@@ -1,0 +1,4 @@
+[core]
+debug = true
+[mcp]
+sse_servers = [ "http://127.0.0.1:53000/sse" ]

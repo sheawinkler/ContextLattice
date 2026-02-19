@@ -1,0 +1,6 @@
+FROM python:3.11-slim
+ENV PIP_NO_CACHE_DIR=1
+RUN pip install --no-cache-dir fastmcp fastembed httpx
+WORKDIR /app
+COPY scripts/mcp_qdrant_adv.py /app/server.py
+CMD ["python", "/app/server.py"]

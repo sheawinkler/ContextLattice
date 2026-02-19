@@ -1,0 +1,10 @@
+prompts:
+  - "Summarize this repo: {{ repo_url }}"
+providers:
+  - id: openai:gpt-4o
+tests:
+  - vars:
+      repo_url: "https://github.com/letta-ai/letta"
+assert:
+  - type: fact
+    metric: 'response includes "Letta"'

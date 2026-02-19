@@ -1,0 +1,3 @@
+FROM ghcr.io/tbxark/mcp-proxy:latest
+# Base is Alpine; add Node.js+npm (which also gives you npx)
+RUN apk add --no-cache nodejs npm

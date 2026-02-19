@@ -1,0 +1,41 @@
+# Release lockfile for reproducible image pulls.
+# Generated from locally validated images on 2026-02-18.
+services:
+  qdrant:
+    image: qdrant/qdrant@sha256:0425e3e03e7fd9b3dc95c4214546afe19de2eb2e28ca621441a56663ac6e1f46
+
+  mongo:
+    image: mongo@sha256:6159d784bc2ed3e6e97648bb28d93d43cf9660401c1230f4f340d14d68421119
+
+  mindsdb:
+    image: mindsdb/mindsdb@sha256:a273d8494ba6a6464f5528c3598cc4510fb072fa4c86b7e062c208b013cc6b47
+
+  mcp-hub:
+    image: ghcr.io/tbxark/mcp-proxy@sha256:70c0e02d39c4c0898e610b3a30954f7930628fa6f4fb447bad14c32382a25879
+
+  ollama:
+    image: ollama/ollama@sha256:5f7a20da9b4d42d1909b4693f90942135bcabc335ee42d529c0d143c44a92311
+
+  letta:
+    image: letta/letta@sha256:a3e73c8147a40c5e3904f0622aba86ba243a5d70c16b927ed907e12014eb76fb
+
+  lf-postgres:
+    image: postgres@sha256:97ff59a4e30e08d1c11bdcd9455e7832368c0572b576c9092cde2df4ae5552a3
+
+  lf-clickhouse:
+    image: clickhouse/clickhouse-server@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+
+  lf-redis:
+    image: redis@sha256:976ab0f0939b78c06d802bcd3bea44c5142ea9a756a57b861e08819817f768c8
+
+  lf-minio:
+    image: cgr.dev/chainguard/minio@sha256:e3f3dae77e33e315e56da348d614832c226cd3a8a9600e0b6eb65c083ec5f666
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker@sha256:03280a32fdb441751191e4d50054adac33fd2768089a9870f6fac56b2d387079
+
+  langfuse:
+    image: langfuse/langfuse@sha256:99eae0d0734a62e29378f038b84de9eed4ba8dbe69878f9b680351c2324a4949
+
+  promptfoo:
+    image: ghcr.io/promptfoo/promptfoo@sha256:aa8f956a13c81912a5f66c27b027797782648e0fe23c90d859e504c1efc6d910

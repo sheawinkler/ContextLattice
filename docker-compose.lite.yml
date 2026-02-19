@@ -1,0 +1,147 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports: ["6333:6333", "6334:6334"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes: ["${QDRANT_STORAGE:-qdrant_storage}:/qdrant/storage"]
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    volumes: ["${MONGO_DATA:-mongo_data}:/data/db"]
+    restart: unless-stopped
+
+  mcp-qdrant:
+    build: { context: ., dockerfile: dockerfile }
+    depends_on: [qdrant]
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-memmcp_notes}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      FASTMCP_SERVER_HOST: 0.0.0.0
+      FASTMCP_SERVER_PORT: 8000
+    expose: ["8000"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "python -c \"import socket,sys; s=socket.create_connection(('127.0.0.1',8000),2); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  memorymcp-http:
+    build: { context: ., dockerfile: Dockerfile.memorymcp }
+    depends_on: [mongo]
+    environment:
+      MEMORYMCP_HTTP_PORT: ${MEMORYMCP_HTTP_PORT:-59081}
+      MEMORY_BANK_ROOT: /data/memory-bank
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+    volumes: ["${MEMORY_BANK_DATA:-memory_bank_data}:/data"]
+    ports: ["${SUPERGW_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${MEMORYMCP_HTTP_PORT:-59081}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mcp-hub:
+    image: ghcr.io/tbxark/mcp-proxy:v0.43.2
+    depends_on: [mcp-qdrant, memorymcp-http]
+    volumes:
+      - ./configs/mcp-hub.lite.json:/config/config.json:ro
+    command: ["--config", "/config/config.json"]
+    ports: ["${MCP_HUB_PORT:-53130}:${MCP_HUB_PORT:-53130}"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "bash -lc 'timeout 3 bash -lc \"exec 3<>/dev/tcp/127.0.0.1/${MCP_HUB_PORT:-53130}; exec 3>&-\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  memmcp-orchestrator:
+    build: { context: ., dockerfile: Dockerfile.orchestrator }
+    depends_on:
+      memorymcp-http:
+        condition: service_healthy
+    environment:
+      MEMMCP_HTTP_URL: http://memorymcp-http:59081/mcp
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_LOCAL_URL: ${QDRANT_LOCAL_URL:-http://qdrant:6333}
+      QDRANT_USE_CLOUD: ${QDRANT_USE_CLOUD:-false}
+      QDRANT_CLUSTER_ENDPOINT: ${QDRANT_CLUSTER_ENDPOINT:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_CLOUD_FALLBACK: ${QDRANT_CLOUD_FALLBACK:-false}
+      QDRANT_GRPC_PREFER: ${QDRANT_GRPC_PREFER:-true}
+      QDRANT_GRPC_PORT: ${QDRANT_GRPC_PORT:-6334}
+      QDRANT_CLOUD_GRPC_PORT: ${QDRANT_CLOUD_GRPC_PORT:-6334}
+      QDRANT_CLIENT_TIMEOUT_SECS: ${QDRANT_CLIENT_TIMEOUT_SECS:-30}
+      MESSAGING_INTEGRATIONS_ENABLED: ${MESSAGING_INTEGRATIONS_ENABLED:-true}
+      MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-true}
+      MESSAGING_COMMAND_HANDLE: ${MESSAGING_COMMAND_HANDLE:-@ContextLattice}
+      MESSAGING_DEFAULT_PROJECT: ${MESSAGING_DEFAULT_PROJECT:-messaging}
+      MESSAGING_SEARCH_LIMIT: ${MESSAGING_SEARCH_LIMIT:-4}
+      MESSAGING_MAX_RESPONSE_CHARS: ${MESSAGING_MAX_RESPONSE_CHARS:-1200}
+      MESSAGING_ORCH_SELF_URL: ${MESSAGING_ORCH_SELF_URL:-http://127.0.0.1:8075}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-ContextLattice}
+      TELEGRAM_DEFAULT_PROJECT: ${TELEGRAM_DEFAULT_PROJECT:-messaging}
+      TELEGRAM_TOPIC_ROOT: ${TELEGRAM_TOPIC_ROOT:-channels/telegram}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_DEFAULT_PROJECT: ${SLACK_DEFAULT_PROJECT:-messaging}
+      SLACK_TOPIC_ROOT: ${SLACK_TOPIC_ROOT:-channels/slack}
+      OPENCLAW_DEFAULT_PROJECT: ${OPENCLAW_DEFAULT_PROJECT:-messaging}
+      ORCH_QDRANT_COLLECTION: ${QDRANT_COLLECTION:-memmcp_notes}
+      MONGO_RAW_CONNECT_TIMEOUT_MS: ${MONGO_RAW_CONNECT_TIMEOUT_MS:-5000}
+      MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS: ${MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS:-5000}
+      MONGO_RAW_SOCKET_TIMEOUT_MS: ${MONGO_RAW_SOCKET_TIMEOUT_MS:-15000}
+      MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS: ${MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS:-5000}
+      MONGO_RAW_MAX_POOL_SIZE: ${MONGO_RAW_MAX_POOL_SIZE:-200}
+      MONGO_RAW_MIN_POOL_SIZE: ${MONGO_RAW_MIN_POOL_SIZE:-0}
+      FANOUT_LETTA_RATE_LIMIT_PER_SEC: ${FANOUT_LETTA_RATE_LIMIT_PER_SEC:-6}
+      FANOUT_LETTA_BULK_SIZE: ${FANOUT_LETTA_BULK_SIZE:-8}
+      FANOUT_LETTA_BATCH_CONCURRENCY: ${FANOUT_LETTA_BATCH_CONCURRENCY:-2}
+      FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC: ${FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC:-20}
+      MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR: ${MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR:-true}
+      MINDSDB_ENABLED: "false"
+      MINDSDB_AUTOSYNC: "false"
+      OLLAMA_BASE_URL: http://ollama:11434
+      TRADING_HISTORY_PATH: /app/data/trading_metrics.ndjson
+      STRATEGY_HISTORY_PATH: /app/data/strategy_metrics.ndjson
+      SIGNAL_HISTORY_PATH: /app/data/solana_signals.ndjson
+      OVERRIDE_HISTORY_PATH: /app/data/solana_overrides.ndjson
+    volumes:
+      - ${ORCHESTRATOR_DATA:-orchestrator_data}:/app/data
+    ports: ["${ORCHESTRATOR_PORT:-8075}:8075"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage: {}
+  mongo_data: {}
+  memory_bank_data: {}
+  orchestrator_data: {}

@@ -1,0 +1,47 @@
+model_providers:
+  ollama_openai:
+    provider: openai
+    base_url: ${OLLAMA_API_BASE:-http://127.0.0.1:11434/v1}
+    api_key: local-demo
+  lmstudio:
+    provider: openai
+    base_url: ${LMSTUDIO_API_BASE:-http://localhost:1234/v1}
+    api_key: local
+
+models:
+  coder_small:
+    model_provider: ollama_openai
+    model: qwen2.5-coder:7b
+    temperature: 0.2
+    max_tokens: 2048
+    parallel_tool_calls: true
+  coder_big:
+    model_provider: lmstudio
+    model: qwen3-42b-coder
+    temperature: 0.3
+    max_tokens: 4096
+    parallel_tool_calls: true
+
+agents:
+  main:
+    model: coder_big
+    tools: [bash, sequentialthinking, str_replace_based_edit_tool, task_done]
+    max_steps: 200
+    enable_lakeview: true
+  fast_fix:
+    model: coder_small
+    tools: [bash, sequentialthinking, str_replace_based_edit_tool, task_done]
+    max_steps: 80
+    enable_lakeview: true
+
+allow_mcp_servers:
+  - memory
+  - mem_hub
+
+mcp_servers:
+  memory:
+    url: ${MCP_MEMORY_URL:-http://127.0.0.1:59081/mcp}
+  mem_hub:
+    url: ${MCP_HUB_URL:-http://127.0.0.1:53130/memorymcp/mcp}
+
+run_dir: ./trae_runs

@@ -1,0 +1,601 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports: ["6333:6333", "6334:6334"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    # Source can be either a named volume (default) or a host path (e.g., /Volumes/ExternalSSD/memmcp/qdrant)
+    volumes: ["${QDRANT_STORAGE:-qdrant_storage}:/qdrant/storage"]
+    restart: unless-stopped
+    profiles: ["core"]
+
+  mongo:
+    image: mongo:7
+    # Source can be either a named volume (default) or a host path (e.g., /Volumes/ExternalSSD/memmcp/mongo)
+    volumes: ["${MONGO_DATA:-mongo_data}:/data/db"]
+    restart: unless-stopped
+    profiles: ["core"]
+
+  # Qdrant MCP (Streamable HTTP)
+  mcp-qdrant:
+    build: { context: ., dockerfile: dockerfile }
+    depends_on: [qdrant]
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      FASTMCP_SERVER_HOST: 0.0.0.0
+      FASTMCP_SERVER_PORT: 8000
+    expose: ["8000"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    profiles: ["core"]
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "python -c \"import socket,sys; s=socket.create_connection(('127.0.0.1',8000),2); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mindsdb:
+    image: mindsdb/mindsdb:v25.14.1
+    environment:
+      MINDSDB_APIS: ${MINDSDB_APIS}
+    ports:
+      - "${MINDS_HTTP_PORT:-47334}:47334"
+      - "${MINDSDB_MCP_PORT:-47337}:47337"
+    volumes: ["${MINDSDB_DATA:-mindsdb_data}:/root/.mindsdb"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    restart: unless-stopped
+    profiles: ["analytics"]
+
+  # Memory Bank via npx supergateway -> HTTP/streamable
+  memorymcp-http:
+    build: { context: ., dockerfile: Dockerfile.memorymcp }
+    depends_on: [mongo]
+    environment:
+      MEMORYMCP_HTTP_PORT: ${MEMORYMCP_HTTP_PORT:-59081}
+      MEMORY_BANK_ROOT: /data/memory-bank
+      MONGODB_URI: ${MONGODB_URI}
+      SUPERGATEWAY_LOG_LEVEL: ${SUPERGATEWAY_LOG_LEVEL:-none}
+      SUPERGATEWAY_SESSION_TIMEOUT_MS: ${SUPERGATEWAY_SESSION_TIMEOUT_MS:-300000}
+    # Source can be either a named volume (default) or a host path (e.g., /Volumes/ExternalSSD/memmcp/memory-bank)
+    volumes: ["${MEMORY_BANK_DATA:-memory_bank_data}:/data"]
+    ports: ["${SUPERGW_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    profiles: ["core"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${MEMORYMCP_HTTP_PORT:-59081}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-25m}
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
+    restart: unless-stopped
+
+  # MindsDB SSE -> HTTP using FastMCP
+  mindsdb-http-proxy:
+    build: { context: ., dockerfile: Dockerfile.mindsdb-http-proxy }
+    depends_on: [mindsdb]
+    environment:
+      MINDSDB_SSE_URL: ${MINDSDB_SSE_URL:-http://mindsdb:47334/mcp/sse}
+    ports: ["${MINDSDB_HTTP_PROXY_PORT:-8004}:8004"]
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "python -c \"import socket,sys; s=socket.create_connection(('127.0.0.1',8004),2); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    restart: unless-stopped
+    profiles: ["analytics"]
+
+  # MCP Hub — single front door (one port; serves /mcp and /sse)
+  mcp-hub:
+    image: ghcr.io/tbxark/mcp-proxy:v0.43.2
+    depends_on:
+      mcp-qdrant:
+        condition: service_healthy
+      memorymcp-http:
+        condition: service_healthy
+    volumes:
+      - ${MCP_HUB_CONFIG:-./configs/mcp-hub.config.json}:/config/config.json:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        set -euo pipefail
+        until (echo > "/dev/tcp/memorymcp-http/${MEMORYMCP_HTTP_PORT:-59081}") >/dev/null 2>&1; do
+          echo "[mcp-hub] waiting for memorymcp-http:${MEMORYMCP_HTTP_PORT:-59081}"
+          sleep 2
+        done
+        until (echo > "/dev/tcp/mcp-qdrant/8000") >/dev/null 2>&1; do
+          echo "[mcp-hub] waiting for mcp-qdrant:8000"
+          sleep 2
+        done
+        exec /main --config /config/config.json
+    ports: ["${MCP_HUB_PORT}:${MCP_HUB_PORT}"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "bash -lc 'timeout 3 bash -lc \"exec 3<>/dev/tcp/127.0.0.1/${MCP_HUB_PORT:-53130}; exec 3>&-\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
+  # Ollama (local, free LLMs)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports: ["11434:11434"]  # expose to host for testing
+    volumes: ["${HOME}/.ollama:/root/.ollama"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-25m}
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
+    profiles: ["llm"]
+
+  # Letta (MemGPT successor) — prefers Ollama if OLLAMA_BASE_URL set
+  letta:
+    image: letta/letta:latest
+    container_name: letta
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Letta uses an OpenAI-compatible client; include /v1 for Ollama compatibility endpoints.
+      OLLAMA_BASE_URL: ${LETTA_OLLAMA_BASE_URL:-http://ollama:11434/v1}
+    ports: ["${LETTA_PORT}:8283"]
+    volumes: ["${LETTA_PGDATA:-letta_pg}:/var/lib/postgresql/data"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    restart: unless-stopped
+    profiles: ["llm"]
+
+  # Observability: Langfuse (app + worker + Postgres + ClickHouse + Redis + MinIO)
+  lf-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${LF_DB_PASS:-postgres}
+      POSTGRES_DB: ${LF_DB_NAME:-langfuse}
+      POSTGRES_USER: ${LF_DB_USER:-postgres}
+    volumes: ["${LF_PGDATA:-lf_pgdata}:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LF_DB_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  lf-clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-langfuse}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-langfuse_dev}
+    volumes: ["${CLICKHOUSE_DATA:-clickhouse_data}:/var/lib/clickhouse"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  lf-redis:
+    image: redis:7
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_AUTH:-change_me}
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  lf-minio:
+    image: cgr.dev/chainguard/minio
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret}
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9090}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9091}:9001"
+    volumes: ["${LF_MINIO_DATA:-lf_minio_data}:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    depends_on:
+      lf-postgres:
+        condition: service_healthy
+      lf-clickhouse:
+        condition: service_healthy
+      lf-redis:
+        condition: service_healthy
+      lf-minio:
+        condition: service_healthy
+    environment: &langfuse-env
+      NEXTAUTH_URL: "http://localhost:${LANGFUSE_PORT:-15510}"
+      DATABASE_URL: postgres://${LF_DB_USER:-postgres}:${LF_DB_PASS:-postgres}@${LF_DB_HOST:-lf-postgres}:5432/${LF_DB_NAME:-langfuse}
+      SALT: ${LANGFUSE_SALT:-change_me_32_chars________________}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-change_me_64_chars________________________________________}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-true}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
+      CLICKHOUSE_MIGRATION_URL: ${CLICKHOUSE_MIGRATION_URL:-clickhouse://default:langfuse_dev@lf-clickhouse:9000}
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://lf-clickhouse:8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-langfuse_dev}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-langfuse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_EVENT_UPLOAD_REGION:-auto}
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-http://lf-minio:9000}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-true}
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-auto}
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://lf-minio:9000}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE:-true}
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: ${LANGFUSE_S3_BATCH_EXPORT_ENABLED:-false}
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX: ${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}
+      LANGFUSE_S3_BATCH_EXPORT_REGION: ${LANGFUSE_S3_BATCH_EXPORT_REGION:-auto}
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_ENDPOINT:-http://lf-minio:9000}
+      LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT:-http://localhost:${MINIO_PORT:-9090}}
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID:-minio}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY:-miniosecret}
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: ${LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE:-true}
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: ${LANGFUSE_INGESTION_QUEUE_DELAY_MS:-}
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: ${LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS:-}
+      REDIS_HOST: ${REDIS_HOST:-lf-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_AUTH: ${REDIS_AUTH:-change_me}
+      REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
+      REDIS_TLS_CA: ${REDIS_TLS_CA:-/certs/ca.crt}
+      REDIS_TLS_CERT: ${REDIS_TLS_CERT:-/certs/redis.crt}
+      REDIS_TLS_KEY: ${REDIS_TLS_KEY:-/certs/redis.key}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+      SMTP_CONNECTION_URL: ${SMTP_CONNECTION_URL:-}
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  langfuse:
+    image: docker.io/langfuse/langfuse:3
+    depends_on:
+      lf-postgres:
+        condition: service_healthy
+      lf-clickhouse:
+        condition: service_healthy
+      lf-redis:
+        condition: service_healthy
+      lf-minio:
+        condition: service_healthy
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change_me_64_chars________________________________________}
+      NEXT_PUBLIC_HOST: "http://localhost:${LANGFUSE_PORT:-15510}"
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+    ports: ["${LANGFUSE_PORT}:3000"]
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  # Evals: Promptfoo self-host
+  promptfoo:
+    image: ghcr.io/promptfoo/promptfoo:latest
+    working_dir: /work
+    volumes: ["./promptfoo:/work"]
+    ports: ["${PROMPTFOO_PORT:-15500}:15500"]
+    command: ["promptfoo","view","--port","15500","-n"]
+    environment:
+      HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:15500/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  memmcp-orchestrator:
+    build: { context: ., dockerfile: Dockerfile.orchestrator }
+    depends_on:
+      memorymcp-http:
+        condition: service_healthy
+    environment:
+      MEMMCP_HTTP_URL: http://memorymcp-http:59081/mcp
+      MEMMCP_LIST_TIMEOUT_SECS: ${MEMMCP_LIST_TIMEOUT_SECS:-4}
+      MEMMCP_READ_TIMEOUT_SECS: ${MEMMCP_READ_TIMEOUT_SECS:-15}
+      MEMMCP_ENV: ${MEMMCP_ENV:-development}
+      ORCH_SECURITY_STRICT: ${ORCH_SECURITY_STRICT:-true}
+      ORCH_PUBLIC_STATUS: ${ORCH_PUBLIC_STATUS:-true}
+      ORCH_PUBLIC_DOCS: ${ORCH_PUBLIC_DOCS:-true}
+      ORCH_HTTP_REQUEST_LOG_SUCCESS_SAMPLE_RATE: ${ORCH_HTTP_REQUEST_LOG_SUCCESS_SAMPLE_RATE:-0.1}
+      ORCH_HTTP_REQUEST_LOG_SLOW_MS: ${ORCH_HTTP_REQUEST_LOG_SLOW_MS:-1500}
+      ORCH_PROMETHEUS_ENABLED: ${ORCH_PROMETHEUS_ENABLED:-true}
+      ORCH_PROMETHEUS_ENDPOINT: ${ORCH_PROMETHEUS_ENDPOINT:-/metrics}
+      ORCH_PROMETHEUS_PUBLIC: ${ORCH_PROMETHEUS_PUBLIC:-false}
+      MESSAGING_INTEGRATIONS_ENABLED: ${MESSAGING_INTEGRATIONS_ENABLED:-true}
+      MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-true}
+      MESSAGING_COMMAND_HANDLE: ${MESSAGING_COMMAND_HANDLE:-@ContextLattice}
+      MESSAGING_DEFAULT_PROJECT: ${MESSAGING_DEFAULT_PROJECT:-messaging}
+      MESSAGING_SEARCH_LIMIT: ${MESSAGING_SEARCH_LIMIT:-4}
+      MESSAGING_MAX_RESPONSE_CHARS: ${MESSAGING_MAX_RESPONSE_CHARS:-1200}
+      MESSAGING_ORCH_SELF_URL: ${MESSAGING_ORCH_SELF_URL:-http://127.0.0.1:8075}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-ContextLattice}
+      TELEGRAM_DEFAULT_PROJECT: ${TELEGRAM_DEFAULT_PROJECT:-messaging}
+      TELEGRAM_TOPIC_ROOT: ${TELEGRAM_TOPIC_ROOT:-channels/telegram}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_DEFAULT_PROJECT: ${SLACK_DEFAULT_PROJECT:-messaging}
+      SLACK_TOPIC_ROOT: ${SLACK_TOPIC_ROOT:-channels/slack}
+      OPENCLAW_DEFAULT_PROJECT: ${OPENCLAW_DEFAULT_PROJECT:-messaging}
+      ORCH_SHARED_HTTP_MAX_CONNECTIONS: ${ORCH_SHARED_HTTP_MAX_CONNECTIONS:-120}
+      ORCH_SHARED_HTTP_MAX_KEEPALIVE_CONNECTIONS: ${ORCH_SHARED_HTTP_MAX_KEEPALIVE_CONNECTIONS:-60}
+      LANGFUSE_URL: http://langfuse:3000
+      LANGFUSE_API_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_LOCAL_URL: ${QDRANT_LOCAL_URL:-http://qdrant:6333}
+      QDRANT_USE_CLOUD: ${QDRANT_USE_CLOUD:-false}
+      QDRANT_CLUSTER_ENDPOINT: ${QDRANT_CLUSTER_ENDPOINT:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_CLOUD_FALLBACK: ${QDRANT_CLOUD_FALLBACK:-false}
+      QDRANT_GRPC_PREFER: ${QDRANT_GRPC_PREFER:-true}
+      QDRANT_GRPC_PORT: ${QDRANT_GRPC_PORT:-6334}
+      QDRANT_CLOUD_GRPC_PORT: ${QDRANT_CLOUD_GRPC_PORT:-6334}
+      ORCH_QDRANT_COLLECTION: ${QDRANT_COLLECTION:-memmcp_notes}
+      MINDSDB_URL: http://mindsdb:47334
+      MINDSDB_USER: ${MINDSDB_USER:-mindsdb}
+      MINDSDB_PASSWORD: ${MINDSDB_PASSWORD:-}
+      MINDSDB_AUTOSYNC: ${MINDSDB_AUTOSYNC:-true}
+      MINDSDB_AUTOSYNC_DB: ${MINDSDB_AUTOSYNC_DB:-files}
+      MINDSDB_AUTOSYNC_TABLE: ${MINDSDB_AUTOSYNC_TABLE:-memory_events}
+      MINDSDB_AUTOSYNC_BATCH_SIZE: ${MINDSDB_AUTOSYNC_BATCH_SIZE:-8}
+      MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR: ${MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR:-true}
+      MINDSDB_AUTOSYNC_TABLE_FALLBACK_SUFFIX: ${MINDSDB_AUTOSYNC_TABLE_FALLBACK_SUFFIX:-_v2}
+      MINDSDB_TRADING_AUTOSYNC: ${MINDSDB_TRADING_AUTOSYNC:-true}
+      MINDSDB_TRADING_DB: ${MINDSDB_TRADING_DB:-files}
+      MINDSDB_TRADING_TABLE: ${MINDSDB_TRADING_TABLE:-trading_metrics}
+      LETTA_URL: http://letta:8283
+      LETTA_API_KEY: ${LETTA_API_KEY:-}
+      LETTA_REQUIRE_API_KEY: ${LETTA_REQUIRE_API_KEY:-false}
+      LETTA_AUTO_SESSION_ID: ${LETTA_AUTO_SESSION_ID:-memmcp-default}
+      LETTA_AGENT_MODEL: ${LETTA_AGENT_MODEL:-ollama/qwen2.5-coder:7b}
+      LETTA_AGENT_EMBEDDING: ${LETTA_AGENT_EMBEDDING:-ollama/nomic-embed-text:latest}
+      LETTA_REQUEST_TIMEOUT_SECS: ${LETTA_REQUEST_TIMEOUT_SECS:-240}
+      LETTA_AGENT_VERIFY_INTERVAL_SECS: ${LETTA_AGENT_VERIFY_INTERVAL_SECS:-300}
+      LETTA_FANOUT_WORKERS: ${LETTA_FANOUT_WORKERS:-1}
+      LETTA_DISABLE_ON_TRANSIENT_ERRORS: ${LETTA_DISABLE_ON_TRANSIENT_ERRORS:-true}
+      LETTA_TRANSIENT_ERROR_THRESHOLD: ${LETTA_TRANSIENT_ERROR_THRESHOLD:-60}
+      LETTA_ARCHIVAL_MAX_CHARS: ${LETTA_ARCHIVAL_MAX_CHARS:-400}
+      LETTA_ARCHIVAL_INCLUDE_CONTENT: ${LETTA_ARCHIVAL_INCLUDE_CONTENT:-false}
+      PILOT_CONTACT_EMAIL: ${PILOT_CONTACT_EMAIL:-}
+      PILOT_CONTACT_URL: ${PILOT_CONTACT_URL:-}
+      ORCH_EMBED_PROVIDER: ${ORCH_EMBED_PROVIDER:-cheap}
+      ORCH_EMBED_MODEL: ${ORCH_EMBED_MODEL:-cheap-embed-v1}
+      ORCH_EMBED_DIM: ${ORCH_EMBED_DIM:-768}
+      ORCH_EMBED_FAIL_OPEN: ${ORCH_EMBED_FAIL_OPEN:-true}
+      EMBEDDING_CACHE_ENABLED: ${EMBEDDING_CACHE_ENABLED:-true}
+      EMBEDDING_CACHE_MAX_KEYS: ${EMBEDDING_CACHE_MAX_KEYS:-50000}
+      ORCH_RETRIEVAL_SOURCES: ${ORCH_RETRIEVAL_SOURCES:-qdrant,mongo_raw,mindsdb,letta,memory_bank}
+      ORCH_RETRIEVAL_MONGO_SCAN_LIMIT: ${ORCH_RETRIEVAL_MONGO_SCAN_LIMIT:-400}
+      ORCH_RETRIEVAL_MINDSDB_SCAN_LIMIT: ${ORCH_RETRIEVAL_MINDSDB_SCAN_LIMIT:-300}
+      ORCH_RETRIEVAL_MEMORY_SCAN_LIMIT: ${ORCH_RETRIEVAL_MEMORY_SCAN_LIMIT:-36}
+      ORCH_RETRIEVAL_MEMORY_PROJECT_LIMIT: ${ORCH_RETRIEVAL_MEMORY_PROJECT_LIMIT:-12}
+      ORCH_RETRIEVAL_MEMORY_FILES_PER_PROJECT: ${ORCH_RETRIEVAL_MEMORY_FILES_PER_PROJECT:-40}
+      ORCH_QDRANT_EMBED_TIMEOUT_SECS: ${ORCH_QDRANT_EMBED_TIMEOUT_SECS:-2.0}
+      ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS: ${ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS:-8}
+      ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS: ${ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS:-6}
+      ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS: ${ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS:-8}
+      ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS: ${ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS:-6}
+      ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS: ${ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS:-5}
+      ORCH_RETRIEVAL_ENABLE_STAGED_FETCH: ${ORCH_RETRIEVAL_ENABLE_STAGED_FETCH:-true}
+      ORCH_RETRIEVAL_FAST_SOURCES: ${ORCH_RETRIEVAL_FAST_SOURCES:-qdrant,mongo_raw,mindsdb}
+      ORCH_RETRIEVAL_SLOW_SOURCES: ${ORCH_RETRIEVAL_SLOW_SOURCES:-letta,memory_bank}
+      ORCH_RETRIEVAL_SLOW_SOURCE_MIN_RESULTS: ${ORCH_RETRIEVAL_SLOW_SOURCE_MIN_RESULTS:-6}
+      ORCH_RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE: ${ORCH_RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE:-0.6}
+      ORCH_RETRIEVAL_ENABLE_LEARNING_RERANK: ${ORCH_RETRIEVAL_ENABLE_LEARNING_RERANK:-true}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      OLLAMA_BASE_URL: http://ollama:11434
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+      MONGO_RAW_ENABLED: ${MONGO_RAW_ENABLED:-true}
+      MONGO_RAW_DB: ${MONGO_RAW_DB:-memmcp_raw}
+      MONGO_RAW_COLLECTION: ${MONGO_RAW_COLLECTION:-memory_write_events}
+      MONGO_RAW_CONNECT_TIMEOUT_MS: ${MONGO_RAW_CONNECT_TIMEOUT_MS:-5000}
+      MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS: ${MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS:-5000}
+      MONGO_RAW_SOCKET_TIMEOUT_MS: ${MONGO_RAW_SOCKET_TIMEOUT_MS:-15000}
+      MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS: ${MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS:-5000}
+      MONGO_RAW_MAX_POOL_SIZE: ${MONGO_RAW_MAX_POOL_SIZE:-200}
+      MONGO_RAW_MIN_POOL_SIZE: ${MONGO_RAW_MIN_POOL_SIZE:-0}
+      MEMORY_WRITE_QUEUE_MAX: ${MEMORY_WRITE_QUEUE_MAX:-2000}
+      MEMORY_WRITE_WORKERS: ${MEMORY_WRITE_WORKERS:-4}
+      MEMORY_WRITE_DEDUP_ENABLED: ${MEMORY_WRITE_DEDUP_ENABLED:-true}
+      MEMORY_WRITE_DEDUP_WINDOW_SECS: ${MEMORY_WRITE_DEDUP_WINDOW_SECS:-120}
+      MEMORY_WRITE_DEDUP_MAX_KEYS: ${MEMORY_WRITE_DEDUP_MAX_KEYS:-10000}
+      MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED: ${MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED:-true}
+      MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS: ${MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS:-50000}
+      HOT_MEMORY_FILE_SUFFIXES: ${HOT_MEMORY_FILE_SUFFIXES:-__latest.json}
+      HOT_MEMORY_ROLLUP_ENABLED: ${HOT_MEMORY_ROLLUP_ENABLED:-true}
+      HOT_MEMORY_ROLLUP_FLUSH_SECS: ${HOT_MEMORY_ROLLUP_FLUSH_SECS:-20}
+      HOT_MEMORY_ROLLUP_SUFFIX: ${HOT_MEMORY_ROLLUP_SUFFIX:-__rollup.json}
+      FANOUT_MAX_ATTEMPTS: ${FANOUT_MAX_ATTEMPTS:-40}
+      FANOUT_RETRY_BASE_SECS: ${FANOUT_RETRY_BASE_SECS:-2}
+      FANOUT_RETRY_MAX_SECS: ${FANOUT_RETRY_MAX_SECS:-900}
+      FANOUT_BATCH_SIZE: ${FANOUT_BATCH_SIZE:-24}
+      MINDSDB_FANOUT_WORKERS: ${MINDSDB_FANOUT_WORKERS:-1}
+      FANOUT_POLL_SECS: ${FANOUT_POLL_SECS:-2.0}
+      FANOUT_RUNNING_STALE_SECS: ${FANOUT_RUNNING_STALE_SECS:-120}
+      FANOUT_SUMMARY_TIMEOUT_SECS: ${FANOUT_SUMMARY_TIMEOUT_SECS:-20.0}
+      FANOUT_SUMMARY_CACHE_TTL_SECS: ${FANOUT_SUMMARY_CACHE_TTL_SECS:-6.0}
+      FANOUT_QDRANT_RATE_LIMIT_PER_SEC: ${FANOUT_QDRANT_RATE_LIMIT_PER_SEC:-40}
+      FANOUT_MINDSDB_RATE_LIMIT_PER_SEC: ${FANOUT_MINDSDB_RATE_LIMIT_PER_SEC:-15}
+      FANOUT_LETTA_RATE_LIMIT_PER_SEC: ${FANOUT_LETTA_RATE_LIMIT_PER_SEC:-6}
+      FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC: ${FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC:-20}
+      FANOUT_QDRANT_BULK_SIZE: ${FANOUT_QDRANT_BULK_SIZE:-16}
+      FANOUT_MINDSDB_BULK_SIZE: ${FANOUT_MINDSDB_BULK_SIZE:-12}
+      FANOUT_MONGO_BULK_SIZE: ${FANOUT_MONGO_BULK_SIZE:-24}
+      FANOUT_LANGFUSE_BULK_SIZE: ${FANOUT_LANGFUSE_BULK_SIZE:-24}
+      FANOUT_LETTA_BULK_SIZE: ${FANOUT_LETTA_BULK_SIZE:-8}
+      FANOUT_LETTA_BATCH_CONCURRENCY: ${FANOUT_LETTA_BATCH_CONCURRENCY:-2}
+      FANOUT_COALESCE_ENABLED: ${FANOUT_COALESCE_ENABLED:-true}
+      FANOUT_COALESCE_WINDOW_SECS: ${FANOUT_COALESCE_WINDOW_SECS:-6}
+      FANOUT_COALESCE_TARGETS: ${FANOUT_COALESCE_TARGETS:-qdrant,mindsdb,letta,langfuse}
+      FANOUT_BACKPRESSURE_ENABLED: ${FANOUT_BACKPRESSURE_ENABLED:-true}
+      FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK: ${FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK:-0.65}
+      FANOUT_BACKPRESSURE_MAX_SLEEP_SECS: ${FANOUT_BACKPRESSURE_MAX_SLEEP_SECS:-1.25}
+      FANOUT_BACKPRESSURE_TARGETS: ${FANOUT_BACKPRESSURE_TARGETS:-letta,langfuse}
+      FANOUT_BACKPRESSURE_LOG_COOLDOWN_SECS: ${FANOUT_BACKPRESSURE_LOG_COOLDOWN_SECS:-30}
+      LOW_VALUE_FILE_SUFFIXES: ${LOW_VALUE_FILE_SUFFIXES:-__latest.json,__rollup.json}
+      LOW_VALUE_TOPIC_PREFIXES: ${LOW_VALUE_TOPIC_PREFIXES:-telemetry,metrics,signals,overrides,perf,tmp}
+      LETTA_ADMISSION_ENABLED: ${LETTA_ADMISSION_ENABLED:-true}
+      LETTA_ADMISSION_BACKLOG_SOFT_LIMIT: ${LETTA_ADMISSION_BACKLOG_SOFT_LIMIT:-800}
+      LETTA_ADMISSION_BACKLOG_HARD_LIMIT: ${LETTA_ADMISSION_BACKLOG_HARD_LIMIT:-2500}
+      LETTA_ADMISSION_LOW_VALUE_MIN_SUMMARY_CHARS: ${LETTA_ADMISSION_LOW_VALUE_MIN_SUMMARY_CHARS:-72}
+      LETTA_ADMISSION_LOG_COOLDOWN_SECS: ${LETTA_ADMISSION_LOG_COOLDOWN_SECS:-30}
+      SINK_RETENTION_ENABLED: ${SINK_RETENTION_ENABLED:-true}
+      SINK_RETENTION_INTERVAL_SECS: ${SINK_RETENTION_INTERVAL_SECS:-2100}
+      SINK_RETENTION_TIMEOUT_SECS: ${SINK_RETENTION_TIMEOUT_SECS:-240}
+      SINK_RETENTION_SCAN_LIMIT: ${SINK_RETENTION_SCAN_LIMIT:-5000}
+      SINK_RETENTION_DELETE_BATCH: ${SINK_RETENTION_DELETE_BATCH:-128}
+      SINK_RETENTION_MAX_DELETES_PER_RUN: ${SINK_RETENTION_MAX_DELETES_PER_RUN:-5000}
+      QDRANT_LOW_VALUE_RETENTION_HOURS: ${QDRANT_LOW_VALUE_RETENTION_HOURS:-72}
+      LETTA_LOW_VALUE_RETENTION_HOURS: ${LETTA_LOW_VALUE_RETENTION_HOURS:-72}
+      MONGO_RAW_LOW_VALUE_RETENTION_HOURS: ${MONGO_RAW_LOW_VALUE_RETENTION_HOURS:-0}
+      LETTA_RETENTION_PAGE_LIMIT: ${LETTA_RETENTION_PAGE_LIMIT:-100}
+      LETTA_RETENTION_MAX_DELETES_PER_RUN: ${LETTA_RETENTION_MAX_DELETES_PER_RUN:-500}
+      FANOUT_OUTBOX_BACKEND: ${FANOUT_OUTBOX_BACKEND:-mongo}
+      FANOUT_OUTBOX_MONGO_URI: ${FANOUT_OUTBOX_MONGO_URI:-mongodb://mongo:27017}
+      FANOUT_OUTBOX_MONGO_DB: ${FANOUT_OUTBOX_MONGO_DB:-memmcp_raw}
+      FANOUT_OUTBOX_MONGO_COLLECTION: ${FANOUT_OUTBOX_MONGO_COLLECTION:-fanout_outbox}
+      FANOUT_OUTBOX_AUTO_PROMOTE_MONGO_ON_SQLITE_IO_ERROR: ${FANOUT_OUTBOX_AUTO_PROMOTE_MONGO_ON_SQLITE_IO_ERROR:-true}
+      FANOUT_OUTBOX_FALLBACK_TO_SQLITE: ${FANOUT_OUTBOX_FALLBACK_TO_SQLITE:-true}
+      FANOUT_OUTBOX_GC_ENABLED: ${FANOUT_OUTBOX_GC_ENABLED:-1}
+      FANOUT_OUTBOX_GC_INTERVAL_SECS: ${FANOUT_OUTBOX_GC_INTERVAL_SECS:-900}
+      FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS: ${FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS:-24}
+      FANOUT_OUTBOX_FAILED_RETENTION_HOURS: ${FANOUT_OUTBOX_FAILED_RETENTION_HOURS:-168}
+      FANOUT_OUTBOX_STALE_PENDING_HOURS: ${FANOUT_OUTBOX_STALE_PENDING_HOURS:-24}
+      FANOUT_OUTBOX_STALE_TARGETS: ${FANOUT_OUTBOX_STALE_TARGETS:-}
+      FANOUT_OUTBOX_GC_VACUUM: ${FANOUT_OUTBOX_GC_VACUUM:-1}
+      FANOUT_OUTBOX_GC_VACUUM_MIN_DELETED: ${FANOUT_OUTBOX_GC_VACUUM_MIN_DELETED:-500}
+      FANOUT_OUTBOX_GC_VACUUM_MIN_INTERVAL_SECS: ${FANOUT_OUTBOX_GC_VACUUM_MIN_INTERVAL_SECS:-3600}
+      FANOUT_OUTBOX_GC_TIMEOUT_SECS: ${FANOUT_OUTBOX_GC_TIMEOUT_SECS:-45}
+      TASK_DB_TIMEOUT: ${TASK_DB_TIMEOUT:-5}
+      TASK_DB_LOCK_RETRIES: ${TASK_DB_LOCK_RETRIES:-8}
+      TASK_DB_LOCK_BACKOFF_SECS: ${TASK_DB_LOCK_BACKOFF_SECS:-0.15}
+      # Persist dashboard/telemetry history so it survives container restarts
+      TRADING_HISTORY_PATH: /app/data/trading_metrics.ndjson
+      STRATEGY_HISTORY_PATH: /app/data/strategy_metrics.ndjson
+      SIGNAL_HISTORY_PATH: /app/data/solana_signals.ndjson
+      OVERRIDE_HISTORY_PATH: /app/data/solana_overrides.ndjson
+    volumes:
+      - ${ORCHESTRATOR_DATA:-orchestrator_data}:/app/data
+    ports: ["${ORCHESTRATOR_PORT:-8075}:8075"]
+    ulimits: 
+      nofile:
+       soft: 65536
+       hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-25m}
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
+    restart: unless-stopped
+    profiles: ["core"]
+
+  memmcp-dashboard:
+    build: { context: ., dockerfile: Dockerfile.dashboard }
+    depends_on:
+      memmcp-orchestrator:
+        condition: service_started
+    environment:
+      DATABASE_URL: ${DASHBOARD_DATABASE_URL:-file:/data/dashboard.db}
+      NEXTAUTH_URL: ${DASHBOARD_URL:-http://localhost:3000}
+      APP_URL: ${DASHBOARD_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${DASHBOARD_NEXTAUTH_SECRET:-dev_secret_change_me}
+      AUTH_REQUIRED: ${DASHBOARD_AUTH_REQUIRED:-false}
+      MEMMCP_ORCHESTRATOR_URL: http://memmcp-orchestrator:8075
+      MEMMCP_ORCHESTRATOR_API_KEY: ${MEMMCP_ORCHESTRATOR_API_KEY:-}
+    volumes:
+      - dashboard_data:/data
+    ports: ["${DASHBOARD_PORT:-3000}:3000"]
+    restart: unless-stopped
+    profiles: ["core"]
+
+volumes:
+  qdrant_storage: {}
+  mongo_data: {}
+  mindsdb_data: {}
+  memory_bank_data: {}
+  orchestrator_data: {}
+  letta_pg: {}
+  lf_pgdata: {}
+  clickhouse_data: {}
+  lf_minio_data: {}
+  dashboard_data: {}

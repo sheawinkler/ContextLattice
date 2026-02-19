@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install FastMCP plus the lightweight deps the proxy relies on.
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+ && pip install --no-cache-dir fastmcp fastapi uvicorn httpx anyio \
+ && apt-get purge -y build-essential && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/ ./scripts/
+
+EXPOSE 8004
+
+# Run the FastMCP-based proxy directly; it binds to 0.0.0.0:8004.
+CMD ["python","scripts/mindsdb_http_proxy.py"]

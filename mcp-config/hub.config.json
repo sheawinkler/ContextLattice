@@ -1,0 +1,22 @@
+{
+  "clients": [
+    {
+      "name": "qdrant",
+      "type": "http",
+      "url": "http://mcp-qdrant:8002"
+    },
+    {
+      "name": "mindsdb",
+      "type": "http",
+      "url": "http://mindsdb-http-proxy:8004"
+    },
+    {
+      "name": "memorymcp",
+      "type": "http",
+      "url": "http://memorymcp-http:59081/mcp"
+    }
+  ],
+  "http": {
+    "port": 9090
+  }
+}

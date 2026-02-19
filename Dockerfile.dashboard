@@ -1,0 +1,17 @@
+FROM node:20-bullseye-slim
+
+WORKDIR /app
+
+COPY memmcp-dashboard/package*.json ./
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm ci
+
+COPY memmcp-dashboard ./
+
+ENV NODE_ENV=development
+ENV HOST=0.0.0.0
+ENV PORT=3000
+
+CMD ["sh", "-c", "npx prisma generate && npx prisma db push && npm run dev -- -H 0.0.0.0 -p ${PORT}"]

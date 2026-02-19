@@ -1,0 +1,38 @@
+{
+  "version": "0.1.0",
+  "currency": "USD",
+  "dimensions": ["jsonrpc_calls_million", "storage_gb_month"],
+  "overage": {
+    "per_million_calls": 0.30,
+    "per_gb_month": 0.30
+  },
+  "plans": [
+    {
+      "id": "free",
+      "seat_month_usd": 0,
+      "org_month_usd": 0,
+      "included_projects": 1,
+      "included_storage_gb": 1,
+      "included_calls_million": 0.2,
+      "features": ["community_support"]
+    },
+    {
+      "id": "pro",
+      "seat_month_usd": 19,
+      "org_month_usd": 0,
+      "included_projects": 5,
+      "included_storage_gb": 10,
+      "included_calls_million": 5,
+      "features": ["oauth_sso_lite","activity_logs"]
+    },
+    {
+      "id": "team",
+      "seat_month_usd": 15,
+      "org_month_usd": 149,
+      "included_projects": 20,
+      "included_storage_gb": 50,
+      "included_calls_million": 20,
+      "features": ["org_sso","rbac","backups","audit","priority_support"]
+    }
+  ]
+}

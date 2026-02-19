@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "qdrant-adv": {
+      "url": "http://mcp-qdrant-adv:8022"
+    },
+    "time-stdio": {
+      "command": "uvx",
+      "args": ["mcp-server-time", "--local-timezone=America/Denver"],
+      "env": { "TZ": "America/Denver" }
+    }
+  }
+}

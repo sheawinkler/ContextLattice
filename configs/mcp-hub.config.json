@@ -1,0 +1,27 @@
+{
+  "mcpProxy": {
+    "baseURL": "http://127.0.0.1:53130",
+    "addr": ":53130",
+    "name": "memMCP hub",
+    "version": "1.0.0",
+    "type": "streamable-http",
+    "options": {
+      "panicIfInvalid": false,
+      "logEnabled": true
+    }
+  },
+  "mcpServers": {
+    "memorymcp": {
+      "url": "http://memorymcp-http:59081/mcp",
+      "transportType": "streamable-http"
+    },
+    "qdrant": {
+      "url": "http://mcp-qdrant:8000/mcp",
+      "transportType": "streamable-http"
+    },
+    "mindsdb": {
+      "url": "http://mindsdb-http-proxy:8004/mcp",
+      "transportType": "streamable-http"
+    }
+  }
+}

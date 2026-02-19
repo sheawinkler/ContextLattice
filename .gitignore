@@ -1,0 +1,47 @@
+# macOS
+.DS_Store
+*.DS_Store
+*.DS_Store*
+
+# env (keep example files tracked)
+.env
+.env.*
+!.env.example
+.envrc
+
+# build/merge artifacts
+.compose.*
+.vols.*
+.yaml.err
+docker-compose.override.yml
+.backup/
+
+# local venvs & logs
+.venv-*
+__pycache__/
+*.pyc
+logs/
+
+# pidfiles
+*.pid
+
+# Node / Next.js
+memmcp-dashboard/node_modules/
+memmcp-dashboard/.next/
+
+# local runs / artifacts
+.data/
+services/orchestrator/data/
+memmcp-dashboard/prisma/dev.db
+trae_runs/
+trajectories/
+tmp/
+reports/
+dev/backups/
+docker_compose_backup/
+trae_config.yaml
+
+# editor / scratch
+*.bak
+*.bak.*
+*.tmp

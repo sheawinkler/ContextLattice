@@ -1,0 +1,20 @@
+{
+  "servers": [
+    {
+      "name": "qdrant",
+      "url": "http://mcp-qdrant:8000/mcp"
+    },
+    {
+      "name": "qdrant-adv",
+      "url": "http://mcp-qdrant-adv:8022/mcp"
+    },
+    {
+      "name": "memorymcp",
+      "url": "http://memorymcp-http:59081/mcp"
+    },
+    {
+      "name": "mindsdb",
+      "url": "http://mindsdb-http-proxy:8004/mcp"
+    }
+  ]
+}

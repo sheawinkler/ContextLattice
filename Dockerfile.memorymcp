@@ -1,0 +1,21 @@
+FROM node:20-alpine
+ENV npm_config_yes=true \
+    npm_config_update_notifier=false \
+    NODE_OPTIONS="--dns-result-order=ipv4first" \
+    PATH="/usr/local/bin:${PATH}"
+RUN apk add --no-cache bash \
+ && npm i -g supergateway @allpepper/memory-bank-mcp@0.2.2 \
+ && node -e "const fs=require('fs');const path='/usr/local/lib/node_modules/@allpepper/memory-bank-mcp/dist/validators/path-security-validator.js';let src=fs.readFileSync(path,'utf8');const needle='value.includes(\"..\") || value.includes(\"/\")';const replacement='value.includes(\"..\") || value.includes(\"\\\\\\\\\") || value.startsWith(\"/\") || (this.fieldName !== \"fileName\" && value.includes(\"/\"))';if(!src.includes(needle)){throw new Error('memory-bank patch failed: pattern not found');}src=src.replace(needle,replacement);fs.writeFileSync(path,src);" \
+ && node -e "const fs=require('fs');const path='/usr/local/lib/node_modules/@allpepper/memory-bank-mcp/dist/validators/param-name-validator.js';let src=fs.readFileSync(path,'utf8');const needle='const isValid = this.regex.test(paramName);';const replacement='const effectiveRegex = this.fieldName === \"fileName\" ? /^[a-zA-Z0-9_.\\\\/\\\\-]+$/ : this.regex;\\n        const isValid = effectiveRegex.test(paramName);';if(!src.includes(needle)){throw new Error('param-name patch failed: pattern not found');}src=src.replace(needle,replacement);fs.writeFileSync(path,src);" \
+ && node -e "const fs=require('fs');const path='/usr/local/lib/node_modules/@allpepper/memory-bank-mcp/dist/infra/filesystem/repositories/fs-file-repository.js';let src=fs.readFileSync(path,'utf8');const needle='const filePath = path.join(projectPath, fileName);\\n        const fileExists = await fs.pathExists(filePath);';const replacement='const filePath = path.join(projectPath, fileName);\\n        await fs.ensureDir(path.dirname(filePath));\\n        const fileExists = await fs.pathExists(filePath);';if(!src.includes(needle)){throw new Error('fs-file patch failed: pattern not found');}src=src.replace(needle,replacement);fs.writeFileSync(path,src);"
+WORKDIR /app
+# IMPORTANT: run the gateway and spawn the memory-bank MCP via stdio; expose as streamable HTTP on /mcp
+# PORT is provided via env MEMORYMCP_HTTP_PORT (default 59081)
+CMD sh -lc "supergateway \
+  --stdio 'mcp-server-memory-bank' \
+  --outputTransport streamableHttp \
+  --stateful \
+  --sessionTimeout ${SUPERGATEWAY_SESSION_TIMEOUT_MS:-300000} \
+  --logLevel ${SUPERGATEWAY_LOG_LEVEL:-none} \
+  --port ${MEMORYMCP_HTTP_PORT:-59081} \
+  --streamableHttpPath /mcp"

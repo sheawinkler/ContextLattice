@@ -1,0 +1,21 @@
+{
+  "mcpProxy": {
+    "type": "http",
+    "addr": ":9092",
+    "baseURL": "http://localhost:9092"
+  },
+  "clients": {
+    "qdrant": {
+      "type": "http",
+      "serverUrl": "http://mcp-qdrant:8000/mcp"
+    },
+    "mindsdb": {
+      "type": "http",
+      "serverUrl": "http://mindsdb-http-proxy:8004/mcp"
+    },
+    "memorymcp": {
+      "type": "http",
+      "serverUrl": "http://memorymcp-http:59081/mcp"
+    }
+  }
+}
