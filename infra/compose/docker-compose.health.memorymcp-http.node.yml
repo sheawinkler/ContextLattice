@@ -1,0 +1,38 @@
+services:
+  memorymcp-http:
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          (function () {
+            const http = require('http');
+            const body = JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'hc-1',
+              method: 'tools/list',
+              params: {}
+            });
+            const req = http.request(
+              {
+                host: '127.0.0.1',
+                port: 59081,
+                path: '/mcp/',
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/json',
+                  'accept': 'application/json, text/event-stream',
+                  'MCP-Protocol-Version': '2025-11-25'
+                }
+              },
+              (res) => process.exit(res.statusCode >= 200 && res.statusCode < 500 ? 0 : 1)
+            );
+            req.on('error', () => process.exit(1));
+            req.write(body);
+            req.end();
+          })();
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

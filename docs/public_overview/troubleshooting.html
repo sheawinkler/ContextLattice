@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Troubleshooting Guide | Context Lattice</title>
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="updates.html">Updates</a>
+        <a href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a class="active" href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="v1/">v1</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Guide 2</span>
+      <h1>Troubleshooting Guide</h1>
+      <p class="sub">Diagnose install and runtime issues quickly, including service-specific recovery steps for Lite and Full modes.</p>
+      <div class="hero-art" aria-hidden="true">
+        <span class="orb orb-a"></span>
+        <span class="orb orb-b"></span>
+        <span class="orb orb-c"></span>
+        <span class="grid-sheen"></span>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Fast checks</div>
+        <h3>First 60-second diagnostics</h3>
+<pre><code>docker compose ps
+curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS http://127.0.0.1:8075/status | jq
+curl -fsS http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+        <p class="muted-note">If <code>/health</code> fails, check orchestrator logs first because write/read fanout depends on it.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Installation failures</div>
+      <h2>Common startup blockers</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Compose env not loaded</h3>
+          <p><strong>Symptom:</strong> services boot with missing env vars or wrong profile behavior.</p>
+          <p><strong>Fix:</strong> recreate the symlink and relaunch.</p>
+<pre><code>ln -svf ../../.env infra/compose/.env
+gmake mem</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Port conflicts</h3>
+          <p><strong>Symptom:</strong> containers exit immediately with bind errors.</p>
+          <p><strong>Fix:</strong> stop conflicting processes, then restart target services.</p>
+<pre><code>docker compose down --remove-orphans
+docker compose up -d --build</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Memory MCP EPIPE</h3>
+          <p><strong>Symptom:</strong> memory gateway crashes after initialize.</p>
+          <p><strong>Fix:</strong> rebuild and restart <code>memorymcp-http</code> image.</p>
+<pre><code>docker compose build memorymcp-http
+docker compose up -d memorymcp-http</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Service troubleshooting</div>
+      <h2>Read/write path recovery</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Orchestrator unhealthy</h3>
+          <p><strong>Impact:</strong> no coordinated writes or retrieval fanout.</p>
+          <p><strong>Action:</strong> inspect logs and restart orchestrator service.</p>
+<pre><code>docker compose logs -f memmcp-orchestrator
+docker compose up -d memmcp-orchestrator</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Fanout backlog rising</h3>
+          <p><strong>Impact:</strong> partial sink coverage and delayed consistency.</p>
+          <p><strong>Action:</strong> check fanout telemetry and queue settings; retry workers recover asynchronously.</p>
+<pre><code>curl -fsS http://127.0.0.1:8075/telemetry/fanout | jq</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Disk pressure</h3>
+          <p><strong>Impact:</strong> service resets or degraded latency under retention lag.</p>
+          <p><strong>Action:</strong> run retention now and verify qdrant/mongo volume paths.</p>
+<pre><code>curl -fsS -X POST http://127.0.0.1:8075/telemetry/retention/run | jq
+curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>MindsDB or Letta drift</h3>
+          <p><strong>Impact:</strong> weaker full-mode retrieval coverage.</p>
+          <p><strong>Action:</strong> restart service and trigger your rehydrate workflow once fanout load is stable.</p>
+<pre><code>docker compose up -d mindsdb mindsdb-http-proxy letta</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Messaging bridge not posting</h3>
+          <p><strong>Impact:</strong> Telegram/Slack/OpenClaw commands do not write or recall memory.</p>
+          <p><strong>Action:</strong> verify webhook env vars and smoke test the command endpoint directly.</p>
+<pre><code>curl -fsS -H 'content-type: application/json' \
+  -d '{"channel":"openclaw","source_id":"chat-1","text":"@ContextLattice status"}' \
+  http://127.0.0.1:8075/integrations/messaging/command | jq</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Optional Qdrant cloud BYO fails</h3>
+          <p><strong>Impact:</strong> cloud fallback or cloud-preferred mode cannot connect.</p>
+          <p><strong>Action:</strong> validate endpoint + key, then run the cloud connectivity probe.</p>
+<pre><code>gmake qdrant-cloud-check</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Mode-specific recovery</div>
+      <h2>Lite and Full restart playbooks</h2>
+      <div class="grid mode-grid">
+        <article class="card mode-card">
+          <h3>Lite mode recovery</h3>
+          <p>Use this when core services are enough and you need fast recovery with lower resource use.</p>
+<pre><code>gmake mem-down-lite
+gmake mem-up-lite
+gmake mem-ps-lite
+curl -fsS http://127.0.0.1:8075/health | jq</code></pre>
+        </article>
+        <article class="card mode-card">
+          <h3>Full mode recovery</h3>
+          <p>Use this when retrieval requires full analytics/RAG services and complete fanout coverage.</p>
+<pre><code>gmake mem-mode-full
+gmake mem
+gmake mem-ps
+gmake mem-logs</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Readiness Gate</div>
+        <h3>Check or cancel scheduled 04:30 MT long-run gate</h3>
+<pre><code>gmake launch-readiness-gate-schedule-status
+gmake launch-readiness-gate-schedule-cancel</code></pre>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice troubleshooting guide</span>
+      <span>Installation steps are documented on the Installation page.</span>
+    </footer>
+  </main>
+</body>
+</html>

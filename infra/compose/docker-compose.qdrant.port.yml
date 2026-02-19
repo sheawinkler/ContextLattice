@@ -1,0 +1,4 @@
+services:
+  qdrant:
+    ports:
+      - "6334:6333"

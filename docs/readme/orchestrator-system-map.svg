@@ -1,0 +1,61 @@
+<svg width="900" height="540" viewBox="0 0 900 540" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="900" y2="540" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111111"/>
+      <stop offset="1" stop-color="#1F1F1F"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="10" width="880" height="520" rx="18" fill="url(#card)" stroke="#595959" stroke-width="2"/>
+  <text x="38" y="54" fill="#EAEAEA" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="800">Orchestrator System Map</text>
+  <text x="38" y="82" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="15">Ingress, durability, parallel fanout, retrieval merge, learning loop</text>
+
+  <rect x="38" y="118" width="172" height="88" rx="10" fill="#151515" stroke="#7A7A7A"/>
+  <text x="54" y="152" fill="#DDDDDD" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Client Write</text>
+  <text x="54" y="177" fill="#A8A8A8" font-family="Segoe UI, Arial, sans-serif" font-size="14">/memory/write</text>
+
+  <rect x="252" y="112" width="395" height="104" rx="12" fill="#121212" stroke="#8A8A8A"/>
+  <text x="272" y="148" fill="#F0F0F0" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="800">Orchestrator Ingest</text>
+  <text x="272" y="174" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Schema validation, normalization, idempotency guards</text>
+  <text x="272" y="196" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Durable write + queued fanout dispatch</text>
+
+  <rect x="686" y="118" width="176" height="88" rx="10" fill="#151515" stroke="#7A7A7A"/>
+  <text x="704" y="152" fill="#DDDDDD" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Outbox Queue</text>
+  <text x="704" y="177" fill="#A8A8A8" font-family="Segoe UI, Arial, sans-serif" font-size="14">retry + coalesce</text>
+
+  <path d="M210 162H252" stroke="#B2B2B2" stroke-width="3"/>
+  <path d="M647 162H686" stroke="#B2B2B2" stroke-width="3"/>
+
+  <line x1="774" y1="232" x2="774" y2="436" stroke="#A2A2A2" stroke-width="3"/>
+  <text x="632" y="252" fill="#D8D8D8" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Parallel Fanout</text>
+
+  <rect x="72" y="280" width="154" height="82" rx="10" fill="#161616" stroke="#727272"/>
+  <text x="92" y="314" fill="#E3E3E3" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Qdrant</text>
+  <text x="92" y="338" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="13">vector recall</text>
+
+  <rect x="248" y="280" width="154" height="82" rx="10" fill="#161616" stroke="#727272"/>
+  <text x="268" y="314" fill="#E3E3E3" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Mongo Raw</text>
+  <text x="268" y="338" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="13">source-of-truth log</text>
+
+  <rect x="424" y="280" width="154" height="82" rx="10" fill="#161616" stroke="#727272"/>
+  <text x="444" y="314" fill="#E3E3E3" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">MindsDB</text>
+  <text x="444" y="338" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="13">analytics sync</text>
+
+  <rect x="600" y="280" width="154" height="82" rx="10" fill="#161616" stroke="#727272"/>
+  <text x="620" y="314" fill="#E3E3E3" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Letta</text>
+  <text x="620" y="338" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="13">agent memory RAG</text>
+
+  <rect x="72" y="386" width="154" height="82" rx="10" fill="#161616" stroke="#727272"/>
+  <text x="92" y="420" fill="#E3E3E3" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Memory Bank</text>
+  <text x="92" y="444" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="13">durable fallback</text>
+
+  <path d="M774 308H754" stroke="#A2A2A2" stroke-width="3"/>
+  <path d="M774 308H578" stroke="#A2A2A2" stroke-width="2"/>
+  <path d="M774 308H402" stroke="#A2A2A2" stroke-width="2"/>
+  <path d="M774 308H226" stroke="#A2A2A2" stroke-width="2"/>
+  <path d="M774 414H226" stroke="#A2A2A2" stroke-width="2"/>
+
+  <rect x="248" y="386" width="508" height="82" rx="12" fill="#121212" stroke="#8A8A8A"/>
+  <text x="268" y="420" fill="#ECECEC" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="800">Retrieval Merge + Learning</text>
+  <text x="268" y="444" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="13">Parallel fetch, score blending, preference feedback, ranked response output</text>
+</svg>

@@ -1,0 +1,18 @@
+services:
+  mindsdb:
+    image: mindsdb/mindsdb:latest
+    environment:
+      # HTTP API is what we need; add "mcp" later if you want native MCP too.
+      MINDSDB_APIS: "http,mysql"
+    restart: unless-stopped
+    healthcheck:
+      # ping the REST API with a trivial SQL to prove it's up
+      test: >
+        bash -lc '
+          curl -fsS -X POST http://127.0.0.1:47334/api/sql
+          -H "content-type: application/json"
+          -d "{\"query\":\"SELECT 1\"}" >/dev/null
+        '
+      interval: 10s
+      timeout: 5s
+      retries: 20

@@ -60,7 +60,11 @@ services:
 
   mcp-hub:
     image: ghcr.io/tbxark/mcp-proxy:v0.43.2
-    depends_on: [mcp-qdrant, memorymcp-http]
+    depends_on:
+      mcp-qdrant:
+        condition: service_healthy
+      memorymcp-http:
+        condition: service_healthy
     volumes:
       - ./configs/mcp-hub.lite.json:/config/config.json:ro
     command: ["--config", "/config/config.json"]

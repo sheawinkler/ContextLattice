@@ -1,0 +1,17 @@
+services:
+  caddy:
+    image: caddy:2.9
+    container_name: memmcp-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - memmcp
+
+networks:
+  memmcp:
+    external: true
+    name: mem_mcp_lobehub_default

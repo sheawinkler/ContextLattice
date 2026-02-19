@@ -1,0 +1,15 @@
+services:
+  memorybank-stdio:
+    image: busybox:1.36.1
+    command: ["sh","-lc","sleep infinity"]
+    profiles: ["off"]
+
+  memorybank-gateway:
+    image: busybox:1.36.1
+    command: ["sh","-lc","sleep infinity"]
+    profiles: ["off"]
+
+  mcp-hub:
+    image: busybox:1.36.1
+    command: ["sh","-lc","sleep infinity"]
+    profiles: ["off"]

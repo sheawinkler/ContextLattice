@@ -1,0 +1,280 @@
+// Prisma schema for auth + billing (dev defaults: SQLite)
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  accounts      Account[]
+  sessions      Session[]
+  customers     BillingCustomer[]
+  subscriptions BillingSubscription[]
+  memberships   WorkspaceMember[]
+  apiKeys       ApiKey[] @relation("ApiKeyOwner")
+  scimTokens    ScimToken[] @relation("ScimTokenOwner")
+  paymentIntents PaymentIntent[]
+  usageEvents   UsageEvent[]
+  auditLogs     AuditLog[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?
+  access_token       String?
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model BillingCustomer {
+  id         String   @id @default(cuid())
+  userId     String
+  provider   String
+  customerId String
+  email      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, customerId])
+  @@index([userId, provider])
+}
+
+model BillingSubscription {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  subscription      String
+  status            String
+  planId            String?
+  currentPeriodEnd  DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subscription])
+  @@index([userId, provider])
+}
+
+model BillingEvent {
+  id          String   @id @default(cuid())
+  provider    String
+  eventId     String
+  eventType   String
+  payload     String
+  status      String   @default("received")
+  error       String?
+  requestId   String?
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([provider, eventId])
+}
+
+
+model AuthAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  action    String
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([email, action, createdAt])
+}
+
+model PaymentIntent {
+  id        String   @id @default(cuid())
+  userId    String
+  provider  String
+  status    String
+  planId    String
+  interval  String
+  amount    Float
+  currency  String
+  reference String?
+  metadata  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, provider])
+  @@index([provider, status])
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String
+  status    String   @default("active")
+  deletionRequestedAt DateTime?
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members    WorkspaceMember[]
+  apiKeys    ApiKey[]
+  scimTokens ScimToken[]
+  ssoConnections SsoConnection[]
+  usageEvents UsageEvent[]
+  budgets    UsageBudget[]
+  auditLogs  AuditLog[]
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        String   @default("owner")
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model ApiKey {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  prefix          String
+  keyHash         String
+  scopes          String?
+  createdByUserId String?
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("ApiKeyOwner", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([prefix])
+}
+
+model ScimToken {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  prefix          String
+  tokenHash       String
+  createdByUserId String?
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("ScimTokenOwner", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([prefix])
+}
+
+model SsoConnection {
+  id          String   @id @default(cuid())
+  workspaceId String
+  provider    String
+  entityId    String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([provider])
+}
+
+model UsageEvent {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String?
+  source      String?
+  model       String?
+  tokens      Int?
+  costUsd     Float?
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+}
+
+model UsageBudget {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  tokenLimit   Int?
+  costLimitUsd Float?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String?
+  action      String
+  targetType  String?
+  targetId    String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([userId])
+  @@index([action])
+}

@@ -1,0 +1,5 @@
+services:
+  mcp-proxy:
+    depends_on:
+      mcp-qdrant:     { condition: service_started }
+      memorymcp-http: { condition: service_started }

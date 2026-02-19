@@ -1,0 +1,6 @@
+services:
+  mindsdb:
+    volumes:
+      - mindsdb_data:/var/lib/mindsdb
+volumes:
+  mindsdb_data: {}

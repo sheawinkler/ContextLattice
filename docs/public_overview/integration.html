@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Integration Guide | Context Lattice</title>
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="updates.html">Updates</a>
+        <a href="installation.html">Installation</a>
+        <a class="active" href="integration.html">Integrations</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="v1/">v1</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Guide 3</span>
+      <h1>Integration Guide</h1>
+      <p class="sub">Connect GPT, Claude, Claude Code, Codex, and OpenClaw/ZeroClaw to Context Lattice once your stack is running locally.</p>
+      <div class="hero-art" aria-hidden="true">
+        <span class="orb orb-a"></span>
+        <span class="orb orb-b"></span>
+        <span class="orb orb-c"></span>
+        <span class="grid-sheen"></span>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Prerequisite</div>
+        <h3>Bring stack up first</h3>
+        <p>Use the launch mode you need, then validate core health before integrating any client.</p>
+<pre><code>gmake mem-up
+curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS http://127.0.0.1:8075/status | jq
+
+# optional lite
+gmake mem-up-lite</code></pre>
+        <ul class="spec-list">
+          <li><strong>Orchestrator API:</strong> <code>http://127.0.0.1:8075</code></li>
+          <li><strong>MCP hub endpoint:</strong> <code>http://127.0.0.1:53130/mcp</code></li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Messaging Surface</div>
+        <h3>OpenClaw/ZeroClaw + Telegram + Slack command bridge</h3>
+        <p>Context Lattice now supports channel command intake via orchestrator-native endpoints. The default handle is <code>@ContextLattice</code>.</p>
+<pre><code>POST /integrations/messaging/command
+POST /integrations/messaging/openclaw
+POST /integrations/telegram/webhook
+POST /integrations/slack/events
+
+@ContextLattice remember deployment complete
+@ContextLattice recall deployment
+@ContextLattice status</code></pre>
+        <ul class="spec-list">
+          <li><strong>BYO accounts:</strong> Telegram/Slack credentials stay in your own account.</li>
+          <li><strong>Project routing:</strong> commands can include <code>project=&lt;name&gt;</code> and <code>topic=&lt;path&gt;</code> directives.</li>
+          <li><strong>Default behavior:</strong> OpenClaw/ZeroClaw route to orchestrator messaging endpoints with no additional memory sink wiring.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Client Integrations</div>
+      <h2>GPT, Claude, Claude Code, Codex</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>GPT applications</h3>
+          <p>For API-driven GPT apps, use Context Lattice as the memory sidecar and call orchestrator endpoints around message processing.</p>
+          <ul class="spec-list">
+            <li>Persist memory on key state changes: <code>POST /memory/write</code></li>
+            <li>Retrieve context before response generation: <code>POST /memory/search</code></li>
+            <li>Check runtime health: <code>GET /status</code></li>
+          </ul>
+        </article>
+
+        <article class="card component-card">
+          <h3>Claude applications</h3>
+          <p>Use MCP-capable Claude clients against the local MCP hub endpoint and route high-value summaries through orchestrator writes.</p>
+          <ul class="spec-list">
+            <li>MCP server URL: <code>http://127.0.0.1:53130/mcp</code></li>
+            <li>Keep write payloads compact; avoid dumping full transcripts.</li>
+            <li>Use topic paths so retrieval stays scoped and fast.</li>
+          </ul>
+        </article>
+
+        <article class="card component-card">
+          <h3>Claude Code + Codex</h3>
+          <p>Point your coding agent runtime at the same local stack and treat memory writes as explicit checkpoints.</p>
+<pre><code>export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075
+export MEMMCP_HTTP_URL=http://127.0.0.1:59081/mcp
+export MCP_HUB_URL=http://127.0.0.1:53130/mcp</code></pre>
+          <p><strong>Pattern:</strong> write summaries after meaningful edits, fetch retrieval context before planning or review actions.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="kicker">OpenClaw / ZeroClaw</div>
+      <h2>Trait mapping and wiring</h2>
+      <article class="card">
+        <p>Map OpenClaw/ZeroClaw memory traits directly to Context Lattice endpoints. Keep orchestrator as the single memory control plane.</p>
+        <div class="grid component-grid">
+          <article class="card component-card">
+            <h3>Recommended mapping</h3>
+            <ul class="spec-list">
+              <li><code>memory_recall_ctx</code> → <code>POST /memory/search</code></li>
+              <li><code>memory_save_store</code> → <code>POST /memory/write</code></li>
+              <li><code>messenger command hook</code> → <code>POST /integrations/messaging/openclaw</code></li>
+              <li><code>healthbeat</code> → <code>GET /health</code> and <code>GET /status</code></li>
+              <li><code>tools_exec</code> → MCP hub <code>/mcp</code> endpoint</li>
+            </ul>
+          </article>
+          <article class="card component-card">
+            <h3>Operational defaults</h3>
+            <ul class="spec-list">
+              <li>Keep Qdrant local-first with gRPC preferred.</li>
+              <li>Use BYO cloud keys only when explicitly enabled.</li>
+              <li>Preserve orchestrator fanout/backpressure defaults before aggressive tuning.</li>
+            </ul>
+          </article>
+        </div>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice integration guide</span>
+      <span>Use Troubleshooting for client-runtime diagnostics.</span>
+    </footer>
+  </main>
+</body>
+</html>

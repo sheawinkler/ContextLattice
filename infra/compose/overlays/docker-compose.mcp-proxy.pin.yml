@@ -1,0 +1,9 @@
+services:
+  mcp-proxy:
+    image: ghcr.io/tbxark/mcp-proxy:v0.39.1
+    command: ["/main","--config","/config/config.json"]
+    volumes:
+      - ./configs/mcp-proxy.config.json:/config/config.json:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped

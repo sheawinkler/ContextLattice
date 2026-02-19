@@ -19,11 +19,29 @@ fi
 rm -rf "${DEST_DIR}"
 mkdir -p "${DEST_DIR}"
 
-rsync -a \
-  --delete \
-  --files-from="${MANIFEST_FILE}" \
-  --exclude-from="${EXCLUDE_FILE}" \
-  "${SOURCE_DIR}/" "${DEST_DIR}/"
+while IFS= read -r raw_path || [[ -n "${raw_path}" ]]; do
+  path="${raw_path%%#*}"
+  path="${path%"${path##*[![:space:]]}"}"
+  path="${path#"${path%%[![:space:]]*}"}"
+  path="${path%/}"
+
+  if [[ -z "${path}" ]]; then
+    continue
+  fi
+
+  src_path="${SOURCE_DIR}/${path}"
+  if [[ ! -e "${src_path}" ]]; then
+    echo "warn: manifest path missing, skipping: ${path}" >&2
+    continue
+  fi
+
+  parent_dir="$(dirname "${path}")"
+  mkdir -p "${DEST_DIR}/${parent_dir}"
+
+  rsync -a \
+    --exclude-from="${EXCLUDE_FILE}" \
+    "${src_path}" "${DEST_DIR}/${parent_dir}/"
+done < "${MANIFEST_FILE}"
 
 echo "staged curated repo at ${DEST_DIR}"
 echo "manifest: ${MANIFEST_FILE}"

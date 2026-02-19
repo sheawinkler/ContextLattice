@@ -1,0 +1,3 @@
+services:
+  mcp-qdrant:
+    pull_policy: never

@@ -1,0 +1,18 @@
+# Copy to infra/caddy/Caddyfile or let scripts/deploy_hosted_core.sh write one.
+# Replace example.com with your domain and update the TLS email if desired.
+example.com {
+  encode gzip
+  tls you@example.com
+
+  handle_path /mcp* {
+    reverse_proxy mcp-hub:53130
+  }
+
+  handle_path /status* {
+    reverse_proxy memmcp-orchestrator:8075
+  }
+
+  handle {
+    reverse_proxy memmcp-orchestrator:8075
+  }
+}

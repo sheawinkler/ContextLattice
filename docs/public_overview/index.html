@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Context Lattice | Private memory fabric for AI agents</title>
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <p class="topbar-motto">Private by default. MCP-compatible by design.</p>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Private memory layer for agents</span>
+      <h1>Fix context drift before it burns your token budget.</h1>
+      <p class="sub">
+        Context Lattice (memMCP) gives agents reusable memory with HTTP MCP, federated retrieval,
+        durable fanout, and storage guardrails so quality and costs remain stable under load.
+      </p>
+      <p class="hero-local">local first</p>
+      <div class="hero-art" aria-hidden="true">
+        <svg class="hero-lattice" viewBox="0 0 320 190" role="presentation" focusable="false">
+          <defs>
+            <radialGradient id="hl-light" cx="292" cy="44" r="76" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.96"></stop>
+              <stop offset="0.28" stop-color="#83cecb" stop-opacity="0.72"></stop>
+              <stop offset="0.56" stop-color="#b1a8d3" stop-opacity="0.34"></stop>
+              <stop offset="1" stop-color="#d6bd86" stop-opacity="0"></stop>
+            </radialGradient>
+            <filter id="hl-blur" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="7"></feGaussianBlur>
+            </filter>
+          </defs>
+
+          <rect class="hl-frame" x="20" y="16" width="286" height="146"></rect>
+          <line class="hl-grid" x1="20" y1="52" x2="306" y2="52"></line>
+          <line class="hl-grid" x1="20" y1="88" x2="306" y2="88"></line>
+          <line class="hl-grid" x1="20" y1="124" x2="306" y2="124"></line>
+          <line class="hl-grid" x1="62" y1="16" x2="62" y2="162"></line>
+          <line class="hl-grid" x1="104" y1="16" x2="104" y2="162"></line>
+          <line class="hl-grid" x1="146" y1="16" x2="146" y2="162"></line>
+          <line class="hl-grid" x1="188" y1="16" x2="188" y2="162"></line>
+          <line class="hl-grid" x1="230" y1="16" x2="230" y2="162"></line>
+
+          <circle class="hl-glow" cx="292" cy="44" r="70"></circle>
+          <circle class="hl-core" cx="292" cy="44" r="7"></circle>
+
+          <path class="hl-converge strong" d="M20 152 C88 132 154 98 292 44"></path>
+          <path class="hl-converge" d="M20 124 C98 98 170 82 292 44"></path>
+          <path class="hl-converge warm" d="M34 166 C122 150 198 122 292 44"></path>
+          <path class="hl-converge" d="M42 90 C112 74 182 66 292 44"></path>
+          <path class="hl-converge strong" d="M56 58 C128 56 208 50 292 44"></path>
+
+          <path class="hl-mesh" d="M20 152 L44 124 L88 132 L98 98 L134 110 L154 98"></path>
+          <path class="hl-mesh" d="M34 166 L72 144 L122 150 L146 128 L198 122"></path>
+          <path class="hl-mesh" d="M42 90 L88 76 L112 74 L148 82 L182 66"></path>
+          <path class="hl-mesh" d="M56 58 L96 60 L128 56 L166 62 L208 50"></path>
+
+          <circle class="hl-node major" cx="20" cy="152" r="4"></circle>
+          <circle class="hl-node" cx="44" cy="124" r="3.6"></circle>
+          <circle class="hl-node" cx="88" cy="132" r="3.8"></circle>
+          <circle class="hl-node" cx="98" cy="98" r="3.5"></circle>
+          <circle class="hl-node" cx="134" cy="110" r="3.7"></circle>
+          <circle class="hl-node" cx="154" cy="98" r="3.5"></circle>
+          <circle class="hl-node" cx="72" cy="144" r="3.4"></circle>
+          <circle class="hl-node" cx="122" cy="150" r="3.6"></circle>
+          <circle class="hl-node" cx="146" cy="128" r="3.6"></circle>
+          <circle class="hl-node" cx="198" cy="122" r="3.9"></circle>
+          <circle class="hl-node" cx="42" cy="90" r="3.6"></circle>
+          <circle class="hl-node" cx="88" cy="76" r="3.4"></circle>
+          <circle class="hl-node" cx="112" cy="74" r="3.4"></circle>
+          <circle class="hl-node" cx="148" cy="82" r="3.4"></circle>
+          <circle class="hl-node" cx="182" cy="66" r="3.6"></circle>
+          <circle class="hl-node major" cx="56" cy="58" r="4"></circle>
+          <circle class="hl-node" cx="96" cy="60" r="3.4"></circle>
+          <circle class="hl-node" cx="128" cy="56" r="3.5"></circle>
+          <circle class="hl-node" cx="166" cy="62" r="3.5"></circle>
+          <circle class="hl-node" cx="208" cy="50" r="3.8"></circle>
+        </svg>
+      </div>
+    </section>
+
+    <div class="lattice-ribbon">
+      <span class="ribbon-wave ribbon-wave-a"></span>
+      <span class="ribbon-wave ribbon-wave-b"></span>
+      <span class="ribbon-dots"></span>
+      <nav class="nav ribbon-nav" aria-label="Primary">
+        <a class="active" href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="updates.html">Updates</a>
+        <a href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="v1/">v1</a>
+      </nav>
+    </div>
+
+    <section class="section">
+      <div class="grid">
+        <article class="card feature-card">
+          <div class="kicker">What it solves</div>
+          <h3>Memory quality + cost control</h3>
+          <p>Replace repetitive long-context stuffing with reusable memory retrieval and sink durability.</p>
+          <div class="feature-matrix" aria-label="Core feature list">
+            <span class="feature-tile tile-major">HTTP-preferred MCP</span>
+            <span class="feature-tile tile-mid">Federated retrieval</span>
+            <span class="feature-tile tile-mid">100 msgs/sec writes</span>
+            <span class="feature-tile tile-wide">Durable outbox fanout</span>
+            <span class="feature-tile tile-mid">Learning rerank</span>
+            <span class="feature-tile tile-mid">Letta RAG support</span>
+            <span class="feature-tile tile-mid">Qwen default model</span>
+          </div>
+        </article>
+        <article class="card">
+          <div class="kicker">How it runs</div>
+          <h3>Qwen-first, model-flexible runtime</h3>
+          <p>Ships with Qwen by default and can plug into your preferred stack via Ollama, LLVM/llama.cpp, LM Studio, and compatible local gateways.</p>
+        </article>
+        <article class="card">
+          <div class="kicker">Latest platform step</div>
+          <h3>100 msgs/sec write stability</h3>
+          <p>Write path is tuned for ~100 messages/sec with queue backpressure, fanout coalescing, admission control, retry workers, and retention sweeps to keep sinks stable under burst load.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Learning retrieval</div>
+        <h3>Orchestrator gets better at memory recall over time</h3>
+        <p class="spotlight">
+          The orchestrator uses a learning schema from feedback signals to rerank results and improve
+          retrieval precision over time. This is reinforced by RAG through Letta archival memory,
+          alongside Qdrant, Mongo raw, MindsDB, and memory-bank fallback.
+        </p>
+        <p class="muted-note">Read the detailed rollout notes on the <a href="updates.html">Updates page</a>.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="kicker">How it all works together</div>
+      <article class="card">
+        <h3>Unified write + retrieval loop through the orchestrator</h3>
+        <p>
+          Every write enters through the orchestrator, which records durable raw data, fans out to specialized stores,
+          and continuously protects queue and storage health. Every search comes back through the same orchestrator so
+          results can be fused, reranked, and improved over time from feedback.
+        </p>
+        <ul class="chips">
+          <li>Write intake</li>
+          <li>Outbox fanout</li>
+          <li>Federated search</li>
+          <li>Learning rerank</li>
+          <li>Retention + guardrails</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Service Map</div>
+      <h2>Data Flow</h2>
+      <div class="grid flow-grid">
+        <article class="card flow-card">
+          <div class="kicker">Receive + Store</div>
+          <h3>Write Flow</h3>
+          <svg class="flow-svg" viewBox="0 0 640 560" role="img" aria-label="Orchestrator write flow with validation, raw write, and parallel fanout sinks">
+            <defs>
+              <marker id="w-arrow-end" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="#c9c9c9"></path>
+              </marker>
+            </defs>
+            <rect class="lane-bg lane-mid" x="40" y="88" rx="10" ry="10" width="252" height="456"></rect>
+            <rect class="lane-bg lane-right" x="312" y="88" rx="10" ry="10" width="288" height="456"></rect>
+
+            <rect class="flow-node input-node" x="84" y="24" rx="8" ry="8" width="164" height="44"></rect>
+            <text x="166" y="50" text-anchor="middle">Client write request</text>
+            <line class="flow-line method-link" x1="166" y1="68" x2="166" y2="94" marker-end="url(#w-arrow-end)"></line>
+
+            <rect class="flow-node orchestrator-node" x="84" y="94" rx="10" ry="10" width="164" height="52"></rect>
+            <text class="flow-node-title" x="166" y="126" text-anchor="middle">Orchestrator</text>
+            <line class="flow-line spine-line" x1="166" y1="146" x2="166" y2="478"></line>
+
+            <rect class="flow-node method-node" x="84" y="184" rx="8" ry="8" width="164" height="44"></rect>
+            <text x="166" y="210" text-anchor="middle">Validation</text>
+
+            <rect class="flow-node method-node" x="84" y="250" rx="8" ry="8" width="164" height="44"></rect>
+            <text x="166" y="276" text-anchor="middle">Raw write</text>
+            <line class="flow-line branch-line" x1="248" y1="272" x2="346" y2="272"></line>
+            <rect class="flow-node sink-node" x="346" y="252" rx="8" ry="8" width="236" height="40"></rect>
+            <text x="364" y="276">Mongo raw ledger</text>
+
+            <rect class="flow-node method-node" x="84" y="316" rx="8" ry="8" width="164" height="44"></rect>
+            <text x="166" y="342" text-anchor="middle">Fanout</text>
+            <line class="flow-line branch-line" x1="248" y1="338" x2="324" y2="338"></line>
+            <line class="flow-line bus-line" x1="324" y1="338" x2="324" y2="500"></line>
+
+            <line class="flow-line bus-branch" x1="324" y1="361" x2="346" y2="361"></line>
+            <rect class="flow-node sink-node" x="346" y="344" rx="8" ry="8" width="236" height="34"></rect>
+            <text x="364" y="366">Memory Bank MCP</text>
+
+            <line class="flow-line bus-branch" x1="324" y1="405" x2="346" y2="405"></line>
+            <rect class="flow-node sink-node" x="346" y="388" rx="8" ry="8" width="236" height="34"></rect>
+            <text x="364" y="410">Qdrant</text>
+
+            <line class="flow-line bus-branch" x1="324" y1="449" x2="346" y2="449"></line>
+            <rect class="flow-node sink-node" x="346" y="432" rx="8" ry="8" width="236" height="34"></rect>
+            <text x="364" y="454">MindsDB</text>
+
+            <line class="flow-line bus-branch" x1="324" y1="493" x2="346" y2="493"></line>
+            <rect class="flow-node sink-node" x="346" y="476" rx="8" ry="8" width="236" height="34"></rect>
+            <text x="364" y="498">Letta</text>
+
+            <rect class="flow-node input-node" x="84" y="496" rx="8" ry="8" width="164" height="48"></rect>
+            <text x="166" y="517" text-anchor="middle">Async sink updates</text>
+            <text x="166" y="534" text-anchor="middle">telemetry + retries</text>
+            <line class="flow-line method-link" x1="166" y1="478" x2="166" y2="496" marker-end="url(#w-arrow-end)"></line>
+
+            <text class="section-label" x="456" y="74" text-anchor="middle">Parallel Fanout</text>
+          </svg>
+          <p class="muted-note flow-caption">Single orchestrator spine, explicit method stages, and parallel fanout branches to all write sinks.</p>
+        </article>
+        <article class="card flow-card">
+          <div class="kicker">Read + Return</div>
+          <h3>Retrieval Flow</h3>
+          <svg class="flow-svg" viewBox="0 0 640 560" role="img" aria-label="Orchestrator retrieval flow with parallel federated sources and clean return path">
+            <defs>
+              <marker id="r-arrow-end" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="#c9c9c9"></path>
+              </marker>
+            </defs>
+            <rect class="lane-bg lane-left" x="20" y="88" rx="10" ry="10" width="200" height="456"></rect>
+            <rect class="lane-bg lane-mid" x="238" y="88" rx="10" ry="10" width="188" height="456"></rect>
+            <rect class="lane-bg lane-right" x="444" y="88" rx="10" ry="10" width="176" height="456"></rect>
+
+            <rect class="flow-node input-node" x="251" y="24" rx="8" ry="8" width="162" height="44"></rect>
+            <text x="332" y="50" text-anchor="middle">Client search request</text>
+            <line class="flow-line method-link" x1="332" y1="68" x2="332" y2="94" marker-end="url(#r-arrow-end)"></line>
+
+            <rect class="flow-node orchestrator-node" x="251" y="94" rx="10" ry="10" width="162" height="52"></rect>
+            <text class="flow-node-title" x="332" y="126" text-anchor="middle">Orchestrator</text>
+            <line class="flow-line spine-line" x1="332" y1="146" x2="332" y2="412"></line>
+
+            <rect class="flow-node method-node" x="259" y="184" rx="8" ry="8" width="146" height="44"></rect>
+            <text x="332" y="210" text-anchor="middle">Federate</text>
+
+            <rect class="flow-node method-node" x="259" y="248" rx="8" ry="8" width="146" height="44"></rect>
+            <text x="332" y="274" text-anchor="middle">Rerank</text>
+
+            <rect class="flow-node method-node" x="259" y="312" rx="8" ry="8" width="146" height="44"></rect>
+            <text x="332" y="338" text-anchor="middle">Return</text>
+
+            <line class="flow-line bus-line" x1="208" y1="176" x2="208" y2="374"></line>
+            <line class="flow-line branch-line" x1="208" y1="206" x2="259" y2="206"></line>
+
+            <rect class="flow-node sink-node" x="32" y="182" rx="8" ry="8" width="158" height="34"></rect>
+            <text x="46" y="204">Memory Bank MCP</text>
+            <line class="flow-line bus-branch" x1="190" y1="199" x2="208" y2="199"></line>
+
+            <rect class="flow-node sink-node" x="32" y="226" rx="8" ry="8" width="158" height="34"></rect>
+            <text x="46" y="248">Qdrant</text>
+            <line class="flow-line bus-branch" x1="190" y1="243" x2="208" y2="243"></line>
+
+            <rect class="flow-node sink-node" x="32" y="270" rx="8" ry="8" width="158" height="34"></rect>
+            <text x="46" y="292">Mongo raw</text>
+            <line class="flow-line bus-branch" x1="190" y1="287" x2="208" y2="287"></line>
+
+            <rect class="flow-node sink-node" x="32" y="314" rx="8" ry="8" width="158" height="34"></rect>
+            <text x="46" y="336">MindsDB</text>
+            <line class="flow-line bus-branch" x1="190" y1="331" x2="208" y2="331"></line>
+
+            <rect class="flow-node sink-node" x="32" y="358" rx="8" ry="8" width="158" height="34"></rect>
+            <text x="46" y="380">Letta</text>
+            <line class="flow-line bus-branch" x1="190" y1="375" x2="208" y2="375"></line>
+
+            <line class="flow-line branch-line" x1="405" y1="334" x2="444" y2="334" marker-end="url(#r-arrow-end)"></line>
+            <rect class="flow-node sink-node" x="456" y="314" rx="8" ry="8" width="152" height="40"></rect>
+            <text x="470" y="338">Ranked response</text>
+
+            <rect class="flow-node input-node" x="456" y="390" rx="8" ry="8" width="152" height="48"></rect>
+            <text x="470" y="412">Feedback updates</text>
+            <text x="470" y="429">learning schema</text>
+            <path class="flow-line feedback-line" d="M456 414 C420 408 415 284 405 270"></path>
+
+            <rect class="flow-node input-node" x="251" y="430" rx="8" ry="8" width="162" height="50"></rect>
+            <text x="332" y="451" text-anchor="middle">Context returned</text>
+            <text x="332" y="468" text-anchor="middle">with source confidence</text>
+            <line class="flow-line method-link" x1="332" y1="412" x2="332" y2="430" marker-end="url(#r-arrow-end)"></line>
+
+            <text class="section-label" x="120" y="74" text-anchor="middle">Parallel Retrieval</text>
+            <text class="section-label" x="532" y="68" text-anchor="middle">Return +</text>
+            <text class="section-label" x="532" y="84" text-anchor="middle">learning loop</text>
+          </svg>
+          <p class="muted-note flow-caption">Federated sources converge to the orchestrator spine, then reranked results return with learning feedback.</p>
+        </article>
+      </div>
+      <div class="grid component-grid flow-components">
+        <article class="card component-card">
+          <h3>Orchestrator</h3>
+          <p><strong>Benefit:</strong> one control plane for writes, retrieval, and policy.</p>
+          <p><strong>Why:</strong> central coordination is what allows multi-source ranking and learning to compound.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Memory Bank MCP</h3>
+          <p><strong>Benefit:</strong> canonical project/file context store.</p>
+          <p><strong>Why:</strong> keeps user-facing memory deterministic and compatible with MCP-native clients.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Qdrant</h3>
+          <p><strong>Benefit:</strong> high-speed semantic recall.</p>
+          <p><strong>Why:</strong> vector retrieval gives broad relevance quickly before deeper reranking.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Mongo Raw</h3>
+          <p><strong>Benefit:</strong> durable source-of-truth write ledger.</p>
+          <p><strong>Why:</strong> protects recoverability and enables repair/rehydrate workflows.</p>
+        </article>
+        <article class="card component-card">
+          <h3>MindsDB</h3>
+          <p><strong>Benefit:</strong> SQL-friendly analytics and structured querying.</p>
+          <p><strong>Why:</strong> complements semantic search with tabular and operational insight paths.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Letta (RAG memory)</h3>
+          <p><strong>Benefit:</strong> long-horizon archival context for agent reasoning.</p>
+          <p><strong>Why:</strong> deep memory context improves difficult recall beyond nearest-neighbor hits.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Fanout Outbox</h3>
+          <p><strong>Benefit:</strong> resilient async delivery with retries, coalescing, and admission control.</p>
+          <p><strong>Why:</strong> prevents sink instability from breaking ingestion reliability.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Retention + Telemetry</h3>
+          <p><strong>Benefit:</strong> bounded storage growth and observable runtime behavior.</p>
+          <p><strong>Why:</strong> operational stability is required for learning retrieval to stay trustworthy.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Why this boosts learning retrieval impact</div>
+        <h3>Learning is strongest when memory is both rich and reliable</h3>
+        <p>
+          The orchestrator's learning schema can only improve ranking if retrieval sources stay healthy, durable,
+          and synchronized. This architecture makes that possible: Qdrant provides fast candidates, Letta supplies
+          deeper RAG context, Mongo guarantees recovery, MindsDB adds structured recall, and guardrails keep the
+          full loop from collapsing under pressure.
+        </p>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Flexible Launch</div>
+      <h2>Deployment Modes</h2>
+      <div class="grid mode-grid">
+        <article class="card mode-card">
+          <h3>Lite mode</h3>
+          <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
+          <ul class="spec-list">
+            <li><strong>Includes:</strong> Orchestrator, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
+            <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
+            <li><strong>Memory:</strong> 4-8 GB RAM baseline</li>
+            <li><strong>Storage:</strong> 25-60 GB SSD depending on write volume</li>
+          </ul>
+        </article>
+        <article class="card mode-card">
+          <h3>Full mode</h3>
+          <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
+          <ul class="spec-list">
+            <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
+            <li><strong>Compute:</strong> 6-8 vCPU recommended</li>
+            <li><strong>Memory:</strong> 16-24 GB RAM baseline</li>
+            <li><strong>Storage:</strong> 120-200 GB SSD depending on retention policy</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice public overview</span>
+      <span>Private by default. MCP-compatible by design.</span>
+    </footer>
+  </main>
+</body>
+</html>

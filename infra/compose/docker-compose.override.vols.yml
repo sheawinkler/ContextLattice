@@ -1,0 +1,4 @@
+volumes:
+  memory_bank_data: {}
+  mindsdb_data: {}
+  qdrant_storage: {}

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Context Lattice Updates</title>
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a class="active" href="updates.html">Updates</a>
+        <a href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="v1/">v1</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Release journal</span>
+      <h1>Product updates and rollout notes</h1>
+      <p class="sub">
+        This page tracks meaningful platform updates over time. It starts with the new pilot page content and
+        the latest orchestrator retrieval and reliability upgrades.
+      </p>
+      <div class="cta-row">
+        <a class="cta primary" href="index.html">Back to overview</a>
+        <a class="cta secondary" href="mailto:pilot@contextlattice.io?subject=Context%20Lattice%20Update%20Question">Ask a question</a>
+      </div>
+    </section>
+
+    <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-02-18 · Messaging Surface + Cloud Validation</span>
+        <h3>Channel command bridge live, with optional Qdrant Cloud gRPC validation</h3>
+        <ul>
+          <li>Added orchestrator-native messaging endpoints for OpenClaw/ZeroClaw, Telegram, and Slack command routing.</li>
+          <li>Added command parsing for <code>@ContextLattice remember|recall|status</code> with project/topic directives.</li>
+          <li>Added a one-shot 04:30 MT launch gate scheduler command and status/cancel controls.</li>
+          <li>Added Qdrant Cloud BYO connectivity check script that validates both HTTP and gRPC paths while keeping local-first default behavior.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-02-18 · Launch Readiness</span>
+        <h3>Public beta hardening and release packaging complete</h3>
+        <ul>
+          <li>Added launch-readiness gate automation for authenticated load, queue drain, backup/restore drill, and production security preflight simulation.</li>
+          <li>Published release image lockfile for reproducible deployments with pinned digest references.</li>
+          <li>Finalized legal package (terms, privacy, DPA baseline, acceptable use, subprocessors, commercial licensing baseline).</li>
+          <li>Published public messaging package and next-track messaging-surface expansion plan.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-02-18 · Throughput + Integration</span>
+        <h3>New integrations guide, dark visual refresh, and faster sink fanout tuning</h3>
+        <ul>
+          <li>Added a dedicated Integrations page for GPT apps, Claude apps, Claude Code, Codex, and OpenClaw/ZeroClaw wiring.</li>
+          <li>Moved public overview pages to a dark-first theme and aligned navigation across Home, Architecture, Updates, Installation, and Troubleshooting.</li>
+          <li>Expanded compose env passthrough for fanout and Mongo pool tuning to speed queue drain and improve sustained write throughput.</li>
+          <li>Documented the default launch path (<code>gmake mem-up</code>) and explicit full/lite commands for local-first deployment.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-02-16 · Architecture Clarity</span>
+        <h3>Landing page now explains each service and why it exists</h3>
+        <ul>
+          <li>Added component-by-component breakdown for Orchestrator, Memory Bank, Qdrant, Mongo, MindsDB, Letta, outbox, and retention.</li>
+          <li>Added explicit “benefit + why” summaries so operators understand service intent at a glance.</li>
+          <li>Connected these components directly to learning retrieval outcomes and ranking quality over time.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-02-16 · Pilot Experience</span>
+        <h3>New pilot landing page published</h3>
+        <p>We shipped a new public pilot page with a clearer value narrative and current platform capabilities.</p>
+        <ul>
+          <li>Headline focus: fix context drift before it burns token budget.</li>
+          <li>Pilot structure: week-by-week baseline, optimization, and ROI readout.</li>
+          <li>Capability highlights: coalesced fanout, backlog-aware Letta admission, and sink retention.</li>
+          <li>Trust framing: private-by-default, BYOK-compatible, local-first operation.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-02-16 · Retrieval Intelligence</span>
+        <h3>Orchestrator learning schema + Letta RAG emphasis</h3>
+        <p class="spotlight">
+          The orchestrator becomes more accurate over time by learning from feedback signals and applying
+          preference-aware reranking during retrieval. This learned ranking is further supported by RAG via
+          Letta archival memory, alongside Qdrant semantic recall and raw-source fallbacks.
+        </p>
+        <ul>
+          <li>Learning loop reinforces what sources and patterns are actually useful in your workflows.</li>
+          <li>Federated retrieval merges Qdrant, Mongo raw, MindsDB, Letta, and memory-bank lexical fallback.</li>
+          <li>Result quality improves iteratively as the learning schema accumulates real operator feedback.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-02-16 · Reliability + Scale</span>
+        <h3>Queue and storage safety upgrades</h3>
+        <ul>
+          <li>Fanout coalescer reduces duplicate hot-file writes before they hit outbox depth.</li>
+          <li>Letta admission control protects throughput by shedding low-value Letta writes under backlog.</li>
+          <li>Low-value retention sweeps for Qdrant and Letta keep storage pressure bounded.</li>
+          <li>Shared HTTP client pools and batched fanout improve write-path efficiency.</li>
+        </ul>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice updates log</span>
+      <span>Keep this page current as releases land.</span>
+    </footer>
+  </main>
+</body>
+</html>
