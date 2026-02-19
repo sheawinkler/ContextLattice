@@ -1,0 +1,23 @@
+services:
+  memorymcp-http:
+    build:
+      context: .
+      dockerfile: Dockerfile.memorymcp
+    image: l337/memorymcp:local
+    volumes:
+      - ./data/memory-bank:/data/memory-bank
+    environment:
+      - MEMORY_BANK_ROOT=/data/memory-bank
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          const http=require('http');
+          const req=http.request({host:'127.0.0.1',port:59081,path:'/mcp',method:'GET'},res=>process.exit(0));
+          req.on('error',()=>process.exit(1)); req.end();
+      interval: 10s
+      timeout: 8s
+      retries: 60
+      start_period: 60s

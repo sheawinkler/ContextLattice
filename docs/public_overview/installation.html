@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Installation Guide | Context Lattice</title>
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="updates.html">Updates</a>
+        <a class="active" href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="v1/">v1</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Guide 1</span>
+      <h1>Installation Guide</h1>
+      <p class="sub">Launch Context Lattice in Lite or Full mode with verified health checks and explicit startup commands.</p>
+      <div class="hero-art" aria-hidden="true">
+        <span class="orb orb-a"></span>
+        <span class="orb orb-b"></span>
+        <span class="orb orb-c"></span>
+        <span class="grid-sheen"></span>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Default launch command</div>
+        <h3><code>gmake mem-up</code> is the standard stack launch entrypoint</h3>
+        <p><code>gmake mem-up</code> uses the active <code>COMPOSE_PROFILES</code> value from <code>.env</code> (or <code>core</code> if unset).</p>
+        <ul class="spec-list">
+          <li><strong>Force full mode:</strong> <code>gmake mem-up-full</code></li>
+          <li><strong>Force core mode:</strong> <code>gmake mem-up-core</code></li>
+          <li><strong>Lite compose stack:</strong> <code>gmake mem-up-lite</code></li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Storage layout</div>
+        <h3>Hot local code + cold external data (recommended)</h3>
+        <p>Keep active project source local for speed, and map high-growth service data paths to external NVMe before heavy ingest.</p>
+<pre><code># keep source local
+~/Documents/projects
+
+# move service data to external SSD
+/Volumes/&lt;external-ssd&gt;/memmcp/qdrant
+/Volumes/&lt;external-ssd&gt;/memmcp/mongo
+/Volumes/&lt;external-ssd&gt;/memmcp/mindsdb
+/Volumes/&lt;external-ssd&gt;/memmcp/letta
+/Volumes/&lt;external-ssd&gt;/memmcp/orchestrator</code></pre>
+        <ul class="spec-list">
+          <li><strong>Why:</strong> avoids laptop internal SSD exhaustion during fanout + rehydrate windows.</li>
+          <li><strong>When:</strong> set mount paths before first full-mode launch.</li>
+          <li><strong>Check:</strong> verify free space before running rehydrate/backfill jobs.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Flexible Launch</div>
+      <h2>Choose your install mode</h2>
+      <div class="grid mode-grid">
+        <article class="card mode-card">
+          <h3>Lite installation</h3>
+          <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
+          <ul class="spec-list">
+            <li><strong>Services:</strong> Orchestrator, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
+            <li><strong>Resource target:</strong> 2-4 vCPU, 4-8 GB RAM, 25-60 GB SSD</li>
+            <li><strong>Startup command:</strong> <code>gmake mem-up-lite</code></li>
+          </ul>
+        </article>
+        <article class="card mode-card">
+          <h3>Full installation</h3>
+          <p>Enables full retrieval fabric and operations stack including analytics, observability, and deeper RAG support.</p>
+          <ul class="spec-list">
+            <li><strong>Services:</strong> Lite stack plus MindsDB, Letta, and observability profile</li>
+            <li><strong>Resource target:</strong> 6-8 vCPU, 16-24 GB RAM, 120-200 GB SSD</li>
+            <li><strong>Startup command:</strong> <code>gmake mem-up-full</code> (or <code>gmake mem-mode-full</code> then <code>gmake mem-up</code>)</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Prerequisites</div>
+        <h3>Before first launch</h3>
+        <ul class="spec-list">
+          <li>Docker Desktop with Compose v2</li>
+          <li><code>gmake</code>, <code>jq</code>, <code>rg</code>, <code>python3</code>, and <code>curl</code></li>
+          <li>Project root initialized with <code>.env</code> and compose env symlink</li>
+        </ul>
+<pre><code>cp .env.example .env
+ln -svf ../../.env infra/compose/.env</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Install path</div>
+        <h3>Lite mode steps</h3>
+        <ol class="step-list">
+          <li>Configure environment from the repository root.</li>
+          <li>Start the Lite profile.</li>
+          <li>Check service state and endpoint health.</li>
+        </ol>
+<pre><code>gmake mem-up-lite
+gmake mem-ps-lite
+curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS http://127.0.0.1:8075/status | jq</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Install path</div>
+        <h3>Full mode steps</h3>
+        <ol class="step-list">
+          <li>Set full profile mode for compose-backed startup.</li>
+          <li>Bring up the stack and watch logs.</li>
+          <li>Validate API, queue telemetry, and retention telemetry.</li>
+        </ol>
+<pre><code>gmake mem-mode-full
+gmake mem-up
+# or force full directly:
+gmake mem-up-full
+gmake mem-ps
+gmake logs
+curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Verification</div>
+        <h3>Expected healthy outcomes</h3>
+        <ul class="spec-list">
+          <li><code>/health</code> returns <code>ok</code> for orchestrator and connected services.</li>
+          <li><code>/status</code> lists Memory Bank and Qdrant connectivity.</li>
+          <li><code>/telemetry/fanout</code> shows queue depth and retry counters.</li>
+          <li><code>/telemetry/retention</code> reports retention cadence and sweep activity.</li>
+        </ul>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice installation guide</span>
+      <span>Use Troubleshooting for install and runtime service recovery.</span>
+    </footer>
+  </main>
+</body>
+</html>

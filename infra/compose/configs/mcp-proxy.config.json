@@ -1,0 +1,9 @@
+{
+  "listen": "0.0.0.0:9090",
+  "logLevel": "info",
+  "clients": [
+    { "name": "memory",  "transportType": "streamable-http", "url": "http://memorymcp-http:59081/mcp" },
+    { "name": "qdrant",  "transportType": "streamable-http", "url": "http://mcp-qdrant:53124/mcp" },
+    { "name": "mindsdb", "transportType": "streamable-http", "url": "http://mindsdb-http-proxy:8004/mcp" }
+  ]
+}

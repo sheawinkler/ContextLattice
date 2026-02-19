@@ -19,6 +19,13 @@ docker_compose_backup/
 development/docker-compose-bak/
 development/makefile-bak/
 development/-f
+reports/
+trajectories/
 **/node_modules/
+**/.next/
 **/__pycache__/
 **/*.pyc
+**/*.bak
+**/*.bak.*
+**/*.db
+services/orchestrator/data/

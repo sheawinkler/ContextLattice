@@ -1,0 +1,8 @@
+services:
+  mcp-proxy:
+    healthcheck:
+      test: ["CMD-SHELL","curl -fsS -X POST -H 'accept: application/json, text/event-stream' -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}' http://127.0.0.1:9090/memory-bank/mcp >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s

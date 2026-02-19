@@ -1,0 +1,25 @@
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  memorymcp-http:
+    environment:
+      MONGODB_URI: "${MONGODB_URI:-mongodb://mongo:27017}"
+    depends_on:
+      mongo: { condition: service_started }
+
+  memorybank-stdio:
+    environment:
+      MONGODB_URI: "${MONGODB_URI:-mongodb://mongo:27017}"
+    depends_on:
+      mongo: { condition: service_started }
+
+  mindsdb-http-proxy:
+    depends_on:
+      mindsdb: { condition: service_started }
+
+volumes:
+  mongo_data: {}

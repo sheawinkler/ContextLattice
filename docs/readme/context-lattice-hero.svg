@@ -1,0 +1,62 @@
+<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A0A0A"/>
+      <stop offset="1" stop-color="#1E1E1E"/>
+    </linearGradient>
+    <linearGradient id="line" x1="240" y1="0" x2="1360" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#575757"/>
+      <stop offset="0.5" stop-color="#E5E5E5"/>
+      <stop offset="1" stop-color="#575757"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="520" rx="20" fill="url(#bg)"/>
+
+  <g opacity="0.25" filter="url(#soft)">
+    <path d="M120 430C300 330 460 370 620 300C760 240 900 160 1100 170C1270 180 1390 220 1480 120" stroke="#D4D4D4" stroke-width="2"/>
+    <path d="M120 390C300 290 470 330 640 265C760 220 930 120 1110 130C1270 140 1390 190 1480 95" stroke="#BFBFBF" stroke-width="2"/>
+    <path d="M120 350C300 250 480 290 660 230C770 190 950 95 1120 105C1270 115 1400 160 1480 70" stroke="#8E8E8E" stroke-width="2"/>
+  </g>
+
+  <g opacity="0.6">
+    <rect x="104" y="88" width="248" height="136" rx="10" fill="#111111" stroke="#666666"/>
+    <text x="128" y="132" fill="#CFCFCF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Client Agents</text>
+    <text x="128" y="164" fill="#9A9A9A" font-family="Segoe UI, Arial, sans-serif" font-size="16">GPT / Claude / Codex</text>
+    <text x="128" y="188" fill="#9A9A9A" font-family="Segoe UI, Arial, sans-serif" font-size="16">OpenClaw / Telegram / Slack</text>
+  </g>
+
+  <g opacity="0.86">
+    <rect x="418" y="70" width="772" height="292" rx="14" fill="#0F0F0F" stroke="#7A7A7A" stroke-width="2"/>
+    <text x="450" y="122" fill="#F2F2F2" font-family="Segoe UI, Arial, sans-serif" font-size="40" font-weight="800">Context Lattice</text>
+    <text x="450" y="158" fill="#BFBFBF" font-family="Segoe UI, Arial, sans-serif" font-size="20">Local-first memory orchestration for AI systems</text>
+
+    <line x1="450" y1="186" x2="1128" y2="186" stroke="url(#line)" stroke-width="2"/>
+
+    <text x="450" y="226" fill="#DADADA" font-family="Segoe UI, Arial, sans-serif" font-size="19" font-weight="700">Write Ingest</text>
+    <text x="450" y="252" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Validate, normalize, and durably persist before fanout.</text>
+
+    <text x="450" y="286" fill="#DADADA" font-family="Segoe UI, Arial, sans-serif" font-size="19" font-weight="700">Parallel Fanout</text>
+    <text x="450" y="312" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Qdrant, Mongo raw, MindsDB, Letta, and memory-bank.</text>
+
+    <text x="450" y="346" fill="#DADADA" font-family="Segoe UI, Arial, sans-serif" font-size="19" font-weight="700">Retrieval Learning Loop</text>
+    <text x="450" y="372" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Merge sources, rank results, and improve future recall quality.</text>
+  </g>
+
+  <g opacity="0.25">
+    <rect x="1222" y="102" width="276" height="70" rx="10" fill="#181818" stroke="#818181"/>
+    <text x="1250" y="145" fill="#CCCCCC" font-family="Segoe UI, Arial, sans-serif" font-size="18">Telemetry + Controls</text>
+    <rect x="1222" y="192" width="276" height="70" rx="10" fill="#181818" stroke="#818181"/>
+    <text x="1250" y="235" fill="#CCCCCC" font-family="Segoe UI, Arial, sans-serif" font-size="18">Retention + Cold Path</text>
+    <rect x="1222" y="282" width="276" height="70" rx="10" fill="#181818" stroke="#818181"/>
+    <text x="1250" y="325" fill="#CCCCCC" font-family="Segoe UI, Arial, sans-serif" font-size="18">Messaging Integrations</text>
+  </g>
+
+  <path d="M352 156H418" stroke="#A0A0A0" stroke-width="3"/>
+  <path d="M1189 156H1222" stroke="#7D7D7D" stroke-width="2"/>
+  <path d="M1189 226H1222" stroke="#7D7D7D" stroke-width="2"/>
+  <path d="M1189 316H1222" stroke="#7D7D7D" stroke-width="2"/>
+</svg>

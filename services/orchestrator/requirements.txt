@@ -1,0 +1,11 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.3
+httpx==0.27.2
+pydantic==2.9.2
+openai==1.54.3
+mindsdb-sdk==3.0.1
+pymongo==4.10.1
+orjson==3.10.15
+prometheus-fastapi-instrumentator==7.1.0
+aiolimiter==1.1.0
+qdrant-client==1.16.2

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Architecture | Context Lattice</title>
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a class="active" href="architecture.html">Architecture</a>
+        <a href="updates.html">Updates</a>
+        <a href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="v1/">v1</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">System blueprint</span>
+      <h1>Detailed architecture for write fanout, retrieval, and learning.</h1>
+      <p class="sub">
+        Context Lattice keeps one orchestrator control plane for all memory operations. Writes are validated,
+        durably queued, and fanned out; reads are federated, reranked, and fed back into the learning schema.
+      </p>
+      <div class="cta-row">
+        <a class="cta primary" href="index.html">Back to overview</a>
+        <a class="cta secondary" href="installation.html">Install guide</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="kicker">Topology Map</div>
+      <h2>Orchestrator-Centered Runtime</h2>
+      <article class="card architecture-board">
+        <svg class="arch-svg" viewBox="0 0 1240 820" role="img" aria-label="Detailed orchestrator architecture with ingress, policy, providers, fanout sinks, and operations services">
+          <defs>
+            <marker id="arch-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#c9c9c9"></path>
+            </marker>
+          </defs>
+
+          <rect class="arch-frame arch-ingress" x="24" y="112" rx="10" ry="10" width="214" height="240"></rect>
+          <text class="arch-title" x="131" y="142" text-anchor="middle">Ingress</text>
+          <text x="52" y="178">Chat apps</text>
+          <text x="52" y="203">CLI</text>
+          <text x="52" y="228">Webhook gateways</text>
+          <text x="52" y="253">Batch workers</text>
+          <text x="52" y="278">Trading agents</text>
+
+          <rect class="arch-frame arch-policy" x="268" y="112" rx="10" ry="10" width="230" height="240"></rect>
+          <text class="arch-title" x="383" y="142" text-anchor="middle">Policy Layer</text>
+          <text x="294" y="178">Gateway auth</text>
+          <text x="294" y="203">Rate limiter</text>
+          <text x="294" y="228">Path + sandbox controls</text>
+          <text x="294" y="253">Secret isolation</text>
+          <text x="294" y="278">Strict mode policy</text>
+
+          <rect class="arch-frame arch-providers" x="528" y="112" rx="10" ry="10" width="688" height="240"></rect>
+          <text class="arch-title" x="872" y="142" text-anchor="middle">Model + Tool Providers</text>
+          <rect class="arch-chip" x="556" y="164" rx="6" ry="6" width="154" height="38"></rect>
+          <text x="633" y="188" text-anchor="middle">Ollama (Qwen)</text>
+          <rect class="arch-chip" x="724" y="164" rx="6" ry="6" width="154" height="38"></rect>
+          <text x="801" y="188" text-anchor="middle">LM Studio</text>
+          <rect class="arch-chip" x="892" y="164" rx="6" ry="6" width="154" height="38"></rect>
+          <text x="969" y="188" text-anchor="middle">OpenAI-compatible</text>
+          <rect class="arch-chip" x="1060" y="164" rx="6" ry="6" width="128" height="38"></rect>
+          <text x="1124" y="188" text-anchor="middle">Custom URL</text>
+          <rect class="arch-chip" x="556" y="214" rx="6" ry="6" width="154" height="38"></rect>
+          <text x="633" y="238" text-anchor="middle">Letta tools</text>
+          <rect class="arch-chip" x="724" y="214" rx="6" ry="6" width="154" height="38"></rect>
+          <text x="801" y="238" text-anchor="middle">MCP Hub</text>
+          <rect class="arch-chip" x="892" y="214" rx="6" ry="6" width="154" height="38"></rect>
+          <text x="969" y="238" text-anchor="middle">Langfuse</text>
+          <rect class="arch-chip" x="1060" y="214" rx="6" ry="6" width="128" height="38"></rect>
+          <text x="1124" y="238" text-anchor="middle">MindsDB</text>
+          <text class="arch-small" x="872" y="288" text-anchor="middle">Provider trait swaps are config-only, no orchestrator rewrite required.</text>
+
+          <line class="arch-line" x1="238" y1="236" x2="268" y2="236" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="498" y1="236" x2="528" y2="236" marker-end="url(#arch-arrow)"></line>
+
+          <rect class="arch-frame arch-loop" x="118" y="392" rx="12" ry="12" width="996" height="124"></rect>
+          <text class="arch-title" x="616" y="422" text-anchor="middle">Orchestrator Agent Loop</text>
+          <rect class="arch-step" x="144" y="444" rx="7" ry="7" width="144" height="44"></rect>
+          <text x="216" y="471" text-anchor="middle">Message in</text>
+          <rect class="arch-step" x="310" y="444" rx="7" ry="7" width="178" height="44"></rect>
+          <text x="399" y="471" text-anchor="middle">Memory recall context</text>
+          <rect class="arch-step" x="510" y="444" rx="7" ry="7" width="142" height="44"></rect>
+          <text x="581" y="471" text-anchor="middle">LLM call</text>
+          <rect class="arch-step" x="674" y="444" rx="7" ry="7" width="150" height="44"></rect>
+          <text x="749" y="471" text-anchor="middle">Tool execute</text>
+          <rect class="arch-step" x="846" y="444" rx="7" ry="7" width="146" height="44"></rect>
+          <text x="919" y="471" text-anchor="middle">Memory write</text>
+          <rect class="arch-step" x="1014" y="444" rx="7" ry="7" width="80" height="44"></rect>
+          <text x="1054" y="471" text-anchor="middle">Output</text>
+
+          <line class="arch-line" x1="288" y1="466" x2="310" y2="466" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="488" y1="466" x2="510" y2="466" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="652" y1="466" x2="674" y2="466" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="824" y1="466" x2="846" y2="466" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="992" y1="466" x2="1014" y2="466" marker-end="url(#arch-arrow)"></line>
+
+          <rect class="arch-frame arch-memory" x="28" y="552" rx="10" ry="10" width="560" height="234"></rect>
+          <text class="arch-title" x="308" y="580" text-anchor="middle">Memory and Retrieval Subsystems</text>
+          <text x="54" y="614">Qdrant semantic index (local-first, optional cloud)</text>
+          <text x="54" y="639">Mongo raw event ledger (durability + replay source)</text>
+          <text x="54" y="664">Memory Bank MCP files (canonical project state)</text>
+          <text x="54" y="689">MindsDB SQL analytics and learned grouping</text>
+          <text x="54" y="714">Letta archival memory for long-horizon RAG support</text>
+          <text class="arch-small" x="308" y="748" text-anchor="middle">Retrieval merges these in parallel, then applies learning-based rerank.</text>
+
+          <rect class="arch-frame arch-ops" x="620" y="552" rx="10" ry="10" width="596" height="234"></rect>
+          <text class="arch-title" x="918" y="580" text-anchor="middle">Operations and Safety</text>
+          <text x="646" y="614">Outbox queue with retries + dead-letter controls</text>
+          <text x="646" y="639">Backpressure and coalescing for burst control</text>
+          <text x="646" y="664">Retention sweeps + cold storage handoff</text>
+          <text x="646" y="689">Service update pipeline + launchd automation</text>
+          <text x="646" y="714">Prometheus, health probes, smoke validations</text>
+          <text class="arch-small" x="918" y="748" text-anchor="middle">Goal: keep throughput high without uncontrolled storage growth.</text>
+
+          <line class="arch-line" x1="616" y1="516" x2="616" y2="552" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="616" y1="516" x2="308" y2="552" marker-end="url(#arch-arrow)"></line>
+          <line class="arch-line" x1="616" y1="516" x2="918" y2="552" marker-end="url(#arch-arrow)"></line>
+        </svg>
+        <p class="muted-note arch-caption">One orchestrator spine, explicit sink responsibilities, and built-in reliability controls for sustained write load.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="grid arch-grid">
+        <article class="card">
+          <div class="kicker">Write lifecycle</div>
+          <h3>Order of operations</h3>
+          <ol class="step-list">
+            <li>Ingress request accepted and normalized.</li>
+            <li>Raw event persisted to Mongo first for durability.</li>
+            <li>Memory-bank canonical write queued.</li>
+            <li>Fanout outbox dispatches Qdrant, MindsDB, Letta, and observability sinks.</li>
+            <li>Retries and backpressure absorb temporary sink failures.</li>
+          </ol>
+        </article>
+        <article class="card">
+          <div class="kicker">Retrieval lifecycle</div>
+          <h3>Order of operations</h3>
+          <ol class="step-list">
+            <li>Orchestrator receives query and embeds intent.</li>
+            <li>Parallel retrieval from Qdrant, Mongo raw, MindsDB, Letta, memory-bank fallback.</li>
+            <li>Learning schema reranks merged results using feedback signals.</li>
+            <li>Context is returned with confidence and source metadata.</li>
+            <li>Feedback is stored to improve future ranking quality.</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Architecture reference</span>
+      <span>Use this map for production troubleshooting and onboarding.</span>
+    </footer>
+  </main>
+</body>
+</html>

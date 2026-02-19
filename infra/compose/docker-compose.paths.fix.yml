@@ -1,0 +1,30 @@
+services:
+  mcp-proxy:
+    volumes:
+      - type: bind
+        source: ${PROJECT_ROOT}/configs/mcp-proxy.config.json
+        target: /config/config.json
+        read_only: true
+
+  mindsdb-http-proxy:
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: Dockerfile.mindsdb-http-proxy
+    volumes:
+      - type: bind
+        source: ${PROJECT_ROOT}/scripts
+        target: /app/scripts
+        read_only: true
+
+  mcp-qdrant:
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: dockerfile
+
+  memorymcp-http:
+    volumes:
+      - type: bind
+        source: ${PROJECT_ROOT}/data/memory-bank
+        target: /data/memory-bank
+        bind:
+          create_host_path: true

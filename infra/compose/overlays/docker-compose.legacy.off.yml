@@ -1,0 +1,4 @@
+services:
+  mcp-hub:            { profiles: ["off"] }
+  memorybank-gateway: { profiles: ["off"] }
+  memorybank-stdio:   { profiles: ["off"] }

@@ -1,0 +1,44 @@
+<svg width="900" height="540" viewBox="0 0 900 540" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="900" y2="540" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111111"/>
+      <stop offset="1" stop-color="#1D1D1D"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="10" y="10" width="880" height="520" rx="18" fill="url(#bg)" stroke="#5D5D5D" stroke-width="2"/>
+  <text x="38" y="56" fill="#ECECEC" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="800">Deployment Modes</text>
+  <text x="38" y="84" fill="#B0B0B0" font-family="Segoe UI, Arial, sans-serif" font-size="15">Choose based on hardware budget and sink requirements</text>
+
+  <rect x="38" y="124" width="396" height="360" rx="14" fill="#131313" stroke="#8A8A8A" stroke-width="2"/>
+  <text x="66" y="164" fill="#F0F0F0" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="800">Lite Mode</text>
+  <text x="66" y="190" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Command: gmake mem-up-lite</text>
+
+  <text x="66" y="230" fill="#E2E2E2" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Services</text>
+  <text x="66" y="255" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">orchestrator, memory-bank, qdrant, mongo</text>
+  <text x="66" y="276" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">optional mindsdb-http proxy</text>
+
+  <text x="66" y="316" fill="#E2E2E2" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Estimated Minimum</text>
+  <text x="66" y="341" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">CPU: 4 cores</text>
+  <text x="66" y="362" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">RAM: 8-12 GB</text>
+  <text x="66" y="383" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Disk: 40+ GB free</text>
+
+  <text x="66" y="423" fill="#E2E2E2" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Best For</text>
+  <text x="66" y="448" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Laptop local-first dev and low-cost ingest</text>
+
+  <rect x="464" y="124" width="396" height="360" rx="14" fill="#131313" stroke="#8A8A8A" stroke-width="2"/>
+  <text x="492" y="164" fill="#F0F0F0" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="800">Full Mode</text>
+  <text x="492" y="190" fill="#AFAFAF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Command: gmake mem-up (default)</text>
+
+  <text x="492" y="230" fill="#E2E2E2" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Services</text>
+  <text x="492" y="255" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">lite stack plus mindsdb, letta, langfuse, ui</text>
+  <text x="492" y="276" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">and optional messaging webhooks</text>
+
+  <text x="492" y="316" fill="#E2E2E2" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Estimated Minimum</text>
+  <text x="492" y="341" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">CPU: 8 cores</text>
+  <text x="492" y="362" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">RAM: 16-24 GB</text>
+  <text x="492" y="383" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Disk: 80+ GB free (external NVMe preferred)</text>
+
+  <text x="492" y="423" fill="#E2E2E2" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Best For</text>
+  <text x="492" y="448" fill="#B7B7B7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Production-like retrieval + full observability</text>
+</svg>

@@ -1,0 +1,28 @@
+services:
+  mcp-qdrant:
+    image: ${MCP_QDRANT_IMAGE:-mem_mcp_lobehub_mcp-qdrant}
+    command: ["mcp-server-qdrant", "--transport", "streamable-http"]
+    environment:
+      # HTTP transport will listen on this port inside the container
+      PORT: "8002"
+      FASTMCP_SERVER_HOST: 0.0.0.0
+      FASTMCP_SERVER_PORT: 8002
+      # your existing envs (keep these the same as before)
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: memmcp_notes
+      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+    ports:
+      - "53124:8002"
+    healthcheck:
+      test: >
+        bash -lc '
+          curl -fsS -H "accept: application/json" -H "content-type: application/json"
+          -d "{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}"
+          http://127.0.0.1:8002/mcp >/dev/null 2>&1
+          || curl -fsS -H "accept: application/json" -H "content-type: application/json"
+          -d "{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}"
+          http://127.0.0.1:8002/ >/dev/null 2>&1
+        '
+      interval: 10s
+      timeout: 5s
+      retries: 12
