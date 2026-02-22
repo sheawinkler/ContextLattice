@@ -21,7 +21,7 @@
         <a href="integration.html">Integrations</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
-        <a href="v1/">v1</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">v1</a>
       </nav>
     </header>
 
@@ -37,10 +37,35 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section section-tight">
+      <article class="card quick-path-card">
+        <div class="kicker">Quick Path</div>
+        <h3>Fastest clean install route</h3>
+        <ol class="step-list">
+          <li>Run <code>gmake quickstart</code>.</li>
+          <li>Choose launch mode: <code>gmake mem-up-lite</code> or <code>gmake mem-up-full</code>.</li>
+          <li>Validate <code>/health</code> and authenticated <code>/status</code>.</li>
+          <li>If needed, move high-growth data paths to external NVMe before heavy ingest.</li>
+        </ol>
+        <p class="muted-note">All details remain below. Use the on-page nav to jump directly to any section.</p>
+      </article>
+    </section>
+
+    <section class="section section-tight">
+      <nav class="page-nav-inline" aria-label="On this page">
+        <a href="#install-quickstart">Quickstart</a>
+        <a href="#install-modes">Modes</a>
+        <a href="#install-storage">Storage</a>
+        <a href="#install-verify">Verify</a>
+        <a href="#install-advanced">Advanced</a>
+      </nav>
+    </section>
+
+    <section class="section" id="install-default-launch">
       <article class="card">
         <div class="kicker">Default launch command</div>
         <h3><code>gmake mem-up</code> is the standard stack launch entrypoint</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p><code>gmake mem-up</code> uses the active <code>COMPOSE_PROFILES</code> value from <code>.env</code> (or <code>core</code> if unset).</p>
         <ul class="spec-list">
           <li><strong>Force full mode:</strong> <code>gmake mem-up-full</code></li>
@@ -50,10 +75,47 @@
       </article>
     </section>
 
-    <section class="section">
+    <section class="section" id="install-quickstart">
+      <article class="card">
+        <div class="kicker">Foolproof start</div>
+        <h3>Use <code>gmake quickstart</code> on first install</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
+        <p>This command creates missing env wiring, runs secure bootstrap, starts services, and validates health/auth so you do not get stuck on early 401 errors.</p>
+<pre><code>gmake quickstart</code></pre>
+      </article>
+    </section>
+
+    <section class="section" id="install-advanced">
+      <article class="card">
+        <div class="kicker">Distribution note</div>
+        <h3>Homebrew can be added, but Docker + <code>gmake quickstart</code> stays canonical</h3>
+        <div class="priority-row"><span class="priority-chip advanced">Advanced</span></div>
+        <details class="fold">
+          <summary>Open optional Homebrew guidance</summary>
+          <p>Context Lattice is a multi-service stack, so Homebrew is best used as a convenience wrapper (bootstrap scripts, templates, health checks), not as the primary runtime package manager.</p>
+          <ul class="spec-list">
+            <li><strong>Recommended today:</strong> clone repo + run <code>gmake quickstart</code>.</li>
+            <li><strong>Homebrew fit:</strong> optional installer for CLI helpers and launch diagnostics.</li>
+            <li><strong>Runtime truth:</strong> Docker Compose remains the source of truth for actual services.</li>
+          </ul>
+        </details>
+      </article>
+    </section>
+
+    <section class="section" id="install-auth">
+      <article class="card">
+        <div class="kicker">Auth note</div>
+        <h3>Secure default means some endpoints require API key</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
+        <p>Use <code>/health</code> unauthenticated. Use <code>x-api-key</code> for <code>/status</code>, <code>/memory/*</code>, and <code>/telemetry/*</code>.</p>
+      </article>
+    </section>
+
+    <section class="section" id="install-storage">
       <article class="card">
         <div class="kicker">Storage layout</div>
         <h3>Hot local code + cold external data (recommended)</h3>
+        <div class="priority-row"><span class="priority-chip recommended">Recommended</span></div>
         <p>Keep active project source local for speed, and map high-growth service data paths to external NVMe before heavy ingest.</p>
 <pre><code># keep source local
 ~/Documents/projects
@@ -72,9 +134,10 @@
       </article>
     </section>
 
-    <section class="section">
+    <section class="section" id="install-modes">
       <div class="kicker">Flexible Launch</div>
       <h2>Choose your install mode</h2>
+      <div class="priority-row"><span class="priority-chip required">Required</span></div>
       <div class="grid mode-grid">
         <article class="card mode-card">
           <h3>Lite installation</h3>
@@ -97,24 +160,32 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="install-prereq">
       <article class="card">
         <div class="kicker">Prerequisites</div>
         <h3>Before first launch</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <ul class="spec-list">
           <li>Docker Desktop with Compose v2</li>
           <li><code>gmake</code>, <code>jq</code>, <code>rg</code>, <code>python3</code>, and <code>curl</code></li>
           <li>Project root initialized with <code>.env</code> and compose env symlink</li>
         </ul>
 <pre><code>cp .env.example .env
-ln -svf ../../.env infra/compose/.env</code></pre>
+ln -svf ../../.env infra/compose/.env
+
+# foolproof first-run bootstrap (generates API key + runs smoke)
+BOOTSTRAP=1 scripts/first_run.sh
+
+# helper for authenticated orchestrator endpoints
+ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"</code></pre>
       </article>
     </section>
 
-    <section class="section">
+    <section class="section" id="install-lite">
       <article class="card">
         <div class="kicker">Install path</div>
         <h3>Lite mode steps</h3>
+        <div class="priority-row"><span class="priority-chip required">Required (Lite)</span></div>
         <ol class="step-list">
           <li>Configure environment from the repository root.</li>
           <li>Start the Lite profile.</li>
@@ -123,14 +194,15 @@ ln -svf ../../.env infra/compose/.env</code></pre>
 <pre><code>gmake mem-up-lite
 gmake mem-ps-lite
 curl -fsS http://127.0.0.1:8075/health | jq
-curl -fsS http://127.0.0.1:8075/status | jq</code></pre>
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq</code></pre>
       </article>
     </section>
 
-    <section class="section">
+    <section class="section" id="install-full">
       <article class="card">
         <div class="kicker">Install path</div>
         <h3>Full mode steps</h3>
+        <div class="priority-row"><span class="priority-chip recommended">Recommended (Full)</span></div>
         <ol class="step-list">
           <li>Set full profile mode for compose-backed startup.</li>
           <li>Bring up the stack and watch logs.</li>
@@ -143,20 +215,21 @@ gmake mem-up-full
 gmake mem-ps
 gmake logs
 curl -fsS http://127.0.0.1:8075/health | jq
-curl -fsS http://127.0.0.1:8075/telemetry/fanout | jq
-curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
       </article>
     </section>
 
-    <section class="section">
+    <section class="section" id="install-verify">
       <article class="card">
         <div class="kicker">Verification</div>
         <h3>Expected healthy outcomes</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <ul class="spec-list">
           <li><code>/health</code> returns <code>ok</code> for orchestrator and connected services.</li>
-          <li><code>/status</code> lists Memory Bank and Qdrant connectivity.</li>
-          <li><code>/telemetry/fanout</code> shows queue depth and retry counters.</li>
-          <li><code>/telemetry/retention</code> reports retention cadence and sweep activity.</li>
+          <li><code>/status</code> (with <code>x-api-key</code>) lists Memory Bank and Qdrant connectivity.</li>
+          <li><code>/telemetry/fanout</code> (with <code>x-api-key</code>) shows queue depth and retry counters.</li>
+          <li><code>/telemetry/retention</code> (with <code>x-api-key</code>) reports retention cadence and sweep activity.</li>
         </ul>
       </article>
     </section>

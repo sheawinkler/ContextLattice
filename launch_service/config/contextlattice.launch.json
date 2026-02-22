@@ -1,0 +1,443 @@
+{
+  "product_name": "ContextLattice",
+  "category": "MCP Server / AI Infrastructure",
+  "launch_window": "24-hour sprint: Friday, February 20, 2026 15:30 MST to Saturday, February 21, 2026 15:00 MST",
+  "one_liner": "Private-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.",
+  "primary_cta": "Start local-first in minutes with `gmake quickstart`.",
+  "metadata": {
+    "primary_url": "https://contextlattice.io/",
+    "docs_url": "https://contextlattice.io/installation.html",
+    "troubleshooting_url": "https://contextlattice.io/troubleshooting.html",
+    "repo_url": "https://github.com/sheawinkler/ContextLattice",
+    "public_overview_url": "https://contextlattice.io/"
+  },
+  "channels": [
+    {
+      "tier": "P0",
+      "name": "GitHub Release",
+      "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
+      "submission_path": "Tag v1.0.0 + release notes + checksums + images",
+      "lead_time": "Same day",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:00",
+      "schedule_pt": "2026-02-21 07:00",
+      "status": "Scheduled",
+      "copy_key": "github_release"
+    },
+    {
+      "tier": "P0",
+      "name": "Custom Domain Docs",
+      "listing_url": "https://contextlattice.io",
+      "submission_path": "DNS + CNAME + HTTPS + smoke tests",
+      "lead_time": "1-2 days",
+      "cost_signal": "Domain/DNS",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:00",
+      "schedule_pt": "2026-02-21 07:00",
+      "status": "Scheduled",
+      "copy_key": "custom_domain"
+    },
+    {
+      "tier": "P0",
+      "name": "MCP Registry (official)",
+      "listing_url": "https://registry.modelcontextprotocol.io",
+      "submission_path": "Publish server metadata via registry tooling",
+      "lead_time": "1-3 days",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 15:30",
+      "schedule_pt": "2026-02-20 14:30",
+      "status": "Scheduled",
+      "copy_key": "mcp_registry"
+    },
+    {
+      "tier": "P0",
+      "name": "Glama MCP",
+      "listing_url": "https://glama.ai/mcp/servers",
+      "submission_path": "Add server listing + docs + repo links",
+      "lead_time": "0-2 days",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 16:00",
+      "schedule_pt": "2026-02-20 15:00",
+      "status": "Scheduled",
+      "copy_key": "glama"
+    },
+    {
+      "tier": "P0",
+      "name": "PulseMCP",
+      "listing_url": "https://www.pulsemcp.com/submit",
+      "submission_path": "Submit MCP server profile + launch links",
+      "lead_time": "1-7 days",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 16:20",
+      "schedule_pt": "2026-02-20 15:20",
+      "status": "Scheduled",
+      "copy_key": "pulsemcp"
+    },
+    {
+      "tier": "P0",
+      "name": "MCP.so",
+      "listing_url": "https://mcp.so/submit",
+      "submission_path": "Submit listing card with MCP service metadata",
+      "lead_time": "0-3 days",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 16:40",
+      "schedule_pt": "2026-02-20 15:40",
+      "status": "Scheduled",
+      "copy_key": "mcp_so"
+    },
+    {
+      "tier": "P0",
+      "name": "Product Hunt",
+      "listing_url": "https://www.producthunt.com/launch",
+      "submission_path": "Launch page + comments + maker FAQ replies",
+      "lead_time": "1-3 days prep",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:05",
+      "schedule_pt": "2026-02-21 07:05",
+      "status": "Scheduled",
+      "copy_key": "product_hunt"
+    },
+    {
+      "tier": "P0",
+      "name": "Show HN",
+      "listing_url": "https://news.ycombinator.com/showhn.html",
+      "submission_path": "Post Show HN with runnable local install",
+      "lead_time": "Same day",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:10",
+      "schedule_pt": "2026-02-21 07:10",
+      "status": "Scheduled",
+      "copy_key": "show_hn"
+    },
+    {
+      "tier": "P0",
+      "name": "X (launch thread)",
+      "listing_url": "https://x.com",
+      "submission_path": "1 launch post + 1 technical follow-up thread",
+      "lead_time": "Same day",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:20",
+      "schedule_pt": "2026-02-21 07:20",
+      "status": "Scheduled",
+      "copy_key": "x_thread"
+    },
+    {
+      "tier": "P0",
+      "name": "LinkedIn",
+      "listing_url": "https://www.linkedin.com",
+      "submission_path": "Founder launch post + architecture image",
+      "lead_time": "Same day",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:25",
+      "schedule_pt": "2026-02-21 07:25",
+      "status": "Scheduled",
+      "copy_key": "linkedin"
+    },
+    {
+      "tier": "P0",
+      "name": "Reddit (targeted)",
+      "listing_url": "https://www.reddit.com",
+      "submission_path": "Subreddit-specific posts with value-first context",
+      "lead_time": "Same day",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:35",
+      "schedule_pt": "2026-02-21 07:35",
+      "status": "Scheduled",
+      "copy_key": "reddit"
+    },
+    {
+      "tier": "P0",
+      "name": "Hugging Face Release (Spaces)",
+      "listing_url": "https://huggingface.co/spaces",
+      "submission_path": "Publish launch Space + README card + repo/docs links",
+      "lead_time": "1-2 days",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 08:45",
+      "schedule_pt": "2026-02-21 07:45",
+      "status": "Scheduled",
+      "copy_key": "huggingface"
+    },
+    {
+      "tier": "P1",
+      "name": "FutureTools",
+      "listing_url": "https://www.futuretools.io/submit-a-tool",
+      "submission_path": "Manual tool submission flow",
+      "lead_time": "1-7 days",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 17:00",
+      "schedule_pt": "2026-02-20 16:00",
+      "status": "Scheduled",
+      "copy_key": "futuretools"
+    },
+    {
+      "tier": "P1",
+      "name": "Futurepedia",
+      "listing_url": "https://www.futurepedia.io/submit-tool",
+      "submission_path": "Submission flow (paid options may apply)",
+      "lead_time": "1-7 days",
+      "cost_signal": "Paid optional",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 17:20",
+      "schedule_pt": "2026-02-20 16:20",
+      "status": "Scheduled",
+      "copy_key": "futurepedia"
+    },
+    {
+      "tier": "P1",
+      "name": "Toolify",
+      "listing_url": "https://www.toolify.ai/submit",
+      "submission_path": "Submission flow (paid options may apply)",
+      "lead_time": "1-3 days",
+      "cost_signal": "Paid optional",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-20 17:40",
+      "schedule_pt": "2026-02-20 16:40",
+      "status": "Scheduled",
+      "copy_key": "toolify"
+    },
+    {
+      "tier": "P1",
+      "name": "Dev.to Deep-dive",
+      "listing_url": "https://dev.to",
+      "submission_path": "Technical launch article with install proof",
+      "lead_time": "Same day",
+      "cost_signal": "Free",
+      "owner": "Shea",
+      "schedule_mt": "2026-02-21 09:30",
+      "schedule_pt": "2026-02-21 08:30",
+      "status": "Scheduled",
+      "copy_key": "devto"
+    }
+  ],
+  "run_of_show": [
+    {
+      "time_mt": "08:30",
+      "time_pt": "07:30",
+      "action": "Launch day preflight on Saturday, February 21, 2026: stack (`gmake mem-up-full`), check `/health` and `/status`, verify release links."
+    },
+    {
+      "time_mt": "08:50",
+      "time_pt": "07:50",
+      "action": "Freeze launch copy and schedule drafts."
+    },
+    {
+      "time_mt": "09:00",
+      "time_pt": "08:00",
+      "action": "Publish GitHub release and custom-domain docs."
+    },
+    {
+      "time_mt": "09:05",
+      "time_pt": "08:05",
+      "action": "Publish Product Hunt listing."
+    },
+    {
+      "time_mt": "09:10",
+      "time_pt": "08:10",
+      "action": "Publish Show HN post."
+    },
+    {
+      "time_mt": "09:20",
+      "time_pt": "08:20",
+      "action": "Publish X launch thread."
+    },
+    {
+      "time_mt": "09:25",
+      "time_pt": "08:25",
+      "action": "Publish LinkedIn post."
+    },
+    {
+      "time_mt": "09:35",
+      "time_pt": "08:35",
+      "action": "Publish Reddit posts."
+    },
+    {
+      "time_mt": "09:45",
+      "time_pt": "08:45",
+      "action": "Publish Hugging Face Space release."
+    },
+    {
+      "time_mt": "10:30",
+      "time_pt": "09:30",
+      "action": "Publish technical deep-dive article and respond to launch threads."
+    }
+  ],
+  "kpis": [
+    {
+      "kpi": "GitHub stars",
+      "target_24h": "100+",
+      "target_7d": "400+",
+      "source": "GitHub"
+    },
+    {
+      "kpi": "Docs unique visitors",
+      "target_24h": "1,500+",
+      "target_7d": "8,000+",
+      "source": "Web analytics"
+    },
+    {
+      "kpi": "Quickstart completions",
+      "target_24h": "50+",
+      "target_7d": "250+",
+      "source": "Issues/discussions + telemetry"
+    },
+    {
+      "kpi": "MCP listings live",
+      "target_24h": "4+",
+      "target_7d": "8+",
+      "source": "Manual tracker"
+    },
+    {
+      "kpi": "Demo watch-through",
+      "target_24h": "30%+",
+      "target_7d": "35%+",
+      "source": "Video host analytics"
+    }
+  ],
+  "risks": [
+    {
+      "risk": "Listing review lag",
+      "impact": "Asynchronous launch windows",
+      "mitigation": "Submit MCP directories by 2026-02-20 and track confirmations"
+    },
+    {
+      "risk": "Terminology drift",
+      "impact": "User confusion in discovery channels",
+      "mitigation": "Use MCP server/service language in every listing and copy block"
+    },
+    {
+      "risk": "Launch-day service hiccups",
+      "impact": "Trust loss",
+      "mitigation": "Warm stack 30 minutes early and pin troubleshooting link"
+    },
+    {
+      "risk": "Paid board underperformance",
+      "impact": "Low ROI",
+      "mitigation": "Cap spend and prioritize MCP-native channels first"
+    }
+  ],
+  "sources": [
+    {
+      "label": "Product Hunt Launch Guide",
+      "url": "https://www.producthunt.com/launch"
+    },
+    {
+      "label": "Show HN Guidelines",
+      "url": "https://news.ycombinator.com/showhn.html"
+    },
+    {
+      "label": "MCP Registry quickstart",
+      "url": "https://modelcontextprotocol.io/registry/quickstart"
+    },
+    {
+      "label": "MCP Registry FAQ",
+      "url": "https://modelcontextprotocol.io/registry/faq"
+    },
+    {
+      "label": "Glama MCP Servers",
+      "url": "https://glama.ai/mcp/servers"
+    },
+    {
+      "label": "PulseMCP submit",
+      "url": "https://www.pulsemcp.com/submit"
+    },
+    {
+      "label": "MCP.so submit",
+      "url": "https://mcp.so/submit"
+    },
+    {
+      "label": "Hugging Face Spaces",
+      "url": "https://huggingface.co/spaces"
+    },
+    {
+      "label": "FutureTools submit",
+      "url": "https://www.futuretools.io/submit-a-tool"
+    },
+    {
+      "label": "Futurepedia submit",
+      "url": "https://www.futurepedia.io/submit-tool"
+    },
+    {
+      "label": "Toolify submit",
+      "url": "https://www.toolify.ai/submit"
+    }
+  ],
+  "copy_blocks": {
+    "github_release": {
+      "title": "{product_name} v1.0.0",
+      "body": "ContextLattice v1.0.0 is now live.\\n\\nHighlights:\\n- HTTP-first, MCP-compatible memory/context/task orchestrator with secure local defaults\\n- Durable write fanout across memory-bank, Qdrant, Mongo raw, MindsDB, and optional Letta\\n- Federated retrieval egress with context-quality feedback prompting and a learning rerank loop\\n- High-throughput write path that can serve as a telemetry database backend\\n- One-command launch path (`gmake quickstart`)\\n\\nStart here:\\n- Docs: {docs_url}\\n- Troubleshooting: {troubleshooting_url}\\n- Repo: {repo_url}"
+    },
+    "custom_domain": {
+      "title": "{product_name} docs go-live",
+      "body": "Point custom domain DNS to GitHub Pages, validate HTTPS, and verify these paths:\\n- /\\n- /installation.html\\n- /integration.html\\n- /troubleshooting.html\\n\\nCurrent public fallback URL: {primary_url}"
+    },
+    "mcp_registry": {
+      "title": "Registry listing summary",
+      "body": "Name: {product_name}\\nCategory: MCP server / AI infrastructure\\nSummary: HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator.\\nInstall docs: {docs_url}\\nRepository: {repo_url}"
+    },
+    "glama": {
+      "title": "Glama listing summary",
+      "body": "ContextLattice is an HTTP-first, MCP-compatible memory/context/task orchestrator that persists writes and returns fused recall from specialized stores with local-first defaults.\\n\\nPrimary URL: {primary_url}\\nInstall: {docs_url}\\nTroubleshooting: {troubleshooting_url}"
+    },
+    "pulsemcp": {
+      "title": "PulseMCP listing summary",
+      "body": "Private-by-default HTTP-first memory/context/task orchestration for every LLM, everywhere.\\n\\nWhat it does:\\n- durable write fanout\\n- federated retrieval\\n- learning rerank improvements over time\\n- high-throughput write ingestion for telemetry workloads\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
+    },
+    "mcp_so": {
+      "title": "MCP.so listing summary",
+      "body": "ContextLattice provides HTTP-first, MCP-compatible memory write/search APIs with multi-sink fanout, retrieval orchestration, and high-throughput telemetry ingestion.\\n\\nTry it locally with {primary_cta}\\nDocs: {docs_url}"
+    },
+    "product_hunt": {
+      "title": "{product_name}",
+      "tagline": "Private-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.",
+      "body": "ContextLattice is an HTTP-first, MCP-compatible memory/context/task orchestrator built for long-horizon agent work.\\n\\nWhy this exists:\\n- In long-horizon workflows, agents that forget prior decisions repeat avoidable mistakes; the result is brittle output and operator fatigue.\\n- Finite context windows are unavoidable; without a durable memory/context system, retrieval quality decays toward zero as horizon length increases.\\n- ContextLattice also serves as a telemetry database backend for app stacks that generate sustained high write volume.\\n\\nWhat ships:\\n- one ingress write path + durable outbox fanout\\n- federated retrieval egress + context-quality feedback prompting + learning rerank loop\\n- local-first security defaults\\n- telemetry-grade throughput with queue controls and backpressure\\n\\nStart in minutes: {docs_url}"
+    },
+    "show_hn": {
+      "title": "Show HN: ContextLattice - HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator",
+      "body": "I built ContextLattice to solve long-horizon context failure in agent systems.\\n\\nIn long-running tasks, agents often forget prior decisions and repeat the same mistake loop.\\nContextLattice addresses that with:\\n- HTTP-first, MCP-compatible memory/context/task orchestration\\n- durable multi-sink writes\\n- federated retrieval egress + context-quality feedback prompting + learning rerank\\n- telemetry-grade write throughput for heavy app event streams\\n\\nQuickstart: {docs_url}\\nRepo: {repo_url}\\n\\nWould appreciate feedback on retrieval quality and operational ergonomics."
+    },
+    "x_thread": {
+      "title": "X launch post",
+      "body": "ContextLattice v1.0.0 is live.\\n\\nPrivate-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.\\n- HTTP-first, MCP-compatible interface\\n- federated retrieval egress + context-quality feedback prompting + learning rerank\\n- telemetry-grade high-write ingestion\\n\\nStart local-first: {docs_url}\\n\\nFollow-up thread:\\n1) Why long-horizon agent work degrades without memory/context\\n2) How orchestration + retrieval stabilizes quality\\n3) Throughput and reliability notes from production-like runs"
+    },
+    "linkedin": {
+      "title": "LinkedIn launch post",
+      "body": "Today we are launching ContextLattice v1.0.0.\\n\\nContextLattice is an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator for agent systems.\\n\\nWhy teams use it:\\n- resolve an agentic issue once, then share reusable context across the team and organization\\n- reduces repeated errors in long-running agent workflows\\n- stabilizes retrieval quality beyond finite context windows via federated retrieval egress + feedback prompting\\n- supports telemetry-grade write throughput while preserving retrieval quality\\n- ships private-by-default with local-first controls\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
+    },
+    "reddit": {
+      "title": "Reddit launch variant",
+      "body": "Built and shipped ContextLattice: an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator.\\n\\nDesign goals:\\n- stop repeated mistake loops from agent forgetfulness in long tasks\\n- keep retrieval quality from decaying across long horizons with federated retrieval egress and feedback prompting\\n- handle heavy write pressure as a telemetry backend, not just memory recall\\n- preserve local-first private defaults\\n\\nInstall docs: {docs_url}\\nTroubleshooting: {troubleshooting_url}\\n\\nHappy to share implementation details if anyone is benchmarking similar stacks."
+    },
+    "huggingface": {
+      "title": "Hugging Face Space card",
+      "body": "ContextLattice launch demo Space\\n\\nThis Space demonstrates:\\n- write flow into an HTTP-first, MCP-compatible memory service\\n- retrieval egress with multi-source fusion + context-quality feedback prompting + rerank learning\\n- local-first deployment docs\\n- telemetry-grade write ingestion path\\n\\nLinks:\\n- Main docs: {docs_url}\\n- Repo: {repo_url}\\n- Public overview: {primary_url}"
+    },
+    "futuretools": {
+      "title": "FutureTools listing summary",
+      "body": "{one_liner}\\n\\nCategory: AI Infrastructure / MCP\\nProtocol posture: HTTP-first, MCP-compatible\\nTry it: {primary_url}\\nInstall: {docs_url}"
+    },
+    "futurepedia": {
+      "title": "Futurepedia listing summary",
+      "body": "{one_liner}\\n\\nUse case: long-horizon cognitive spine for agent memory/context, plus telemetry-grade write ingestion.\\nDocs: {docs_url}"
+    },
+    "toolify": {
+      "title": "Toolify listing summary",
+      "body": "{one_liner}\\n\\nProtocol posture: HTTP-first, MCP-compatible\\nLaunch command: gmake quickstart\\nDocs: {docs_url}\\nRepo: {repo_url}"
+    },
+    "devto": {
+      "title": "Dev.to deep-dive title",
+      "body": "How I built an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator with telemetry-grade write ingestion\\n\\nStructure:\\n1) problem framing\\n2) architecture\\n3) operational controls\\n4) launch learnings\\n\\nStart here: {docs_url}"
+    }
+  }
+}

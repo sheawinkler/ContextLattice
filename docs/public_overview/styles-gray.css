@@ -502,6 +502,88 @@ a:hover {
   margin-top: 28px;
 }
 
+.section-tight {
+  margin-top: 14px;
+}
+
+section[id] {
+  scroll-margin-top: 84px;
+}
+
+.page-nav-inline {
+  position: sticky;
+  top: 10px;
+  z-index: 8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px;
+  border: 1.5px solid var(--line);
+  background: rgba(20, 20, 20, 0.96);
+  backdrop-filter: blur(4px);
+  box-shadow: var(--shadow);
+}
+
+.page-nav-inline a {
+  text-decoration: none;
+  border: 1.5px solid #6a6a6a;
+  background: #1e1e1e;
+  color: #ececec;
+  padding: 8px 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.page-nav-inline a:hover {
+  background: #2a2a2a;
+}
+
+.quick-path-card {
+  border-left: 4px solid #9a9a9a;
+}
+
+.quick-path-card p {
+  max-width: 68ch;
+}
+
+.priority-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.priority-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border: 1.5px solid #6a6a6a;
+  background: #202020;
+  color: #e8e8e8;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.priority-chip.required {
+  border-color: #c9c9c9;
+  background: #efefef;
+  color: #121212;
+}
+
+.priority-chip.recommended {
+  border-color: rgba(131, 206, 203, 0.62);
+  background: rgba(131, 206, 203, 0.14);
+}
+
+.priority-chip.advanced {
+  border-color: rgba(214, 189, 134, 0.62);
+  background: rgba(214, 189, 134, 0.14);
+}
+
 .grid {
   display: grid;
   gap: 16px;
@@ -603,6 +685,7 @@ a:hover {
 
 .component-card p {
   margin-bottom: 10px;
+  max-width: 66ch;
 }
 
 .mode-card p {
@@ -737,7 +820,59 @@ a:hover {
   margin: 0 0 14px;
   padding-left: 19px;
   color: #d5d5d5;
-  line-height: 1.58;
+  line-height: 1.7;
+  max-width: 72ch;
+}
+
+.spec-list li,
+.step-list li {
+  margin-bottom: 8px;
+}
+
+.card > p,
+.card > .muted-note,
+.card > .spotlight {
+  max-width: 66ch;
+}
+
+details.fold {
+  margin-top: 10px;
+  border: 1.5px solid var(--line);
+  background: #141414;
+  padding: 10px 12px;
+}
+
+details.fold > summary {
+  cursor: pointer;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #ececec;
+  list-style: none;
+}
+
+details.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.fold > summary::before {
+  content: "+ ";
+  color: #cfcfcf;
+}
+
+details.fold[open] > summary::before {
+  content: "− ";
+}
+
+details.fold p,
+details.fold ul,
+details.fold ol {
+  margin-top: 10px;
+}
+
+details.fold pre {
+  margin-top: 10px;
 }
 
 pre {
@@ -814,7 +949,12 @@ pre code {
 }
 
 .architecture-board {
-  padding: 14px;
+  padding: 30px;
+}
+
+.arch-page .card {
+  background: #151a21;
+  border-color: #616b7a;
 }
 
 .arch-svg {
@@ -825,28 +965,176 @@ pre code {
   background: #121212;
 }
 
+.arch-diagram-figure {
+  margin: 0;
+}
+
+.arch-diagram-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+.arch-diagram-panel {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.arch-diagram-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 1.5px solid var(--line);
+  background:
+    radial-gradient(circle at 18% 8%, rgba(157, 190, 226, 0.1), transparent 46%),
+    radial-gradient(circle at 86% 10%, rgba(214, 189, 134, 0.08), transparent 42%),
+    linear-gradient(180deg, #151b24 0%, #121820 100%);
+}
+
+.arch-diagram-caption {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #c8d4e2;
+}
+
 .arch-svg text {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-  font-size: 16px;
-  fill: #e4e4e4;
+  font-size: 18px;
+  fill: #e8edf5;
 }
 
 .arch-svg .arch-title {
   font-family: "IBM Plex Mono", monospace;
   font-size: 15px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
 }
 
 .arch-svg .arch-small {
   font-size: 13px;
-  fill: #aeaeae;
+  fill: #b6c0cc;
+}
+
+.arch-page .arch-svg.ive {
+  border-color: #6c7685;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(157, 190, 226, 0.1), transparent 46%),
+    radial-gradient(circle at 86% 10%, rgba(214, 189, 134, 0.08), transparent 42%),
+    linear-gradient(180deg, #151b24 0%, #121820 100%);
+}
+
+.arch-page .arch-svg.ive .ive-boundary {
+  fill: rgba(255, 255, 255, 0.025);
+  stroke: rgba(236, 244, 252, 0.45);
+  stroke-width: 1.8;
+  stroke-dasharray: 8 8;
+}
+
+.arch-page .arch-svg.ive .ive-node {
+  fill: rgba(35, 42, 52, 0.82);
+  stroke: rgba(232, 241, 249, 0.44);
+  stroke-width: 1.7;
+}
+
+.arch-page .arch-svg.ive .ive-core {
+  fill: #8f551f;
+  stroke: #f2d3ad;
+  stroke-width: 2.2;
+}
+
+.arch-page .arch-svg.ive .ive-title {
+  font-size: 18px;
+  fill: #f4f8ff;
+  font-weight: 600;
+}
+
+.arch-page .arch-svg.ive .ive-label {
+  font-size: 17px;
+  fill: #f4f8ff;
+  font-weight: 600;
+}
+
+.arch-page .arch-svg.ive .ive-label-wide {
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.arch-page .arch-svg.ive .ive-sub {
+  font-size: 14px;
+  fill: #c6d1de;
+  font-weight: 500;
+}
+
+.arch-page .arch-svg.ive .ive-flow {
+  stroke: #dce7f5;
+  stroke-width: 2.25;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.arch-page .arch-svg.ive .ive-flow-async {
+  stroke: #aad9e4;
+  stroke-width: 2.1;
+  stroke-dasharray: 9 7;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.arch-page .arch-svg.ive .ive-flow-feedback {
+  stroke: #d8c28f;
+  stroke-width: 2.1;
+  stroke-dasharray: 5 7;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.arch-page .arch-svg.ive .ive-legend {
+  fill: rgba(15, 19, 24, 0.9);
+  stroke: rgba(225, 235, 246, 0.45);
+  stroke-width: 1.7;
 }
 
 .arch-svg .arch-frame {
   fill: #202020;
   stroke: #8f8f8f;
   stroke-width: 2;
+}
+
+.arch-svg .arch-boundary {
+  fill: rgba(255, 255, 255, 0.018);
+  stroke: #9d9d9d;
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+}
+
+.arch-svg .arch-external {
+  fill: #151515;
+}
+
+.arch-svg .arch-container-core {
+  fill: #242424;
+}
+
+.arch-svg .arch-container-data {
+  fill: #1c1c1c;
+}
+
+.arch-svg .arch-container-store {
+  fill: #1a1a1a;
+}
+
+.arch-svg .arch-container-ops {
+  fill: #202020;
+}
+
+.arch-svg .arch-legend {
+  fill: rgba(20, 20, 20, 0.95);
+  stroke: #8f8f8f;
+  stroke-width: 1.7;
 }
 
 .arch-svg .arch-ingress {
@@ -891,8 +1179,45 @@ pre code {
   fill: none;
 }
 
+.arch-svg .arch-line-sync {
+  stroke: #b4b4b4;
+}
+
+.arch-svg .arch-line-async {
+  stroke: #9bc7cf;
+  stroke-dasharray: 7 6;
+}
+
+.arch-svg .arch-line-feedback {
+  stroke: #d6bd86;
+  stroke-width: 2;
+  stroke-dasharray: 3 5;
+}
+
+.arch-split {
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 22px;
+}
+
+.arch-note-list li {
+  margin-bottom: 8px;
+}
+
+.arch-note-card {
+  margin-top: 4px;
+}
+
 .arch-grid {
   align-items: start;
+  gap: 18px;
+}
+
+.runtime-flow-title {
+  font-size: clamp(40px, 5.8vw, 62px);
+  line-height: 0.96;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
 }
 
 .arch-caption {
@@ -910,6 +1235,14 @@ pre code {
 
   .ribbon-nav a {
     min-width: 118px;
+  }
+
+  .page-nav-inline {
+    position: static;
+  }
+
+  .arch-split {
+    grid-template-columns: 1fr;
   }
 }
 

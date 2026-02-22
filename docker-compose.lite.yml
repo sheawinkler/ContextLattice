@@ -1,7 +1,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:latest
-    ports: ["6333:6333", "6334:6334"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:6333:6333", "${HOST_BIND_ADDRESS:-127.0.0.1}:6334:6334"]
     ulimits:
       nofile:
         soft: 65536
@@ -46,7 +46,7 @@ services:
       MEMORY_BANK_ROOT: /data/memory-bank
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
     volumes: ["${MEMORY_BANK_DATA:-memory_bank_data}:/data"]
-    ports: ["${SUPERGW_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${SUPERGW_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"]
     ulimits:
       nofile:
         soft: 65536
@@ -68,7 +68,7 @@ services:
     volumes:
       - ./configs/mcp-hub.lite.json:/config/config.json:ro
     command: ["--config", "/config/config.json"]
-    ports: ["${MCP_HUB_PORT:-53130}:${MCP_HUB_PORT:-53130}"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${MCP_HUB_PORT:-53130}:${MCP_HUB_PORT:-53130}"]
     ulimits:
       nofile:
         soft: 65536
@@ -89,6 +89,12 @@ services:
         condition: service_healthy
     environment:
       MEMMCP_HTTP_URL: http://memorymcp-http:59081/mcp
+      MEMMCP_ENV: ${MEMMCP_ENV:-production}
+      ORCH_SECURITY_STRICT: ${ORCH_SECURITY_STRICT:-true}
+      ORCH_PUBLIC_STATUS: ${ORCH_PUBLIC_STATUS:-false}
+      ORCH_PUBLIC_DOCS: ${ORCH_PUBLIC_DOCS:-false}
+      MEMMCP_ORCHESTRATOR_API_KEY: ${MEMMCP_ORCHESTRATOR_API_KEY:-}
+      SECRETS_STORAGE_MODE: ${SECRETS_STORAGE_MODE:-redact}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_LOCAL_URL: ${QDRANT_LOCAL_URL:-http://qdrant:6333}
       QDRANT_USE_CLOUD: ${QDRANT_USE_CLOUD:-false}
@@ -100,7 +106,7 @@ services:
       QDRANT_CLOUD_GRPC_PORT: ${QDRANT_CLOUD_GRPC_PORT:-6334}
       QDRANT_CLIENT_TIMEOUT_SECS: ${QDRANT_CLIENT_TIMEOUT_SECS:-30}
       MESSAGING_INTEGRATIONS_ENABLED: ${MESSAGING_INTEGRATIONS_ENABLED:-true}
-      MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-true}
+      MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-false}
       MESSAGING_COMMAND_HANDLE: ${MESSAGING_COMMAND_HANDLE:-@ContextLattice}
       MESSAGING_DEFAULT_PROJECT: ${MESSAGING_DEFAULT_PROJECT:-messaging}
       MESSAGING_SEARCH_LIMIT: ${MESSAGING_SEARCH_LIMIT:-4}
@@ -116,6 +122,9 @@ services:
       SLACK_DEFAULT_PROJECT: ${SLACK_DEFAULT_PROJECT:-messaging}
       SLACK_TOPIC_ROOT: ${SLACK_TOPIC_ROOT:-channels/slack}
       OPENCLAW_DEFAULT_PROJECT: ${OPENCLAW_DEFAULT_PROJECT:-messaging}
+      IRONCLAW_INTEGRATION_ENABLED: ${IRONCLAW_INTEGRATION_ENABLED:-false}
+      IRONCLAW_DEFAULT_PROJECT: ${IRONCLAW_DEFAULT_PROJECT:-messaging}
+      MESSAGING_OPENCLAW_STRICT_SECURITY: ${MESSAGING_OPENCLAW_STRICT_SECURITY:-true}
       ORCH_QDRANT_COLLECTION: ${QDRANT_COLLECTION:-memmcp_notes}
       MONGO_RAW_CONNECT_TIMEOUT_MS: ${MONGO_RAW_CONNECT_TIMEOUT_MS:-5000}
       MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS: ${MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS:-5000}
@@ -137,7 +146,7 @@ services:
       OVERRIDE_HISTORY_PATH: /app/data/solana_overrides.ndjson
     volumes:
       - ${ORCHESTRATOR_DATA:-orchestrator_data}:/app/data
-    ports: ["${ORCHESTRATOR_PORT:-8075}:8075"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${ORCHESTRATOR_PORT:-8075}:8075"]
     ulimits:
       nofile:
         soft: 65536

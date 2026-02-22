@@ -1,7 +1,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:latest
-    ports: ["6333:6333", "6334:6334"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:6333:6333", "${HOST_BIND_ADDRESS:-127.0.0.1}:6334:6334"]
     ulimits: 
       nofile:
        soft: 65536
@@ -49,8 +49,8 @@ services:
     environment:
       MINDSDB_APIS: ${MINDSDB_APIS}
     ports:
-      - "${MINDS_HTTP_PORT:-47334}:47334"
-      - "${MINDSDB_MCP_PORT:-47337}:47337"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MINDS_HTTP_PORT:-47334}:47334"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MINDSDB_MCP_PORT:-47337}:47337"
     volumes: ["${MINDSDB_DATA:-mindsdb_data}:/root/.mindsdb"]
     ulimits: 
       nofile:
@@ -71,7 +71,7 @@ services:
       SUPERGATEWAY_SESSION_TIMEOUT_MS: ${SUPERGATEWAY_SESSION_TIMEOUT_MS:-300000}
     # Source can be either a named volume (default) or a host path (e.g., /Volumes/ExternalSSD/memmcp/memory-bank)
     volumes: ["${MEMORY_BANK_DATA:-memory_bank_data}:/data"]
-    ports: ["${SUPERGW_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${SUPERGW_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"]
     ulimits: 
       nofile:
        soft: 65536
@@ -95,7 +95,7 @@ services:
     depends_on: [mindsdb]
     environment:
       MINDSDB_SSE_URL: ${MINDSDB_SSE_URL:-http://mindsdb:47334/mcp/sse}
-    ports: ["${MINDSDB_HTTP_PROXY_PORT:-8004}:8004"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${MINDSDB_HTTP_PROXY_PORT:-8004}:8004"]
     healthcheck:
       test:
         ["CMD-SHELL",
@@ -133,7 +133,7 @@ services:
           sleep 2
         done
         exec /main --config /config/config.json
-    ports: ["${MCP_HUB_PORT}:${MCP_HUB_PORT}"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${MCP_HUB_PORT}:${MCP_HUB_PORT}"]
     ulimits: 
       nofile:
        soft: 65536
@@ -152,7 +152,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
-    ports: ["11434:11434"]  # expose to host for testing
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:11434:11434"]  # expose to host for testing
     volumes: ["${HOME}/.ollama:/root/.ollama"]
     restart: unless-stopped
     healthcheck:
@@ -179,7 +179,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Letta uses an OpenAI-compatible client; include /v1 for Ollama compatibility endpoints.
       OLLAMA_BASE_URL: ${LETTA_OLLAMA_BASE_URL:-http://ollama:11434/v1}
-    ports: ["${LETTA_PORT}:8283"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${LETTA_PORT}:8283"]
     volumes: ["${LETTA_PGDATA:-letta_pg}:/var/lib/postgresql/data"]
     ulimits: 
       nofile:
@@ -244,8 +244,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret}
     ports:
-      - "127.0.0.1:${MINIO_PORT:-9090}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9091}:9001"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MINIO_PORT:-9090}:9000"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9091}:9001"
     volumes: ["${LF_MINIO_DATA:-lf_minio_data}:/data"]
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
@@ -340,7 +340,7 @@ services:
       LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
       LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
-    ports: ["${LANGFUSE_PORT}:3000"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${LANGFUSE_PORT}:3000"]
     restart: unless-stopped
     profiles: ["observability"]
 
@@ -349,7 +349,7 @@ services:
     image: ghcr.io/promptfoo/promptfoo:latest
     working_dir: /work
     volumes: ["./promptfoo:/work"]
-    ports: ["${PROMPTFOO_PORT:-15500}:15500"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${PROMPTFOO_PORT:-15500}:15500"]
     command: ["promptfoo","view","--port","15500","-n"]
     environment:
       HOST: 0.0.0.0
@@ -370,17 +370,19 @@ services:
       MEMMCP_HTTP_URL: http://memorymcp-http:59081/mcp
       MEMMCP_LIST_TIMEOUT_SECS: ${MEMMCP_LIST_TIMEOUT_SECS:-4}
       MEMMCP_READ_TIMEOUT_SECS: ${MEMMCP_READ_TIMEOUT_SECS:-15}
-      MEMMCP_ENV: ${MEMMCP_ENV:-development}
+      MEMMCP_ENV: ${MEMMCP_ENV:-production}
       ORCH_SECURITY_STRICT: ${ORCH_SECURITY_STRICT:-true}
-      ORCH_PUBLIC_STATUS: ${ORCH_PUBLIC_STATUS:-true}
-      ORCH_PUBLIC_DOCS: ${ORCH_PUBLIC_DOCS:-true}
+      ORCH_PUBLIC_STATUS: ${ORCH_PUBLIC_STATUS:-false}
+      ORCH_PUBLIC_DOCS: ${ORCH_PUBLIC_DOCS:-false}
+      MEMMCP_ORCHESTRATOR_API_KEY: ${MEMMCP_ORCHESTRATOR_API_KEY:-}
+      SECRETS_STORAGE_MODE: ${SECRETS_STORAGE_MODE:-redact}
       ORCH_HTTP_REQUEST_LOG_SUCCESS_SAMPLE_RATE: ${ORCH_HTTP_REQUEST_LOG_SUCCESS_SAMPLE_RATE:-0.1}
       ORCH_HTTP_REQUEST_LOG_SLOW_MS: ${ORCH_HTTP_REQUEST_LOG_SLOW_MS:-1500}
       ORCH_PROMETHEUS_ENABLED: ${ORCH_PROMETHEUS_ENABLED:-true}
       ORCH_PROMETHEUS_ENDPOINT: ${ORCH_PROMETHEUS_ENDPOINT:-/metrics}
       ORCH_PROMETHEUS_PUBLIC: ${ORCH_PROMETHEUS_PUBLIC:-false}
       MESSAGING_INTEGRATIONS_ENABLED: ${MESSAGING_INTEGRATIONS_ENABLED:-true}
-      MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-true}
+      MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-false}
       MESSAGING_COMMAND_HANDLE: ${MESSAGING_COMMAND_HANDLE:-@ContextLattice}
       MESSAGING_DEFAULT_PROJECT: ${MESSAGING_DEFAULT_PROJECT:-messaging}
       MESSAGING_SEARCH_LIMIT: ${MESSAGING_SEARCH_LIMIT:-4}
@@ -396,6 +398,9 @@ services:
       SLACK_DEFAULT_PROJECT: ${SLACK_DEFAULT_PROJECT:-messaging}
       SLACK_TOPIC_ROOT: ${SLACK_TOPIC_ROOT:-channels/slack}
       OPENCLAW_DEFAULT_PROJECT: ${OPENCLAW_DEFAULT_PROJECT:-messaging}
+      IRONCLAW_INTEGRATION_ENABLED: ${IRONCLAW_INTEGRATION_ENABLED:-false}
+      IRONCLAW_DEFAULT_PROJECT: ${IRONCLAW_DEFAULT_PROJECT:-messaging}
+      MESSAGING_OPENCLAW_STRICT_SECURITY: ${MESSAGING_OPENCLAW_STRICT_SECURITY:-true}
       ORCH_SHARED_HTTP_MAX_CONNECTIONS: ${ORCH_SHARED_HTTP_MAX_CONNECTIONS:-120}
       ORCH_SHARED_HTTP_MAX_KEEPALIVE_CONNECTIONS: ${ORCH_SHARED_HTTP_MAX_KEEPALIVE_CONNECTIONS:-60}
       LANGFUSE_URL: http://langfuse:3000
@@ -556,7 +561,7 @@ services:
       OVERRIDE_HISTORY_PATH: /app/data/solana_overrides.ndjson
     volumes:
       - ${ORCHESTRATOR_DATA:-orchestrator_data}:/app/data
-    ports: ["${ORCHESTRATOR_PORT:-8075}:8075"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${ORCHESTRATOR_PORT:-8075}:8075"]
     ulimits: 
       nofile:
        soft: 65536
@@ -584,7 +589,7 @@ services:
       MEMMCP_ORCHESTRATOR_API_KEY: ${MEMMCP_ORCHESTRATOR_API_KEY:-}
     volumes:
       - dashboard_data:/data
-    ports: ["${DASHBOARD_PORT:-3000}:3000"]
+    ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-3000}:3000"]
     restart: unless-stopped
     profiles: ["core"]
 

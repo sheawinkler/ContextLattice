@@ -390,6 +390,40 @@ TASK_DB_PATH = Path(
 TASK_DB_TIMEOUT = float(os.getenv("TASK_DB_TIMEOUT", "5.0"))
 TASK_DB_LOCK_RETRIES = int(os.getenv("TASK_DB_LOCK_RETRIES", "8"))
 TASK_DB_LOCK_BACKOFF_SECS = float(os.getenv("TASK_DB_LOCK_BACKOFF_SECS", "0.15"))
+TASK_SCHEDULER_ENABLED = os.getenv("TASK_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+TASK_INTERNAL_WORKERS_ENABLED = os.getenv("TASK_INTERNAL_WORKERS_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+AGENT_TASK_WORKERS = max(0, int(os.getenv("AGENT_TASK_WORKERS", "2")))
+TASK_WORKER_POLL_SECS = float(os.getenv("TASK_WORKER_POLL_SECS", "1.2"))
+TASK_LEASE_SECS = max(15, int(os.getenv("TASK_LEASE_SECS", "120")))
+TASK_DEFAULT_MAX_ATTEMPTS = max(1, int(os.getenv("TASK_DEFAULT_MAX_ATTEMPTS", "4")))
+TASK_RETRY_BASE_SECS = max(0.2, float(os.getenv("TASK_RETRY_BASE_SECS", "2.0")))
+TASK_RETRY_MAX_SECS = max(TASK_RETRY_BASE_SECS, float(os.getenv("TASK_RETRY_MAX_SECS", "300")))
+TASK_CALLBACK_TIMEOUT_SECS = max(1.0, float(os.getenv("TASK_CALLBACK_TIMEOUT_SECS", "15")))
+TASK_CALLBACK_ALLOWED_HOSTS_ENV = os.getenv("TASK_CALLBACK_ALLOWED_HOSTS", "localhost,127.0.0.1")
+TASK_RESULT_WRITEBACK_ENABLED = os.getenv("TASK_RESULT_WRITEBACK_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+TASK_PROVIDER_CHAT_ENABLED = os.getenv("TASK_PROVIDER_CHAT_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+TASK_PROVIDER_CHAT_MODEL = os.getenv("TASK_PROVIDER_CHAT_MODEL", "").strip()
+TASK_PROVIDER_CHAT_URL = os.getenv("TASK_PROVIDER_CHAT_URL", EMBEDDING_BASE_URL or "").strip()
+TASK_PROVIDER_CHAT_API_KEY = os.getenv("TASK_PROVIDER_CHAT_API_KEY", EMBEDDING_API_KEY or "").strip()
+TASK_ALLOWED_ACTIONS_ENV = os.getenv(
+    "TASK_ALLOWED_ACTIONS",
+    "memory_write,memory_search,messaging_command,http_callback,provider_chat",
+)
 SIDECAR_HEALTH_HISTORY_LIMIT = int(os.getenv("SIDECAR_HEALTH_HISTORY_LIMIT", "200"))
 MEMMCP_ENV = os.getenv("MEMMCP_ENV", "development").strip().lower()
 ORCH_SECURITY_STRICT = os.getenv("ORCH_SECURITY_STRICT", "true").lower() in ("1", "true", "yes", "on")
@@ -432,6 +466,25 @@ SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "").strip()
 SLACK_DEFAULT_PROJECT = os.getenv("SLACK_DEFAULT_PROJECT", MESSAGING_DEFAULT_PROJECT).strip()
 SLACK_TOPIC_ROOT = os.getenv("SLACK_TOPIC_ROOT", "channels/slack").strip() or "channels/slack"
 OPENCLAW_DEFAULT_PROJECT = os.getenv("OPENCLAW_DEFAULT_PROJECT", MESSAGING_DEFAULT_PROJECT).strip()
+IRONCLAW_DEFAULT_PROJECT = os.getenv(
+    "IRONCLAW_DEFAULT_PROJECT",
+    OPENCLAW_DEFAULT_PROJECT or MESSAGING_DEFAULT_PROJECT,
+).strip()
+IRONCLAW_INTEGRATION_ENABLED = os.getenv("IRONCLAW_INTEGRATION_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+MESSAGING_OPENCLAW_STRICT_SECURITY = os.getenv("MESSAGING_OPENCLAW_STRICT_SECURITY", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+SECRETS_STORAGE_MODE = os.getenv("SECRETS_STORAGE_MODE", "redact").strip().lower()
+if SECRETS_STORAGE_MODE not in {"allow", "redact", "block"}:
+    SECRETS_STORAGE_MODE = "redact"
 ORCH_MISSING_FILE_AUTOSTUB = os.getenv("ORCH_MISSING_FILE_AUTOSTUB", "true").lower() in (
     "1",
     "true",
@@ -499,11 +552,41 @@ def _normalize_lower_csv(raw: str | None) -> list[str]:
     return [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
 
 
+def _normalize_task_action_csv(raw: str | None) -> tuple[str, ...]:
+    allowed_defaults = ("memory_write", "memory_search", "messaging_command", "http_callback", "provider_chat")
+    requested = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for action in requested:
+        if action in seen:
+            continue
+        seen.add(action)
+        normalized.append(action)
+    if not normalized:
+        return allowed_defaults
+    return tuple(normalized)
+
+
+def _normalize_host_allowlist(raw: str | None) -> tuple[str, ...]:
+    hosts = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for host in hosts:
+        if host in seen:
+            continue
+        seen.add(host)
+        unique.append(host)
+    return tuple(unique)
+
+
 FANOUT_OUTBOX_STALE_TARGETS = _normalize_fanout_target_csv(FANOUT_OUTBOX_STALE_TARGETS_ENV)
 FANOUT_BACKPRESSURE_TARGETS = _normalize_fanout_target_csv(FANOUT_BACKPRESSURE_TARGETS_ENV)
 if not FANOUT_BACKPRESSURE_TARGETS:
     FANOUT_BACKPRESSURE_TARGETS = [FANOUT_TARGET_LETTA, FANOUT_TARGET_LANGFUSE]
 FANOUT_COALESCE_TARGETS = _normalize_fanout_target_csv(FANOUT_COALESCE_TARGETS_ENV)
+TASK_ALLOWED_ACTIONS = _normalize_task_action_csv(TASK_ALLOWED_ACTIONS_ENV)
+TASK_CALLBACK_ALLOWED_HOSTS = _normalize_host_allowlist(TASK_CALLBACK_ALLOWED_HOSTS_ENV)
+
 if not FANOUT_COALESCE_TARGETS:
     FANOUT_COALESCE_TARGETS = [FANOUT_TARGET_QDRANT, FANOUT_TARGET_MINDSDB, FANOUT_TARGET_LETTA, FANOUT_TARGET_LANGFUSE]
 LOW_VALUE_FILE_SUFFIXES = _normalize_lower_csv(LOW_VALUE_FILE_SUFFIXES_ENV)
@@ -2537,8 +2620,23 @@ async def init_mcp_client() -> None:
 @app.on_event("shutdown")
 async def close_mcp_client() -> None:
     global MCP_CLIENT, MCP_SESSION_ID, MONGO_CLIENT, FANOUT_OUTBOX_MONGO_CLIENT, outbox_gc_task, hot_memory_rollup_task
-    global sink_retention_task
+    global sink_retention_task, task_scheduler_task, agent_task_worker_tasks
     global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
+    if task_scheduler_task is not None:
+        task_scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task_scheduler_task
+        task_scheduler_task = None
+    if agent_task_worker_tasks:
+        for worker_task in list(agent_task_worker_tasks):
+            worker_task.cancel()
+        for worker_task in list(agent_task_worker_tasks):
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+        agent_task_worker_tasks.clear()
+    task_runtime_health["workersRunning"] = 0
+    task_runtime_health["schedulerRunning"] = False
+    task_runtime_health["lastSchedulerTickAt"] = _task_iso_now()
     if hot_memory_rollup_task is not None:
         hot_memory_rollup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -2629,6 +2727,22 @@ topic_tree: Dict[str, Any] = {}
 topic_tree_lock = asyncio.Lock()
 task_db_lock = asyncio.Lock()
 task_db_ready = False
+task_scheduler_task: asyncio.Task[Any] | None = None
+agent_task_worker_tasks: list[asyncio.Task[Any]] = []
+task_runtime_health: dict[str, Any] = {
+    "schedulerEnabled": TASK_SCHEDULER_ENABLED,
+    "schedulerRunning": False,
+    "internalWorkersEnabled": TASK_INTERNAL_WORKERS_ENABLED,
+    "workersConfigured": AGENT_TASK_WORKERS,
+    "workersRunning": 0,
+    "lastSchedulerTickAt": None,
+    "lastSchedulerRecovered": 0,
+    "lastWorkerError": None,
+    "claimed": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "retried": 0,
+}
 sidecar_health_state: Dict[str, Any] = {
     "updatedAt": None,
     "healthy": None,
@@ -3160,6 +3274,14 @@ def _init_task_db() -> None:
                 agent TEXT,
                 priority INTEGER DEFAULT 0,
                 payload TEXT,
+                run_after TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 3,
+                lease_expires_at TEXT,
+                claimed_by TEXT,
+                last_error TEXT,
+                result TEXT,
+                completed_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -3174,6 +3296,28 @@ def _init_task_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN risk_level TEXT")
         if "action_type" not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN action_type TEXT")
+        if "run_after" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN run_after TEXT")
+        if "attempts" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+        if "max_attempts" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3")
+        if "lease_expires_at" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN lease_expires_at TEXT")
+        if "claimed_by" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN claimed_by TEXT")
+        if "last_error" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN last_error TEXT")
+        if "result" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN result TEXT")
+        if "completed_at" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks(status, run_after, priority, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_running_lease ON tasks(status, lease_expires_at)"
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS task_events (
@@ -5491,32 +5635,207 @@ def build_preference_context(records: list[dict[str, Any]]) -> dict[str, Any]:
         "updated_at": datetime.utcnow().isoformat() + "Z",
     }
 
+
+TASK_TERMINAL_STATUSES = {"succeeded", "failed", "canceled"}
+TASK_MUTABLE_STATUSES = {"queued", "approved", "running", "blocked"}
+
+
+def _task_parse_datetime(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return datetime.utcfromtimestamp(float(raw))
+    candidate = raw
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _task_iso_now() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _task_iso_after(seconds: float) -> str:
+    when = datetime.utcnow() + timedelta(seconds=max(0.0, seconds))
+    return when.isoformat() + "Z"
+
+
+def _safe_json_load(value: str | None) -> Any:
+    if value is None:
+        return None
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+
+def _task_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    payload = _safe_json_load(row["payload"] if "payload" in row.keys() else None)
+    result = _safe_json_load(row["result"] if "result" in row.keys() else None)
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "status": row["status"],
+        "project": row["project"],
+        "agent": row["agent"],
+        "priority": row["priority"],
+        "payload": payload if isinstance(payload, dict) else payload,
+        "approval_required": bool(row["approval_required"]) if "approval_required" in row.keys() else False,
+        "approved": bool(row["approved"]) if "approved" in row.keys() else False,
+        "risk_level": row["risk_level"] if "risk_level" in row.keys() else None,
+        "action_type": row["action_type"] if "action_type" in row.keys() else None,
+        "run_after": row["run_after"] if "run_after" in row.keys() else None,
+        "attempts": int(row["attempts"]) if "attempts" in row.keys() and row["attempts"] is not None else 0,
+        "max_attempts": int(row["max_attempts"]) if "max_attempts" in row.keys() and row["max_attempts"] is not None else TASK_DEFAULT_MAX_ATTEMPTS,
+        "lease_expires_at": row["lease_expires_at"] if "lease_expires_at" in row.keys() else None,
+        "claimed_by": row["claimed_by"] if "claimed_by" in row.keys() else None,
+        "last_error": row["last_error"] if "last_error" in row.keys() else None,
+        "result": result,
+        "completed_at": row["completed_at"] if "completed_at" in row.keys() else None,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _normalize_task_action(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    action = str(raw).strip().lower()
+    if not action:
+        return None
+    alias = {
+        "write": "memory_write",
+        "remember": "memory_write",
+        "search": "memory_search",
+        "recall": "memory_search",
+        "message": "messaging_command",
+        "messaging": "messaging_command",
+        "callback": "http_callback",
+        "http": "http_callback",
+        "provider": "provider_chat",
+    }
+    return alias.get(action, action)
+
+
+def _task_validate_callback_url(url: str) -> None:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise HTTPException(422, "http_callback requires http/https URL")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise HTTPException(422, "http_callback URL host is required")
+    if TASK_CALLBACK_ALLOWED_HOSTS:
+        if host not in TASK_CALLBACK_ALLOWED_HOSTS:
+            raise HTTPException(422, f"http_callback host '{host}' not allowlisted")
+
+
+def _validate_task_payload_contract(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "task payload must be an object")
+    normalized = dict(payload)
+    action = _normalize_task_action(
+        normalized.get("action")
+        or normalized.get("action_type")
+        or _detect_action_type(normalized)
+    )
+    if not action:
+        raise HTTPException(422, "task payload requires action")
+    if action not in TASK_ALLOWED_ACTIONS:
+        raise HTTPException(422, f"task action '{action}' is not allowed")
+    normalized["action"] = action
+    normalized["action_type"] = action
+
+    if action == "memory_write":
+        project_name = str(normalized.get("projectName") or normalized.get("project") or "").strip()
+        file_name = str(normalized.get("fileName") or normalized.get("file") or "").strip()
+        content = str(normalized.get("content") or "").strip()
+        if not project_name or not file_name or not content:
+            raise HTTPException(422, "memory_write requires projectName, fileName, and content")
+        normalized["projectName"] = project_name
+        normalized["fileName"] = file_name
+        normalized["content"] = content
+    elif action == "memory_search":
+        query = str(normalized.get("query") or "").strip()
+        if not query:
+            raise HTTPException(422, "memory_search requires query")
+        normalized["query"] = query
+    elif action == "messaging_command":
+        text = str(normalized.get("text") or "").strip()
+        if not text:
+            raise HTTPException(422, "messaging_command requires text")
+        normalized["text"] = text
+    elif action == "http_callback":
+        callback_url = str(normalized.get("url") or "").strip()
+        if not callback_url:
+            raise HTTPException(422, "http_callback requires url")
+        _task_validate_callback_url(callback_url)
+        normalized["url"] = callback_url
+        method = str(normalized.get("method") or "POST").strip().upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            raise HTTPException(422, f"http_callback method '{method}' not allowed")
+        normalized["method"] = method
+    elif action == "provider_chat":
+        has_prompt = bool(str(normalized.get("prompt") or "").strip())
+        has_messages = isinstance(normalized.get("messages"), list) and bool(normalized.get("messages"))
+        if not has_prompt and not has_messages:
+            raise HTTPException(422, "provider_chat requires prompt or messages")
+    return normalized
+
+
+def _task_retry_delay_secs(attempt: int) -> float:
+    exp = max(0, int(attempt) - 1)
+    delay = TASK_RETRY_BASE_SECS * (2**exp)
+    return min(delay, TASK_RETRY_MAX_SECS)
+
 async def create_task_record(
     title: str,
     project: str | None,
     agent: str | None,
     priority: int,
     payload: dict[str, Any] | None,
+    *,
+    run_after: str | None = None,
+    max_attempts: int | None = None,
 ) -> dict[str, Any]:
     task_id = uuid.uuid4().hex
-    timestamp = datetime.utcnow().isoformat() + "Z"
-    payload_json = _task_payload_json(payload)
-    risk_level = _detect_risk_level(payload)
-    action_type = _detect_action_type(payload)
-    approval_required = bool(payload.get("approval_required")) if payload else False
+    timestamp = _task_iso_now()
+    normalized_payload = _validate_task_payload_contract(payload)
+    payload_json = _task_payload_json(normalized_payload)
+    risk_level = _detect_risk_level(normalized_payload)
+    action_type = _normalize_task_action(
+        (normalized_payload or {}).get("action") if isinstance(normalized_payload, dict) else None
+    ) or _detect_action_type(normalized_payload)
+    approval_required = bool((normalized_payload or {}).get("approval_required")) if normalized_payload else False
     if not approval_required:
-        approval_required = _requires_approval(payload)
-    approved = bool(payload.get("approved") or payload.get("approval")) if payload else False
+        approval_required = _requires_approval(normalized_payload)
+    approved = bool((normalized_payload or {}).get("approved") or (normalized_payload or {}).get("approval")) if normalized_payload else False
+    due_dt = _task_parse_datetime(run_after) if run_after else None
+    if run_after and due_dt is None:
+        raise HTTPException(422, "run_after must be ISO-8601 timestamp")
+    due_at = due_dt.isoformat() + "Z" if due_dt else timestamp
+    capped_max_attempts = max(1, min(int(max_attempts or TASK_DEFAULT_MAX_ATTEMPTS), 50))
 
     def _create(conn: sqlite3.Connection):
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             INSERT INTO tasks (
-                id, title, status, project, agent, priority, payload, created_at, updated_at,
+                id, title, status, project, agent, priority, payload, run_after, attempts, max_attempts,
+                lease_expires_at, claimed_by, last_error, result, completed_at, created_at, updated_at,
                 approval_required, approved, risk_level, action_type
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -5526,6 +5845,14 @@ async def create_task_record(
                 agent,
                 priority,
                 payload_json,
+                due_at,
+                0,
+                capped_max_attempts,
+                None,
+                None,
+                None,
+                None,
+                None,
                 timestamp,
                 timestamp,
                 int(approval_required),
@@ -5534,29 +5861,17 @@ async def create_task_record(
                 action_type,
             ),
         )
+        event_message = f"Task created (due {due_at})"
         conn.execute(
             """
             INSERT INTO task_events (task_id, timestamp, status, message, metadata)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (task_id, timestamp, "queued", "Task created", None),
+            (task_id, timestamp, "queued", event_message, None),
         )
         conn.commit()
-        return {
-            "id": task_id,
-            "title": title,
-            "status": "queued",
-            "project": project,
-            "agent": agent,
-            "priority": priority,
-            "payload": payload,
-            "approval_required": approval_required,
-            "approved": approved,
-            "risk_level": risk_level,
-            "action_type": action_type,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        }
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return _task_row_to_dict(row)
 
     return await _task_db_exec(_create)
 
@@ -5564,6 +5879,7 @@ async def create_task_record(
 async def list_task_records(
     status: str | None = None,
     project: str | None = None,
+    agent: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     limit = max(1, min(limit, 200))
@@ -5573,37 +5889,24 @@ async def list_task_records(
         params: list[Any] = []
         if status:
             clauses.append("status = ?")
-            params.append(status)
+            params.append(str(status).lower())
         if project:
             clauses.append("project = ?")
             params.append(project)
+        if agent:
+            normalized_agent = str(agent).strip().lower()
+            if normalized_agent == "unassigned":
+                clauses.append("(agent IS NULL OR trim(agent) = '')")
+            else:
+                clauses.append("lower(trim(coalesce(agent, ''))) = ?")
+                params.append(normalized_agent)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         rows = conn.execute(
-            f"SELECT * FROM tasks {where} ORDER BY priority DESC, created_at DESC LIMIT ?",
+            f"SELECT * FROM tasks {where} ORDER BY priority DESC, run_after ASC, created_at DESC LIMIT ?",
             params,
         ).fetchall()
-        items: list[dict[str, Any]] = []
-        for row in rows:
-            payload = row["payload"]
-            items.append(
-                {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "status": row["status"],
-                    "project": row["project"],
-                    "agent": row["agent"],
-                    "priority": row["priority"],
-                    "payload": json.loads(payload) if payload else None,
-                    "approval_required": bool(row["approval_required"]) if "approval_required" in row.keys() else False,
-                    "approved": bool(row["approved"]) if "approved" in row.keys() else False,
-                    "risk_level": row["risk_level"] if "risk_level" in row.keys() else None,
-                    "action_type": row["action_type"] if "action_type" in row.keys() else None,
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                }
-            )
-        return items
+        return [_task_row_to_dict(row) for row in rows]
 
     return await _task_db_exec(_list)
 
@@ -5613,22 +5916,7 @@ async def get_task_record(task_id: str) -> dict[str, Any] | None:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             return None
-        payload = row["payload"]
-        return {
-            "id": row["id"],
-            "title": row["title"],
-            "status": row["status"],
-            "project": row["project"],
-            "agent": row["agent"],
-            "priority": row["priority"],
-            "payload": json.loads(payload) if payload else None,
-            "approval_required": bool(row["approval_required"]) if "approval_required" in row.keys() else False,
-            "approved": bool(row["approved"]) if "approved" in row.keys() else False,
-            "risk_level": row["risk_level"] if "risk_level" in row.keys() else None,
-            "action_type": row["action_type"] if "action_type" in row.keys() else None,
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
+        return _task_row_to_dict(row)
 
     return await _task_db_exec(_get)
 
@@ -5656,14 +5944,154 @@ async def get_task_events(task_id: str) -> list[dict[str, Any]]:
     return await _task_db_exec(_events)
 
 
+async def list_deadletter_task_records(
+    project: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 500))
+
+    def _list(conn: sqlite3.Connection):
+        params: list[Any] = []
+        where = "WHERE status = 'failed'"
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+        params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM tasks {where} ORDER BY updated_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [_task_row_to_dict(row) for row in rows]
+
+    return await _task_db_exec(_list)
+
+
+async def replay_task_record(
+    task_id: str,
+    *,
+    actor: str | None = None,
+    note: str | None = None,
+    reset_attempts: bool = True,
+) -> dict[str, Any] | None:
+    now = _task_iso_now()
+
+    def _replay(conn: sqlite3.Connection):
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute("BEGIN IMMEDIATE")
+        attempts = 0 if reset_attempts else int(row["attempts"] or 0)
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'queued',
+                run_after = ?,
+                lease_expires_at = NULL,
+                claimed_by = NULL,
+                completed_at = NULL,
+                attempts = ?,
+                last_error = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, attempts, now, task_id),
+        )
+        event_metadata = {"actor": actor, "note": note, "reset_attempts": bool(reset_attempts)}
+        conn.execute(
+            """
+            INSERT INTO task_events (task_id, timestamp, status, message, metadata)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                now,
+                "queued",
+                "Task replayed to queue",
+                json.dumps(event_metadata),
+            ),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return _task_row_to_dict(updated)
+
+    return await _task_db_exec(_replay)
+
+
+async def get_task_runtime_snapshot() -> dict[str, Any]:
+    now = _task_iso_now()
+
+    def _snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+        by_status_rows = conn.execute(
+            "SELECT status, COUNT(*) AS total FROM tasks GROUP BY status"
+        ).fetchall()
+        by_status = {
+            str(row["status"]): int(row["total"])
+            for row in by_status_rows
+            if row["status"] is not None
+        }
+        ready_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM tasks
+            WHERE status IN ('queued', 'approved')
+              AND (approval_required = 0 OR approved = 1)
+              AND attempts < max_attempts
+              AND (run_after IS NULL OR run_after <= ?)
+            """,
+            (now,),
+        ).fetchone()
+        oldest_row = conn.execute(
+            """
+            SELECT run_after
+            FROM tasks
+            WHERE status IN ('queued', 'approved')
+            ORDER BY run_after ASC, created_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        running_row = conn.execute(
+            "SELECT COUNT(*) AS total FROM tasks WHERE status = 'running'"
+        ).fetchone()
+        deadletter_row = conn.execute(
+            "SELECT COUNT(*) AS total FROM tasks WHERE status = 'failed'"
+        ).fetchone()
+        return {
+            "queueReady": int((ready_row["total"] if ready_row else 0) or 0),
+            "running": int((running_row["total"] if running_row else 0) or 0),
+            "deadletter": int((deadletter_row["total"] if deadletter_row else 0) or 0),
+            "oldestPendingRunAfter": oldest_row["run_after"] if oldest_row else None,
+            "byStatus": by_status,
+        }
+
+    snapshot = await _task_db_exec(_snapshot)
+    return {
+        **task_runtime_health,
+        **snapshot,
+        "timestamp": now,
+    }
+
+
 async def update_task_status(
     task_id: str,
     status: str,
     message: str | None,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in TASK_TERMINAL_STATUSES.union(TASK_MUTABLE_STATUSES):
+        raise HTTPException(422, f"invalid task status '{status}'")
+    timestamp = _task_iso_now()
     metadata_json = _task_metadata_json(metadata)
+    terminal = normalized_status in TASK_TERMINAL_STATUSES
+    run_after_override = None
+    if isinstance(metadata, dict) and metadata.get("run_after"):
+        parsed = _task_parse_datetime(str(metadata.get("run_after")))
+        if parsed is not None:
+            run_after_override = parsed.isoformat() + "Z"
+    result_payload = None
+    if isinstance(metadata, dict):
+        result_payload = metadata.get("result") if "result" in metadata else metadata
+    result_json = json.dumps(result_payload) if result_payload is not None else None
 
     def _update(conn: sqlite3.Connection):
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -5671,35 +6099,40 @@ async def update_task_status(
             return None
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-            (status, timestamp, task_id),
+            """
+            UPDATE tasks
+            SET status = ?, updated_at = ?, run_after = ?, lease_expires_at = ?, claimed_by = ?,
+                completed_at = ?, last_error = ?, result = ?
+            WHERE id = ?
+            """,
+            (
+                normalized_status,
+                timestamp,
+                run_after_override if run_after_override is not None else (timestamp if normalized_status in {"queued", "approved"} else row["run_after"]),
+                None if terminal or normalized_status in {"queued", "approved", "blocked"} else row["lease_expires_at"],
+                None if terminal or normalized_status in {"queued", "approved", "blocked"} else row["claimed_by"],
+                timestamp if terminal else row["completed_at"],
+                (str(message or row["last_error"] or "")[:2000] if normalized_status == "failed" else row["last_error"]),
+                result_json if result_json is not None else row["result"],
+                task_id,
+            ),
         )
         conn.execute(
             """
             INSERT INTO task_events (task_id, timestamp, status, message, metadata)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (task_id, timestamp, status, message, metadata_json),
+            (task_id, timestamp, normalized_status, message, metadata_json),
         )
         conn.commit()
-        payload = row["payload"]
-        return {
-            "id": row["id"],
-            "title": row["title"],
-            "status": status,
-            "project": row["project"],
-            "agent": row["agent"],
-            "priority": row["priority"],
-            "payload": json.loads(payload) if payload else None,
-            "approval_required": bool(row["approval_required"]) if "approval_required" in row.keys() else False,
-            "approved": bool(row["approved"]) if "approved" in row.keys() else False,
-            "risk_level": row["risk_level"] if "risk_level" in row.keys() else None,
-            "action_type": row["action_type"] if "action_type" in row.keys() else None,
-            "created_at": row["created_at"],
-            "updated_at": timestamp,
-        }
+        updated = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return _task_row_to_dict(updated)
 
-    return await _task_db_exec(_update)
+    task = await _task_db_exec(_update)
+    if task and terminal and TASK_RESULT_WRITEBACK_ENABLED:
+        with contextlib.suppress(Exception):
+            await _record_task_outcome_memory(task, message=message, metadata=metadata)
+    return task
 
 
 async def approve_task_record(
@@ -5707,7 +6140,7 @@ async def approve_task_record(
     approver: str | None,
     note: str | None,
 ) -> dict[str, Any] | None:
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    timestamp = _task_iso_now()
 
     def _approve(conn: sqlite3.Connection):
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -5718,8 +6151,8 @@ async def approve_task_record(
         if status in ("blocked", "queued"):
             status = "approved"
         conn.execute(
-            "UPDATE tasks SET approved = 1, status = ?, updated_at = ? WHERE id = ?",
-            (status, timestamp, task_id),
+            "UPDATE tasks SET approved = 1, status = ?, updated_at = ?, run_after = COALESCE(run_after, ?) WHERE id = ?",
+            (status, timestamp, timestamp, task_id),
         )
         metadata = {"approver": approver, "note": note} if approver or note else None
         conn.execute(
@@ -5730,74 +6163,390 @@ async def approve_task_record(
             (task_id, timestamp, "approved", "Task approved", json.dumps(metadata) if metadata else None),
         )
         conn.commit()
-        payload = row["payload"]
-        return {
-            "id": row["id"],
-            "title": row["title"],
-            "status": status,
-            "project": row["project"],
-            "agent": row["agent"],
-            "priority": row["priority"],
-            "payload": json.loads(payload) if payload else None,
-            "approval_required": bool(row["approval_required"]) if "approval_required" in row.keys() else False,
-            "approved": True,
-            "risk_level": row["risk_level"] if "risk_level" in row.keys() else None,
-            "action_type": row["action_type"] if "action_type" in row.keys() else None,
-            "created_at": row["created_at"],
-            "updated_at": timestamp,
-        }
+        updated = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return _task_row_to_dict(updated)
 
     return await _task_db_exec(_approve)
 
 
+async def recover_expired_task_leases(limit: int = 100) -> int:
+    if limit <= 0:
+        return 0
+    now = _task_iso_now()
+
+    def _recover(conn: sqlite3.Connection) -> int:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            """
+            SELECT id FROM tasks
+            WHERE status = 'running'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at <= ?
+            ORDER BY lease_expires_at ASC
+            LIMIT ?
+            """,
+            (now, int(limit)),
+        ).fetchall()
+        recovered = 0
+        for row in rows:
+            task_id = row["id"]
+            conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'queued',
+                    run_after = ?,
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    updated_at = ?,
+                    last_error = COALESCE(last_error, 'lease expired; requeued')
+                WHERE id = ?
+                """,
+                (now, now, task_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO task_events (task_id, timestamp, status, message, metadata)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (task_id, now, "queued", "Lease expired; requeued by scheduler", None),
+            )
+            recovered += 1
+        conn.commit()
+        return recovered
+
+    return await _task_db_exec(_recover)
+
+
+async def requeue_task_for_retry(
+    task_id: str,
+    *,
+    error: str,
+    worker: str | None = None,
+) -> dict[str, Any] | None:
+    now = _task_iso_now()
+    error_text = str(error or "task execution failed")[:2000]
+
+    def _requeue(conn: sqlite3.Connection):
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return None
+        attempts = int(row["attempts"] or 0)
+        max_attempts = int(row["max_attempts"] or TASK_DEFAULT_MAX_ATTEMPTS)
+        terminal_failure = attempts >= max_attempts
+        conn.execute("BEGIN IMMEDIATE")
+        if terminal_failure:
+            next_status = "failed"
+            next_run_after = row["run_after"]
+            completed_at = now
+            message = f"Task failed permanently after {attempts}/{max_attempts} attempts"
+        else:
+            next_status = "queued"
+            delay_secs = _task_retry_delay_secs(attempts)
+            next_run_after = _task_iso_after(delay_secs)
+            completed_at = None
+            message = f"Task requeued after failure (attempt {attempts}/{max_attempts})"
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = ?, run_after = ?, lease_expires_at = NULL, claimed_by = NULL,
+                updated_at = ?, completed_at = ?, last_error = ?
+            WHERE id = ?
+            """,
+            (next_status, next_run_after, now, completed_at, error_text, task_id),
+        )
+        event_metadata = {"worker": worker, "error": error_text}
+        conn.execute(
+            """
+            INSERT INTO task_events (task_id, timestamp, status, message, metadata)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (task_id, now, next_status, message, json.dumps(event_metadata)),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return _task_row_to_dict(updated)
+
+    task = await _task_db_exec(_requeue)
+    if task and task.get("status") == "failed" and TASK_RESULT_WRITEBACK_ENABLED:
+        with contextlib.suppress(Exception):
+            await _record_task_outcome_memory(task, message="Task failed after retries", metadata={"error": error_text})
+    return task
+
+
 async def claim_next_task(worker: str | None) -> dict[str, Any] | None:
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    timestamp = _task_iso_now()
+    lease_expires = _task_iso_after(TASK_LEASE_SECS)
+    worker_name = str(worker or "external").strip() or "external"
+    worker_key = worker_name.lower()
+    worker_is_internal = worker_key.startswith("internal-worker")
+    await recover_expired_task_leases(limit=25)
 
     def _claim(conn: sqlite3.Connection):
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
             SELECT * FROM tasks
-            WHERE status IN ('queued', 'approved') AND (approval_required = 0 OR approved = 1)
-            ORDER BY priority DESC, created_at ASC
+            WHERE status IN ('queued', 'approved')
+              AND (approval_required = 0 OR approved = 1)
+              AND attempts < max_attempts
+              AND (run_after IS NULL OR run_after <= ?)
+              AND (
+                    agent IS NULL
+                    OR trim(agent) = ''
+                    OR lower(trim(agent)) = 'any'
+                    OR lower(trim(agent)) = ?
+                    OR (? = 1 AND lower(trim(agent)) = 'internal')
+                    OR (? = 0 AND lower(trim(agent)) = 'external')
+              )
+            ORDER BY priority DESC, run_after ASC, created_at ASC
             LIMIT 1
-            """
+            """,
+            (timestamp, worker_key, int(worker_is_internal), int(worker_is_internal)),
         ).fetchone()
         if not row:
             conn.commit()
             return None
         conn.execute(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-            ("running", timestamp, row["id"]),
+            """
+            UPDATE tasks
+            SET status = ?, updated_at = ?, lease_expires_at = ?, claimed_by = ?, attempts = attempts + 1
+            WHERE id = ?
+            """,
+            ("running", timestamp, lease_expires, worker_name, row["id"]),
         )
-        message = f"Claimed by {worker}" if worker else "Task claimed"
+        message = f"Claimed by {worker_name}"
         conn.execute(
             """
             INSERT INTO task_events (task_id, timestamp, status, message, metadata)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (row["id"], timestamp, "running", message, None),
+            (row["id"], timestamp, "running", message, json.dumps({"worker": worker_name})),
         )
         conn.commit()
-        payload = row["payload"]
-        return {
-            "id": row["id"],
-            "title": row["title"],
-            "status": "running",
-            "project": row["project"],
-            "agent": row["agent"],
-            "priority": row["priority"],
-            "payload": json.loads(payload) if payload else None,
-            "approval_required": bool(row["approval_required"]) if "approval_required" in row.keys() else False,
-            "approved": bool(row["approved"]) if "approved" in row.keys() else False,
-            "risk_level": row["risk_level"] if "risk_level" in row.keys() else None,
-            "action_type": row["action_type"] if "action_type" in row.keys() else None,
-            "created_at": row["created_at"],
-            "updated_at": timestamp,
-            "worker": worker,
-        }
+        updated = conn.execute("SELECT * FROM tasks WHERE id = ?", (row["id"],)).fetchone()
+        return _task_row_to_dict(updated)
 
     return await _task_db_exec(_claim)
+
+
+async def _execute_task_action(task: dict[str, Any], worker_name: str) -> dict[str, Any]:
+    payload = task.get("payload")
+    if not isinstance(payload, dict):
+        raise OrchestratorError("task payload missing")
+    action = _normalize_task_action(payload.get("action") or task.get("action_type"))
+    if not action:
+        raise OrchestratorError("task action missing")
+    if action not in TASK_ALLOWED_ACTIONS:
+        raise OrchestratorError(f"task action '{action}' is not allowed")
+
+    if action == "memory_write":
+        write_payload = MemoryWrite(
+            projectName=str(payload.get("projectName") or payload.get("project") or task.get("project") or "").strip(),
+            fileName=str(payload.get("fileName") or payload.get("file") or "").strip(),
+            content=str(payload.get("content") or ""),
+            topicPath=(str(payload.get("topic_path") or "").strip() or None),
+        )
+        result = await write_memory(write_payload, _synthetic_request("/agents/tasks/worker"))
+        return {"action": action, "result": result}
+
+    if action == "memory_search":
+        search_payload = MemorySearch(
+            query=str(payload.get("query") or "").strip(),
+            limit=max(1, min(int(payload.get("limit") or 10), 50)),
+            project=str(payload.get("project") or task.get("project") or "").strip() or None,
+            topic_path=str(payload.get("topic_path") or "").strip() or None,
+            fetch_content=bool(payload.get("fetch_content", False)),
+            include_retrieval_debug=bool(payload.get("include_retrieval_debug", False)),
+            user_id=str(payload.get("user_id") or "").strip() or None,
+            include_preferences=bool(payload.get("include_preferences", True)),
+        )
+        result = await search_memory(search_payload)
+        return {"action": action, "result": result}
+
+    if action == "messaging_command":
+        channel = str(payload.get("channel") or "custom").strip() or "custom"
+        source_id = str(payload.get("source_id") or worker_name).strip() or worker_name
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            raise OrchestratorError("messaging_command text is required")
+        parsed = _parse_messaging_command(text, require_prefix=bool(payload.get("require_prefix", False)))
+        if parsed is None:
+            parsed = {"action": "help", "content": "", "directives": {}, "raw": text}
+        result = await _execute_messaging_command(
+            parsed,
+            channel=channel,
+            source_id=source_id,
+            default_project=str(payload.get("project") or task.get("project") or MESSAGING_DEFAULT_PROJECT),
+            topic_root=str(payload.get("topic_path") or payload.get("topic_root") or f"channels/{channel}"),
+            project_override=str(payload.get("project") or "").strip() or None,
+            topic_override=str(payload.get("topic_path") or "").strip() or None,
+            user_id=str(payload.get("user_id") or "").strip() or None,
+        )
+        return {"action": action, "result": result}
+
+    if action == "http_callback":
+        callback_url = str(payload.get("url") or "").strip()
+        _task_validate_callback_url(callback_url)
+        method = str(payload.get("method") or "POST").strip().upper()
+        body = payload.get("body")
+        headers_raw = payload.get("headers")
+        headers = {str(k): str(v) for k, v in headers_raw.items()} if isinstance(headers_raw, dict) else {}
+        async with httpx.AsyncClient(timeout=TASK_CALLBACK_TIMEOUT_SECS) as client:
+            response = await client.request(method, callback_url, json=body, headers=headers)
+        return {
+            "action": action,
+            "status_code": response.status_code,
+            "response_text": response.text[:600],
+        }
+
+    if action == "provider_chat":
+        if not TASK_PROVIDER_CHAT_ENABLED:
+            raise OrchestratorError("provider_chat action is disabled")
+        endpoint = str(payload.get("url") or TASK_PROVIDER_CHAT_URL).strip()
+        if not endpoint:
+            raise OrchestratorError("provider_chat endpoint is not configured")
+        if endpoint.endswith("/"):
+            endpoint = endpoint[:-1]
+        if endpoint.endswith("/v1"):
+            endpoint = f"{endpoint}/chat/completions"
+        elif not endpoint.endswith("/chat/completions"):
+            endpoint = f"{endpoint}/v1/chat/completions"
+        model = str(payload.get("model") or TASK_PROVIDER_CHAT_MODEL or LETTA_AGENT_MODEL or "").strip()
+        if not model:
+            raise OrchestratorError("provider_chat model is not configured")
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            prompt = str(payload.get("prompt") or "").strip()
+            if not prompt:
+                raise OrchestratorError("provider_chat requires prompt or messages")
+            messages = [{"role": "user", "content": prompt}]
+        body = {
+            "model": model,
+            "messages": messages,
+            "temperature": float(payload.get("temperature", 0.2)),
+        }
+        headers = {"content-type": "application/json"}
+        if TASK_PROVIDER_CHAT_API_KEY:
+            headers["authorization"] = f"Bearer {TASK_PROVIDER_CHAT_API_KEY}"
+        async with httpx.AsyncClient(timeout=max(10.0, TASK_CALLBACK_TIMEOUT_SECS)) as client:
+            response = await client.post(endpoint, json=body, headers=headers)
+        if response.status_code >= 400:
+            raise OrchestratorError(f"provider_chat failed: status={response.status_code} body={response.text[:240]}")
+        data = response.json() if response.content else {}
+        choices = data.get("choices") if isinstance(data, dict) else None
+        content = None
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                message = first.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content")
+        return {
+            "action": action,
+            "model": model,
+            "content": str(content or "")[:1200],
+            "raw": data,
+        }
+
+    raise OrchestratorError(f"unsupported task action '{action}'")
+
+
+async def _record_task_outcome_memory(
+    task: dict[str, Any],
+    *,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if not TASK_RESULT_WRITEBACK_ENABLED:
+        return
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    project = str(task.get("project") or payload.get("projectName") or payload.get("project") or "").strip()
+    if not project:
+        return
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return
+    action = str(task.get("action_type") or payload.get("action") or "task").strip().lower()
+    topic_path = normalize_topic_path(str(payload.get("topic_path") or f"tasks/{action}"))
+    file_name = normalize_memory_path(f"tasks/{task_id}__latest.json")
+    outcome_payload = {
+        "task_id": task_id,
+        "title": task.get("title"),
+        "status": task.get("status"),
+        "project": project,
+        "action": action,
+        "attempts": task.get("attempts"),
+        "max_attempts": task.get("max_attempts"),
+        "message": message,
+        "metadata": metadata,
+        "result": task.get("result"),
+        "updated_at": task.get("updated_at") or _task_iso_now(),
+    }
+    write_payload = MemoryWrite(
+        projectName=project,
+        fileName=file_name,
+        content=json.dumps(outcome_payload, ensure_ascii=True, sort_keys=True),
+        topicPath=topic_path,
+    )
+    await write_memory(write_payload, _synthetic_request("/agents/tasks/outcome"))
+
+
+async def _agent_task_worker(worker_index: int) -> None:
+    worker_name = f"internal-worker-{worker_index}"
+    task_runtime_health["workersRunning"] = int(task_runtime_health.get("workersRunning") or 0) + 1
+    try:
+        while True:
+            task: dict[str, Any] | None = None
+            try:
+                task = await claim_next_task(worker_name)
+                if not task:
+                    await asyncio.sleep(max(0.2, TASK_WORKER_POLL_SECS))
+                    continue
+                task_runtime_health["claimed"] = int(task_runtime_health.get("claimed") or 0) + 1
+                result = await _execute_task_action(task, worker_name=worker_name)
+                await update_task_status(
+                    str(task["id"]),
+                    "succeeded",
+                    "Task executed successfully",
+                    {"worker": worker_name, "result": result},
+                )
+                task_runtime_health["succeeded"] = int(task_runtime_health.get("succeeded") or 0) + 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                task_runtime_health["lastWorkerError"] = str(exc)[:300]
+                if task and task.get("id"):
+                    retried = await requeue_task_for_retry(
+                        str(task["id"]),
+                        error=str(exc),
+                        worker=worker_name,
+                    )
+                    if retried and retried.get("status") == "queued":
+                        task_runtime_health["retried"] = int(task_runtime_health.get("retried") or 0) + 1
+                    else:
+                        task_runtime_health["failed"] = int(task_runtime_health.get("failed") or 0) + 1
+                else:
+                    await asyncio.sleep(max(0.3, TASK_WORKER_POLL_SECS))
+    finally:
+        task_runtime_health["workersRunning"] = max(0, int(task_runtime_health.get("workersRunning") or 0) - 1)
+
+
+async def _task_scheduler_worker() -> None:
+    task_runtime_health["schedulerRunning"] = True
+    try:
+        while True:
+            try:
+                recovered = await recover_expired_task_leases(limit=200)
+                task_runtime_health["lastSchedulerTickAt"] = _task_iso_now()
+                task_runtime_health["lastSchedulerRecovered"] = recovered
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                task_runtime_health["lastWorkerError"] = str(exc)[:300]
+                logger.warning("Task scheduler loop failed: %s", exc)
+            await asyncio.sleep(max(0.5, TASK_WORKER_POLL_SECS))
+    finally:
+        task_runtime_health["schedulerRunning"] = False
 
 
 _load_override_history()
@@ -5807,9 +6556,18 @@ _load_topic_tree()
 
 @app.on_event("startup")
 async def orchestrator_startup() -> None:
+    global task_scheduler_task, agent_task_worker_tasks
     validate_orchestrator_security_posture()
     asyncio.create_task(_signal_refresh_loop())
     asyncio.create_task(_override_refresh_loop())
+    await ensure_task_db()
+    if TASK_SCHEDULER_ENABLED and task_scheduler_task is None:
+        task_scheduler_task = asyncio.create_task(_task_scheduler_worker(), name="task-scheduler")
+    if TASK_INTERNAL_WORKERS_ENABLED and AGENT_TASK_WORKERS > 0 and not agent_task_worker_tasks:
+        for idx in range(AGENT_TASK_WORKERS):
+            agent_task_worker_tasks.append(
+                asyncio.create_task(_agent_task_worker(idx), name=f"task-worker-{idx}")
+            )
 
 
 class MemoryWrite(BaseModel):
@@ -5830,6 +6588,8 @@ class AgentTaskCreate(BaseModel):
     approval_required: bool | None = Field(None, description="Force approval gate")
     approved: bool | None = Field(None, description="Mark approved at creation")
     topic_path: str | None = Field(None, description="Topic path for task feedback")
+    run_after: str | None = Field(None, description="Optional ISO-8601 schedule time")
+    max_attempts: int | None = Field(None, ge=1, le=50, description="Max worker attempts before deadletter")
 
 
 class AgentTaskStatus(BaseModel):
@@ -5841,6 +6601,12 @@ class AgentTaskStatus(BaseModel):
 class AgentTaskApproval(BaseModel):
     approver: str | None = Field(None, description="Who approved the task")
     note: str | None = Field(None, description="Optional approval note")
+
+
+class AgentTaskReplay(BaseModel):
+    actor: str | None = Field(None, description="Who requested replay")
+    note: str | None = Field(None, description="Optional replay note")
+    reset_attempts: bool = Field(True, description="Reset attempts to zero before replay")
 
 
 class TrajectoryIngest(BaseModel):
@@ -8130,6 +8896,8 @@ async def create_agent_task(payload: AgentTaskCreate):
         payload.agent,
         payload.priority,
         task_payload or None,
+        run_after=payload.run_after,
+        max_attempts=payload.max_attempts,
     )
     return {"task": task}
 
@@ -8138,9 +8906,10 @@ async def create_agent_task(payload: AgentTaskCreate):
 async def list_agent_tasks(
     status: str | None = None,
     project: str | None = None,
+    agent: str | None = None,
     limit: int = 50,
 ):
-    tasks = await list_task_records(status=status, project=project, limit=limit)
+    tasks = await list_task_records(status=status, project=project, agent=agent, limit=limit)
     return {"tasks": tasks}
 
 
@@ -8182,6 +8951,36 @@ async def approve_agent_task(task_id: str, payload: AgentTaskApproval):
     return {"task": task}
 
 
+@app.post("/agents/tasks/{task_id}/replay")
+async def replay_agent_task(task_id: str, payload: AgentTaskReplay):
+    task = await replay_task_record(
+        task_id,
+        actor=payload.actor,
+        note=payload.note,
+        reset_attempts=payload.reset_attempts,
+    )
+    if not task:
+        raise HTTPException(404, "task not found")
+    return {"task": task}
+
+
+@app.post("/agents/tasks/recover-leases")
+async def recover_agent_task_leases(limit: int = 200):
+    recovered = await recover_expired_task_leases(limit=max(1, min(limit, 1000)))
+    return {"ok": True, "recovered": recovered}
+
+
+@app.get("/agents/tasks/deadletter")
+async def list_deadletter_tasks(project: str | None = None, limit: int = 100):
+    tasks = await list_deadletter_task_records(project=project, limit=limit)
+    return {"tasks": tasks}
+
+
+@app.get("/agents/tasks/runtime")
+async def agent_task_runtime():
+    return {"runtime": await get_task_runtime_snapshot()}
+
+
 @app.get("/signals/latest")
 async def get_latest_signals(limit: int = 50):
     limit = max(1, min(limit, SIGNAL_HISTORY_LIMIT))
@@ -8206,6 +9005,21 @@ async def refresh_overrides():
     return {"ok": True, "cached": count}
 
 
+def _prepare_content_for_storage(content: str) -> tuple[str, str | None]:
+    payload = str(content or "")
+    mode = SECRETS_STORAGE_MODE
+    if mode == "allow":
+        return payload, None
+    if not _contains_sensitive_value(payload):
+        return payload, None
+    if mode == "block":
+        raise HTTPException(422, "potential secret detected; storage blocked by SECRETS_STORAGE_MODE=block")
+    redacted = _redact_sensitive_values(payload)
+    if redacted != payload:
+        return redacted, "potential secrets were redacted before storage (SECRETS_STORAGE_MODE=redact)"
+    return payload, None
+
+
 @app.post("/memory/write")
 async def write_memory(payload: MemoryWrite, request: Request):
     global memory_write_queue_dropped
@@ -8213,14 +9027,15 @@ async def write_memory(payload: MemoryWrite, request: Request):
     file_name = normalize_memory_path(payload.fileName)
     if not file_name:
         raise HTTPException(400, "fileName is required")
+    content_to_store, storage_policy_warning = _prepare_content_for_storage(payload.content)
     request_id = getattr(request.state, "request_id", None)
     hot_file = is_hot_memory_file(file_name)
-    content_hash = memory_content_sha256(payload.content)
+    content_hash = memory_content_sha256(content_to_store)
     hot_rollup_mode = hot_file and HOT_MEMORY_ROLLUP_ENABLED
 
     topic_path = derive_topic_path(file_name, payload.topicPath)
     topic_tags = topic_tags_for_path(topic_path)
-    summary = await summarize_content(payload.content)
+    summary = await summarize_content(content_to_store)
 
     async def _seed_mongo_retry(
         event_id: str,
@@ -8256,13 +9071,15 @@ async def write_memory(payload: MemoryWrite, request: Request):
             event_id=event_id,
             project=payload.projectName,
             file_name=file_name,
-            content=payload.content,
+            content=content_to_store,
             summary=summary,
             topic_path=topic_path,
             topic_tags=topic_tags,
             request_id=request_id,
         )
         warnings = ["latest snapshot unchanged (hash match); memory-bank and fanout writes suppressed"]
+        if storage_policy_warning:
+            warnings.append(storage_policy_warning)
         fanout_status: dict[str, str] = {
             "memory_bank": "skipped",
             FANOUT_TARGET_MONGO_RAW: "pending",
@@ -8290,7 +9107,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "event_id": event_id,
                 "project": payload.projectName,
                 "file": file_name,
-                "bytes": len(payload.content),
+                "bytes": len(content_to_store),
                 "hash": content_hash[:16],
             },
         )
@@ -8303,12 +9120,14 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "latest_hash_unchanged": True,
         }
 
-    dedupe_key = build_memory_write_dedupe_key(payload.projectName, file_name, payload.content)
+    dedupe_key = build_memory_write_dedupe_key(payload.projectName, file_name, content_to_store)
     if await should_skip_duplicate_memory_write(dedupe_key):
-        skipped_event_id = build_event_id(payload.projectName, file_name, payload.content)
+        skipped_event_id = build_event_id(payload.projectName, file_name, content_to_store)
         warnings = [
             f"duplicate memory.write suppressed within {int(max(0.0, MEMORY_WRITE_DEDUP_WINDOW_SECS))} seconds"
         ]
+        if storage_policy_warning:
+            warnings.append(storage_policy_warning)
         _json_log(
             "memory.write.deduped",
             {
@@ -8316,7 +9135,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "event_id": skipped_event_id,
                 "project": payload.projectName,
                 "file": file_name,
-                "bytes": len(payload.content),
+                "bytes": len(content_to_store),
             },
         )
         return {
@@ -8339,7 +9158,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
         event_id=event_id,
         project=payload.projectName,
         file_name=file_name,
-        content=payload.content,
+        content=content_to_store,
         summary=summary,
         topic_path=topic_path,
         topic_tags=topic_tags,
@@ -8348,9 +9167,11 @@ async def write_memory(payload: MemoryWrite, request: Request):
     payload_data = {
         "projectName": payload.projectName,
         "fileName": file_name,
-        "content": payload.content,
+        "content": content_to_store,
     }
     warnings: list[str] = []
+    if storage_policy_warning:
+        warnings.append(storage_policy_warning)
     fanout_status: dict[str, str] = {
         "memory_bank": "queued_rollup" if hot_rollup_mode else "queued",
         FANOUT_TARGET_MONGO_RAW: "pending",
@@ -8413,7 +9234,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "content_hash": content_hash,
         }
         if not hot_rollup_mode:
-            letta_context["content"] = payload.content
+            letta_context["content"] = content_to_store
 
     if hot_rollup_mode:
         rollup_file = build_hot_memory_rollup_file(file_name)
@@ -8425,7 +9246,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "topic_path": topic_path,
                 "topic_tags": topic_tags,
                 "content_hash": content_hash,
-                "content_length": len(payload.content),
+                "content_length": len(content_to_store),
                 "letta_session": LETTA_AUTO_SESSION_ID if _letta_target_enabled() and letta_admitted else None,
                 "letta_admit": letta_admitted,
                 "letta_context": letta_context or {},
@@ -8446,7 +9267,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "project": payload.projectName,
                 "file": file_name,
                 "rollup_file": rollup_file,
-                "bytes": len(payload.content),
+                "bytes": len(content_to_store),
                 "latency_ms": round(latency_ms, 2),
             },
         )
@@ -8485,7 +9306,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "summary": summary,
             "topic_path": topic_path,
             "topic_tags": topic_tags,
-            "content_length": len(payload.content),
+            "content_length": len(content_to_store),
             "letta_session": LETTA_AUTO_SESSION_ID if _letta_target_enabled() and letta_admitted else None,
             "letta_admit": letta_admitted,
             "letta_context": letta_context,
@@ -8514,7 +9335,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "event_id": event_id,
             "project": payload.projectName,
             "file": file_name,
-            "bytes": len(payload.content),
+            "bytes": len(content_to_store),
             "latency_ms": round(latency_ms, 2),
         },
     )
@@ -8544,19 +9365,34 @@ async def write_memory(payload: MemoryWrite, request: Request):
 @app.post("/ingest/trajectory")
 async def ingest_trajectory(body: TrajectoryIngest):
     summary = body.summary
+    trajectory_content = json.dumps(body.trajectory, indent=2)
+    content_to_store, storage_policy_warning = _prepare_content_for_storage(trajectory_content)
+    langfuse_payload: dict[str, Any] = body.trajectory
+    if storage_policy_warning:
+        try:
+            parsed = json.loads(content_to_store)
+            if isinstance(parsed, dict):
+                langfuse_payload = parsed
+            else:
+                langfuse_payload = {"trajectory": parsed}
+        except Exception:
+            langfuse_payload = {"trajectory": content_to_store}
     await call_memory_tool(
         "memory_bank_write",
         {
             "projectName": body.project,
             "fileName": f"trajectory-{uuid.uuid4().hex}.json",
-            "content": json.dumps(body.trajectory, indent=2),
+            "content": content_to_store,
         },
     )
     await asyncio.gather(
         push_to_qdrant(body.project, "trajectory", summary),
-        push_to_langfuse(body.project, summary, body.trajectory),
+        push_to_langfuse(body.project, summary, langfuse_payload),
     )
-    return {"ok": True}
+    response: dict[str, Any] = {"ok": True}
+    if storage_policy_warning:
+        response["warnings"] = [storage_policy_warning]
+    return response
 
 
 @app.get("/health")
@@ -8653,7 +9489,11 @@ async def status():
     except Exception as exc:  # pragma: no cover
         services.append({"name": "letta", "healthy": False, "detail": str(exc)})
 
-    return {"services": services}
+    task_runtime: dict[str, Any] | None = None
+    with contextlib.suppress(Exception):
+        task_runtime = await get_task_runtime_snapshot()
+
+    return {"services": services, "taskRuntime": task_runtime}
 
 
 @app.post("/telemetry/metrics")
@@ -8679,6 +9519,7 @@ async def get_metrics():
 @app.get("/telemetry/memory")
 async def get_memory_metrics():
     outbox_summary = await get_fanout_summary()
+    task_runtime = await get_task_runtime_snapshot()
     return {
         "updatedAt": datetime.utcnow().isoformat() + "Z",
         "lastWriteAt": memory_write_last_at,
@@ -8756,6 +9597,7 @@ async def get_memory_metrics():
             "fileSuffixes": HOT_MEMORY_FILE_SUFFIXES,
             "health": hot_memory_rollup_health,
         },
+        "taskRuntime": task_runtime,
         "embeddingCache": {
             "enabled": EMBEDDING_CACHE_ENABLED,
             "maxKeys": EMBEDDING_CACHE_MAX_KEYS,
@@ -9024,7 +9866,7 @@ class TopicsListRequest(BaseModel):
 
 
 class MessagingCommandIn(BaseModel):
-    channel: str = Field(..., description="Channel adapter name (telegram/slack/openclaw/zeroclaw/custom)")
+    channel: str = Field(..., description="Channel adapter name (telegram/slack/openclaw/zeroclaw/ironclaw/custom)")
     source_id: str = Field(..., description="Conversation/user identifier from the channel")
     text: str = Field(..., description="Incoming message text")
     project: str | None = Field(None, description="Optional project override")
@@ -9033,7 +9875,56 @@ class MessagingCommandIn(BaseModel):
     require_prefix: bool = Field(True, description="Require command prefix/mention in the message")
 
 
-_MESSAGING_DIRECTIVE_RE = re.compile(r"\b(project|topic|file|limit)\s*=\s*([^\s]+)", flags=re.IGNORECASE)
+_MESSAGING_DIRECTIVE_RE = re.compile(
+    r"\b(project|topic|file|limit|status|priority|max_attempts|run_after|agent|task|task_id|model)\s*=\s*([^\s]+)",
+    flags=re.IGNORECASE,
+)
+_STRICT_MESSAGING_CHANNELS = {"openclaw", "zeroclaw", "ironclaw"}
+_SENSITIVE_VALUE_PATTERNS = [
+    re.compile(r"(?i)\b(?:api[_-]?key|token|secret|password|passwd|private[_-]?key|access[_-]?key)\s*[:=]\s*([^\s,;]{8,})"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9\-._~+/]+=*"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
+]
+
+
+def _strict_messaging_channel(channel: str) -> bool:
+    if not MESSAGING_OPENCLAW_STRICT_SECURITY:
+        return False
+    normalized = normalize_topic_path(channel)
+    return normalized in _STRICT_MESSAGING_CHANNELS
+
+
+def _contains_sensitive_value(text: str) -> bool:
+    payload = str(text or "")
+    return any(pattern.search(payload) for pattern in _SENSITIVE_VALUE_PATTERNS)
+
+
+def _redact_sensitive_values(text: str) -> str:
+    scrubbed = str(text or "")
+    for pattern in _SENSITIVE_VALUE_PATTERNS:
+        scrubbed = pattern.sub("[REDACTED]", scrubbed)
+    return scrubbed
+
+
+def _scrub_sensitive_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return _redact_sensitive_values(value)
+    if isinstance(value, list):
+        return [_scrub_sensitive_payload(item) for item in value]
+    if isinstance(value, dict):
+        scrubbed: dict[str, Any] = {}
+        for key, nested in value.items():
+            key_text = str(key)
+            if re.search(r"(?i)(api[_-]?key|token|secret|password|private[_-]?key|access[_-]?key)", key_text):
+                scrubbed[key_text] = "[REDACTED]"
+                continue
+            scrubbed[key_text] = _scrub_sensitive_payload(nested)
+        return scrubbed
+    return value
 
 
 def _messaging_command_prefixes() -> list[str]:
@@ -9101,6 +9992,8 @@ def _parse_messaging_command(text: str, require_prefix: bool = True) -> dict[str
         "find": "recall",
         "status": "status",
         "health": "status",
+        "task": "task",
+        "tasks": "task",
         "help": "help",
     }
     action = action_aliases.get(action_raw)
@@ -9242,6 +10135,141 @@ def _format_recall_response(
     return "\n".join(lines)
 
 
+def _messaging_directive_int(
+    directives: dict[str, str],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = directives.get(key)
+    if raw is None:
+        return default
+    try:
+        parsed = int(str(raw).strip())
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _build_messaging_task_payload(
+    create_spec: str,
+    *,
+    project: str,
+    topic_path: str,
+    channel: str,
+    source_id: str,
+    directives: dict[str, str],
+) -> tuple[str, dict[str, Any]]:
+    rendered = str(create_spec or "").strip()
+    if not rendered:
+        raise HTTPException(400, "task create requires a payload or subcommand")
+
+    if rendered.startswith("{"):
+        try:
+            payload = json.loads(rendered)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, "task create payload JSON is invalid") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "task create JSON payload must be an object")
+        title = str(payload.get("title") or payload.get("name") or "Queued task").strip() or "Queued task"
+        return title, payload
+
+    parts = rendered.split(maxsplit=1)
+    sub_action = parts[0].strip().lower()
+    remainder = parts[1].strip() if len(parts) > 1 else ""
+    remember_aliases = {"remember", "write", "save"}
+    recall_aliases = {"recall", "search", "find"}
+    messaging_aliases = {"message", "command", "notify"}
+
+    if sub_action in remember_aliases:
+        if not remainder:
+            raise HTTPException(400, "task create remember requires content")
+        file_name = _messaging_file_name(topic_path, directives.get("file"))
+        payload = {
+            "action": "memory_write",
+            "projectName": project,
+            "fileName": file_name,
+            "content": remainder,
+            "topic_path": topic_path,
+        }
+        return f"Remember: {remainder[:72]}", payload
+
+    if sub_action in recall_aliases:
+        if not remainder:
+            raise HTTPException(400, "task create recall requires query")
+        payload = {
+            "action": "memory_search",
+            "query": remainder,
+            "project": project,
+            "topic_path": topic_path,
+            "limit": _messaging_directive_int(
+                directives,
+                "limit",
+                MESSAGING_SEARCH_LIMIT,
+                minimum=1,
+                maximum=50,
+            ),
+            "include_preferences": True,
+        }
+        return f"Recall: {remainder[:72]}", payload
+
+    if sub_action in messaging_aliases:
+        if not remainder:
+            raise HTTPException(400, "task create message requires text")
+        payload = {
+            "action": "messaging_command",
+            "text": remainder,
+            "channel": channel,
+            "source_id": source_id,
+            "project": project,
+            "topic_path": topic_path,
+            "require_prefix": False,
+        }
+        return f"Message: {remainder[:72]}", payload
+
+    if sub_action in {"callback", "http"}:
+        if not remainder:
+            raise HTTPException(400, "task create callback requires URL")
+        method = "POST"
+        url = remainder
+        first_token = remainder.split(maxsplit=1)[0].upper()
+        if first_token in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            method = first_token
+            url = remainder.split(maxsplit=1)[1].strip() if len(remainder.split(maxsplit=1)) > 1 else ""
+        if not url:
+            raise HTTPException(400, "task create callback requires URL")
+        payload = {
+            "action": "http_callback",
+            "url": url,
+            "method": method,
+            "body": {"source": "messaging_task", "channel": channel, "source_id": source_id},
+        }
+        return f"Callback: {method} {url[:60]}", payload
+
+    if sub_action in {"provider", "chat"}:
+        if not remainder:
+            raise HTTPException(400, "task create provider requires prompt text")
+        payload = {
+            "action": "provider_chat",
+            "prompt": remainder,
+            "model": directives.get("model") or TASK_PROVIDER_CHAT_MODEL or None,
+        }
+        return f"Provider chat: {remainder[:60]}", payload
+
+    payload = {
+        "action": "messaging_command",
+        "text": rendered,
+        "channel": channel,
+        "source_id": source_id,
+        "project": project,
+        "topic_path": topic_path,
+        "require_prefix": False,
+    }
+    return f"Task: {rendered[:72]}", payload
+
+
 async def _execute_messaging_command(
     parsed: dict[str, Any],
     *,
@@ -9256,6 +10284,20 @@ async def _execute_messaging_command(
     action = str(parsed.get("action") or "help").strip().lower()
     directives = parsed.get("directives") if isinstance(parsed.get("directives"), dict) else {}
     content = str(parsed.get("content") or "").strip()
+    strict_surface = _strict_messaging_channel(channel)
+
+    def _secure_surface_response(payload: dict[str, Any]) -> dict[str, Any]:
+        if not strict_surface:
+            return payload
+        secured = dict(payload)
+        if "response_text" in secured:
+            secured["response_text"] = _redact_sensitive_values(str(secured.get("response_text") or ""))
+        if "file" in secured:
+            secured["file"] = _redact_sensitive_values(str(secured.get("file") or ""))
+        if "result" in secured:
+            secured["result"] = _scrub_sensitive_payload(secured.get("result"))
+        return secured
+
     project = str(project_override or directives.get("project") or default_project or MESSAGING_DEFAULT_PROJECT).strip()
     if not project:
         project = MESSAGING_DEFAULT_PROJECT
@@ -9265,6 +10307,8 @@ async def _execute_messaging_command(
     if action == "remember":
         if not content:
             raise HTTPException(400, "remember command requires content")
+        if strict_surface and _contains_sensitive_value(content):
+            raise HTTPException(422, "potential secret detected; remember command blocked on secure messaging surface")
         file_name = _messaging_file_name(topic_path, directives.get("file"))
         write_payload = MemoryWrite(
             projectName=project,
@@ -9277,7 +10321,8 @@ async def _execute_messaging_command(
         response_text = f"Stored memory in project '{project}' at '{file_name}'."
         if warnings:
             response_text += " Warnings: " + " | ".join(str(item) for item in warnings[:2])
-        return {
+        return _secure_surface_response(
+            {
             "ok": True,
             "action": action,
             "project": project,
@@ -9286,11 +10331,14 @@ async def _execute_messaging_command(
             "response_text": _truncate_messaging_text(response_text),
             "result": write_result,
         }
+        )
 
     if action == "recall":
         query = content or str(parsed.get("raw") or "").strip()
         if not query:
             raise HTTPException(400, "recall command requires query text")
+        if strict_surface and _contains_sensitive_value(query):
+            raise HTTPException(422, "potential secret detected; recall command blocked on secure messaging surface")
         limit = MESSAGING_SEARCH_LIMIT
         if "limit" in directives:
             try:
@@ -9310,7 +10358,8 @@ async def _execute_messaging_command(
             )
         )
         response_text = _format_recall_response(query, project, topic_path, search_result, limit=limit)
-        return {
+        return _secure_surface_response(
+            {
             "ok": True,
             "action": action,
             "project": project,
@@ -9318,6 +10367,232 @@ async def _execute_messaging_command(
             "response_text": _truncate_messaging_text(response_text),
             "result": search_result,
         }
+        )
+
+    if action == "task":
+        raw = content or str(parsed.get("raw") or "").strip()
+        parts = raw.split(maxsplit=1) if raw else []
+        subcommand = parts[0].strip().lower() if parts else "help"
+        remainder = parts[1].strip() if len(parts) > 1 else ""
+        task_id = str(directives.get("task_id") or directives.get("task") or remainder).strip()
+
+        if subcommand in {"create", "enqueue", "new"}:
+            if strict_surface and _contains_sensitive_value(remainder):
+                raise HTTPException(422, "potential secret detected; task create blocked on secure messaging surface")
+            title, task_payload = _build_messaging_task_payload(
+                remainder,
+                project=project,
+                topic_path=topic_path,
+                channel=channel,
+                source_id=source_id,
+                directives=directives,
+            )
+            priority = _messaging_directive_int(directives, "priority", 0, minimum=-20, maximum=20)
+            max_attempts = _messaging_directive_int(
+                directives,
+                "max_attempts",
+                TASK_DEFAULT_MAX_ATTEMPTS,
+                minimum=1,
+                maximum=50,
+            )
+            run_after = str(directives.get("run_after") or "").strip() or None
+            agent = str(directives.get("agent") or "").strip() or None
+            task = await create_task_record(
+                title=title,
+                project=project,
+                agent=agent,
+                priority=priority,
+                payload=task_payload,
+                run_after=run_after,
+                max_attempts=max_attempts,
+            )
+            response_text = (
+                f"Queued task {task['id']} ({task.get('action_type') or 'custom'}) "
+                f"status={task['status']} max_attempts={task.get('max_attempts')}."
+            )
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "create",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"task": task},
+                }
+            )
+
+        if subcommand in {"status", "get"}:
+            if not task_id:
+                raise HTTPException(400, "task status requires task id")
+            task = await get_task_record(task_id)
+            if not task:
+                raise HTTPException(404, "task not found")
+            events = await get_task_events(task_id)
+            response_text = (
+                f"Task {task_id}: status={task.get('status')} attempts={task.get('attempts')}/{task.get('max_attempts')} "
+                f"project={task.get('project') or '-'} action={task.get('action_type') or '-'}."
+            )
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "status",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"task": task, "events": events[:20]},
+                }
+            )
+
+        if subcommand in {"approve"}:
+            if not task_id:
+                raise HTTPException(400, "task approve requires task id")
+            task = await approve_task_record(task_id, approver=source_id, note="approved via messaging")
+            if not task:
+                raise HTTPException(404, "task not found")
+            response_text = f"Approved task {task_id}; status={task.get('status')}."
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "approve",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"task": task},
+                }
+            )
+
+        if subcommand in {"replay", "retry", "requeue"}:
+            if not task_id:
+                raise HTTPException(400, "task replay requires task id")
+            task = await replay_task_record(task_id, actor=source_id, note="replayed via messaging", reset_attempts=True)
+            if not task:
+                raise HTTPException(404, "task not found")
+            response_text = f"Replayed task {task_id}; status={task.get('status')} attempts reset."
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "replay",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"task": task},
+                }
+            )
+
+        if subcommand in {"cancel"}:
+            if not task_id:
+                raise HTTPException(400, "task cancel requires task id")
+            task = await update_task_status(
+                task_id,
+                "canceled",
+                "Task canceled via messaging command",
+                {"actor": source_id, "channel": channel},
+            )
+            if not task:
+                raise HTTPException(404, "task not found")
+            response_text = f"Canceled task {task_id}."
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "cancel",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"task": task},
+                }
+            )
+
+        if subcommand in {"list", "ls"}:
+            status_filter = str(directives.get("status") or "").strip().lower() or None
+            agent_filter = str(directives.get("agent") or "").strip() or None
+            limit = _messaging_directive_int(directives, "limit", 8, minimum=1, maximum=25)
+            tasks = await list_task_records(
+                status=status_filter,
+                project=project,
+                agent=agent_filter,
+                limit=limit,
+            )
+            lines = [f"Tasks ({len(tasks)}):"]
+            for item in tasks[:limit]:
+                lines.append(
+                    f"- {item.get('id')} | {item.get('status')} | p={item.get('priority')} | "
+                    f"{item.get('action_type') or '-'} | {item.get('title') or '-'}"
+                )
+            response_text = "\n".join(lines) if tasks else "No tasks found."
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "list",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"tasks": tasks},
+                }
+            )
+
+        if subcommand in {"deadletter", "dlq", "failed"}:
+            limit = _messaging_directive_int(directives, "limit", 8, minimum=1, maximum=25)
+            tasks = await list_deadletter_task_records(project=project, limit=limit)
+            lines = [f"Deadletter ({len(tasks)}):"]
+            for item in tasks[:limit]:
+                lines.append(
+                    f"- {item.get('id')} | {item.get('status')} | attempts={item.get('attempts')}/{item.get('max_attempts')} | "
+                    f"error={str(item.get('last_error') or '-')[:70]}"
+                )
+            response_text = "\n".join(lines) if tasks else "No deadletter tasks."
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "deadletter",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"tasks": tasks},
+                }
+            )
+
+        if subcommand in {"runtime", "health"}:
+            runtime = await get_task_runtime_snapshot()
+            response_text = (
+                f"Task runtime: ready={runtime.get('queueReady')} running={runtime.get('running')} "
+                f"deadletter={runtime.get('deadletter')} workers={runtime.get('workersRunning')}/"
+                f"{runtime.get('workersConfigured')}."
+            )
+            return _secure_surface_response(
+                {
+                    "ok": True,
+                    "action": "task",
+                    "subcommand": "runtime",
+                    "project": project,
+                    "topic_path": topic_path,
+                    "response_text": _truncate_messaging_text(response_text),
+                    "result": {"runtime": runtime},
+                }
+            )
+
+        task_help = (
+            "Task commands: task create <remember|recall|message|callback|provider ...>; "
+            "task status <id>; task list [status=queued limit=8]; task approve <id>; "
+            "task replay <id>; task deadletter; task runtime."
+        )
+        return _secure_surface_response(
+            {
+                "ok": True,
+                "action": "task",
+                "subcommand": "help",
+                "project": project,
+                "topic_path": topic_path,
+                "response_text": task_help,
+                "result": {"help": True},
+            }
+        )
 
     if action == "status":
         status_result = await status()
@@ -9325,7 +10600,8 @@ async def _execute_messaging_command(
         healthy = sum(1 for svc in services if isinstance(svc, dict) and svc.get("healthy"))
         total = len(services) if isinstance(services, list) else 0
         response_text = f"Context Lattice status: {healthy}/{total} services healthy."
-        return {
+        return _secure_surface_response(
+            {
             "ok": True,
             "action": action,
             "project": project,
@@ -9333,14 +10609,16 @@ async def _execute_messaging_command(
             "response_text": response_text,
             "result": status_result,
         }
+        )
 
     help_handle = MESSAGING_COMMAND_HANDLE or "@ContextLattice"
     help_text = (
         f"Commands: {help_handle} remember <text>; "
-        f"{help_handle} recall <query>; {help_handle} status. "
+        f"{help_handle} recall <query>; {help_handle} status; {help_handle} task <subcommand>. "
         "Optional directives: project=<name> topic=<path> limit=<n>."
     )
-    return {
+    return _secure_surface_response(
+        {
         "ok": True,
         "action": "help",
         "project": project,
@@ -9348,6 +10626,7 @@ async def _execute_messaging_command(
         "response_text": help_text,
         "result": {"help": True},
     }
+    )
 
 
 @app.post("/memory/search")
@@ -9437,6 +10716,7 @@ async def messaging_command(payload: MessagingCommandIn):
         "slack": SLACK_DEFAULT_PROJECT or MESSAGING_DEFAULT_PROJECT,
         "openclaw": OPENCLAW_DEFAULT_PROJECT or MESSAGING_DEFAULT_PROJECT,
         "zeroclaw": OPENCLAW_DEFAULT_PROJECT or MESSAGING_DEFAULT_PROJECT,
+        "ironclaw": IRONCLAW_DEFAULT_PROJECT or OPENCLAW_DEFAULT_PROJECT or MESSAGING_DEFAULT_PROJECT,
     }.get(channel, MESSAGING_DEFAULT_PROJECT)
     default_project = payload.project or channel_default_project
     result = await _execute_messaging_command(
@@ -9459,6 +10739,22 @@ async def messaging_openclaw(payload: MessagingCommandIn):
         source_id=payload.source_id,
         text=payload.text,
         project=payload.project or OPENCLAW_DEFAULT_PROJECT,
+        topic_path=payload.topic_path,
+        user_id=payload.user_id,
+        require_prefix=payload.require_prefix,
+    )
+    return await messaging_command(bridged)
+
+
+@app.post("/integrations/messaging/ironclaw")
+async def messaging_ironclaw(payload: MessagingCommandIn):
+    if not IRONCLAW_INTEGRATION_ENABLED:
+        raise HTTPException(503, "ironclaw integration disabled")
+    bridged = MessagingCommandIn(
+        channel=payload.channel or "ironclaw",
+        source_id=payload.source_id,
+        text=payload.text,
+        project=payload.project or IRONCLAW_DEFAULT_PROJECT or OPENCLAW_DEFAULT_PROJECT,
         topic_path=payload.topic_path,
         user_id=payload.user_id,
         require_prefix=payload.require_prefix,

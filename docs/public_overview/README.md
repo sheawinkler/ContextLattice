@@ -11,6 +11,10 @@ This folder is the source for the public `memmcp-overview` web pages.
 - `troubleshooting.html` - install/runtime recovery guide
 - `contact.html` - contact page
 - `styles.css` - shared styles
+- `styles-gray.css` - grayscale/brutalist theme
+- `assets/` - listing/social graphics (`contextlattice-og-1200x630.png`, `contextlattice-icon-512.png`)
+- `.well-known/glama.json` - Glama server-claim metadata
+- `.nojekyll` - enables serving dot-directories such as `.well-known` on GitHub Pages
 
 ## Update workflow
 1. Edit the required page(s).
@@ -30,5 +34,9 @@ This syncs:
 - `troubleshooting.html`
 - `contact.html`
 - `styles.css`
+- `styles-gray.css`
+- `assets/`
+- `.well-known/glama.json`
+- `.nojekyll`
 
 to the public repo `sheawinkler/memmcp-overview`.

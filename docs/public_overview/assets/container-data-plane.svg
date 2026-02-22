@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-label="Container and data-plane diagram showing ingress, durable fanout, retrieval synthesis, and learning loop">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192434"/>
+      <stop offset="100%" stop-color="#111a25"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="22%" cy="8%" r="58%">
+      <stop offset="0%" stop-color="#88a5d2" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#88a5d2" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="88%" cy="10%" r="54%">
+      <stop offset="0%" stop-color="#d2b883" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#d2b883" stop-opacity="0"/>
+    </radialGradient>
+
+    <marker id="arrowSync" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#deebfc"/>
+    </marker>
+    <marker id="arrowAsync" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#94d8e8"/>
+    </marker>
+    <marker id="arrowLearn" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#dcc18a"/>
+    </marker>
+
+    <style><![CDATA[
+      .frame { fill: url(#bg); stroke: #69788b; stroke-width: 1.4; }
+      .boundary { fill: rgba(255,255,255,0.02); stroke: #cdd8e8; stroke-width: 2; stroke-dasharray: 10 8; }
+      .node { fill: #1f2b3a; stroke: #cfdbeb; stroke-width: 2; }
+      .core { fill: #2b3d53; stroke: #e1eaf7; stroke-width: 2.2; }
+      .title { font: 700 16px 'IBM Plex Mono', 'SF Mono', Menlo, monospace; fill: #d4deeb; letter-spacing: 0.09em; }
+      .h2 { font: 700 40px 'IBM Plex Sans', 'Inter', sans-serif; fill: #eef4fd; }
+      .label { font: 700 26px 'IBM Plex Sans', 'Inter', sans-serif; fill: #f1f6ff; }
+      .sub { font: 600 20px 'IBM Plex Sans', 'Inter', sans-serif; fill: #d2ddec; }
+      .lane { font: 700 24px 'IBM Plex Sans', 'Inter', sans-serif; fill: #d8e3f2; }
+      .small { font: 600 20px 'IBM Plex Sans', 'Inter', sans-serif; fill: #cfdae9; }
+      .sync { stroke: #deebfc; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .async { stroke: #94d8e8; stroke-width: 3; fill: none; stroke-dasharray: 10 8; stroke-linecap: round; stroke-linejoin: round; }
+      .learn { stroke: #dcc18a; stroke-width: 3; fill: none; stroke-dasharray: 4 8; stroke-linecap: round; stroke-linejoin: round; }
+      .plate { fill: rgba(17,24,35,0.88); stroke: #cdd8e8; stroke-width: 1.8; }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1200" class="frame"/>
+  <rect x="0" y="0" width="1800" height="1200" fill="url(#glowA)"/>
+  <rect x="0" y="0" width="1800" height="1200" fill="url(#glowB)"/>
+
+  <text x="900" y="70" text-anchor="middle" class="title">CONTAINER DIAGRAM: CONTEXT LATTICE RUNTIME</text>
+
+  <rect x="260" y="140" width="980" height="930" rx="82" class="boundary"/>
+  <text x="750" y="212" text-anchor="middle" class="h2">Context Lattice System Boundary</text>
+
+  <rect x="40" y="430" width="190" height="250" rx="38" class="node"/>
+  <text x="135" y="500" text-anchor="middle" class="label">Clients</text>
+  <text x="135" y="540" text-anchor="middle" class="sub">agents</text>
+  <text x="135" y="574" text-anchor="middle" class="sub">messaging</text>
+  <text x="135" y="608" text-anchor="middle" class="sub">apps</text>
+
+  <rect x="550" y="230" width="400" height="140" rx="24" class="core"/>
+  <text x="750" y="308" text-anchor="middle" class="label">Orchestrator API</text>
+  <text x="750" y="346" text-anchor="middle" class="sub">HTTP ingress + auth + policy</text>
+
+  <rect x="590" y="400" width="320" height="90" rx="20" class="node"/>
+  <text x="750" y="456" text-anchor="middle" class="label">Ops + Security Gate</text>
+
+  <rect x="400" y="540" width="300" height="130" rx="24" class="node"/>
+  <text x="550" y="612" text-anchor="middle" class="label">Outbox Queue</text>
+  <text x="550" y="650" text-anchor="middle" class="sub">durable async fanout</text>
+
+  <rect x="820" y="540" width="300" height="130" rx="24" class="node"/>
+  <text x="970" y="612" text-anchor="middle" class="label">Retrieval Engine</text>
+  <text x="970" y="650" text-anchor="middle" class="sub">parallel recall + rerank</text>
+
+  <rect x="330" y="730" width="900" height="300" rx="56" class="node"/>
+  <text x="780" y="794" text-anchor="middle" class="h2">Memory Plane</text>
+
+  <rect x="370" y="810" width="190" height="190" rx="22" class="node"/>
+  <text x="465" y="890" text-anchor="middle" class="label">Memory Bank</text>
+  <text x="465" y="930" text-anchor="middle" class="sub">canonical</text>
+
+  <rect x="580" y="810" width="190" height="190" rx="22" class="node"/>
+  <text x="675" y="890" text-anchor="middle" class="label">Qdrant</text>
+  <text x="675" y="930" text-anchor="middle" class="sub">vectors</text>
+
+  <rect x="790" y="810" width="190" height="190" rx="22" class="node"/>
+  <text x="885" y="890" text-anchor="middle" class="label">Mongo</text>
+  <text x="885" y="930" text-anchor="middle" class="sub">raw ledger</text>
+
+  <rect x="1000" y="810" width="200" height="190" rx="22" class="node"/>
+  <text x="1100" y="890" text-anchor="middle" class="label">MindsDB + Letta</text>
+  <text x="1100" y="930" text-anchor="middle" class="sub">SQL + archival</text>
+
+  <rect x="1310" y="250" width="450" height="220" rx="42" class="node"/>
+  <text x="1535" y="332" text-anchor="middle" class="label">Providers</text>
+  <text x="1535" y="374" text-anchor="middle" class="sub">Qwen/Ollama, LM Studio</text>
+  <text x="1535" y="412" text-anchor="middle" class="sub">OpenAI-compatible APIs</text>
+
+  <rect x="1310" y="600" width="450" height="210" rx="42" class="node"/>
+  <text x="1535" y="682" text-anchor="middle" class="label">Messaging Surfaces</text>
+  <text x="1535" y="724" text-anchor="middle" class="sub">Telegram / Slack</text>
+  <text x="1535" y="762" text-anchor="middle" class="sub">OpenClaw family</text>
+
+  <rect x="1310" y="70" width="450" height="160" rx="24" class="plate"/>
+  <text x="1346" y="116" class="small">Legend</text>
+  <path class="sync" d="M1344 142 H1460" marker-end="url(#arrowSync)"/>
+  <text x="1480" y="148" class="small">sync request/read</text>
+  <path class="async" d="M1344 174 H1460" marker-end="url(#arrowAsync)"/>
+  <text x="1480" y="180" class="small">async outbox fanout</text>
+  <path class="learn" d="M1344 206 H1460" marker-end="url(#arrowLearn)"/>
+  <text x="1480" y="212" class="small">learning feedback loop</text>
+
+  <path class="sync" d="M230 500 H550" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M550 540 H230" marker-end="url(#arrowSync)"/>
+
+  <path class="sync" d="M750 370 V400" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M670 490 L550 540" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M830 490 L970 540" marker-end="url(#arrowSync)"/>
+
+  <path class="sync" d="M950 300 H1310" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M1120 605 H1310" marker-end="url(#arrowSync)"/>
+
+  <text x="440" y="772" class="lane">Async Fanout</text>
+  <path class="async" d="M550 670 V770 H1100"/>
+  <path class="async" d="M465 770 V810" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M675 770 V810" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M885 770 V810" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M1100 770 V810" marker-end="url(#arrowAsync)"/>
+
+  <text x="760" y="714" class="lane">Parallel Retrieval</text>
+  <path class="sync" d="M465 810 V720" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M675 810 V720" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M885 810 V720" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M1100 810 V720" marker-end="url(#arrowSync)"/>
+  <path class="sync" d="M465 720 H1100"/>
+  <path class="sync" d="M885 720 C945 720,1000 690,1120 670" marker-end="url(#arrowSync)"/>
+
+  <text x="1160" y="784" class="small" fill="#dcc18a">learning write</text>
+  <path class="learn" d="M1080 670 C1150 720,1160 780,1100 810" marker-end="url(#arrowLearn)"/>
+
+  <text x="1248" y="728" class="small" fill="#dcc18a">feedback return</text>
+  <path class="learn" d="M1100 1000 C1280 980,1310 700,1120 600" marker-end="url(#arrowLearn)"/>
+</svg>

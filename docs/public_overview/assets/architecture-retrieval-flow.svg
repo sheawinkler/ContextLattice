@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1080" viewBox="0 0 1700 1080" role="img" aria-label="Retrieval flow showing parallel recall, context synthesis, response, and learning reinforcement">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192434"/>
+      <stop offset="100%" stop-color="#111a25"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#deebfc"/>
+    </marker>
+    <marker id="arrowRecall" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#94d8e8"/>
+    </marker>
+    <marker id="arrowLearn" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#dcc18a"/>
+    </marker>
+    <style><![CDATA[
+      .frame { fill: url(#bg); stroke: #69788b; stroke-width: 1.4; }
+      .node { fill: #1f2b3a; stroke: #cfdbeb; stroke-width: 2; }
+      .core { fill: #8f551f; stroke: #f2d3ad; stroke-width: 2.4; }
+      .recall-box { fill: rgba(19, 35, 49, 0.72); stroke: #94d8e8; stroke-width: 2; stroke-dasharray: 10 8; }
+      .title { font: 700 20px 'IBM Plex Mono', monospace; fill: #d4deeb; letter-spacing: 0.09em; }
+      .label { font: 700 26px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+      .sub { font: 600 20px 'IBM Plex Sans', sans-serif; fill: #d2ddec; }
+      .lane { font: 700 24px 'IBM Plex Sans', sans-serif; fill: #d8e3f2; }
+      .sync { stroke: #deebfc; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .recall { stroke: #94d8e8; stroke-width: 3; fill: none; stroke-dasharray: 10 8; stroke-linecap: round; stroke-linejoin: round; }
+      .learn { stroke: #dcc18a; stroke-width: 3; fill: none; stroke-dasharray: 4 8; stroke-linecap: round; stroke-linejoin: round; }
+      .merge-label { font: 700 23px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1700" height="1080" class="frame"/>
+  <text x="850" y="64" text-anchor="middle" class="title">RETRIEVAL + LEARNING LOOP</text>
+
+  <rect x="650" y="96" width="400" height="96" rx="20" class="node"/>
+  <text x="850" y="154" text-anchor="middle" class="label">Query Request</text>
+
+  <rect x="650" y="232" width="400" height="106" rx="22" class="core"/>
+  <text x="850" y="296" text-anchor="middle" class="label">Orchestrator Query Handler</text>
+  <text x="850" y="332" text-anchor="middle" class="sub">single retrieval entrypoint</text>
+
+  <rect x="650" y="378" width="400" height="96" rx="20" class="node"/>
+  <text x="850" y="436" text-anchor="middle" class="label">Retrieval Engine</text>
+
+  <rect x="700" y="510" width="300" height="78" rx="16" class="recall-box"/>
+  <text x="850" y="558" text-anchor="middle" class="lane">Parallel Recall</text>
+
+  <rect x="280" y="662" width="250" height="120" rx="20" class="node"/>
+  <text x="405" y="728" text-anchor="middle" class="label">Memory Bank</text>
+
+  <rect x="550" y="662" width="250" height="120" rx="20" class="node"/>
+  <text x="675" y="728" text-anchor="middle" class="label">Qdrant</text>
+
+  <rect x="820" y="662" width="250" height="120" rx="20" class="node"/>
+  <text x="945" y="728" text-anchor="middle" class="label">Mongo</text>
+
+  <rect x="1090" y="662" width="270" height="120" rx="20" class="node"/>
+  <text x="1225" y="728" text-anchor="middle" class="label">MindsDB + Letta</text>
+
+  <rect x="560" y="822" width="580" height="112" rx="20" class="node"/>
+  <text x="850" y="888" text-anchor="middle" class="merge-label">Merge + Rerank + Compose Context</text>
+
+  <rect x="650" y="964" width="400" height="96" rx="20" class="node"/>
+  <text x="850" y="1022" text-anchor="middle" class="label">Return Context to Caller</text>
+
+  <path class="sync" d="M850 192 V232" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 338 V378" marker-end="url(#arrow)"/>
+  <path class="recall" d="M850 474 V510" marker-end="url(#arrowRecall)"/>
+  <path class="recall" d="M850 588 V628"/>
+
+  <path class="recall" d="M405 628 V662" marker-end="url(#arrowRecall)"/>
+  <path class="recall" d="M675 628 V662" marker-end="url(#arrowRecall)"/>
+  <path class="recall" d="M945 628 V662" marker-end="url(#arrowRecall)"/>
+  <path class="recall" d="M1225 628 V662" marker-end="url(#arrowRecall)"/>
+  <path class="recall" d="M405 628 H1225"/>
+
+  <path class="sync" d="M405 782 V812" marker-end="url(#arrow)"/>
+  <path class="sync" d="M675 782 V812" marker-end="url(#arrow)"/>
+  <path class="sync" d="M945 782 V812" marker-end="url(#arrow)"/>
+  <path class="sync" d="M1225 782 V812" marker-end="url(#arrow)"/>
+  <path class="sync" d="M405 812 H1225"/>
+  <path class="sync" d="M850 812 V822" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 934 V964" marker-end="url(#arrow)"/>
+
+  <path class="learn" d="M1010 474 C1090 530,1160 590,1225 662" marker-end="url(#arrowLearn)"/>
+  <text x="1136" y="590" class="sub" fill="#dcc18a">learning write</text>
+
+  <path class="learn" d="M1260 662 C1360 590,1330 500,1048 426" marker-end="url(#arrowLearn)"/>
+  <text x="1286" y="560" class="sub" fill="#dcc18a">feedback return</text>
+</svg>

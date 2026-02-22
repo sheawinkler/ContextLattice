@@ -15,9 +15,9 @@ retrievable, and private with Context Lattice."
 
 ## 3) Tagline options
 
-- Context that compounds.
-- Memory that keeps agents grounded.
-- Local-first memory orchestration for serious AI workflows.
+- Private-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.
+- Private by default. One intelligent memory layer for apps and agents.
+- HTTP-first, MCP-compatible long-horizon orchestration for serious AI workflows.
 
 ## 4) Key proof points
 
@@ -35,7 +35,8 @@ retrieval quality and cost predictable.
 
 ### Agent builders and vibecoders
 
-Give your agents persistent memory and topic-scoped recall without repeatedly
+Give your agents a long-horizon cognitive spine for memory/context and
+topic-scoped recall without repeatedly
 stuffing huge prompts.
 
 ### Enterprise AI leads

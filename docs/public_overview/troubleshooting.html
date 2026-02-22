@@ -21,7 +21,7 @@
         <a href="integration.html">Integrations</a>
         <a class="active" href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
-        <a href="v1/">v1</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">v1</a>
       </nav>
     </header>
 
@@ -37,22 +37,49 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section section-tight">
+      <article class="card quick-path-card">
+        <div class="kicker">Quick Path</div>
+        <h3>Fastest path to recovery</h3>
+        <ol class="step-list">
+          <li>Run 60-second diagnostics and confirm API key/auth path.</li>
+          <li>Resolve startup blockers (env wiring, port binds, container crash loops).</li>
+          <li>Check fanout and retention telemetry before deeper sink-specific actions.</li>
+          <li>Use mode-specific restart playbook (Lite or Full).</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="section section-tight">
+      <nav class="page-nav-inline" aria-label="On this page">
+        <a href="#trouble-fast">Fast Checks</a>
+        <a href="#trouble-startup">Startup</a>
+        <a href="#trouble-readwrite">Read/Write</a>
+        <a href="#trouble-mode">Mode Recovery</a>
+        <a href="#trouble-advanced">Advanced</a>
+      </nav>
+    </section>
+
+    <section class="section" id="trouble-fast">
       <article class="card">
         <div class="kicker">Fast checks</div>
         <h3>First 60-second diagnostics</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
 <pre><code>docker compose ps
+ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 curl -fsS http://127.0.0.1:8075/health | jq
-curl -fsS http://127.0.0.1:8075/status | jq
-curl -fsS http://127.0.0.1:8075/telemetry/fanout | jq
-curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+        <p class="muted-note"><strong>401 almost always means missing/incorrect <code>x-api-key</code>.</strong> Re-read key from <code>.env</code> and restart the caller process if needed.</p>
         <p class="muted-note">If <code>/health</code> fails, check orchestrator logs first because write/read fanout depends on it.</p>
       </article>
     </section>
 
-    <section class="section">
+    <section class="section" id="trouble-startup">
       <div class="kicker">Installation failures</div>
       <h2>Common startup blockers</h2>
+      <div class="priority-row"><span class="priority-chip required">Required</span></div>
       <div class="grid component-grid">
         <article class="card component-card">
           <h3>Compose env not loaded</h3>
@@ -78,9 +105,10 @@ docker compose up -d memorymcp-http</code></pre>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="trouble-readwrite">
       <div class="kicker">Service troubleshooting</div>
       <h2>Read/write path recovery</h2>
+      <div class="priority-row"><span class="priority-chip required">Required</span></div>
       <div class="grid component-grid">
         <article class="card component-card">
           <h3>Orchestrator unhealthy</h3>
@@ -93,14 +121,14 @@ docker compose up -d memmcp-orchestrator</code></pre>
           <h3>Fanout backlog rising</h3>
           <p><strong>Impact:</strong> partial sink coverage and delayed consistency.</p>
           <p><strong>Action:</strong> check fanout telemetry and queue settings; retry workers recover asynchronously.</p>
-<pre><code>curl -fsS http://127.0.0.1:8075/telemetry/fanout | jq</code></pre>
+<pre><code>curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq</code></pre>
         </article>
         <article class="card component-card">
           <h3>Disk pressure</h3>
           <p><strong>Impact:</strong> service resets or degraded latency under retention lag.</p>
           <p><strong>Action:</strong> run retention now and verify qdrant/mongo volume paths.</p>
-<pre><code>curl -fsS -X POST http://127.0.0.1:8075/telemetry/retention/run | jq
-curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
+<pre><code>curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention/run | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
         </article>
         <article class="card component-card">
           <h3>MindsDB or Letta drift</h3>
@@ -113,21 +141,27 @@ curl -fsS http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
           <p><strong>Impact:</strong> Telegram/Slack/OpenClaw commands do not write or recall memory.</p>
           <p><strong>Action:</strong> verify webhook env vars and smoke test the command endpoint directly.</p>
 <pre><code>curl -fsS -H 'content-type: application/json' \
+  -H "x-api-key: ${ORCH_KEY}" \
   -d '{"channel":"openclaw","source_id":"chat-1","text":"@ContextLattice status"}' \
   http://127.0.0.1:8075/integrations/messaging/command | jq</code></pre>
         </article>
         <article class="card component-card">
           <h3>Optional Qdrant cloud BYO fails</h3>
-          <p><strong>Impact:</strong> cloud fallback or cloud-preferred mode cannot connect.</p>
-          <p><strong>Action:</strong> validate endpoint + key, then run the cloud connectivity probe.</p>
+          <div class="priority-row"><span class="priority-chip advanced">Advanced</span></div>
+          <details class="fold">
+            <summary>Optional cloud connectivity probe</summary>
+            <p><strong>Impact:</strong> cloud fallback or cloud-preferred mode cannot connect.</p>
+            <p><strong>Action:</strong> validate endpoint + key, then run the cloud connectivity probe.</p>
 <pre><code>gmake qdrant-cloud-check</code></pre>
+          </details>
         </article>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="trouble-mode">
       <div class="kicker">Mode-specific recovery</div>
       <h2>Lite and Full restart playbooks</h2>
+      <div class="priority-row"><span class="priority-chip required">Required</span></div>
       <div class="grid mode-grid">
         <article class="card mode-card">
           <h3>Lite mode recovery</h3>
@@ -148,12 +182,16 @@ gmake mem-logs</code></pre>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="trouble-advanced">
       <article class="card">
         <div class="kicker">Readiness Gate</div>
         <h3>Check or cancel scheduled 04:30 MT long-run gate</h3>
+        <div class="priority-row"><span class="priority-chip advanced">Advanced</span></div>
+        <details class="fold">
+          <summary>Open launch-readiness schedule controls</summary>
 <pre><code>gmake launch-readiness-gate-schedule-status
 gmake launch-readiness-gate-schedule-cancel</code></pre>
+        </details>
       </article>
     </section>
 

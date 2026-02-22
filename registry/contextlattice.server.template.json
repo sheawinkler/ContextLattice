@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.sheawinkler/contextlattice",
+  "description": "Private-by-default memory orchestration for MCP apps and agents.",
+  "status": "active",
+  "version_detail": {
+    "version": "1.0.0"
+  },
+  "repository": {
+    "url": "https://github.com/sheawinkler/REPLACE_WITH_PUBLIC_CONTEXTLATTICE_REPO",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://REPLACE_WITH_PUBLIC_MCP_HOST/mcp",
+      "headers": {
+        "x-api-key": "${CONTEXTLATTICE_API_KEY}"
+      }
+    }
+  ]
+}

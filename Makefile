@@ -25,7 +25,7 @@ BASE_OS := $(if $(filter $(UNAME_S),Darwin),mac,linux)
 ENV_FILE ?= .env
 DC := docker compose -f docker-compose.yml
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight
 
 help:
 > echo "Targets:"
@@ -48,6 +48,8 @@ help:
 > echo "  launch-readiness-gate-schedule*: schedule/status/cancel one-shot 04:30 America/Denver gate run"
 > echo "  qdrant-cloud-check: verify HTTP + gRPC to BYO Qdrant Cloud endpoint"
 > echo "  mem-up-release|mem-up-lite-release: compose up with image digest lockfile"
+> echo "  quickstart: create .env if needed, run secure bootstrap, and verify health"
+> echo "  submission-preflight: verify repo collateral for launch directory submissions"
 
 # ---- One-shot launcher ----
 
@@ -197,6 +199,9 @@ service-update-status:
 
 service-update-run:
 > bash scripts/service_update_runner.sh
+
+submission-preflight:
+> python3 scripts/submission_preflight.py
 
 # ---- env wiring (append-only) ----
 
@@ -350,7 +355,7 @@ trae-shell: trae-install trae-config
 > cd $(TRAE_DIR) && uv run trae-cli --config "$(TRAE_CFG)" interactive
 
 # Lightweight memory stack shortcuts (avoid mk/memory.mk)
-.PHONY: mem-up mem-down mem mem-ps
+.PHONY: mem-up mem-down mem mem-ps quickstart
 MEM_PROFILE_CORE := core
 MEM_PROFILE_FULL := core,analytics,llm,observability
 MEM_PROFILES_DEFAULT := $(shell [ -f "$(ENV_FILE)" ] && awk -F= '/^COMPOSE_PROFILES=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)
@@ -380,6 +385,19 @@ mem-down:
 
 mem-ps:
 > PROFILES="$(MEM_PROFILES)" $(MAKE) ps
+
+quickstart:
+> if [ ! -f "$(ENV_FILE)" ]; then \
+>   cp .env.example "$(ENV_FILE)"; \
+>   echo ">> created $(ENV_FILE) from .env.example"; \
+> fi
+> mkdir -p infra/compose
+> ln -svf "../../$(ENV_FILE)" infra/compose/.env >/dev/null
+> BOOTSTRAP=1 scripts/first_run.sh
+> ORCH_KEY="$$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)"; \
+> curl -fsS "http://127.0.0.1:8075/health" | jq . >/dev/null; \
+> curl -fsS -H "x-api-key: $$ORCH_KEY" "http://127.0.0.1:8075/status" | jq . >/dev/null; \
+> echo ">> quickstart complete (health + status checks passed)"
 
 mem-up-core:
 > PROFILES="$(MEM_PROFILE_CORE)" $(MAKE) up

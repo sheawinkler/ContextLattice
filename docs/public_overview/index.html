@@ -4,7 +4,38 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Context Lattice | Private memory fabric for AI agents</title>
+  <meta name="description" content="Context Lattice is a private-by-default, local-first memory orchestration service for apps and agents with durable fanout and retrieval learning loops." />
+  <link rel="canonical" href="https://contextlattice.io/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Context Lattice" />
+  <meta property="og:title" content="Context Lattice | Private memory fabric for AI agents" />
+  <meta property="og:description" content="Private-by-default memory orchestration for apps and agents with HTTP-preferred MCP, durable fanout, and learning retrieval." />
+  <meta property="og:url" content="https://contextlattice.io/" />
+  <meta property="og:image" content="https://contextlattice.io/assets/contextlattice-og-1200x630.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Context Lattice: private-by-default memory layer for apps and agents" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Context Lattice | Private memory fabric for AI agents" />
+  <meta name="twitter:description" content="Local-first memory orchestration with durable fanout and learning retrieval." />
+  <meta name="twitter:image" content="https://contextlattice.io/assets/contextlattice-og-1200x630.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
   <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Context Lattice",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux",
+      "url": "https://contextlattice.io/",
+      "description": "Private-by-default memory orchestration for apps and agents with HTTP-preferred MCP, durable fanout, and learning retrieval.",
+      "author": {
+        "@type": "Organization",
+        "name": "Private Memory Corp"
+      }
+    }
+  </script>
 </head>
 <body class="home">
   <main class="container">
@@ -13,7 +44,7 @@
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
       </a>
-      <p class="topbar-motto">Private by default. MCP-compatible by design.</p>
+      <p class="topbar-motto">Private by default. Local-first intelligence by design.</p>
     </header>
 
     <section class="hero">
@@ -23,7 +54,12 @@
         Context Lattice (memMCP) gives agents reusable memory with HTTP MCP, federated retrieval,
         durable fanout, and storage guardrails so quality and costs remain stable under load.
       </p>
-      <p class="hero-local">local first</p>
+      <p class="hero-local">One intelligent memory layer for apps and agents.</p>
+      <div class="cta-row">
+        <a class="cta primary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">View v1 on GitHub</a>
+        <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Download v1 (ZIP)</a>
+      </div>
+      <p class="muted-note">Clone: <code>git clone git@github.com:sheawinkler/ContextLattice.git</code></p>
       <div class="hero-art" aria-hidden="true">
         <svg class="hero-lattice" viewBox="0 0 320 190" role="presentation" focusable="false">
           <defs>
@@ -98,7 +134,7 @@
         <a href="integration.html">Integrations</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
-        <a href="v1/">v1</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">v1</a>
       </nav>
     </div>
 
@@ -120,7 +156,7 @@
         </article>
         <article class="card">
           <div class="kicker">How it runs</div>
-          <h3>Qwen-first, model-flexible runtime</h3>
+          <h3>Qwen-first, any-model runtime</h3>
           <p>Ships with Qwen by default and can plug into your preferred stack via Ollama, LLVM/llama.cpp, LM Studio, and compatible local gateways.</p>
         </article>
         <article class="card">
@@ -129,6 +165,32 @@
           <p>Write path is tuned for ~100 messages/sec with queue backpressure, fanout coalescing, admission control, retry workers, and retention sweeps to keep sinks stable under burst load.</p>
         </article>
       </div>
+    </section>
+
+    <section class="section">
+      <div class="grid">
+        <article class="card">
+          <div class="kicker">Quickstart</div>
+          <h3>One command to launch safely</h3>
+          <p>Use <code>gmake quickstart</code> for first-run setup, secure bootstrap, and health verification.</p>
+<pre><code>gmake quickstart</code></pre>
+        </article>
+        <article class="card">
+          <div class="kicker">60-second verify</div>
+          <h3>Prove service + auth in two calls</h3>
+<pre><code>ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+curl -fsS http://127.0.0.1:8075/health | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.service,.sinks'</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Auth note</div>
+        <h3>Getting 401 on local requests?</h3>
+        <p>Secure mode is on by default. Keep using <code>/health</code> without auth, and include <code>x-api-key</code> for protected endpoints like <code>/status</code>, <code>/memory/*</code>, and <code>/telemetry/*</code>.</p>
+      </article>
     </section>
 
     <section class="section">
@@ -386,7 +448,7 @@
 
     <footer class="footer">
       <span>Context Lattice public overview</span>
-      <span>Private by default. MCP-compatible by design.</span>
+      <span>Private by default. Local-first intelligence by design.</span>
     </footer>
   </main>
 </body>

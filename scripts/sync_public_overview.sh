@@ -27,8 +27,22 @@ if [[ -d "$PUBLIC_SOURCE_DIR" ]]; then
   cp "$PUBLIC_SOURCE_DIR/troubleshooting.html" "$PUBLIC_DIR/troubleshooting.html"
   cp "$PUBLIC_SOURCE_DIR/contact.html" "$PUBLIC_DIR/contact.html"
   cp "$PUBLIC_SOURCE_DIR/styles.css" "$PUBLIC_DIR/styles.css"
+  if [[ -f "$PUBLIC_SOURCE_DIR/CNAME" ]]; then
+    cp "$PUBLIC_SOURCE_DIR/CNAME" "$PUBLIC_DIR/CNAME"
+  fi
   if [[ -f "$PUBLIC_SOURCE_DIR/styles-gray.css" ]]; then
     cp "$PUBLIC_SOURCE_DIR/styles-gray.css" "$PUBLIC_DIR/styles-gray.css"
+  fi
+  if [[ -f "$PUBLIC_SOURCE_DIR/.nojekyll" ]]; then
+    cp "$PUBLIC_SOURCE_DIR/.nojekyll" "$PUBLIC_DIR/.nojekyll"
+  fi
+  if [[ -d "$PUBLIC_SOURCE_DIR/assets" ]]; then
+    rm -rf "$PUBLIC_DIR/assets"
+    cp -R "$PUBLIC_SOURCE_DIR/assets" "$PUBLIC_DIR/assets"
+  fi
+  if [[ -d "$PUBLIC_SOURCE_DIR/.well-known" ]]; then
+    rm -rf "$PUBLIC_DIR/.well-known"
+    cp -R "$PUBLIC_SOURCE_DIR/.well-known" "$PUBLIC_DIR/.well-known"
   fi
 fi
 rm -f "$PUBLIC_DIR/README.md"

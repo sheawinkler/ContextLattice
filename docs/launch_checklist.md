@@ -37,3 +37,20 @@ local free, hosted cloud, and on‑prem tiers.
 - [x] Align pricing page + public landing page.
 - [x] Build pilot onboarding + ROI case study flow.
 - [x] Prepare standard contract + license language.
+
+## F) Distribution execution tracker
+- [x] Create channel-by-channel launch tracker: `docs/publish_execution_tracker.md`
+- [x] Generate channel copybook for synchronized posting: `docs/launch_channel_copybook.md`
+- [x] Add modular launch generator service: `launch_service/README.md`
+- [x] Generate docs from modular config: `python3 launch_service/generate_launch_docs.py --config launch_service/config/contextlattice.launch.json`
+- [x] Add submission requirements matrix + automated preflight: `docs/submission_requirements.md`, `gmake submission-preflight`
+- [ ] Run D-2 launch dry run against `docs/publish_execution_tracker.md` run-of-show.
+
+## G) 24-hour launch sprint (Feb 20-21, 2026)
+- [x] Compressed all channel publish times into 24 hours in `launch_service/config/contextlattice.launch.json`.
+- [x] Marked all channel entries as `Scheduled` in generated tracker docs.
+- [ ] Domain routing cutover: `contextlattice.io` canonical; 301 redirect `privatememorycorp.ai`, `privatememorycorp.com`, `privatememorycorp.io`, and `contextlattice.pro` to canonical.
+- [ ] Run `python3 scripts/submission_preflight.py --online` before sending submissions.
+- [ ] Execute pre-launch submissions on Feb 20, 2026: MCP Registry, Glama, PulseMCP, MCP.so, FutureTools, Futurepedia, Toolify.
+- [ ] Execute launch-day run-of-show on Feb 21, 2026: release, Product Hunt, Show HN, X, LinkedIn, Reddit, Hugging Face, Dev.to.
+- [ ] Post-launch checkpoint on Feb 21, 2026 by 15:00 MST: update tracker statuses + KPI snapshot.

@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1080" viewBox="0 0 1700 1080" role="img" aria-label="Task coordination and agent communication workflow through the Context Lattice orchestrator">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192434"/>
+      <stop offset="100%" stop-color="#111a25"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="20%" cy="8%" r="60%">
+      <stop offset="0%" stop-color="#88a5d2" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#88a5d2" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="arrow" markerWidth="12.1" markerHeight="12.1" refX="9.7" refY="6.05" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L12.1 6.05 L0 12.1 Z" fill="#deebfc"/>
+    </marker>
+    <marker id="arrowAsync" markerWidth="12.1" markerHeight="12.1" refX="9.7" refY="6.05" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L12.1 6.05 L0 12.1 Z" fill="#94d8e8"/>
+    </marker>
+    <marker id="arrowLearn" markerWidth="12.1" markerHeight="12.1" refX="9.7" refY="6.05" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L12.1 6.05 L0 12.1 Z" fill="#dcc18a"/>
+    </marker>
+    <style><![CDATA[
+      .frame { fill: url(#bg); stroke: #69788b; stroke-width: 1.4; }
+      .boundary { fill: rgba(255,255,255,0.02); stroke: #cdd8e8; stroke-width: 2; stroke-dasharray: 10 8; }
+      .node { fill: #1f2b3a; stroke: #cfdbeb; stroke-width: 2; }
+      .core { fill: #8f551f; stroke: #f2d3ad; stroke-width: 2.4; }
+      .worker-box { fill: rgba(19, 35, 49, 0.78); stroke: #94d8e8; stroke-width: 2; stroke-dasharray: 10 8; }
+      .title { font: 700 20px 'IBM Plex Mono', monospace; fill: #d4deeb; letter-spacing: 0.09em; }
+      .h2 { font: 700 38px 'IBM Plex Sans', sans-serif; fill: #eef4fd; }
+      .label { font: 700 24px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+      .label-sm { font: 700 20px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+      .sub { font: 600 19px 'IBM Plex Sans', sans-serif; fill: #d2ddec; }
+      .sub-sm { font: 600 15px 'IBM Plex Sans', sans-serif; fill: #c8d6e8; }
+      .lane { font: 700 24px 'IBM Plex Sans', sans-serif; fill: #d8e3f2; }
+      .sync { stroke: #deebfc; stroke-width: 3.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .async { stroke: #94d8e8; stroke-width: 3.2; fill: none; stroke-dasharray: 10 8; stroke-linecap: round; stroke-linejoin: round; }
+      .learn { stroke: #dcc18a; stroke-width: 3.2; fill: none; stroke-dasharray: 4 8; stroke-linecap: round; stroke-linejoin: round; }
+      .legend { fill: rgba(15, 19, 24, 0.92); stroke: rgba(225, 235, 246, 0.5); stroke-width: 1.7; }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1700" height="1080" class="frame"/>
+  <rect x="0" y="0" width="1700" height="1080" fill="url(#glowA)"/>
+  <text x="850" y="66" text-anchor="middle" class="title">TASK COORDINATION + AGENT COMMUNICATION</text>
+
+  <rect x="250" y="116" width="1200" height="860" rx="72" class="boundary"/>
+  <text x="850" y="190" text-anchor="middle" class="h2">Context Lattice Task Plane</text>
+
+  <rect x="44" y="330" width="216" height="178" rx="30" class="node"/>
+  <text x="152" y="396" text-anchor="middle" class="label">Agent Clients</text>
+  <text x="152" y="430" text-anchor="middle" class="sub">agents</text>
+  <text x="152" y="458" text-anchor="middle" class="sub">messaging apps</text>
+  <text x="152" y="486" text-anchor="middle" class="sub">MCP callers</text>
+
+  <rect x="1440" y="330" width="216" height="178" rx="30" class="node"/>
+  <text x="1548" y="396" text-anchor="middle" class="label">Messaging</text>
+  <text x="1548" y="430" text-anchor="middle" class="sub">Telegram / Slack</text>
+  <text x="1548" y="458" text-anchor="middle" class="sub">OpenClaw family</text>
+  <text x="1548" y="486" text-anchor="middle" class="sub">human-in-loop</text>
+
+  <rect x="620" y="194" width="460" height="84" rx="14" class="core"/>
+  <text x="850" y="242" text-anchor="middle" class="label">Orchestrator Task API</text>
+  <text x="850" y="264" text-anchor="middle" class="sub-sm">single ingress for task coordination + communication</text>
+
+  <rect x="620" y="322" width="460" height="68" rx="12" class="node"/>
+  <text x="850" y="364" text-anchor="middle" class="label-sm">Task Planner + Policy Gate</text>
+
+  <rect x="620" y="432" width="460" height="68" rx="12" class="node"/>
+  <text x="850" y="474" text-anchor="middle" class="label-sm">Durable Task Queue + Scheduler</text>
+
+  <rect x="530" y="550" width="640" height="84" rx="12" class="worker-box"/>
+  <text x="850" y="596" text-anchor="middle" class="lane">Parallel Agent Workers</text>
+  <text x="850" y="618" text-anchor="middle" class="sub-sm">internal runners + external agents (Codex / Claude Code)</text>
+
+  <rect x="320" y="724" width="480" height="102" rx="16" class="node"/>
+  <text x="560" y="770" text-anchor="middle" class="label-sm">Context + Memory Services</text>
+  <text x="560" y="796" text-anchor="middle" class="sub-sm">memory-bank, qdrant, mongo</text>
+  <text x="560" y="818" text-anchor="middle" class="sub-sm">mindsdb + letta</text>
+
+  <rect x="900" y="724" width="480" height="102" rx="16" class="node"/>
+  <text x="1140" y="770" text-anchor="middle" class="label-sm">Tool + Model Runtimes</text>
+  <text x="1140" y="796" text-anchor="middle" class="sub-sm">Qwen/Ollama, LM Studio</text>
+  <text x="1140" y="818" text-anchor="middle" class="sub-sm">OpenAI-compatible + external tools</text>
+
+  <rect x="620" y="892" width="460" height="72" rx="14" class="node"/>
+  <text x="850" y="936" text-anchor="middle" class="label-sm">Result Composer + Task State Write</text>
+
+  <rect x="1110" y="130" width="298" height="132" rx="16" class="legend"/>
+  <text x="1138" y="162" class="sub">Legend</text>
+  <path class="sync" d="M1138 186 H1246" marker-end="url(#arrow)"/>
+  <text x="1256" y="192" class="sub-sm">sync task flow</text>
+  <path class="async" d="M1138 212 H1246" marker-end="url(#arrowAsync)"/>
+  <text x="1256" y="218" class="sub-sm">async worker fanout</text>
+  <path class="learn" d="M1138 238 H1246" marker-end="url(#arrowLearn)"/>
+  <text x="1256" y="244" class="sub-sm">learning feedback</text>
+
+  <path class="sync" d="M260 420 C420 420,470 236,620 236" marker-end="url(#arrow)"/>
+  <path class="sync" d="M1440 420 C1280 420,1230 236,1080 236" marker-end="url(#arrow)"/>
+
+  <path class="sync" d="M850 278 V322" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 390 V432" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 500 V550" marker-end="url(#arrow)"/>
+
+  <path class="async" d="M850 634 V706 H560 V724" marker-end="url(#arrowAsync)"/>
+  <text x="704" y="700" class="sub-sm" fill="#94d8e8">execution outcome</text>
+
+  <path class="sync" d="M930 634 C1006 658,1086 690,1140 724" marker-end="url(#arrow)"/>
+
+  <path class="learn" d="M412 724 V676 H850 V634" marker-end="url(#arrowLearn)"/>
+  <text x="648" y="668" class="sub-sm" fill="#dcc18a">outcome writeback</text>
+
+  <path class="sync" d="M560 826 C648 842,714 858,770 892" marker-end="url(#arrow)"/>
+  <path class="sync" d="M1140 826 C1052 842,986 858,930 892" marker-end="url(#arrow)"/>
+
+  <path class="sync" d="M620 928 C480 928,350 880,260 500" marker-end="url(#arrow)"/>
+  <path class="sync" d="M1080 928 C1220 928,1350 880,1440 500" marker-end="url(#arrow)"/>
+
+  <path class="learn" d="M1240 724 C1300 642,1290 500,1080 356" marker-end="url(#arrowLearn)"/>
+  <text x="1278" y="616" class="sub-sm" fill="#dcc18a">routing quality feedback</text>
+</svg>

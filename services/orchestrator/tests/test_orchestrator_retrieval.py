@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -120,6 +121,31 @@ def test_validate_security_posture_requires_api_key_in_production(monkeypatch: p
         orchestrator.validate_orchestrator_security_posture()
 
 
+def test_prepare_content_for_storage_redacts_in_redact_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "SECRETS_STORAGE_MODE", "redact")
+    content = "api_key=sk-1234567890abcdefghijklmno"
+    stored, warning = orchestrator._prepare_content_for_storage(content)
+    assert stored != content
+    assert "[REDACTED]" in stored
+    assert warning
+    assert "redacted" in warning
+
+
+def test_prepare_content_for_storage_blocks_in_block_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "SECRETS_STORAGE_MODE", "block")
+    with pytest.raises(orchestrator.HTTPException) as exc:
+        orchestrator._prepare_content_for_storage("api_key=sk-1234567890abcdefghijklmno")
+    assert exc.value.status_code == 422
+
+
+def test_prepare_content_for_storage_allows_in_allow_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "SECRETS_STORAGE_MODE", "allow")
+    content = "api_key=sk-1234567890abcdefghijklmno"
+    stored, warning = orchestrator._prepare_content_for_storage(content)
+    assert stored == content
+    assert warning is None
+
+
 @pytest.mark.asyncio
 async def test_memory_search_fails_open_when_preference_store_unavailable(
     monkeypatch: pytest.MonkeyPatch,
@@ -204,6 +230,403 @@ async def test_tool_topics_list_project_scope(monkeypatch: pytest.MonkeyPatch):
     assert result["total"] == 3
     assert result["topics"][0]["path"] == "root"
     assert result["topics"][0]["count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_openclaw_surface_blocks_secret_like_remember_content(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "MESSAGING_OPENCLAW_STRICT_SECURITY", True)
+    parsed = {
+        "action": "remember",
+        "content": "api_key=sk-1234567890abcdefghijklmno",
+        "directives": {},
+        "raw": "remember api_key=sk-1234567890abcdefghijklmno",
+    }
+    with pytest.raises(orchestrator.HTTPException) as exc:
+        await orchestrator._execute_messaging_command(
+            parsed,
+            channel="openclaw",
+            source_id="session-1",
+            default_project="messaging",
+            topic_root="channels/openclaw",
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_openclaw_surface_redacts_secret_like_recall_output(monkeypatch: pytest.MonkeyPatch):
+    async def _search(_: Any):
+        return {
+            "results": [
+                {
+                    "project": "messaging",
+                    "file": "channels/openclaw/session-1/msg_1.md",
+                    "summary": "token=supersecret123456789",
+                    "source": "memory_bank",
+                }
+            ],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(orchestrator, "MESSAGING_OPENCLAW_STRICT_SECURITY", True)
+    monkeypatch.setattr(orchestrator, "search_memory", _search)
+    parsed = {
+        "action": "recall",
+        "content": "status",
+        "directives": {},
+        "raw": "recall status",
+    }
+    result = await orchestrator._execute_messaging_command(
+        parsed,
+        channel="zeroclaw",
+        source_id="session-1",
+        default_project="messaging",
+        topic_root="channels/zeroclaw",
+    )
+    rendered = json.dumps(result)
+    assert "supersecret123456789" not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@pytest.mark.asyncio
+async def test_messaging_ironclaw_endpoint_disabled_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "IRONCLAW_INTEGRATION_ENABLED", False)
+    payload = orchestrator.MessagingCommandIn(
+        channel="ironclaw",
+        source_id="wallet-1",
+        text="@ContextLattice status",
+    )
+    with pytest.raises(orchestrator.HTTPException) as exc:
+        await orchestrator.messaging_ironclaw(payload)
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_messaging_ironclaw_endpoint_bridges_to_command(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def _messaging_command(payload: Any):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    monkeypatch.setattr(orchestrator, "IRONCLAW_INTEGRATION_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "IRONCLAW_DEFAULT_PROJECT", "web3")
+    monkeypatch.setattr(orchestrator, "messaging_command", _messaging_command)
+    payload = orchestrator.MessagingCommandIn(
+        channel="",
+        source_id="wallet-1",
+        text="@ContextLattice status",
+    )
+    result = await orchestrator.messaging_ironclaw(payload)
+    bridged = captured["payload"]
+    assert result["ok"] is True
+    assert bridged.channel == "ironclaw"
+    assert bridged.project == "web3"
+
+
+@pytest.mark.asyncio
+async def test_messaging_task_create_remember_enqueues_task(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def _create_task_record(title, project, agent, priority, payload, run_after=None, max_attempts=None):
+        captured.update(
+            {
+                "title": title,
+                "project": project,
+                "agent": agent,
+                "priority": priority,
+                "payload": payload,
+                "run_after": run_after,
+                "max_attempts": max_attempts,
+            }
+        )
+        return {
+            "id": "task-123",
+            "status": "queued",
+            "action_type": "memory_write",
+            "max_attempts": max_attempts or 4,
+        }
+
+    monkeypatch.setattr(orchestrator, "create_task_record", _create_task_record)
+    parsed = {
+        "action": "task",
+        "content": "create remember deployment complete",
+        "directives": {"priority": "3", "max_attempts": "6"},
+        "raw": "task create remember deployment complete",
+    }
+    result = await orchestrator._execute_messaging_command(
+        parsed,
+        channel="custom",
+        source_id="chat-1",
+        default_project="alpha",
+        topic_root="channels/custom",
+    )
+    assert result["ok"] is True
+    assert result["subcommand"] == "create"
+    assert captured["priority"] == 3
+    assert captured["max_attempts"] == 6
+    assert captured["payload"]["action"] == "memory_write"
+    assert "task-123" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_messaging_task_status_returns_task_and_events(monkeypatch: pytest.MonkeyPatch):
+    async def _get_task_record(task_id: str):
+        assert task_id == "task-1"
+        return {
+            "id": task_id,
+            "status": "running",
+            "attempts": 1,
+            "max_attempts": 4,
+            "project": "alpha",
+            "action_type": "memory_search",
+        }
+
+    async def _get_task_events(task_id: str):
+        assert task_id == "task-1"
+        return [{"id": 1, "status": "running"}]
+
+    monkeypatch.setattr(orchestrator, "get_task_record", _get_task_record)
+    monkeypatch.setattr(orchestrator, "get_task_events", _get_task_events)
+    parsed = {
+        "action": "task",
+        "content": "status task-1",
+        "directives": {},
+        "raw": "task status task-1",
+    }
+    result = await orchestrator._execute_messaging_command(
+        parsed,
+        channel="custom",
+        source_id="chat-1",
+        default_project="alpha",
+        topic_root="channels/custom",
+    )
+    assert result["ok"] is True
+    assert result["subcommand"] == "status"
+    assert result["result"]["task"]["id"] == "task-1"
+    assert result["result"]["events"][0]["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_messaging_task_replay_calls_replay_task_record(monkeypatch: pytest.MonkeyPatch):
+    called: dict[str, Any] = {}
+
+    async def _replay(task_id: str, *, actor: str | None = None, note: str | None = None, reset_attempts: bool = True):
+        called.update(
+            {
+                "task_id": task_id,
+                "actor": actor,
+                "note": note,
+                "reset_attempts": reset_attempts,
+            }
+        )
+        return {"id": task_id, "status": "queued", "attempts": 0, "max_attempts": 4}
+
+    monkeypatch.setattr(orchestrator, "replay_task_record", _replay)
+    parsed = {
+        "action": "task",
+        "content": "replay task-9",
+        "directives": {},
+        "raw": "task replay task-9",
+    }
+    result = await orchestrator._execute_messaging_command(
+        parsed,
+        channel="custom",
+        source_id="chat-3",
+        default_project="alpha",
+        topic_root="channels/custom",
+    )
+    assert result["ok"] is True
+    assert result["subcommand"] == "replay"
+    assert called["task_id"] == "task-9"
+    assert called["actor"] == "chat-3"
+    assert called["reset_attempts"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_task_runtime_snapshot_reports_counts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / "agent_tasks.db"
+    monkeypatch.setattr(orchestrator, "TASK_DB_PATH", db_path)
+    monkeypatch.setattr(orchestrator, "task_db_ready", False)
+    await orchestrator.ensure_task_db()
+
+    old_ts = "2000-01-01T00:00:00Z"
+    future_ts = "2999-01-01T00:00:00Z"
+
+    def _seed(conn):
+        rows = [
+            ("task-q", "queued", 0, 0, old_ts, 0, 3),
+            ("task-a", "approved", 1, 1, old_ts, 0, 3),
+            ("task-blocked", "approved", 1, 0, old_ts, 0, 3),
+            ("task-future", "queued", 0, 0, future_ts, 0, 3),
+            ("task-running", "running", 0, 0, old_ts, 1, 3),
+            ("task-failed", "failed", 0, 0, old_ts, 3, 3),
+        ]
+        for task_id, status, approval_required, approved, run_after, attempts, max_attempts in rows:
+            conn.execute(
+                """
+                INSERT INTO tasks (
+                    id, title, status, project, agent, priority, payload, run_after, attempts, max_attempts,
+                    lease_expires_at, claimed_by, last_error, result, completed_at, created_at, updated_at,
+                    approval_required, approved, risk_level, action_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    f"title-{task_id}",
+                    status,
+                    "alpha",
+                    None,
+                    0,
+                    "{}",
+                    run_after,
+                    attempts,
+                    max_attempts,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    old_ts,
+                    old_ts,
+                    approval_required,
+                    approved,
+                    None,
+                    "memory_write",
+                ),
+            )
+        conn.commit()
+
+    await orchestrator._task_db_exec(_seed)
+    snapshot = await orchestrator.get_task_runtime_snapshot()
+    assert snapshot["queueReady"] == 2
+    assert snapshot["running"] == 1
+    assert snapshot["deadletter"] == 1
+    assert snapshot["byStatus"]["queued"] == 2
+    assert snapshot["byStatus"]["approved"] == 2
+
+
+@pytest.mark.asyncio
+async def test_claim_next_task_respects_agent_affinity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / "agent_tasks.db"
+    monkeypatch.setattr(orchestrator, "TASK_DB_PATH", db_path)
+    monkeypatch.setattr(orchestrator, "task_db_ready", False)
+    await orchestrator.ensure_task_db()
+
+    old_ts = "2000-01-01T00:00:00Z"
+
+    def _seed(conn):
+        rows = [
+            ("task-external", "codex-subagent", 9),
+            ("task-internal", "internal", 8),
+            ("task-unassigned", None, 1),
+        ]
+        for task_id, agent, priority in rows:
+            conn.execute(
+                """
+                INSERT INTO tasks (
+                    id, title, status, project, agent, priority, payload, run_after, attempts, max_attempts,
+                    lease_expires_at, claimed_by, last_error, result, completed_at, created_at, updated_at,
+                    approval_required, approved, risk_level, action_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    f"title-{task_id}",
+                    "queued",
+                    "alpha",
+                    agent,
+                    priority,
+                    "{}",
+                    old_ts,
+                    0,
+                    3,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    old_ts,
+                    old_ts,
+                    0,
+                    0,
+                    None,
+                    "messaging_command",
+                ),
+            )
+        conn.commit()
+
+    await orchestrator._task_db_exec(_seed)
+    internal_claim = await orchestrator.claim_next_task("internal-worker-1")
+    assert internal_claim is not None
+    assert internal_claim["id"] == "task-internal"
+    external_claim = await orchestrator.claim_next_task("internal-worker-1")
+    assert external_claim is not None
+    assert external_claim["id"] == "task-unassigned"
+    no_more_internal = await orchestrator.claim_next_task("internal-worker-1")
+    assert no_more_internal is None
+    codex_claim = await orchestrator.claim_next_task("codex-subagent")
+    assert codex_claim is not None
+    assert codex_claim["id"] == "task-external"
+
+
+@pytest.mark.asyncio
+async def test_list_task_records_filters_by_agent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / "agent_tasks.db"
+    monkeypatch.setattr(orchestrator, "TASK_DB_PATH", db_path)
+    monkeypatch.setattr(orchestrator, "task_db_ready", False)
+    await orchestrator.ensure_task_db()
+
+    old_ts = "2000-01-01T00:00:00Z"
+
+    def _seed(conn):
+        rows = [
+            ("task-a", "codex-subagent"),
+            ("task-b", ""),
+            ("task-c", None),
+        ]
+        for task_id, agent in rows:
+            conn.execute(
+                """
+                INSERT INTO tasks (
+                    id, title, status, project, agent, priority, payload, run_after, attempts, max_attempts,
+                    lease_expires_at, claimed_by, last_error, result, completed_at, created_at, updated_at,
+                    approval_required, approved, risk_level, action_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    f"title-{task_id}",
+                    "queued",
+                    "alpha",
+                    agent,
+                    0,
+                    "{}",
+                    old_ts,
+                    0,
+                    3,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    old_ts,
+                    old_ts,
+                    0,
+                    0,
+                    None,
+                    "memory_write",
+                ),
+            )
+        conn.commit()
+
+    await orchestrator._task_db_exec(_seed)
+    codex_tasks = await orchestrator.list_task_records(project="alpha", agent="codex-subagent", limit=10)
+    assert [item["id"] for item in codex_tasks] == ["task-a"]
+    unassigned_tasks = await orchestrator.list_task_records(project="alpha", agent="unassigned", limit=10)
+    assert [item["id"] for item in unassigned_tasks] == ["task-b", "task-c"]
 
 
 @pytest.mark.asyncio
