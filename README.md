@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://contextlattice.io/" target="_blank" rel="noopener noreferrer">
-    <img src="docs/readme/context-lattice-hero.svg" alt="Context Lattice hero banner" width="100%" />
+    <img src="docs/public_overview/assets/architecture-service-map.svg" alt="Context Lattice system context map" width="100%" />
   </a>
 </p>
 
@@ -46,19 +46,19 @@ Context Lattice is built for teams running high-volume memory writes where durab
     </td>
     <td width="50%">
       <a href="https://contextlattice.io/architecture.html">
-        <img src="docs/public_overview/assets/architecture-task-coordination.svg" alt="Task coordination and agent communication flow" width="100%" />
+        <img src="docs/public_overview/assets/architecture-write-flow.svg" alt="Write flow with durable outbox fanout" width="100%" />
       </a>
     </td>
   </tr>
   <tr>
     <td width="50%">
       <a href="https://contextlattice.io/architecture.html">
-        <img src="docs/public_overview/assets/architecture-write-flow.svg" alt="Write flow with durable outbox fanout" width="100%" />
+        <img src="docs/public_overview/assets/architecture-retrieval-flow.svg" alt="Retrieval and learning feedback flow" width="100%" />
       </a>
     </td>
     <td width="50%">
       <a href="https://contextlattice.io/architecture.html">
-        <img src="docs/public_overview/assets/architecture-retrieval-flow.svg" alt="Retrieval and learning feedback flow" width="100%" />
+        <img src="docs/public_overview/assets/architecture-task-coordination.svg" alt="Task coordination and agent communication flow" width="100%" />
       </a>
     </td>
   </tr>
