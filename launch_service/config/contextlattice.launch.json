@@ -210,14 +210,14 @@
     {
       "tier": "P1",
       "name": "Dev.to Deep-dive",
-      "listing_url": "https://dev.to",
+      "listing_url": "https://dev.to/sheawinkler/how-i-built-a-private-by-default-http-first-mcp-memorycontexttask-orchestrator-4m29",
       "submission_path": "Technical launch article with install proof",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
       "schedule_mt": "2026-02-21 09:30",
       "schedule_pt": "2026-02-21 08:30",
-      "status": "Ready (manual submit)",
+      "status": "Live",
       "copy_key": "devto"
     }
   ],
