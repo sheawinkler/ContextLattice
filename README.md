@@ -41,12 +41,24 @@ Context Lattice is built for teams running high-volume memory writes where durab
   <tr>
     <td width="50%">
       <a href="https://contextlattice.io/architecture.html">
-        <img src="docs/readme/orchestrator-system-map.svg" alt="Orchestrator system map" width="100%" />
+        <img src="docs/public_overview/assets/architecture-service-map.svg" alt="Context Lattice service map" width="100%" />
       </a>
     </td>
     <td width="50%">
-      <a href="https://contextlattice.io/installation.html">
-        <img src="docs/readme/deployment-modes.svg" alt="Deployment modes overview" width="100%" />
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-task-coordination.svg" alt="Task coordination and agent communication flow" width="100%" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-write-flow.svg" alt="Write flow with durable outbox fanout" width="100%" />
+      </a>
+    </td>
+    <td width="50%">
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-retrieval-flow.svg" alt="Retrieval and learning feedback flow" width="100%" />
       </a>
     </td>
   </tr>
