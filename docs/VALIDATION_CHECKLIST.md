@@ -9,7 +9,7 @@ smoke tests, devnet/dry-run rehearsals, and the hosted deployment drill.
 3. `PAPER_SMOKE_DURATION=180 scripts/smoke_paper_trading.sh`
    - Confirms the unified engine runs unattended in paper mode, with logs
      written to `logs/smoke/`. Inspect the tail printed at the end for
-     warnings or memMCP errors.
+     warnings or ContextLattice errors.
 
 ## 2. Manual Paper Run (Full Logs)
 - For longer sessions, run `cargo run --bin algotrader -- --paper` and leave it
@@ -35,7 +35,7 @@ smoke tests, devnet/dry-run rehearsals, and the hosted deployment drill.
 1. Provision a clean VM, install Docker + compose.
 2. `scripts/deploy_live.sh` → choose option 1 (paper) for the first pass.
 3. Use the new `logs/smoke/` artifacts plus `services/orchestrator/logs/` to
-   verify memMCP + telemetry ingestion.
+   verify ContextLattice + telemetry ingestion.
 4. Hit the dashboard (`memmcp-dashboard`) and confirm the SOL/USDC feed renders.
 
 ## 5. Observability & Memory
@@ -45,10 +45,10 @@ smoke tests, devnet/dry-run rehearsals, and the hosted deployment drill.
 - Log review checklist:
   - `logs/smoke/paper_smoke_*.log`
   - `logs/algotrader.log`
-  - `services/orchestrator/logs/*.log` (memMCP ingest)
+  - `services/orchestrator/logs/*.log` (ContextLattice ingest)
 
 ## 6. Release Sign-off
 - Update `docs/DEV_PROGRESS.md` and `docs/PHASE_5_PRODUCTION_READINESS.md` with
   the date, artifacts, and any circuit-breaker triggers observed.
-- Capture screenshots (dashboard, CLI tail, memMCP inspector).
+- Capture screenshots (dashboard, CLI tail, ContextLattice inspector).
 - Tag the release candidate once all above items are green.

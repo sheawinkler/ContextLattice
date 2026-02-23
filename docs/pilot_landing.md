@@ -8,7 +8,7 @@ Local-first memory fabric for AI agents with HTTP MCP, federated retrieval, dura
 
 ## What You Get (2-4 week pilot)
 - Baseline measurement for token spend, long-context dependence, and failure rate.
-- Deployment of memMCP with retrieval + write-fanout tuned to your workflow.
+- Deployment of ContextLattice with retrieval + write-fanout tuned to your workflow.
 - Post-pilot ROI summary with rollout recommendation.
 
 ## What Is New In This Build

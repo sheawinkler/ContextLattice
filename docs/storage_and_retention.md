@@ -40,15 +40,15 @@ If you set the env var to a **host path** (e.g. `/Volumes/ExternalSSD/...`) it b
 ### 2.1 Recommended directory layout
 
 Example:
-- `/Volumes/ExternalSSD/memmcp/qdrant`
-- `/Volumes/ExternalSSD/memmcp/mongo`
-- `/Volumes/ExternalSSD/memmcp/memory-bank`
-- `/Volumes/ExternalSSD/memmcp/orchestrator`
+- `/Volumes/ExternalSSD/contextlattice/qdrant`
+- `/Volumes/ExternalSSD/contextlattice/mongo`
+- `/Volumes/ExternalSSD/contextlattice/memory-bank`
+- `/Volumes/ExternalSSD/contextlattice/orchestrator`
 
 Create them:
 
 ```bash
-mkdir -p /Volumes/ExternalSSD/memmcp/{qdrant,mongo,memory-bank,orchestrator}
+mkdir -p /Volumes/ExternalSSD/contextlattice/{qdrant,mongo,memory-bank,orchestrator}
 ```
 
 ## Memory bank retention + export
@@ -68,10 +68,10 @@ cp .env.example .env
 Then set these (paths are just examples):
 
 ```ini
-QDRANT_STORAGE=/Volumes/ExternalSSD/memmcp/qdrant
-MONGO_DATA=/Volumes/ExternalSSD/memmcp/mongo
-MEMORY_BANK_DATA=/Volumes/ExternalSSD/memmcp/memory-bank
-ORCHESTRATOR_DATA=/Volumes/ExternalSSD/memmcp/orchestrator
+QDRANT_STORAGE=/Volumes/ExternalSSD/contextlattice/qdrant
+MONGO_DATA=/Volumes/ExternalSSD/contextlattice/mongo
+MEMORY_BANK_DATA=/Volumes/ExternalSSD/contextlattice/memory-bank
+ORCHESTRATOR_DATA=/Volumes/ExternalSSD/contextlattice/orchestrator
 ```
 
 ### 2.3 Docker Desktop file sharing (macOS)
@@ -91,9 +91,9 @@ To keep a hot window (example: 48h) and archive the rest to gzipped cold storage
 
 ```bash
 python3 scripts/archive_ndjson_by_time.py \
-  --data-dir /Volumes/ExternalSSD/memmcp/orchestrator \
+  --data-dir /Volumes/ExternalSSD/contextlattice/orchestrator \
   --retention-hours 48 \
-  --cold-dir /Volumes/ExternalSSD/memmcp/cold/telemetry
+  --cold-dir /Volumes/ExternalSSD/contextlattice/cold/telemetry
 ```
 
 ### 3.2 Qdrant snapshots + pruning
@@ -107,14 +107,14 @@ python3 scripts/qdrant_snapshot_prune.py \
   --qdrant-url http://localhost:6333 \
   --collection memmcp_notes \
   --retention-days 14 \
-  --snapshot-dir /Volumes/ExternalSSD/memmcp/cold/qdrant
+  --snapshot-dir /Volumes/ExternalSSD/contextlattice/cold/qdrant
 
 # Optional hour-level pruning (overrides days)
 python3 scripts/qdrant_snapshot_prune.py \
   --qdrant-url http://localhost:6333 \
   --collection memmcp_notes \
   --retention-hours 1 \
-  --snapshot-dir /Volumes/ExternalSSD/memmcp/cold/qdrant
+  --snapshot-dir /Volumes/ExternalSSD/contextlattice/cold/qdrant
 ```
 
 For hourly retention runs where duplicate snapshot files are too expensive, set:

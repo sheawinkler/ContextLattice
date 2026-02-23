@@ -7,7 +7,7 @@
 2. **Exercise Trae on the lightweight Ollama endpoint**  
    - Copy `trae_config.template.yaml` to `~/.trae_agent/trae_config.yaml` if needed.  
    - Confirm Ollama has `llama3.2:1b` pulled (`ollama pull llama3.2:1b`).  
-   - Run `trae-cli run --config ~/.trae_agent/trae_config.yaml` and check that memories and trajectories log via the memMCP hub.
+   - Run `trae-cli run --config ~/.trae_agent/trae_config.yaml` and check that memories and trajectories log via the ContextLattice hub.
 
 3. **Dry-run the hosted deployment path**  
    - On a spare VM (or locally via kind), run `scripts/deploy_hosted_core.sh <domain> <email>` to launch the `core` profile and the Caddy proxy.  
@@ -20,5 +20,5 @@
 
 5. **Prototype a Rust-native hot-path store**  
    - Spike a lightweight append-only store (e.g., `sled`, `sqlite` via `rusqlite`, or a custom binary log) inside the trading repo so high-frequency telemetry can land locally without waiting on HTTP round-trips.  
-   - Add a periodic exporter that batches those records back into memMCP, preserving the shared longitudinal context while keeping memMCP storage project-agnostic.  
+   - Add a periodic exporter that batches those records back into ContextLattice, preserving the shared longitudinal context while keeping ContextLattice storage project-agnostic.  
    - Document findings and criteria for when to cut over (latency targets, disk footprint, recovery procedure).

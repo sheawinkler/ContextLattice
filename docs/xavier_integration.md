@@ -1,6 +1,6 @@
 # Xavier Mode Telemetry Notes
 
-This repo now has a lightweight way to push trading context into the memMCP
+This repo now has a lightweight way to push trading context into the ContextLattice
 stack without blocking the trading loop. The Rust agent uses
 `TelemetryClient` (see `~/Documents/Projects/algotraderv2_rust/src/monitoring/telemetry.rs`) to
 buffer events and asynchronously POST them to this orchestrator via
@@ -22,7 +22,7 @@ buffer events and asynchronously POST them to this orchestrator via
   custom endpoint; by default it points to the orchestrator's
   `/telemetry/metrics` route that the dashboard consumes.
 - Each run queues the loaded godmode profile and every sidecar guidance
-  event; the background worker flushes them to memMCP, Qdrant, and
+  event; the background worker flushes them to ContextLattice, Qdrant, and
   Langfuse.
 - Export `MEMMCP_DISABLE=1` to skip logging while keeping the code path.
 

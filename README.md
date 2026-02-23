@@ -1,4 +1,4 @@
-# Context Lattice (memMCP)
+# ContextLattice
 
 <p align="center">
   <a href="https://contextlattice.io/" target="_blank" rel="noopener noreferrer">
@@ -322,7 +322,7 @@ python3 scripts/submission_preflight.py --online
 ## Private/Public Sync Notes
 
 This repository (`sheawinkler/ContextLattice`) is the primary codebase.
-Public landing collateral remains mirrored in `sheawinkler/memmcp-overview`.
+Public landing collateral remains mirrored in the dedicated public overview mirror repository.
 
 - Source: `docs/public_overview/`
 - Sync script: `scripts/sync_public_overview.sh`

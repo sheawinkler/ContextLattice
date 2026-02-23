@@ -1,7 +1,7 @@
-# Agent Context: memMCP Logging + Recall (Updated 2026-02-08)
+# Agent Context: ContextLattice Logging + Recall (Updated 2026-02-08)
 
 ## Why this matters
-- memMCP is the shared memory stack for every agent working on these machines—not just algotraderv2.
+- ContextLattice is the shared memory stack for every agent working on these machines—not just algotraderv2.
 - Log **every meaningful decision, assumption, and configuration change** so the next agent can pick up instantly, regardless of project.
 - Fallback to these instructions anytime you forget how to record or retrieve context.
 
@@ -93,5 +93,5 @@ If `/memory/write` fails, queue your note locally and retry—**never skip loggi
 ## Expectations for all agents (any repo)
 - Record every outstanding TODO, test run, production change, or investigative note—no exceptions.
 - When you finish a session, append a “handoff” file under `briefings/` summarizing repo state and remaining blockers for that project.
-- Before editing, search memMCP for the subsystem you are touching to avoid duplicating work.
+- Before editing, search ContextLattice for the subsystem you are touching to avoid duplicating work.
 - If you add a new workflow, automation, or convention, update this instruction file (in every location) and log the change.

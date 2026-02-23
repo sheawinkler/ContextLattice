@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to memMCP! This repo focuses on reliable memory, MCP routing, and orchestration across agents. The fastest way to help is to keep changes small, testable, and well‑documented.
+Thanks for contributing to ContextLattice! This repo focuses on reliable memory, MCP routing, and orchestration across agents. The fastest way to help is to keep changes small, testable, and well‑documented.
 
 ## Quick start
 1. Fork + clone.

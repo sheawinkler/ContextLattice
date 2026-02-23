@@ -5,13 +5,13 @@ This directory contains **global** protocols that ALL agents should follow, rega
 ## Structure
 
 ### Global vs Project-Specific
-- **Global protocols** (`_global/agent_protocols/` in memMCP): Cross-project behavior, conventions, learnings
-- **Project decisions** (`{projectName}/decisions/` in memMCP): Specific to individual codebases
+- **Global protocols** (`_global/agent_protocols/` in ContextLattice): Cross-project behavior, conventions, learnings
+- **Project decisions** (`{projectName}/decisions/` in ContextLattice): Specific to individual codebases
 
-### Storage Pattern in memMCP
+### Storage Pattern in ContextLattice
 
 ```
-memMCP Storage:
+ContextLattice Storage:
 ├── _global/
 │   ├── agent_protocols/        # How agents should behave everywhere
 │   │   ├── logging_protocol.md
@@ -42,7 +42,7 @@ memMCP Storage:
 ## Current Protocols
 
 ### [logging_protocol.md](./logging_protocol.md)
-Core protocol for decision logging via memMCP. Defines:
+Core protocol for decision logging via ContextLattice. Defines:
 - Two entrypoints (orchestrator REST vs raw MCP)
 - Logging format and file naming conventions
 - Retrieval patterns
@@ -58,9 +58,9 @@ When working in ANY project, agents should:
 4. Log cross-project learnings to `_global/shared_learnings/`
 5. Update protocols in `_global/agent_protocols/` when conventions change
 
-## Logging Global Protocols to memMCP
+## Logging Global Protocols to ContextLattice
 
-To ensure these protocols are accessible via memMCP:
+To ensure these protocols are accessible via ContextLattice:
 
 ```bash
 export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075

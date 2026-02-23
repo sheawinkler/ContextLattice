@@ -1,6 +1,6 @@
 # Public Overview Site Source
 
-This folder is the source for the public `memmcp-overview` web pages.
+This folder is the source for the public ContextLattice overview web pages.
 
 ## Files
 - `index.html` - public landing page
@@ -39,4 +39,4 @@ This syncs:
 - `.well-known/glama.json`
 - `.nojekyll`
 
-to the public repo `sheawinkler/memmcp-overview`.
+to the dedicated public overview mirror repository.

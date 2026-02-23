@@ -1,6 +1,6 @@
 # Topic Retrieval Trees
 
-memMCP builds a topic/subtopic tree from memory paths and uses it to filter retrieval.
+ContextLattice builds a topic/subtopic tree from memory paths and uses it to filter retrieval.
 
 ## Topic Path Rules
 

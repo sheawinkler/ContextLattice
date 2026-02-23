@@ -1,13 +1,13 @@
 # Rust Hot-Path Store Spike
 
 Goal: give the Solana trading engine a zero-latency persistence layer while keeping
-memMCP as the long-term canonical memory. This spike lives in the
+ContextLattice as the long-term canonical memory. This spike lives in the
 `~/Documents/Projects/algotraderv2_rust` repo and should prove:
 
 1. **Fast writes** – telemetry and strategy metrics land locally in microseconds.
 2. **Crash safety** – after a restart we can replay anything not yet flushed to
-   memMCP.
-3. **Clean hand-off** – a background exporter batches records back into memMCP
+   ContextLattice.
+3. **Clean hand-off** – a background exporter batches records back into ContextLattice
    (via the orchestrator) using the same project/kind tags we already defined.
 
 ## Option A: `sled`
@@ -85,7 +85,7 @@ CREATE INDEX idx_telemetry_exported ON telemetry(exported, captured_at);
 ## Why not SurrealDB / GreptimeDB / RisingWave / LanceDB / TiKV / Neon / Tantivy?
 | Engine | Fit for hot-path telemetry? | Notes |
 | --- | --- | --- |
-| **SurrealDB** | Partial | Brings its own SQL-like runtime and auth. Great for multi-tenant deployments, but embedded mode still requires a server process and the feature set overlaps with Mongo/Postgres we already run for memMCP. |
+| **SurrealDB** | Partial | Brings its own SQL-like runtime and auth. Great for multi-tenant deployments, but embedded mode still requires a server process and the feature set overlaps with Mongo/Postgres we already run for ContextLattice. |
 | **GreptimeDB** | No | Distributed time-series DB tuned for clusters + object storage. Tremendous for hosted analytics, overkill for a laptop hot-path cache. |
 | **RisingWave** | No | Streaming SQL engine that shines when fed by Kafka/Pulsar. Not designed as an embedded write-ahead log. |
 | **LanceDB** | No | Columnar + vector hybrid, similar to Qdrant. We already have Qdrant for vectors, and LanceDB does not buy us cheaper local persistence for scalar telemetry. |
@@ -99,9 +99,9 @@ Conclusion: sled or sqlite remain the smallest-footprint tools that meet the goa
 1. Trading loop writes to local store synchronously.
 2. Background task wakes every `EXPORT_INTERVAL_MS` (configurable) and grabs up
    to `EXPORT_BATCH_SIZE` records.
-3. For each batch, POST to the memMCP orchestrator exactly as today. On success,
+3. For each batch, POST to the ContextLattice orchestrator exactly as today. On success,
    mark the records as exported (delete from sled / set `exported=1` in sqlite).
-4. If the exporter falls behind, memMCP still has its own HTTP queue, but the
+4. If the exporter falls behind, ContextLattice still has its own HTTP queue, but the
    trading loop never blocks.
 
 ## Next Actions
@@ -109,8 +109,8 @@ Conclusion: sled or sqlite remain the smallest-footprint tools that meet the goa
       feature flag (`local-store`).
 - [ ] Record metrics (`local_store_queue_depth`) so the dashboard can alert when
       the backlog grows.
-- [ ] Once validated, decide whether memMCP should ingest the sled/sqlite files
+- [ ] Once validated, decide whether ContextLattice should ingest the sled/sqlite files
       directly for faster catch-up during maintenance windows.
 
 Log all experiments using `project=sol_scaler` + `kind=local_store_spike` so
-memMCP consumers can review findings.
+ContextLattice consumers can review findings.

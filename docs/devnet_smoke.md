@@ -4,12 +4,12 @@ Parent issue: [#23](https://github.com/sheawinkler/algotrader_rust/issues/23)
 
 ## Why
 Before we attempt live trades, we need a deterministic workflow that proves the
-runtime, telemetry, and memMCP wiring on Solana devnet. The steps below run the
-`unified_trader` binary in paper/godmode mode, stream telemetry to the memMCP
+runtime, telemetry, and ContextLattice wiring on Solana devnet. The steps below run the
+`unified_trader` binary in paper/godmode mode, stream telemetry to the ContextLattice
 orchestrator, and confirm events land in the local backup/spool for inspection.
 
 ## Prerequisites
-1. memMCP stack running locally (at least the orchestrator on `http://127.0.0.1:8075`).
+1. ContextLattice stack running locally (at least the orchestrator on `http://127.0.0.1:8075`).
    If you set `BOOTSTRAP_ORCH=1`, the script will execute `ORCH_START_CMD` for you
    (default: `cd ~/.mcp-servers/mem_mcp_lobehub && docker compose up -d memmcp-orchestrator`).
 2. FastAPI sidecar stub (optional but recommended). When `BOOTSTRAP_SIDECAR=1`, the
@@ -47,7 +47,7 @@ just devnet-smoke CONFIG=config.toml WALLET=wallet_devnet.json DURATION=120 BIN=
 
 Key env toggles:
 - `BOOTSTRAP_ORCH` / `ORCH_START_CMD`: auto-start orchestrator (default command uses
-  docker compose in the memMCP repo).
+  docker compose in the ContextLattice repo).
 - `BOOTSTRAP_SIDECAR` / `SIDECAR_START_CMD`: auto-start FastAPI stub (default command
   runs uvicorn via poetry). The script writes stdout/stderr to `/tmp/devnet_sidecar.log`
   and kills the process on exit.
@@ -81,8 +81,8 @@ cargo run --bin unified_trader -- \
 - `scripts/storage_audit.py --json` shows increased point/doc counts.
 - Optional: `curl $MEMMCP_ORCHESTRATOR_URL/telemetry/trading | jq` displays recent snapshots.
 
-## Logging to memMCP
-After each run, log a note via memMCP (`project=sol_scaler`, `kind=devnet_smoke`)
+## Logging to ContextLattice
+After each run, log a note via ContextLattice (`project=sol_scaler`, `kind=devnet_smoke`)
 with config/wallet aliases, duration, telemetry delta, and any errors.
 
 ## Next steps

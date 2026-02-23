@@ -1,14 +1,14 @@
 # Paid Pilot Offer (2026-01-24)
 
 ## Title
-**Context Cost Audit + memMCP Pilot (2–4 weeks)**
+**Context Cost Audit + ContextLattice Pilot (2–4 weeks)**
 
 ## Objective
 Quantify baseline token spend and demonstrate cost + reliability gains from memory.
 
 ## Deliverables
 - Baseline metrics: token spend, long-context rate, truncation/failure rate.
-- memMCP deployment (self-host or hosted).
+- ContextLattice deployment (self-host or hosted).
 - After metrics + ROI report (anonymized if requested).
 
 ## Requirements from partner

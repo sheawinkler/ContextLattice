@@ -1,7 +1,7 @@
 # Memory MCP Components & Interactions
 
 ## Overview
-The memMCP stack is a collection of HTTP-first services that cooperate to provide a longitudinal memory layer for agents. Each component handles a single concern (storage, retrieval, observability, evaluation, orchestration) while communicating through standardized interfaces (MCP, REST, or HTTP streams). Interconnecting them unlocks persistent memory, searchable context, and structured observability—giving light LLMs superhuman recall.
+The ContextLattice stack is a collection of HTTP-first services that cooperate to provide a longitudinal memory layer for agents. Each component handles a single concern (storage, retrieval, observability, evaluation, orchestration) while communicating through standardized interfaces (MCP, REST, or HTTP streams). Interconnecting them unlocks persistent memory, searchable context, and structured observability—giving light LLMs superhuman recall.
 
 ## Component Breakdown
 
@@ -39,7 +39,7 @@ The memMCP stack is a collection of HTTP-first services that cooperate to provid
 ### Letta (Agent Runner)
 - **Role:** Alternative to Trae for long-running agentic workflows, already configured to use Ollama and MCP hub.
 
-### New: MemMCP Orchestrator (HTTP glue)
+### New: ContextLattice Orchestrator (HTTP glue)
 - **Role:** FastAPI service (`http://127.0.0.1:8075`) that:
   - Accepts trajectory payloads (e.g., POST `/ingest/trajectory`).
   - Writes summaries to the memory bank via MCP HTTP.
@@ -56,7 +56,7 @@ The memMCP stack is a collection of HTTP-first services that cooperate to provid
 - **Interaction:** Uses Next API routes to proxy MCP calls, ensuring browsers never need direct MCP headers.
 
 ### Strategy Override Feed
-- **Role:** Surfaces the Sol-scaling bot's override events (size/confidence boosts) that are logged to the `sol_scaler_overrides` project in memMCP.
+- **Role:** Surfaces the Sol-scaling bot's override events (size/confidence boosts) that are logged to the `sol_scaler_overrides` project in ContextLattice.
 - **Orchestrator:** Background task polls `memory_bank_read` for new override files and serves them via `GET /overrides/latest` with a pluggable history limit.
 - **Dashboard:** `OverridesPanel` consumes `/api/overrides/latest` and renders the latest boosts (priority, reason, pre/post size, confidence deltas). This keeps ops aware when Trae/Xavier enlarge trades.
 - **Env knobs:**
@@ -74,8 +74,8 @@ The result is a hyper-efficient memory layer: every piece of context becomes sea
 
 ## Cross-Project Guardrails
 - **Namespace everything:** Each payload the Solana trading bot emits is tagged with `project=sol_scaler` plus fine-grained `kind` labels (e.g., `telemetry`, `strategy_metrics`). Other projects can safely ignore or filter these tags, keeping the core memory corpus clean.
-- **Keep trading logic out of this repo:** The bot remains in `~/Documents/Projects/algotraderv2_rust`, and any future trading-only modules live there (or in sibling repos). memMCP only exposes HTTP endpoints and dashboards that *consume* those events—if a component starts to require trading-specific business logic, we spin it out of this codebase.
-- **Document shared patterns:** Notes like `docs/xavier_integration.md` exist solely to explain how an external client can leverage memMCP; they should never hard-code trading assumptions into the orchestrator or dashboard.
+- **Keep trading logic out of this repo:** The bot remains in `~/Documents/Projects/algotraderv2_rust`, and any future trading-only modules live there (or in sibling repos). ContextLattice only exposes HTTP endpoints and dashboards that *consume* those events—if a component starts to require trading-specific business logic, we spin it out of this codebase.
+- **Document shared patterns:** Notes like `docs/xavier_integration.md` exist solely to explain how an external client can leverage ContextLattice; they should never hard-code trading assumptions into the orchestrator or dashboard.
 - **Monitor growth:** Periodically review stored collections (Qdrant, Mongo) so trading telemetry does not drown global knowledge. If a namespace balloons, export/archive it or graduate that workload to a dedicated storage service.
   - Run `scripts/storage_audit.py` (optionally with `--json`) to capture point/doc counts and check them into `reports/storage/` for historical diffing.
 
