@@ -68,9 +68,10 @@ Context Lattice is built for teams running high-volume memory writes where durab
 
 ### Prerequisites
 
-- Docker Desktop (Compose v2)
+- Docker Engine-compatible runtime with Compose v2 (`docker compose`) on macOS, Linux, or Windows (WSL2)
+- Host machine sized for selected profile (`lite` vs `full`) with enough CPU, RAM, and disk
 - `gmake`, `jq`, `rg`, `python3`, `curl`
-- macOS 13+ (primary test environment)
+- Tested baseline: macOS 13+ with Docker Desktop
 
 ### 1) Configure environment
 
