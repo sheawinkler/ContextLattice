@@ -1,7 +1,7 @@
 # ContextLattice Publish Execution Tracker (MCP Service)
 
 Last updated: 2026-02-22
-Launch window: 24-hour sprint: Friday, February 20, 2026 15:30 MST to Saturday, February 21, 2026 15:00 MST
+Launch window: Catch-up execution wave: Monday, February 23, 2026
 
 ## 1) Positioning Guardrails
 
@@ -27,22 +27,22 @@ Launch window: 24-hour sprint: Friday, February 20, 2026 15:30 MST to Saturday, 
 
 | Tier | Channel | Listing URL | Submission path | Lead time | Cost signal | Owner | Scheduled publish (MT / PT) | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| P0 | GitHub Release | https://github.com/sheawinkler/ContextLattice/releases/new | Tag v1.0.0 + release notes + checksums + images | Same day | Free | Shea | 2026-02-21 08:00 / 2026-02-21 07:00 | Scheduled |
-| P0 | Custom Domain Docs | https://contextlattice.io | DNS + CNAME + HTTPS + smoke tests | 1-2 days | Domain/DNS | Shea | 2026-02-21 08:00 / 2026-02-21 07:00 | Scheduled |
-| P0 | MCP Registry (official) | https://registry.modelcontextprotocol.io | Publish server metadata via registry tooling | 1-3 days | Free | Shea | 2026-02-20 15:30 / 2026-02-20 14:30 | Scheduled |
-| P0 | Glama MCP | https://glama.ai/mcp/servers | Add server listing + docs + repo links | 0-2 days | Free | Shea | 2026-02-20 16:00 / 2026-02-20 15:00 | Scheduled |
-| P0 | PulseMCP | https://www.pulsemcp.com/submit | Submit MCP server profile + launch links | 1-7 days | Free | Shea | 2026-02-20 16:20 / 2026-02-20 15:20 | Scheduled |
-| P0 | MCP.so | https://mcp.so/submit | Submit listing card with MCP service metadata | 0-3 days | Free | Shea | 2026-02-20 16:40 / 2026-02-20 15:40 | Scheduled |
-| P0 | Product Hunt | https://www.producthunt.com/launch | Launch page + comments + maker FAQ replies | 1-3 days prep | Free | Shea | 2026-02-21 08:05 / 2026-02-21 07:05 | Scheduled |
-| P0 | Show HN | https://news.ycombinator.com/showhn.html | Post Show HN with runnable local install | Same day | Free | Shea | 2026-02-21 08:10 / 2026-02-21 07:10 | Scheduled |
-| P0 | X (launch thread) | https://x.com | 1 launch post + 1 technical follow-up thread | Same day | Free | Shea | 2026-02-21 08:20 / 2026-02-21 07:20 | Scheduled |
-| P0 | LinkedIn | https://www.linkedin.com | Founder launch post + architecture image | Same day | Free | Shea | 2026-02-21 08:25 / 2026-02-21 07:25 | Scheduled |
-| P0 | Reddit (targeted) | https://www.reddit.com | Subreddit-specific posts with value-first context | Same day | Free | Shea | 2026-02-21 08:35 / 2026-02-21 07:35 | Scheduled |
-| P0 | Hugging Face Release (Spaces) | https://huggingface.co/spaces | Publish launch Space + README card + repo/docs links | 1-2 days | Free | Shea | 2026-02-21 08:45 / 2026-02-21 07:45 | Scheduled |
-| P1 | FutureTools | https://www.futuretools.io/submit-a-tool | Manual tool submission flow | 1-7 days | Free | Shea | 2026-02-20 17:00 / 2026-02-20 16:00 | Scheduled |
-| P1 | Futurepedia | https://www.futurepedia.io/submit-tool | Submission flow (paid options may apply) | 1-7 days | Paid optional | Shea | 2026-02-20 17:20 / 2026-02-20 16:20 | Scheduled |
-| P1 | Toolify | https://www.toolify.ai/submit | Submission flow (paid options may apply) | 1-3 days | Paid optional | Shea | 2026-02-20 17:40 / 2026-02-20 16:40 | Scheduled |
-| P1 | Dev.to Deep-dive | https://dev.to | Technical launch article with install proof | Same day | Free | Shea | 2026-02-21 09:30 / 2026-02-21 08:30 | Scheduled |
+| P0 | GitHub Release | https://github.com/sheawinkler/ContextLattice/releases/new | Tag v1.0.0 + release notes + checksums + images | Same day | Free | Shea | 2026-02-23 00:00 / 2026-02-22 23:00 | Live |
+| P0 | Custom Domain Docs | https://contextlattice.io | DNS + CNAME + HTTPS + smoke tests | 1-2 days | Domain/DNS | Shea | 2026-02-23 00:00 / 2026-02-22 23:00 | Live |
+| P0 | MCP Registry (official) | https://registry.modelcontextprotocol.io | Publish server metadata via registry tooling | 1-3 days | Free | Shea | 2026-02-20 15:30 / 2026-02-20 14:30 | Ready (manual submit) |
+| P0 | Glama MCP | https://glama.ai/mcp/servers | Add server listing + docs + repo links | 0-2 days | Free | Shea | 2026-02-20 16:00 / 2026-02-20 15:00 | Ready (manual submit) |
+| P0 | PulseMCP | https://www.pulsemcp.com/submit | Submit MCP server profile + launch links | 1-7 days | Free | Shea | 2026-02-20 16:20 / 2026-02-20 15:20 | Ready (manual submit) |
+| P0 | MCP.so | https://mcp.so/submit | Submit listing card with MCP service metadata | 0-3 days | Free | Shea | 2026-02-20 16:40 / 2026-02-20 15:40 | Ready (manual submit) |
+| P0 | Product Hunt | https://www.producthunt.com/launch | Launch page + comments + maker FAQ replies | 1-3 days prep | Free | Shea | 2026-02-21 08:05 / 2026-02-21 07:05 | Ready (manual submit) |
+| P0 | Show HN | https://news.ycombinator.com/showhn.html | Post Show HN with runnable local install | Same day | Free | Shea | 2026-02-21 08:10 / 2026-02-21 07:10 | Ready (manual submit) |
+| P0 | X (launch thread) | https://x.com | 1 launch post + 1 technical follow-up thread | Same day | Free | Shea | 2026-02-21 08:20 / 2026-02-21 07:20 | Ready (manual submit) |
+| P0 | LinkedIn | https://www.linkedin.com | Founder launch post + architecture image | Same day | Free | Shea | 2026-02-21 08:25 / 2026-02-21 07:25 | Ready (manual submit) |
+| P0 | Reddit (targeted) | https://www.reddit.com | Subreddit-specific posts with value-first context | Same day | Free | Shea | 2026-02-21 08:35 / 2026-02-21 07:35 | Ready (manual submit) |
+| P0 | Hugging Face Release (Spaces) | https://huggingface.co/spaces | Publish launch Space + README card + repo/docs links | 1-2 days | Free | Shea | 2026-02-21 08:45 / 2026-02-21 07:45 | Ready (manual submit) |
+| P1 | FutureTools | https://www.futuretools.io/submit-a-tool | Manual tool submission flow | 1-7 days | Free | Shea | 2026-02-20 17:00 / 2026-02-20 16:00 | Ready (manual submit) |
+| P1 | Futurepedia | https://www.futurepedia.io/submit-tool | Submission flow (paid options may apply) | 1-7 days | Paid optional | Shea | 2026-02-20 17:20 / 2026-02-20 16:20 | Ready (manual submit) |
+| P1 | Toolify | https://www.toolify.ai/submit | Submission flow (paid options may apply) | 1-3 days | Paid optional | Shea | 2026-02-20 17:40 / 2026-02-20 16:40 | Ready (manual submit) |
+| P1 | Dev.to Deep-dive | https://dev.to | Technical launch article with install proof | Same day | Free | Shea | 2026-02-21 09:30 / 2026-02-21 08:30 | Ready (manual submit) |
 
 ## 4) Launch-Day Run of Show
 

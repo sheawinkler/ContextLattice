@@ -1,7 +1,7 @@
 {
   "product_name": "ContextLattice",
   "category": "MCP Server / AI Infrastructure",
-  "launch_window": "24-hour sprint: Friday, February 20, 2026 15:30 MST to Saturday, February 21, 2026 15:00 MST",
+  "launch_window": "Catch-up execution wave: Monday, February 23, 2026",
   "one_liner": "Private-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.",
   "primary_cta": "Start local-first in minutes with `gmake quickstart`.",
   "metadata": {
@@ -20,9 +20,9 @@
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:00",
-      "schedule_pt": "2026-02-21 07:00",
-      "status": "Scheduled",
+      "schedule_mt": "2026-02-23 00:00",
+      "schedule_pt": "2026-02-22 23:00",
+      "status": "Live",
       "copy_key": "github_release"
     },
     {
@@ -33,9 +33,9 @@
       "lead_time": "1-2 days",
       "cost_signal": "Domain/DNS",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:00",
-      "schedule_pt": "2026-02-21 07:00",
-      "status": "Scheduled",
+      "schedule_mt": "2026-02-23 00:00",
+      "schedule_pt": "2026-02-22 23:00",
+      "status": "Live",
       "copy_key": "custom_domain"
     },
     {
@@ -48,7 +48,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 15:30",
       "schedule_pt": "2026-02-20 14:30",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "mcp_registry"
     },
     {
@@ -61,7 +61,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 16:00",
       "schedule_pt": "2026-02-20 15:00",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "glama"
     },
     {
@@ -74,7 +74,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 16:20",
       "schedule_pt": "2026-02-20 15:20",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "pulsemcp"
     },
     {
@@ -87,7 +87,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 16:40",
       "schedule_pt": "2026-02-20 15:40",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "mcp_so"
     },
     {
@@ -100,7 +100,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 08:05",
       "schedule_pt": "2026-02-21 07:05",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "product_hunt"
     },
     {
@@ -113,7 +113,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 08:10",
       "schedule_pt": "2026-02-21 07:10",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "show_hn"
     },
     {
@@ -126,7 +126,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 08:20",
       "schedule_pt": "2026-02-21 07:20",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "x_thread"
     },
     {
@@ -139,7 +139,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 08:25",
       "schedule_pt": "2026-02-21 07:25",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "linkedin"
     },
     {
@@ -152,7 +152,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 08:35",
       "schedule_pt": "2026-02-21 07:35",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "reddit"
     },
     {
@@ -165,7 +165,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 08:45",
       "schedule_pt": "2026-02-21 07:45",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "huggingface"
     },
     {
@@ -178,7 +178,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 17:00",
       "schedule_pt": "2026-02-20 16:00",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "futuretools"
     },
     {
@@ -191,7 +191,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 17:20",
       "schedule_pt": "2026-02-20 16:20",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "futurepedia"
     },
     {
@@ -204,7 +204,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-20 17:40",
       "schedule_pt": "2026-02-20 16:40",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "toolify"
     },
     {
@@ -217,7 +217,7 @@
       "owner": "Shea",
       "schedule_mt": "2026-02-21 09:30",
       "schedule_pt": "2026-02-21 08:30",
-      "status": "Scheduled",
+      "status": "Ready (manual submit)",
       "copy_key": "devto"
     }
   ],
