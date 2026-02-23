@@ -1,7 +1,7 @@
 # ContextLattice Launch Channel Copybook
 
 Last updated: 2026-02-22
-Launch target: 24-hour sprint: Friday, February 20, 2026 15:30 MST to Saturday, February 21, 2026 15:00 MST
+Launch target: Catch-up execution wave: Monday, February 23, 2026
 
 Use these blocks as final copy for synchronized launch submissions.
 
@@ -11,7 +11,7 @@ Use these blocks as final copy for synchronized launch submissions.
 
 ## GitHub Release
 
-- Scheduled publish: `2026-02-21 08:00 MT / 2026-02-21 07:00 PT`
+- Scheduled publish: `2026-02-23 00:00 MT / 2026-02-22 23:00 PT`
 - Listing URL: `https://github.com/sheawinkler/ContextLattice/releases/new`
 
 Title: ContextLattice v1.0.0
@@ -34,7 +34,7 @@ Start here:
 
 ## Custom Domain Docs
 
-- Scheduled publish: `2026-02-21 08:00 MT / 2026-02-21 07:00 PT`
+- Scheduled publish: `2026-02-23 00:00 MT / 2026-02-22 23:00 PT`
 - Listing URL: `https://contextlattice.io`
 
 Title: ContextLattice docs go-live
