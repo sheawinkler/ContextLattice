@@ -3,12 +3,12 @@
 ## Mission
 Build a memory-driven trading application that compounds capital from 2 SOL to 20,000+ SOL by:
 - Proactively generating alpha (we move markets, not react to them).
-- Logging every signal/decision into the shared memMCP service so all agents share context.
+- Logging every signal/decision into the shared ContextLattice service so all agents share context.
 - Surfacing live telemetry and strategic insights through the dashboard for human + agent operators.
 
 ## Architecture Overview
 1. **Trading Runtime (algotraderv2_rust)**
-   - Unified engine (Xavier Mode) with godmode profiles, self-evolving strategies, and memMCP telemetry hooks.
+   - Unified engine (Xavier Mode) with godmode profiles, self-evolving strategies, and ContextLattice telemetry hooks.
    - Sidecar/LLM guidance (via FastAPI bridge) for scenario assessments.
    - Risk + portfolio managers tuned for aggressive compounding (kelly sizing, diversification, drawdown defenses).
 2. **Memory & Orchestrator (mem_mcp_lobehub/services/orchestrator)**
@@ -16,13 +16,13 @@ Build a memory-driven trading application that compounds capital from 2 SOL to 2
    - Persists snapshots to disk + Qdrant, fans out to Langfuse, exposes health for operators.
 3. **Operator Dashboard (memmcp-dashboard)**
    - Next.js interface pulling orchestrator telemetry, showing queue stats, trading metrics, sol targets.
-   - Planned panels: compounding progress, godmode profile in play, strategy heatmap, memMCP log browser.
+   - Planned panels: compounding progress, godmode profile in play, strategy heatmap, ContextLattice log browser.
 4. **Shared Memory Consumers**
-   - Trae agent, Windsurf, Cursor, etc. read/write via memMCP to maintain continuous context.
+   - Trae agent, Windsurf, Cursor, etc. read/write via ContextLattice to maintain continuous context.
 
 ## Data Flow
 ```
-Trading Engine -> memMCP logger -> Orchestrator -> (Langfuse, Qdrant, Disk)
+Trading Engine -> ContextLattice logger -> Orchestrator -> (Langfuse, Qdrant, Disk)
                                     |
                                     +-> Dashboard (Polling APIs)
                                     +-> External agents (via HTTP/MCP)
@@ -37,7 +37,7 @@ Trading Engine -> memMCP logger -> Orchestrator -> (Langfuse, Qdrant, Disk)
    - Tight telemetry to catch slippage + stuck queues.
 2. **Acceleration (20-2,000 SOL)**
    - Activate self-evolving strategy engine with capital buckets.
-   - Use memMCP to store per-strategy performance windows for auto-rotation.
+   - Use ContextLattice to store per-strategy performance windows for auto-rotation.
    - Dashboard shows strategy-level PnL, capital allocation.
 3. **Institutional Scale (2,000-20,000 SOL+)**
    - Distributed execution network (multi-wallet), cross-chain arb modules.
@@ -47,8 +47,8 @@ Trading Engine -> memMCP logger -> Orchestrator -> (Langfuse, Qdrant, Disk)
 ## Memory Integration Checklist
 - [x] Godmode profile logs (`src/monitoring/telemetry.rs`).
 - [x] Trading metric snapshots -> `/telemetry/trading` with persistence.
-- [ ] Strategy performance digests -> memMCP projects (TODO for scaling tiers).
-- [ ] Dashboard view for memMCP trajectories (link to memory explorer).
+- [ ] Strategy performance digests -> ContextLattice projects (TODO for scaling tiers).
+- [ ] Dashboard view for ContextLattice trajectories (link to memory explorer).
 
 ## Dashboard Enhancements Roadmap
 1. **Telemetry Baseline** (DONE)
@@ -58,13 +58,13 @@ Trading Engine -> memMCP logger -> Orchestrator -> (Langfuse, Qdrant, Disk)
 3. **Strategy Heatmap**
    - Pull per-strategy metrics (to implement in orchestrator) and show win rate, capital allocated, mem logs.
 4. **Memory Browser**
-   - Query memMCP for latest trajectories/godmode logs; display links for operators.
+   - Query ContextLattice for latest trajectories/godmode logs; display links for operators.
 5. **Action Pad**
    - Kick off tasks (e.g., rebalance, strategy switch) using Trae agent with mem context.
 
 ## Implementation Phases
 1. **Telemetric Hardening**
-   - Ensure all trading modules log to memMCP + persist backups.
+   - Ensure all trading modules log to ContextLattice + persist backups.
    - Add retry/error surfacing (already partly done in telemetry client).
 2. **Dashboard Expansion**
    - Build Compounding panel + History list (depends on orchestrator history endpoint).

@@ -1,6 +1,6 @@
 # Learning Loop (Feedback + Preferences)
 
-The learning loop lets memMCP incorporate user feedback and agent findings into retrieval context by default. It does **not** retrain models; instead it stores feedback and surfaces it during search so agents can adapt behavior.
+The learning loop lets ContextLattice incorporate user feedback and agent findings into retrieval context by default. It does **not** retrain models; instead it stores feedback and surfaces it during search so agents can adapt behavior.
 
 ## Endpoints
 
@@ -45,6 +45,6 @@ Response includes `preferences` when enabled.
 - `FEEDBACK_MAX_CONTENT=2000`
 
 ## Notes
-- Feedback is stored in the orchestrator SQLite DB and also written into memMCP memory under `feedback/<id>.md`.
+- Feedback is stored in the orchestrator SQLite DB and also written into ContextLattice memory under `feedback/<id>.md`.
 - Task workers automatically log agent findings to `/feedback` with `source=agent`.
 - If you want to disable preference injection for a call, set `include_preferences=false`.

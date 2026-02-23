@@ -1,6 +1,6 @@
 # Low-Cost Deployment Playbook
 
-The full memMCP stack can run on a single small VM, but several services (Langfuse, MindsDB, Promptfoo, Letta, Ollama) drive the memory, CPU, and storage bill. This guide explains how to launch a trimmed-down deployment for early adopters or demo tenants, and how to layer optional services back in when budget allows.
+The full ContextLattice stack can run on a single small VM, but several services (Langfuse, MindsDB, Promptfoo, Letta, Ollama) drive the memory, CPU, and storage bill. This guide explains how to launch a trimmed-down deployment for early adopters or demo tenants, and how to layer optional services back in when budget allows.
 
 ## 1. Choose the service tier
 
@@ -81,7 +81,7 @@ Once these are addressed, we can push images to a registry and script a one-comm
 
 ## 7. Paid cloud quickstart
 
-When you're ready to host memMCP for others:
+When you're ready to host ContextLattice for others:
 
 1. Provision a small VM (e.g., Hetzner CX32 / AWS m7i.large) with Docker + Docker Compose installed.
 2. Copy this repo + `.env` to the server and set `COMPOSE_PROFILES=core` for the initial bring-up.

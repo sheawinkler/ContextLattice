@@ -81,7 +81,7 @@ make doctor
 curl -fsS http://127.0.0.1:8075/status | jq
 ```
 
-### Orchestrator (memMCP decision logging)
+### Orchestrator (ContextLattice decision logging)
 
 ```bash
 # Log a decision
@@ -222,7 +222,7 @@ Compose reads `.env` from the **project directory** (the folder of the first `-f
 
 ### Global vs Project-Specific Context
 
-memMCP uses a **hierarchical structure** for agent knowledge:
+ContextLattice uses a **hierarchical structure** for agent knowledge:
 
 ```
 _global/                      # Cross-project protocols & learnings

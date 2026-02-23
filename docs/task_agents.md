@@ -1,10 +1,10 @@
 # Task Agents (Optional)
 
-memMCP includes a lightweight task queue so you can orchestrate agents locally without standing up a heavy control plane. Tasks are stored in a small SQLite DB and claimed via HTTP.
+ContextLattice includes a lightweight task queue so you can orchestrate agents locally without standing up a heavy control plane. Tasks are stored in a small SQLite DB and claimed via HTTP.
 
 ## Quickstart (default Trae-compatible runner)
 ```bash
-# Start the memMCP stack first.
+# Start the ContextLattice stack first.
 gmake mem
 
 # Run the task worker (defaults to Trae-style + local model)
@@ -68,7 +68,7 @@ scripts/launch_task_agent.sh --task-agent autogen
 
 ### Built-in compatibility shims (lightweight)
 If you want a quick, dependency-free runner, we ship tiny shims that call the same
-OpenAI-compatible/Llama/Ollama flow and write results back into memMCP:
+OpenAI-compatible/Llama/Ollama flow and write results back into ContextLattice:
 
 - `scripts/agent_runners/trae_runner.py`
 - `scripts/agent_runners/letta_runner.py`

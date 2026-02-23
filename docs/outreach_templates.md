@@ -7,7 +7,7 @@ Hi {{name}},
 
 I’m working on a private memory layer that cuts long-context spend and truncation failures for agent workflows. It installs locally, and we measure before/after token savings.
 
-We’re running short paid pilots (2–4 weeks) to baseline token usage, deploy memMCP, and deliver a simple ROI report. Open to a 20-minute call this week?
+We’re running short paid pilots (2–4 weeks) to baseline token usage, deploy ContextLattice, and deliver a simple ROI report. Open to a 20-minute call this week?
 
 Thanks,
 {{sender}}

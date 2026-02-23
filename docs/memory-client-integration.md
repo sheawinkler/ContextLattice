@@ -87,7 +87,7 @@ Optional controls:
 2. Add an entry:
    ```json
    {
-     "name": "memmcp",
+     "name": "contextlattice",
      "transport": "streamable-http",
      "url": "http://127.0.0.1:53130/memorymcp/mcp"
    }
@@ -100,7 +100,7 @@ Optional controls:
 2. Append:
    ```json
    {
-     "name": "memmcp",
+     "name": "contextlattice",
      "type": "http",
      "serverUrl": "http://127.0.0.1:53130/memorymcp/mcp"
    }
@@ -119,14 +119,14 @@ Claude’s MCP beta looks for `~/.mcp/servers.json`:
 {
   "servers": [
     {
-      "name": "memmcp",
+      "name": "contextlattice",
       "type": "http",
       "serverUrl": "http://127.0.0.1:53130/memorymcp/mcp"
     }
   ]
 }
 ```
-Restart Claude Code and verify the “memmcp” toolset appears in the MCP panel.
+Restart Claude Code and verify the “contextlattice” toolset appears in the MCP panel.
 
 ## Trae Agent + Ollama (lightweight)
 

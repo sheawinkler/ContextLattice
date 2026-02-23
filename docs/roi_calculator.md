@@ -6,7 +6,7 @@ Use this to quantify savings from memory vs. long‑context prompts.
 - Daily input tokens (baseline)
 - Daily output tokens (baseline)
 - % of requests using long context (>200k)
-- Average tokens saved by memMCP (target: 30–80%)
+- Average tokens saved by ContextLattice (target: 30–80%)
 - Model pricing (input/output) and any long‑context multipliers
 - Memory cost per GB/month (or per 1M tokens stored)
 
