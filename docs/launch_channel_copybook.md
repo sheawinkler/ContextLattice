@@ -301,7 +301,7 @@ Repo: https://github.com/sheawinkler/ContextLattice
 ## Dev.to Deep-dive
 
 - Scheduled publish: `2026-02-21 09:30 MT / 2026-02-21 08:30 PT`
-- Listing URL: `https://dev.to`
+- Listing URL: `https://dev.to/sheawinkler/how-i-built-a-private-by-default-http-first-mcp-memorycontexttask-orchestrator-4m29`
 
 Title: Dev.to deep-dive title
 

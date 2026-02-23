@@ -42,7 +42,7 @@ Launch window: Catch-up execution wave: Monday, February 23, 2026
 | P1 | FutureTools | https://www.futuretools.io/submit-a-tool | Manual tool submission flow | 1-7 days | Free | Shea | 2026-02-20 17:00 / 2026-02-20 16:00 | Ready (manual submit) |
 | P1 | Futurepedia | https://www.futurepedia.io/submit-tool | Submission flow (paid options may apply) | 1-7 days | Paid optional | Shea | 2026-02-20 17:20 / 2026-02-20 16:20 | Ready (manual submit) |
 | P1 | Toolify | https://www.toolify.ai/submit | Submission flow (paid options may apply) | 1-3 days | Paid optional | Shea | 2026-02-20 17:40 / 2026-02-20 16:40 | Ready (manual submit) |
-| P1 | Dev.to Deep-dive | https://dev.to | Technical launch article with install proof | Same day | Free | Shea | 2026-02-21 09:30 / 2026-02-21 08:30 | Ready (manual submit) |
+| P1 | Dev.to Deep-dive | https://dev.to/sheawinkler/how-i-built-a-private-by-default-http-first-mcp-memorycontexttask-orchestrator-4m29 | Technical launch article with install proof | Same day | Free | Shea | 2026-02-21 09:30 / 2026-02-21 08:30 | Live |
 
 ## 4) Launch-Day Run of Show
 
