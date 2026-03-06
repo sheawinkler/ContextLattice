@@ -82,18 +82,31 @@ services:
       retries: 10
     restart: unless-stopped
 
-  memmcp-orchestrator:
+  contextlattice-orchestrator:
     build: { context: ., dockerfile: Dockerfile.orchestrator }
     depends_on:
       memorymcp-http:
         condition: service_healthy
+      orchestrator-go:
+        condition: service_started
+      gateway-go:
+        condition: service_started
     environment:
-      MEMMCP_HTTP_URL: http://memorymcp-http:59081/mcp
-      MEMMCP_ENV: ${MEMMCP_ENV:-production}
+      CONTEXTLATTICE_HTTP_URL: ${CONTEXTLATTICE_HTTP_URL:-${MEMMCP_HTTP_URL:-http://memorymcp-http:59081/mcp}}
+      CONTEXTLATTICE_ENV: ${CONTEXTLATTICE_ENV:-${MEMMCP_ENV:-production}}
+      USE_RUST_CODEC: ${USE_RUST_CODEC:-true}
+      USE_RUST_MEMORY: ${USE_RUST_MEMORY:-true}
+      USE_RUST_RETRIEVAL: ${USE_RUST_RETRIEVAL:-true}
+      USE_GO_ORCHESTRATOR: ${USE_GO_ORCHESTRATOR:-true}
+      CONTEXTLATTICE_ENGINE_MODE: ${CONTEXTLATTICE_ENGINE_MODE:-service}
+      CONTEXTLATTICE_ENGINE_URL: ${CONTEXTLATTICE_ENGINE_URL:-http://contextlattice-orchestrator:8075}
+      CONTEXTLATTICE_GO_ORCHESTRATOR_URL: ${CONTEXTLATTICE_GO_ORCHESTRATOR_URL:-http://orchestrator-go:8090}
+      MIGRATION_SHADOW_DUAL_RUN: ${MIGRATION_SHADOW_DUAL_RUN:-true}
+      MIGRATION_CANARY_ENABLED: ${MIGRATION_CANARY_ENABLED:-true}
       ORCH_SECURITY_STRICT: ${ORCH_SECURITY_STRICT:-true}
       ORCH_PUBLIC_STATUS: ${ORCH_PUBLIC_STATUS:-false}
       ORCH_PUBLIC_DOCS: ${ORCH_PUBLIC_DOCS:-false}
-      MEMMCP_ORCHESTRATOR_API_KEY: ${MEMMCP_ORCHESTRATOR_API_KEY:-}
+      CONTEXTLATTICE_ORCHESTRATOR_API_KEY: ${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${MEMMCP_ORCHESTRATOR_API_KEY:-}}
       SECRETS_STORAGE_MODE: ${SECRETS_STORAGE_MODE:-redact}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_LOCAL_URL: ${QDRANT_LOCAL_URL:-http://qdrant:6333}
@@ -135,6 +148,10 @@ services:
       FANOUT_LETTA_RATE_LIMIT_PER_SEC: ${FANOUT_LETTA_RATE_LIMIT_PER_SEC:-6}
       FANOUT_LETTA_BULK_SIZE: ${FANOUT_LETTA_BULK_SIZE:-8}
       FANOUT_LETTA_BATCH_CONCURRENCY: ${FANOUT_LETTA_BATCH_CONCURRENCY:-2}
+      FANOUT_COALESCE_STALE_TARGETS: ${FANOUT_COALESCE_STALE_TARGETS:-letta}
+      LETTA_EXCLUDED_FILE_PATTERNS: ${LETTA_EXCLUDED_FILE_PATTERNS:-index__*.json,*_agg-latest.json,telemetry__*.json}
+      LETTA_EXCLUDED_TOPIC_PREFIXES: ${LETTA_EXCLUDED_TOPIC_PREFIXES:-telemetry,metrics,signals,overrides,perf,tmp}
+      HOT_MEMORY_FILE_PATTERNS: ${HOT_MEMORY_FILE_PATTERNS:-index__*.json,*_agg-latest.json,telemetry__*.json}
       FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC: ${FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC:-20}
       MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR: ${MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR:-true}
       MINDSDB_ENABLED: "false"
@@ -151,6 +168,32 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    restart: unless-stopped
+
+  orchestrator-go:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator-go
+    environment:
+      PORT: ${GO_ORCHESTRATOR_PORT_INTERNAL:-8090}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_ORCHESTRATOR_PORT_INTERNAL:-8090}/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  gateway-go:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway-go
+    environment:
+      PORT: ${GO_GATEWAY_PORT_INTERNAL:-8091}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_GATEWAY_PORT_INTERNAL:-8091}/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
 volumes:
