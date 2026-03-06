@@ -856,6 +856,17 @@ LETTA_EXCLUDED_TOPIC_PREFIXES_ENV = os.getenv(
     "LETTA_EXCLUDED_TOPIC_PREFIXES",
     "telemetry,metrics,signals,overrides,perf,tmp",
 )
+LETTA_AUTO_PRUNE_ENABLED = os.getenv("LETTA_AUTO_PRUNE_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+LETTA_AUTO_PRUNE_INTERVAL_SECS = float(os.getenv("LETTA_AUTO_PRUNE_INTERVAL_SECS", "75"))
+LETTA_AUTO_PRUNE_BACKLOG_TRIGGER = int(os.getenv("LETTA_AUTO_PRUNE_BACKLOG_TRIGGER", "1000"))
+LETTA_AUTO_PRUNE_LIMIT = int(os.getenv("LETTA_AUTO_PRUNE_LIMIT", "20000"))
+LETTA_AUTO_PRUNE_TIMEOUT_SECS = float(os.getenv("LETTA_AUTO_PRUNE_TIMEOUT_SECS", "45"))
+LETTA_AUTO_PRUNE_STATUSES_ENV = os.getenv("LETTA_AUTO_PRUNE_STATUSES", "pending,retrying")
 SINK_RETENTION_ENABLED = os.getenv("SINK_RETENTION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 SINK_RETENTION_INTERVAL_SECS = float(os.getenv("SINK_RETENTION_INTERVAL_SECS", "1800"))
 SINK_RETENTION_TIMEOUT_SECS = float(os.getenv("SINK_RETENTION_TIMEOUT_SECS", "240"))
@@ -1051,6 +1062,19 @@ def _normalize_lower_csv(raw: str | None) -> list[str]:
     return [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
 
 
+def _normalize_outbox_status_csv(raw: str | None) -> list[str]:
+    allowed = {"pending", "retrying", "running"}
+    requested = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for status in requested:
+        if status not in allowed or status in seen:
+            continue
+        seen.add(status)
+        normalized.append(status)
+    return normalized
+
+
 def _normalize_task_action_csv(raw: str | None) -> tuple[str, ...]:
     allowed_defaults = ("memory_write", "memory_search", "messaging_command", "http_callback", "provider_chat")
     requested = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
@@ -1098,6 +1122,9 @@ if not LOW_VALUE_TOPIC_PREFIXES:
 HOT_MEMORY_FILE_PATTERNS = _normalize_lower_csv(HOT_MEMORY_FILE_PATTERNS_ENV)
 LETTA_EXCLUDED_FILE_PATTERNS = _normalize_lower_csv(LETTA_EXCLUDED_FILE_PATTERNS_ENV)
 LETTA_EXCLUDED_TOPIC_PREFIXES = _normalize_lower_csv(LETTA_EXCLUDED_TOPIC_PREFIXES_ENV)
+LETTA_AUTO_PRUNE_STATUSES = _normalize_outbox_status_csv(LETTA_AUTO_PRUNE_STATUSES_ENV)
+if not LETTA_AUTO_PRUNE_STATUSES:
+    LETTA_AUTO_PRUNE_STATUSES = ["pending", "retrying"]
 
 RETRIEVAL_SOURCE_QDRANT = "qdrant"
 RETRIEVAL_SOURCE_MEMORY_BANK = "memory_bank"
@@ -2836,6 +2863,24 @@ letta_admission_last_logged_at = 0.0
 letta_admission_dropped = 0
 letta_admission_last_reason = ""
 letta_admission_last_backlog = 0
+letta_auto_prune_task: asyncio.Task[Any] | None = None
+letta_auto_prune_state: dict[str, Any] = {
+    "enabled": LETTA_AUTO_PRUNE_ENABLED,
+    "intervalSecs": max(15.0, LETTA_AUTO_PRUNE_INTERVAL_SECS),
+    "backlogTrigger": max(1, LETTA_AUTO_PRUNE_BACKLOG_TRIGGER),
+    "limit": max(1, LETTA_AUTO_PRUNE_LIMIT),
+    "statuses": list(LETTA_AUTO_PRUNE_STATUSES),
+    "timeoutSecs": max(1.0, LETTA_AUTO_PRUNE_TIMEOUT_SECS),
+    "lastRunAt": None,
+    "lastDurationMs": None,
+    "lastError": None,
+    "lastDeleted": 0,
+    "lastBacklogBefore": 0,
+    "lastBacklogAfter": 0,
+    "lastSkippedReason": None,
+    "runs": 0,
+    "lastResult": {},
+}
 sink_retention_task: asyncio.Task[Any] | None = None
 sink_retention_state: dict[str, Any] = {
     "lastRunAt": None,
@@ -4993,7 +5038,7 @@ async def start_background_tasks() -> None:
     global mindsdb_queue_task, memory_write_queue_tasks, mindsdb_write_queue_tasks
     global memory_bank_queue_tasks, letta_write_queue_tasks, outbox_gc_task, hot_memory_rollup_task
     global topic_rollup_task
-    global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task
+    global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, letta_auto_prune_task
     if MONGO_RAW_ENABLED:
         await init_mongo_client()
     if _use_mongo_outbox():
@@ -5039,6 +5084,8 @@ async def start_background_tasks() -> None:
             )
     if FANOUT_OUTBOX_GC_ENABLED and outbox_gc_task is None:
         outbox_gc_task = asyncio.create_task(_fanout_outbox_gc_worker())
+    if LETTA_AUTO_PRUNE_ENABLED and letta_auto_prune_task is None:
+        letta_auto_prune_task = asyncio.create_task(_letta_auto_prune_worker())
     if SINK_RETENTION_ENABLED and sink_retention_task is None:
         sink_retention_task = asyncio.create_task(_sink_retention_worker())
     if RETRIEVAL_PATHWAY_WARMER_ENABLED and retrieval_pathway_warmer_task is None:
@@ -5072,6 +5119,7 @@ async def close_mcp_client() -> None:
     global MCP_CLIENT, MCP_SESSION_ID, MONGO_CLIENT, FANOUT_OUTBOX_MONGO_CLIENT, outbox_gc_task, hot_memory_rollup_task
     global topic_rollup_task
     global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, task_scheduler_task, agent_task_worker_tasks
+    global letta_auto_prune_task
     global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
     if task_scheduler_task is not None:
         task_scheduler_task.cancel()
@@ -5106,6 +5154,11 @@ async def close_mcp_client() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await outbox_gc_task
         outbox_gc_task = None
+    if letta_auto_prune_task is not None:
+        letta_auto_prune_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await letta_auto_prune_task
+        letta_auto_prune_task = None
     if sink_retention_task is not None:
         sink_retention_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -8534,6 +8587,164 @@ async def _fanout_outbox_gc_worker() -> None:
             err_text = str(exc).strip() or exc.__class__.__name__
             await _promote_outbox_backend_to_mongo_if_sqlite_error(err_text)
             logger.warning("Fanout outbox GC run failed: %s", err_text)
+        await asyncio.sleep(interval)
+
+
+def _record_letta_auto_prune_run(
+    *,
+    result: dict[str, Any] | None,
+    error: str | None,
+    duration_ms: float,
+) -> None:
+    state = letta_auto_prune_state
+    state["enabled"] = LETTA_AUTO_PRUNE_ENABLED
+    state["intervalSecs"] = max(15.0, LETTA_AUTO_PRUNE_INTERVAL_SECS)
+    state["backlogTrigger"] = max(1, LETTA_AUTO_PRUNE_BACKLOG_TRIGGER)
+    state["limit"] = max(1, LETTA_AUTO_PRUNE_LIMIT)
+    state["statuses"] = list(LETTA_AUTO_PRUNE_STATUSES)
+    state["timeoutSecs"] = max(1.0, LETTA_AUTO_PRUNE_TIMEOUT_SECS)
+    state["lastRunAt"] = _utc_now()
+    state["lastDurationMs"] = round(max(0.0, duration_ms), 2)
+    state["runs"] = int(state.get("runs", 0) or 0) + 1
+    if error:
+        state["lastError"] = error[:400]
+        state["lastResult"] = result or {}
+        state["lastSkippedReason"] = None
+        return
+    state["lastError"] = None
+    payload = result or {}
+    state["lastResult"] = payload
+    skipped_reason = payload.get("skipped")
+    state["lastSkippedReason"] = str(skipped_reason) if skipped_reason else None
+    prune_payload = payload.get("prune") if isinstance(payload, dict) else {}
+    deleted = 0
+    if isinstance(prune_payload, dict):
+        deleted = int(prune_payload.get("deleted") or 0)
+    state["lastDeleted"] = deleted
+    backlog_before = payload.get("backlogBefore")
+    if backlog_before is None:
+        backlog_before = payload.get("backlog")
+    if backlog_before is not None:
+        state["lastBacklogBefore"] = int(backlog_before or 0)
+    backlog_after = payload.get("backlogAfter")
+    if backlog_after is None and isinstance(prune_payload, dict):
+        backlog_after = prune_payload.get("afterPending")
+    if backlog_after is not None:
+        state["lastBacklogAfter"] = int(backlog_after or 0)
+
+
+async def run_letta_auto_prune_once(*, force: bool = False) -> dict[str, Any]:
+    threshold = max(1, LETTA_AUTO_PRUNE_BACKLOG_TRIGGER)
+    statuses = list(LETTA_AUTO_PRUNE_STATUSES) or ["pending", "retrying"]
+    limit = max(1, LETTA_AUTO_PRUNE_LIMIT)
+    timeout_secs = max(1.0, LETTA_AUTO_PRUNE_TIMEOUT_SECS)
+    run_started = time.monotonic()
+    try:
+        if not LETTA_AUTO_PRUNE_ENABLED and not force:
+            result = {
+                "enabled": False,
+                "forced": False,
+                "ran": False,
+                "skipped": "disabled",
+                "threshold": threshold,
+                "statuses": statuses,
+                "limit": limit,
+                "timeoutSecs": timeout_secs,
+            }
+            _record_letta_auto_prune_run(
+                result=result,
+                error=None,
+                duration_ms=(time.monotonic() - run_started) * 1000,
+            )
+            return result
+
+        summary = await get_fanout_summary()
+        backlog = _fanout_target_outstanding_count(summary, FANOUT_TARGET_LETTA)
+        if not force and backlog < threshold:
+            result = {
+                "enabled": LETTA_AUTO_PRUNE_ENABLED,
+                "forced": False,
+                "ran": False,
+                "skipped": "below_threshold",
+                "threshold": threshold,
+                "backlog": backlog,
+                "statuses": statuses,
+                "limit": limit,
+                "timeoutSecs": timeout_secs,
+            }
+            _record_letta_auto_prune_run(
+                result=result,
+                error=None,
+                duration_ms=(time.monotonic() - run_started) * 1000,
+            )
+            return result
+
+        prune_result = await asyncio.wait_for(
+            prune_letta_low_value_outbox(
+                statuses=statuses,
+                limit=limit,
+                dry_run=False,
+            ),
+            timeout=timeout_secs,
+        )
+        backlog_after: int | None = None
+        with contextlib.suppress(Exception):
+            refreshed = await asyncio.wait_for(
+                _query_fanout_summary_uncached(),
+                timeout=max(1.0, FANOUT_SUMMARY_TIMEOUT_SECS),
+            )
+            _set_fanout_summary_cache(refreshed)
+            backlog_after = _fanout_target_outstanding_count(refreshed, FANOUT_TARGET_LETTA)
+        if backlog_after is None:
+            deleted = int(prune_result.get("deleted") or 0)
+            backlog_after = max(0, backlog - deleted)
+        result = {
+            "enabled": LETTA_AUTO_PRUNE_ENABLED,
+            "forced": bool(force),
+            "ran": True,
+            "skipped": None,
+            "threshold": threshold,
+            "backlogBefore": backlog,
+            "backlogAfter": backlog_after,
+            "statuses": statuses,
+            "limit": limit,
+            "timeoutSecs": timeout_secs,
+            "prune": prune_result,
+        }
+        _record_letta_auto_prune_run(
+            result=result,
+            error=None,
+            duration_ms=(time.monotonic() - run_started) * 1000,
+        )
+        return result
+    except Exception as exc:
+        err_text = str(exc).strip() or exc.__class__.__name__
+        _record_letta_auto_prune_run(
+            result=None,
+            error=err_text,
+            duration_ms=(time.monotonic() - run_started) * 1000,
+        )
+        raise
+
+
+async def _letta_auto_prune_worker() -> None:
+    interval = max(15.0, LETTA_AUTO_PRUNE_INTERVAL_SECS)
+    while True:
+        try:
+            result = await run_letta_auto_prune_once(force=False)
+            if result.get("ran"):
+                prune_result = result.get("prune") if isinstance(result, dict) else {}
+                logger.info(
+                    "letta auto prune: deleted=%s before=%s after=%s threshold=%s",
+                    (prune_result or {}).get("deleted"),
+                    result.get("backlogBefore"),
+                    result.get("backlogAfter"),
+                    result.get("threshold"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - runtime resilience
+            logger.warning("Letta auto prune run failed: %s", exc)
         await asyncio.sleep(interval)
 
 
@@ -14360,6 +14571,15 @@ async def get_memory_metrics():
                     "lastBacklog": letta_admission_last_backlog,
                 },
             },
+            "lettaAutoPrune": {
+                "enabled": LETTA_AUTO_PRUNE_ENABLED,
+                "intervalSecs": max(15.0, LETTA_AUTO_PRUNE_INTERVAL_SECS),
+                "backlogTrigger": max(1, LETTA_AUTO_PRUNE_BACKLOG_TRIGGER),
+                "limit": max(1, LETTA_AUTO_PRUNE_LIMIT),
+                "statuses": LETTA_AUTO_PRUNE_STATUSES,
+                "timeoutSecs": max(1.0, LETTA_AUTO_PRUNE_TIMEOUT_SECS),
+                "state": letta_auto_prune_state,
+            },
             "rateLimitsPerSec": {
                 "qdrant": FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
                 "mindsdb": FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
@@ -14535,6 +14755,15 @@ async def get_fanout_metrics():
             "transientErrorStreak": letta_transient_error_streak,
             "transientErrorThreshold": LETTA_TRANSIENT_ERROR_THRESHOLD,
         },
+        "lettaAutoPrune": {
+            "enabled": LETTA_AUTO_PRUNE_ENABLED,
+            "intervalSecs": max(15.0, LETTA_AUTO_PRUNE_INTERVAL_SECS),
+            "backlogTrigger": max(1, LETTA_AUTO_PRUNE_BACKLOG_TRIGGER),
+            "limit": max(1, LETTA_AUTO_PRUNE_LIMIT),
+            "statuses": LETTA_AUTO_PRUNE_STATUSES,
+            "timeoutSecs": max(1.0, LETTA_AUTO_PRUNE_TIMEOUT_SECS),
+            "state": letta_auto_prune_state,
+        },
         "rateLimitsPerSec": {
             "qdrant": FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
             "mindsdb": FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
@@ -14608,6 +14837,12 @@ async def trigger_prune_letta_low_value(
     )
     ok = bool(result.get("dryRun")) or int(result.get("deleted", 0) or 0) >= 0
     return {"ok": ok, "result": result}
+
+
+@app.post("/telemetry/fanout/letta/auto-prune/run")
+async def trigger_letta_auto_prune(force: bool = False):
+    result = await run_letta_auto_prune_once(force=force)
+    return {"ok": bool(result.get("ran")) or bool(result.get("skipped")), "result": result}
 
 
 @app.get("/telemetry/retention")
