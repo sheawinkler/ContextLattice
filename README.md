@@ -81,6 +81,17 @@ cp .env.example .env
 ln -svf ../../.env infra/compose/.env
 ```
 
+Optional Letta backlog auto-prune tuning in `.env`:
+
+```bash
+LETTA_AUTO_PRUNE_ENABLED=true
+LETTA_AUTO_PRUNE_INTERVAL_SECS=75
+LETTA_AUTO_PRUNE_BACKLOG_TRIGGER=1000
+LETTA_AUTO_PRUNE_LIMIT=20000
+LETTA_AUTO_PRUNE_TIMEOUT_SECS=45
+LETTA_AUTO_PRUNE_STATUSES=pending,retrying
+```
+
 ### 2) One-command quickstart (recommended)
 
 ```bash
@@ -140,7 +151,10 @@ ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq '.lettaAutoPrune'
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" | jq
 ```
 
 ### 7) First-run toggles (optional)
@@ -295,6 +309,7 @@ Ingress endpoints:
 - `POST /agents/tasks/recover-leases`
 - `GET /telemetry/memory`
 - `GET /telemetry/fanout`
+- `POST /telemetry/fanout/letta/auto-prune/run`
 - `GET /telemetry/retention`
 - `POST /telemetry/retention/run`
 

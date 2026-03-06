@@ -219,6 +219,10 @@ gmake mem-ps
 gmake logs
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq '.lettaAutoPrune'
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" \
+  | jq '.result | {ran, skipped, deleted: (.prune.deleted // 0)}'
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
       </article>
     </section>
@@ -231,7 +235,8 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention 
         <ul class="spec-list">
           <li><code>/health</code> returns <code>ok</code> for orchestrator and connected services.</li>
           <li><code>/status</code> (with <code>x-api-key</code>) lists Memory Bank and Qdrant connectivity.</li>
-          <li><code>/telemetry/fanout</code> (with <code>x-api-key</code>) shows queue depth and retry counters.</li>
+          <li><code>/telemetry/fanout</code> (with <code>x-api-key</code>) shows queue depth/retry counters and <code>lettaAutoPrune.state</code>.</li>
+          <li><code>POST /telemetry/fanout/letta/auto-prune/run</code> triggers a threshold-gated prune pass and returns <code>ran</code> vs <code>skipped</code>.</li>
           <li><code>/telemetry/retention</code> (with <code>x-api-key</code>) reports retention cadence and sweep activity.</li>
         </ul>
       </article>
