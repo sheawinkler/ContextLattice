@@ -2440,6 +2440,108 @@ async def test_prune_letta_low_value_outbox_sqlite(
 
 
 @pytest.mark.asyncio
+async def test_run_letta_auto_prune_once_skips_below_threshold(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_BACKLOG_TRIGGER", 10)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_LIMIT", 50)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_TIMEOUT_SECS", 5.0)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_STATUSES", ["pending", "retrying"])
+    orchestrator.letta_auto_prune_state.update(
+        {
+            "lastRunAt": None,
+            "lastDurationMs": None,
+            "lastError": None,
+            "lastDeleted": 0,
+            "lastBacklogBefore": 0,
+            "lastBacklogAfter": 0,
+            "lastSkippedReason": None,
+            "runs": 0,
+            "lastResult": {},
+        }
+    )
+
+    async def _summary():
+        return {"by_target": {"letta": {"pending": 4, "retrying": 1}}}
+
+    async def _prune(*, statuses: list[str], limit: int, dry_run: bool):
+        raise AssertionError("prune should not run below threshold")
+
+    monkeypatch.setattr(orchestrator, "get_fanout_summary", _summary)
+    monkeypatch.setattr(orchestrator, "prune_letta_low_value_outbox", _prune)
+
+    result = await orchestrator.run_letta_auto_prune_once()
+    assert result["ran"] is False
+    assert result["skipped"] == "below_threshold"
+    assert result["backlog"] == 5
+    assert orchestrator.letta_auto_prune_state["runs"] == 1
+    assert orchestrator.letta_auto_prune_state["lastSkippedReason"] == "below_threshold"
+    assert orchestrator.letta_auto_prune_state["lastError"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_letta_auto_prune_once_prunes_when_threshold_met(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_BACKLOG_TRIGGER", 10)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_LIMIT", 123)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_TIMEOUT_SECS", 5.0)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_PRUNE_STATUSES", ["pending", "retrying"])
+    orchestrator.letta_auto_prune_state.update(
+        {
+            "lastRunAt": None,
+            "lastDurationMs": None,
+            "lastError": None,
+            "lastDeleted": 0,
+            "lastBacklogBefore": 0,
+            "lastBacklogAfter": 0,
+            "lastSkippedReason": None,
+            "runs": 0,
+            "lastResult": {},
+        }
+    )
+    seen: dict[str, Any] = {}
+
+    async def _summary():
+        return {"by_target": {"letta": {"pending": 20, "retrying": 5}}}
+
+    async def _fresh_summary():
+        return {"by_target": {"letta": {"pending": 11, "retrying": 2, "running": 1}}}
+
+    async def _prune(*, statuses: list[str], limit: int, dry_run: bool):
+        seen["statuses"] = statuses
+        seen["limit"] = limit
+        seen["dry_run"] = dry_run
+        return {
+            "backend": "sqlite",
+            "statuses": statuses,
+            "beforePending": 25,
+            "afterPending": 13,
+            "scanned": 40,
+            "matched": 12,
+            "deleted": 12,
+            "dryRun": False,
+            "limit": limit,
+            "matchedExcluded": 8,
+            "matchedLowValue": 9,
+        }
+
+    monkeypatch.setattr(orchestrator, "get_fanout_summary", _summary)
+    monkeypatch.setattr(orchestrator, "_query_fanout_summary_uncached", _fresh_summary)
+    monkeypatch.setattr(orchestrator, "prune_letta_low_value_outbox", _prune)
+
+    result = await orchestrator.run_letta_auto_prune_once()
+    assert result["ran"] is True
+    assert result["backlogBefore"] == 25
+    assert result["backlogAfter"] == 14
+    assert result["prune"]["deleted"] == 12
+    assert seen == {"statuses": ["pending", "retrying"], "limit": 123, "dry_run": False}
+    assert orchestrator.letta_auto_prune_state["runs"] == 1
+    assert orchestrator.letta_auto_prune_state["lastDeleted"] == 12
+    assert orchestrator.letta_auto_prune_state["lastBacklogBefore"] == 25
+    assert orchestrator.letta_auto_prune_state["lastBacklogAfter"] == 14
+    assert orchestrator.letta_auto_prune_state["lastSkippedReason"] is None
+
+
+@pytest.mark.asyncio
 async def test_run_sink_retention_once_collects_partial_errors(monkeypatch: pytest.MonkeyPatch):
     async def _qdrant():
         return {"enabled": True, "deleted": 2}
