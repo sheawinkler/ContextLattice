@@ -149,9 +149,9 @@ services:
       FANOUT_LETTA_BULK_SIZE: ${FANOUT_LETTA_BULK_SIZE:-8}
       FANOUT_LETTA_BATCH_CONCURRENCY: ${FANOUT_LETTA_BATCH_CONCURRENCY:-2}
       FANOUT_COALESCE_STALE_TARGETS: ${FANOUT_COALESCE_STALE_TARGETS:-letta}
-      LETTA_EXCLUDED_FILE_PATTERNS: ${LETTA_EXCLUDED_FILE_PATTERNS:-index__*.json,*_agg-latest.json,telemetry__*.json}
+      LETTA_EXCLUDED_FILE_PATTERNS: ${LETTA_EXCLUDED_FILE_PATTERNS:-index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json}
       LETTA_EXCLUDED_TOPIC_PREFIXES: ${LETTA_EXCLUDED_TOPIC_PREFIXES:-telemetry,metrics,signals,overrides,perf,tmp}
-      HOT_MEMORY_FILE_PATTERNS: ${HOT_MEMORY_FILE_PATTERNS:-index__*.json,*_agg-latest.json,telemetry__*.json}
+      HOT_MEMORY_FILE_PATTERNS: ${HOT_MEMORY_FILE_PATTERNS:-index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json}
       FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC: ${FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC:-20}
       MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR: ${MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR:-true}
       MINDSDB_ENABLED: "false"

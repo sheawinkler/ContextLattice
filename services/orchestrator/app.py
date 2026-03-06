@@ -757,7 +757,7 @@ HOT_MEMORY_FILE_SUFFIXES = [
 ]
 HOT_MEMORY_FILE_PATTERNS_ENV = os.getenv(
     "HOT_MEMORY_FILE_PATTERNS",
-    "index__*.json,*_agg-latest.json,telemetry__*.json",
+    "index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json",
 )
 HOT_MEMORY_ROLLUP_ENABLED = os.getenv("HOT_MEMORY_ROLLUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 HOT_MEMORY_ROLLUP_FLUSH_SECS = float(os.getenv("HOT_MEMORY_ROLLUP_FLUSH_SECS", "20"))
@@ -850,7 +850,7 @@ LETTA_ADMISSION_LOW_VALUE_MIN_SUMMARY_CHARS = int(
 LETTA_ADMISSION_LOG_COOLDOWN_SECS = float(os.getenv("LETTA_ADMISSION_LOG_COOLDOWN_SECS", "30"))
 LETTA_EXCLUDED_FILE_PATTERNS_ENV = os.getenv(
     "LETTA_EXCLUDED_FILE_PATTERNS",
-    "index__*.json,*_agg-latest.json,telemetry__*.json",
+    "index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json",
 )
 LETTA_EXCLUDED_TOPIC_PREFIXES_ENV = os.getenv(
     "LETTA_EXCLUDED_TOPIC_PREFIXES",
