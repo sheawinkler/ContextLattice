@@ -322,10 +322,13 @@ python3 scripts/submission_preflight.py --online
 ## Private/Public Sync Notes
 
 This repository (`sheawinkler/ContextLattice`) is the primary codebase.
-Public landing collateral remains mirrored in the dedicated public overview mirror repository.
+Public landing collateral publishes from `sheawinkler/ContextLattice` branch `gh-pages`.
 
 - Source: `docs/public_overview/`
 - Sync script: `scripts/sync_public_overview.sh`
+- Primary URL: `https://contextlattice.io/`
+- Fallback URL: `https://sheawinkler.github.io/ContextLattice/`
+- Historical mirror repository `sheawinkler/memmcp-overview` is archived and not used for live hosting.
 
 ## License
 
