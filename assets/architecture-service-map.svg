@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="980" viewBox="0 0 1700 980" role="img" aria-label="Service map showing the single orchestrator control plane, memory services, and external dependencies">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192434"/>
+      <stop offset="100%" stop-color="#111a25"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="20%" cy="8%" r="60%">
+      <stop offset="0%" stop-color="#88a5d2" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#88a5d2" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="arrow" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#deebfc"/>
+    </marker>
+    <marker id="arrowAsync" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#94d8e8"/>
+    </marker>
+    <style><![CDATA[
+      .frame { fill: url(#bg); stroke: #69788b; stroke-width: 1.4; }
+      .boundary { fill: rgba(255,255,255,0.02); stroke: #cdd8e8; stroke-width: 2; stroke-dasharray: 10 8; }
+      .node { fill: #1f2b3a; stroke: #cfdbeb; stroke-width: 2; }
+      .core { fill: #8f551f; stroke: #f2d3ad; stroke-width: 2.4; }
+      .title { font: 700 20px 'IBM Plex Mono', monospace; fill: #d4deeb; letter-spacing: 0.09em; }
+      .h2 { font: 700 38px 'IBM Plex Sans', sans-serif; fill: #eef4fd; }
+      .label { font: 700 26px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+      .label-small { font: 700 22px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+      .sub { font: 600 20px 'IBM Plex Sans', sans-serif; fill: #d2ddec; }
+      .sub-small { font: 600 16px 'IBM Plex Sans', sans-serif; fill: #d2ddec; }
+      .sync { stroke: #deebfc; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .async { stroke: #94d8e8; stroke-width: 3; fill: none; stroke-dasharray: 10 8; stroke-linecap: round; stroke-linejoin: round; }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1700" height="980" class="frame"/>
+  <rect x="0" y="0" width="1700" height="980" fill="url(#glowA)"/>
+
+  <text x="850" y="66" text-anchor="middle" class="title">SERVICE MAP</text>
+
+  <rect x="300" y="130" width="940" height="730" rx="74" class="boundary"/>
+  <text x="770" y="206" text-anchor="middle" class="h2">Context Lattice System Boundary</text>
+
+  <rect x="52" y="360" width="210" height="190" rx="34" class="node"/>
+  <text x="157" y="432" text-anchor="middle" class="label">Clients</text>
+  <text x="157" y="468" text-anchor="middle" class="sub">apps + agents</text>
+
+  <rect x="610" y="240" width="330" height="122" rx="22" class="core"/>
+  <text x="775" y="312" text-anchor="middle" class="label">Orchestrator API</text>
+  <text x="775" y="350" text-anchor="middle" class="sub">single ingress + policy + auth</text>
+
+  <rect x="635" y="390" width="280" height="90" rx="20" class="node"/>
+  <text x="775" y="446" text-anchor="middle" class="label">Ops + Security Gate</text>
+
+  <rect x="460" y="520" width="260" height="112" rx="22" class="node"/>
+  <text x="590" y="586" text-anchor="middle" class="label">Outbox Queue</text>
+
+  <rect x="830" y="520" width="260" height="112" rx="22" class="node"/>
+  <text x="960" y="586" text-anchor="middle" class="label">Retrieval Engine</text>
+
+  <rect x="420" y="650" width="790" height="210" rx="44" class="node"/>
+  <text x="815" y="704" text-anchor="middle" class="h2">Memory Plane</text>
+
+  <rect x="446" y="736" width="168" height="96" rx="18" class="node"/>
+  <text x="530" y="794" text-anchor="middle" class="label">Memory Bank</text>
+
+  <rect x="628" y="736" width="168" height="96" rx="18" class="node"/>
+  <text x="712" y="794" text-anchor="middle" class="label">Qdrant</text>
+
+  <rect x="810" y="736" width="168" height="96" rx="18" class="node"/>
+  <text x="894" y="794" text-anchor="middle" class="label">Mongo</text>
+
+  <rect x="992" y="736" width="206" height="96" rx="18" class="node"/>
+  <text x="1095" y="786" text-anchor="middle" class="label-small">MindsDB +</text>
+  <text x="1095" y="814" text-anchor="middle" class="label-small">Letta</text>
+
+  <rect x="52" y="150" width="250" height="178" rx="34" class="node"/>
+  <text x="177" y="220" text-anchor="middle" class="label">Providers</text>
+  <text x="177" y="256" text-anchor="middle" class="sub">plug in any model runtime</text>
+  <text x="177" y="284" text-anchor="middle" class="sub-small">(ships with qwen3</text>
+  <text x="177" y="306" text-anchor="middle" class="sub-small">via ollama)</text>
+
+  <rect x="1280" y="510" width="370" height="190" rx="38" class="node"/>
+  <text x="1465" y="590" text-anchor="middle" class="label">Messaging Surfaces</text>
+  <text x="1465" y="626" text-anchor="middle" class="sub">HTTP / MCP / messaging returns</text>
+  <text x="1465" y="654" text-anchor="middle" class="sub-small">bidirectional human + agent egress</text>
+
+  <path class="sync" d="M262 456 C420 456,490 300,610 300" marker-end="url(#arrow)"/>
+  <path class="sync" d="M302 250 C430 250,500 250,610 250" marker-end="url(#arrow)"/>
+  <path class="sync" d="M775 362 V390" marker-end="url(#arrow)"/>
+  <path class="sync" d="M710 480 L590 520" marker-end="url(#arrow)"/>
+  <path class="sync" d="M840 480 L960 520" marker-end="url(#arrow)"/>
+  <path class="sync" d="M1090 576 H1280" marker-end="url(#arrow)"/>
+  <path class="sync" d="M960 632 V650" marker-end="url(#arrow)"/>
+  <path class="async" d="M590 632 V650" marker-end="url(#arrowAsync)"/>
+</svg>

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>V3 Roadmap | Context Lattice</title>
+  <meta name="description" content="ContextLattice V3 roadmap: performance, deep recall quality, runner interoperability, and staged validation across issues 68-72." />
+  <link rel="canonical" href="https://contextlattice.io/roadmap.html" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="updates.html">Updates</a>
+        <a class="active" href="roadmap.html">Roadmap</a>
+        <a href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">V3 Program</span>
+      <h1>From fast memory to context efficacy at scale.</h1>
+      <p class="sub">
+        V3 focuses on one outcome: more correct agent outcomes per request. The plan combines latency,
+        recall quality, runner interoperability, and safety gates across backlog issues #68 through #72.
+      </p>
+      <div class="cta-row">
+        <a class="cta primary" href="#track-groups">See track breakdown</a>
+        <a class="cta secondary" href="updates.html">View release journal</a>
+      </div>
+    </section>
+
+    <section class="section section-tight">
+      <article class="card quick-path-card">
+        <div class="kicker">Program Intent</div>
+        <h3>What V3 changes for application efficacy</h3>
+        <ol class="step-list">
+          <li>Reduce p95/p99 deep-read tails while preserving high-quality sources.</li>
+          <li>Increase recall precision with code/context-aware ranking and stronger source telemetry.</li>
+          <li>Expand external runner compatibility with safer contracts and richer task lifecycle signals.</li>
+          <li>Ship all changes behind reversible flags with benchmark and security gates.</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Efficacy Chain</div>
+        <h3>How V3 improvements cascade through the app</h3>
+<pre><code>Write speed up
+  -> queue pressure down
+  -> sink freshness up
+  -> retrieval freshness up
+  -> recall quality up
+  -> deep-read timeout rate down
+  -> agent completion reliability up
+  -> application throughput and trust up</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Roadmap Graph</div>
+        <h3>Grouped tracks across issues #68-#72</h3>
+<pre><code>                 +-----------------------------------+
+                 | V3 Objective: Context Efficacy    |
+                 +-----------------+-----------------+
+                                   |
+        +--------------------------+--------------------------+
+        |                          |                          |
++-------+--------+         +-------+--------+         +-------+--------+
+| Track A        |         | Track B        |         | Track C        |
+| Performance    |         | Recall Quality |         | Agent Surface  |
+| #69 + #72      |         | #70 + #72      |         | #68 + #71      |
++-------+--------+         +-------+--------+         +-------+--------+
+        |                          |                          |
+        v                          v                          v
+ Adapter spikes             Enrichment/rerank          Runner + sidecar
+ ANN/indexing               and source policy          contracts/events
+        +--------------------------+--------------------------+
+                                   |
+                                   v
+                       Security + benchmark + recall gates
+                                   |
+                                   v
+                              Staged V3 cutover</code></pre>
+      </article>
+    </section>
+
+    <section class="section" id="track-groups">
+      <div class="kicker">Track Groups</div>
+      <h2>Integration scope by domain</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Track A: Performance + Deep Read Stability</h3>
+          <p><strong>Backlog reference:</strong> performance/deep-read track aligned to planning set #69 + #72.</p>
+          <p><strong>Primary repos:</strong> swiftide, fastembed-rs, EmbedAnything, zvec, edgevec, trieve, helix-db, chroma, tantivy, quickwit, lancedb, RediSearch, meilisearch, infinity, milvus, usearch, mini-rag, LightRAG, qdrant/rust-client.</p>
+          <p><strong>Reference tuning source:</strong> qdrant/qdrant (engine tuning patterns, not a new integration target).</p>
+          <p><strong>Key output:</strong> lower p95/p99 latency and fewer deep-read timeouts without quality regression.</p>
+        </article>
+
+        <article class="card component-card">
+          <h3>Track B: Recall Quality + Memory Semantics</h3>
+          <p><strong>Backlog reference:</strong> recall/memory quality track aligned to planning set #70 + #72.</p>
+          <p><strong>Primary repos:</strong> codemem, codegraph-rust, subcog, shodh-memory, mcp-redis, mindsdb, graphrag-rs, mem0, rust-local-rag, krira-chunker, satoriDB.</p>
+          <p><strong>Key output:</strong> better ranking precision and better detail-dive linkage from rollups to source files.</p>
+        </article>
+
+        <article class="card component-card">
+          <h3>Track C: Runner Interop + Compute Backend</h3>
+          <p><strong>Backlog reference:</strong> runner/sidecar track aligned to planning set #68 + #71.</p>
+          <p><strong>Primary repos:</strong> opencode, openclaw, ironclaw, unbrowse, MCP registry, litellm; runner targets OpenCode, Goose, Eliza; ANE sidecar route for M-series macOS.</p>
+          <p><strong>Key output:</strong> broader runner support with strict contracts, better progress telemetry, and safe provider fallback.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Validation Gauntlet</div>
+        <h3>Integration and test flow for every candidate</h3>
+        <ol class="step-list">
+          <li><strong>Security preflight:</strong> commit pinning, sandboxed execution, dependency/license + secret scans.</li>
+          <li><strong>Adapter spike:</strong> feature-flagged integration only, no default-path replacement.</li>
+          <li><strong>Benchmark gate:</strong> p50/p95/p99, throughput, timeout rate, deep-read stress.</li>
+          <li><strong>Recall gate:</strong> saved recall eval + code-heavy quality regression suite.</li>
+          <li><strong>Canary gate:</strong> staged rollout with rollback profile verified.</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">Wave 1 · 2026-03-09 to 2026-03-22</span>
+        <h3>Harness + interface foundations</h3>
+        <ul>
+          <li>Benchmark matrix extension and deep-read stress scenarios.</li>
+          <li>Feature-flag adapter boundaries for embeddings/ANN/retrieval sources.</li>
+          <li>Security gates normalized across candidate spikes.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">Wave 2 · 2026-03-23 to 2026-04-12</span>
+        <h3>Performance and recall spikes</h3>
+        <ul>
+          <li>Track A candidate benchmarks and keep/drop decisions.</li>
+          <li>Track B enrichment + rerank prototype validation.</li>
+          <li>Publish artifacts and recommendation memo.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">Wave 3 · 2026-04-13 to 2026-05-03</span>
+        <h3>Runner and compute canary</h3>
+        <ul>
+          <li>Runner contract unification and lifecycle event telemetry.</li>
+          <li>ANE sidecar canary (M-series macOS) with automatic fallback path.</li>
+          <li>Interop hardening across OpenCode/OpenClaw/IronClaw surfaces.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">Wave 4 · 2026-05-04 to 2026-05-24</span>
+        <h3>Cutover readiness</h3>
+        <ul>
+          <li>Cross-track regression pass and rollback drills.</li>
+          <li>Final quality/performance sign-off against acceptance gates.</li>
+          <li>V3 release packaging and runbook publication.</li>
+        </ul>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice V3 roadmap</span>
+      <span>Execution detail: issues #68-#72 and docs/v3-roadmap.md</span>
+    </footer>
+  </main>
+</body>
+</html>

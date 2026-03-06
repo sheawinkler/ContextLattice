@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1080" viewBox="0 0 1700 1080" role="img" aria-label="Write flow showing ingress, validation, persistence, outbox enqueue, async fanout workers, and sink writes">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192434"/>
+      <stop offset="100%" stop-color="#111a25"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#deebfc"/>
+    </marker>
+    <marker id="arrowAsync" markerWidth="10.737" markerHeight="10.737" refX="8.59" refY="5.3685" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0 0 L10.737 5.3685 L0 10.737 Z" fill="#94d8e8"/>
+    </marker>
+    <style><![CDATA[
+      .frame { fill: url(#bg); stroke: #69788b; stroke-width: 1.4; }
+      .node { fill: #1f2b3a; stroke: #cfdbeb; stroke-width: 2; }
+      .core { fill: #8f551f; stroke: #f2d3ad; stroke-width: 2.4; }
+      .callout { fill: rgba(20, 27, 36, 0.95); stroke: #c8d6e8; stroke-width: 1.9; }
+      .fanout-box { fill: rgba(19, 35, 49, 0.78); stroke: #94d8e8; stroke-width: 2; stroke-dasharray: 10 8; }
+      .title { font: 700 20px 'IBM Plex Mono', monospace; fill: #d4deeb; letter-spacing: 0.09em; }
+      .label { font: 700 26px 'IBM Plex Sans', sans-serif; fill: #f1f6ff; }
+      .sub { font: 600 20px 'IBM Plex Sans', sans-serif; fill: #d2ddec; }
+      .lane { font: 700 24px 'IBM Plex Sans', sans-serif; fill: #d8e3f2; }
+      .lane-sm { font: 700 22px 'IBM Plex Sans', sans-serif; fill: #d8e3f2; }
+      .sync { stroke: #deebfc; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .async { stroke: #94d8e8; stroke-width: 3; fill: none; stroke-dasharray: 10 8; stroke-linecap: round; stroke-linejoin: round; }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1700" height="1080" class="frame"/>
+  <text x="850" y="64" text-anchor="middle" class="title">WRITE FLOW</text>
+
+  <rect x="650" y="96" width="400" height="96" rx="20" class="node"/>
+  <text x="850" y="154" text-anchor="middle" class="label">Client Write Request</text>
+
+  <rect x="650" y="232" width="400" height="106" rx="22" class="core"/>
+  <text x="850" y="296" text-anchor="middle" class="label">Orchestrator Ingress</text>
+  <text x="850" y="332" text-anchor="middle" class="sub">single write entrypoint</text>
+
+  <rect x="650" y="378" width="400" height="96" rx="20" class="node"/>
+  <text x="850" y="436" text-anchor="middle" class="label">Validate + Auth + Normalize</text>
+
+  <rect x="650" y="514" width="400" height="96" rx="20" class="node"/>
+  <text x="850" y="572" text-anchor="middle" class="label">Persist Raw Event (Mongo)</text>
+
+  <rect x="650" y="650" width="400" height="110" rx="20" class="node"/>
+  <text x="850" y="714" text-anchor="middle" class="label">Enqueue Durable Outbox Job</text>
+
+  <rect x="1090" y="666" width="470" height="88" rx="16" class="callout"/>
+  <text x="1325" y="708" text-anchor="middle" class="sub">Outbox workers apply retries + backpressure</text>
+  <text x="1325" y="736" text-anchor="middle" class="sub">before writing fanout sinks.</text>
+  <path class="sync" d="M1050 705 H1090" marker-end="url(#arrow)"/>
+
+  <rect x="730" y="814" width="240" height="64" rx="14" class="fanout-box"/>
+  <text x="850" y="853" text-anchor="middle" class="lane-sm">Fanout Workers</text>
+
+  <rect x="260" y="928" width="250" height="120" rx="20" class="node"/>
+  <text x="385" y="994" text-anchor="middle" class="label">Memory Bank</text>
+
+  <rect x="530" y="928" width="250" height="120" rx="20" class="node"/>
+  <text x="655" y="994" text-anchor="middle" class="label">Qdrant</text>
+
+  <rect x="800" y="928" width="250" height="120" rx="20" class="node"/>
+  <text x="925" y="994" text-anchor="middle" class="label">Mongo</text>
+
+  <rect x="1070" y="928" width="270" height="120" rx="20" class="node"/>
+  <text x="1205" y="994" text-anchor="middle" class="label">MindsDB + Letta</text>
+
+  <path class="sync" d="M850 192 V232" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 338 V378" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 474 V514" marker-end="url(#arrow)"/>
+  <path class="sync" d="M850 610 V650" marker-end="url(#arrow)"/>
+  <path class="async" d="M850 760 V814" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M850 878 V906"/>
+
+  <path class="async" d="M385 906 V928" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M655 906 V928" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M925 906 V928" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M1205 906 V928" marker-end="url(#arrowAsync)"/>
+  <path class="async" d="M385 906 H1205"/>
+</svg>
