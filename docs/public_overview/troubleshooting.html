@@ -70,6 +70,7 @@ ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq '.lettaAutoPrune.state | {lastRunAt,lastDeleted,lastSkippedReason,lastError}'
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
         <p class="muted-note"><strong>401 almost always means missing/incorrect <code>x-api-key</code>.</strong> Re-read key from <code>.env</code> and restart the caller process if needed.</p>
         <p class="muted-note">If <code>/health</code> fails, check orchestrator logs first because write/read fanout depends on it.</p>
@@ -120,8 +121,10 @@ docker compose up -d memmcp-orchestrator</code></pre>
         <article class="card component-card">
           <h3>Fanout backlog rising</h3>
           <p><strong>Impact:</strong> partial sink coverage and delayed consistency.</p>
-          <p><strong>Action:</strong> check fanout telemetry and queue settings; retry workers recover asynchronously.</p>
-<pre><code>curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq</code></pre>
+          <p><strong>Action:</strong> check fanout telemetry and Letta auto-prune state; trigger a prune pass and tune <code>LETTA_AUTO_PRUNE_*</code> thresholds if needed.</p>
+<pre><code>curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" | jq</code></pre>
         </article>
         <article class="card component-card">
           <h3>Disk pressure</h3>
