@@ -134,6 +134,42 @@ def test_merge_federated_rows_applies_fusion_quality_and_lifecycle_adjustments(m
     assert sorted(row["sources"]) == ["letta", "qdrant"]
 
 
+def test_merge_federated_rows_suppresses_low_value_non_letta(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LOW_VALUE_NON_LETTA_PENALTY", 0.3)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LOW_VALUE_NON_LETTA_SCORE_CAP", 0.4)
+    rows = {
+        "qdrant": [
+            {
+                "project": "alpha",
+                "file": "telemetry/queue__latest.json",
+                "summary": "queue depth reached 220",
+                "score": 0.82,
+            }
+        ],
+        "letta": [
+            {
+                "project": "alpha",
+                "file": "telemetry/queue-history.log",
+                "summary": "queue depth reached 220",
+                "score": 0.76,
+            }
+        ],
+    }
+    merged = orchestrator._merge_federated_rows(
+        rows,
+        {"qdrant": 1.0, "letta": 1.0},
+        set(),
+        set(),
+        learning_enabled=False,
+        query="how did recall quality improve",
+    )
+    by_source = {row.get("source"): row for row in merged}
+    assert by_source["qdrant"]["low_value_suppressed"] is True
+    assert by_source["qdrant"]["score"] <= 0.4
+    assert by_source["letta"]["low_value_suppressed"] is False
+
+
 @pytest.mark.asyncio
 async def test_retrieval_source_quality_snapshot_penalizes_unstable_sources(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SOURCE_QUALITY_ADAPTIVE_ENABLED", True)
@@ -1211,6 +1247,138 @@ async def test_memory_search_uses_agent_profile_pipeline_and_grounding(monkeypat
     assert response["retrieval_mode"] == "deep"
     assert response["grounding"]["strict_numeric_copy"] is True
     assert response["degraded"] is False
+
+
+@pytest.mark.asyncio
+async def test_memory_search_resolves_project_alias(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def _pipeline(**kwargs):
+        captured.update(kwargs)
+        return (
+            [
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "decisions/alpha.md",
+                    "summary": "decision note",
+                    "score": 0.8,
+                    "topic_path": "decisions",
+                }
+            ],
+            {"retrieval_mode": "balanced", "source_errors": {}, "source_counts": {}},
+            [],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    async def _projects():
+        return ["algotraderv2_rust", "alpha"]
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "PROJECT_ALIAS_MAP", {"algotrader": "algotraderv2_rust"})
+    monkeypatch.setattr(orchestrator, "list_projects", _projects)
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="decision",
+            project="algotrader",
+            include_retrieval_debug=True,
+        )
+    )
+
+    assert captured["project_filter"] == "algotraderv2_rust"
+    assert response["project_resolution"]["aliasApplied"] is True
+    assert response["project_resolution"]["resolved"] == "algotraderv2_rust"
+
+
+@pytest.mark.asyncio
+async def test_memory_search_suggests_similar_project_when_missing(monkeypatch: pytest.MonkeyPatch):
+    called = {"pipeline": 0}
+
+    async def _pipeline(**kwargs):
+        called["pipeline"] += 1
+        return (
+            [],
+            {"retrieval_mode": "balanced", "source_errors": {}, "source_counts": {}},
+            [],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    async def _projects():
+        return ["algotraderv2_rust", "alpha"]
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "PROJECT_ALIAS_MAP", {})
+    monkeypatch.setattr(orchestrator, "PROJECT_NAME_FAIL_FAST_ON_MISS", True)
+    monkeypatch.setattr(orchestrator, "list_projects", _projects)
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="pnl",
+            project="algotrader",
+            include_retrieval_debug=True,
+            include_grounding=True,
+        )
+    )
+
+    assert response["results"] == []
+    assert called["pipeline"] == 0
+    assert "algotraderv2_rust" in response["project_suggestions"]
+    assert response["project_resolution"]["verified"] is False
+    assert response["retrieval"]["topic_scope"]["total_results"] == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_search_applies_trading_scope_filter(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def _pipeline(**kwargs):
+        captured.update(kwargs)
+        return (
+            [
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "telemetry/queue__latest.json",
+                    "summary": "queue snapshot",
+                    "score": 0.96,
+                    "topic_path": "telemetry",
+                },
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "profitability/weekly.md",
+                    "summary": "weekly profitability summary",
+                    "score": 0.62,
+                    "topic_path": "profitability",
+                },
+            ],
+            {"retrieval_mode": "balanced", "source_errors": {}, "source_counts": {}},
+            [],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    async def _projects():
+        return ["algotraderv2_rust", "alpha"]
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "TRADING_PROJECT_HINTS", ["algotraderv2_rust"])
+    monkeypatch.setattr(orchestrator, "TRADING_DEFAULT_TOPIC_PREFIXES", ["decisions", "reports", "profitability"])
+    monkeypatch.setattr(orchestrator, "list_projects", _projects)
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="profitability",
+            project="algotraderv2_rust",
+            include_retrieval_debug=True,
+        )
+    )
+
+    assert captured["topic_filter"] is None
+    assert len(response["results"]) == 1
+    assert response["results"][0]["topic_path"] == "profitability"
+    assert response["retrieval"]["topic_scope"]["applied"] is True
+    assert response["retrieval"]["topic_scope"]["matched_results"] == 1
 
 
 @pytest.mark.asyncio
