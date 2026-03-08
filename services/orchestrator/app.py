@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import hashlib
 import hmac
 import json
@@ -594,6 +595,22 @@ RETRIEVAL_FUSION_NUMERIC_MISS_PENALTY = max(
     0.0,
     float(os.getenv("ORCH_RETRIEVAL_FUSION_NUMERIC_MISS_PENALTY", "0.03")),
 )
+RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS = os.getenv(
+    "ORCH_RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_LOW_VALUE_NON_LETTA_PENALTY = max(
+    0.0,
+    float(os.getenv("ORCH_RETRIEVAL_LOW_VALUE_NON_LETTA_PENALTY", "0.28")),
+)
+RETRIEVAL_LOW_VALUE_NON_LETTA_SCORE_CAP = max(
+    0.0,
+    float(os.getenv("ORCH_RETRIEVAL_LOW_VALUE_NON_LETTA_SCORE_CAP", "0.45")),
+)
+RETRIEVAL_LOW_VALUE_BYPASS_TERMS_ENV = os.getenv(
+    "ORCH_RETRIEVAL_LOW_VALUE_BYPASS_TERMS",
+    "telemetry,metric,metrics,state,snapshot,snapshots,latency,queue,health,status,debug,log,logs,throughput",
+)
 RETRIEVAL_SOURCE_QUALITY_ADAPTIVE_ENABLED = os.getenv(
     "ORCH_RETRIEVAL_SOURCE_QUALITY_ADAPTIVE_ENABLED",
     "true",
@@ -836,6 +853,30 @@ LOW_VALUE_TOPIC_PREFIXES_ENV = os.getenv(
     "LOW_VALUE_TOPIC_PREFIXES",
     "telemetry,metrics,signals,overrides,perf,tmp",
 )
+PROJECT_ALIAS_MAP_ENV = os.getenv(
+    "ORCH_PROJECT_ALIAS_MAP",
+    "algotrader:algotraderv2_rust",
+)
+PROJECT_NAME_FAIL_FAST_ON_MISS = os.getenv(
+    "ORCH_PROJECT_NAME_FAIL_FAST_ON_MISS",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+PROJECT_SUGGESTION_LIMIT = max(
+    1,
+    min(20, int(os.getenv("ORCH_PROJECT_SUGGESTION_LIMIT", "6"))),
+)
+PROJECT_SUGGESTION_MIN_SIMILARITY = min(
+    1.0,
+    max(0.0, float(os.getenv("ORCH_PROJECT_SUGGESTION_MIN_SIMILARITY", "0.55"))),
+)
+TRADING_PROJECT_HINTS_ENV = os.getenv(
+    "ORCH_TRADING_PROJECT_HINTS",
+    "algotrader,algotraderv2_rust",
+)
+TRADING_DEFAULT_TOPIC_PREFIXES_ENV = os.getenv(
+    "ORCH_TRADING_DEFAULT_TOPIC_PREFIXES",
+    "decisions,reports,profitability",
+)
 LETTA_ADMISSION_ENABLED = os.getenv("LETTA_ADMISSION_ENABLED", "true").lower() in (
     "1",
     "true",
@@ -1075,6 +1116,21 @@ def _normalize_outbox_status_csv(raw: str | None) -> list[str]:
     return normalized
 
 
+def _normalize_project_alias_map(raw: str | None) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for item in str(raw or "").split(","):
+        token = str(item or "").strip()
+        if not token or ":" not in token:
+            continue
+        source, target = token.split(":", 1)
+        source_key = str(source or "").strip().lower()
+        target_name = str(target or "").strip()
+        if not source_key or not target_name:
+            continue
+        aliases[source_key] = target_name
+    return aliases
+
+
 def _normalize_task_action_csv(raw: str | None) -> tuple[str, ...]:
     allowed_defaults = ("memory_write", "memory_search", "messaging_command", "http_callback", "provider_chat")
     requested = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
@@ -1119,6 +1175,20 @@ if not LOW_VALUE_FILE_SUFFIXES:
 LOW_VALUE_TOPIC_PREFIXES = _normalize_lower_csv(LOW_VALUE_TOPIC_PREFIXES_ENV)
 if not LOW_VALUE_TOPIC_PREFIXES:
     LOW_VALUE_TOPIC_PREFIXES = ["telemetry", "metrics", "signals", "overrides", "perf", "tmp"]
+RETRIEVAL_LOW_VALUE_BYPASS_TERMS = _normalize_lower_csv(RETRIEVAL_LOW_VALUE_BYPASS_TERMS_ENV)
+if not RETRIEVAL_LOW_VALUE_BYPASS_TERMS:
+    RETRIEVAL_LOW_VALUE_BYPASS_TERMS = ["telemetry", "metrics", "latency", "queue", "health", "status", "debug"]
+PROJECT_ALIAS_MAP = _normalize_project_alias_map(PROJECT_ALIAS_MAP_ENV)
+TRADING_PROJECT_HINTS = _normalize_lower_csv(TRADING_PROJECT_HINTS_ENV)
+if not TRADING_PROJECT_HINTS:
+    TRADING_PROJECT_HINTS = ["algotrader", "algotraderv2_rust"]
+TRADING_DEFAULT_TOPIC_PREFIXES = [
+    re.sub(r"/+", "/", str(item or "").strip().strip("/").replace("\\", "/"))
+    for item in _normalize_lower_csv(TRADING_DEFAULT_TOPIC_PREFIXES_ENV)
+]
+TRADING_DEFAULT_TOPIC_PREFIXES = [item for item in TRADING_DEFAULT_TOPIC_PREFIXES if item and item != "."]
+if not TRADING_DEFAULT_TOPIC_PREFIXES:
+    TRADING_DEFAULT_TOPIC_PREFIXES = ["decisions", "reports", "profitability"]
 HOT_MEMORY_FILE_PATTERNS = _normalize_lower_csv(HOT_MEMORY_FILE_PATTERNS_ENV)
 LETTA_EXCLUDED_FILE_PATTERNS = _normalize_lower_csv(LETTA_EXCLUDED_FILE_PATTERNS_ENV)
 LETTA_EXCLUDED_TOPIC_PREFIXES = _normalize_lower_csv(LETTA_EXCLUDED_TOPIC_PREFIXES_ENV)
@@ -10851,6 +10921,114 @@ def _normalize_retrieval_weights(
     return weights
 
 
+def _normalize_project_key(project: str | None) -> str:
+    return str(project or "").strip().lower()
+
+
+def _resolve_project_alias(project: str | None, max_hops: int = 6) -> tuple[str | None, list[dict[str, str]]]:
+    current = str(project or "").strip()
+    if not current:
+        return None, []
+    hops: list[dict[str, str]] = []
+    visited: set[str] = set()
+    while len(hops) < max(1, int(max_hops)):
+        key = _normalize_project_key(current)
+        if not key or key in visited:
+            break
+        visited.add(key)
+        target = str(PROJECT_ALIAS_MAP.get(key) or "").strip()
+        if not target:
+            break
+        hops.append({"from": current, "to": target})
+        current = target
+    return current or None, hops
+
+
+def _resolve_project_case_insensitive(project: str | None, candidates: list[str]) -> str | None:
+    key = _normalize_project_key(project)
+    if not key:
+        return None
+    by_key = {_normalize_project_key(item): item for item in candidates if str(item).strip()}
+    return by_key.get(key)
+
+
+def _suggest_similar_projects(
+    requested_project: str | None,
+    candidates: list[str],
+    *,
+    limit: int = PROJECT_SUGGESTION_LIMIT,
+) -> list[str]:
+    requested = str(requested_project or "").strip()
+    if not requested:
+        return []
+    requested_key = _normalize_project_key(requested)
+    scored: list[tuple[float, str]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_name = str(candidate or "").strip()
+        if not candidate_name or candidate_name in seen:
+            continue
+        seen.add(candidate_name)
+        candidate_key = _normalize_project_key(candidate_name)
+        ratio = difflib.SequenceMatcher(None, requested_key, candidate_key).ratio()
+        substring_bonus = 0.18 if requested_key in candidate_key or candidate_key in requested_key else 0.0
+        score = ratio + substring_bonus
+        if score < PROJECT_SUGGESTION_MIN_SIMILARITY and substring_bonus <= 0.0:
+            continue
+        scored.append((score, candidate_name))
+    scored.sort(key=lambda item: (item[0], -len(item[1])), reverse=True)
+    return [name for _, name in scored[: max(1, int(limit))]]
+
+
+def _query_targets_low_value_paths(query: str) -> bool:
+    tokens = _query_terms(query, max_terms=14)
+    if not tokens:
+        return False
+    lookup = set(RETRIEVAL_LOW_VALUE_BYPASS_TERMS)
+    for token in tokens:
+        if token in lookup:
+            return True
+        for candidate in lookup:
+            if token.startswith(candidate) or candidate.startswith(token):
+                return True
+    return False
+
+
+def _looks_like_trading_project(project: str | None) -> bool:
+    normalized = _normalize_project_key(project)
+    if not normalized:
+        return False
+    for hint in TRADING_PROJECT_HINTS:
+        token = _normalize_project_key(hint)
+        if not token:
+            continue
+        if normalized == token or token in normalized or normalized in token:
+            return True
+    return False
+
+
+def _row_topic_path(row: dict[str, Any]) -> str:
+    topic_path = normalize_topic_path(str(row.get("topic_path") or ""))
+    if topic_path:
+        return topic_path
+    return derive_topic_path(str(row.get("file") or ""), None)
+
+
+def _row_matches_any_topic_prefix(row: dict[str, Any], prefixes: list[str]) -> bool:
+    if not prefixes:
+        return True
+    topic_path = _row_topic_path(row)
+    if not topic_path:
+        return False
+    for prefix in prefixes:
+        normalized_prefix = normalize_topic_path(str(prefix or ""))
+        if not normalized_prefix:
+            continue
+        if topic_path == normalized_prefix or topic_path.startswith(f"{normalized_prefix}/"):
+            return True
+    return False
+
+
 def _query_terms(query: str, max_terms: int = 8) -> list[str]:
     terms: list[str] = []
     seen: set[str] = set()
@@ -12252,11 +12430,14 @@ async def search_qdrant(
     results = []
     for hit in hits:
         payload = getattr(hit, "payload", None) or {}
+        file_name = str(payload.get("file") or "")
+        topic_path = normalize_topic_path(str(payload.get("topic_path") or "")) or derive_topic_path(file_name, None)
         results.append({
             "project": payload.get("project"),
-            "file": payload.get("file"),
+            "file": file_name,
             "summary": payload.get("summary"),
             "score": getattr(hit, "score", None),
+            "topic_path": topic_path or None,
         })
 
     latency_ms = (asyncio.get_event_loop().time() - start_time) * 1000
@@ -12360,6 +12541,7 @@ async def search_memory_bank_lexical(
                     "summary": summary,
                     "score": score,
                     "source": RETRIEVAL_SOURCE_MEMORY_BANK,
+                    "topic_path": derive_topic_path(file_name, None),
                 }
             )
 
@@ -12577,6 +12759,7 @@ async def search_mindsdb_memory(
                 "score": score,
                 "source": RETRIEVAL_SOURCE_MINDSDB,
                 "created_at": row.get("created_at"),
+                "topic_path": derive_topic_path(file_name, None),
             }
         )
     rows.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
@@ -12678,6 +12861,7 @@ def _merge_federated_rows(
     lifecycle_snapshot: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_query = re.sub(r"\s+", " ", str(query or "").strip().lower())
+    query_targets_low_value_paths = _query_targets_low_value_paths(normalized_query)
     query_numeric_values = set(
         _extract_numeric_values_verbatim(normalized_query, limit=16)
     )
@@ -12697,6 +12881,7 @@ def _merge_federated_rows(
             summary = str(row.get("summary") or "")
             file_name = str(row.get("file") or "")
             project = str(row.get("project") or "")
+            topic_path = normalize_topic_path(str(row.get("topic_path") or "")) or derive_topic_path(file_name, None)
             text_blob = f"{project}\n{file_name}\n{summary}".lower()
             base_score = float(row.get("score") or 0.0)
             positive_hits = sum(1 for term in positive_terms if term in text_blob)
@@ -12744,9 +12929,30 @@ def _merge_federated_rows(
                 + fusion_adjustment
                 + lifecycle_adjustment
             )
+            low_value_row = _is_low_value_memory_record(
+                file_name=file_name,
+                topic_path=topic_path,
+                summary=summary,
+                source_kind=str(row.get("source_kind") or ""),
+                include_short_summary=False,
+            )
+            low_value_penalty = 0.0
+            low_value_suppressed = False
+            if (
+                RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS
+                and source_name != RETRIEVAL_SOURCE_LETTA
+                and low_value_row
+                and not query_targets_low_value_paths
+            ):
+                low_value_penalty = RETRIEVAL_LOW_VALUE_NON_LETTA_PENALTY
+                composite_score -= low_value_penalty
+                if RETRIEVAL_LOW_VALUE_NON_LETTA_SCORE_CAP > 0:
+                    composite_score = min(composite_score, RETRIEVAL_LOW_VALUE_NON_LETTA_SCORE_CAP)
+                low_value_suppressed = True
             normalized = dict(row)
             normalized["source"] = source_name or source
             normalized["sources"] = [source_name or source]
+            normalized["topic_path"] = topic_path or row.get("topic_path")
             normalized["base_score"] = round(base_score, 6)
             normalized["source_weight"] = round(source_weight, 4)
             normalized["quality_multiplier"] = round(quality_multiplier, 6)
@@ -12756,6 +12962,9 @@ def _merge_federated_rows(
             normalized["numeric_adjustment"] = round(numeric_adjustment, 6)
             normalized["numeric_match_ratio"] = round(numeric_match_ratio, 6)
             normalized["lifecycle_adjustment"] = round(lifecycle_adjustment, 6)
+            normalized["low_value"] = bool(low_value_row)
+            normalized["low_value_penalty"] = round(low_value_penalty, 6)
+            normalized["low_value_suppressed"] = bool(low_value_suppressed)
             normalized["pre_consensus_score"] = round(composite_score, 6)
             normalized["score"] = round(composite_score, 6)
             existing = merged.get(key)
@@ -16120,9 +16329,19 @@ async def search_memory(payload: MemorySearch):
         if isinstance(agent_profile.get("topic_prefixes"), list)
         else []
     )
+    explicit_project = str(payload.project or "").strip()
+    project_filter = explicit_project or str(agent_profile.get("default_project") or "").strip() or None
+    project_filter, alias_hops = _resolve_project_alias(project_filter)
     if not topic_filter and profile_topic_prefixes:
         topic_filter = str(profile_topic_prefixes[0] or "").strip() or None
-    project_filter = str(payload.project or "").strip() or str(agent_profile.get("default_project") or "").strip() or None
+    trading_scope_prefixes: list[str] = []
+    if (
+        not topic_filter
+        and not payload.topic_path
+        and not profile_topic_prefixes
+        and _looks_like_trading_project(project_filter)
+    ):
+        trading_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
     retrieval_mode = _normalize_retrieval_mode(
         payload.retrieval_mode
         or str(agent_profile.get("retrieval_mode") or RETRIEVAL_MODE_DEFAULT)
@@ -16140,10 +16359,97 @@ async def search_memory(payload: MemorySearch):
 
     preferences = None
     pre_warnings: list[str] = []
+    project_suggestions: list[str] = []
+    project_missing = False
+    project_resolution: dict[str, Any] = {
+        "requested": explicit_project or None,
+        "resolved": project_filter,
+        "aliasApplied": bool(alias_hops),
+        "aliasHops": alias_hops,
+        "verified": False,
+    }
+    if alias_hops:
+        last_hop = alias_hops[-1]
+        pre_warnings.append(
+            f"Project alias resolved '{last_hop.get('from')}' -> '{last_hop.get('to')}'."
+        )
     if profile_topic_prefixes and not payload.topic_path and len(profile_topic_prefixes) > 1:
         pre_warnings.append(
             f"Agent profile '{profile_id}' has multiple topic prefixes; using '{topic_filter}' by default."
         )
+    if trading_scope_prefixes:
+        pre_warnings.append(
+            "Applied default trading scope to decision/report/profitability topics."
+        )
+
+    if explicit_project and project_filter:
+        known_projects = await list_projects()
+        project_resolution["knownProjectCount"] = len(known_projects)
+        if known_projects:
+            canonical_match = _resolve_project_case_insensitive(project_filter, known_projects)
+            if canonical_match:
+                project_filter = canonical_match
+                project_resolution["resolved"] = project_filter
+                project_resolution["verified"] = True
+            else:
+                project_missing = True
+                project_suggestions = _suggest_similar_projects(
+                    explicit_project,
+                    known_projects,
+                    limit=PROJECT_SUGGESTION_LIMIT,
+                )
+                if project_suggestions:
+                    pre_warnings.append(
+                        f"Project '{explicit_project}' was not found. Similar projects: {', '.join(project_suggestions)}."
+                    )
+                else:
+                    pre_warnings.append(f"Project '{explicit_project}' was not found.")
+    elif explicit_project:
+        project_missing = True
+        pre_warnings.append(f"Project '{explicit_project}' was not found.")
+
+    if project_missing and PROJECT_NAME_FAIL_FAST_ON_MISS:
+        empty_grounding = _build_grounding_payload([])
+        retrieval_debug = {
+            "retrieval_mode": retrieval_mode,
+            "source_errors": {},
+            "source_counts": {},
+            "project_resolution": project_resolution,
+            "topic_scope": {
+                "applied": bool(trading_scope_prefixes),
+                "prefixes": trading_scope_prefixes,
+                "topic_filter": topic_filter,
+                "matched_results": 0,
+                "total_results": 0,
+            },
+        }
+        response: dict[str, Any] = {
+            "results": [],
+            "preferences": preferences,
+            "learning_enabled": LEARNING_LOOP_ENABLED,
+            "retrieval_mode": retrieval_mode,
+            "warnings": pre_warnings,
+            "agent_id": profile_id,
+            "degraded": True,
+            "project_resolution": project_resolution,
+            "project_suggestions": project_suggestions,
+            "agent_profile": {
+                "id": profile_id,
+                "retrieval_mode": agent_profile.get("retrieval_mode"),
+                "sources": agent_profile.get("sources"),
+                "source_weights": agent_profile.get("source_weights"),
+                "default_project": agent_profile.get("default_project"),
+                "topic_prefixes": profile_topic_prefixes,
+                "auto_escalate": bool(agent_profile.get("auto_escalate", True)),
+                "query_expansion": bool(agent_profile.get("query_expansion", True)),
+            },
+        }
+        if payload.include_grounding:
+            response["grounding"] = empty_grounding
+        if payload.include_retrieval_debug:
+            response["retrieval"] = retrieval_debug
+        return response
+
     if LEARNING_LOOP_ENABLED and payload.include_preferences:
         try:
             feedback_records = await list_feedback_records(
@@ -16174,6 +16480,30 @@ async def search_memory(payload: MemorySearch):
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
     )
+    topic_scope_debug = {
+        "applied": bool(trading_scope_prefixes),
+        "prefixes": trading_scope_prefixes,
+        "topic_filter": topic_filter,
+        "matched_results": len(results),
+        "total_results": len(results),
+    }
+    if trading_scope_prefixes:
+        scoped_results = [
+            row
+            for row in results
+            if isinstance(row, dict) and _row_matches_any_topic_prefix(row, trading_scope_prefixes)
+        ]
+        topic_scope_debug["matched_results"] = len(scoped_results)
+        if scoped_results:
+            if len(scoped_results) < len(results):
+                pre_warnings.append(
+                    f"Trading scope filtered {len(results) - len(scoped_results)} off-topic retrieval rows."
+                )
+            results = scoped_results[: payload.limit]
+        else:
+            pre_warnings.append(
+                "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
+            )
     if pre_warnings:
         warnings = pre_warnings + warnings
 
@@ -16216,6 +16546,8 @@ async def search_memory(payload: MemorySearch):
         ),
         "warnings": warnings,
         "agent_id": profile_id,
+        "project_resolution": project_resolution,
+        "project_suggestions": project_suggestions,
         "degraded": bool(
             not results
             or (
@@ -16237,7 +16569,10 @@ async def search_memory(payload: MemorySearch):
     if payload.include_grounding:
         response["grounding"] = grounding
     if payload.include_retrieval_debug:
-        response["retrieval"] = retrieval_debug
+        retrieval_payload = dict(retrieval_debug)
+        retrieval_payload["project_resolution"] = project_resolution
+        retrieval_payload["topic_scope"] = topic_scope_debug
+        response["retrieval"] = retrieval_payload
     return response
 
 
@@ -16312,6 +16647,36 @@ async def engine_retrieval_query(payload: dict[str, Any]):
     )
     rerank_with_learning = bool(request_payload.get("rerank_with_learning", True))
     retrieval_mode = str(request_payload.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED)
+    pre_warnings: list[str] = []
+    explicit_project = str(project_filter or "").strip()
+    project_filter, alias_hops = _resolve_project_alias(project_filter)
+    project_resolution: dict[str, Any] = {
+        "requested": explicit_project or None,
+        "resolved": project_filter,
+        "aliasApplied": bool(alias_hops),
+        "aliasHops": alias_hops,
+        "verified": False,
+    }
+    if alias_hops:
+        last_hop = alias_hops[-1]
+        pre_warnings.append(
+            f"Project alias resolved '{last_hop.get('from')}' -> '{last_hop.get('to')}'."
+        )
+    if explicit_project and project_filter:
+        known_projects = await list_projects()
+        project_resolution["knownProjectCount"] = len(known_projects)
+        if known_projects:
+            canonical_match = _resolve_project_case_insensitive(project_filter, known_projects)
+            if canonical_match:
+                project_filter = canonical_match
+                project_resolution["resolved"] = project_filter
+                project_resolution["verified"] = True
+    topic_scope_prefixes: list[str] = []
+    if not topic_filter and _looks_like_trading_project(project_filter):
+        topic_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
+        pre_warnings.append(
+            "Applied default trading scope to decision/report/profitability topics."
+        )
     results, retrieval_debug, warnings = await federated_search_memory(
         query,
         limit=limit,
@@ -16324,10 +16689,38 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         retrieval_mode=retrieval_mode,
         record_pathway_usage=False,
     )
+    topic_scope_debug = {
+        "applied": bool(topic_scope_prefixes),
+        "prefixes": topic_scope_prefixes,
+        "topic_filter": topic_filter,
+        "matched_results": len(results),
+        "total_results": len(results),
+    }
+    if topic_scope_prefixes:
+        scoped_results = [
+            row
+            for row in results
+            if isinstance(row, dict) and _row_matches_any_topic_prefix(row, topic_scope_prefixes)
+        ]
+        topic_scope_debug["matched_results"] = len(scoped_results)
+        if scoped_results:
+            if len(scoped_results) < len(results):
+                pre_warnings.append(
+                    f"Trading scope filtered {len(results) - len(scoped_results)} off-topic retrieval rows."
+                )
+            results = scoped_results[:limit]
+        else:
+            pre_warnings.append(
+                "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
+            )
+    combined_warnings = pre_warnings + warnings if pre_warnings else warnings
+    retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["project_resolution"] = project_resolution
+    retrieval_payload["topic_scope"] = topic_scope_debug
     return {
         "results": results,
-        "retrieval_debug": retrieval_debug,
-        "warnings": warnings,
+        "retrieval_debug": retrieval_payload,
+        "warnings": combined_warnings,
     }
 
 
@@ -16369,6 +16762,36 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     )
     auto_escalate = bool(request_payload.get("auto_escalate", False))
     query_expansion = bool(request_payload.get("query_expansion", True))
+    pre_warnings: list[str] = []
+    explicit_project = str(project_filter or "").strip()
+    project_filter, alias_hops = _resolve_project_alias(project_filter)
+    project_resolution: dict[str, Any] = {
+        "requested": explicit_project or None,
+        "resolved": project_filter,
+        "aliasApplied": bool(alias_hops),
+        "aliasHops": alias_hops,
+        "verified": False,
+    }
+    if alias_hops:
+        last_hop = alias_hops[-1]
+        pre_warnings.append(
+            f"Project alias resolved '{last_hop.get('from')}' -> '{last_hop.get('to')}'."
+        )
+    if explicit_project and project_filter:
+        known_projects = await list_projects()
+        project_resolution["knownProjectCount"] = len(known_projects)
+        if known_projects:
+            canonical_match = _resolve_project_case_insensitive(project_filter, known_projects)
+            if canonical_match:
+                project_filter = canonical_match
+                project_resolution["resolved"] = project_filter
+                project_resolution["verified"] = True
+    topic_scope_prefixes: list[str] = []
+    if not topic_filter and _looks_like_trading_project(project_filter):
+        topic_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
+        pre_warnings.append(
+            "Applied default trading scope to decision/report/profitability topics."
+        )
     results, retrieval_debug, warnings, grounding = await _run_memory_recall_pipeline(
         query=query,
         limit=limit,
@@ -16383,10 +16806,39 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
     )
+    topic_scope_debug = {
+        "applied": bool(topic_scope_prefixes),
+        "prefixes": topic_scope_prefixes,
+        "topic_filter": topic_filter,
+        "matched_results": len(results),
+        "total_results": len(results),
+    }
+    if topic_scope_prefixes:
+        scoped_results = [
+            row
+            for row in results
+            if isinstance(row, dict) and _row_matches_any_topic_prefix(row, topic_scope_prefixes)
+        ]
+        topic_scope_debug["matched_results"] = len(scoped_results)
+        if scoped_results:
+            if len(scoped_results) < len(results):
+                pre_warnings.append(
+                    f"Trading scope filtered {len(results) - len(scoped_results)} off-topic retrieval rows."
+                )
+            results = scoped_results[:limit]
+            grounding = _build_grounding_payload(results)
+        else:
+            pre_warnings.append(
+                "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
+            )
+    combined_warnings = pre_warnings + warnings if pre_warnings else warnings
+    retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["project_resolution"] = project_resolution
+    retrieval_payload["topic_scope"] = topic_scope_debug
     return {
         "results": results,
-        "retrieval_debug": retrieval_debug,
-        "warnings": warnings,
+        "retrieval_debug": retrieval_payload,
+        "warnings": combined_warnings,
         "grounding": grounding,
     }
 
