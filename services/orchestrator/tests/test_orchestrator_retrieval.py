@@ -333,6 +333,66 @@ async def test_federated_search_explicit_sources_do_not_skip_slow_batch(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_federated_search_call_budget_defers_slow_sources(monkeypatch: pytest.MonkeyPatch):
+    warm_calls: list[dict[str, Any]] = []
+
+    async def _qdrant(*args, **kwargs):
+        return [
+            {
+                "project": "alpha",
+                "file": "notes/a.md",
+                "summary": "fast qdrant row",
+                "score": 0.88,
+                "source": "qdrant",
+            }
+        ]
+
+    async def _letta(*args, **kwargs):
+        await asyncio.sleep(0.3)
+        return [
+            {
+                "project": "alpha",
+                "file": "notes/letta.md",
+                "summary": "slow letta row",
+                "score": 0.81,
+                "source": "letta",
+            }
+        ]
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    def _warm(**kwargs):
+        warm_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "_schedule_background_letta_query_warm", _warm)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+
+    results, debug, warnings = await orchestrator.federated_search_memory(
+        "alpha",
+        limit=5,
+        sources=[orchestrator.RETRIEVAL_SOURCE_QDRANT, orchestrator.RETRIEVAL_SOURCE_LETTA],
+        rerank_with_learning=False,
+        call_budget_secs=0.25,
+    )
+
+    assert results
+    assert results[0]["source"] == "qdrant"
+    assert "letta" in debug["call_budget"]["deferred_sources"]
+    assert debug["call_budget"]["exhausted"] is True
+    assert debug["call_budget"]["cacheWriteSkipped"] is True
+    assert warm_calls
+    assert any("deferred" in item.lower() for item in warnings)
+
+
+@pytest.mark.asyncio
 async def test_search_letta_archival_applies_top_k_cap_and_cache(monkeypatch: pytest.MonkeyPatch):
     class _FakeResponse:
         def __init__(self, body: dict[str, Any]):
@@ -767,6 +827,123 @@ async def test_federated_search_pathway_cache_hits(monkeypatch: pytest.MonkeyPat
     assert debug_first["cache"]["pathway_hit"] is False
     assert debug_second["cache"]["pathway_hit"] is True
     assert orchestrator.retrieval_pathway_cache_hits >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_retrieval_template_caps_memory_timeout(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_TIMEOUT_SECS", 120.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS", 9.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_DEEP_TIMEOUT_CAP_SECS", 17.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_TEMPLATE_CACHE_ENABLED", True)
+    async with orchestrator.retrieval_template_cache_lock:
+        orchestrator.retrieval_template_cache.clear()
+
+    balanced, _ = await orchestrator._get_retrieval_template(
+        "balanced",
+        [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
+    )
+    deep, _ = await orchestrator._get_retrieval_template(
+        "deep",
+        [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
+    )
+
+    assert balanced["source_timeouts"][orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK] == 9.0
+    assert deep["source_timeouts"][orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK] == 17.0
+
+
+@pytest.mark.asyncio
+async def test_recall_pipeline_scoped_query_caps_variants_and_escalation(monkeypatch: pytest.MonkeyPatch):
+    calls: list[dict[str, Any]] = []
+
+    async def _federated(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return (
+            [],
+            {
+                "retrieval_mode": kwargs.get("retrieval_mode"),
+                "source_errors": {},
+                "source_counts": {},
+                "call_budget": {"exhausted": False, "deferred_sources": []},
+            },
+            [],
+        )
+
+    monkeypatch.setattr(orchestrator, "federated_search_memory", _federated)
+    monkeypatch.setattr(orchestrator, "_expand_query_variants", lambda _query: ["v1", "v2", "v3", "v4"])
+    monkeypatch.setattr(orchestrator, "AGENT_RECALL_ESCALATION_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RECALL_SCOPED_QUERY_VARIANT_CAP", 2)
+    monkeypatch.setattr(orchestrator, "RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS", 1)
+
+    _results, debug, _warnings, _grounding = await orchestrator._run_memory_recall_pipeline(
+        query="alpha",
+        limit=5,
+        project_filter="algotraderv2_rust",
+        topic_filter=None,
+        sources=None,
+        source_weights=None,
+        preferences=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+        agent_profile=None,
+        auto_escalate=True,
+        query_expansion=True,
+    )
+
+    assert len(calls) == 2
+    assert debug["pipeline"]["query_expansion"]["max_variants"] == 2
+    assert debug["pipeline"]["escalation"]["max_steps"] == 1
+    assert debug["pipeline"]["query_expansion"]["scoped_query"] is True
+
+
+@pytest.mark.asyncio
+async def test_recall_pipeline_respects_e2e_budget(monkeypatch: pytest.MonkeyPatch):
+    calls = {"count": 0}
+
+    async def _federated(*args, **kwargs):
+        calls["count"] += 1
+        await asyncio.sleep(0.12)
+        return (
+            [
+                {
+                    "project": "alpha",
+                    "file": "notes/a.md",
+                    "summary": "budgeted row",
+                    "score": 0.7,
+                    "source": "qdrant",
+                }
+            ],
+            {
+                "retrieval_mode": kwargs.get("retrieval_mode"),
+                "source_errors": {},
+                "source_counts": {"qdrant": 1},
+                "call_budget": {"exhausted": False, "deferred_sources": []},
+            },
+            [],
+        )
+
+    monkeypatch.setattr(orchestrator, "federated_search_memory", _federated)
+    monkeypatch.setattr(orchestrator, "_expand_query_variants", lambda _query: ["v1", "v2", "v3"])
+    monkeypatch.setattr(orchestrator, "RECALL_E2E_BUDGET_SECS", 0.15)
+    monkeypatch.setattr(orchestrator, "RECALL_E2E_MIN_FEDERATED_BUDGET_SECS", 0.05)
+
+    _results, debug, warnings, _grounding = await orchestrator._run_memory_recall_pipeline(
+        query="alpha",
+        limit=5,
+        project_filter=None,
+        topic_filter=None,
+        sources=None,
+        source_weights=None,
+        preferences=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+        agent_profile=None,
+        auto_escalate=False,
+        query_expansion=True,
+    )
+
+    assert calls["count"] == 1
+    assert debug["pipeline"]["budget"]["exhausted"] is True
+    assert any("budget" in item.lower() for item in warnings)
 
 
 @pytest.mark.asyncio

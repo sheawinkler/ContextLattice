@@ -291,6 +291,14 @@ RETRIEVAL_MONGO_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MONGO_TIMEOUT_SEC
 RETRIEVAL_MINDSDB_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "8"))
 RETRIEVAL_LETTA_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS", "45"))
 RETRIEVAL_MEMORY_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS", "3"))
+RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS", "12")),
+)
+RETRIEVAL_MEMORY_DEEP_TIMEOUT_CAP_SECS = max(
+    RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS,
+    float(os.getenv("ORCH_RETRIEVAL_MEMORY_DEEP_TIMEOUT_CAP_SECS", "18")),
+)
 RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", "2"))
 RETRIEVAL_MODE_DEFAULT = os.getenv("ORCH_RETRIEVAL_MODE_DEFAULT", "balanced").strip().lower()
 RETRIEVAL_MODE_FAST_TIMEOUT_SCALE = max(
@@ -422,6 +430,22 @@ AGENT_RECALL_ESCALATE_MIN_TOP_SCORE = min(
 AGENT_RECALL_MAX_ESCALATION_STEPS = max(
     1,
     int(os.getenv("ORCH_AGENT_RECALL_MAX_ESCALATION_STEPS", "2")),
+)
+RECALL_E2E_BUDGET_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_SECS", "90")),
+)
+RECALL_E2E_MIN_FEDERATED_BUDGET_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RECALL_E2E_MIN_FEDERATED_BUDGET_SECS", "6")),
+)
+RECALL_SCOPED_QUERY_VARIANT_CAP = max(
+    1,
+    int(os.getenv("ORCH_RECALL_SCOPED_QUERY_VARIANT_CAP", "2")),
+)
+RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS = max(
+    1,
+    int(os.getenv("ORCH_RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS", "1")),
 )
 RECALL_LOW_CONFIDENCE_SCORE = min(
     1.0,
@@ -3325,6 +3349,52 @@ async def _schedule_letta_search_cache_warm(
     asyncio.create_task(_runner())
 
 
+def _schedule_background_letta_query_warm(
+    *,
+    query: str,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+    timeout_hint_secs: float,
+) -> None:
+    if not RETRIEVAL_LETTA_ASYNC_WARM_ENABLED:
+        return
+    if not _letta_config_enabled():
+        return
+
+    async def _runner() -> None:
+        headers: dict[str, str] = {}
+        if LETTA_API_KEY:
+            headers["Authorization"] = f"Bearer {LETTA_API_KEY}"
+        try:
+            agent_id = await _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers)
+        except Exception as exc:
+            logger.debug("Letta warm scheduling skipped: %s", exc)
+            return
+        top_k = max(limit, int(limit * max(1.0, RETRIEVAL_LETTA_TOP_K_FACTOR)))
+        top_k = min(top_k, RETRIEVAL_LETTA_TOP_K_CAP)
+        cache_key = _letta_search_cache_key(
+            query=query,
+            limit=limit,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+            top_k=top_k,
+        )
+        await _schedule_letta_search_cache_warm(
+            cache_key=cache_key,
+            agent_id=agent_id,
+            query=query,
+            limit=limit,
+            top_k=top_k,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+            headers=headers,
+            prior_timeout_secs=max(1.0, float(timeout_hint_secs)),
+        )
+
+    asyncio.create_task(_runner())
+
+
 def _normalize_retrieval_mode(mode: str | None) -> str:
     candidate = str(mode or RETRIEVAL_MODE_DEFAULT or RETRIEVAL_MODE_BALANCED).strip().lower()
     if candidate not in RETRIEVAL_MODES:
@@ -3339,6 +3409,13 @@ def _retrieval_mode_timeout_scale(mode: str) -> float:
     if normalized == RETRIEVAL_MODE_DEEP:
         return RETRIEVAL_MODE_DEEP_TIMEOUT_SCALE
     return 1.0
+
+
+def _retrieval_memory_timeout_cap_for_mode(mode: str) -> float:
+    normalized = _normalize_retrieval_mode(mode)
+    if normalized == RETRIEVAL_MODE_DEEP:
+        return max(1.0, RETRIEVAL_MEMORY_DEEP_TIMEOUT_CAP_SECS)
+    return max(1.0, RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS)
 
 
 def _retrieval_mode_source_limit(limit: int, mode: str) -> int:
@@ -3667,6 +3744,7 @@ async def _retrieval_pathway_cache_set(
 
 
 def _retrieval_template_cache_key(mode: str, resolved_sources: list[str]) -> str:
+    memory_timeout_cap = _retrieval_memory_timeout_cap_for_mode(mode)
     identity = "\n".join(
         [
             _normalize_retrieval_mode(mode),
@@ -3679,6 +3757,7 @@ def _retrieval_template_cache_key(mode: str, resolved_sources: list[str]) -> str
             str(RETRIEVAL_MINDSDB_TIMEOUT_SECS),
             str(RETRIEVAL_LETTA_TIMEOUT_SECS),
             str(RETRIEVAL_MEMORY_TIMEOUT_SECS),
+            str(memory_timeout_cap),
             str(RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS),
             str(RETRIEVAL_MODE_FAST_TIMEOUT_SCALE),
             str(RETRIEVAL_MODE_DEEP_TIMEOUT_SCALE),
@@ -3742,12 +3821,17 @@ async def _get_retrieval_template(mode: str, resolved_sources: list[str]) -> tup
     if cached is not None:
         return cached, True
     timeout_scale = _retrieval_mode_timeout_scale(mode)
+    memory_timeout_cap = _retrieval_memory_timeout_cap_for_mode(mode)
+    memory_timeout = min(
+        max(1.0, RETRIEVAL_MEMORY_TIMEOUT_SECS * timeout_scale),
+        memory_timeout_cap,
+    )
     source_timeouts: dict[str, float] = {
         RETRIEVAL_SOURCE_QDRANT: max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_MONGO_RAW: max(1.0, RETRIEVAL_MONGO_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_MINDSDB: max(1.0, RETRIEVAL_MINDSDB_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_LETTA: max(1.0, RETRIEVAL_LETTA_TIMEOUT_SECS * timeout_scale),
-        RETRIEVAL_SOURCE_MEMORY_BANK: max(1.0, RETRIEVAL_MEMORY_TIMEOUT_SECS * timeout_scale),
+        RETRIEVAL_SOURCE_MEMORY_BANK: memory_timeout,
         RETRIEVAL_SOURCE_TOPIC_ROLLUPS: max(1.0, RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS * timeout_scale),
     }
     configured_fast = [source for source in DEFAULT_RETRIEVAL_FAST_SOURCES if source in resolved_sources]
@@ -3765,6 +3849,7 @@ async def _get_retrieval_template(mode: str, resolved_sources: list[str]) -> tup
         "configured_slow": configured_slow,
         "staged_fast_sources": staged_fast_sources,
         "staged_slow_sources": staged_slow_sources,
+        "memory_timeout_cap": memory_timeout_cap,
         "staged_fetch_used": bool(
             RETRIEVAL_ENABLE_STAGED_FETCH
             and staged_fast_sources
@@ -13001,8 +13086,28 @@ async def federated_search_memory(
     rerank_with_learning: bool = True,
     retrieval_mode: str = RETRIEVAL_MODE_BALANCED,
     record_pathway_usage: bool = True,
+    call_budget_secs: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    federated_started_monotonic = time.monotonic()
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
+    normalized_call_budget_secs = (
+        max(0.25, float(call_budget_secs))
+        if call_budget_secs is not None
+        else None
+    )
+    call_deadline_monotonic = (
+        federated_started_monotonic + normalized_call_budget_secs
+        if normalized_call_budget_secs is not None
+        else None
+    )
+    call_budget_exhausted = False
+    deferred_sources: list[str] = []
+
+    def _remaining_call_budget_secs() -> float | None:
+        if call_deadline_monotonic is None:
+            return None
+        return max(0.0, call_deadline_monotonic - time.monotonic())
+
     resolved_sources = _resolve_retrieval_sources_for_mode(mode=normalized_mode, sources=sources)
     resolved_weights = _normalize_retrieval_weights(source_weights)
     source_limit = _retrieval_mode_source_limit(limit, normalized_mode)
@@ -13130,6 +13235,32 @@ async def federated_search_memory(
     async def _run_source_batch(
         source_batch: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str], list[str]]:
+        nonlocal call_budget_exhausted
+        batch_rows: dict[str, list[dict[str, Any]]] = {}
+        batch_errors: dict[str, str] = {}
+        batch_warnings: list[str] = []
+        if call_deadline_monotonic is not None:
+            remaining = _remaining_call_budget_secs()
+            if remaining is not None and remaining <= 0.0:
+                call_budget_exhausted = True
+                for source in source_batch:
+                    batch_errors[source] = f"{source} retrieval deferred before dispatch (call budget exhausted)"
+                    batch_warnings.append(
+                        f"{source} retrieval deferred before dispatch (call budget exhausted)."
+                    )
+                    if source == RETRIEVAL_SOURCE_LETTA:
+                        letta_limit = min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                        _schedule_background_letta_query_warm(
+                            query=query,
+                            limit=letta_limit,
+                            project_filter=project_filter,
+                            topic_filter=topic_filter,
+                            timeout_hint_secs=float(
+                                effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
+                            ),
+                        )
+                    deferred_sources.append(source)
+                return batch_rows, batch_errors, batch_warnings
         tasks: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
         for source in source_batch:
             timeout = float(effective_source_timeouts.get(source, RETRIEVAL_QDRANT_TIMEOUT_SECS))
@@ -13140,18 +13271,73 @@ async def federated_search_memory(
                     _build_source_coro(source, timeout),
                 )
             )
-        batch_rows: dict[str, list[dict[str, Any]]] = {}
-        batch_errors: dict[str, str] = {}
-        batch_warnings: list[str] = []
         if not tasks:
             return batch_rows, batch_errors, batch_warnings
-        gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        for source, outcome in zip(tasks.keys(), gathered):
-            if isinstance(outcome, Exception):
-                batch_errors[source] = str(outcome)
-                batch_warnings.append(f"{source} retrieval failed: {outcome}")
+        if call_deadline_monotonic is None:
+            gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
+            for source, outcome in zip(tasks.keys(), gathered):
+                if isinstance(outcome, Exception):
+                    batch_errors[source] = str(outcome)
+                    batch_warnings.append(f"{source} retrieval failed: {outcome}")
+                    continue
+                batch_rows[source] = outcome
+            return batch_rows, batch_errors, batch_warnings
+
+        task_to_source = {task: source for source, task in tasks.items()}
+        pending: set[asyncio.Task[list[dict[str, Any]]]] = set(tasks.values())
+        done_total: set[asyncio.Task[list[dict[str, Any]]]] = set()
+        while pending:
+            remaining = _remaining_call_budget_secs()
+            if remaining is None:
+                remaining = 0.0
+            if remaining <= 0.0:
+                call_budget_exhausted = True
+                break
+            done, still_pending = await asyncio.wait(
+                pending,
+                timeout=remaining,
+                return_when=asyncio.ALL_COMPLETED,
+            )
+            done_total.update(done)
+            pending = set(still_pending)
+            if pending:
+                call_budget_exhausted = True
+                break
+
+        for task in done_total:
+            source = task_to_source.get(task) or "unknown"
+            try:
+                outcome = task.result()
+            except Exception as exc:
+                batch_errors[source] = str(exc)
+                batch_warnings.append(f"{source} retrieval failed: {exc}")
                 continue
             batch_rows[source] = outcome
+
+        if pending:
+            for task in pending:
+                source = task_to_source.get(task) or "unknown"
+                task.cancel()
+                deferred_sources.append(source)
+                batch_errors[source] = (
+                    f"{source} retrieval deferred after call budget reached"
+                )
+                batch_warnings.append(
+                    f"{source} retrieval deferred after call budget reached; returning best-available results."
+                )
+                if source == RETRIEVAL_SOURCE_LETTA:
+                    letta_limit = min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                    _schedule_background_letta_query_warm(
+                        query=query,
+                        limit=letta_limit,
+                        project_filter=project_filter,
+                        topic_filter=topic_filter,
+                        timeout_hint_secs=float(
+                            effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
+                        ),
+                    )
+            with contextlib.suppress(Exception):
+                await asyncio.gather(*pending, return_exceptions=True)
         return batch_rows, batch_errors, batch_warnings
 
     results_by_source: dict[str, list[dict[str, Any]]] = {}
@@ -13344,15 +13530,28 @@ async def federated_search_memory(
             "max_keys": RETRIEVAL_LIFECYCLE_MAX_KEYS,
             "half_life_hours": RETRIEVAL_LIFECYCLE_HALFLIFE_HOURS,
         },
+        "call_budget": {
+            "configuredSecs": normalized_call_budget_secs,
+            "elapsedMs": round((time.monotonic() - federated_started_monotonic) * 1000, 2),
+            "exhausted": bool(call_budget_exhausted),
+            "deferred_sources": sorted(set(deferred_sources)),
+        },
     }
     final_results = merged[:limit]
     await _record_retrieval_lifecycle_observation(query=query, results=final_results)
-    await _retrieval_pathway_cache_set(
-        pathway_cache_key,
-        results=final_results,
-        retrieval_debug=retrieval_debug,
-        warnings=warnings,
-    )
+    cache_write_skipped = bool(call_budget_exhausted or deferred_sources)
+    retrieval_debug["call_budget"]["cacheWriteSkipped"] = cache_write_skipped
+    if not cache_write_skipped:
+        await _retrieval_pathway_cache_set(
+            pathway_cache_key,
+            results=final_results,
+            retrieval_debug=retrieval_debug,
+            warnings=warnings,
+        )
+    else:
+        warnings.append(
+            "Response returned with partial results due call budget; deferred sources continue warming in background."
+        )
     if record_pathway_usage:
         await _record_retrieval_pathway_observation(
             query=query,
@@ -13395,21 +13594,78 @@ async def _run_memory_recall_pipeline(
     query_variants = [item for item in query_variants if item]
     if not query_variants:
         query_variants = [str(query or "").strip()]
+    scoped_query = bool(str(project_filter or "").strip() or str(topic_filter or "").strip())
+    max_variants_allowed = RETRIEVAL_QUERY_EXPANSION_MAX_VARIANTS
+    max_escalation_steps = AGENT_RECALL_MAX_ESCALATION_STEPS
+    if scoped_query:
+        max_variants_allowed = min(max_variants_allowed, RECALL_SCOPED_QUERY_VARIANT_CAP)
+        max_escalation_steps = min(max_escalation_steps, RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS)
+    query_variants = query_variants[: max(1, int(max_variants_allowed))]
+    recall_budget_secs = float(RECALL_E2E_BUDGET_SECS)
+    recall_budget_enabled = recall_budget_secs > 0.0
+    recall_started_monotonic = time.monotonic()
+    recall_deadline_monotonic = (
+        recall_started_monotonic + recall_budget_secs
+        if recall_budget_enabled
+        else None
+    )
+
+    def _remaining_recall_budget_secs() -> float | None:
+        if recall_deadline_monotonic is None:
+            return None
+        return max(0.0, recall_deadline_monotonic - time.monotonic())
+
     warnings_all: list[str] = []
     variant_results_all: list[list[dict[str, Any]]] = []
     variant_debug_records: list[dict[str, Any]] = []
     escalation_enabled = bool(AGENT_RECALL_ESCALATION_ENABLED and auto_escalate)
     min_results = int(profile.get("escalate_min_results") or AGENT_RECALL_ESCALATE_MIN_RESULTS)
     min_top_score = float(profile.get("escalate_min_top_score") or AGENT_RECALL_ESCALATE_MIN_TOP_SCORE)
+    budget_exhausted = False
 
     for variant_index, query_variant in enumerate(query_variants):
+        remaining_before_variant = _remaining_recall_budget_secs()
+        if remaining_before_variant is not None and remaining_before_variant <= 0.0:
+            budget_exhausted = True
+            warnings_all.append(
+                "Recall response budget exhausted before all query variants completed; returning best-available results."
+            )
+            break
+        if (
+            remaining_before_variant is not None
+            and remaining_before_variant < RECALL_E2E_MIN_FEDERATED_BUDGET_SECS
+            and variant_results_all
+        ):
+            budget_exhausted = True
+            warnings_all.append(
+                "Recall response budget too low to evaluate additional query variants; returning best-available results."
+            )
+            break
         hop_mode = normalized_mode
         hop_result_sets: list[list[dict[str, Any]]] = []
         hop_debugs: list[dict[str, Any]] = []
         hop_warnings: list[str] = []
         hop_count = 0
         while True:
+            remaining_before_hop = _remaining_recall_budget_secs()
+            if remaining_before_hop is not None and remaining_before_hop <= 0.0:
+                budget_exhausted = True
+                hop_warnings.append(
+                    "Recall response budget exhausted before escalation hops completed."
+                )
+                break
+            if (
+                remaining_before_hop is not None
+                and remaining_before_hop < RECALL_E2E_MIN_FEDERATED_BUDGET_SECS
+                and hop_result_sets
+            ):
+                budget_exhausted = True
+                hop_warnings.append(
+                    "Recall response budget too low for another escalation hop; returning best-available results."
+                )
+                break
             hop_count += 1
+            call_budget_secs = float(remaining_before_hop) if remaining_before_hop is not None else None
             hop_results, hop_debug, hop_warn = await federated_search_memory(
                 query_variant,
                 limit=limit,
@@ -13420,10 +13676,18 @@ async def _run_memory_recall_pipeline(
                 preferences=preferences,
                 rerank_with_learning=rerank_with_learning,
                 retrieval_mode=hop_mode,
+                call_budget_secs=call_budget_secs,
             )
             hop_result_sets.append(hop_results)
             hop_debugs.append(hop_debug)
             hop_warnings.extend(hop_warn)
+            call_budget_debug = (
+                hop_debug.get("call_budget")
+                if isinstance(hop_debug.get("call_budget"), dict)
+                else {}
+            )
+            if bool(call_budget_debug.get("exhausted")):
+                budget_exhausted = True
             should_escalate = escalation_enabled and _recall_should_escalate(
                 results=hop_results,
                 min_results=min_results,
@@ -13433,9 +13697,14 @@ async def _run_memory_recall_pipeline(
                 break
             if hop_mode == RETRIEVAL_MODE_DEEP:
                 break
-            if hop_count >= AGENT_RECALL_MAX_ESCALATION_STEPS:
+            if hop_count >= max_escalation_steps:
+                break
+            if budget_exhausted:
                 break
             hop_mode = _next_retrieval_mode(hop_mode)
+
+        if budget_exhausted and not hop_result_sets:
+            break
 
         merged_variant_results = _merge_ranked_result_sets(
             hop_result_sets,
@@ -13462,6 +13731,8 @@ async def _run_memory_recall_pipeline(
         )
         warnings_all.extend(hop_warnings)
 
+        if budget_exhausted:
+            break
         if variant_index == 0 and not _recall_should_escalate(
             results=merged_variant_results,
             min_results=max(1, min(limit, min_results)),
@@ -13502,13 +13773,16 @@ async def _run_memory_recall_pipeline(
     pipeline_debug = {
         "query_expansion": {
             "enabled": expand_enabled,
-            "max_variants": RETRIEVAL_QUERY_EXPANSION_MAX_VARIANTS,
+            "max_variants": max_variants_allowed,
+            "scoped_query": scoped_query,
+            "scoped_variant_cap": RECALL_SCOPED_QUERY_VARIANT_CAP,
             "variants_considered": query_variants,
             "variants_used": [record.get("query") for record in variant_debug_records],
         },
         "escalation": {
             "enabled": escalation_enabled,
-            "max_steps": AGENT_RECALL_MAX_ESCALATION_STEPS,
+            "max_steps": max_escalation_steps,
+            "scoped_max_steps": RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS,
             "min_results": min_results,
             "min_top_score": min_top_score,
             "variants": [
@@ -13523,6 +13797,13 @@ async def _run_memory_recall_pipeline(
                 for record in variant_debug_records
             ],
         },
+        "budget": {
+            "enabled": recall_budget_enabled,
+            "configuredSecs": recall_budget_secs if recall_budget_enabled else None,
+            "minHopBudgetSecs": RECALL_E2E_MIN_FEDERATED_BUDGET_SECS,
+            "elapsedMs": round((time.monotonic() - recall_started_monotonic) * 1000, 2),
+            "exhausted": budget_exhausted,
+        },
     }
     best_debug["retrieval_mode"] = _normalize_retrieval_mode(str(best_debug.get("retrieval_mode") or normalized_mode))
     best_debug["source_errors"] = source_errors
@@ -13530,6 +13811,10 @@ async def _run_memory_recall_pipeline(
     best_debug["pipeline"] = pipeline_debug
     grounding = _build_grounding_payload(merged_results)
     await _record_recall_quality_observation(results=merged_results, retrieval_debug=best_debug)
+    if budget_exhausted:
+        warnings_all.append(
+            "Recall response budget reached; returning best-available partial results while slower sources continue warming."
+        )
     deduped_warnings = []
     seen_warning: set[str] = set()
     for warning in warnings_all:
@@ -16688,6 +16973,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
         record_pathway_usage=False,
+        call_budget_secs=RECALL_E2E_BUDGET_SECS if RECALL_E2E_BUDGET_SECS > 0 else None,
     )
     topic_scope_debug = {
         "applied": bool(topic_scope_prefixes),
