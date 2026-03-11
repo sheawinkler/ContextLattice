@@ -92,6 +92,48 @@ func TestProxyForwardsQueryParams(t *testing.T) {
 	}
 }
 
+func TestProxyForwardsMemorySearchRequest(t *testing.T) {
+	var capturedBody string
+	var capturedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		capturedBody = string(raw)
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"source":"topic_rollups"}],"retrieval_intent":"decision"}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/memory/search",
+		strings.NewReader(`{"query":"profitability tuning","project":"algotraderv2_rust","retrieval_intent":"decision"}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if capturedPath != "/memory/search" {
+		t.Fatalf("expected /memory/search to be proxied, got %s", capturedPath)
+	}
+	if !strings.Contains(capturedBody, `"retrieval_intent":"decision"`) {
+		t.Fatalf("expected retrieval_intent payload to be proxied, got %s", capturedBody)
+	}
+}
+
 func TestHealthzIncludesBackendStatus(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {

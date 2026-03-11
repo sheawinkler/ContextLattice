@@ -54,6 +54,8 @@ func isProxyPath(path string) bool {
 		"/v1/retrieval/query-with-grounding",
 		"/v1/retrieval/batch-query",
 		"/v1/retrieval/health",
+		"/memory/search",
+		"/memory/context-pack",
 		"/v1/memory/put",
 		"/v1/memory/update",
 		"/v1/memory/get",
@@ -181,6 +183,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.proxy)
 	mux.HandleFunc("/v1/retrieval/batch-query", s.proxy)
 	mux.HandleFunc("/v1/retrieval/health", s.proxy)
+	mux.HandleFunc("/memory/search", s.proxy)
+	mux.HandleFunc("/memory/context-pack", s.proxy)
 	mux.HandleFunc("/v1/memory/put", s.proxy)
 	mux.HandleFunc("/v1/memory/update", s.proxy)
 	mux.HandleFunc("/v1/memory/get", s.proxy)

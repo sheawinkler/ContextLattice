@@ -896,6 +896,55 @@ async def test_recall_pipeline_scoped_query_caps_variants_and_escalation(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_recall_pipeline_scoped_query_filters_structural_variants(monkeypatch: pytest.MonkeyPatch):
+    captured_queries: list[str] = []
+
+    async def _federated(*args, **kwargs):
+        captured_queries.append(str(args[0]))
+        return (
+            [],
+            {
+                "retrieval_mode": kwargs.get("retrieval_mode"),
+                "source_errors": {},
+                "source_counts": {},
+                "call_budget": {"exhausted": False, "deferred_sources": []},
+            },
+            [],
+        )
+
+    monkeypatch.setattr(orchestrator, "federated_search_memory", _federated)
+    monkeypatch.setattr(
+        orchestrator,
+        "_expand_query_variants",
+        lambda _query: [
+            "profitability tuning baseline ladder",
+            "profitability/tuning/baseline/ladder",
+            "profitability_tuning_baseline_ladder",
+        ],
+    )
+    monkeypatch.setattr(orchestrator, "AGENT_RECALL_ESCALATION_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RECALL_SCOPED_QUERY_VARIANT_CAP", 3)
+
+    _results, debug, _warnings, _grounding = await orchestrator._run_memory_recall_pipeline(
+        query="profitability tuning baseline ladder",
+        limit=5,
+        project_filter="algotraderv2_rust",
+        topic_filter=None,
+        sources=None,
+        source_weights=None,
+        preferences=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+        agent_profile=None,
+        auto_escalate=False,
+        query_expansion=True,
+    )
+
+    assert captured_queries == ["profitability tuning baseline ladder"]
+    assert debug["pipeline"]["query_expansion"]["scoped_structural_variant_filtered"] is True
+
+
+@pytest.mark.asyncio
 async def test_recall_pipeline_respects_e2e_budget(monkeypatch: pytest.MonkeyPatch):
     calls = {"count": 0}
 
@@ -1559,6 +1608,70 @@ async def test_memory_search_applies_trading_scope_filter(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_memory_search_applies_trading_project_intent_sources(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def _pipeline(**kwargs):
+        captured.update(kwargs)
+        return (
+            [],
+            {"retrieval_mode": "balanced", "retrieval_intent": "decision", "source_errors": {}, "source_counts": {}},
+            [],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "TRADING_PROJECT_HINTS", ["algotraderv2_rust"])
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="profitability tuning",
+            project="algotraderv2_rust",
+            include_retrieval_debug=True,
+        )
+    )
+
+    assert captured["sources"] == orchestrator._resolve_intent_default_sources("decision")
+    assert response["retrieval_policy"]["projectDefaultsApplied"] is True
+    assert response["retrieval_policy"]["intentDefaultSourcesApplied"] is True
+
+
+@pytest.mark.asyncio
+async def test_memory_search_raw_intent_skips_trading_scope(monkeypatch: pytest.MonkeyPatch):
+    async def _pipeline(**_kwargs):
+        return (
+            [
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "telemetry/queue__latest.json",
+                    "summary": "queue snapshot",
+                    "score": 0.9,
+                    "topic_path": "telemetry",
+                }
+            ],
+            {"retrieval_mode": "balanced", "retrieval_intent": "raw", "source_errors": {}, "source_counts": {}},
+            [],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "TRADING_PROJECT_HINTS", ["algotraderv2_rust"])
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="exit manager state",
+            project="algotraderv2_rust",
+            retrieval_intent="raw",
+            include_retrieval_debug=True,
+        )
+    )
+
+    assert response["retrieval"]["topic_scope"]["applied"] is False
+
+
+@pytest.mark.asyncio
 async def test_context_pack_endpoint_returns_grounded_payload(monkeypatch: pytest.MonkeyPatch):
     async def _search(_: Any):
         return {
@@ -1620,6 +1733,50 @@ async def test_context_pack_endpoint_returns_grounded_payload(monkeypatch: pytes
     assert pack["strictNumericCopy"] is True
     assert pack["numericFacts"][0]["value"] == "62.5%"
     assert pack["citations"][0]["file"] == "notes/a.md"
+
+
+@pytest.mark.asyncio
+async def test_context_pack_rollup_includes_raw_refs(monkeypatch: pytest.MonkeyPatch):
+    async def _search(_: Any):
+        return {
+            "results": [
+                {
+                    "project": "alpha",
+                    "file": "_rollups/topics/decisions.json",
+                    "summary": "Rollup summary",
+                    "score": 0.81,
+                    "source": orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+                    "topic_path": "decisions",
+                    "topic_rollup": {
+                        "event_count": 20,
+                        "recent_event_count": 5,
+                        "unique_file_count": 3,
+                        "latest_timestamp": "2026-03-02T10:00:00Z",
+                        "raw_refs": ["decisions/a.md", "decisions/b.md"],
+                    },
+                }
+            ],
+            "grounding": {
+                "strict_numeric_copy": True,
+                "facts": [],
+                "numeric_facts": [],
+            },
+            "warnings": [],
+            "retrieval_mode": "balanced",
+            "retrieval_intent": "decision",
+            "agent_id": "default",
+        }
+
+    monkeypatch.setattr(orchestrator, "search_memory", _search)
+    response = await orchestrator.get_memory_context_pack(
+        orchestrator.ContextPackRequest(query="decision rollup", limit=5, max_facts=5)
+    )
+    pack = response["context_pack"]
+    assert pack["results"][0]["topic_rollup"]["raw_refs"] == ["decisions/a.md", "decisions/b.md"]
+    assert any(
+        citation.get("source") == "topic_rollup_raw_ref" and citation.get("file") == "decisions/a.md"
+        for citation in pack["citations"]
+    )
 
 
 @pytest.mark.asyncio
@@ -2706,6 +2863,12 @@ def test_low_value_classifier_helpers():
         include_short_summary=True,
     )
     assert orchestrator._is_low_value_memory_record(
+        "exit_manager__state__20260302T101500Z.json",
+        "root",
+        "state snapshot",
+        include_short_summary=False,
+    )
+    assert orchestrator._is_low_value_memory_record(
         "notes/flow.md",
         "signals/live",
         "signal update",
@@ -2717,6 +2880,78 @@ def test_low_value_classifier_helpers():
         "Long-form decision artifact",
         include_short_summary=False,
     )
+
+
+def test_merge_rows_respects_raw_intent_low_value_policy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS", True)
+    sample_rows = {
+        "qdrant": [
+            {
+                "project": "alpha",
+                "file": "exit_manager__state__20260302T101500Z.json",
+                "summary": "state snapshot",
+                "score": 0.9,
+                "source": "qdrant",
+                "topic_path": "root",
+            }
+        ]
+    }
+    weights = {"qdrant": 1.0}
+
+    decision_rows = orchestrator._merge_federated_rows(
+        sample_rows,
+        weights,
+        set(),
+        set(),
+        learning_enabled=False,
+        query="execution blockers",
+        retrieval_intent="decision",
+    )
+    raw_rows = orchestrator._merge_federated_rows(
+        sample_rows,
+        weights,
+        set(),
+        set(),
+        learning_enabled=False,
+        query="execution blockers",
+        retrieval_intent="raw",
+    )
+
+    assert decision_rows[0]["low_value_suppressed"] is True
+    assert raw_rows[0]["low_value_suppressed"] is False
+
+
+@pytest.mark.asyncio
+async def test_mindsdb_lz4_circuit_breaker_skips_repeated_queries(monkeypatch: pytest.MonkeyPatch):
+    calls = {"execute": 0}
+
+    async def _ensure():
+        return None
+
+    async def _execute(_sql: str):
+        calls["execute"] += 1
+        raise RuntimeError("[file/files]: LZ4 decompress failed: ERROR_decompressionFailed")
+
+    monkeypatch.setattr(orchestrator, "MINDSDB_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_AUTOSYNC", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_RETRIEVAL_CIRCUIT_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS", 120.0)
+    monkeypatch.setattr(orchestrator, "ensure_mindsdb_table", _ensure)
+    monkeypatch.setattr(orchestrator, "_mindsdb_execute", _execute)
+    monkeypatch.setattr(orchestrator, "mindsdb_retrieval_lz4_cooldown_until_monotonic", 0.0)
+    monkeypatch.setattr(orchestrator, "mindsdb_retrieval_lz4_hits", 0)
+    monkeypatch.setattr(orchestrator, "mindsdb_retrieval_lz4_skipped", 0)
+    monkeypatch.setattr(orchestrator, "mindsdb_retrieval_log_last_at", {})
+
+    first = await orchestrator.search_mindsdb_memory("queue pressure", limit=5)
+    second = await orchestrator.search_mindsdb_memory("queue pressure", limit=5)
+
+    assert first == []
+    assert second == []
+    assert calls["execute"] == 1
+    assert orchestrator.mindsdb_retrieval_lz4_hits == 1
+    assert orchestrator.mindsdb_retrieval_lz4_skipped >= 1
 
 
 @pytest.mark.asyncio
@@ -3400,6 +3635,7 @@ async def test_search_topic_rollups_returns_rollup_source_rows():
     assert rows
     assert rows[0]["source"] == orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS
     assert rows[0]["topic_rollup"]["event_count"] == 20
+    assert rows[0]["topic_rollup"]["raw_refs"] == ["decisions/a.md"]
 
 
 @pytest.mark.asyncio

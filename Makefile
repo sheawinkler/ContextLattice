@@ -24,8 +24,10 @@ BASE_OS := $(if $(filter $(UNAME_S),Darwin),mac,linux)
 # Core compose invocation (env-driven)
 ENV_FILE ?= .env
 DC := docker compose -f docker-compose.yml
+PYTEST_FOCUS ?= app
+PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py
 
 help:
 > echo "Targets:"
@@ -44,12 +46,24 @@ help:
 > echo "  service-version-audit|service-version-apply: check/apply stable image tag bumps"
 > echo "  service-update-pipeline: audit -> validate -> redeploy -> tests -> health checks"
 > echo "  service-update-install|service-update-status: schedule automated service update checks"
+> echo "  storage-migrate-hot-bindings: copy hot bind-mount data into named volumes for fs stability"
+> echo "  docker-fs-watchdog-* : install/status/run watchdog for Docker Desktop fs injector stalls"
+> echo "  test-py: run Python tests (PYTEST_FOCUS=app|all; default app)"
 > echo "  launch-readiness-gate: accelerated soak + queue drain + backup drill + security preflight"
 > echo "  launch-readiness-gate-schedule*: schedule/status/cancel one-shot 04:30 America/Denver gate run"
 > echo "  qdrant-cloud-check: verify HTTP + gRPC to BYO Qdrant Cloud endpoint"
 > echo "  mem-up-release|mem-up-lite-release: compose up with image digest lockfile"
 > echo "  quickstart: create .env if needed, run secure bootstrap, and verify health"
 > echo "  submission-preflight: verify repo collateral for launch directory submissions"
+> echo "  launch-lock: hard local-track launch gate (blocks out-of-order publishing)"
+> echo "  launch-lock-public: hard public-track gate (requires live public HTTPS /mcp)"
+
+test-py:
+> if [ "$(PYTEST_FOCUS)" = "all" ]; then \
+>   pytest -q services/orchestrator/tests; \
+> else \
+>   pytest -q $(PYTEST_APP_TESTS); \
+> fi
 
 # ---- One-shot launcher ----
 
@@ -146,7 +160,7 @@ qdrant-snapshot-prune:
 >   --collection "$${ORCH_QDRANT_COLLECTION:-memmcp_notes}" \
 >   --retention-hours "$${QDRANT_RETENTION_HOURS:-0}" \
 >   --retention-days "$${QDRANT_RETENTION_DAYS:-14}" \
->   --snapshot-dir "$${MEMMCP_COLD_ROOT:-./.data/cold/qdrant}" \
+>   --snapshot-dir "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold/qdrant}" \
 >   --timeout-secs "$${QDRANT_HTTP_TIMEOUT_SECS:-300}" \
 >   $$([ "$${QDRANT_SKIP_SNAPSHOT:-0}" = "1" ] && echo --skip-snapshot) \
 >   $$([ "$${QDRANT_SKIP_PRUNE:-0}" = "1" ] && echo --skip-prune)
@@ -158,13 +172,13 @@ telemetry-archive:
 > python3 scripts/archive_ndjson_by_time.py \
 >   --data-dir "$${ORCHESTRATOR_DATA_DIR:-./.data/orchestrator}" \
 >   --retention-hours "$${TELEMETRY_HOT_HOURS:-48}" \
->   --cold-dir "$${MEMMCP_COLD_ROOT:-./.data/cold/telemetry}"
+>   --cold-dir "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold/telemetry}"
 
 fanout-status:
-> curl -fsS "$${MEMMCP_ORCHESTRATOR_URL:-http://127.0.0.1:8075}/telemetry/fanout" | jq
+> curl -fsS "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}/telemetry/fanout" | jq
 
 fanout-deadletters:
-> curl -fsS "$${MEMMCP_ORCHESTRATOR_URL:-http://127.0.0.1:8075}/telemetry/fanout/deadletters?limit=$${LIMIT:-50}" | jq
+> curl -fsS "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}/telemetry/fanout/deadletters?limit=$${LIMIT:-50}" | jq
 
 fanout-rehydrate:
 > LIMIT="$${LIMIT:-2000}" PROJECT="$${PROJECT:-}" TARGETS="$${TARGETS:-}" QDRANT_COLLECTION="$${QDRANT_COLLECTION:-}" FORCE_REQUEUE="$${FORCE_REQUEUE:-0}" scripts/rehydrate_fanout.sh
@@ -172,11 +186,29 @@ fanout-rehydrate:
 retention-install:
 > bash scripts/install_retention_runner.sh install
 
+retention-install-daily:
+> RETENTION_INTERVAL_SECONDS="$${RETENTION_INTERVAL_SECONDS:-86400}" RETENTION_RUN_AT_LOAD=1 bash scripts/install_retention_runner.sh install
+
 retention-uninstall:
 > bash scripts/install_retention_runner.sh uninstall
 
 retention-status:
 > bash scripts/install_retention_runner.sh status
+
+docker-fs-watchdog-run:
+> bash scripts/docker_fs_watchdog.sh
+
+docker-fs-watchdog-install:
+> bash scripts/install_docker_fs_watchdog.sh install
+
+docker-fs-watchdog-uninstall:
+> bash scripts/install_docker_fs_watchdog.sh uninstall
+
+docker-fs-watchdog-status:
+> bash scripts/install_docker_fs_watchdog.sh status
+
+storage-migrate-hot-bindings:
+> bash scripts/migrate_hot_bind_mounts_to_named_volumes.sh
 
 .PHONY: service-version-audit service-version-apply service-update-pipeline service-update-install service-update-uninstall service-update-status service-update-run
 service-version-audit:
@@ -202,6 +234,12 @@ service-update-run:
 
 submission-preflight:
 > python3 scripts/submission_preflight.py
+
+launch-lock:
+> python3 scripts/launch_lock.py --mode local
+
+launch-lock-public:
+> python3 scripts/launch_lock.py --mode public
 
 # ---- env wiring (append-only) ----
 
@@ -394,7 +432,7 @@ quickstart:
 > mkdir -p infra/compose
 > ln -svf "../../$(ENV_FILE)" infra/compose/.env >/dev/null
 > BOOTSTRAP=1 scripts/first_run.sh
-> ORCH_KEY="$$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)"; \
+> ORCH_KEY="$$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)"; \
 > curl -fsS "http://127.0.0.1:8075/health" | jq . >/dev/null; \
 > curl -fsS -H "x-api-key: $$ORCH_KEY" "http://127.0.0.1:8075/status" | jq . >/dev/null; \
 > echo ">> quickstart complete (health + status checks passed)"

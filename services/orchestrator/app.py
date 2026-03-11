@@ -257,6 +257,26 @@ RETRIEVAL_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SOURCES",
     "qdrant,mongo_raw,mindsdb,topic_rollups,letta,memory_bank",
 )
+RETRIEVAL_INTENT_DEFAULT = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_DEFAULT",
+    "decision",
+).strip().lower()
+RETRIEVAL_INTENT_DECISION_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_DECISION_SOURCES",
+    "topic_rollups,qdrant,mindsdb,letta,memory_bank,mongo_raw",
+)
+RETRIEVAL_INTENT_OPS_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_OPS_SOURCES",
+    "topic_rollups,mindsdb,mongo_raw,qdrant,letta,memory_bank",
+)
+RETRIEVAL_INTENT_RAW_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_RAW_SOURCES",
+    "mongo_raw,memory_bank,qdrant,mindsdb,topic_rollups,letta",
+)
+RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_MONGO_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MONGO_SCAN_LIMIT", "400"))
 RETRIEVAL_MINDSDB_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MINDSDB_SCAN_LIMIT", "300"))
 RETRIEVAL_MEMORY_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MEMORY_SCAN_LIMIT", "36"))
@@ -289,6 +309,18 @@ QDRANT_EMBED_TIMEOUT_SECS = float(os.getenv("ORCH_QDRANT_EMBED_TIMEOUT_SECS", "2
 RETRIEVAL_QDRANT_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "8"))
 RETRIEVAL_MONGO_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", "6"))
 RETRIEVAL_MINDSDB_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "8"))
+MINDSDB_RETRIEVAL_CIRCUIT_ENABLED = os.getenv(
+    "ORCH_MINDSDB_RETRIEVAL_CIRCUIT_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS = max(
+    10.0,
+    float(os.getenv("ORCH_MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS", "300")),
+)
+MINDSDB_RETRIEVAL_LOG_COOLDOWN_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_MINDSDB_RETRIEVAL_LOG_COOLDOWN_SECS", "45")),
+)
 RETRIEVAL_LETTA_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS", "45"))
 RETRIEVAL_MEMORY_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS", "3"))
 RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS = max(
@@ -766,6 +798,7 @@ TOPIC_ROLLUP_HISTORY_SCAN_LIMIT = max(50, int(os.getenv("TOPIC_ROLLUP_HISTORY_SC
 TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS = max(1, int(os.getenv("TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS", "8")))
 TOPIC_ROLLUP_MAX_NUMERIC_FACTS = max(1, int(os.getenv("TOPIC_ROLLUP_MAX_NUMERIC_FACTS", "16")))
 TOPIC_ROLLUP_MAX_UNIQUE_FILES = max(1, int(os.getenv("TOPIC_ROLLUP_MAX_UNIQUE_FILES", "24")))
+TOPIC_ROLLUP_RAW_REFS_MAX = max(1, int(os.getenv("TOPIC_ROLLUP_RAW_REFS_MAX", "8")))
 TOPIC_ROLLUP_BACKFILL_HOLD_SECS = max(0.0, float(os.getenv("TOPIC_ROLLUP_BACKFILL_HOLD_SECS", "1800")))
 TOPIC_ROLLUP_PATH = Path(
     os.getenv(
@@ -873,6 +906,14 @@ FANOUT_OUTBOX_GC_VACUUM_MIN_INTERVAL_SECS = float(
 )
 FANOUT_OUTBOX_GC_TIMEOUT_SECS = float(os.getenv("FANOUT_OUTBOX_GC_TIMEOUT_SECS", "45"))
 LOW_VALUE_FILE_SUFFIXES_ENV = os.getenv("LOW_VALUE_FILE_SUFFIXES", "__latest.json,__rollup.json")
+LOW_VALUE_FILE_PATTERNS_ENV = os.getenv(
+    "LOW_VALUE_FILE_PATTERNS",
+    (
+        "index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,"
+        "*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,"
+        "*__allocations__*.json,*__import-*.json,*__imports__*.json"
+    ),
+)
 LOW_VALUE_TOPIC_PREFIXES_ENV = os.getenv(
     "LOW_VALUE_TOPIC_PREFIXES",
     "telemetry,metrics,signals,overrides,perf,tmp",
@@ -1196,6 +1237,19 @@ if not FANOUT_COALESCE_TARGETS:
 LOW_VALUE_FILE_SUFFIXES = _normalize_lower_csv(LOW_VALUE_FILE_SUFFIXES_ENV)
 if not LOW_VALUE_FILE_SUFFIXES:
     LOW_VALUE_FILE_SUFFIXES = ["__latest.json", "__rollup.json"]
+LOW_VALUE_FILE_PATTERNS = _normalize_lower_csv(LOW_VALUE_FILE_PATTERNS_ENV)
+if not LOW_VALUE_FILE_PATTERNS:
+    LOW_VALUE_FILE_PATTERNS = [
+        "index__*.json",
+        "*_agg-latest.json",
+        "*__agg-*.json",
+        "telemetry__*.json",
+        "*__state__*.json",
+        "*__stats__*.json",
+        "*__snapshots__*.json",
+        "*__health__*.json",
+        "*__allocations__*.json",
+    ]
 LOW_VALUE_TOPIC_PREFIXES = _normalize_lower_csv(LOW_VALUE_TOPIC_PREFIXES_ENV)
 if not LOW_VALUE_TOPIC_PREFIXES:
     LOW_VALUE_TOPIC_PREFIXES = ["telemetry", "metrics", "signals", "overrides", "perf", "tmp"]
@@ -1272,6 +1326,27 @@ RETRIEVAL_MODES = (
 )
 if RETRIEVAL_MODE_DEFAULT not in RETRIEVAL_MODES:
     RETRIEVAL_MODE_DEFAULT = RETRIEVAL_MODE_BALANCED
+RETRIEVAL_INTENT_DECISION = "decision"
+RETRIEVAL_INTENT_OPS = "ops"
+RETRIEVAL_INTENT_RAW = "raw"
+RETRIEVAL_INTENTS = (
+    RETRIEVAL_INTENT_DECISION,
+    RETRIEVAL_INTENT_OPS,
+    RETRIEVAL_INTENT_RAW,
+)
+if RETRIEVAL_INTENT_DEFAULT not in RETRIEVAL_INTENTS:
+    RETRIEVAL_INTENT_DEFAULT = RETRIEVAL_INTENT_DECISION
+DEFAULT_RETRIEVAL_INTENT_SOURCES: dict[str, list[str]] = {
+    RETRIEVAL_INTENT_DECISION: _normalize_retrieval_source_csv(RETRIEVAL_INTENT_DECISION_SOURCES_ENV),
+    RETRIEVAL_INTENT_OPS: _normalize_retrieval_source_csv(RETRIEVAL_INTENT_OPS_SOURCES_ENV),
+    RETRIEVAL_INTENT_RAW: _normalize_retrieval_source_csv(RETRIEVAL_INTENT_RAW_SOURCES_ENV),
+}
+for _intent_name in RETRIEVAL_INTENTS:
+    if DEFAULT_RETRIEVAL_INTENT_SOURCES.get(_intent_name):
+        continue
+    DEFAULT_RETRIEVAL_INTENT_SOURCES[_intent_name] = list(
+        _normalize_retrieval_source_csv(RETRIEVAL_SOURCES_ENV)
+    )
 _RETRIEVAL_QUERY_SYNONYM_MAP_RAW = os.getenv("ORCH_RETRIEVAL_QUERY_SYNONYM_MAP", "").strip()
 RETRIEVAL_QUERY_SYNONYM_MAP: dict[str, list[str]] = {
     "recall": ["retrieve", "memory", "lookup"],
@@ -2217,6 +2292,8 @@ def _looks_low_value_file(file_name: str | None) -> bool:
         return False
     if "/_rollups/" in lowered:
         return True
+    if _matches_any_glob(lowered, LOW_VALUE_FILE_PATTERNS):
+        return True
     return any(lowered.endswith(suffix) for suffix in LOW_VALUE_FILE_SUFFIXES)
 
 
@@ -2901,6 +2978,10 @@ retrieval_source_timeout_counts: dict[str, int] = {}
 retrieval_latency_mode_counts: dict[str, int] = {}
 retrieval_latency_updated_at: str | None = None
 retrieval_slow_source_cooldown_until: dict[str, float] = {}
+mindsdb_retrieval_lz4_cooldown_until_monotonic = 0.0
+mindsdb_retrieval_lz4_hits = 0
+mindsdb_retrieval_lz4_skipped = 0
+mindsdb_retrieval_log_last_at: dict[str, float] = {}
 retrieval_lifecycle_lock = asyncio.Lock()
 retrieval_result_lifecycle: OrderedDict[str, dict[str, Any]] = OrderedDict()
 recall_quality_lock = asyncio.Lock()
@@ -3219,6 +3300,30 @@ def _is_retrieval_timeout_error(exc: Exception) -> bool:
     return isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
 
 
+def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    return "lz4" in text and ("decompress" in text or "decompressionfailed" in text)
+
+
+def _mindsdb_retrieval_circuit_open(now_monotonic: float | None = None) -> bool:
+    if not MINDSDB_RETRIEVAL_CIRCUIT_ENABLED:
+        return False
+    now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+    return float(mindsdb_retrieval_lz4_cooldown_until_monotonic) > now
+
+
+def _log_mindsdb_retrieval_warning(key: str, message: str) -> None:
+    now = time.monotonic()
+    cooldown = max(1.0, MINDSDB_RETRIEVAL_LOG_COOLDOWN_SECS)
+    last = float(mindsdb_retrieval_log_last_at.get(key, 0.0) or 0.0)
+    if now - last < cooldown:
+        return
+    mindsdb_retrieval_log_last_at[key] = now
+    logger.warning("%s", message)
+
+
 def _letta_search_rows_from_payload(
     *,
     payload: dict[str, Any],
@@ -3402,6 +3507,22 @@ def _normalize_retrieval_mode(mode: str | None) -> str:
     return candidate
 
 
+def _normalize_retrieval_intent(intent: str | None) -> str:
+    candidate = str(intent or RETRIEVAL_INTENT_DEFAULT or RETRIEVAL_INTENT_DECISION).strip().lower()
+    if candidate not in RETRIEVAL_INTENTS:
+        return RETRIEVAL_INTENT_DECISION
+    return candidate
+
+
+def _resolve_intent_default_sources(intent: str) -> list[str]:
+    normalized_intent = _normalize_retrieval_intent(intent)
+    sources = DEFAULT_RETRIEVAL_INTENT_SOURCES.get(normalized_intent) or []
+    normalized_sources = _normalize_retrieval_sources(list(sources))
+    if normalized_sources:
+        return normalized_sources
+    return _normalize_retrieval_sources(None)
+
+
 def _retrieval_mode_timeout_scale(mode: str) -> float:
     normalized = _normalize_retrieval_mode(mode)
     if normalized == RETRIEVAL_MODE_FAST:
@@ -3466,6 +3587,7 @@ def _retrieval_pathway_cache_key(
     sources: list[str],
     source_weights: dict[str, float],
     retrieval_mode: str,
+    retrieval_intent: str,
     learning_enabled: bool,
     positive_terms: set[str],
     negative_terms: set[str],
@@ -3473,6 +3595,7 @@ def _retrieval_pathway_cache_key(
     identity = "\n".join(
         [
             _normalize_retrieval_mode(retrieval_mode),
+            _normalize_retrieval_intent(retrieval_intent),
             str(limit),
             str(project_filter or ""),
             str(topic_filter or ""),
@@ -3867,10 +3990,12 @@ def _retrieval_pathway_stat_key(
     topic_filter: str | None,
     sources: list[str],
     retrieval_mode: str,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> str:
     identity = "\n".join(
         [
             _normalize_retrieval_mode(retrieval_mode),
+            _normalize_retrieval_intent(retrieval_intent),
             str(project_filter or ""),
             str(topic_filter or ""),
             ",".join(sources),
@@ -3888,6 +4013,7 @@ async def _record_retrieval_pathway_observation(
     sources: list[str],
     source_weights: dict[str, float],
     retrieval_mode: str,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> None:
     query_text = re.sub(r"\s+", " ", str(query or "").strip())
     if not query_text:
@@ -3899,6 +4025,7 @@ async def _record_retrieval_pathway_observation(
         topic_filter=topic_filter,
         sources=sources,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
     )
     async with retrieval_pathway_stats_lock:
         entry = retrieval_pathway_stats.get(key)
@@ -3910,6 +4037,7 @@ async def _record_retrieval_pathway_observation(
                 "sources": list(sources),
                 "source_weights": dict(source_weights),
                 "retrieval_mode": _normalize_retrieval_mode(retrieval_mode),
+                "retrieval_intent": _normalize_retrieval_intent(retrieval_intent),
                 "hits": 0,
                 "first_seen_at": _utc_now(),
                 "first_seen_monotonic": now,
@@ -4404,6 +4532,24 @@ def _build_retrieval_alerts(latency_snapshot: dict[str, Any]) -> dict[str, Any]:
                     ),
                 }
             )
+    mindsdb_cooldown_remaining = max(
+        0.0,
+        float(mindsdb_retrieval_lz4_cooldown_until_monotonic) - time.monotonic(),
+    )
+    if mindsdb_cooldown_remaining > 0.0:
+        alerts.append(
+            {
+                "code": "mindsdb_lz4_circuit_open",
+                "severity": "warn",
+                "source": RETRIEVAL_SOURCE_MINDSDB,
+                "metric": "lz4CircuitCooldownSecs",
+                "value": round(mindsdb_cooldown_remaining, 3),
+                "message": (
+                    f"MindsDB retrieval LZ4 circuit is open for another "
+                    f"{mindsdb_cooldown_remaining:.1f}s."
+                ),
+            }
+        )
 
     warmer_last_error = str(retrieval_pathway_warmer_state.get("lastError") or "").strip()
     warmer_errors = retrieval_pathway_warmer_state.get("lastResult")
@@ -4471,9 +4617,40 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
     async with letta_search_warm_lock:
         letta_warm_inflight = len(letta_search_warm_inflight)
     lifecycle_state = await _retrieval_lifecycle_state_snapshot()
+    recent_rows = recall_quality.get("recent") if isinstance(recall_quality.get("recent"), list) else []
+    sample_count = len(recent_rows)
+    rollup_hits = 0
+    multi_source_hits = 0
+    top_scores: list[float] = []
+    for row in recent_rows:
+        if not isinstance(row, dict):
+            continue
+        row_sources = row.get("sources") if isinstance(row.get("sources"), list) else []
+        normalized_sources = {str(source).strip().lower() for source in row_sources if str(source).strip()}
+        if RETRIEVAL_SOURCE_TOPIC_ROLLUPS in normalized_sources:
+            rollup_hits += 1
+        if len(normalized_sources) >= 2:
+            multi_source_hits += 1
+        top_scores.append(max(0.0, float(row.get("topScore", 0.0) or 0.0)))
+    avg_top_score = round(sum(top_scores) / len(top_scores), 6) if top_scores else 0.0
+    mindsdb_cooldown_remaining = max(
+        0.0,
+        float(mindsdb_retrieval_lz4_cooldown_until_monotonic) - time.monotonic(),
+    )
+    runtime_flags = {
+        "useRustCodec": bool(getattr(MIGRATION_FLAGS, "use_rust_codec", False)),
+        "useRustMemory": bool(getattr(MIGRATION_FLAGS, "use_rust_memory", False)),
+        "useRustRetrieval": bool(getattr(MIGRATION_FLAGS, "use_rust_retrieval", False)),
+        "useGoOrchestrator": bool(getattr(MIGRATION_FLAGS, "use_go_orchestrator", False)),
+        "engineMode": str(getattr(MIGRATION_FLAGS, "engine_mode", "embedded")),
+        "shadowDualRun": bool(getattr(MIGRATION_FLAGS, "shadow_dual_run", False)),
+        "canaryEnabled": bool(getattr(MIGRATION_FLAGS, "canary_enabled", False)),
+    }
     return {
         "updatedAt": _utc_now(),
         "defaultMode": RETRIEVAL_MODE_DEFAULT,
+        "defaultIntent": RETRIEVAL_INTENT_DEFAULT,
+        "intents": list(RETRIEVAL_INTENTS),
         "modes": list(RETRIEVAL_MODES),
         "pathwayCache": {
             "enabled": RETRIEVAL_PATHWAY_CACHE_ENABLED,
@@ -4549,6 +4726,20 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         },
         "latency": latency,
         "recallQuality": recall_quality,
+        "qualityKpis": {
+            "sampleCount": sample_count,
+            "rollupHitRate": round((rollup_hits / sample_count), 6) if sample_count > 0 else 0.0,
+            "multiSourceConsensusRate": round((multi_source_hits / sample_count), 6) if sample_count > 0 else 0.0,
+            "avgTopScore": avg_top_score,
+            "mindsdbLz4CircuitOpen": mindsdb_cooldown_remaining > 0.0,
+            "mindsdbLz4CooldownRemainingSecs": round(mindsdb_cooldown_remaining, 3),
+            "mindsdbLz4Hits": int(mindsdb_retrieval_lz4_hits),
+            "mindsdbCircuitSkips": int(mindsdb_retrieval_lz4_skipped),
+        },
+        "runtimeCutover": {
+            **runtime_flags,
+            "rollbackPath": "python_fallback_available",
+        },
         "lifecycle": lifecycle_state,
         "alerts": alerts,
     }
@@ -4806,6 +4997,7 @@ async def _run_retrieval_pathway_warm_query(entry: dict[str, Any]) -> bool:
     sources = entry.get("sources") if isinstance(entry.get("sources"), list) else None
     source_weights = entry.get("source_weights") if isinstance(entry.get("source_weights"), dict) else None
     mode = _normalize_retrieval_mode(str(entry.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED))
+    intent = _normalize_retrieval_intent(str(entry.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT))
     limit = max(1, min(RETRIEVAL_PATHWAY_WARMER_LIMIT, 20))
     await federated_search_memory(
         query,
@@ -4817,6 +5009,7 @@ async def _run_retrieval_pathway_warm_query(entry: dict[str, Any]) -> bool:
         preferences=None,
         rerank_with_learning=False,
         retrieval_mode=mode,
+        retrieval_intent=intent,
         record_pathway_usage=False,
     )
     return True
@@ -5469,6 +5662,7 @@ def _default_agent_memory_profile() -> dict[str, Any]:
         sources = [RETRIEVAL_SOURCE_QDRANT]
     return {
         "retrieval_mode": RETRIEVAL_MODE_DEFAULT,
+        "retrieval_intent": RETRIEVAL_INTENT_DEFAULT,
         "sources": sources,
         "source_weights": {},
         "default_project": None,
@@ -5484,6 +5678,7 @@ def _normalize_agent_memory_profile_payload(payload: dict[str, Any] | None) -> d
     base = _default_agent_memory_profile()
     data = payload if isinstance(payload, dict) else {}
     retrieval_mode = _normalize_retrieval_mode(data.get("retrieval_mode"))
+    retrieval_intent = _normalize_retrieval_intent(data.get("retrieval_intent"))
     sources_raw = data.get("sources")
     sources = None
     if isinstance(sources_raw, list):
@@ -5505,6 +5700,7 @@ def _normalize_agent_memory_profile_payload(payload: dict[str, Any] | None) -> d
     default_project = default_project_raw or None
     return {
         "retrieval_mode": retrieval_mode or base["retrieval_mode"],
+        "retrieval_intent": retrieval_intent or base["retrieval_intent"],
         "sources": sources if sources is not None else list(base["sources"]),
         "source_weights": {
             source: weight
@@ -10298,6 +10494,7 @@ async def _execute_task_action(task: dict[str, Any], worker_name: str) -> dict[s
             topic_path=str(payload.get("topic_path") or "").strip() or None,
             fetch_content=bool(payload.get("fetch_content", False)),
             retrieval_mode=str(payload.get("retrieval_mode") or "").strip() or None,
+            retrieval_intent=str(payload.get("retrieval_intent") or "").strip() or None,
             sources=payload.get("sources") if isinstance(payload.get("sources"), list) else None,
             source_weights=payload.get("source_weights") if isinstance(payload.get("source_weights"), dict) else None,
             rerank_with_learning=bool(payload.get("rerank_with_learning", True)),
@@ -11384,20 +11581,47 @@ def _build_context_pack_payload(
     for row in results[: max(1, int(max_results))]:
         if not isinstance(row, dict):
             continue
-        result_rows.append(
-            {
-                "project": row.get("project"),
-                "file": row.get("file"),
-                "source": row.get("source"),
-                "score": float(row.get("score") or 0.0),
-                "topic_path": row.get("topic_path"),
-                "timestamp": _result_timestamp_iso(row),
-                "summary": _topic_rollup_sanitize_text(
-                    str(row.get("summary") or ""),
-                    max_chars=RECALL_GROUNDING_SNIPPET_CHARS,
-                ),
+        rendered_row = {
+            "project": row.get("project"),
+            "file": row.get("file"),
+            "source": row.get("source"),
+            "score": float(row.get("score") or 0.0),
+            "topic_path": row.get("topic_path"),
+            "timestamp": _result_timestamp_iso(row),
+            "summary": _topic_rollup_sanitize_text(
+                str(row.get("summary") or ""),
+                max_chars=RECALL_GROUNDING_SNIPPET_CHARS,
+            ),
+        }
+        topic_rollup = row.get("topic_rollup") if isinstance(row.get("topic_rollup"), dict) else None
+        if isinstance(topic_rollup, dict):
+            raw_refs = [
+                str(item)
+                for item in (topic_rollup.get("raw_refs") if isinstance(topic_rollup.get("raw_refs"), list) else [])
+                if str(item).strip()
+            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+            rendered_row["topic_rollup"] = {
+                "event_count": int(topic_rollup.get("event_count") or 0),
+                "recent_event_count": int(topic_rollup.get("recent_event_count") or 0),
+                "unique_file_count": int(topic_rollup.get("unique_file_count") or 0),
+                "latest_timestamp": topic_rollup.get("latest_timestamp"),
+                "raw_refs": raw_refs,
             }
-        )
+            for raw_file in raw_refs:
+                key = f"{row.get('project')}:{raw_file}:rollup"
+                if key in seen_citations:
+                    continue
+                seen_citations.add(key)
+                citations.append(
+                    {
+                        "project": row.get("project"),
+                        "file": raw_file,
+                        "source": "topic_rollup_raw_ref",
+                        "topic_path": row.get("topic_path"),
+                        "timestamp": topic_rollup.get("latest_timestamp"),
+                    }
+                )
+        result_rows.append(rendered_row)
     return {
         "query": query,
         "generatedAt": _utc_now(),
@@ -11409,6 +11633,7 @@ def _build_context_pack_payload(
         "results": result_rows,
         "warnings": search_response.get("warnings") if isinstance(search_response.get("warnings"), list) else [],
         "retrievalMode": search_response.get("retrieval_mode"),
+        "retrievalIntent": search_response.get("retrieval_intent"),
         "agentId": search_response.get("agent_id"),
     }
 
@@ -12700,6 +12925,11 @@ async def search_topic_rollups(
                         "event_count": int(topic.get("eventCount") or 0),
                         "recent_event_count": int(topic.get("recentEventCount") or 0),
                         "unique_file_count": int(topic.get("uniqueFileCount") or 0),
+                        "raw_refs": [
+                            str(file_name)
+                            for file_name in (topic.get("uniqueFiles") if isinstance(topic.get("uniqueFiles"), list) else [])
+                            if str(file_name).strip()
+                        ][:TOPIC_ROLLUP_RAW_REFS_MAX],
                         "latest_timestamp": topic.get("latestTimestamp"),
                     },
                 }
@@ -12789,12 +13019,21 @@ async def search_mindsdb_memory(
     project_filter: str | None = None,
     topic_filter: str | None = None,
 ) -> list[dict[str, Any]]:
+    global mindsdb_retrieval_lz4_cooldown_until_monotonic, mindsdb_retrieval_lz4_hits, mindsdb_retrieval_lz4_skipped
     if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
+        return []
+    if _mindsdb_retrieval_circuit_open():
+        mindsdb_retrieval_lz4_skipped += 1
+        remaining = max(0.0, mindsdb_retrieval_lz4_cooldown_until_monotonic - time.monotonic())
+        _log_mindsdb_retrieval_warning(
+            "circuit-open",
+            f"MindsDB retrieval temporarily skipped while LZ4 circuit is open ({remaining:.1f}s remaining).",
+        )
         return []
     try:
         await ensure_mindsdb_table()
     except Exception as exc:
-        logger.warning("MindsDB retrieval bootstrap failed: %s", exc)
+        _log_mindsdb_retrieval_warning("bootstrap", f"MindsDB retrieval bootstrap failed: {exc}")
         return []
     table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     clauses: list[str] = []
@@ -12826,7 +13065,23 @@ async def search_mindsdb_memory(
     try:
         raw = await _mindsdb_execute(sql)
     except Exception as exc:
-        logger.warning("MindsDB retrieval query failed: %s", exc)
+        if _is_mindsdb_lz4_decompress_error(exc):
+            mindsdb_retrieval_lz4_hits += 1
+            mindsdb_retrieval_lz4_cooldown_until_monotonic = (
+                time.monotonic() + MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS
+            )
+            _log_mindsdb_retrieval_warning(
+                "lz4",
+                (
+                    "MindsDB retrieval query failed with LZ4 decompress error; "
+                    f"circuit opened for {MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS:.1f}s."
+                ),
+            )
+        else:
+            _log_mindsdb_retrieval_warning(
+                "query",
+                f"MindsDB retrieval query failed: {exc}",
+            )
         return []
     rows: list[dict[str, Any]] = []
     for row in _mindsdb_rows(raw):
@@ -12944,7 +13199,9 @@ def _merge_federated_rows(
     query: str = "",
     source_quality_multipliers: dict[str, float] | None = None,
     lifecycle_snapshot: dict[str, dict[str, Any]] | None = None,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> list[dict[str, Any]]:
+    normalized_intent = _normalize_retrieval_intent(retrieval_intent)
     normalized_query = re.sub(r"\s+", " ", str(query or "").strip().lower())
     query_targets_low_value_paths = _query_targets_low_value_paths(normalized_query)
     query_numeric_values = set(
@@ -13023,8 +13280,14 @@ def _merge_federated_rows(
             )
             low_value_penalty = 0.0
             low_value_suppressed = False
+            suppress_low_value = RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS
             if (
-                RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS
+                normalized_intent == RETRIEVAL_INTENT_RAW
+                and RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS
+            ):
+                suppress_low_value = False
+            if (
+                suppress_low_value
                 and source_name != RETRIEVAL_SOURCE_LETTA
                 and low_value_row
                 and not query_targets_low_value_paths
@@ -13085,11 +13348,13 @@ async def federated_search_memory(
     preferences: dict[str, Any] | None = None,
     rerank_with_learning: bool = True,
     retrieval_mode: str = RETRIEVAL_MODE_BALANCED,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
     record_pathway_usage: bool = True,
     call_budget_secs: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     federated_started_monotonic = time.monotonic()
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
+    resolved_intent = _normalize_retrieval_intent(retrieval_intent)
     normalized_call_budget_secs = (
         max(0.25, float(call_budget_secs))
         if call_budget_secs is not None
@@ -13356,6 +13621,7 @@ async def federated_search_memory(
         sources=resolved_sources,
         source_weights=resolved_weights,
         retrieval_mode=normalized_mode,
+        retrieval_intent=resolved_intent,
         learning_enabled=learning_enabled,
         positive_terms=positive_terms,
         negative_terms=negative_terms,
@@ -13377,6 +13643,7 @@ async def federated_search_memory(
                 sources=resolved_sources,
                 source_weights=resolved_weights,
                 retrieval_mode=normalized_mode,
+                retrieval_intent=resolved_intent,
             )
         return cached_results[:limit], cached_debug, cached_warnings
 
@@ -13413,6 +13680,7 @@ async def federated_search_memory(
                 for name, value in source_quality_multipliers.items()
             },
             lifecycle_snapshot=lifecycle_snapshot,
+            retrieval_intent=resolved_intent,
         )
         fast_merged.sort(
             key=lambda row: (
@@ -13473,6 +13741,7 @@ async def federated_search_memory(
             for name, value in source_quality_multipliers.items()
         },
         lifecycle_snapshot=lifecycle_snapshot,
+        retrieval_intent=resolved_intent,
     )
     merged.sort(
         key=lambda row: (
@@ -13483,6 +13752,7 @@ async def federated_search_memory(
     )
     retrieval_debug = {
         "retrieval_mode": normalized_mode,
+        "retrieval_intent": resolved_intent,
         "sources": resolved_sources,
         "source_weights": resolved_weights,
         "source_counts": {
@@ -13560,6 +13830,7 @@ async def federated_search_memory(
             sources=resolved_sources,
             source_weights=resolved_weights,
             retrieval_mode=normalized_mode,
+            retrieval_intent=resolved_intent,
         )
     return final_results, retrieval_debug, warnings
 
@@ -13578,8 +13849,10 @@ async def _run_memory_recall_pipeline(
     agent_profile: dict[str, Any] | None = None,
     auto_escalate: bool = False,
     query_expansion: bool = True,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
+    normalized_intent = _normalize_retrieval_intent(retrieval_intent)
     profile = agent_profile if isinstance(agent_profile, dict) else {}
     profile_sources = profile.get("sources") if isinstance(profile.get("sources"), list) else None
     profile_weights = profile.get("source_weights") if isinstance(profile.get("source_weights"), dict) else None
@@ -13590,11 +13863,25 @@ async def _run_memory_recall_pipeline(
             merged_weights[str(key)] = value
     resolved_weights = merged_weights if merged_weights else None
     expand_enabled = bool(query_expansion and RETRIEVAL_QUERY_EXPANSION_ENABLED)
-    query_variants = _expand_query_variants(query) if expand_enabled else [re.sub(r"\s+", " ", str(query).strip())]
+    base_query = re.sub(r"\s+", " ", str(query or "").strip())
+    query_variants = _expand_query_variants(query) if expand_enabled else [base_query]
     query_variants = [item for item in query_variants if item]
     if not query_variants:
-        query_variants = [str(query or "").strip()]
+        query_variants = [base_query]
     scoped_query = bool(str(project_filter or "").strip() or str(topic_filter or "").strip())
+    scoped_structural_variant_filtered = False
+    if scoped_query:
+        structural_aliases: set[str] = set()
+        if " " in base_query and "/" not in base_query:
+            structural_aliases = {
+                base_query.replace(" ", "/"),
+                base_query.replace(" ", "_"),
+            }
+        if structural_aliases:
+            filtered = [item for item in query_variants if item not in structural_aliases]
+            if filtered:
+                scoped_structural_variant_filtered = len(filtered) != len(query_variants)
+                query_variants = filtered
     max_variants_allowed = RETRIEVAL_QUERY_EXPANSION_MAX_VARIANTS
     max_escalation_steps = AGENT_RECALL_MAX_ESCALATION_STEPS
     if scoped_query:
@@ -13676,6 +13963,7 @@ async def _run_memory_recall_pipeline(
                 preferences=preferences,
                 rerank_with_learning=rerank_with_learning,
                 retrieval_mode=hop_mode,
+                retrieval_intent=normalized_intent,
                 call_budget_secs=call_budget_secs,
             )
             hop_result_sets.append(hop_results)
@@ -13775,6 +14063,7 @@ async def _run_memory_recall_pipeline(
             "enabled": expand_enabled,
             "max_variants": max_variants_allowed,
             "scoped_query": scoped_query,
+            "scoped_structural_variant_filtered": scoped_structural_variant_filtered,
             "scoped_variant_cap": RECALL_SCOPED_QUERY_VARIANT_CAP,
             "variants_considered": query_variants,
             "variants_used": [record.get("query") for record in variant_debug_records],
@@ -13797,6 +14086,7 @@ async def _run_memory_recall_pipeline(
                 for record in variant_debug_records
             ],
         },
+        "retrieval_intent": normalized_intent,
         "budget": {
             "enabled": recall_budget_enabled,
             "configuredSecs": recall_budget_secs if recall_budget_enabled else None,
@@ -13806,6 +14096,9 @@ async def _run_memory_recall_pipeline(
         },
     }
     best_debug["retrieval_mode"] = _normalize_retrieval_mode(str(best_debug.get("retrieval_mode") or normalized_mode))
+    best_debug["retrieval_intent"] = _normalize_retrieval_intent(
+        str(best_debug.get("retrieval_intent") or normalized_intent)
+    )
     best_debug["source_errors"] = source_errors
     best_debug["source_counts"] = source_counts
     best_debug["pipeline"] = pipeline_debug
@@ -15117,6 +15410,7 @@ async def get_memory_metrics():
             "enabled": TOPIC_ROLLUP_ENABLED,
             "flushSecs": max(5.0, TOPIC_ROLLUP_FLUSH_SECS),
             "historyScanLimit": TOPIC_ROLLUP_HISTORY_SCAN_LIMIT,
+            "rawRefsMax": TOPIC_ROLLUP_RAW_REFS_MAX,
             "backfillHoldSecs": TOPIC_ROLLUP_BACKFILL_HOLD_SECS,
             "health": _topic_rollup_health_snapshot(),
             "generatedAt": topic_rollup_index.get("generatedAt"),
@@ -15226,6 +15520,7 @@ async def get_topic_rollup_metrics():
             "maxSummarySnippets": TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS,
             "maxNumericFacts": TOPIC_ROLLUP_MAX_NUMERIC_FACTS,
             "maxUniqueFiles": TOPIC_ROLLUP_MAX_UNIQUE_FILES,
+            "maxRawRefs": TOPIC_ROLLUP_RAW_REFS_MAX,
             "backfillHoldSecs": TOPIC_ROLLUP_BACKFILL_HOLD_SECS,
             "path": str(TOPIC_ROLLUP_PATH),
         },
@@ -15495,6 +15790,10 @@ class MemorySearch(BaseModel):
         None,
         description="Retrieval depth mode (fast|balanced|deep)",
     )
+    retrieval_intent: str | None = Field(
+        None,
+        description="Retrieval intent policy (decision|ops|raw)",
+    )
     sources: list[str] | None = Field(
         None,
         description=(
@@ -15541,6 +15840,7 @@ class ContextPackRequest(BaseModel):
     project: str | None = Field(None, description="Optional project filter")
     topic_path: str | None = Field(None, description="Optional topic path filter")
     retrieval_mode: str | None = Field(None, description="Optional retrieval mode override")
+    retrieval_intent: str | None = Field(None, description="Optional retrieval intent override")
     sources: list[str] | None = Field(None, description="Optional source override")
     source_weights: dict[str, float] | None = Field(None, description="Optional source weighting override")
     user_id: str | None = Field(None, description="User identifier for preference-aware reranking")
@@ -15553,6 +15853,7 @@ class ContextPackRequest(BaseModel):
 
 class AgentMemoryProfileUpdate(BaseModel):
     retrieval_mode: str | None = Field(None, description="Retrieval mode default for the agent")
+    retrieval_intent: str | None = Field(None, description="Retrieval intent default for the agent")
     sources: list[str] | None = Field(None, description="Default source list")
     source_weights: dict[str, float] | None = Field(None, description="Default source weights")
     default_project: str | None = Field(None, description="Default project scope for agent recall")
@@ -15578,6 +15879,7 @@ class RecallEvalCase(BaseModel):
     expected_substrings: list[str] | None = Field(None, description="Substrings expected in top-k summaries")
     expected_numeric: list[str] | None = Field(None, description="Numeric values expected verbatim in grounding")
     retrieval_mode: str | None = Field(None, description="Optional per-case retrieval mode override")
+    retrieval_intent: str | None = Field(None, description="Optional per-case retrieval intent override")
     sources: list[str] | None = Field(None, description="Optional per-case source override")
     source_weights: dict[str, float] | None = Field(None, description="Optional per-case source weighting override")
     agent_id: str | None = Field(None, description="Optional per-case agent profile")
@@ -15952,6 +16254,7 @@ async def _retriever_search_with_grounding_via_runtime(
     preferences: dict[str, Any] | None,
     rerank_with_learning: bool,
     retrieval_mode: str,
+    retrieval_intent: str,
     agent_profile: dict[str, Any] | None,
     auto_escalate: bool,
     query_expansion: bool,
@@ -15968,6 +16271,7 @@ async def _retriever_search_with_grounding_via_runtime(
             preferences=preferences,
             rerank_with_learning=rerank_with_learning,
             retrieval_mode=retrieval_mode,
+            retrieval_intent=retrieval_intent,
             agent_profile=agent_profile,
             auto_escalate=auto_escalate,
             query_expansion=query_expansion,
@@ -15982,6 +16286,7 @@ async def _retriever_search_with_grounding_via_runtime(
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
         agent_profile=agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
@@ -16620,16 +16925,13 @@ async def search_memory(payload: MemorySearch):
     if not topic_filter and profile_topic_prefixes:
         topic_filter = str(profile_topic_prefixes[0] or "").strip() or None
     trading_scope_prefixes: list[str] = []
-    if (
-        not topic_filter
-        and not payload.topic_path
-        and not profile_topic_prefixes
-        and _looks_like_trading_project(project_filter)
-    ):
-        trading_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
     retrieval_mode = _normalize_retrieval_mode(
         payload.retrieval_mode
         or str(agent_profile.get("retrieval_mode") or RETRIEVAL_MODE_DEFAULT)
+    )
+    retrieval_intent = _normalize_retrieval_intent(
+        payload.retrieval_intent
+        or str(agent_profile.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT)
     )
     auto_escalate = (
         payload.auto_escalate
@@ -16644,6 +16946,40 @@ async def search_memory(payload: MemorySearch):
 
     preferences = None
     pre_warnings: list[str] = []
+    policy_debug: dict[str, Any] = {
+        "projectDefaultsApplied": False,
+        "intentDefaultSourcesApplied": False,
+        "intent": retrieval_intent,
+    }
+    requested_sources = payload.sources if isinstance(payload.sources, list) else None
+    profile_sources = (
+        agent_profile.get("sources")
+        if isinstance(agent_profile.get("sources"), list)
+        else None
+    )
+    profile_sources_default = (
+        _normalize_retrieval_sources(profile_sources)
+        == _normalize_retrieval_sources(_default_agent_memory_profile().get("sources"))
+    )
+    if (
+        requested_sources is None
+        and _looks_like_trading_project(project_filter)
+        and profile_sources_default
+    ):
+        requested_sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_debug["projectDefaultsApplied"] = True
+        policy_debug["intentDefaultSourcesApplied"] = True
+        pre_warnings.append(
+            f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
+        )
+    if (
+        not topic_filter
+        and not payload.topic_path
+        and not profile_topic_prefixes
+        and retrieval_intent != RETRIEVAL_INTENT_RAW
+        and _looks_like_trading_project(project_filter)
+    ):
+        trading_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
     project_suggestions: list[str] = []
     project_missing = False
     project_resolution: dict[str, Any] = {
@@ -16697,6 +17033,7 @@ async def search_memory(payload: MemorySearch):
         empty_grounding = _build_grounding_payload([])
         retrieval_debug = {
             "retrieval_mode": retrieval_mode,
+            "retrieval_intent": retrieval_intent,
             "source_errors": {},
             "source_counts": {},
             "project_resolution": project_resolution,
@@ -16707,20 +17044,27 @@ async def search_memory(payload: MemorySearch):
                 "matched_results": 0,
                 "total_results": 0,
             },
+            "policy": {
+                **policy_debug,
+                "effectiveSources": requested_sources or profile_sources or [],
+            },
         }
         response: dict[str, Any] = {
             "results": [],
             "preferences": preferences,
             "learning_enabled": LEARNING_LOOP_ENABLED,
             "retrieval_mode": retrieval_mode,
+            "retrieval_intent": retrieval_intent,
             "warnings": pre_warnings,
             "agent_id": profile_id,
             "degraded": True,
             "project_resolution": project_resolution,
             "project_suggestions": project_suggestions,
+            "retrieval_policy": policy_debug,
             "agent_profile": {
                 "id": profile_id,
                 "retrieval_mode": agent_profile.get("retrieval_mode"),
+                "retrieval_intent": agent_profile.get("retrieval_intent"),
                 "sources": agent_profile.get("sources"),
                 "source_weights": agent_profile.get("source_weights"),
                 "default_project": agent_profile.get("default_project"),
@@ -16756,11 +17100,12 @@ async def search_memory(payload: MemorySearch):
         limit=payload.limit,
         project_filter=project_filter,
         topic_filter=topic_filter,
-        sources=payload.sources,
+        sources=requested_sources,
         source_weights=payload.source_weights,
         preferences=preferences,
         rerank_with_learning=payload.rerank_with_learning,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
         agent_profile=agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
@@ -16829,10 +17174,17 @@ async def search_memory(payload: MemorySearch):
         "retrieval_mode": _normalize_retrieval_mode(
             str(retrieval_debug.get("retrieval_mode") or retrieval_mode)
         ),
+        "retrieval_intent": _normalize_retrieval_intent(
+            str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
+        ),
         "warnings": warnings,
         "agent_id": profile_id,
         "project_resolution": project_resolution,
         "project_suggestions": project_suggestions,
+        "retrieval_policy": {
+            **policy_debug,
+            "effectiveSources": requested_sources or profile_sources or [],
+        },
         "degraded": bool(
             not results
             or (
@@ -16843,6 +17195,7 @@ async def search_memory(payload: MemorySearch):
         "agent_profile": {
             "id": profile_id,
             "retrieval_mode": agent_profile.get("retrieval_mode"),
+            "retrieval_intent": agent_profile.get("retrieval_intent"),
             "sources": agent_profile.get("sources"),
             "source_weights": agent_profile.get("source_weights"),
             "default_project": agent_profile.get("default_project"),
@@ -16857,6 +17210,10 @@ async def search_memory(payload: MemorySearch):
         retrieval_payload = dict(retrieval_debug)
         retrieval_payload["project_resolution"] = project_resolution
         retrieval_payload["topic_scope"] = topic_scope_debug
+        retrieval_payload["policy"] = {
+            **policy_debug,
+            "effectiveSources": requested_sources or profile_sources or [],
+        }
         response["retrieval"] = retrieval_payload
     return response
 
@@ -16871,6 +17228,7 @@ async def get_memory_context_pack(payload: ContextPackRequest):
             fetch_content=False,
             topic_path=payload.topic_path,
             retrieval_mode=payload.retrieval_mode,
+            retrieval_intent=payload.retrieval_intent,
             sources=payload.sources,
             source_weights=payload.source_weights,
             rerank_with_learning=True,
@@ -16894,6 +17252,7 @@ async def get_memory_context_pack(payload: ContextPackRequest):
         "context_pack": context_pack,
         "warnings": search_response.get("warnings") if isinstance(search_response, dict) else [],
         "retrieval_mode": search_response.get("retrieval_mode") if isinstance(search_response, dict) else None,
+        "retrieval_intent": search_response.get("retrieval_intent") if isinstance(search_response, dict) else None,
         "agent_id": search_response.get("agent_id") if isinstance(search_response, dict) else None,
     }
     if payload.include_retrieval_debug and isinstance(search_response, dict):
@@ -16932,7 +17291,15 @@ async def engine_retrieval_query(payload: dict[str, Any]):
     )
     rerank_with_learning = bool(request_payload.get("rerank_with_learning", True))
     retrieval_mode = str(request_payload.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED)
+    retrieval_intent = _normalize_retrieval_intent(
+        request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
+    )
     pre_warnings: list[str] = []
+    policy_debug: dict[str, Any] = {
+        "projectDefaultsApplied": False,
+        "intentDefaultSourcesApplied": False,
+        "intent": retrieval_intent,
+    }
     explicit_project = str(project_filter or "").strip()
     project_filter, alias_hops = _resolve_project_alias(project_filter)
     project_resolution: dict[str, Any] = {
@@ -16956,8 +17323,22 @@ async def engine_retrieval_query(payload: dict[str, Any]):
                 project_filter = canonical_match
                 project_resolution["resolved"] = project_filter
                 project_resolution["verified"] = True
+    if (
+        sources is None
+        and _looks_like_trading_project(project_filter)
+    ):
+        sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_debug["projectDefaultsApplied"] = True
+        policy_debug["intentDefaultSourcesApplied"] = True
+        pre_warnings.append(
+            f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
+        )
     topic_scope_prefixes: list[str] = []
-    if not topic_filter and _looks_like_trading_project(project_filter):
+    if (
+        not topic_filter
+        and retrieval_intent != RETRIEVAL_INTENT_RAW
+        and _looks_like_trading_project(project_filter)
+    ):
         topic_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
         pre_warnings.append(
             "Applied default trading scope to decision/report/profitability topics."
@@ -16972,6 +17353,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
         record_pathway_usage=False,
         call_budget_secs=RECALL_E2E_BUDGET_SECS if RECALL_E2E_BUDGET_SECS > 0 else None,
     )
@@ -17001,8 +17383,15 @@ async def engine_retrieval_query(payload: dict[str, Any]):
             )
     combined_warnings = pre_warnings + warnings if pre_warnings else warnings
     retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
+        str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
+    )
     retrieval_payload["project_resolution"] = project_resolution
     retrieval_payload["topic_scope"] = topic_scope_debug
+    retrieval_payload["policy"] = {
+        **policy_debug,
+        "effectiveSources": sources or [],
+    }
     return {
         "results": results,
         "retrieval_debug": retrieval_payload,
@@ -17041,6 +17430,9 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     )
     rerank_with_learning = bool(request_payload.get("rerank_with_learning", True))
     retrieval_mode = str(request_payload.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED)
+    retrieval_intent = _normalize_retrieval_intent(
+        request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
+    )
     agent_profile = (
         request_payload.get("agent_profile")
         if isinstance(request_payload.get("agent_profile"), dict)
@@ -17049,6 +17441,11 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     auto_escalate = bool(request_payload.get("auto_escalate", False))
     query_expansion = bool(request_payload.get("query_expansion", True))
     pre_warnings: list[str] = []
+    policy_debug: dict[str, Any] = {
+        "projectDefaultsApplied": False,
+        "intentDefaultSourcesApplied": False,
+        "intent": retrieval_intent,
+    }
     explicit_project = str(project_filter or "").strip()
     project_filter, alias_hops = _resolve_project_alias(project_filter)
     project_resolution: dict[str, Any] = {
@@ -17072,8 +17469,22 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
                 project_filter = canonical_match
                 project_resolution["resolved"] = project_filter
                 project_resolution["verified"] = True
+    if (
+        sources is None
+        and _looks_like_trading_project(project_filter)
+    ):
+        sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_debug["projectDefaultsApplied"] = True
+        policy_debug["intentDefaultSourcesApplied"] = True
+        pre_warnings.append(
+            f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
+        )
     topic_scope_prefixes: list[str] = []
-    if not topic_filter and _looks_like_trading_project(project_filter):
+    if (
+        not topic_filter
+        and retrieval_intent != RETRIEVAL_INTENT_RAW
+        and _looks_like_trading_project(project_filter)
+    ):
         topic_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
         pre_warnings.append(
             "Applied default trading scope to decision/report/profitability topics."
@@ -17088,6 +17499,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
         agent_profile=agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
@@ -17119,8 +17531,15 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
             )
     combined_warnings = pre_warnings + warnings if pre_warnings else warnings
     retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
+        str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
+    )
     retrieval_payload["project_resolution"] = project_resolution
     retrieval_payload["topic_scope"] = topic_scope_debug
+    retrieval_payload["policy"] = {
+        **policy_debug,
+        "effectiveSources": sources or [],
+    }
     return {
         "results": results,
         "retrieval_debug": retrieval_payload,
@@ -17388,6 +17807,7 @@ async def evaluate_memory_recall(payload: RecallEvalRequest):
                 fetch_content=False,
                 topic_path=case.topic_path,
                 retrieval_mode=case.retrieval_mode,
+                retrieval_intent=case.retrieval_intent,
                 sources=case.sources,
                 source_weights=case.source_weights,
                 rerank_with_learning=True,

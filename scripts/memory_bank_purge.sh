@@ -33,12 +33,12 @@ if [[ -n "$root_path" && -d "$root_path" ]]; then
   echo "Purging memory bank at $root_path (>${RETENTION_DAYS} days)"
   purge_count=$(find "$root_path" -type f -mtime +"$RETENTION_DAYS" | wc -l | awk '{print $1}')
   if [[ "$DRY_RUN" == "1" ]]; then
-    find "$root_path" -type f -mtime +"$RETENTION_DAYS" -print
+    find "$root_path" -type f -mtime +"$RETENTION_DAYS" -print 2>/dev/null || true
   else
     if [[ "$VERBOSE" == "1" ]]; then
-      find "$root_path" -type f -mtime +"$RETENTION_DAYS" -print -delete
+      find "$root_path" -type f -mtime +"$RETENTION_DAYS" -print -delete 2>/dev/null || true
     else
-      find "$root_path" -type f -mtime +"$RETENTION_DAYS" -delete
+      find "$root_path" -type f -mtime +"$RETENTION_DAYS" -delete 2>/dev/null || true
     fi
   fi
   exit 0
@@ -49,14 +49,14 @@ purge_count=$(docker compose -f docker-compose.yml exec -T memorymcp-http sh -lc
   "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} | wc -l" | tr -d '[:space:]')
 if [[ "$DRY_RUN" == "1" ]]; then
   docker compose -f docker-compose.yml exec -T memorymcp-http sh -lc \
-    "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} -print"
+    "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} -print 2>/dev/null || true"
 else
   if [[ "$VERBOSE" == "1" ]]; then
     docker compose -f docker-compose.yml exec -T memorymcp-http sh -lc \
-      "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} -print -delete"
+      "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} -print -delete 2>/dev/null || true"
   else
     docker compose -f docker-compose.yml exec -T memorymcp-http sh -lc \
-      "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} -delete"
+      "find /data/memory-bank -type f -mtime +${RETENTION_DAYS} -delete 2>/dev/null || true"
   fi
 fi
 

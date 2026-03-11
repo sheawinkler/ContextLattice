@@ -18,6 +18,13 @@ else
   ORCH_AUTH_HEADER=()
 fi
 
+CURL_RETRY_ARGS=(
+  --retry "${MEMORY_BANK_EXPORT_CURL_RETRIES:-4}"
+  --retry-all-errors
+  --retry-delay "${MEMORY_BANK_EXPORT_CURL_RETRY_DELAY_SECS:-2}"
+  --max-time "${MEMORY_BANK_EXPORT_CURL_MAX_TIME_SECS:-90}"
+)
+
 encode_path() {
   python3 - "$1" <<'PY'
 import sys
@@ -32,7 +39,7 @@ PY
 mkdir -p "$EXPORT_DIR"
 export_count=0
 
-projects_json="$(curl -fsS "$ORCH_URL/projects" "${ORCH_AUTH_HEADER[@]}")"
+projects_json="$(curl -fsS "${CURL_RETRY_ARGS[@]}" "$ORCH_URL/projects" "${ORCH_AUTH_HEADER[@]}")"
 projects="$(python3 - <<'PY' "$projects_json"
 import json,sys
 data=json.loads(sys.argv[1])
@@ -51,7 +58,7 @@ fi
 echo "Exporting memory files to $EXPORT_DIR"
 
 while IFS= read -r project; do
-  files_json="$(curl -fsS "$ORCH_URL/projects/${project}/files" "${ORCH_AUTH_HEADER[@]}")"
+  files_json="$(curl -fsS "${CURL_RETRY_ARGS[@]}" "$ORCH_URL/projects/${project}/files" "${ORCH_AUTH_HEADER[@]}")"
   files="$(python3 - <<'PY' "$files_json"
 import json,sys
 data=json.loads(sys.argv[1])
@@ -67,7 +74,7 @@ PY
     encoded_path="$(encode_path "$file_path")"
     dest="$EXPORT_DIR/$project/$file_path"
     mkdir -p "$(dirname "$dest")"
-    curl -fsS "$ORCH_URL/memory/files/${project}/${encoded_path}" \
+    curl -fsS "${CURL_RETRY_ARGS[@]}" "$ORCH_URL/memory/files/${project}/${encoded_path}" \
       "${ORCH_AUTH_HEADER[@]}" > "$dest"
     export_count=$((export_count+1))
   done <<< "$files"
