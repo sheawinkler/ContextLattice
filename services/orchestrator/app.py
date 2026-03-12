@@ -21,6 +21,7 @@ from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
 from urllib.parse import unquote
 
@@ -489,6 +490,18 @@ RECALL_E2E_BUDGET_SECS = max(
     0.0,
     float(os.getenv("ORCH_RECALL_E2E_BUDGET_SECS", "90")),
 )
+RECALL_E2E_BUDGET_FAST_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_FAST_SECS", "25")),
+)
+RECALL_E2E_BUDGET_BALANCED_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_BALANCED_SECS", "60")),
+)
+RECALL_E2E_BUDGET_DEEP_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_DEEP_SECS", "75")),
+)
 RECALL_E2E_MIN_FEDERATED_BUDGET_SECS = max(
     1.0,
     float(os.getenv("ORCH_RECALL_E2E_MIN_FEDERATED_BUDGET_SECS", "6")),
@@ -613,6 +626,10 @@ RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES",
     "memory_bank",
 )
+RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES = os.getenv(
     "ORCH_RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES",
     "false",
@@ -679,6 +696,10 @@ RETRIEVAL_BACKLOG_GATING_TARGETS_ENV = os.getenv(
     "ORCH_RETRIEVAL_BACKLOG_GATING_TARGETS",
     "letta",
 )
+RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX = max(
     1,
     int(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX", "700")),
@@ -3844,11 +3865,34 @@ def _resolve_retrieval_sources_for_mode(
     return _normalize_retrieval_sources(None)
 
 
+def _recall_e2e_budget_for_mode(mode: str) -> float:
+    normalized_mode = _normalize_retrieval_mode(mode)
+    if normalized_mode == RETRIEVAL_MODE_FAST and RECALL_E2E_BUDGET_FAST_SECS > 0.0:
+        return float(RECALL_E2E_BUDGET_FAST_SECS)
+    if normalized_mode == RETRIEVAL_MODE_BALANCED and RECALL_E2E_BUDGET_BALANCED_SECS > 0.0:
+        return float(RECALL_E2E_BUDGET_BALANCED_SECS)
+    if normalized_mode == RETRIEVAL_MODE_DEEP and RECALL_E2E_BUDGET_DEEP_SECS > 0.0:
+        return float(RECALL_E2E_BUDGET_DEEP_SECS)
+    return float(RECALL_E2E_BUDGET_SECS)
+
+
 def _json_clone(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, default=str))
     except Exception:
         return value
+
+
+def _dedupe_warning_messages(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for warning in items:
+        text = str(warning or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
 
 
 def _retrieval_weight_signature(source_weights: dict[str, float]) -> str:
@@ -13766,6 +13810,7 @@ async def federated_search_memory(
     project_filter: str | None = None,
     topic_filter: str | None = None,
     sources: list[str] | None = None,
+    explicit_source_override: bool | None = None,
     source_weights: dict[str, float] | None = None,
     preferences: dict[str, Any] | None = None,
     rerank_with_learning: bool = True,
@@ -13798,10 +13843,11 @@ async def federated_search_memory(
     resolved_sources = _resolve_retrieval_sources_for_mode(mode=normalized_mode, sources=sources)
     resolved_weights = _normalize_retrieval_weights(source_weights)
     source_limit = _retrieval_mode_source_limit(limit, normalized_mode)
-    explicit_source_override = False
-    if sources:
+    explicit_source_override_resolved = bool(explicit_source_override)
+    if explicit_source_override is None and sources:
         default_sources = set(_resolve_retrieval_sources_for_mode(mode=normalized_mode, sources=None))
-        explicit_source_override = set(resolved_sources) != default_sources
+        explicit_source_override_resolved = set(resolved_sources) != default_sources
+    explicit_source_override = bool(explicit_source_override_resolved)
     warnings: list[str] = []
     template, template_cache_hit = await _get_retrieval_template(normalized_mode, resolved_sources)
     source_timeouts = {
@@ -14119,6 +14165,7 @@ async def federated_search_memory(
     slow_sources_skipped: list[str] = []
     async_warm_slow_sources: list[str] = []
     sync_fallback_slow_sources: list[str] = []
+    backlog_async_warm_slow_sources: list[str] = []
     hard_sync_async_split_applied = False
     if staged_fetch_used:
         fast_rows, fast_errors, fast_warnings = await _run_source_batch(staged_fast_sources)
@@ -14190,6 +14237,23 @@ async def federated_search_memory(
             slow_sources_skipped.extend(blocked_slow_sources)
         if force_include_slow:
             skip_slow = False
+        sync_slow_requires_explicit = bool(
+            RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT
+            and normalized_mode != RETRIEVAL_MODE_DEEP
+        )
+        if sync_slow_requires_explicit and not explicit_source_override:
+            skip_slow = True
+            needs_async_warm_after_skip = True
+        if (
+            RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED
+            and not explicit_source_override
+            and backlog_blocked_slow_sources
+        ):
+            backlog_async_warm_slow_sources = [
+                source
+                for source in backlog_blocked_slow_sources
+                if source == RETRIEVAL_SOURCE_LETTA
+            ]
         hard_split_enabled = bool(
             RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED
             and not explicit_source_override
@@ -14206,6 +14270,8 @@ async def federated_search_memory(
                 for source in RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES
                 if source in allowed_slow_sources
             ]
+            if sync_slow_requires_explicit and not explicit_source_override:
+                fallback_sources = []
             if len(fast_merged) < min_fast_results and fallback_sources:
                 sync_fallback_slow_sources = list(fallback_sources)
                 async_warm_slow_sources = [
@@ -14236,7 +14302,13 @@ async def federated_search_memory(
             results_by_source.update(slow_rows)
             source_errors.update(slow_errors)
             warnings.extend(slow_warnings)
-        if RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES and async_warm_slow_sources:
+        if backlog_async_warm_slow_sources:
+            async_warm_slow_sources.extend(backlog_async_warm_slow_sources)
+        should_schedule_async_warm = bool(async_warm_slow_sources) and (
+            RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES
+            or any(source == RETRIEVAL_SOURCE_LETTA for source in async_warm_slow_sources)
+        )
+        if should_schedule_async_warm:
             for source in async_warm_slow_sources:
                 warm_limit = (
                     min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
@@ -14265,6 +14337,8 @@ async def federated_search_memory(
         async_warm_slow_sources = sorted(set(async_warm_slow_sources))
     if sync_fallback_slow_sources:
         sync_fallback_slow_sources = sorted(set(sync_fallback_slow_sources))
+    if backlog_async_warm_slow_sources:
+        backlog_async_warm_slow_sources = sorted(set(backlog_async_warm_slow_sources))
     if circuit_blocked_slow_sources:
         circuit_blocked_slow_sources = sorted(set(circuit_blocked_slow_sources))
     if degraded_probe_sources:
@@ -14338,8 +14412,10 @@ async def federated_search_memory(
             "degraded_probe_sources": degraded_probe_sources,
             "backlog_gating_enabled": RETRIEVAL_BACKLOG_GATING_ENABLED,
             "backlog_blocked_sources": backlog_blocked_slow_sources,
+            "backlog_async_warm_sources": backlog_async_warm_slow_sources,
             "backlog_summary": backlog_policy.get("summary"),
             "backlog_summary_fresh": backlog_policy.get("summary_fresh"),
+            "sync_slow_requires_explicit": RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT,
         },
         "learning_rerank": {
             "enabled": learning_enabled,
@@ -14415,9 +14491,12 @@ async def _run_memory_recall_pipeline(
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     normalized_intent = _normalize_retrieval_intent(retrieval_intent)
     profile = agent_profile if isinstance(agent_profile, dict) else {}
+    source_override_requested = bool(sources is not None)
+    if "_source_override_requested" in profile:
+        source_override_requested = bool(profile.get("_source_override_requested"))
     profile_sources = profile.get("sources") if isinstance(profile.get("sources"), list) else None
     profile_weights = profile.get("source_weights") if isinstance(profile.get("source_weights"), dict) else None
-    resolved_sources = sources if sources is not None else profile_sources
+    resolved_sources = sources if source_override_requested else profile_sources
     merged_weights = dict(profile_weights) if profile_weights else {}
     if source_weights:
         for key, value in source_weights.items():
@@ -14445,11 +14524,14 @@ async def _run_memory_recall_pipeline(
                 query_variants = filtered
     max_variants_allowed = RETRIEVAL_QUERY_EXPANSION_MAX_VARIANTS
     max_escalation_steps = AGENT_RECALL_MAX_ESCALATION_STEPS
+    if normalized_mode == RETRIEVAL_MODE_FAST:
+        # Keep fast mode bounded to one variant to protect latency.
+        max_variants_allowed = 1
     if scoped_query:
         max_variants_allowed = min(max_variants_allowed, RECALL_SCOPED_QUERY_VARIANT_CAP)
         max_escalation_steps = min(max_escalation_steps, RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS)
     query_variants = query_variants[: max(1, int(max_variants_allowed))]
-    recall_budget_secs = float(RECALL_E2E_BUDGET_SECS)
+    recall_budget_secs = _recall_e2e_budget_for_mode(normalized_mode)
     recall_budget_enabled = recall_budget_secs > 0.0
     recall_started_monotonic = time.monotonic()
     recall_deadline_monotonic = (
@@ -14520,6 +14602,7 @@ async def _run_memory_recall_pipeline(
                 project_filter=project_filter,
                 topic_filter=topic_filter,
                 sources=resolved_sources,
+                explicit_source_override=source_override_requested,
                 source_weights=resolved_weights,
                 preferences=preferences,
                 rerank_with_learning=rerank_with_learning,
@@ -14626,6 +14709,7 @@ async def _run_memory_recall_pipeline(
             "scoped_query": scoped_query,
             "scoped_structural_variant_filtered": scoped_structural_variant_filtered,
             "scoped_variant_cap": RECALL_SCOPED_QUERY_VARIANT_CAP,
+            "source_override_requested": source_override_requested,
             "variants_considered": query_variants,
             "variants_used": [record.get("query") for record in variant_debug_records],
         },
@@ -17189,15 +17273,27 @@ async def _scheduler_submit_via_runtime(
             run_after=run_after,
             max_attempts=max_attempts,
         )
-    request = RuntimeTaskSubmitRequest(
-        title=title,
-        project=project,
-        agent=agent,
-        priority=priority,
-        payload=payload,
-        run_after=run_after,
-        max_attempts=max_attempts,
-    )
+    if RuntimeTaskSubmitRequest is None:
+        # Runtime bindings may be partially unavailable in lightweight test imports.
+        request = SimpleNamespace(
+            title=title,
+            project=project,
+            agent=agent,
+            priority=priority,
+            payload=payload,
+            run_after=run_after,
+            max_attempts=max_attempts,
+        )
+    else:
+        request = RuntimeTaskSubmitRequest(
+            title=title,
+            project=project,
+            agent=agent,
+            priority=priority,
+            payload=payload,
+            run_after=run_after,
+            max_attempts=max_attempts,
+        )
     return await runtime.scheduler.submit_task(request)
 
 
@@ -17948,6 +18044,8 @@ async def search_memory(payload: MemorySearch):
         "intent": retrieval_intent,
     }
     requested_sources = payload.sources if isinstance(payload.sources, list) else None
+    policy_default_sources: list[str] | None = None
+    source_override_requested = bool(requested_sources is not None)
     profile_sources = (
         agent_profile.get("sources")
         if isinstance(agent_profile.get("sources"), list)
@@ -17962,12 +18060,18 @@ async def search_memory(payload: MemorySearch):
         and _looks_like_trading_project(project_filter)
         and profile_sources_default
     ):
-        requested_sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_default_sources = _resolve_intent_default_sources(retrieval_intent)
         policy_debug["projectDefaultsApplied"] = True
         policy_debug["intentDefaultSourcesApplied"] = True
         pre_warnings.append(
             f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
         )
+    effective_agent_profile = dict(agent_profile)
+    if policy_default_sources is not None and requested_sources is None:
+        effective_agent_profile["sources"] = list(policy_default_sources)
+        effective_agent_profile["_source_override_requested"] = False
+    else:
+        effective_agent_profile["_source_override_requested"] = source_override_requested
     if (
         not topic_filter
         and not payload.topic_path
@@ -18040,11 +18144,12 @@ async def search_memory(payload: MemorySearch):
                 "matched_results": 0,
                 "total_results": 0,
             },
-            "policy": {
-                **policy_debug,
-                "effectiveSources": requested_sources or profile_sources or [],
-            },
-        }
+                "policy": {
+                    **policy_debug,
+                    "effectiveSources": requested_sources or policy_default_sources or profile_sources or [],
+                    "sourceOverrideRequested": source_override_requested,
+                },
+            }
         response: dict[str, Any] = {
             "results": [],
             "preferences": preferences,
@@ -18102,7 +18207,7 @@ async def search_memory(payload: MemorySearch):
         rerank_with_learning=payload.rerank_with_learning,
         retrieval_mode=retrieval_mode,
         retrieval_intent=retrieval_intent,
-        agent_profile=agent_profile,
+        agent_profile=effective_agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
     )
@@ -18130,8 +18235,7 @@ async def search_memory(payload: MemorySearch):
             pre_warnings.append(
                 "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
             )
-    if pre_warnings:
-        warnings = pre_warnings + warnings
+    warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
 
     if payload.fetch_content:
         runtime = await _get_migration_runtime()
@@ -18179,7 +18283,12 @@ async def search_memory(payload: MemorySearch):
         "project_suggestions": project_suggestions,
         "retrieval_policy": {
             **policy_debug,
-            "effectiveSources": requested_sources or profile_sources or [],
+            "effectiveSources": (
+                retrieval_debug.get("sources")
+                if isinstance(retrieval_debug.get("sources"), list)
+                else requested_sources or policy_default_sources or profile_sources or []
+            ),
+            "sourceOverrideRequested": source_override_requested,
         },
         "degraded": bool(
             not results
@@ -18208,7 +18317,12 @@ async def search_memory(payload: MemorySearch):
         retrieval_payload["topic_scope"] = topic_scope_debug
         retrieval_payload["policy"] = {
             **policy_debug,
-            "effectiveSources": requested_sources or profile_sources or [],
+            "effectiveSources": (
+                retrieval_debug.get("sources")
+                if isinstance(retrieval_debug.get("sources"), list)
+                else requested_sources or policy_default_sources or profile_sources or []
+            ),
+            "sourceOverrideRequested": source_override_requested,
         }
         response["retrieval"] = retrieval_payload
     return response
@@ -18275,6 +18389,10 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         or ""
     ).strip() or None
     sources = request_payload.get("sources") if isinstance(request_payload.get("sources"), list) else None
+    source_override_requested = bool(sources is not None)
+    policy_default_sources: list[str] | None = None
+    source_override_requested = bool(sources is not None)
+    policy_default_sources: list[str] | None = None
     source_weights = (
         request_payload.get("source_weights")
         if isinstance(request_payload.get("source_weights"), dict)
@@ -18323,7 +18441,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         sources is None
         and _looks_like_trading_project(project_filter)
     ):
-        sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_default_sources = _resolve_intent_default_sources(retrieval_intent)
         policy_debug["projectDefaultsApplied"] = True
         policy_debug["intentDefaultSourcesApplied"] = True
         pre_warnings.append(
@@ -18344,7 +18462,8 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         limit=limit,
         project_filter=project_filter,
         topic_filter=topic_filter,
-        sources=sources,
+        sources=sources or policy_default_sources,
+        explicit_source_override=source_override_requested,
         source_weights=source_weights,
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
@@ -18377,7 +18496,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
             pre_warnings.append(
                 "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
             )
-    combined_warnings = pre_warnings + warnings if pre_warnings else warnings
+    combined_warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
     retrieval_payload = dict(retrieval_debug)
     retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
         str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
@@ -18386,7 +18505,12 @@ async def engine_retrieval_query(payload: dict[str, Any]):
     retrieval_payload["topic_scope"] = topic_scope_debug
     retrieval_payload["policy"] = {
         **policy_debug,
-        "effectiveSources": sources or [],
+        "effectiveSources": (
+            retrieval_debug.get("sources")
+            if isinstance(retrieval_debug.get("sources"), list)
+            else sources or policy_default_sources or []
+        ),
+        "sourceOverrideRequested": source_override_requested,
     }
     return {
         "results": results,
@@ -18414,6 +18538,8 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         or ""
     ).strip() or None
     sources = request_payload.get("sources") if isinstance(request_payload.get("sources"), list) else None
+    source_override_requested = bool(sources is not None)
+    policy_default_sources: list[str] | None = None
     source_weights = (
         request_payload.get("source_weights")
         if isinstance(request_payload.get("source_weights"), dict)
@@ -18469,12 +18595,18 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         sources is None
         and _looks_like_trading_project(project_filter)
     ):
-        sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_default_sources = _resolve_intent_default_sources(retrieval_intent)
         policy_debug["projectDefaultsApplied"] = True
         policy_debug["intentDefaultSourcesApplied"] = True
         pre_warnings.append(
             f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
         )
+    effective_agent_profile = dict(agent_profile) if isinstance(agent_profile, dict) else {}
+    if policy_default_sources is not None and sources is None:
+        effective_agent_profile["sources"] = list(policy_default_sources)
+        effective_agent_profile["_source_override_requested"] = False
+    else:
+        effective_agent_profile["_source_override_requested"] = source_override_requested
     topic_scope_prefixes: list[str] = []
     if (
         not topic_filter
@@ -18496,7 +18628,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
         retrieval_intent=retrieval_intent,
-        agent_profile=agent_profile,
+        agent_profile=effective_agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
     )
@@ -18525,7 +18657,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
             pre_warnings.append(
                 "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
             )
-    combined_warnings = pre_warnings + warnings if pre_warnings else warnings
+    combined_warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
     retrieval_payload = dict(retrieval_debug)
     retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
         str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
@@ -18534,7 +18666,12 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     retrieval_payload["topic_scope"] = topic_scope_debug
     retrieval_payload["policy"] = {
         **policy_debug,
-        "effectiveSources": sources or [],
+        "effectiveSources": (
+            retrieval_debug.get("sources")
+            if isinstance(retrieval_debug.get("sources"), list)
+            else sources or policy_default_sources or []
+        ),
+        "sourceOverrideRequested": source_override_requested,
     }
     return {
         "results": results,

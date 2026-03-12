@@ -198,6 +198,7 @@ Required behavior:
    - fast: 25s
    - balanced: 60s
    - deep (or explicit `letta`/`memory_bank` sources): 75s
+   Fast/balanced modes keep slow sources async by default unless explicitly requested (`sources=[...]`); deep mode can still block on slow sources.
    If the first deep read times out, retry the same query once; staged fetch plus circuit/backlog gating returns best-available results first and can warm slow sources on follow-up.
 ```
 
