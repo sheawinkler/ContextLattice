@@ -2070,6 +2070,157 @@ async def test_tool_topics_list_project_scope(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_ops_queue_status_reports_pressure(monkeypatch: pytest.MonkeyPatch):
+    queue = asyncio.Queue(maxsize=10)
+    for _ in range(8):
+        queue.put_nowait({"event_id": str(_)})
+    monkeypatch.setattr(orchestrator, "memory_write_queue", queue)
+    monkeypatch.setattr(orchestrator, "MEMORY_WRITE_QUEUE_MAX", 10)
+    monkeypatch.setattr(
+        orchestrator,
+        "outbox_health",
+        {
+            "lastError": "MindsDB autosync error: verification failed",
+            "lastProcessedAt": "2026-03-12T00:00:00Z",
+            "lastBatchSize": 4,
+        },
+    )
+    monkeypatch.setattr(orchestrator, "LETTA_ADMISSION_BACKLOG_SOFT_LIMIT", 500)
+    monkeypatch.setattr(orchestrator, "LETTA_ADMISSION_BACKLOG_HARD_LIMIT", 1500)
+    monkeypatch.setattr(orchestrator, "LETTA_ADMISSION_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "FANOUT_BACKPRESSURE_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "FANOUT_BACKPRESSURE_TARGETS", ["letta"])
+    monkeypatch.setattr(orchestrator, "FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK", 0.65)
+    monkeypatch.setattr(orchestrator, "FANOUT_BACKPRESSURE_MAX_SLEEP_SECS", 1.25)
+    monkeypatch.setattr(orchestrator, "memory_write_queue_processed", 25)
+    monkeypatch.setattr(orchestrator, "memory_write_queue_dropped", 2)
+    monkeypatch.setattr(orchestrator, "letta_admission_last_reason", "excluded_file_pattern")
+    monkeypatch.setattr(orchestrator, "letta_admission_last_backlog", 900)
+
+    async def _summary():
+        return {
+            "by_status": {"pending": 900, "retrying": 600, "running": 12, "failed": 5, "succeeded": 200},
+            "by_target": {"letta": {"pending": 800, "retrying": 100, "running": 10}},
+        }
+
+    async def _deadletters(_statuses, limit=100, target=None):
+        return [
+            {"target": "mindsdb", "id": 1},
+            {"target": "mindsdb", "id": 2},
+            {"target": "letta", "id": 3},
+        ][:limit]
+
+    monkeypatch.setattr(orchestrator, "get_fanout_summary", _summary)
+    monkeypatch.setattr(orchestrator, "list_fanout_jobs", _deadletters)
+    payload = orchestrator.OpsQueueStatusRequest(
+        include_deadletters=True,
+        deadletter_limit=10,
+        queue_high_watermark=0.7,
+    )
+    result = await orchestrator.tool_ops_queue_status(payload)
+    assert result["queue"]["highWatermarkExceeded"] is True
+    assert result["deadletters"]["byTarget"]["mindsdb"] == 2
+    assert result["lettaAdmission"]["backlog"] == 900
+    assert result["nextActions"]
+
+
+@pytest.mark.asyncio
+async def test_tool_memory_write_batch_request_and_item_idempotency(monkeypatch: pytest.MonkeyPatch):
+    calls = {"count": 0}
+
+    async def _write_memory(payload: Any, _request: Request):
+        calls["count"] += 1
+        return {
+            "ok": True,
+            "event_id": f"evt-{calls['count']}",
+            "warnings": [],
+            "fanout": {"mongo_raw": "succeeded"},
+        }
+
+    monkeypatch.setattr(orchestrator, "write_memory", _write_memory)
+    monkeypatch.setattr(orchestrator, "MEMORY_WRITE_BATCH_MAX_ITEMS", 16)
+    monkeypatch.setattr(orchestrator, "MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS", 900.0)
+    monkeypatch.setattr(orchestrator, "memory_write_batch_request_idempotency_seen", orchestrator.OrderedDict())
+    monkeypatch.setattr(orchestrator, "memory_write_batch_item_idempotency_seen", orchestrator.OrderedDict())
+    monkeypatch.setattr(
+        orchestrator,
+        "memory_write_batch_metrics",
+        {
+            "accepted": 0,
+            "rejected": 0,
+            "requestIdempotentHits": 0,
+            "itemIdempotentHits": 0,
+            "itemSuccesses": 0,
+            "itemFailures": 0,
+        },
+    )
+
+    payload = orchestrator.MemoryWriteBatchRequest(
+        idempotencyKey="req-1",
+        items=[
+            orchestrator.MemoryWriteBatchItem(
+                projectName="alpha",
+                fileName="notes/a.md",
+                content="hello",
+                itemId="a1",
+                idempotencyKey="item-1",
+            ),
+            orchestrator.MemoryWriteBatchItem(
+                projectName="alpha",
+                fileName="notes/b.md",
+                content="hello",
+                itemId="a2",
+                idempotencyKey="item-1",
+            ),
+        ],
+    )
+
+    first = await orchestrator.tool_memory_write_batch(payload)
+    second = await orchestrator.tool_memory_write_batch(payload)
+    assert first["ok"] is True
+    assert first["succeeded"] == 2
+    assert calls["count"] == 1  # second row replayed via item idempotency
+    assert second["idempotentReplay"] is True
+    assert second["idempotencyScope"] == "request"
+    assert orchestrator.memory_write_batch_metrics["requestIdempotentHits"] >= 1
+
+
+def test_sanitize_mindsdb_query_text_truncates_controls():
+    raw = "alpha\x00\x1f\t\tbeta " + ("x" * 1000)
+    cleaned = orchestrator._sanitize_mindsdb_query_text(raw)
+    assert "\x00" not in cleaned
+    assert "\x1f" not in cleaned
+    assert len(cleaned) <= orchestrator.MINDSDB_QUERY_TEXT_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_get_retrieval_source_quality_summarizes_deltas(monkeypatch: pytest.MonkeyPatch):
+    async def _metrics(_limit: int):
+        return {
+            "updatedAt": "2026-03-12T00:00:00Z",
+            "latency": {
+                "sources": {
+                    "qdrant": {"requests": 100, "timeouts": 2, "p50Ms": 40, "p95Ms": 500, "p99Ms": 900},
+                    "letta": {"requests": 100, "timeouts": 80, "p50Ms": 10000, "p95Ms": 39000, "p99Ms": 40000},
+                }
+            },
+            "recallQuality": {
+                "bySource": {
+                    "qdrant": {"requests": 1000, "errors": 1, "errorRate": 0.001},
+                    "letta": {"requests": 1000, "errors": 100, "errorRate": 0.1},
+                }
+            },
+        }
+
+    monkeypatch.setattr(orchestrator, "_build_retrieval_metrics_payload", _metrics)
+    result = await orchestrator.get_retrieval_source_quality(limit=5)
+    assert result["baselineSource"] == "qdrant"
+    assert result["sources"][0]["source"] == "letta"
+    assert result["sources"][0]["errorRateDeltaVsQdrant"] > 0
+    assert any("Letta timeout rate is high" in row for row in result["recommendations"])
+
+
+@pytest.mark.asyncio
 async def test_openclaw_surface_blocks_secret_like_remember_content(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "MESSAGING_OPENCLAW_STRICT_SECURITY", True)
     parsed = {

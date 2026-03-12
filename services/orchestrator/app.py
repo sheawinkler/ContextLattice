@@ -91,6 +91,13 @@ except Exception as exc:  # pragma: no cover - optional migration path
     runtime_snapshot = None  # type: ignore
     _runtime_import_error = str(exc)
 
+_runtime_adapter_registry_error: str | None = None
+try:
+    from runtime.adapters import adapter_flags_snapshot
+except Exception as exc:  # pragma: no cover - optional adapter path
+    adapter_flags_snapshot = None  # type: ignore
+    _runtime_adapter_registry_error = str(exc)
+
 def _env_alias(primary: str, legacy: str, default: str = "") -> str:
     """Return primary env value when present, else legacy env value, else default."""
     if primary in os.environ:
@@ -819,11 +826,20 @@ MEMORY_WRITE_DEDUP_ENABLED = os.getenv("MEMORY_WRITE_DEDUP_ENABLED", "true").low
 )
 MEMORY_WRITE_DEDUP_WINDOW_SECS = float(os.getenv("MEMORY_WRITE_DEDUP_WINDOW_SECS", "120"))
 MEMORY_WRITE_DEDUP_MAX_KEYS = int(os.getenv("MEMORY_WRITE_DEDUP_MAX_KEYS", "10000"))
+MEMORY_WRITE_BATCH_MAX_ITEMS = max(1, int(os.getenv("MEMORY_WRITE_BATCH_MAX_ITEMS", "64")))
+MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS = max(
+    30.0,
+    float(os.getenv("MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS", "900")),
+)
 MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED = os.getenv(
     "MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS = int(os.getenv("MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS", "50000"))
+MINDSDB_QUERY_TEXT_MAX_CHARS = max(
+    64,
+    int(os.getenv("ORCH_MINDSDB_QUERY_TEXT_MAX_CHARS", "640")),
+)
 HOT_MEMORY_FILE_SUFFIXES = [
     suffix.strip().lower()
     for suffix in os.getenv("HOT_MEMORY_FILE_SUFFIXES", "__latest.json").split(",")
@@ -3307,6 +3323,14 @@ def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
     return "lz4" in text and ("decompress" in text or "decompressionfailed" in text)
 
 
+def _sanitize_mindsdb_query_text(query: str) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(query or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > MINDSDB_QUERY_TEXT_MAX_CHARS:
+        text = text[:MINDSDB_QUERY_TEXT_MAX_CHARS].rstrip()
+    return text
+
+
 def _mindsdb_retrieval_circuit_open(now_monotonic: float | None = None) -> bool:
     if not MINDSDB_RETRIEVAL_CIRCUIT_ENABLED:
         return False
@@ -4646,6 +4670,12 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         "shadowDualRun": bool(getattr(MIGRATION_FLAGS, "shadow_dual_run", False)),
         "canaryEnabled": bool(getattr(MIGRATION_FLAGS, "canary_enabled", False)),
     }
+    if callable(adapter_flags_snapshot):
+        adapter_flags = adapter_flags_snapshot()
+    else:
+        adapter_flags = {
+            "error": _runtime_adapter_registry_error or "adapter registry unavailable",
+        }
     return {
         "updatedAt": _utc_now(),
         "defaultMode": RETRIEVAL_MODE_DEFAULT,
@@ -4740,6 +4770,7 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             **runtime_flags,
             "rollbackPath": "python_fallback_available",
         },
+        "adapterFlags": adapter_flags,
         "lifecycle": lifecycle_state,
         "alerts": alerts,
     }
@@ -5564,6 +5595,17 @@ memory_write_history = deque(maxlen=MEMORY_WRITE_HISTORY_LIMIT)
 memory_write_history_lock = asyncio.Lock()
 memory_write_dedupe_lock = asyncio.Lock()
 memory_write_dedupe_seen: dict[str, float] = {}
+memory_write_batch_idempotency_lock = asyncio.Lock()
+memory_write_batch_request_idempotency_seen: OrderedDict[str, dict[str, Any]] = OrderedDict()
+memory_write_batch_item_idempotency_seen: OrderedDict[str, dict[str, Any]] = OrderedDict()
+memory_write_batch_metrics: dict[str, int] = {
+    "accepted": 0,
+    "rejected": 0,
+    "requestIdempotentHits": 0,
+    "itemIdempotentHits": 0,
+    "itemSuccesses": 0,
+    "itemFailures": 0,
+}
 memory_write_latest_hash_lock = asyncio.Lock()
 memory_write_latest_hashes: dict[str, str] = {}
 memory_bank_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MEMORY_BANK_QUEUE_MAX)
@@ -7191,6 +7233,56 @@ def build_memory_write_dedupe_key(project: str, file_name: str, content: str) ->
 
 def memory_content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _memory_write_batch_cache_key(key: str, scope: str) -> str:
+    normalized_key = str(key or "").strip()
+    if not normalized_key:
+        return ""
+    digest = hashlib.sha256(f"{scope}:{normalized_key}".encode("utf-8")).hexdigest()
+    return f"{scope}:{digest}"
+
+
+async def _memory_write_batch_idempotency_get(
+    cache: OrderedDict[str, dict[str, Any]],
+    key: str,
+) -> dict[str, Any] | None:
+    if not key:
+        return None
+    now = time.monotonic()
+    ttl = max(30.0, MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS)
+    stale: list[str] = []
+    for cache_key, payload in list(cache.items()):
+        seen_at = float(payload.get("seenAtMonotonic") or 0.0)
+        if seen_at + ttl < now:
+            stale.append(cache_key)
+    for cache_key in stale:
+        cache.pop(cache_key, None)
+    payload = cache.get(key)
+    if payload is None:
+        return None
+    cache.move_to_end(key)
+    cached_result = payload.get("result")
+    if isinstance(cached_result, dict):
+        return dict(cached_result)
+    return None
+
+
+async def _memory_write_batch_idempotency_set(
+    cache: OrderedDict[str, dict[str, Any]],
+    key: str,
+    result: dict[str, Any],
+) -> None:
+    if not key:
+        return
+    cache[key] = {
+        "seenAtMonotonic": time.monotonic(),
+        "result": dict(result),
+    }
+    cache.move_to_end(key)
+    max_keys = max(128, MEMORY_WRITE_DEDUP_MAX_KEYS)
+    while len(cache) > max_keys:
+        cache.popitem(last=False)
 
 
 async def should_skip_duplicate_memory_write(dedupe_key: str, now_monotonic: float | None = None) -> bool:
@@ -10731,6 +10823,20 @@ class MemoryWrite(BaseModel):
     topicPath: str | None = Field(None, description="Optional topic path override")
 
 
+class MemoryWriteBatchItem(BaseModel):
+    projectName: str = Field(..., description="Project identifier")
+    fileName: str = Field(..., description="File name inside the project")
+    content: str = Field(..., description="Payload to store")
+    topicPath: str | None = Field(None, description="Optional topic path override")
+    itemId: str | None = Field(None, description="Optional caller-provided item identifier")
+    idempotencyKey: str | None = Field(None, description="Optional per-item idempotency key")
+
+
+class MemoryWriteBatchRequest(BaseModel):
+    items: list[MemoryWriteBatchItem] = Field(..., description="Write items")
+    idempotencyKey: str | None = Field(None, description="Optional request-level idempotency key")
+
+
 class AgentTaskCreate(BaseModel):
     title: str = Field(..., description="Short task label")
     project: str | None = Field(None, description="Project identifier")
@@ -13035,6 +13141,9 @@ async def search_mindsdb_memory(
     except Exception as exc:
         _log_mindsdb_retrieval_warning("bootstrap", f"MindsDB retrieval bootstrap failed: {exc}")
         return []
+    safe_query = _sanitize_mindsdb_query_text(query)
+    if not safe_query:
+        return []
     table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     clauses: list[str] = []
     if project_filter:
@@ -13042,7 +13151,7 @@ async def search_mindsdb_memory(
     if topic_filter:
         escaped_topic = _escape_sql_literal(topic_filter)
         clauses.append(f"(file LIKE '{escaped_topic}/%' OR file LIKE '{escaped_topic}%')")
-    terms = _query_terms(query, max_terms=6)
+    terms = _query_terms(safe_query, max_terms=6)
     if terms:
         term_predicates = [
             f"LOWER(summary) LIKE '%{_escape_sql_literal(term.lower())}%'"
@@ -13088,7 +13197,7 @@ async def search_mindsdb_memory(
         project = str(row.get("project") or "")
         file_name = str(row.get("file") or "")
         summary = str(row.get("summary") or "")
-        score = _text_match_score(query, f"{project}\n{file_name}\n{summary}")
+        score = _text_match_score(safe_query, f"{project}\n{file_name}\n{summary}")
         if score <= 0 and terms:
             continue
         rows.append(
@@ -14780,6 +14889,319 @@ def _prepare_content_for_storage(content: str) -> tuple[str, str | None]:
     return payload, None
 
 
+async def _execute_memory_write_batch(
+    payload: MemoryWriteBatchRequest,
+    request: Request,
+    source_path: str,
+) -> dict[str, Any]:
+    items = payload.items if isinstance(payload.items, list) else []
+    if not items:
+        async with memory_write_batch_idempotency_lock:
+            memory_write_batch_metrics["rejected"] = int(memory_write_batch_metrics.get("rejected", 0)) + 1
+        raise HTTPException(422, "items must contain at least one write")
+    if len(items) > MEMORY_WRITE_BATCH_MAX_ITEMS:
+        async with memory_write_batch_idempotency_lock:
+            memory_write_batch_metrics["rejected"] = int(memory_write_batch_metrics.get("rejected", 0)) + 1
+        raise HTTPException(422, f"batch exceeds MEMORY_WRITE_BATCH_MAX_ITEMS={MEMORY_WRITE_BATCH_MAX_ITEMS}")
+
+    request_key = _memory_write_batch_cache_key(payload.idempotencyKey or "", "request")
+    if request_key:
+        async with memory_write_batch_idempotency_lock:
+            cached_response = await _memory_write_batch_idempotency_get(
+                memory_write_batch_request_idempotency_seen,
+                request_key,
+            )
+            if cached_response is not None:
+                memory_write_batch_metrics["requestIdempotentHits"] = (
+                    int(memory_write_batch_metrics.get("requestIdempotentHits", 0)) + 1
+                )
+                replayed = dict(cached_response)
+                replayed["idempotentReplay"] = True
+                replayed["idempotencyScope"] = "request"
+                return replayed
+
+    results: list[dict[str, Any]] = []
+    successes = 0
+    failures = 0
+    local_item_cache: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(items):
+        item_key = _memory_write_batch_cache_key(item.idempotencyKey or "", "item")
+        cached_item: dict[str, Any] | None = None
+        if item_key and item_key in local_item_cache:
+            cached_item = dict(local_item_cache[item_key])
+        elif item_key:
+            async with memory_write_batch_idempotency_lock:
+                cached_item = await _memory_write_batch_idempotency_get(
+                    memory_write_batch_item_idempotency_seen,
+                    item_key,
+                )
+                if cached_item is not None:
+                    memory_write_batch_metrics["itemIdempotentHits"] = (
+                        int(memory_write_batch_metrics.get("itemIdempotentHits", 0)) + 1
+                    )
+                    local_item_cache[item_key] = dict(cached_item)
+
+        if cached_item is not None:
+            item_result = dict(cached_item)
+            item_result["index"] = index
+            item_result["itemId"] = item.itemId
+            item_result["idempotentReplay"] = True
+            item_result["idempotencyScope"] = "item"
+            results.append(item_result)
+            if bool(item_result.get("ok")):
+                successes += 1
+            else:
+                failures += 1
+            continue
+
+        try:
+            write_result = await write_memory(
+                MemoryWrite(
+                    projectName=item.projectName,
+                    fileName=item.fileName,
+                    content=item.content,
+                    topicPath=item.topicPath,
+                ),
+                request,
+            )
+            item_result = {
+                "index": index,
+                "itemId": item.itemId,
+                "ok": bool(write_result.get("ok", True)),
+                "event_id": write_result.get("event_id"),
+                "warnings": list(write_result.get("warnings") or []),
+                "fanout": dict(write_result.get("fanout") or {}),
+                "rollup_buffered": bool(write_result.get("rollup_buffered", False)),
+                "deduped": bool(write_result.get("deduped", False)),
+                "latest_hash_unchanged": bool(write_result.get("latest_hash_unchanged", False)),
+            }
+            successes += 1 if item_result["ok"] else 0
+            failures += 0 if item_result["ok"] else 1
+        except HTTPException as exc:
+            item_result = {
+                "index": index,
+                "itemId": item.itemId,
+                "ok": False,
+                "error": {
+                    "status": int(exc.status_code),
+                    "detail": str(exc.detail),
+                },
+                "warnings": [],
+                "fanout": {},
+            }
+            failures += 1
+        except Exception as exc:  # pragma: no cover - unexpected runtime path
+            item_result = {
+                "index": index,
+                "itemId": item.itemId,
+                "ok": False,
+                "error": {
+                    "status": 500,
+                    "detail": str(exc),
+                },
+                "warnings": [],
+                "fanout": {},
+            }
+            failures += 1
+
+        if item_key:
+            cacheable_result = {
+                key: value
+                for key, value in item_result.items()
+                if key not in {"index", "itemId"}
+            }
+            local_item_cache[item_key] = dict(cacheable_result)
+            async with memory_write_batch_idempotency_lock:
+                await _memory_write_batch_idempotency_set(
+                    memory_write_batch_item_idempotency_seen,
+                    item_key,
+                    cacheable_result,
+                )
+        results.append(item_result)
+
+    response = {
+        "ok": failures == 0,
+        "partial": failures > 0 and successes > 0,
+        "source": source_path,
+        "accepted": len(items),
+        "succeeded": successes,
+        "failed": failures,
+        "results": results,
+    }
+
+    async with memory_write_batch_idempotency_lock:
+        memory_write_batch_metrics["accepted"] = int(memory_write_batch_metrics.get("accepted", 0)) + 1
+        memory_write_batch_metrics["itemSuccesses"] = (
+            int(memory_write_batch_metrics.get("itemSuccesses", 0)) + successes
+        )
+        memory_write_batch_metrics["itemFailures"] = (
+            int(memory_write_batch_metrics.get("itemFailures", 0)) + failures
+        )
+        if request_key:
+            await _memory_write_batch_idempotency_set(
+                memory_write_batch_request_idempotency_seen,
+                request_key,
+                response,
+            )
+    return response
+
+
+def _ops_queue_status_next_actions(
+    *,
+    pending: int,
+    retrying: int,
+    failed: int,
+    queue_ratio: float,
+    queue_high_watermark: float,
+    retrying_high_threshold: int,
+    pending_high_threshold: int,
+    letta_backlog: int,
+    letta_soft_limit: int,
+    last_error: str,
+) -> list[str]:
+    actions: list[str] = []
+    if failed > 0:
+        actions.append(
+            "Inspect deadletters via /telemetry/fanout/deadletters and run targeted rehydrate for safe subsets."
+        )
+    if retrying >= retrying_high_threshold:
+        actions.append(
+            "Retry backlog is elevated; run /telemetry/fanout/gc and verify per-target upstream health before rehydrate."
+        )
+    if pending >= pending_high_threshold:
+        actions.append(
+            "Pending backlog exceeded threshold; temporarily reduce optional sources for reads and increase worker throughput carefully."
+        )
+    if queue_ratio >= queue_high_watermark:
+        actions.append(
+            "In-memory fanout queue crossed high watermark; keep backpressure enabled and avoid large write bursts."
+        )
+    if letta_backlog >= letta_soft_limit:
+        actions.append(
+            "Letta backlog is above soft limit; keep staged fetch and throttle low-value Letta fanout until queue normalizes."
+        )
+    if "mindsdb autosync error" in last_error.lower():
+        actions.append(
+            "MindsDB autosync is failing; disable/de-prioritize MindsDB fanout temporarily or fix table/format compatibility first."
+        )
+    if not actions:
+        actions.append("Queue pressure is within configured limits; continue monitoring trend snapshots.")
+    return actions
+
+
+async def _build_ops_queue_status_payload(
+    *,
+    include_deadletters: bool = True,
+    deadletter_limit: int = 100,
+    deadletter_target: str | None = None,
+    queue_high_watermark: float | None = None,
+    pending_high_threshold: int | None = None,
+    retrying_high_threshold: int | None = None,
+) -> dict[str, Any]:
+    summary = await get_fanout_summary()
+    by_status = summary.get("by_status") if isinstance(summary.get("by_status"), dict) else {}
+    by_target = summary.get("by_target") if isinstance(summary.get("by_target"), dict) else {}
+    pending = int(by_status.get("pending", 0) or 0)
+    retrying = int(by_status.get("retrying", 0) or 0)
+    running = int(by_status.get("running", 0) or 0)
+    failed = int(by_status.get("failed", 0) or 0)
+    succeeded = int(by_status.get("succeeded", 0) or 0)
+    queue_depth = memory_write_queue.qsize()
+    queue_max = max(1, MEMORY_WRITE_QUEUE_MAX)
+    queue_ratio = queue_depth / queue_max
+    high_watermark = _normalize_watermark(
+        float(queue_high_watermark)
+        if queue_high_watermark is not None
+        else FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK
+    )
+    default_pending_threshold = max(500, LETTA_ADMISSION_BACKLOG_SOFT_LIMIT * 2)
+    default_retry_threshold = max(200, LETTA_ADMISSION_BACKLOG_SOFT_LIMIT)
+    pending_threshold = max(1, int(pending_high_threshold or default_pending_threshold))
+    retry_threshold = max(1, int(retrying_high_threshold or default_retry_threshold))
+    letta_state = by_target.get(FANOUT_TARGET_LETTA) if isinstance(by_target.get(FANOUT_TARGET_LETTA), dict) else {}
+    letta_backlog = int(letta_state.get("pending", 0) or 0) + int(letta_state.get("retrying", 0) or 0)
+    deadletters: list[dict[str, Any]] = []
+    deadletters_by_target: dict[str, int] = {}
+    if include_deadletters:
+        deadletters = await list_fanout_jobs(
+            ["failed"],
+            limit=max(1, min(deadletter_limit, 500)),
+            target=str(deadletter_target or "").strip() or None,
+        )
+        for row in deadletters:
+            target = str(row.get("target") or "unknown").strip().lower() or "unknown"
+            deadletters_by_target[target] = deadletters_by_target.get(target, 0) + 1
+    next_actions = _ops_queue_status_next_actions(
+        pending=pending,
+        retrying=retrying,
+        failed=failed,
+        queue_ratio=queue_ratio,
+        queue_high_watermark=high_watermark,
+        retrying_high_threshold=retry_threshold,
+        pending_high_threshold=pending_threshold,
+        letta_backlog=letta_backlog,
+        letta_soft_limit=LETTA_ADMISSION_BACKLOG_SOFT_LIMIT,
+        last_error=str(outbox_health.get("lastError") or ""),
+    )
+    return {
+        "updatedAt": _utc_now(),
+        "queue": {
+            "pending": pending,
+            "retrying": retrying,
+            "running": running,
+            "succeeded": succeeded,
+            "failed": failed,
+            "totalOutstanding": max(0, pending + retrying + running),
+            "memoryWriteQueueDepth": queue_depth,
+            "memoryWriteQueueMax": queue_max,
+            "memoryWriteQueueRatio": round(queue_ratio, 6),
+            "highWatermark": high_watermark,
+            "pendingHighThreshold": pending_threshold,
+            "retryingHighThreshold": retry_threshold,
+            "highWatermarkExceeded": queue_ratio >= high_watermark,
+        },
+        "deadletters": {
+            "included": include_deadletters,
+            "count": len(deadletters),
+            "byTarget": deadletters_by_target,
+            "items": deadletters if include_deadletters else [],
+        },
+        "trend": {
+            "snapshotAt": _utc_now(),
+            "queueDepth": queue_depth,
+            "outstanding": max(0, pending + retrying + running),
+            "processed": memory_write_queue_processed,
+            "dropped": memory_write_queue_dropped,
+            "lastProcessedAt": outbox_health.get("lastProcessedAt"),
+            "lastBatchSize": outbox_health.get("lastBatchSize"),
+        },
+        "backpressure": {
+            "enabled": FANOUT_BACKPRESSURE_ENABLED,
+            "targets": FANOUT_BACKPRESSURE_TARGETS,
+            "queueHighWatermark": _normalize_watermark(FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK),
+            "maxSleepSecs": max(0.0, FANOUT_BACKPRESSURE_MAX_SLEEP_SECS),
+        },
+        "lettaAdmission": {
+            "enabled": LETTA_ADMISSION_ENABLED,
+            "softLimit": LETTA_ADMISSION_BACKLOG_SOFT_LIMIT,
+            "hardLimit": LETTA_ADMISSION_BACKLOG_HARD_LIMIT,
+            "backlog": letta_backlog,
+            "lastReason": letta_admission_last_reason or None,
+            "lastBacklog": letta_admission_last_backlog,
+        },
+        "health": {
+            "lastError": outbox_health.get("lastError"),
+            "lastProcessedAt": outbox_health.get("lastProcessedAt"),
+        },
+        "nextActions": next_actions,
+    }
+
+
+@app.post("/memory/write/batch")
+async def write_memory_batch(payload: MemoryWriteBatchRequest, request: Request):
+    return await _execute_memory_write_batch(payload, request, "/memory/write/batch")
+
+
 @app.post("/memory/write")
 async def write_memory(payload: MemoryWrite, request: Request):
     global memory_write_queue_dropped
@@ -15331,6 +15753,11 @@ async def get_memory_metrics():
             "processed": memory_bank_queue_processed,
             "dropped": memory_bank_queue_dropped,
         },
+        "memoryWriteBatch": {
+            "maxItems": MEMORY_WRITE_BATCH_MAX_ITEMS,
+            "idempotencyTtlSecs": max(30.0, MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS),
+            "metrics": dict(memory_write_batch_metrics),
+        },
         "fanout": {
             "queueDepth": memory_write_queue.qsize(),
             "queueMax": MEMORY_WRITE_QUEUE_MAX,
@@ -15438,6 +15865,76 @@ async def get_memory_metrics():
 @app.get("/telemetry/retrieval")
 async def get_retrieval_metrics(limit: int = 20):
     return await _build_retrieval_metrics_payload(limit)
+
+
+@app.get("/telemetry/retrieval/source-quality")
+async def get_retrieval_source_quality(limit: int = 20):
+    payload = await _build_retrieval_metrics_payload(limit)
+    recall_quality = payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
+    latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
+    latency_sources = latency.get("sources") if isinstance(latency.get("sources"), dict) else {}
+    by_source = recall_quality.get("bySource") if isinstance(recall_quality.get("bySource"), dict) else {}
+    baseline_source = RETRIEVAL_SOURCE_QDRANT
+    baseline_error_rate = float(
+        (
+            by_source.get(baseline_source, {}).get("errorRate")
+            if isinstance(by_source.get(baseline_source), dict)
+            else 0.0
+        )
+        or 0.0
+    )
+    rows: list[dict[str, Any]] = []
+    source_names = sorted(set(latency_sources.keys()) | set(by_source.keys()))
+    for source_name in source_names:
+        source_latency = (
+            latency_sources.get(source_name)
+            if isinstance(latency_sources.get(source_name), dict)
+            else {}
+        )
+        source_quality = (
+            by_source.get(source_name)
+            if isinstance(by_source.get(source_name), dict)
+            else {}
+        )
+        requests = int(source_latency.get("requests") or source_quality.get("requests") or 0)
+        timeouts = int(source_latency.get("timeouts") or 0)
+        timeout_rate = (float(timeouts) / float(requests)) if requests > 0 else 0.0
+        error_rate = float(source_quality.get("errorRate") or 0.0)
+        rows.append(
+            {
+                "source": source_name,
+                "requests": requests,
+                "timeouts": timeouts,
+                "timeoutRate": round(timeout_rate, 6),
+                "errorRate": round(error_rate, 6),
+                "errorRateDeltaVsQdrant": round(error_rate - baseline_error_rate, 6),
+                "p50Ms": float(source_latency.get("p50Ms") or 0.0),
+                "p95Ms": float(source_latency.get("p95Ms") or 0.0),
+                "p99Ms": float(source_latency.get("p99Ms") or 0.0),
+            }
+        )
+    rows.sort(key=lambda item: (item["timeoutRate"], item["errorRate"], item["p95Ms"]), reverse=True)
+    recommendations: list[str] = []
+    if rows and rows[0]["timeoutRate"] >= 0.25:
+        recommendations.append(
+            "At least one source has timeout rate >= 25%; keep it out of default decision path or reduce time budget."
+        )
+    if any(row["source"] == RETRIEVAL_SOURCE_LETTA and row["timeoutRate"] >= 0.5 for row in rows):
+        recommendations.append(
+            "Letta timeout rate is high; keep staged fetch + backlog admission and avoid blocking critical read path on Letta."
+        )
+    if any(row["source"] == RETRIEVAL_SOURCE_MINDSDB and row["errorRate"] > 0 for row in rows):
+        recommendations.append(
+            "MindsDB source errors are non-zero; verify table format and keep LZ4 circuit protection enabled."
+        )
+    if not recommendations:
+        recommendations.append("Source quality is within expected bounds for current thresholds.")
+    return {
+        "updatedAt": payload.get("updatedAt"),
+        "baselineSource": baseline_source,
+        "sources": rows,
+        "recommendations": recommendations,
+    }
 
 
 @app.get("/telemetry/recall")
@@ -15662,6 +16159,25 @@ async def trigger_retention_run():
 async def get_fanout_deadletters(limit: int = 100, target: str | None = None):
     jobs = await list_fanout_jobs(["failed"], limit=limit, target=target)
     return {"items": jobs}
+
+
+@app.get("/ops/queue/status")
+async def get_ops_queue_status(
+    include_deadletters: bool = True,
+    deadletter_limit: int = 100,
+    deadletter_target: str | None = None,
+    queue_high_watermark: float | None = None,
+    pending_high_threshold: int | None = None,
+    retrying_high_threshold: int | None = None,
+):
+    return await _build_ops_queue_status_payload(
+        include_deadletters=include_deadletters,
+        deadletter_limit=deadletter_limit,
+        deadletter_target=deadletter_target,
+        queue_high_watermark=queue_high_watermark,
+        pending_high_threshold=pending_high_threshold,
+        retrying_high_threshold=retrying_high_threshold,
+    )
 
 
 @app.post("/telemetry/trading")
@@ -15914,6 +16430,15 @@ class TopicsListRequest(BaseModel):
     limit: int = Field(200, ge=1, le=5000)
     min_count: int = Field(1, ge=1)
     depth: int = Field(8, ge=1, le=16)
+
+
+class OpsQueueStatusRequest(BaseModel):
+    include_deadletters: bool = Field(True, description="Include deadletter details")
+    deadletter_limit: int = Field(100, ge=1, le=500)
+    deadletter_target: str | None = Field(None, description="Optional target filter for deadletters")
+    queue_high_watermark: float | None = Field(None, ge=0.01, le=1.0)
+    pending_high_threshold: int | None = Field(None, ge=1)
+    retrying_high_threshold: int | None = Field(None, ge=1)
 
 
 class MessagingCommandIn(BaseModel):
@@ -18159,6 +18684,27 @@ async def tool_topics_list(payload: TopicsListRequest):
             min_count=payload.min_count,
             depth=payload.depth,
         )
+
+
+@app.post("/tools/ops_queue_status")
+async def tool_ops_queue_status(payload: OpsQueueStatusRequest):
+    return await _build_ops_queue_status_payload(
+        include_deadletters=payload.include_deadletters,
+        deadletter_limit=payload.deadletter_limit,
+        deadletter_target=payload.deadletter_target,
+        queue_high_watermark=payload.queue_high_watermark,
+        pending_high_threshold=payload.pending_high_threshold,
+        retrying_high_threshold=payload.retrying_high_threshold,
+    )
+
+
+@app.post("/tools/memory_write_batch")
+async def tool_memory_write_batch(payload: MemoryWriteBatchRequest):
+    return await _execute_memory_write_batch(
+        payload,
+        _synthetic_request("/tools/memory_write_batch"),
+        "/tools/memory_write_batch",
+    )
 
 
 @app.post("/feedback")

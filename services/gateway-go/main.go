@@ -55,7 +55,11 @@ func isProxyPath(path string) bool {
 		"/v1/retrieval/batch-query",
 		"/v1/retrieval/health",
 		"/memory/search",
+		"/memory/write/batch",
 		"/memory/context-pack",
+		"/ops/queue/status",
+		"/tools/ops_queue_status",
+		"/tools/memory_write_batch",
 		"/v1/memory/put",
 		"/v1/memory/update",
 		"/v1/memory/get",
@@ -184,7 +188,11 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/batch-query", s.proxy)
 	mux.HandleFunc("/v1/retrieval/health", s.proxy)
 	mux.HandleFunc("/memory/search", s.proxy)
+	mux.HandleFunc("/memory/write/batch", s.proxy)
 	mux.HandleFunc("/memory/context-pack", s.proxy)
+	mux.HandleFunc("/ops/queue/status", s.proxy)
+	mux.HandleFunc("/tools/ops_queue_status", s.proxy)
+	mux.HandleFunc("/tools/memory_write_batch", s.proxy)
 	mux.HandleFunc("/v1/memory/put", s.proxy)
 	mux.HandleFunc("/v1/memory/update", s.proxy)
 	mux.HandleFunc("/v1/memory/get", s.proxy)

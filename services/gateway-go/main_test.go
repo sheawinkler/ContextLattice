@@ -134,6 +134,54 @@ func TestProxyForwardsMemorySearchRequest(t *testing.T) {
 	}
 }
 
+func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
+	var capturedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/tools/memory_write_batch",
+		strings.NewReader(`{"items":[{"projectName":"alpha","fileName":"notes/a.md","content":"x"}]}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for tools/memory_write_batch, got %d", resp.StatusCode)
+	}
+	if capturedPath != "/tools/memory_write_batch" {
+		t.Fatalf("expected /tools/memory_write_batch to be proxied, got %s", capturedPath)
+	}
+
+	resp2, err := http.Get(gateway.URL + "/ops/queue/status?include_deadletters=false")
+	if err != nil {
+		t.Fatalf("ops queue request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /ops/queue/status, got %d", resp2.StatusCode)
+	}
+	if capturedPath != "/ops/queue/status" {
+		t.Fatalf("expected /ops/queue/status to be proxied, got %s", capturedPath)
+	}
+}
+
 func TestHealthzIncludesBackendStatus(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
