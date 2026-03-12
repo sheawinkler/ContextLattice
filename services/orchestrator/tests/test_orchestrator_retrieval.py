@@ -542,7 +542,8 @@ async def test_search_letta_archival_timeout_warms_cache_async(monkeypatch: pyte
     assert orchestrator.letta_search_warm_started >= 1
     assert orchestrator.letta_search_warm_completed >= 1
     assert fake_client.calls[0] == 2.0
-    assert max(fake_client.calls) >= 12.0
+    assert max(fake_client.calls) >= 3.0
+    assert max(fake_client.calls) <= 12.0
 
     second = await orchestrator.search_letta_archival("warm cache", limit=5, project_filter="alpha")
     assert second
@@ -1209,6 +1210,210 @@ async def test_federated_search_staged_fetch_requires_fast_source_diversity(monk
     assert calls["letta"] == 1
     assert debug["staged_fetch"]["slow_sources_skipped"] == []
     assert debug["staged_fetch"]["slow_source_min_diversity"] == 2
+
+
+@pytest.mark.asyncio
+async def test_federated_search_hard_sync_async_split_uses_fallback_source(monkeypatch: pytest.MonkeyPatch):
+    calls = {"qdrant": 0, "letta": 0, "memory_bank": 0}
+
+    async def _qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": "fast/a.md",
+                "summary": "fast answer",
+                "score": 0.81,
+                "source": "qdrant",
+            }
+        ]
+
+    async def _letta(*args, **kwargs):
+        calls["letta"] += 1
+        return []
+
+    async def _memory_bank(*args, **kwargs):
+        calls["memory_bank"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": "slow/memory.md",
+                "summary": "fallback answer",
+                "score": 0.44,
+                "source": "memory_bank",
+            }
+        ]
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _memory_bank)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", 2)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK])
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA, orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
+    )
+
+    results, debug, _warnings = await orchestrator.federated_search_memory(
+        "alpha",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+
+    assert results
+    assert calls["qdrant"] == 1
+    assert calls["letta"] == 0
+    assert calls["memory_bank"] == 1
+    assert debug["staged_fetch"]["hard_sync_async_split"] is True
+    assert debug["staged_fetch"]["sync_fallback_sources"] == [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK]
+
+
+@pytest.mark.asyncio
+async def test_federated_search_circuit_blocks_degraded_slow_sources(monkeypatch: pytest.MonkeyPatch):
+    calls = {"qdrant": 0, "letta": 0}
+
+    async def _qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": f"fast/{idx}.md",
+                "summary": "fast answer",
+                "score": 0.93 - (idx * 0.01),
+                "source": "qdrant",
+            }
+            for idx in range(4)
+        ]
+
+    async def _letta(*args, **kwargs):
+        calls["letta"] += 1
+        return []
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N", 99)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_STABILITY_MIN_REQUESTS", 10)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_TIMEOUT_RATE_THRESHOLD", 0.5)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_ERROR_RATE_THRESHOLD", 0.6)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_RESULTS", 10)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE", 0.98)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY", 2)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA],
+    )
+    async with orchestrator.retrieval_latency_lock:
+        orchestrator.retrieval_source_request_counts.clear()
+        orchestrator.retrieval_source_error_counts.clear()
+        orchestrator.retrieval_source_timeout_counts.clear()
+        orchestrator.retrieval_slow_source_cooldown_until.clear()
+        orchestrator.retrieval_slow_source_probe_attempts.clear()
+        orchestrator.retrieval_source_request_counts[orchestrator.RETRIEVAL_SOURCE_LETTA] = 20
+        orchestrator.retrieval_source_timeout_counts[orchestrator.RETRIEVAL_SOURCE_LETTA] = 16
+
+    _results, debug, _warnings = await orchestrator.federated_search_memory(
+        "alpha",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+
+    assert calls["qdrant"] == 1
+    assert calls["letta"] == 0
+    assert orchestrator.RETRIEVAL_SOURCE_LETTA in debug["source_policy"]["circuit_blocked_sources"]
+
+
+@pytest.mark.asyncio
+async def test_federated_search_backlog_gating_blocks_letta(monkeypatch: pytest.MonkeyPatch):
+    calls = {"qdrant": 0, "letta": 0}
+
+    async def _qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        return [{"project": "alpha", "file": "fast/a.md", "summary": "fast", "score": 0.91, "source": "qdrant"}]
+
+    async def _letta(*args, **kwargs):
+        calls["letta"] += 1
+        return []
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_TARGETS", [orchestrator.RETRIEVAL_SOURCE_LETTA])
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX", 10)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX", 4)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA],
+    )
+    orchestrator.fanout_summary_cache["by_target"] = {
+        orchestrator.RETRIEVAL_SOURCE_LETTA: {"pending": 20, "retrying": 8, "running": 0}
+    }
+    orchestrator.fanout_summary_cache["updated_monotonic"] = time.monotonic()
+
+    _results, debug, _warnings = await orchestrator.federated_search_memory(
+        "alpha",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+
+    assert calls["qdrant"] == 1
+    assert calls["letta"] == 0
+    assert debug["source_policy"]["backlog_blocked_sources"] == [orchestrator.RETRIEVAL_SOURCE_LETTA]
 
 
 @pytest.mark.asyncio
@@ -2921,6 +3126,7 @@ async def test_federated_search_staged_fetch_skips_slow_sources(
     monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
     monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _memory_bank)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", False)
     monkeypatch.setattr(
         orchestrator,
         "DEFAULT_RETRIEVAL_FAST_SOURCES",

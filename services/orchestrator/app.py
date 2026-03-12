@@ -162,6 +162,17 @@ QDRANT_GRPC_PREFER = os.getenv("QDRANT_GRPC_PREFER", "true").lower() in ("1", "t
 QDRANT_GRPC_PORT = int(os.getenv("QDRANT_GRPC_PORT", "6334"))
 QDRANT_CLOUD_GRPC_PORT = int(os.getenv("QDRANT_CLOUD_GRPC_PORT", str(QDRANT_GRPC_PORT)))
 QDRANT_CLIENT_TIMEOUT_SECS = float(os.getenv("QDRANT_CLIENT_TIMEOUT_SECS", "30"))
+QDRANT_SEARCH_HNSW_EF = max(0, int(os.getenv("ORCH_QDRANT_SEARCH_HNSW_EF", "0")))
+QDRANT_SEARCH_EXACT = os.getenv("ORCH_QDRANT_SEARCH_EXACT", "false").lower() in ("1", "true", "yes", "on")
+QDRANT_SEARCH_INDEXED_ONLY = os.getenv("ORCH_QDRANT_SEARCH_INDEXED_ONLY", "false").lower() in ("1", "true", "yes", "on")
+QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED = os.getenv(
+    "ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR = min(
+    1.0,
+    max(0.2, float(os.getenv("ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR", "0.5"))),
+)
 QDRANT_URL = QDRANT_CLUSTER_ENDPOINT if QDRANT_USE_CLOUD and QDRANT_CLUSTER_ENDPOINT else QDRANT_LOCAL_URL
 QDRANT_COLLECTION = os.getenv("ORCH_QDRANT_COLLECTION", "memmcp_notes")
 MINDSDB_URL = os.getenv("MINDSDB_URL", "http://mindsdb:47334")
@@ -307,6 +318,10 @@ RETRIEVAL_LETTA_ASYNC_WARM_ENABLED = os.getenv(
 RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS = max(
     1.0,
     float(os.getenv("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS", "180")),
+)
+RETRIEVAL_LETTA_ASYNC_WARM_RESOLVE_TIMEOUT_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_RESOLVE_TIMEOUT_SECS", "8")),
 )
 RETRIEVAL_LETTA_ASYNC_WARM_MAX_INFLIGHT = max(
     1,
@@ -582,6 +597,42 @@ RETRIEVAL_ENABLE_STAGED_FETCH = os.getenv(
     "ORCH_RETRIEVAL_ENABLE_STAGED_FETCH",
     "true",
 ).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", "2")),
+)
+RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES",
+    "memory_bank",
+)
+RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT", "8")),
+)
+RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N", "8")),
+)
+RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS", "30")),
+)
 RETRIEVAL_FAST_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_FAST_SOURCES",
     "qdrant,mongo_raw,mindsdb,topic_rollups",
@@ -619,6 +670,26 @@ RETRIEVAL_SLOW_SOURCE_ERROR_RATE_THRESHOLD = min(
 RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS = max(
     10.0,
     float(os.getenv("ORCH_RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS", "180")),
+)
+RETRIEVAL_BACKLOG_GATING_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_BACKLOG_GATING_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_BACKLOG_GATING_TARGETS_ENV = os.getenv(
+    "ORCH_RETRIEVAL_BACKLOG_GATING_TARGETS",
+    "letta",
+)
+RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX", "700")),
+)
+RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX", "250")),
+)
+RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS", "8")),
 )
 RETRIEVAL_LETTA_DEGRADED_TIMEOUT_SECS = max(
     1.0,
@@ -1332,6 +1403,14 @@ if not DEFAULT_RETRIEVAL_SLOW_SOURCES:
         RETRIEVAL_SOURCE_LETTA,
         RETRIEVAL_SOURCE_MEMORY_BANK,
     ]
+RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES = _normalize_retrieval_source_csv(
+    RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES_ENV
+)
+if not RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES:
+    RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES = [RETRIEVAL_SOURCE_MEMORY_BANK]
+RETRIEVAL_BACKLOG_GATING_TARGETS = _normalize_retrieval_source_csv(RETRIEVAL_BACKLOG_GATING_TARGETS_ENV)
+if not RETRIEVAL_BACKLOG_GATING_TARGETS:
+    RETRIEVAL_BACKLOG_GATING_TARGETS = [RETRIEVAL_SOURCE_LETTA]
 RETRIEVAL_MODE_FAST = "fast"
 RETRIEVAL_MODE_BALANCED = "balanced"
 RETRIEVAL_MODE_DEEP = "deep"
@@ -2994,6 +3073,12 @@ retrieval_source_timeout_counts: dict[str, int] = {}
 retrieval_latency_mode_counts: dict[str, int] = {}
 retrieval_latency_updated_at: str | None = None
 retrieval_slow_source_cooldown_until: dict[str, float] = {}
+retrieval_slow_source_probe_attempts: dict[str, int] = {}
+retrieval_async_source_warm_lock = asyncio.Lock()
+retrieval_async_source_warm_inflight: dict[str, float] = {}
+retrieval_async_source_warm_started = 0
+retrieval_async_source_warm_completed = 0
+retrieval_async_source_warm_failed = 0
 mindsdb_retrieval_lz4_cooldown_until_monotonic = 0.0
 mindsdb_retrieval_lz4_hits = 0
 mindsdb_retrieval_lz4_skipped = 0
@@ -3313,7 +3398,12 @@ def _letta_effective_timeout(timeout_secs: float | None) -> float:
 
 
 def _is_retrieval_timeout_error(exc: Exception) -> bool:
-    return isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
+        return True
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    return any(token in text for token in ("timeout", "timed out", "deadline exceeded", "operation expired"))
 
 
 def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
@@ -3432,9 +3522,9 @@ async def _schedule_letta_search_cache_warm(
         or RETRIEVAL_LETTA_CACHE_MAX_KEYS <= 0
     ):
         return
-    warm_timeout = max(
-        float(prior_timeout_secs) + 1.0,
+    warm_timeout = min(
         RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS,
+        max(float(prior_timeout_secs) + 1.0, RETRIEVAL_LETTA_TIMEOUT_SECS),
     )
     now = time.monotonic()
     async with letta_search_warm_lock:
@@ -3496,7 +3586,10 @@ def _schedule_background_letta_query_warm(
         if LETTA_API_KEY:
             headers["Authorization"] = f"Bearer {LETTA_API_KEY}"
         try:
-            agent_id = await _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers)
+            agent_id = await asyncio.wait_for(
+                _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers),
+                timeout=max(1.0, RETRIEVAL_LETTA_ASYNC_WARM_RESOLVE_TIMEOUT_SECS),
+            )
         except Exception as exc:
             logger.debug("Letta warm scheduling skipped: %s", exc)
             return
@@ -3520,6 +3613,169 @@ def _schedule_background_letta_query_warm(
             headers=headers,
             prior_timeout_secs=max(1.0, float(timeout_hint_secs)),
         )
+
+    asyncio.create_task(_runner())
+
+
+def _retrieval_async_warm_key(
+    *,
+    source: str,
+    query: str,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+) -> str:
+    identity = "\n".join(
+        [
+            str(source or "").strip().lower(),
+            re.sub(r"\s+", " ", str(query or "").strip().lower()),
+            str(max(1, int(limit))),
+            str(project_filter or ""),
+            str(topic_filter or ""),
+        ]
+    ).encode("utf-8")
+    return hashlib.sha1(identity).hexdigest()
+
+
+def _degraded_source_probe_allowed(source: str) -> bool:
+    source_name = str(source or "").strip().lower()
+    if not source_name:
+        return False
+    attempts = int(retrieval_slow_source_probe_attempts.get(source_name, 0) or 0) + 1
+    retrieval_slow_source_probe_attempts[source_name] = attempts
+    probe_every = max(1, int(RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N))
+    if attempts % probe_every != 0:
+        return False
+    cooldown_until = float(retrieval_slow_source_cooldown_until.get(source_name, 0.0) or 0.0)
+    remaining = max(0.0, cooldown_until - time.monotonic())
+    min_recovery = max(1.0, float(RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS))
+    return remaining <= min_recovery
+
+
+def _retrieval_backlog_pressure_policy() -> dict[str, Any]:
+    policy: dict[str, Any] = {
+        "enabled": bool(RETRIEVAL_BACKLOG_GATING_ENABLED),
+        "targets": list(RETRIEVAL_BACKLOG_GATING_TARGETS),
+        "blocked_sources": [],
+        "summary_fresh": False,
+        "summary": {},
+        "thresholds": {
+            RETRIEVAL_SOURCE_LETTA: {
+                "outstandingMax": RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX,
+                "retryingMax": RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX,
+            }
+        },
+    }
+    if not RETRIEVAL_BACKLOG_GATING_ENABLED:
+        return policy
+    cached = _get_fanout_summary_cache()
+    if not _fanout_cache_fresh(cached):
+        _schedule_fanout_summary_refresh()
+    cache_updated = fanout_summary_cache.get("updated_monotonic")
+    summary_age = None
+    if isinstance(cache_updated, (int, float)):
+        summary_age = max(0.0, time.monotonic() - float(cache_updated))
+    if summary_age is not None and summary_age > max(0.0, RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS):
+        return policy
+    policy["summary_fresh"] = bool(_fanout_cache_fresh(cached))
+    by_target = cached.get("by_target") if isinstance(cached, dict) else {}
+    if not isinstance(by_target, dict):
+        return policy
+    blocked: list[str] = []
+    summary: dict[str, Any] = {}
+    for source_name in RETRIEVAL_BACKLOG_GATING_TARGETS:
+        if source_name != RETRIEVAL_SOURCE_LETTA:
+            continue
+        target_counts = by_target.get(source_name) if isinstance(by_target.get(source_name), dict) else {}
+        pending = int(target_counts.get("pending", 0) or 0)
+        retrying = int(target_counts.get("retrying", 0) or 0)
+        running = int(target_counts.get("running", 0) or 0)
+        outstanding = pending + retrying + running
+        summary[source_name] = {
+            "pending": pending,
+            "retrying": retrying,
+            "running": running,
+            "outstanding": outstanding,
+        }
+        if (
+            outstanding >= RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX
+            or retrying >= RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX
+        ):
+            blocked.append(source_name)
+    policy["summary"] = summary
+    policy["blocked_sources"] = sorted(set(blocked))
+    return policy
+
+
+def _schedule_background_source_warm(
+    *,
+    source: str,
+    query: str,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+    timeout_hint_secs: float,
+) -> None:
+    source_name = str(source or "").strip().lower()
+    if not source_name:
+        return
+    if source_name == RETRIEVAL_SOURCE_LETTA:
+        _schedule_background_letta_query_warm(
+            query=query,
+            limit=limit,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+            timeout_hint_secs=timeout_hint_secs,
+        )
+        return
+    if not RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES:
+        return
+    if source_name != RETRIEVAL_SOURCE_MEMORY_BANK:
+        return
+
+    async def _runner() -> None:
+        global retrieval_async_source_warm_started, retrieval_async_source_warm_completed
+        global retrieval_async_source_warm_failed
+        warm_key = _retrieval_async_warm_key(
+            source=source_name,
+            query=query,
+            limit=limit,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+        )
+        now = time.monotonic()
+        timeout_secs = max(1.0, float(timeout_hint_secs))
+        async with retrieval_async_source_warm_lock:
+            stale_keys = [
+                key
+                for key, expires_at in retrieval_async_source_warm_inflight.items()
+                if float(expires_at or 0.0) <= now
+            ]
+            for stale_key in stale_keys:
+                retrieval_async_source_warm_inflight.pop(stale_key, None)
+            if warm_key in retrieval_async_source_warm_inflight:
+                return
+            if len(retrieval_async_source_warm_inflight) >= RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT:
+                return
+            retrieval_async_source_warm_inflight[warm_key] = now + timeout_secs + 5.0
+            retrieval_async_source_warm_started += 1
+        try:
+            await asyncio.wait_for(
+                search_memory_bank_lexical(
+                    query,
+                    limit=max(1, int(limit)),
+                    project_filter=project_filter,
+                    topic_filter=topic_filter,
+                    time_budget_secs=timeout_secs,
+                ),
+                timeout=max(1.0, timeout_secs + 1.0),
+            )
+            retrieval_async_source_warm_completed += 1
+        except Exception:
+            retrieval_async_source_warm_failed += 1
+        finally:
+            async with retrieval_async_source_warm_lock:
+                retrieval_async_source_warm_inflight.pop(warm_key, None)
 
     asyncio.create_task(_runner())
 
@@ -4212,6 +4468,9 @@ async def _retrieval_slow_source_runtime_policy(
         "explicit_source_override": bool(explicit_source_override),
         "degraded": {},
         "timeout_overrides": {},
+        "circuit_skip_enabled": bool(RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED),
+        "probe_every_n": RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N,
+        "probe_attempts": {},
         "cooldown_secs": RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS,
         "min_requests": RETRIEVAL_SLOW_SOURCE_STABILITY_MIN_REQUESTS,
         "timeout_rate_threshold": RETRIEVAL_SLOW_SOURCE_TIMEOUT_RATE_THRESHOLD,
@@ -4252,10 +4511,15 @@ async def _retrieval_slow_source_runtime_policy(
                 in_cooldown = True
             elif not in_cooldown:
                 retrieval_slow_source_cooldown_until.pop(source_name, None)
+                retrieval_slow_source_probe_attempts[source_name] = 0
 
             is_degraded = bool(in_cooldown)
             if not is_degraded:
                 continue
+            probe_attempts = int(retrieval_slow_source_probe_attempts.get(source_name, 0) or 0)
+            policy_probe = policy.get("probe_attempts")
+            if isinstance(policy_probe, dict):
+                policy_probe[source_name] = probe_attempts
             degraded[source_name] = {
                 "requests": requests,
                 "errors": errors,
@@ -4263,6 +4527,7 @@ async def _retrieval_slow_source_runtime_policy(
                 "timeout_rate": round(timeout_rate, 6),
                 "error_rate": round(error_rate, 6),
                 "cooldown_remaining_secs": round(max(0.0, cooldown_until - now), 3),
+                "probe_attempts": probe_attempts,
             }
             cap = _degraded_timeout_cap_for_source(source_name)
             if cap is not None:
@@ -4640,6 +4905,8 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         memory_read_refresh_inflight = len(memory_read_cache_refresh_inflight)
     async with letta_search_warm_lock:
         letta_warm_inflight = len(letta_search_warm_inflight)
+    async with retrieval_async_source_warm_lock:
+        async_warm_inflight = len(retrieval_async_source_warm_inflight)
     lifecycle_state = await _retrieval_lifecycle_state_snapshot()
     recent_rows = recall_quality.get("recent") if isinstance(recall_quality.get("recent"), list) else []
     sample_count = len(recent_rows)
@@ -4753,6 +5020,32 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 "completed": letta_search_warm_completed,
                 "failed": letta_search_warm_failed,
             },
+            "asyncSourceWarm": {
+                "enabled": RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES,
+                "maxInflight": RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT,
+                "inflight": async_warm_inflight,
+                "started": retrieval_async_source_warm_started,
+                "completed": retrieval_async_source_warm_completed,
+                "failed": retrieval_async_source_warm_failed,
+            },
+        },
+        "sourceCircuit": {
+            "enabled": RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED and RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED,
+            "probeEveryN": RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N,
+            "cooldownSecs": RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS,
+            "minRecoveryCooldownSecs": RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS,
+            "degradedSources": {
+                str(source): round(max(0.0, float(until) - time.monotonic()), 3)
+                for source, until in retrieval_slow_source_cooldown_until.items()
+                if float(until or 0.0) > time.monotonic()
+            },
+        },
+        "backlogGating": {
+            "enabled": RETRIEVAL_BACKLOG_GATING_ENABLED,
+            "targets": list(RETRIEVAL_BACKLOG_GATING_TARGETS),
+            "lettaOutstandingMax": RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX,
+            "lettaRetryingMax": RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX,
+            "freshTtlSecs": RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS,
         },
         "latency": latency,
         "recallQuality": recall_quality,
@@ -12811,23 +13104,39 @@ async def search_qdrant(
                 return candidate
         return []
 
-    async def _run_search(vector: list[float]) -> Any:
+    search_params = None
+    if qdrant_models is not None and (
+        QDRANT_SEARCH_HNSW_EF > 0
+        or QDRANT_SEARCH_EXACT
+        or QDRANT_SEARCH_INDEXED_ONLY
+    ):
+        search_params = qdrant_models.SearchParams(
+            hnsw_ef=QDRANT_SEARCH_HNSW_EF if QDRANT_SEARCH_HNSW_EF > 0 else None,
+            exact=bool(QDRANT_SEARCH_EXACT),
+            indexed_only=bool(QDRANT_SEARCH_INDEXED_ONLY),
+        )
+
+    async def _run_search(vector: list[float], requested_limit: int) -> Any:
+        bounded_limit = max(1, int(requested_limit))
+
         async def _execute_search(client: Any, _: str) -> Any:
             if hasattr(client, "search"):
                 return await client.search(
                     collection_name=QDRANT_COLLECTION,
                     query_vector=vector,
                     query_filter=query_filter,
-                    limit=limit,
+                    limit=bounded_limit,
                     with_payload=True,
+                    search_params=search_params,
                 )
             if hasattr(client, "query_points"):
                 response = await client.query_points(
                     collection_name=QDRANT_COLLECTION,
                     query=vector,
                     query_filter=query_filter,
-                    limit=limit,
+                    limit=bounded_limit,
                     with_payload=True,
+                    search_params=search_params,
                 )
                 return _extract_points_from_query_response(response)
             raise RuntimeError("Qdrant client does not expose search/query_points")
@@ -12835,13 +13144,17 @@ async def search_qdrant(
         return await _qdrant_call("search", _execute_search)
 
     try:
-        hits = await _run_search(query_vector)
+        hits = await _run_search(query_vector, limit)
     except Exception as exc:
         expected_dim = _qdrant_expected_dim(str(exc))
-        if not expected_dim or expected_dim <= 0 or expected_dim == len(query_vector):
+        if expected_dim and expected_dim > 0 and expected_dim != len(query_vector):
+            fallback_vector = _cheap_embedding(query, expected_dim)
+            hits = await _run_search(fallback_vector, limit)
+        elif QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED and _is_retrieval_timeout_error(exc):
+            retry_limit = max(1, int(math.ceil(limit * QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR)))
+            hits = await _run_search(query_vector, retry_limit)
+        else:
             raise RuntimeError(f"Qdrant search failed: {exc}") from exc
-        fallback_vector = _cheap_embedding(query, expected_dim)
-        hits = await _run_search(fallback_vector)
 
     results = []
     for hit in hits:
@@ -13503,6 +13816,12 @@ async def federated_search_memory(
         retrieval_mode=normalized_mode,
         explicit_source_override=explicit_source_override,
     )
+    backlog_policy = _retrieval_backlog_pressure_policy()
+    backlog_blocked_sources = set(
+        backlog_policy.get("blocked_sources")
+        if isinstance(backlog_policy.get("blocked_sources"), list)
+        else []
+    )
     timeout_overrides = (
         runtime_policy.get("timeout_overrides")
         if isinstance(runtime_policy.get("timeout_overrides"), dict)
@@ -13518,10 +13837,34 @@ async def federated_search_memory(
         for source in staged_slow_sources
         if source in degraded_sources
     ]
+    circuit_blocked_slow_sources: list[str] = []
+    degraded_probe_sources: list[str] = []
+    if (
+        RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED
+        and RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED
+        and not explicit_source_override
+    ):
+        for source in list(staged_slow_sources):
+            if source not in degraded_sources:
+                continue
+            if _degraded_source_probe_allowed(source):
+                degraded_probe_sources.append(source)
+                continue
+            circuit_blocked_slow_sources.append(source)
+            deferred_sources.append(source)
+    backlog_blocked_slow_sources: list[str] = []
+    if RETRIEVAL_BACKLOG_GATING_ENABLED and not explicit_source_override:
+        for source in list(staged_slow_sources):
+            if source in backlog_blocked_sources:
+                backlog_blocked_slow_sources.append(source)
+                if source not in deferred_sources:
+                    deferred_sources.append(source)
     force_include_slow = bool(
         normalized_mode == RETRIEVAL_MODE_DEEP
         and not explicit_source_override
         and not degraded_slow_sources
+        and not circuit_blocked_slow_sources
+        and not backlog_blocked_slow_sources
     )
     effective_source_timeouts = dict(source_timeouts)
     for source_name, capped_timeout in timeout_overrides.items():
@@ -13622,11 +13965,16 @@ async def federated_search_memory(
                     batch_warnings.append(
                         f"{source} retrieval deferred before dispatch (call budget exhausted)."
                     )
-                    if source == RETRIEVAL_SOURCE_LETTA:
-                        letta_limit = min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
-                        _schedule_background_letta_query_warm(
+                    if source in staged_slow_sources:
+                        warm_limit = (
+                            min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                            if source == RETRIEVAL_SOURCE_LETTA
+                            else source_limit
+                        )
+                        _schedule_background_source_warm(
+                            source=source,
                             query=query,
-                            limit=letta_limit,
+                            limit=warm_limit,
                             project_filter=project_filter,
                             topic_filter=topic_filter,
                             timeout_hint_secs=float(
@@ -13699,11 +14047,16 @@ async def federated_search_memory(
                 batch_warnings.append(
                     f"{source} retrieval deferred after call budget reached; returning best-available results."
                 )
-                if source == RETRIEVAL_SOURCE_LETTA:
-                    letta_limit = min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
-                    _schedule_background_letta_query_warm(
+                if source in staged_slow_sources:
+                    warm_limit = (
+                        min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                        if source == RETRIEVAL_SOURCE_LETTA
+                        else source_limit
+                    )
+                    _schedule_background_source_warm(
+                        source=source,
                         query=query,
-                        limit=letta_limit,
+                        limit=warm_limit,
                         project_filter=project_filter,
                         topic_filter=topic_filter,
                         timeout_hint_secs=float(
@@ -13764,6 +14117,9 @@ async def federated_search_memory(
     }
 
     slow_sources_skipped: list[str] = []
+    async_warm_slow_sources: list[str] = []
+    sync_fallback_slow_sources: list[str] = []
+    hard_sync_async_split_applied = False
     if staged_fetch_used:
         fast_rows, fast_errors, fast_warnings = await _run_source_batch(staged_fast_sources)
         results_by_source.update(fast_rows)
@@ -13815,20 +14171,106 @@ async def federated_search_memory(
                 or enough_fast_volume
             )
         )
+        needs_async_warm_after_skip = bool(
+            len(fast_merged) < max(limit, RETRIEVAL_SLOW_SOURCE_MIN_RESULTS)
+            or top_fast_score < RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE
+            or not enough_fast_diversity
+        )
+        allowed_slow_sources = [
+            source
+            for source in staged_slow_sources
+            if source not in circuit_blocked_slow_sources and source not in backlog_blocked_slow_sources
+        ]
+        blocked_slow_sources = [
+            source
+            for source in staged_slow_sources
+            if source in circuit_blocked_slow_sources or source in backlog_blocked_slow_sources
+        ]
+        if blocked_slow_sources:
+            slow_sources_skipped.extend(blocked_slow_sources)
         if force_include_slow:
             skip_slow = False
-        if skip_slow and not explicit_source_override:
-            slow_sources_skipped = list(staged_slow_sources)
+        hard_split_enabled = bool(
+            RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED
+            and not explicit_source_override
+            and (normalized_mode != RETRIEVAL_MODE_DEEP or not RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING)
+        )
+        hard_sync_async_split_applied = hard_split_enabled
+        if hard_split_enabled:
+            min_fast_results = max(
+                1,
+                min(limit, RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS),
+            )
+            fallback_sources = [
+                source
+                for source in RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES
+                if source in allowed_slow_sources
+            ]
+            if len(fast_merged) < min_fast_results and fallback_sources:
+                sync_fallback_slow_sources = list(fallback_sources)
+                async_warm_slow_sources = [
+                    source
+                    for source in allowed_slow_sources
+                    if source not in sync_fallback_slow_sources
+                ]
+                slow_sources_skipped.extend(async_warm_slow_sources)
+                slow_rows, slow_errors, slow_warnings = await _run_source_batch(sync_fallback_slow_sources)
+                results_by_source.update(slow_rows)
+                source_errors.update(slow_errors)
+                warnings.extend(slow_warnings)
+            else:
+                if needs_async_warm_after_skip:
+                    async_warm_slow_sources = list(allowed_slow_sources)
+                    slow_sources_skipped.extend(async_warm_slow_sources)
+                else:
+                    slow_sources_skipped.extend(list(allowed_slow_sources))
+        elif skip_slow and not explicit_source_override:
+            if needs_async_warm_after_skip:
+                async_warm_slow_sources = list(allowed_slow_sources)
+                slow_sources_skipped.extend(async_warm_slow_sources)
+            else:
+                slow_sources_skipped.extend(list(allowed_slow_sources))
         else:
-            slow_rows, slow_errors, slow_warnings = await _run_source_batch(staged_slow_sources)
+            sync_batch = sync_fallback_slow_sources or allowed_slow_sources
+            slow_rows, slow_errors, slow_warnings = await _run_source_batch(sync_batch)
             results_by_source.update(slow_rows)
             source_errors.update(slow_errors)
             warnings.extend(slow_warnings)
+        if RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES and async_warm_slow_sources:
+            for source in async_warm_slow_sources:
+                warm_limit = (
+                    min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                    if source == RETRIEVAL_SOURCE_LETTA
+                    else source_limit
+                )
+                _schedule_background_source_warm(
+                    source=source,
+                    query=query,
+                    limit=warm_limit,
+                    project_filter=project_filter,
+                    topic_filter=topic_filter,
+                    timeout_hint_secs=float(
+                        effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
+                    ),
+                )
     else:
         batch_rows, batch_errors, batch_warnings = await _run_source_batch(resolved_sources)
         results_by_source.update(batch_rows)
         source_errors.update(batch_errors)
         warnings.extend(batch_warnings)
+
+    if slow_sources_skipped:
+        slow_sources_skipped = sorted(set(slow_sources_skipped))
+    if async_warm_slow_sources:
+        async_warm_slow_sources = sorted(set(async_warm_slow_sources))
+    if sync_fallback_slow_sources:
+        sync_fallback_slow_sources = sorted(set(sync_fallback_slow_sources))
+    if circuit_blocked_slow_sources:
+        circuit_blocked_slow_sources = sorted(set(circuit_blocked_slow_sources))
+    if degraded_probe_sources:
+        degraded_probe_sources = sorted(set(degraded_probe_sources))
+    if backlog_blocked_slow_sources:
+        backlog_blocked_slow_sources = sorted(set(backlog_blocked_slow_sources))
 
     source_quality_snapshot = await _retrieval_source_quality_snapshot(
         sources=list(results_by_source.keys()) or list(resolved_sources)
@@ -13877,9 +14319,12 @@ async def federated_search_memory(
             "enabled": staged_fetch_used,
             "explicit_source_override": explicit_source_override,
             "force_include_slow": force_include_slow,
+            "hard_sync_async_split": hard_sync_async_split_applied,
             "fast_sources": staged_fast_sources,
             "slow_sources": staged_slow_sources,
             "slow_sources_skipped": slow_sources_skipped,
+            "sync_fallback_sources": sync_fallback_slow_sources,
+            "async_warm_sources": async_warm_slow_sources,
             "slow_source_min_results": RETRIEVAL_SLOW_SOURCE_MIN_RESULTS,
             "slow_source_min_top_score": RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE,
             "slow_source_min_diversity": RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY,
@@ -13888,6 +14333,13 @@ async def federated_search_memory(
             "stability_enabled": bool(runtime_policy.get("enabled")),
             "degraded_sources": degraded_sources,
             "timeout_overrides": timeout_overrides,
+            "circuit_skip_enabled": RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED,
+            "circuit_blocked_sources": circuit_blocked_slow_sources,
+            "degraded_probe_sources": degraded_probe_sources,
+            "backlog_gating_enabled": RETRIEVAL_BACKLOG_GATING_ENABLED,
+            "backlog_blocked_sources": backlog_blocked_slow_sources,
+            "backlog_summary": backlog_policy.get("summary"),
+            "backlog_summary_fresh": backlog_policy.get("summary_fresh"),
         },
         "learning_rerank": {
             "enabled": learning_enabled,
@@ -15872,6 +16324,8 @@ async def get_retrieval_source_quality(limit: int = 20):
     payload = await _build_retrieval_metrics_payload(limit)
     recall_quality = payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
     latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
+    source_circuit = payload.get("sourceCircuit") if isinstance(payload.get("sourceCircuit"), dict) else {}
+    backlog_gating = payload.get("backlogGating") if isinstance(payload.get("backlogGating"), dict) else {}
     latency_sources = latency.get("sources") if isinstance(latency.get("sources"), dict) else {}
     by_source = recall_quality.get("bySource") if isinstance(recall_quality.get("bySource"), dict) else {}
     baseline_source = RETRIEVAL_SOURCE_QDRANT
@@ -15926,6 +16380,23 @@ async def get_retrieval_source_quality(limit: int = 20):
     if any(row["source"] == RETRIEVAL_SOURCE_MINDSDB and row["errorRate"] > 0 for row in rows):
         recommendations.append(
             "MindsDB source errors are non-zero; verify table format and keep LZ4 circuit protection enabled."
+        )
+    degraded_sources = (
+        source_circuit.get("degradedSources")
+        if isinstance(source_circuit.get("degradedSources"), dict)
+        else {}
+    )
+    if degraded_sources:
+        names = ", ".join(sorted(degraded_sources.keys()))
+        recommendations.append(
+            f"Adaptive source circuit is currently open for: {names}. Continue using staged fetch + async warm while sources recover."
+        )
+    if (
+        backlog_gating.get("enabled")
+        and int(backlog_gating.get("lettaOutstandingMax") or 0) > 0
+    ):
+        recommendations.append(
+            "Backlog gating is enabled for slow sinks; high outbox pressure will suppress blocking reads from overloaded sources."
         )
     if not recommendations:
         recommendations.append("Source quality is within expected bounds for current thresholds.")
