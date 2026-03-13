@@ -68,10 +68,12 @@ test-py:
 > fi
 
 bench-shortlist:
-> API_KEY="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}" python3 bench/perf_shortlist_matrix.py --api-key "$$API_KEY"
+> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}"; \
+> python3 bench/perf_shortlist_matrix.py --api-key "$$api_key"
 
 bench-qdrant-tuning:
-> API_KEY="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}" python3 bench/qdrant_tuning_matrix.py --api-key "$$API_KEY"
+> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}"; \
+> python3 bench/qdrant_tuning_matrix.py --api-key "$$api_key"
 
 # ---- One-shot launcher ----
 

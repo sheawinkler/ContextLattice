@@ -1,0 +1,62 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "generatedAt": "2026-03-13T21:34:30.224841+00:00",
+  "notes": [
+    "Run once per tuning profile and compare p95/p99 against baseline.",
+    "Do not promote a profile with recall-quality regression."
+  ],
+  "profiles": {
+    "baseline": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "mean": 34.652,
+        "p50": 26.603,
+        "p95": 84.843,
+        "p99": 101.14
+      },
+      "runs": 20
+    },
+    "deep_tail": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "mean": 63.458,
+        "p50": 39.993,
+        "p95": 162.87,
+        "p99": 361.092
+      },
+      "runs": 20
+    },
+    "fast_path": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "mean": 165.607,
+        "p50": 108.889,
+        "p95": 603.521,
+        "p99": 631.379
+      },
+      "runs": 20
+    }
+  },
+  "project": "perf_qdrant",
+  "qdrantTuning": {
+    "baseHnswEf": 0,
+    "exact": false,
+    "indexedOnly": false,
+    "modeHnswEf": {
+      "balanced": 96,
+      "deep": 128,
+      "fast": 48
+    },
+    "modeLimitCaps": {
+      "balanced": 120,
+      "deep": 180,
+      "fast": 80
+    },
+    "timeoutRetryEnabled": true,
+    "timeoutRetryLimitFactor": 0.5
+  },
+  "runsPerProfile": 20
+}

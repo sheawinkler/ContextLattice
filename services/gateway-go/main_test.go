@@ -431,6 +431,81 @@ func TestStagedRetrievalAppliesQdrantSyncCap(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalAppliesQdrantSyncCapByMode(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "3")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", "0.6")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS", "0.2")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_BALANCED_SECS", "0.5")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS", "1.0")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		time.Sleep(350 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"a.md","score":0.9}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	fastReq := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"fast"}}`
+	fastResp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(fastReq))
+	if err != nil {
+		t.Fatalf("fast request failed: %v", err)
+	}
+	defer fastResp.Body.Close()
+	if fastResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(fastResp.Body)
+		t.Fatalf("expected 200 for fast mode, got %d body=%s", fastResp.StatusCode, string(body))
+	}
+	var fastPayload map[string]any
+	if err := json.NewDecoder(fastResp.Body).Decode(&fastPayload); err != nil {
+		t.Fatalf("decode fast response: %v", err)
+	}
+	fastWarnings := strings.ToLower(strings.Join(parseWarnings(fastPayload["warnings"]), " | "))
+	if !strings.Contains(fastWarnings, "qdrant retrieval timed out") {
+		t.Fatalf("expected fast mode timeout warning, got %v", fastPayload["warnings"])
+	}
+
+	deepReq := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"deep"}}`
+	deepResp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(deepReq))
+	if err != nil {
+		t.Fatalf("deep request failed: %v", err)
+	}
+	defer deepResp.Body.Close()
+	if deepResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(deepResp.Body)
+		t.Fatalf("expected 200 for deep mode, got %d body=%s", deepResp.StatusCode, string(body))
+	}
+	var deepPayload map[string]any
+	if err := json.NewDecoder(deepResp.Body).Decode(&deepPayload); err != nil {
+		t.Fatalf("decode deep response: %v", err)
+	}
+	deepWarnings := strings.ToLower(strings.Join(parseWarnings(deepPayload["warnings"]), " | "))
+	if strings.Contains(deepWarnings, "qdrant retrieval timed out") {
+		t.Fatalf("expected deep mode to avoid qdrant timeout, warnings=%v", deepPayload["warnings"])
+	}
+	deepRows, _ := deepPayload["results"].([]any)
+	if len(deepRows) == 0 {
+		t.Fatalf("expected deep mode qdrant rows, got %#v", deepPayload["results"])
+	}
+}
+
 func TestHealthzIncludesBackendStatus(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
