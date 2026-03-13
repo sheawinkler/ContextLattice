@@ -123,10 +123,11 @@ docker compose up -d contextlattice-orchestrator</code></pre>
         <article class="card component-card">
           <h3>Fanout backlog rising</h3>
           <p><strong>Impact:</strong> partial sink coverage and delayed consistency.</p>
-          <p><strong>Action:</strong> check fanout telemetry and Letta auto-prune state; trigger a prune pass and tune <code>LETTA_AUTO_PRUNE_*</code> thresholds if needed.</p>
+          <p><strong>Action:</strong> check fanout telemetry and Letta auto-prune state; trigger a prune pass and tune <code>LETTA_AUTO_PRUNE_*</code> thresholds if needed. If backlog is dominated by root JSON churn, set <code>LETTA_LOW_VALUE_ROOT_JSON_PREFIXES</code> so those files are excluded from Letta fanout.</p>
 <pre><code>curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
 curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
-  "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" | jq</code></pre>
+  "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" | jq
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/ops/capabilities | jq</code></pre>
         </article>
         <article class="card component-card">
           <h3>Disk pressure</h3>
@@ -167,6 +168,20 @@ ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED=true
 ORCH_RETRIEVAL_BACKLOG_GATING_ENABLED=true
 # let blocked letta sources continue async warm without sync read blocking
 ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED=true</code></pre>
+        </article>
+        <article class="card component-card">
+          <h3>Saved recall gate failing</h3>
+          <p><strong>Impact:</strong> release gates fail even though live retrieval is healthy because saved cases are stale or unscoped.</p>
+          <p><strong>Action:</strong> refresh saved cases from hot pathways, then rerun the saved gate.</p>
+<pre><code>curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  -H "content-type: application/json" \
+  -d '{"max_cases":5,"min_hits":2,"run_evaluation":true}' \
+  http://127.0.0.1:8075/memory/recall/eval-cases/refresh | jq
+
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  -H "content-type: application/json" \
+  -d '{}' \
+  http://127.0.0.1:8075/memory/recall/evaluate/saved | jq</code></pre>
         </article>
         <article class="card component-card">
           <h3>Messaging bridge not posting</h3>

@@ -1,0 +1,45 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "generatedAt": "2026-03-12T19:16:59.040611+00:00",
+  "notes": [
+    "Run once per tuning profile and compare p95/p99 against baseline.",
+    "Do not promote a profile with recall-quality regression."
+  ],
+  "profiles": {
+    "baseline": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "mean": 474.607,
+        "p50": 474.607,
+        "p95": 651.335,
+        "p99": 667.044
+      },
+      "runs": 2
+    },
+    "deep_tail": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "mean": 232.299,
+        "p50": 232.299,
+        "p95": 335.749,
+        "p99": 344.944
+      },
+      "runs": 2
+    },
+    "fast_path": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "mean": 250.566,
+        "p50": 250.566,
+        "p95": 353.06,
+        "p99": 362.171
+      },
+      "runs": 2
+    }
+  },
+  "project": "algotraderv2_rust",
+  "runsPerProfile": 2
+}

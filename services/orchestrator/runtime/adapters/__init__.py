@@ -6,6 +6,7 @@ from .base import (
     EmbeddingRequest,
     EmbeddingResponse,
 )
+from .fastembed_rs import FastembedRsConfig, FastembedRsEmbeddingAdapter
 from .registry import AdapterFlags, adapter_flags_snapshot, load_adapter_flags
 
 __all__ = [
@@ -15,6 +16,8 @@ __all__ = [
     "EmbeddingProviderAdapter",
     "EmbeddingRequest",
     "EmbeddingResponse",
+    "FastembedRsConfig",
+    "FastembedRsEmbeddingAdapter",
     "AdapterFlags",
     "adapter_flags_snapshot",
     "load_adapter_flags",

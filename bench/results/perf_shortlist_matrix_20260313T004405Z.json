@@ -1,0 +1,134 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "candidates": {
+    "EmbedAnything": "adapter spike pending",
+    "edgevec": "adapter spike pending",
+    "fastembed-rs": "adapter spike pending",
+    "swiftide": "pipeline pattern reference",
+    "zvec": "benchmark-only candidate"
+  },
+  "generatedAt": "2026-03-13T00:44:29.459639+00:00",
+  "matrix": {
+    "deep_recall": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 283.349,
+        "mean": 256.622,
+        "min": 229.895,
+        "p50": 256.622,
+        "p95": 280.676,
+        "p99": 282.814
+      },
+      "runs": 2
+    },
+    "ops_focus": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 900.455,
+        "mean": 620.993,
+        "min": 341.531,
+        "p50": 620.993,
+        "p95": 872.509,
+        "p99": 894.866
+      },
+      "runs": 2
+    },
+    "short_context": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 583.271,
+        "mean": 461.045,
+        "min": 338.819,
+        "p50": 461.045,
+        "p95": 571.048,
+        "p99": 580.826
+      },
+      "runs": 2
+    }
+  },
+  "notes": [
+    "Use this script before/after each adapter spike.",
+    "Keep runtime defaults unchanged unless benchmark + recall gates pass."
+  ],
+  "project": "perf_shortlist",
+  "runsPerCase": 2,
+  "sourceQuality": {
+    "baselineSource": "qdrant",
+    "recommendations": [
+      "At least one source has timeout rate >= 25%; keep it out of default decision path or reduce time budget.",
+      "Backlog gating is enabled for slow sinks; high outbox pressure will suppress blocking reads from overloaded sources."
+    ],
+    "sources": [
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 18018.559,
+        "p95Ms": 18358.416,
+        "p99Ms": 18407.861,
+        "requests": 11,
+        "source": "memory_bank",
+        "timeoutRate": 1.0,
+        "timeouts": 11
+      },
+      {
+        "errorRate": 1.08,
+        "errorRateDeltaVsQdrant": 1.08,
+        "p50Ms": 6003.987,
+        "p95Ms": 7535.003,
+        "p99Ms": 7560.412,
+        "requests": 29,
+        "source": "mongo_raw",
+        "timeoutRate": 0.965517,
+        "timeouts": 28
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 52505.462,
+        "p95Ms": 71989.086,
+        "p99Ms": 74401.52,
+        "requests": 9,
+        "source": "letta",
+        "timeoutRate": 0.222222,
+        "timeouts": 2
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 266.075,
+        "p95Ms": 7284.823,
+        "p99Ms": 8140.581,
+        "requests": 29,
+        "source": "qdrant",
+        "timeoutRate": 0.137931,
+        "timeouts": 4
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 0.027,
+        "p95Ms": 4029.501,
+        "p99Ms": 7650.858,
+        "requests": 29,
+        "source": "mindsdb",
+        "timeoutRate": 0.034483,
+        "timeouts": 1
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 0.521,
+        "p95Ms": 9.664,
+        "p99Ms": 55.597,
+        "requests": 29,
+        "source": "topic_rollups",
+        "timeoutRate": 0.0,
+        "timeouts": 0
+      }
+    ],
+    "updatedAt": "2026-03-13T00:44:26.775196Z"
+  }
+}

@@ -106,12 +106,27 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 runs=args.runs,
                 mode=str(profile["mode"]),
             )
+        tuning_snapshot: dict[str, Any] = {}
+        try:
+            telemetry_resp = client.get(
+                f"{base_url}/telemetry/retrieval",
+                headers=headers,
+            )
+            if telemetry_resp.status_code == 200:
+                telemetry_payload = telemetry_resp.json()
+                if isinstance(telemetry_payload, dict):
+                    raw_tuning = telemetry_payload.get("qdrantTuning")
+                    if isinstance(raw_tuning, dict):
+                        tuning_snapshot = raw_tuning
+        except Exception:  # pragma: no cover - network/runtime dependent
+            tuning_snapshot = {}
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "baseUrl": base_url,
         "project": args.project,
         "runsPerProfile": args.runs,
         "profiles": results,
+        "qdrantTuning": tuning_snapshot,
         "notes": [
             "Run once per tuning profile and compare p95/p99 against baseline.",
             "Do not promote a profile with recall-quality regression.",

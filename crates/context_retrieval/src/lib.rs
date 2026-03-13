@@ -1,10 +1,105 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RetrievalCandidate {
     pub id: String,
     pub score: f32,
     pub summary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SourceRetrievalCandidate {
+    pub id: String,
+    pub score: f32,
+    pub summary: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FusedRetrievalCandidate {
+    pub id: String,
+    pub score: f32,
+    pub summary: String,
+    pub sources: Vec<String>,
+}
+
+pub fn fuse_source_candidates(
+    candidates: &[SourceRetrievalCandidate],
+    limit: usize,
+    consensus_boost: f32,
+) -> Vec<FusedRetrievalCandidate> {
+    if limit == 0 || candidates.is_empty() {
+        return Vec::new();
+    }
+
+    #[derive(Clone)]
+    struct MergeState {
+        best_score: f32,
+        best_summary: String,
+        sources: HashSet<String>,
+    }
+
+    let mut merged: HashMap<String, MergeState> = HashMap::new();
+    for candidate in candidates {
+        let id = candidate.id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        let source = {
+            let normalized = candidate.source.trim().to_lowercase();
+            if normalized.is_empty() {
+                "unknown".to_string()
+            } else {
+                normalized
+            }
+        };
+        if let Some(existing) = merged.get_mut(id) {
+            existing.sources.insert(source);
+            if candidate.score > existing.best_score {
+                existing.best_score = candidate.score;
+                existing.best_summary = candidate.summary.clone();
+            } else if existing.best_summary.trim().is_empty()
+                && !candidate.summary.trim().is_empty()
+            {
+                existing.best_summary = candidate.summary.clone();
+            }
+            continue;
+        }
+        let mut sources = HashSet::new();
+        sources.insert(source);
+        merged.insert(
+            id.to_string(),
+            MergeState {
+                best_score: candidate.score,
+                best_summary: candidate.summary.clone(),
+                sources,
+            },
+        );
+    }
+
+    let mut rows: Vec<FusedRetrievalCandidate> = merged
+        .into_iter()
+        .map(|(id, state)| {
+            let mut sources: Vec<String> = state.sources.into_iter().collect();
+            sources.sort();
+            let consensus = usize::saturating_sub(sources.len(), 1) as f32;
+            FusedRetrievalCandidate {
+                id,
+                score: state.best_score + consensus * consensus_boost.max(0.0),
+                summary: state.best_summary,
+                sources,
+            }
+        })
+        .collect();
+
+    rows.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    rows.into_iter().take(limit).collect()
 }
 
 #[derive(Default)]
@@ -23,7 +118,11 @@ impl RetrievalIndex {
 
     pub fn search(&self, limit: usize) -> Vec<RetrievalCandidate> {
         let mut rows = self.rows.clone();
-        rows.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        rows.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         rows.into_iter().take(limit).collect()
     }
 
@@ -97,7 +196,11 @@ impl HybridRetrievalIndex {
                 }
             }
         }
-        merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        merged.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         merged.into_iter().take(limit).collect()
     }
 }
@@ -125,7 +228,9 @@ pub mod qdrant_remote {
         }
 
         pub fn has_api_key(&self) -> bool {
-            self.api_key.as_ref().is_some_and(|value| !value.trim().is_empty())
+            self.api_key
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
         }
 
         pub fn build_client(&self) -> Result<Qdrant> {
@@ -231,6 +336,64 @@ mod tests {
         let caps = backend_capabilities();
         assert_eq!(caps.qdrant_remote_enabled, cfg!(feature = "qdrant_remote"));
         assert_eq!(caps.usearch_ann_enabled, cfg!(feature = "usearch_ann"));
-        assert_eq!(caps.tantivy_lexical_enabled, cfg!(feature = "tantivy_lexical"));
+        assert_eq!(
+            caps.tantivy_lexical_enabled,
+            cfg!(feature = "tantivy_lexical")
+        );
+    }
+
+    #[test]
+    fn fuse_source_candidates_merges_duplicate_ids_and_sources() {
+        let rows = vec![
+            SourceRetrievalCandidate {
+                id: "alpha::a.md".to_string(),
+                score: 0.81,
+                summary: "from qdrant".to_string(),
+                source: "qdrant".to_string(),
+            },
+            SourceRetrievalCandidate {
+                id: "alpha::a.md".to_string(),
+                score: 0.92,
+                summary: "from topic rollups".to_string(),
+                source: "topic_rollups".to_string(),
+            },
+            SourceRetrievalCandidate {
+                id: "alpha::b.md".to_string(),
+                score: 0.75,
+                summary: "from mindsdb".to_string(),
+                source: "mindsdb".to_string(),
+            },
+        ];
+        let fused = fuse_source_candidates(&rows, 10, 0.0);
+        assert_eq!(fused.len(), 2);
+        assert_eq!(fused[0].id, "alpha::a.md");
+        assert_eq!(fused[0].score, 0.92);
+        assert_eq!(
+            fused[0].sources,
+            vec!["qdrant".to_string(), "topic_rollups".to_string()]
+        );
+        assert_eq!(fused[1].id, "alpha::b.md");
+    }
+
+    #[test]
+    fn fuse_source_candidates_applies_consensus_boost() {
+        let rows = vec![
+            SourceRetrievalCandidate {
+                id: "alpha::a.md".to_string(),
+                score: 0.50,
+                summary: "first".to_string(),
+                source: "qdrant".to_string(),
+            },
+            SourceRetrievalCandidate {
+                id: "alpha::a.md".to_string(),
+                score: 0.50,
+                summary: "second".to_string(),
+                source: "topic_rollups".to_string(),
+            },
+        ];
+        let fused = fuse_source_candidates(&rows, 5, 0.10);
+        assert_eq!(fused.len(), 1);
+        assert!((fused[0].score - 0.60).abs() < 0.0001);
+        assert_eq!(fused[0].sources.len(), 2);
     }
 }

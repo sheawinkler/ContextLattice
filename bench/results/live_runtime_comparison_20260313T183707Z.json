@@ -1,0 +1,57 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "errorCount": 0,
+  "errors": [],
+  "generatedAt": "2026-03-13T18:37:51.657905+00:00",
+  "latencyMs": {
+    "mean": 2004.519,
+    "p50": 632.298,
+    "p95": 8942.325,
+    "p99": 9468.78
+  },
+  "requests": 20,
+  "runtime": {
+    "enabled": true,
+    "flags": {
+      "canary_enabled": true,
+      "engine_mode": "service",
+      "shadow_dual_run": true,
+      "use_go_orchestrator": true,
+      "use_rust_codec": true,
+      "use_rust_memory": true,
+      "use_rust_retrieval": true
+    },
+    "implementations": {
+      "codec": "RustCodecBridge",
+      "memory_store": "RustMemoryStoreProxy",
+      "retriever": "RustRetrieverProxy",
+      "scheduler": "GoSchedulerProxy",
+      "state_delta": "JsonMergeStateDelta"
+    },
+    "snapshot": {
+      "flags": {
+        "canary_enabled": true,
+        "engine_mode": "service",
+        "shadow_dual_run": true,
+        "use_go_orchestrator": true,
+        "use_rust_codec": true,
+        "use_rust_memory": true,
+        "use_rust_retrieval": true
+      },
+      "implementations": {
+        "codec": "RustCodecBridge",
+        "memory_store": "RustMemoryStoreProxy",
+        "retriever": "RustRetrieverProxy",
+        "scheduler": "GoSchedulerProxy",
+        "state_delta": "JsonMergeStateDelta"
+      },
+      "retriever_health": {
+        "base_url": "http://gateway-go:8091",
+        "impl": "python-engine-compat",
+        "mode": "service-compat",
+        "ok": true,
+        "proxy": "rust"
+      }
+    }
+  }
+}

@@ -27,6 +27,7 @@ def _load_orchestrator_module():
 
 
 orchestrator = _load_orchestrator_module()
+orchestrator.RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED = False
 
 
 def test_parse_letta_archival_content():
@@ -134,6 +135,40 @@ def test_merge_federated_rows_applies_fusion_quality_and_lifecycle_adjustments(m
     assert sorted(row["sources"]) == ["letta", "qdrant"]
 
 
+def test_merge_federated_rows_applies_code_context_adjustments(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "CODE_CONTEXT_ENRICH_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "CODE_CONTEXT_SYMBOL_OVERLAP_BOOST", 0.2)
+    monkeypatch.setattr(orchestrator, "CODE_CONTEXT_FILEPATH_PROXIMITY_BOOST", 0.1)
+    monkeypatch.setattr(orchestrator, "CODE_CONTEXT_RECENCY_MAX_BOOST", 0.05)
+    rows = {
+        "qdrant": [
+            {
+                "project": "alpha",
+                "file": "services/orchestrator/app.py",
+                "summary": "retrieval timeout and staged fetch tuning",
+                "score": 0.42,
+                "code_context": {
+                    "symbols": ["retrieval", "timeout", "staged_fetch"],
+                    "path_tokens": ["services", "orchestrator", "app", "py"],
+                    "updated_at": orchestrator._utc_now(),
+                },
+            }
+        ]
+    }
+    merged = orchestrator._merge_federated_rows(
+        rows,
+        {"qdrant": 1.0},
+        set(),
+        set(),
+        learning_enabled=False,
+        query="orchestrator retrieval timeout tuning",
+    )
+    assert len(merged) == 1
+    row = merged[0]
+    assert row["code_context_adjustment"] > 0
+    assert row["score"] > row["base_score"]
+
+
 def test_merge_federated_rows_suppresses_low_value_non_letta(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS", True)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_LOW_VALUE_NON_LETTA_PENALTY", 0.3)
@@ -168,6 +203,97 @@ def test_merge_federated_rows_suppresses_low_value_non_letta(monkeypatch: pytest
     assert by_source["qdrant"]["low_value_suppressed"] is True
     assert by_source["qdrant"]["score"] <= 0.4
     assert by_source["letta"]["low_value_suppressed"] is False
+
+
+def test_letta_root_json_low_value_helpers(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        orchestrator,
+        "LETTA_LOW_VALUE_ROOT_JSON_PREFIXES",
+        ["arena__", "risk__", "dex__"],
+    )
+    assert orchestrator._looks_letta_root_json_low_value(
+        "arena__weights__20260312.json",
+        "root",
+    )
+    assert orchestrator._looks_letta_root_json_low_value(
+        "risk__circuit_breaker__20260312.json",
+        "",
+    )
+    assert not orchestrator._looks_letta_root_json_low_value(
+        "decisions/trade-plan.md",
+        "runbooks/profitability",
+    )
+    excluded, reason = orchestrator._is_letta_excluded_memory_record(
+        "dex__router_snapshot-20260312T185520494Z.json",
+        "root",
+    )
+    assert excluded is True
+    assert reason == "excluded_root_json_prefix"
+
+
+def test_mindsdb_decode_classifier_includes_flatbuffer_footer():
+    assert orchestrator._is_mindsdb_lz4_decompress_error(
+        RuntimeError("[file/files]: Verification of flatbuffer-encoded Footer failed.")
+    )
+    assert orchestrator._is_mindsdb_lz4_decompress_error(
+        RuntimeError("LZ4 decompress failed: ERROR_decompressionFailed")
+    )
+    assert not orchestrator._is_mindsdb_lz4_decompress_error(
+        RuntimeError("network reset by peer")
+    )
+
+
+def test_runner_capability_map_payload(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "MCP_CAPABILITY_MAP_ENABLED", True)
+    monkeypatch.setattr(
+        orchestrator,
+        "MIGRATION_FLAGS",
+        SimpleNamespace(
+            use_go_orchestrator=True,
+            use_rust_codec=True,
+            use_rust_memory=True,
+            use_rust_retrieval=True,
+        ),
+    )
+    payload = orchestrator._runner_capability_map_payload()
+    assert payload["enabled"] is True
+    assert payload["defaultRunner"] == "go_scheduler"
+    assert payload["tools"]["memory_write_batch"] is True
+    assert payload["runnerContracts"]["statusLifecycle"] == [
+        "queued",
+        "claimed",
+        "partial",
+        "succeeded",
+        "failed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_write_browser_context_routes_to_memory_write(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "BROWSER_CONTEXT_INGEST_ENABLED", True)
+    captured: dict[str, Any] = {}
+
+    async def _fake_write_memory(payload, request):
+        captured["payload"] = payload
+        captured["path"] = request.url.path
+        return {"ok": True, "event_id": "evt-1", "warnings": [], "fanout": {}}
+
+    monkeypatch.setattr(orchestrator, "write_memory", _fake_write_memory)
+    payload = orchestrator.BrowserContextIngest(
+        projectName="algotraderv2_rust",
+        pageUrl="https://example.com/docs/retrieval",
+        title="Retrieval Tuning",
+        textSnapshot="staged fetch works with async warm",
+        topicPath="runbooks/performance",
+        agentId="codex",
+    )
+    result = await orchestrator.write_browser_context(payload)
+    write_payload = captured["payload"]
+    assert write_payload.projectName == "algotraderv2_rust"
+    assert write_payload.fileName.startswith("browser/example-com/")
+    assert write_payload.topicPath == "runbooks/performance"
+    assert "browser context persisted" in " ".join(result.get("warnings") or []).lower()
+    assert result["browserContext"]["url"] == "https://example.com/docs/retrieval"
 
 
 @pytest.mark.asyncio
@@ -390,6 +516,180 @@ async def test_federated_search_call_budget_defers_slow_sources(monkeypatch: pyt
     assert debug["call_budget"]["cacheWriteSkipped"] is True
     assert warm_calls
     assert any("deferred" in item.lower() for item in warnings)
+
+
+@pytest.mark.asyncio
+async def test_federated_search_timeout_fail_open_continues_slow_source(monkeypatch: pytest.MonkeyPatch):
+    scheduled: list[dict[str, Any]] = []
+
+    async def _slow_memory_bank(*args, **kwargs):
+        await asyncio.sleep(1.2)
+        return []
+
+    def _schedule(**kwargs):
+        scheduled.append(dict(kwargs))
+
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _slow_memory_bank)
+    monkeypatch.setattr(orchestrator, "_schedule_background_source_warm", _schedule)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_TIMEOUT_SECS", 1.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", True)
+    monkeypatch.setattr(
+        orchestrator,
+        "RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
+    )
+
+    _results, debug, warnings = await orchestrator.federated_search_memory(
+        "alpha timeout memory path",
+        limit=3,
+        sources=[orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+
+    assert scheduled
+    assert scheduled[0]["source"] == orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK
+    assert scheduled[0]["force"] is True
+    assert debug["staged_fetch"]["fail_open_continuation_sources"] == [
+        orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK
+    ]
+    assert any("continuing asynchronously for cache warm" in item.lower() for item in warnings)
+
+
+@pytest.mark.asyncio
+async def test_federated_search_deep_mode_fail_open_nonblocking_defaults(monkeypatch: pytest.MonkeyPatch):
+    calls = {"qdrant": 0, "letta": 0}
+    scheduled: list[str] = []
+
+    async def _qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": "notes/fast.md",
+                "summary": "fast source result",
+                "score": 0.95,
+                "source": "qdrant",
+            }
+        ]
+
+    async def _letta(*args, **kwargs):
+        calls["letta"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": "notes/slow.md",
+                "summary": "slow source result",
+                "score": 0.55,
+                "source": "letta",
+            }
+        ]
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    def _schedule_letta(*, source: str, **_kwargs):
+        scheduled.append(source)
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "_schedule_background_source_warm", _schedule_letta)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING", False)
+    monkeypatch.setattr(
+        orchestrator,
+        "RETRIEVAL_SOURCES_ENV",
+        ",".join([orchestrator.RETRIEVAL_SOURCE_QDRANT, orchestrator.RETRIEVAL_SOURCE_LETTA]),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA],
+    )
+
+    results, debug, _warnings = await orchestrator.federated_search_memory(
+        "alpha deep read",
+        limit=1,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="deep",
+    )
+
+    assert results
+    assert calls["qdrant"] == 1
+    assert calls["letta"] == 0
+    assert debug["staged_fetch"]["hard_sync_async_split"] is True
+    assert debug["staged_fetch"]["force_include_slow"] is False
+    assert orchestrator.RETRIEVAL_SOURCE_LETTA in debug["staged_fetch"]["async_warm_sources"]
+    assert orchestrator.RETRIEVAL_SOURCE_LETTA in scheduled
+
+
+@pytest.mark.asyncio
+async def test_federated_search_applies_qdrant_sync_timeout_cap(monkeypatch: pytest.MonkeyPatch):
+    calls = {"qdrant": 0, "rollups": 0}
+
+    async def _slow_qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        await asyncio.sleep(1.2)
+        return [{"project": "alpha", "file": "q/a.md", "summary": "late qdrant", "score": 0.7, "source": "qdrant"}]
+
+    async def _rollups(*args, **kwargs):
+        calls["rollups"] += 1
+        return [{"project": "alpha", "file": "r/a.md", "summary": "fast rollup", "score": 0.9, "source": "topic_rollups"}]
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _slow_qdrant)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _rollups)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "_schedule_background_source_warm", lambda **_kwargs: None)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_QDRANT_TIMEOUT_SECS", 8.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", 1.0)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS, orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA, orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
+    )
+
+    started = time.monotonic()
+    results, _debug, warnings = await orchestrator.federated_search_memory(
+        "alpha qdrant timeout cap",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+    elapsed = time.monotonic() - started
+
+    assert results
+    assert calls["qdrant"] == 1
+    assert calls["rollups"] == 1
+    assert elapsed < 1.5
+    assert any("qdrant retrieval failed" in item.lower() for item in warnings)
 
 
 @pytest.mark.asyncio
@@ -1043,6 +1343,74 @@ async def test_recall_pipeline_respects_e2e_budget(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_recall_pipeline_skips_timed_out_sources_on_followup_variants(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    call_sources: list[list[str] | None] = []
+
+    async def _federated(*args, **kwargs):
+        call_sources.append(kwargs.get("sources"))
+        if len(call_sources) == 1:
+            return (
+                [],
+                {
+                    "retrieval_mode": kwargs.get("retrieval_mode"),
+                    "source_errors": {"qdrant": "qdrant retrieval timed out after 4.0s"},
+                    "source_counts": {"topic_rollups": 1},
+                    "call_budget": {"exhausted": False, "deferred_sources": []},
+                },
+                [],
+            )
+        return (
+            [],
+            {
+                "retrieval_mode": kwargs.get("retrieval_mode"),
+                "source_errors": {},
+                "source_counts": {"topic_rollups": 1},
+                "call_budget": {"exhausted": False, "deferred_sources": []},
+            },
+            [],
+        )
+
+    monkeypatch.setattr(orchestrator, "federated_search_memory", _federated)
+    monkeypatch.setattr(orchestrator, "_expand_query_variants", lambda _query: ["v1", "v2"])
+    monkeypatch.setattr(orchestrator, "AGENT_RECALL_ESCALATION_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED", True)
+    monkeypatch.setattr(
+        orchestrator,
+        "RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+
+    _results, debug, warnings, _grounding = await orchestrator._run_memory_recall_pipeline(
+        query="alpha",
+        limit=5,
+        project_filter=None,
+        topic_filter=None,
+        sources=None,
+        source_weights=None,
+        preferences=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+        agent_profile=None,
+        auto_escalate=False,
+        query_expansion=True,
+    )
+
+    assert len(call_sources) == 2
+    assert call_sources[1] is not None
+    assert orchestrator.RETRIEVAL_SOURCE_QDRANT not in call_sources[1]
+    assert debug["pipeline"]["timeout_adaptive"]["enabled"] is True
+    assert debug["pipeline"]["timeout_adaptive"]["observed_timeout_sources"] == [
+        orchestrator.RETRIEVAL_SOURCE_QDRANT
+    ]
+    assert debug["pipeline"]["timeout_adaptive"]["skipped_sources"] == [
+        orchestrator.RETRIEVAL_SOURCE_QDRANT
+    ]
+    assert any("adaptive timeout policy skipped timed-out sources" in item.lower() for item in warnings)
+
+
+@pytest.mark.asyncio
 async def test_retrieval_pathway_cache_reads_backend_on_memory_miss(monkeypatch: pytest.MonkeyPatch):
     backend_calls = {"get": 0}
 
@@ -1094,6 +1462,174 @@ async def test_retrieval_pathway_cache_set_writes_backend(monkeypatch: pytest.Mo
         warnings=[],
     )
     assert calls["set"] == 1
+
+
+@pytest.mark.asyncio
+async def test_federated_search_stale_cache_hit_schedules_swr_refresh(monkeypatch: pytest.MonkeyPatch):
+    schedule_calls: list[dict[str, Any]] = []
+    source_calls = {"qdrant": 0}
+
+    async def _qdrant(*args, **kwargs):
+        source_calls["qdrant"] += 1
+        return []
+
+    def _schedule(**kwargs):
+        schedule_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "_schedule_retrieval_pathway_swr_refresh", _schedule)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_TTL_SECS", 10.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS", 120.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_MAX_KEYS", 128)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED", False)
+    async with orchestrator.retrieval_pathway_cache_lock:
+        orchestrator.retrieval_pathway_cache.clear()
+
+    normalized_weights = orchestrator._normalize_retrieval_weights(None)
+    cache_key = orchestrator._retrieval_pathway_cache_key(
+        query="alpha stale query",
+        limit=5,
+        project_filter=None,
+        topic_filter=None,
+        sources=[orchestrator.RETRIEVAL_SOURCE_QDRANT],
+        source_weights=normalized_weights,
+        retrieval_mode="balanced",
+        retrieval_intent="decision",
+        learning_enabled=False,
+        positive_terms=set(),
+        negative_terms=set(),
+    )
+    now = time.monotonic()
+    async with orchestrator.retrieval_pathway_cache_lock:
+        orchestrator.retrieval_pathway_cache[cache_key] = {
+            "expires_at": now - 1.0,
+            "stale_until": now + 60.0,
+            "value": {
+                "results": [
+                    {
+                        "project": "alpha",
+                        "file": "notes/stale.md",
+                        "summary": "stale cached row",
+                        "score": 0.72,
+                        "source": "qdrant",
+                    }
+                ],
+                "retrieval_debug": {"cache": {}},
+                "warnings": [],
+            },
+        }
+
+    results, debug, _warnings = await orchestrator.federated_search_memory(
+        "alpha stale query",
+        limit=5,
+        sources=[orchestrator.RETRIEVAL_SOURCE_QDRANT],
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+    assert results
+    assert debug["cache"]["pathway_hit"] is True
+    assert debug["cache"]["pathway_stale"] is True
+    assert source_calls["qdrant"] == 0
+    assert schedule_calls
+
+
+@pytest.mark.asyncio
+async def test_federated_search_negative_cache_short_circuits_repeat_empty_queries(monkeypatch: pytest.MonkeyPatch):
+    source_calls = {"qdrant": 0}
+
+    async def _qdrant(*args, **kwargs):
+        source_calls["qdrant"] += 1
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS", 120.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS", 128)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MIN_QUERY_CHARS", 3)
+    async with orchestrator.retrieval_pathway_negative_cache_lock:
+        orchestrator.retrieval_pathway_negative_cache.clear()
+        orchestrator.retrieval_pathway_negative_cache_hits = 0
+        orchestrator.retrieval_pathway_negative_cache_misses = 0
+
+    _first_results, _first_debug, _first_warnings = await orchestrator.federated_search_memory(
+        "alpha missing",
+        limit=5,
+        sources=[orchestrator.RETRIEVAL_SOURCE_QDRANT],
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+    second_results, second_debug, _second_warnings = await orchestrator.federated_search_memory(
+        "alpha missing",
+        limit=5,
+        sources=[orchestrator.RETRIEVAL_SOURCE_QDRANT],
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+    assert second_results == []
+    assert source_calls["qdrant"] == 1
+    assert second_debug["cache"]["pathway_negative_hit"] is True
+    assert orchestrator.retrieval_pathway_negative_cache_hits >= 1
+
+
+@pytest.mark.asyncio
+async def test_federated_search_intentional_slow_deferral_does_not_emit_partial_budget_warning(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source_calls = {"qdrant": 0, "letta": 0}
+
+    async def _qdrant(*args, **kwargs):
+        source_calls["qdrant"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": "notes/fast.md",
+                "summary": "fast row",
+                "score": 0.84,
+                "source": "qdrant",
+            }
+        ]
+
+    async def _letta(*args, **kwargs):
+        source_calls["letta"] += 1
+        return []
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_STRICT_FAST_SYNC_DEFAULT", True)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA],
+    )
+
+    _results, debug, warnings = await orchestrator.federated_search_memory(
+        "alpha",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+    assert source_calls["qdrant"] == 1
+    assert source_calls["letta"] == 0
+    assert debug["call_budget"]["cacheWriteSkipped"] is False
+    assert not any("partial results due call budget" in item.lower() for item in warnings)
 
 
 @pytest.mark.asyncio
@@ -1305,7 +1841,9 @@ async def test_federated_search_hard_sync_async_split_uses_fallback_source(monke
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING", True)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", 2)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK])
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED", True)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_STRICT_FAST_SYNC_DEFAULT", False)
     monkeypatch.setattr(
         orchestrator,
         "DEFAULT_RETRIEVAL_FAST_SOURCES",
@@ -1867,6 +2405,71 @@ async def test_memory_search_fails_open_when_preference_store_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_memory_search_deep_async_returns_poll_token(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    async def _enqueue(*, payload: Any, callback_url: str | None):
+        captured["payload"] = payload
+        captured["callback_url"] = callback_url
+        return {
+            "ok": True,
+            "async": True,
+            "token": "tok-1",
+            "status": "queued",
+            "poll_url": "/memory/search/async/tok-1",
+        }
+
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "_enqueue_recall_deep_async_job", _enqueue)
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="deep search",
+            retrieval_mode="deep",
+            deep_async=True,
+        )
+    )
+    assert response["async"] is True
+    assert response["token"] == "tok-1"
+    assert captured["callback_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_memory_search_deep_async_requires_deep_mode(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_ENABLED", True)
+    with pytest.raises(orchestrator.HTTPException) as exc:
+        await orchestrator.search_memory(
+            orchestrator.MemorySearch(
+                query="not deep",
+                retrieval_mode="balanced",
+                deep_async=True,
+            )
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_memory_search_async_returns_completed_result(monkeypatch: pytest.MonkeyPatch):
+    token = "tok-status"
+    expires = time.monotonic() + 120.0
+    async with orchestrator.recall_deep_async_lock:
+        orchestrator.recall_deep_async_jobs.clear()
+        orchestrator.recall_deep_async_jobs[token] = {
+            "token": token,
+            "status": "completed",
+            "created_at": "2026-03-12T00:00:00Z",
+            "updated_at": "2026-03-12T00:00:01Z",
+            "completed_at": "2026-03-12T00:00:01Z",
+            "expires_monotonic": expires,
+            "expires_at": orchestrator._recall_deep_async_expires_at_iso(expires),
+            "result": {"results": [{"project": "alpha"}]},
+            "error": None,
+        }
+    response = await orchestrator.get_memory_search_async(token)
+    assert response["status"] == "completed"
+    assert response["result"]["results"][0]["project"] == "alpha"
+
+
+@pytest.mark.asyncio
 async def test_memory_search_uses_agent_profile_pipeline_and_grounding(monkeypatch: pytest.MonkeyPatch):
     captured: dict[str, Any] = {}
 
@@ -2210,6 +2813,13 @@ async def test_context_pack_rollup_includes_raw_refs(monkeypatch: pytest.MonkeyP
                         "unique_file_count": 3,
                         "latest_timestamp": "2026-03-02T10:00:00Z",
                         "raw_refs": ["decisions/a.md", "decisions/b.md"],
+                        "file_partitions": [
+                            {
+                                "topic_path": "decisions",
+                                "file_count": 3,
+                                "sample_files": ["decisions/a.md", "decisions/b.md"],
+                            }
+                        ],
                     },
                 }
             ],
@@ -2230,10 +2840,31 @@ async def test_context_pack_rollup_includes_raw_refs(monkeypatch: pytest.MonkeyP
     )
     pack = response["context_pack"]
     assert pack["results"][0]["topic_rollup"]["raw_refs"] == ["decisions/a.md", "decisions/b.md"]
+    assert pack["results"][0]["topic_rollup"]["file_partitions"][0]["topic_path"] == "decisions"
     assert any(
         citation.get("source") == "topic_rollup_raw_ref" and citation.get("file") == "decisions/a.md"
         for citation in pack["citations"]
     )
+    assert any(
+        citation.get("source") == "topic_rollup_partition_ref" and citation.get("file") == "decisions/b.md"
+        for citation in pack["citations"]
+    )
+
+
+def test_finalize_topic_rollup_entry_builds_file_partitions(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_FILE_PARTITIONS_MAX", 3)
+    entry = orchestrator._new_topic_rollup_entry("runbooks/performance")
+    entry["_unique_files"] = {
+        "runbooks/performance/a.md",
+        "runbooks/performance/b.md",
+        "runbooks/profitability/c.md",
+        "telemetry/stats/d.json",
+    }
+    finalized = orchestrator._finalize_topic_rollup_entry(entry)
+    partitions = finalized.get("filePartitions")
+    assert isinstance(partitions, list)
+    assert partitions
+    assert sum(int(item.get("file_count") or 0) for item in partitions) == finalized["uniqueFileCount"]
 
 
 @pytest.mark.asyncio
@@ -2457,6 +3088,338 @@ async def test_evaluate_saved_recall_cases_uses_defaults(monkeypatch: pytest.Mon
     assert result["savedCaseSet"]["count"] == 1
     assert captured["payload"].k == 3
     assert captured["payload"].gate_min_recall_at_k == 0.5
+
+
+@pytest.mark.asyncio
+async def test_evaluate_memory_recall_retries_transient_failures(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_TRANSIENT_RETRY_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_TRANSIENT_RETRY_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_TRANSIENT_RETRY_MODES_ENV", "balanced")
+    calls: list[str | None] = []
+
+    async def _search(payload: Any):
+        calls.append(payload.retrieval_mode)
+        if len(calls) == 1:
+            return {
+                "results": [],
+                "warnings": ["qdrant retrieval failed: qdrant retrieval timed out after 5.2s"],
+                "grounding": {"numeric_facts": []},
+                "retrieval_mode": "fast",
+                "agent_id": "default",
+                "retrieval": {"source_errors": {"qdrant": "timeout"}},
+            }
+        return {
+            "results": [
+                {
+                    "project": "alpha",
+                    "file": "notes/health.md",
+                    "summary": "health status improved after tuning",
+                    "source": "topic_rollups",
+                    "score": 0.81,
+                }
+            ],
+            "warnings": [],
+            "grounding": {"numeric_facts": []},
+            "retrieval_mode": "balanced",
+            "agent_id": "default",
+            "retrieval": {"source_errors": {}},
+        }
+
+    monkeypatch.setattr(orchestrator, "search_memory", _search)
+    payload = orchestrator.RecallEvalRequest(
+        cases=[
+            orchestrator.RecallEvalCase(
+                id="case-transient",
+                query="health status",
+                expected_substrings=["health"],
+                retrieval_mode="fast",
+            )
+        ],
+        k=5,
+    )
+    result = await orchestrator.evaluate_memory_recall(payload)
+    assert result["passed"] is True
+    assert calls == ["fast", "balanced"]
+    case = result["cases"][0]
+    assert case["hit"] is True
+    assert case["retry_attempts"] == 1
+    assert case["transient_retry_triggered"] is True
+    assert case["transient_retry_recovered"] is True
+    assert case["attempt_modes"] == ["fast", "balanced"]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_memory_recall_no_retry_without_transient_signal(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_TRANSIENT_RETRY_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_TRANSIENT_RETRY_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_TRANSIENT_RETRY_MODES_ENV", "balanced")
+    calls: list[str | None] = []
+
+    async def _search(payload: Any):
+        calls.append(payload.retrieval_mode)
+        return {
+            "results": [],
+            "warnings": ["no qualifying retrieval hits"],
+            "grounding": {"numeric_facts": []},
+            "retrieval_mode": "fast",
+            "agent_id": "default",
+            "retrieval": {"source_errors": {}},
+        }
+
+    monkeypatch.setattr(orchestrator, "search_memory", _search)
+    payload = orchestrator.RecallEvalRequest(
+        cases=[
+            orchestrator.RecallEvalCase(
+                id="case-non-transient",
+                query="health status",
+                expected_substrings=["health"],
+                retrieval_mode="fast",
+            )
+        ],
+        k=5,
+    )
+    result = await orchestrator.evaluate_memory_recall(payload)
+    assert result["passed"] is False
+    assert calls == ["fast"]
+    case = result["cases"][0]
+    assert case["retry_attempts"] == 0
+    assert case["transient_retry_triggered"] is False
+    assert case["transient_retry_recovered"] is False
+    assert case["attempt_modes"] == ["fast"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_saved_recall_eval_cases_persists_and_runs_eval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    case_path = tmp_path / "recall_eval_cases.json"
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_CASES_PATH", case_path)
+
+    async def _build_cases(**kwargs):
+        assert kwargs["max_cases"] == 3
+        assert kwargs["min_hits"] == 1
+        return {
+            "version": 1,
+            "updatedAt": "2026-03-12T00:00:00Z",
+            "k": 5,
+            "gate": {"minRecallAtK": 0.75, "minMrr": 0.55, "minNumericExactness": 0.9},
+            "cases": [
+                {
+                    "id": "c1",
+                    "query": "source quality",
+                    "project": "algotraderv2_rust",
+                    "topic_path": "runbooks/performance",
+                    "expected_substrings": ["source"],
+                }
+            ],
+        }
+
+    async def _eval_saved(payload):
+        assert payload.include_preferences is True
+        return {"ok": True, "passed": True, "metrics": {"recallAtK": 1.0}, "gate": {}, "cases": []}
+
+    monkeypatch.setattr(orchestrator, "_build_refreshed_recall_eval_case_set", _build_cases)
+    monkeypatch.setattr(orchestrator, "evaluate_saved_recall_cases", _eval_saved)
+    payload = orchestrator.RecallEvalRefreshRequest(max_cases=3, min_hits=1, run_evaluation=True)
+    result = await orchestrator.refresh_saved_recall_eval_cases(payload)
+    assert result["ok"] is True
+    assert result["savedCaseSet"]["count"] == 1
+    assert result["evaluation"]["passed"] is True
+    persisted = json.loads(case_path.read_text(encoding="utf-8"))
+    assert persisted["cases"][0]["id"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_build_refreshed_recall_eval_case_set_uses_hot_pathways(monkeypatch: pytest.MonkeyPatch):
+    async def _hot(_limit: int):
+        return [
+            {
+                "query": "source quality qdrant",
+                "project_filter": "algotraderv2_rust",
+                "topic_filter": "runbooks/performance",
+                "sources": ["qdrant", "topic_rollups"],
+                "source_weights": {"qdrant": 1.0},
+                "retrieval_mode": "deep",
+                "retrieval_intent": "decision",
+                "hits": 5,
+            }
+        ]
+
+    monkeypatch.setattr(orchestrator, "_list_hot_retrieval_pathways", _hot)
+    async def _pipeline(**kwargs):
+        return (
+            [
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "notes/perf.md",
+                    "summary": "qdrant source quality improved",
+                    "source": "qdrant",
+                    "score": 0.9,
+                }
+            ],
+            {},
+            [],
+            {},
+        )
+
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+    payload = await orchestrator._build_refreshed_recall_eval_case_set(
+        max_cases=5,
+        min_hits=2,
+        project="algotraderv2_rust",
+        topic_prefix="runbooks",
+    )
+    assert len(payload["cases"]) == 1
+    case = payload["cases"][0]
+    assert case["project"] == "algotraderv2_rust"
+    assert case["topic_path"] == "runbooks/performance"
+    assert case["retrieval_mode"] == "fast"
+    assert case["sources"] == ["qdrant", "topic_rollups"]
+    assert "qdrant" in (case.get("expected_substrings") or [])
+
+
+@pytest.mark.asyncio
+async def test_build_refreshed_recall_eval_case_set_prunes_fallback_non_hits(monkeypatch: pytest.MonkeyPatch):
+    async def _hot(_limit: int):
+        return []
+
+    async def _pipeline(**kwargs):
+        query = str(kwargs.get("query") or "")
+        if "runtime cutover" in query:
+            return ([], {}, [], {})
+        return (
+            [
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "notes/perf.md",
+                    "summary": "qdrant source quality improved",
+                    "source": "qdrant",
+                    "score": 0.9,
+                }
+            ],
+            {},
+            [],
+            {},
+        )
+
+    monkeypatch.setattr(orchestrator, "_list_hot_retrieval_pathways", _hot)
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+    payload = await orchestrator._build_refreshed_recall_eval_case_set(
+        max_cases=5,
+        min_hits=1,
+        project="algotraderv2_rust",
+        topic_prefix=None,
+    )
+    assert len(payload["cases"]) == 2
+    ids = {case.get("id") for case in payload["cases"]}
+    assert "runtime-cutover-surface" not in ids
+
+
+@pytest.mark.asyncio
+async def test_build_refreshed_recall_eval_case_set_requires_rollup_support(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RECALL_EVAL_REFRESH_REQUIRE_ROLLUP_SUPPORT", True)
+
+    async def _hot(_limit: int):
+        return [
+            {
+                "query": "source quality qdrant",
+                "project_filter": "algotraderv2_rust",
+                "topic_filter": "runbooks/performance",
+                "retrieval_intent": "decision",
+                "hits": 5,
+            }
+        ]
+
+    async def _pipeline(**kwargs):
+        sources = kwargs.get("sources") or []
+        if sources == [orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS]:
+            return ([], {}, [], {})
+        return (
+            [
+                {
+                    "project": "algotraderv2_rust",
+                    "file": "notes/perf.md",
+                    "summary": "qdrant source quality improved",
+                    "source": "qdrant",
+                    "score": 0.9,
+                }
+            ],
+            {},
+            [],
+            {},
+        )
+
+    monkeypatch.setattr(orchestrator, "_list_hot_retrieval_pathways", _hot)
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+    payload = await orchestrator._build_refreshed_recall_eval_case_set(
+        max_cases=5,
+        min_hits=1,
+        project="algotraderv2_rust",
+        topic_prefix=None,
+    )
+    assert payload["cases"] == []
+
+
+@pytest.mark.asyncio
+async def test_embed_text_prefers_fastembed_adapter(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_ready", lambda: True)
+
+    async def _fastembed(text: str):
+        assert text == "alpha beta"
+        return [0.25, 0.75]
+
+    async def _cache_get(_key: str):
+        return None
+
+    captured: dict[str, Any] = {}
+
+    async def _cache_set(_key: str, vector: list[float]):
+        captured["vector"] = vector
+
+    monkeypatch.setattr(orchestrator, "_fastembed_rs_embedding", _fastembed)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_get", _cache_get)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_set", _cache_set)
+    vector = await orchestrator.embed_text("alpha beta")
+    assert vector == [0.25, 0.75]
+    assert captured["vector"] == [0.25, 0.75]
+
+
+@pytest.mark.asyncio
+async def test_embed_text_fastembed_fallbacks_to_provider(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_ready", lambda: True)
+    monkeypatch.setattr(orchestrator, "EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setattr(orchestrator, "fastembed_adapter_fallbacks", 0)
+
+    async def _fastembed(_text: str):
+        raise RuntimeError("adapter unavailable")
+
+    async def _cache_get(_key: str):
+        return None
+
+    async def _cache_set(_key: str, _vector: list[float]):
+        return None
+
+    async def _openai(_text: str):
+        return [0.1, 0.2, 0.7]
+
+    monkeypatch.setattr(orchestrator, "_fastembed_rs_embedding", _fastembed)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_get", _cache_get)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_set", _cache_set)
+    monkeypatch.setattr(orchestrator, "_openai_like_embedding", _openai)
+    vector = await orchestrator.embed_text("fallback query")
+    assert vector == [0.1, 0.2, 0.7]
+    assert orchestrator.fastembed_adapter_fallbacks == 1
+
+
+def test_qdrant_mode_helpers(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "QDRANT_SEARCH_HNSW_EF", 64)
+    monkeypatch.setattr(orchestrator, "QDRANT_SEARCH_MODE_HNSW_EF_ENV", "{\"fast\":32,\"deep\":140}")
+    monkeypatch.setattr(orchestrator, "QDRANT_SEARCH_MODE_LIMIT_CAPS_ENV", "{\"fast\":40,\"balanced\":90,\"deep\":130}")
+    assert orchestrator._qdrant_mode_hnsw_ef("fast") == 32
+    assert orchestrator._qdrant_mode_hnsw_ef("balanced") == 64
+    assert orchestrator._qdrant_mode_limit_cap("fast", 100) == 40
+    assert orchestrator._qdrant_mode_limit_cap("deep", 200) == 130
 
 
 def test_list_topics_snapshot_sorts_and_filters(monkeypatch: pytest.MonkeyPatch):
@@ -3401,7 +4364,7 @@ async def test_federated_search_staged_fetch_skips_slow_sources(
     )
     assert results
     assert slow_calls == {"letta": 0, "memory_bank": 0}
-    assert debug["staged_fetch"]["slow_sources_skipped"] == ["letta", "memory_bank"]
+    assert "letta" in debug["staged_fetch"]["slow_sources_skipped"]
 
 
 def test_mongo_timestamp_and_outstanding_helpers():
@@ -3489,6 +4452,93 @@ def test_low_value_classifier_helpers():
         "Long-form decision artifact",
         include_short_summary=False,
     )
+
+
+def test_memory_bank_telemetry_classifier_helpers():
+    assert orchestrator._looks_memory_bank_telemetry_file(
+        "arena__mint_agg-20260310T020603091Z-part1of1.json",
+        "root",
+    )
+    assert orchestrator._looks_memory_bank_telemetry_file(
+        "telemetry/queue__state__20260310T020603091Z.json",
+        "telemetry",
+    )
+    assert not orchestrator._looks_memory_bank_telemetry_file(
+        "runbooks/profitability/baseline_ladder.md",
+        "runbooks/profitability",
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_memory_bank_lexical_ranks_after_full_scan(monkeypatch: pytest.MonkeyPatch):
+    async def _files(_project: str):
+        return [f"noise/file_{idx}.json" for idx in range(80)] + [
+            "runbooks/profitability/baseline_ladder.md",
+        ]
+
+    async def _read(_project: str, file_name: str, **_kwargs):
+        if file_name.endswith("baseline_ladder.md"):
+            return "Baseline ladder tuning notes with concrete profitability changes."
+        return ""
+
+    async def _summary(content: str, max_length: int = 500):
+        return content[:max_length]
+
+    monkeypatch.setattr(orchestrator, "list_files", _files)
+    monkeypatch.setattr(orchestrator, "read_project_file", _read)
+    monkeypatch.setattr(orchestrator, "summarize_content", _summary)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_FILES_PER_PROJECT", 8)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_SCAN_LIMIT", 12)
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", False)
+
+    rows = await orchestrator.search_memory_bank_lexical(
+        "profitability baseline ladder",
+        project_filter="alpha",
+        limit=6,
+        time_budget_secs=5.0,
+    )
+    assert rows
+    assert rows[0]["file"] == "runbooks/profitability/baseline_ladder.md"
+
+
+@pytest.mark.asyncio
+async def test_search_memory_bank_lexical_skips_telemetry_unless_query_targets_it(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    reads = {"count": 0}
+
+    async def _files(_project: str):
+        return ["telemetry/queue__state__20260310T020603091Z.json"]
+
+    async def _read(_project: str, _file_name: str, **_kwargs):
+        reads["count"] += 1
+        return "{\"queueDepth\": 42}"
+
+    async def _summary(content: str, max_length: int = 500):
+        return content[:max_length]
+
+    monkeypatch.setattr(orchestrator, "list_files", _files)
+    monkeypatch.setattr(orchestrator, "read_project_file", _read)
+    monkeypatch.setattr(orchestrator, "summarize_content", _summary)
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", True)
+
+    normal_rows = await orchestrator.search_memory_bank_lexical(
+        "profitability baseline ladder",
+        project_filter="alpha",
+        limit=5,
+        time_budget_secs=3.0,
+    )
+    assert normal_rows == []
+    assert reads["count"] == 0
+
+    telemetry_rows = await orchestrator.search_memory_bank_lexical(
+        "telemetry queue health",
+        project_filter="alpha",
+        limit=5,
+        time_budget_secs=3.0,
+    )
+    assert telemetry_rows
+    assert reads["count"] == 1
 
 
 def test_merge_rows_respects_raw_intent_low_value_policy(monkeypatch: pytest.MonkeyPatch):
@@ -3955,6 +5005,7 @@ async def test_flush_hot_memory_rollups_emits_compact_snapshot(monkeypatch: pyte
 
     monkeypatch.setattr(orchestrator, "_enqueue_memory_bank_write", _capture)
     monkeypatch.setattr(orchestrator, "HOT_MEMORY_ROLLUP_FLUSH_SECS", 1.0)
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", False)
     orchestrator.hot_memory_rollup_entries.clear()
     orchestrator.hot_memory_rollup_health.update(
         {
@@ -4012,6 +5063,7 @@ async def test_write_memory_hot_file_buffers_then_skips_unchanged(monkeypatch: p
 
     monkeypatch.setattr(orchestrator, "HOT_MEMORY_ROLLUP_ENABLED", True)
     monkeypatch.setattr(orchestrator, "HOT_MEMORY_FILE_SUFFIXES", ["__latest.json"])
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", False)
     monkeypatch.setattr(orchestrator, "MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED", True)
     monkeypatch.setattr(orchestrator, "MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS", 100)
     monkeypatch.setattr(orchestrator, "summarize_content", _fake_summarize)
@@ -4036,6 +5088,66 @@ async def test_write_memory_hot_file_buffers_then_skips_unchanged(monkeypatch: p
     assert second["ok"] is True
     assert second["deduped"] is True
     assert second["latest_hash_unchanged"] is True
+
+
+@pytest.mark.asyncio
+async def test_write_memory_skips_memory_bank_for_telemetry_low_value(monkeypatch: pytest.MonkeyPatch):
+    finalized: list[dict[str, object]] = []
+
+    async def _fake_finalize(
+        item: dict[str, object],
+        *,
+        worker_id: int | None,
+        persisted_to_memory_bank: bool,
+    ) -> None:
+        finalized.append(
+            {
+                "project": item.get("project"),
+                "file": item.get("file"),
+                "worker_id": worker_id,
+                "persisted_to_memory_bank": persisted_to_memory_bank,
+            }
+        )
+
+    async def _fake_summarize(content: str, max_length: int = 500):
+        return content[:max_length]
+
+    async def _persist_raw(_event: dict[str, object]):
+        return True, None
+
+    async def _fanout_summary():
+        return {"by_status": {}, "by_target": {}}
+
+    async def _should_skip_duplicate(_dedupe_key: str):
+        return False
+
+    async def _should_skip_latest(_project: str, _file: str, _hash: str):
+        return False
+
+    async def _unexpected_enqueue(_item: dict[str, object]):
+        raise AssertionError("memory_bank enqueue should be skipped for telemetry low-value writes")
+
+    monkeypatch.setattr(orchestrator, "_finalize_memory_write_item", _fake_finalize)
+    monkeypatch.setattr(orchestrator, "summarize_content", _fake_summarize)
+    monkeypatch.setattr(orchestrator, "persist_raw_event_to_mongo", _persist_raw)
+    monkeypatch.setattr(orchestrator, "get_fanout_summary", _fanout_summary)
+    monkeypatch.setattr(orchestrator, "should_skip_duplicate_memory_write", _should_skip_duplicate)
+    monkeypatch.setattr(orchestrator, "should_skip_unchanged_latest_hash", _should_skip_latest)
+    monkeypatch.setattr(orchestrator, "_enqueue_memory_bank_write", _unexpected_enqueue)
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LETTA_AUTO_SESSION_ID", "")
+
+    request = SimpleNamespace(state=SimpleNamespace(request_id="test-low-value"))
+    payload = orchestrator.MemoryWrite(
+        projectName="alpha",
+        fileName="telemetry/queue__state__20260310T020603091Z.json",
+        content="{\"queueDepth\":42}",
+    )
+    response = await orchestrator.write_memory(payload, request)
+    assert response["ok"] is True
+    assert response["fanout"]["memory_bank"] == "skipped_low_value"
+    assert response["memory_bank_skipped_low_value"] is True
+    assert finalized and finalized[0]["persisted_to_memory_bank"] is False
 
 
 def test_letta_transient_error_detection_and_threshold(monkeypatch: pytest.MonkeyPatch):

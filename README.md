@@ -34,6 +34,7 @@ Context Lattice is built for teams running high-volume memory writes where durab
 - One ingress contract (`/memory/write`) with validated + normalized payloads.
 - Durable outbox fanout to specialized sinks (Qdrant, Mongo raw, MindsDB, Letta, memory-bank).
 - Retrieval orchestration that merges multi-source recall and improves ranking through a learning loop.
+- Code-context enrichment + reranking (symbol overlap, file-path proximity, recency) behind env-gated controls.
 - Local-first operation with optional cloud BYO for specific sinks.
 
 ## Architecture Snapshot
@@ -93,6 +94,30 @@ LETTA_AUTO_PRUNE_TIMEOUT_SECS=45
 LETTA_AUTO_PRUNE_STATUSES=pending,retrying
 ```
 
+Optional code-context and agent capability surfaces:
+
+```bash
+ORCH_CODE_CONTEXT_ENRICH_ENABLED=true
+ORCH_MCP_CAPABILITY_MAP_ENABLED=true
+ORCH_BROWSER_CONTEXT_INGEST_ENABLED=true
+```
+
+Optional fastembed-rs adapter spike (feature-flagged):
+
+```bash
+ORCH_ADAPTER_FASTEMBED_RS_ENABLED=true
+ORCH_FASTEMBED_RS_BASE_URL=http://fastembed-rs:8080
+ORCH_FASTEMBED_RS_ROUTE=/embed
+ORCH_FASTEMBED_RS_TIMEOUT_SECS=2.5
+```
+
+Optional mode-aware Qdrant tuning:
+
+```bash
+ORCH_QDRANT_SEARCH_MODE_HNSW_EF={"fast":48,"balanced":96,"deep":128}
+ORCH_QDRANT_SEARCH_MODE_LIMIT_CAPS={"fast":80,"balanced":120,"deep":180}
+```
+
 ### 2) One-command quickstart (recommended)
 
 ```bash
@@ -114,6 +139,7 @@ ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,ind
 
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.service,.sinks'
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/ops/capabilities | jq
 ```
 
 Expected:
