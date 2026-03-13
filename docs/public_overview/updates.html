@@ -40,6 +40,50 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-03-13 · Runtime Tuning</span>
+        <h3>Qdrant staged-fetch caps tuned by retrieval mode + compose passthrough hardening</h3>
+        <p class="spotlight">
+          Added mode-specific Qdrant sync timeout caps in <code>gateway-go</code> and exposed tuning envs in
+          compose so operators can tune fast/balanced/deep behavior without code edits.
+        </p>
+        <ul>
+          <li>New knobs: <code>ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS</code>, <code>..._BALANCED_...</code>, <code>..._DEEP_...</code>.</li>
+          <li>A/B artifact pair: <code>bench/results/qdrant_tuning_20260313T004405Z.json</code> vs <code>bench/results/qdrant_tuning_20260313T213430Z.json</code>.</li>
+          <li>Observed p95 delta (same harness): baseline <code>593.575ms → 84.843ms</code> (~<code>7.00x</code>), deep-tail <code>995.125ms → 162.870ms</code> (~<code>6.11x</code>), fast-path <code>686.621ms → 603.521ms</code> (~<code>1.14x</code>).</li>
+          <li>Companion matrix artifact: <code>bench/results/perf_shortlist_matrix_20260313T213440Z.json</code>.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-03-05 · V3 Planning</span>
+        <h3>Published V3 roadmap for issues #68-#72</h3>
+        <p class="spotlight">
+          We published the V3 execution roadmap to show how performance, deep-read stability,
+          recall quality, and runner interoperability will be integrated and tested as one program.
+        </p>
+        <ul>
+          <li>Roadmap page: <a href="roadmap.html">roadmap.html</a></li>
+          <li>Includes grouped tracks, integration scope, and benchmark + recall + security gates.</li>
+          <li>Focus is application efficacy: more correct outcomes per request with lower tail latency.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-03-04 · v2.0.0 · Runtime Cutover Benchmark</span>
+        <h3>Rust+Go runtime is now default; Python retained as legacy fallback</h3>
+        <p class="spotlight">
+          We ran a live A/B on the same <code>/memory/search</code> path before and after cutover.
+          Test profile: <code>bench/phase1_runtime_comparison.py</code>, <code>8</code> requests, <code>20s</code> timeout.
+        </p>
+        <ul>
+          <li>Cutover ON (Rust+Go): mean <code>3557ms</code>, p50 <code>2334ms</code>, p95 <code>8494ms</code>, p99 <code>9359ms</code>, errors <code>0/8</code>.</li>
+          <li>Legacy OFF (Python): mean <code>17565ms</code>, p50 <code>20006ms</code>, p95 <code>20008ms</code>, p99 <code>20008ms</code>, errors <code>7/8</code> (timeouts).</li>
+          <li>Observed delta: mean <code>4.94x</code> faster, p50 <code>8.57x</code> faster, p95 <code>2.36x</code> faster.</li>
+          <li>Compose defaults now start with Rust+Go enabled; Python is rollback/legacy path only.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-02-18 · Messaging Surface + Cloud Validation</span>
         <h3>Channel command bridge live, with optional Qdrant Cloud gRPC validation</h3>
         <ul>

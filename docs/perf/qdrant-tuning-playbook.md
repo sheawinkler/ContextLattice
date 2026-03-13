@@ -15,7 +15,7 @@ gmake bench-qdrant-tuning
 - request throughput under fast/balanced/deep modes
 
 Latest sample artifact:
-- `bench/results/qdrant_tuning_20260312T191656Z.json`
+- `bench/results/qdrant_tuning_20260313T213430Z.json`
 
 ## Tuning Matrix
 Evaluate one profile change at a time:
@@ -27,6 +27,10 @@ Evaluate one profile change at a time:
 - `ORCH_QDRANT_SEARCH_INDEXED_ONLY`
 - `ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED`
 - `ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR`
+- `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS`
+- `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS`
+- `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_BALANCED_SECS`
+- `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS`
 2. Index build profile:
 - `QDRANT_HNSW_M`
 - `QDRANT_HNSW_EF_CONSTRUCT`

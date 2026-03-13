@@ -45,6 +45,7 @@ type retrievalPolicy struct {
 	minFastResults              int
 	deepBlocking                bool
 	qdrantSyncTimeoutCap        time.Duration
+	qdrantSyncTimeoutCapByMode  map[string]time.Duration
 	failOpenContinuationEnabled bool
 	failOpenContinuationSources map[string]struct{}
 	timeoutAdaptiveSkipEnabled  bool
@@ -283,6 +284,20 @@ func loadRetrievalPolicy() retrievalPolicy {
 	}
 	policy.deepBlocking = envBool("ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING", false)
 	policy.qdrantSyncTimeoutCap = envDurationSeconds("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", 4)
+	policy.qdrantSyncTimeoutCapByMode = map[string]time.Duration{
+		"fast": envDurationSeconds(
+			"ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS",
+			policy.qdrantSyncTimeoutCap.Seconds(),
+		),
+		"balanced": envDurationSeconds(
+			"ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_BALANCED_SECS",
+			policy.qdrantSyncTimeoutCap.Seconds(),
+		),
+		"deep": envDurationSeconds(
+			"ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS",
+			policy.qdrantSyncTimeoutCap.Seconds(),
+		),
+	}
 	policy.failOpenContinuationEnabled = envBool("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", true)
 	policy.failOpenContinuationSources = toSourceSet(csvListEnv(
 		"ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES",
@@ -487,10 +502,15 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 		"description": "ContextLattice gateway-go retrieval/memory proxy",
 		"backendUrl":  s.backendURL,
 		"retrieval": map[string]any{
-			"stagedEnabled":                   s.retrieval.enabled,
-			"fastSources":                     s.retrieval.fastSources,
-			"slowSources":                     s.retrieval.slowSources,
-			"qdrantSyncTimeoutCapSecs":        s.retrieval.qdrantSyncTimeoutCap.Seconds(),
+			"stagedEnabled":            s.retrieval.enabled,
+			"fastSources":              s.retrieval.fastSources,
+			"slowSources":              s.retrieval.slowSources,
+			"qdrantSyncTimeoutCapSecs": s.retrieval.qdrantSyncTimeoutCap.Seconds(),
+			"qdrantSyncTimeoutCapByModeSecs": map[string]any{
+				"fast":     s.retrieval.qdrantSyncTimeoutCapByMode["fast"].Seconds(),
+				"balanced": s.retrieval.qdrantSyncTimeoutCapByMode["balanced"].Seconds(),
+				"deep":     s.retrieval.qdrantSyncTimeoutCapByMode["deep"].Seconds(),
+			},
 			"failOpenContinuationEnabled":     s.retrieval.failOpenContinuationEnabled,
 			"timeoutAdaptiveSkipEnabled":      s.retrieval.timeoutAdaptiveSkipEnabled,
 			"continuationMaxInflight":         s.retrieval.continuationMaxInflight,
@@ -849,13 +869,26 @@ func isTimeoutError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }
 
-func (s *server) resolveSourceTimeout(source string, syncPhase bool, explicitSourceOverride bool) time.Duration {
+func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
+	normalized := strings.TrimSpace(strings.ToLower(mode))
+	if timeout, ok := s.retrieval.qdrantSyncTimeoutCapByMode[normalized]; ok && timeout > 0 {
+		return timeout
+	}
+	return s.retrieval.qdrantSyncTimeoutCap
+}
+
+func (s *server) resolveSourceTimeout(
+	source string,
+	retrievalMode string,
+	syncPhase bool,
+	explicitSourceOverride bool,
+) time.Duration {
 	timeout, ok := s.retrieval.sourceTimeouts[source]
 	if !ok || timeout <= 0 {
 		timeout = 8 * time.Second
 	}
 	if syncPhase && !explicitSourceOverride && source == sourceQdrant {
-		capDuration := s.retrieval.qdrantSyncTimeoutCap
+		capDuration := s.resolveQdrantSyncCap(retrievalMode)
 		if capDuration > 0 && timeout > capDuration {
 			return capDuration
 		}
@@ -999,6 +1032,7 @@ func (s *server) runSourceBatch(
 	incomingHeaders http.Header,
 	baseRequest map[string]any,
 	sources []string,
+	retrievalMode string,
 	phase string,
 	explicitSourceOverride bool,
 	syncPhase bool,
@@ -1028,7 +1062,12 @@ func (s *server) runSourceBatch(
 			continue
 		}
 		started += 1
-		sourceTimeout := s.resolveSourceTimeout(normalized, syncPhase, explicitSourceOverride)
+		sourceTimeout := s.resolveSourceTimeout(
+			normalized,
+			retrievalMode,
+			syncPhase,
+			explicitSourceOverride,
+		)
 		go func(sourceName string, timeout time.Duration) {
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -1182,6 +1221,7 @@ func (s *server) executeRetrieval(
 		incomingHeaders,
 		requestPayload,
 		fastSources,
+		retrievalMode,
 		"fast",
 		explicitSourceOverride,
 		true,
@@ -1238,6 +1278,7 @@ func (s *server) executeRetrieval(
 					incomingHeaders,
 					requestPayload,
 					fallback,
+					retrievalMode,
 					"slow-sync-fallback",
 					explicitSourceOverride,
 					true,
@@ -1273,6 +1314,7 @@ func (s *server) executeRetrieval(
 				incomingHeaders,
 				requestPayload,
 				slowSources,
+				retrievalMode,
 				"slow-sync",
 				explicitSourceOverride,
 				true,
@@ -1339,13 +1381,18 @@ func (s *server) executeRetrieval(
 		"source_counts":    sourceCounts,
 		"source_errors":    sourceErrors,
 		"source_policy": map[string]any{
-			"staged_enabled":                         s.retrieval.enabled,
-			"fast_sources":                           s.retrieval.fastSources,
-			"slow_sources":                           s.retrieval.slowSources,
-			"sync_fallback_sources":                  s.retrieval.syncFallbackSources,
-			"min_fast_results":                       s.retrieval.minFastResults,
-			"deep_blocking":                          s.retrieval.deepBlocking,
-			"qdrant_sync_timeout_cap_secs":           s.retrieval.qdrantSyncTimeoutCap.Seconds(),
+			"staged_enabled":               s.retrieval.enabled,
+			"fast_sources":                 s.retrieval.fastSources,
+			"slow_sources":                 s.retrieval.slowSources,
+			"sync_fallback_sources":        s.retrieval.syncFallbackSources,
+			"min_fast_results":             s.retrieval.minFastResults,
+			"deep_blocking":                s.retrieval.deepBlocking,
+			"qdrant_sync_timeout_cap_secs": s.retrieval.qdrantSyncTimeoutCap.Seconds(),
+			"qdrant_sync_timeout_cap_by_mode_secs": map[string]any{
+				"fast":     s.resolveQdrantSyncCap("fast").Seconds(),
+				"balanced": s.resolveQdrantSyncCap("balanced").Seconds(),
+				"deep":     s.resolveQdrantSyncCap("deep").Seconds(),
+			},
 			"fail_open_timeout_continuation_enabled": s.retrieval.failOpenContinuationEnabled,
 			"timeout_adaptive_skip_enabled":          s.retrieval.timeoutAdaptiveSkipEnabled,
 		},
