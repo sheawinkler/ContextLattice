@@ -20,6 +20,7 @@
 <p align="center">
   <a href="https://contextlattice.io/">Overview</a> |
   <a href="https://contextlattice.io/architecture.html">Architecture</a> |
+  <a href="https://contextlattice.io/roadmap.html">V3 Roadmap</a> |
   <a href="https://contextlattice.io/installation.html">Installation</a> |
   <a href="https://contextlattice.io/integration.html">Integrations</a> |
   <a href="https://contextlattice.io/troubleshooting.html">Troubleshooting</a> |
@@ -33,6 +34,7 @@ Context Lattice is built for teams running high-volume memory writes where durab
 - One ingress contract (`/memory/write`) with validated + normalized payloads.
 - Durable outbox fanout to specialized sinks (Qdrant, Mongo raw, MindsDB, Letta, memory-bank).
 - Retrieval orchestration that merges multi-source recall and improves ranking through a learning loop.
+- Code-context enrichment + reranking (symbol overlap, file-path proximity, recency) behind env-gated controls.
 - Local-first operation with optional cloud BYO for specific sinks.
 
 ## Architecture Snapshot
@@ -92,6 +94,30 @@ LETTA_AUTO_PRUNE_TIMEOUT_SECS=45
 LETTA_AUTO_PRUNE_STATUSES=pending,retrying
 ```
 
+Optional code-context and agent capability surfaces:
+
+```bash
+ORCH_CODE_CONTEXT_ENRICH_ENABLED=true
+ORCH_MCP_CAPABILITY_MAP_ENABLED=true
+ORCH_BROWSER_CONTEXT_INGEST_ENABLED=true
+```
+
+Optional fastembed-rs adapter spike (feature-flagged):
+
+```bash
+ORCH_ADAPTER_FASTEMBED_RS_ENABLED=true
+ORCH_FASTEMBED_RS_BASE_URL=http://fastembed-rs:8080
+ORCH_FASTEMBED_RS_ROUTE=/embed
+ORCH_FASTEMBED_RS_TIMEOUT_SECS=2.5
+```
+
+Optional mode-aware Qdrant tuning:
+
+```bash
+ORCH_QDRANT_SEARCH_MODE_HNSW_EF={"fast":48,"balanced":96,"deep":128}
+ORCH_QDRANT_SEARCH_MODE_LIMIT_CAPS={"fast":80,"balanced":120,"deep":180}
+```
+
 ### 2) One-command quickstart (recommended)
 
 ```bash
@@ -101,7 +127,7 @@ gmake quickstart
 This command:
 - creates `.env` if missing
 - links compose env
-- generates `MEMMCP_ORCHESTRATOR_API_KEY` if missing
+- generates `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` if missing
 - applies secure local defaults
 - boots the stack
 - runs smoke + auth-safe health checks
@@ -109,10 +135,11 @@ This command:
 ### 3) 60-second verify (recommended)
 
 ```bash
-ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.service,.sinks'
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/ops/capabilities | jq
 ```
 
 Expected:
@@ -146,7 +173,7 @@ gmake mem-mode-core
 ### 6) Verify health and telemetry
 
 ```bash
-ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq
@@ -167,7 +194,7 @@ scripts/first_run.sh --insecure-local
 
 `scripts/first_run.sh` now enforces secure local-first defaults unless explicitly overridden:
 - loopback-only host port binding (`HOST_BIND_ADDRESS=127.0.0.1`)
-- production auth posture (`MEMMCP_ENV=production`, strict API key requirement)
+- production auth posture (`CONTEXTLATTICE_ENV=production`, strict API key requirement)
 - private status/docs/webhook endpoints
 - secrets-safe writes (`SECRETS_STORAGE_MODE=redact`)
 
@@ -185,7 +212,7 @@ You must use Context Lattice as the memory/context layer.
 
 Runtime:
 - Orchestrator: http://127.0.0.1:8075
-- API key: MEMMCP_ORCHESTRATOR_API_KEY from my local .env
+- API key: CONTEXTLATTICE_ORCHESTRATOR_API_KEY from my local .env
 
 Required behavior:
 1) Before planning, call POST /memory/search with compact query + project/topic filters.
@@ -193,6 +220,12 @@ Required behavior:
 3) Before final answer, run one more POST /memory/search for recency.
 4) Keep writes compact (summary, decisions, diffs), never full transcripts.
 5) If memory endpoints fail, continue task and report degraded-memory mode explicitly.
+6) Use read-call timeouts that match retrieval mode:
+   - fast: 25s
+   - balanced: 60s
+   - deep (or explicit `letta`/`memory_bank` sources): 75s
+   Fast/balanced modes keep slow sources async by default unless explicitly requested (`sources=[...]`); deep mode can still block on slow sources.
+   If the first deep read times out, retry the same query once; staged fetch plus circuit/backlog gating returns best-available results first and can warm slow sources on follow-up.
 ```
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`
@@ -206,7 +239,7 @@ Context Lattice can queue and route tasks to external runners (Codex, OpenCode, 
 - Practical default: external runners as primary path, internal workers as fallback/secondary for high-resource systems.
 
 ```bash
-ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 
 # 1) Create a task targeted to any external runner id.
 curl -fsS -X POST http://127.0.0.1:8075/agents/tasks \
@@ -243,6 +276,93 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - Storage pressure controls: retention runner, low-value TTL pruning, optional snapshot pruning, and external NVMe cold path support.
 - Retrieval path: parallel source reads with orchestrator merge/rank loop and preference-learning feedback.
 
+### v2.0.0 Runtime Comparison (v1 legacy vs v2 cutover)
+
+Live A/B benchmark on `POST /memory/search` using `bench/phase1_runtime_comparison.py` with `8` requests and `20s` timeout:
+
+- v2 cutover (`USE_RUST_* = true`, `USE_GO_ORCHESTRATOR = true`):
+  - mean `3557ms`, p50 `2334ms`, p95 `8494ms`, errors `0/8`
+- v1-style legacy path (`USE_RUST_* = false`, `USE_GO_ORCHESTRATOR = false`):
+  - mean `17565ms`, p50 `20006ms`, p95 `20008ms`, errors `7/8` (timeouts)
+- Observed improvement:
+  - mean `4.94x` faster (about `5x`)
+  - p50 `8.57x` faster
+  - p95 `2.36x` faster
+
+Artifacts:
+- `bench/results/phase1_ab_rustgo_on_fast_20260304T182812Z.json`
+- `bench/results/phase1_ab_rustgo_off_fast_20260304T182916Z.json`
+
+## V3 Roadmap (Issues 68-72)
+
+V3 is focused on application efficacy, not speed in isolation:
+
+- lower deep-read p95/p99 tails and timeout rates
+- higher recall quality for agent decisions
+- stronger runner interoperability and task-lifecycle visibility
+- ANE sidecar acceleration path (M-series macOS) with automatic fallback
+
+Roadmap documents:
+- full plan: `docs/v3-roadmap.md`
+- public roadmap page: `https://contextlattice.io/roadmap.html`
+
+Program graph:
+
+```text
+V3 Objective: Context Efficacy at Scale
+  ├─ Track A (Issues #69 + #72): performance + deep-read stability
+  ├─ Track B (Issues #70 + #72): recall quality + memory semantics
+  └─ Track C (Issues #68 + #71): runner interop + compute backend
+      -> unified security/benchmark/recall gates -> staged cutover
+```
+
+## Migration Runtime (Phases 1-8)
+
+The orchestrator now runs Rust+Go as the default runtime path. Python remains in place as a legacy fallback when a proxy is unavailable.
+
+- Runtime interfaces: `Codec`, `MemoryStore`, `Retriever`, `Scheduler`, `StateDelta`
+- Status endpoint: `GET /migration/runtime`
+- Flags:
+  - `USE_RUST_CODEC`
+  - `USE_RUST_MEMORY`
+  - `USE_RUST_RETRIEVAL`
+  - `USE_GO_ORCHESTRATOR`
+  - `CONTEXTLATTICE_ENGINE_MODE` (`embedded` or `service`)
+  - `CONTEXTLATTICE_ENGINE_URL`
+  - `CONTEXTLATTICE_GO_ORCHESTRATOR_URL`
+  - `MIGRATION_SHADOW_DUAL_RUN`
+  - `MIGRATION_CANARY_ENABLED`
+
+Migration scaffolding:
+
+- Rust crates: `crates/context_codec`, `crates/context_engine`, `crates/context_retrieval`
+- Service contract: `proto/contextlattice_engine.proto`
+- Go services: `services/orchestrator-go`, `services/gateway-go`
+- API docs: `docs/engine-api.md`, `docs/migration-phase-status.md`
+
+Default cutover toggles:
+
+```bash
+USE_RUST_CODEC=true
+USE_RUST_MEMORY=true
+USE_RUST_RETRIEVAL=true
+USE_GO_ORCHESTRATOR=true
+CONTEXTLATTICE_ENGINE_MODE=service
+CONTEXTLATTICE_ENGINE_URL=http://contextlattice-orchestrator:8075
+CONTEXTLATTICE_GO_ORCHESTRATOR_URL=http://orchestrator-go:8090
+MIGRATION_SHADOW_DUAL_RUN=true
+MIGRATION_CANARY_ENABLED=true
+```
+
+Rollback/legacy toggles (temporary fallback only):
+
+```bash
+USE_RUST_CODEC=false
+USE_RUST_MEMORY=false
+USE_RUST_RETRIEVAL=false
+USE_GO_ORCHESTRATOR=false
+```
+
 ## Model Runtime
 
 - Ships with a sane local default (`qwen` via Ollama).
@@ -259,9 +379,9 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - `SECRETS_STORAGE_MODE=block` rejects writes containing secret-like material (`422`).
 - `SECRETS_STORAGE_MODE=allow` stores write payloads as-is (operator opt-in).
 - Compose host bindings default to loopback via `HOST_BIND_ADDRESS=127.0.0.1`.
-- Production strict mode requires `MEMMCP_ORCHESTRATOR_API_KEY`.
+- Production strict mode requires `CONTEXTLATTICE_ORCHESTRATOR_API_KEY`.
 
-### Main branch release gate (v1.0.0)
+### Main branch release gate
 
 Enforce PR-only merges on `main` with CODEOWNERS approval (`.github/CODEOWNERS` is `* @sheawinkler`):
 
@@ -315,23 +435,20 @@ Ingress endpoints:
 
 ## Docs Index
 
-- Runbook: `docs/onprem_full_runbook.md`
-- Performance: `docs/performance.md`
-- Retention operations: `docs/retention_ops.md`
-- Storage controls: `docs/storage_and_retention.md`
-- Orchestrator enhancements: `docs/orchestrator_enhancements.md`
-- Launch checklist: `docs/launch_checklist.md`
-- Submission requirements audit: `docs/submission_requirements.md`
-- Human agent instruction playbook: `docs/human_agent_instruction_playbook.md`
-- Public messaging package: `docs/public_messaging_package.md`
+- Phase 0 performance baseline: `docs/perf-baseline.md`
+- Migration plan: `docs/migration-plan.md`
+- Migration interfaces (Phase 1 proposal): `docs/migration-interfaces.md`
+- Benchmark harness docs: `bench/README.md`
+- Public overview site source: `docs/public_overview/README.md`
 - Legal and licensing: `docs/legal/README.md`
-- New repo migration plan: `docs/contextlattice_repo_migration_plan.md`
 
 Pre-submit verifier:
 
 ```bash
 gmake submission-preflight
 python3 scripts/submission_preflight.py --online
+gmake launch-lock
+gmake launch-lock-public
 ```
 
 ## Private/Public Sync Notes

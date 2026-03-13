@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import difflib
+import heapq
 import hashlib
 import hmac
 import json
@@ -21,8 +22,9 @@ from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -91,6 +93,23 @@ except Exception as exc:  # pragma: no cover - optional migration path
     runtime_snapshot = None  # type: ignore
     _runtime_import_error = str(exc)
 
+_runtime_adapter_registry_error: str | None = None
+try:
+    from runtime.adapters import (
+        EmbeddingRequest as RuntimeEmbeddingRequest,
+        FastembedRsConfig,
+        FastembedRsEmbeddingAdapter,
+        adapter_flags_snapshot,
+        load_adapter_flags,
+    )
+except Exception as exc:  # pragma: no cover - optional adapter path
+    RuntimeEmbeddingRequest = None  # type: ignore
+    FastembedRsConfig = None  # type: ignore
+    FastembedRsEmbeddingAdapter = None  # type: ignore
+    adapter_flags_snapshot = None  # type: ignore
+    load_adapter_flags = None  # type: ignore
+    _runtime_adapter_registry_error = str(exc)
+
 def _env_alias(primary: str, legacy: str, default: str = "") -> str:
     """Return primary env value when present, else legacy env value, else default."""
     if primary in os.environ:
@@ -155,6 +174,22 @@ QDRANT_GRPC_PREFER = os.getenv("QDRANT_GRPC_PREFER", "true").lower() in ("1", "t
 QDRANT_GRPC_PORT = int(os.getenv("QDRANT_GRPC_PORT", "6334"))
 QDRANT_CLOUD_GRPC_PORT = int(os.getenv("QDRANT_CLOUD_GRPC_PORT", str(QDRANT_GRPC_PORT)))
 QDRANT_CLIENT_TIMEOUT_SECS = float(os.getenv("QDRANT_CLIENT_TIMEOUT_SECS", "30"))
+QDRANT_SEARCH_HNSW_EF = max(0, int(os.getenv("ORCH_QDRANT_SEARCH_HNSW_EF", "0")))
+QDRANT_SEARCH_EXACT = os.getenv("ORCH_QDRANT_SEARCH_EXACT", "false").lower() in ("1", "true", "yes", "on")
+QDRANT_SEARCH_INDEXED_ONLY = os.getenv("ORCH_QDRANT_SEARCH_INDEXED_ONLY", "false").lower() in ("1", "true", "yes", "on")
+QDRANT_SEARCH_MODE_HNSW_EF_ENV = os.getenv("ORCH_QDRANT_SEARCH_MODE_HNSW_EF", "").strip()
+QDRANT_SEARCH_MODE_LIMIT_CAPS_ENV = os.getenv(
+    "ORCH_QDRANT_SEARCH_MODE_LIMIT_CAPS",
+    "{\"fast\":80,\"balanced\":120,\"deep\":180}",
+).strip()
+QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED = os.getenv(
+    "ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR = min(
+    1.0,
+    max(0.2, float(os.getenv("ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR", "0.5"))),
+)
 QDRANT_URL = QDRANT_CLUSTER_ENDPOINT if QDRANT_USE_CLOUD and QDRANT_CLUSTER_ENDPOINT else QDRANT_LOCAL_URL
 QDRANT_COLLECTION = os.getenv("ORCH_QDRANT_COLLECTION", "memmcp_notes")
 MINDSDB_URL = os.getenv("MINDSDB_URL", "http://mindsdb:47334")
@@ -249,6 +284,13 @@ EMBEDDING_MODEL = os.getenv("ORCH_EMBED_MODEL", os.getenv("EMBEDDING_MODEL", "ch
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", os.getenv("OPENAI_API_BASE"))
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("OPENAI_API_KEY"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+FASTEMBED_RS_BASE_URL = os.getenv("ORCH_FASTEMBED_RS_BASE_URL", "").strip()
+FASTEMBED_RS_ROUTE = os.getenv("ORCH_FASTEMBED_RS_ROUTE", "/embed").strip() or "/embed"
+FASTEMBED_RS_MODEL = os.getenv("ORCH_FASTEMBED_RS_MODEL", "").strip()
+FASTEMBED_RS_TIMEOUT_SECS = max(
+    0.2,
+    float(os.getenv("ORCH_FASTEMBED_RS_TIMEOUT_SECS", "2.5")),
+)
 FALLBACK_EMBED_DIM = int(os.getenv("ORCH_EMBED_DIM", os.getenv("EMBEDDING_DIM", "32")))
 EMBEDDING_FAIL_OPEN = os.getenv("ORCH_EMBED_FAIL_OPEN", "true").lower() in ("1", "true", "yes", "on")
 EMBEDDING_CACHE_ENABLED = os.getenv("EMBEDDING_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -257,6 +299,26 @@ RETRIEVAL_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SOURCES",
     "qdrant,mongo_raw,mindsdb,topic_rollups,letta,memory_bank",
 )
+RETRIEVAL_INTENT_DEFAULT = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_DEFAULT",
+    "decision",
+).strip().lower()
+RETRIEVAL_INTENT_DECISION_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_DECISION_SOURCES",
+    "topic_rollups,qdrant,mindsdb,letta,memory_bank,mongo_raw",
+)
+RETRIEVAL_INTENT_OPS_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_OPS_SOURCES",
+    "topic_rollups,qdrant,mindsdb,letta,memory_bank,mongo_raw",
+)
+RETRIEVAL_INTENT_RAW_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_RAW_SOURCES",
+    "mongo_raw,memory_bank,qdrant,mindsdb,topic_rollups,letta",
+)
+RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS = os.getenv(
+    "ORCH_RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_MONGO_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MONGO_SCAN_LIMIT", "400"))
 RETRIEVAL_MINDSDB_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MINDSDB_SCAN_LIMIT", "300"))
 RETRIEVAL_MEMORY_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MEMORY_SCAN_LIMIT", "36"))
@@ -281,14 +343,38 @@ RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS = max(
     1.0,
     float(os.getenv("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS", "180")),
 )
+RETRIEVAL_LETTA_ASYNC_WARM_RESOLVE_TIMEOUT_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_RESOLVE_TIMEOUT_SECS", "8")),
+)
 RETRIEVAL_LETTA_ASYNC_WARM_MAX_INFLIGHT = max(
     1,
     int(os.getenv("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_MAX_INFLIGHT", "4")),
+)
+RETRIEVAL_LETTA_ASYNC_WARM_FAILURE_COOLDOWN_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_FAILURE_COOLDOWN_SECS", "15")),
 )
 QDRANT_EMBED_TIMEOUT_SECS = float(os.getenv("ORCH_QDRANT_EMBED_TIMEOUT_SECS", "2.0"))
 RETRIEVAL_QDRANT_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "8"))
 RETRIEVAL_MONGO_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", "6"))
 RETRIEVAL_MINDSDB_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "8"))
+RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", "4")),
+)
+MINDSDB_RETRIEVAL_CIRCUIT_ENABLED = os.getenv(
+    "ORCH_MINDSDB_RETRIEVAL_CIRCUIT_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS = max(
+    10.0,
+    float(os.getenv("ORCH_MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS", "300")),
+)
+MINDSDB_RETRIEVAL_LOG_COOLDOWN_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_MINDSDB_RETRIEVAL_LOG_COOLDOWN_SECS", "45")),
+)
 RETRIEVAL_LETTA_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS", "45"))
 RETRIEVAL_MEMORY_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS", "3"))
 RETRIEVAL_MEMORY_TIMEOUT_CAP_SECS = max(
@@ -333,9 +419,33 @@ RETRIEVAL_PATHWAY_CACHE_TTL_SECS = max(
     0.0,
     float(os.getenv("ORCH_RETRIEVAL_PATHWAY_CACHE_TTL_SECS", "90")),
 )
+RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS", "180")),
+)
 RETRIEVAL_PATHWAY_CACHE_MAX_KEYS = max(
     1,
     int(os.getenv("ORCH_RETRIEVAL_PATHWAY_CACHE_MAX_KEYS", "2000")),
+)
+RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS", "30")),
+)
+RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS", "5000")),
+)
+RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MIN_QUERY_CHARS = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MIN_QUERY_CHARS", "4")),
+)
+RETRIEVAL_PATHWAY_SWR_REFRESH_MAX_INFLIGHT = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_PATHWAY_SWR_REFRESH_MAX_INFLIGHT", "12")),
 )
 RETRIEVAL_PATHWAY_CACHE_BACKEND = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND",
@@ -357,6 +467,38 @@ RETRIEVAL_PATHWAY_REDIS_TIMEOUT_SECS = max(
 )
 RETRIEVAL_PATHWAY_REDIS_COMPRESS = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_REDIS_COMPRESS",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+CODE_CONTEXT_ENRICH_ENABLED = os.getenv(
+    "ORCH_CODE_CONTEXT_ENRICH_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+CODE_CONTEXT_ENRICH_MAX_SYMBOLS = max(
+    1,
+    min(128, int(os.getenv("ORCH_CODE_CONTEXT_ENRICH_MAX_SYMBOLS", "24"))),
+)
+CODE_CONTEXT_SYMBOL_OVERLAP_BOOST = max(
+    0.0,
+    float(os.getenv("ORCH_CODE_CONTEXT_SYMBOL_OVERLAP_BOOST", "0.14")),
+)
+CODE_CONTEXT_FILEPATH_PROXIMITY_BOOST = max(
+    0.0,
+    float(os.getenv("ORCH_CODE_CONTEXT_FILEPATH_PROXIMITY_BOOST", "0.08")),
+)
+CODE_CONTEXT_RECENCY_MAX_BOOST = max(
+    0.0,
+    float(os.getenv("ORCH_CODE_CONTEXT_RECENCY_MAX_BOOST", "0.06")),
+)
+CODE_CONTEXT_RECENCY_HALF_LIFE_HOURS = max(
+    1.0,
+    float(os.getenv("ORCH_CODE_CONTEXT_RECENCY_HALF_LIFE_HOURS", "168")),
+)
+MCP_CAPABILITY_MAP_ENABLED = os.getenv(
+    "ORCH_MCP_CAPABILITY_MAP_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+BROWSER_CONTEXT_INGEST_ENABLED = os.getenv(
+    "ORCH_BROWSER_CONTEXT_INGEST_ENABLED",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_PATHWAY_TEMPLATE_CACHE_ENABLED = os.getenv(
@@ -435,9 +577,29 @@ RECALL_E2E_BUDGET_SECS = max(
     0.0,
     float(os.getenv("ORCH_RECALL_E2E_BUDGET_SECS", "90")),
 )
+RECALL_E2E_BUDGET_FAST_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_FAST_SECS", "25")),
+)
+RECALL_E2E_BUDGET_BALANCED_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_BALANCED_SECS", "60")),
+)
+RECALL_E2E_BUDGET_DEEP_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RECALL_E2E_BUDGET_DEEP_SECS", "75")),
+)
 RECALL_E2E_MIN_FEDERATED_BUDGET_SECS = max(
     1.0,
     float(os.getenv("ORCH_RECALL_E2E_MIN_FEDERATED_BUDGET_SECS", "6")),
+)
+RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED = os.getenv(
+    "ORCH_RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES_ENV = os.getenv(
+    "ORCH_RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES",
+    "qdrant,mindsdb,mongo_raw",
 )
 RECALL_SCOPED_QUERY_VARIANT_CAP = max(
     1,
@@ -543,12 +705,68 @@ RETRIEVAL_ENABLE_STAGED_FETCH = os.getenv(
     "ORCH_RETRIEVAL_ENABLE_STAGED_FETCH",
     "true",
 ).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", "2")),
+)
+RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES",
+    "",
+)
+RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES = os.getenv(
+    "ORCH_RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_STRICT_FAST_SYNC_DEFAULT = os.getenv(
+    "ORCH_RETRIEVAL_STRICT_FAST_SYNC_DEFAULT",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT", "8")),
+)
+RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N", "8")),
+)
+RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS", "30")),
+)
 RETRIEVAL_FAST_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_FAST_SOURCES",
-    "qdrant,mongo_raw,mindsdb,topic_rollups",
+    "topic_rollups,qdrant",
 )
 RETRIEVAL_SLOW_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SLOW_SOURCES",
+    "mindsdb,mongo_raw,letta,memory_bank",
+)
+RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES",
     "letta,memory_bank",
 )
 RETRIEVAL_SLOW_SOURCE_MIN_RESULTS = int(
@@ -580,6 +798,58 @@ RETRIEVAL_SLOW_SOURCE_ERROR_RATE_THRESHOLD = min(
 RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS = max(
     10.0,
     float(os.getenv("ORCH_RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS", "180")),
+)
+RETRIEVAL_ADAPTIVE_TIMEOUT_POLICY_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_POLICY_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS", "12")),
+)
+RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR = max(
+    0.5,
+    float(os.getenv("ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR", "1.25")),
+)
+RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SECS = max(
+    0.2,
+    float(os.getenv("ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SECS", "0.8")),
+)
+RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE", "1.8")),
+)
+RETRIEVAL_ADAPTIVE_TIMEOUT_STEADY_ERROR_RATE = min(
+    1.0,
+    max(0.0, float(os.getenv("ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_STEADY_ERROR_RATE", "0.03"))),
+)
+RETRIEVAL_ADAPTIVE_TIMEOUT_STEADY_TIMEOUT_RATE = min(
+    1.0,
+    max(0.0, float(os.getenv("ORCH_RETRIEVAL_ADAPTIVE_TIMEOUT_STEADY_TIMEOUT_RATE", "0.03"))),
+)
+RETRIEVAL_BACKLOG_GATING_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_BACKLOG_GATING_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_BACKLOG_GATING_TARGETS_ENV = os.getenv(
+    "ORCH_RETRIEVAL_BACKLOG_GATING_TARGETS",
+    "letta",
+)
+RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX", "700")),
+)
+RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX", "250")),
+)
+RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS", "8")),
 )
 RETRIEVAL_LETTA_DEGRADED_TIMEOUT_SECS = max(
     1.0,
@@ -760,12 +1030,70 @@ RECALL_EVAL_CASES_PATH = Path(
         str(Path(__file__).resolve().parent / "data" / "recall_eval_cases.json"),
     )
 )
+RECALL_EVAL_REFRESH_MAX_CASES = max(
+    1,
+    int(os.getenv("ORCH_RECALL_EVAL_REFRESH_MAX_CASES", "5")),
+)
+RECALL_EVAL_REFRESH_MIN_HITS = max(
+    1,
+    int(os.getenv("ORCH_RECALL_EVAL_REFRESH_MIN_HITS", "2")),
+)
+RECALL_EVAL_REFRESH_SOURCES_ENV = os.getenv(
+    "ORCH_RECALL_EVAL_REFRESH_SOURCES",
+    "qdrant,topic_rollups",
+).strip()
+RECALL_EVAL_DEFAULT_PROJECT = os.getenv(
+    "ORCH_RECALL_EVAL_DEFAULT_PROJECT",
+    os.getenv("MEMMCP_PROJECT", ""),
+).strip()
+RECALL_EVAL_TRANSIENT_RETRY_ENABLED = os.getenv(
+    "ORCH_RECALL_EVAL_TRANSIENT_RETRY_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_EVAL_TRANSIENT_RETRY_MAX_ATTEMPTS = max(
+    0,
+    int(os.getenv("ORCH_RECALL_EVAL_TRANSIENT_RETRY_MAX_ATTEMPTS", "1")),
+)
+RECALL_EVAL_TRANSIENT_RETRY_MODES_ENV = os.getenv(
+    "ORCH_RECALL_EVAL_TRANSIENT_RETRY_MODES",
+    "balanced,deep",
+).strip()
+RECALL_EVAL_REFRESH_REQUIRE_ROLLUP_SUPPORT = os.getenv(
+    "ORCH_RECALL_EVAL_REFRESH_REQUIRE_ROLLUP_SUPPORT",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_DEEP_ASYNC_ENABLED = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+RECALL_DEEP_ASYNC_MAX_INFLIGHT = max(
+    1,
+    int(os.getenv("ORCH_RECALL_DEEP_ASYNC_MAX_INFLIGHT", "32")),
+)
+RECALL_DEEP_ASYNC_MAX_JOBS = max(
+    64,
+    int(os.getenv("ORCH_RECALL_DEEP_ASYNC_MAX_JOBS", "1024")),
+)
+RECALL_DEEP_ASYNC_RESULT_TTL_SECS = max(
+    30.0,
+    float(os.getenv("ORCH_RECALL_DEEP_ASYNC_RESULT_TTL_SECS", "600")),
+)
+RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS", "6")),
+)
 TOPIC_ROLLUP_ENABLED = os.getenv("TOPIC_ROLLUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TOPIC_ROLLUP_FLUSH_SECS = float(os.getenv("TOPIC_ROLLUP_FLUSH_SECS", "45"))
 TOPIC_ROLLUP_HISTORY_SCAN_LIMIT = max(50, int(os.getenv("TOPIC_ROLLUP_HISTORY_SCAN_LIMIT", "600")))
 TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS = max(1, int(os.getenv("TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS", "8")))
 TOPIC_ROLLUP_MAX_NUMERIC_FACTS = max(1, int(os.getenv("TOPIC_ROLLUP_MAX_NUMERIC_FACTS", "16")))
 TOPIC_ROLLUP_MAX_UNIQUE_FILES = max(1, int(os.getenv("TOPIC_ROLLUP_MAX_UNIQUE_FILES", "24")))
+TOPIC_ROLLUP_RAW_REFS_MAX = max(1, int(os.getenv("TOPIC_ROLLUP_RAW_REFS_MAX", "8")))
+TOPIC_ROLLUP_FILE_PARTITIONS_MAX = max(1, int(os.getenv("TOPIC_ROLLUP_FILE_PARTITIONS_MAX", "12")))
 TOPIC_ROLLUP_BACKFILL_HOLD_SECS = max(0.0, float(os.getenv("TOPIC_ROLLUP_BACKFILL_HOLD_SECS", "1800")))
 TOPIC_ROLLUP_PATH = Path(
     os.getenv(
@@ -786,11 +1114,20 @@ MEMORY_WRITE_DEDUP_ENABLED = os.getenv("MEMORY_WRITE_DEDUP_ENABLED", "true").low
 )
 MEMORY_WRITE_DEDUP_WINDOW_SECS = float(os.getenv("MEMORY_WRITE_DEDUP_WINDOW_SECS", "120"))
 MEMORY_WRITE_DEDUP_MAX_KEYS = int(os.getenv("MEMORY_WRITE_DEDUP_MAX_KEYS", "10000"))
+MEMORY_WRITE_BATCH_MAX_ITEMS = max(1, int(os.getenv("MEMORY_WRITE_BATCH_MAX_ITEMS", "64")))
+MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS = max(
+    30.0,
+    float(os.getenv("MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS", "900")),
+)
 MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED = os.getenv(
     "MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS = int(os.getenv("MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS", "50000"))
+MINDSDB_QUERY_TEXT_MAX_CHARS = max(
+    64,
+    int(os.getenv("ORCH_MINDSDB_QUERY_TEXT_MAX_CHARS", "640")),
+)
 HOT_MEMORY_FILE_SUFFIXES = [
     suffix.strip().lower()
     for suffix in os.getenv("HOT_MEMORY_FILE_SUFFIXES", "__latest.json").split(",")
@@ -873,6 +1210,14 @@ FANOUT_OUTBOX_GC_VACUUM_MIN_INTERVAL_SECS = float(
 )
 FANOUT_OUTBOX_GC_TIMEOUT_SECS = float(os.getenv("FANOUT_OUTBOX_GC_TIMEOUT_SECS", "45"))
 LOW_VALUE_FILE_SUFFIXES_ENV = os.getenv("LOW_VALUE_FILE_SUFFIXES", "__latest.json,__rollup.json")
+LOW_VALUE_FILE_PATTERNS_ENV = os.getenv(
+    "LOW_VALUE_FILE_PATTERNS",
+    (
+        "index__*.json,*_agg-latest.json,*_agg-*.json,*__agg-*.json,telemetry__*.json,"
+        "*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,"
+        "*__allocations__*.json,*__import-*.json,*__imports__*.json"
+    ),
+)
 LOW_VALUE_TOPIC_PREFIXES_ENV = os.getenv(
     "LOW_VALUE_TOPIC_PREFIXES",
     "telemetry,metrics,signals,overrides,perf,tmp",
@@ -915,11 +1260,18 @@ LETTA_ADMISSION_LOW_VALUE_MIN_SUMMARY_CHARS = int(
 LETTA_ADMISSION_LOG_COOLDOWN_SECS = float(os.getenv("LETTA_ADMISSION_LOG_COOLDOWN_SECS", "30"))
 LETTA_EXCLUDED_FILE_PATTERNS_ENV = os.getenv(
     "LETTA_EXCLUDED_FILE_PATTERNS",
-    "index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json",
+    "index__*.json,*_agg-latest.json,*_agg-*.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json",
 )
 LETTA_EXCLUDED_TOPIC_PREFIXES_ENV = os.getenv(
     "LETTA_EXCLUDED_TOPIC_PREFIXES",
     "telemetry,metrics,signals,overrides,perf,tmp",
+)
+LETTA_LOW_VALUE_ROOT_JSON_PREFIXES_ENV = os.getenv(
+    "LETTA_LOW_VALUE_ROOT_JSON_PREFIXES",
+    (
+        "arena__,risk__,dex__,operating_mode__,router__,portfolio__,positions__,strategy__,"
+        "orderbook__,pricing__,discovery__,attribution__,exits__,trades__"
+    ),
 )
 LETTA_AUTO_PRUNE_ENABLED = os.getenv("LETTA_AUTO_PRUNE_ENABLED", "true").lower() in (
     "1",
@@ -941,6 +1293,46 @@ SINK_RETENTION_MAX_DELETES_PER_RUN = max(1, int(os.getenv("SINK_RETENTION_MAX_DE
 QDRANT_LOW_VALUE_RETENTION_HOURS = float(os.getenv("QDRANT_LOW_VALUE_RETENTION_HOURS", "72"))
 LETTA_LOW_VALUE_RETENTION_HOURS = float(os.getenv("LETTA_LOW_VALUE_RETENTION_HOURS", "48"))
 MONGO_RAW_LOW_VALUE_RETENTION_HOURS = float(os.getenv("MONGO_RAW_LOW_VALUE_RETENTION_HOURS", "0"))
+MEMORY_BANK_TELEMETRY_GUARD_ENABLED = os.getenv(
+    "ORCH_MEMORY_BANK_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MEMORY_BANK_TELEMETRY_FILE_PATTERNS_ENV = os.getenv(
+    "ORCH_MEMORY_BANK_TELEMETRY_FILE_PATTERNS",
+    (
+        "index__*.json,*_agg-latest.json,*_agg-*.json,*__agg-*.json,telemetry__*.json,"
+        "*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json"
+    ),
+)
+MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES_ENV = os.getenv(
+    "ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES",
+    "telemetry,metrics,signals,overrides,perf,tmp",
+)
+MEMORY_BANK_TELEMETRY_MARKERS_ENV = os.getenv(
+    "ORCH_MEMORY_BANK_TELEMETRY_MARKERS",
+    "telemetry,metrics,latency,queue,health,status,snapshot,stats,allocations,_agg-",
+)
+MEMORY_BANK_TELEMETRY_CLEANUP_MAX_CONCURRENCY = max(
+    1,
+    int(os.getenv("ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_MAX_CONCURRENCY", "8")),
+)
+MEMORY_BANK_TELEMETRY_TOMBSTONE_CONTENT = (
+    os.getenv(
+        "ORCH_MEMORY_BANK_TELEMETRY_TOMBSTONE_CONTENT",
+        "archived low-value telemetry artifact",
+    ).strip()
+    or "archived low-value telemetry artifact"
+)
+MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT = max(
+    1,
+    int(os.getenv("ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT", "5000")),
+)
+MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH = Path(
+    os.getenv(
+        "ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH",
+        str(Path(__file__).resolve().parent / "data" / "memory_bank_telemetry_cleanup_state.json"),
+    )
+)
 LETTA_RETENTION_PAGE_LIMIT = max(10, int(os.getenv("LETTA_RETENTION_PAGE_LIMIT", "100")))
 LETTA_RETENTION_MAX_DELETES_PER_RUN = max(1, int(os.getenv("LETTA_RETENTION_MAX_DELETES_PER_RUN", "1200")))
 MINDSDB_AUTOSYNC_TABLE_FALLBACK_SUFFIX = os.getenv("MINDSDB_AUTOSYNC_TABLE_FALLBACK_SUFFIX", "_v2")
@@ -1196,9 +1588,54 @@ if not FANOUT_COALESCE_TARGETS:
 LOW_VALUE_FILE_SUFFIXES = _normalize_lower_csv(LOW_VALUE_FILE_SUFFIXES_ENV)
 if not LOW_VALUE_FILE_SUFFIXES:
     LOW_VALUE_FILE_SUFFIXES = ["__latest.json", "__rollup.json"]
+LOW_VALUE_FILE_PATTERNS = _normalize_lower_csv(LOW_VALUE_FILE_PATTERNS_ENV)
+if not LOW_VALUE_FILE_PATTERNS:
+    LOW_VALUE_FILE_PATTERNS = [
+        "index__*.json",
+        "*_agg-latest.json",
+        "*_agg-*.json",
+        "*__agg-*.json",
+        "telemetry__*.json",
+        "*__state__*.json",
+        "*__stats__*.json",
+        "*__snapshots__*.json",
+        "*__health__*.json",
+        "*__allocations__*.json",
+    ]
 LOW_VALUE_TOPIC_PREFIXES = _normalize_lower_csv(LOW_VALUE_TOPIC_PREFIXES_ENV)
 if not LOW_VALUE_TOPIC_PREFIXES:
     LOW_VALUE_TOPIC_PREFIXES = ["telemetry", "metrics", "signals", "overrides", "perf", "tmp"]
+MEMORY_BANK_TELEMETRY_FILE_PATTERNS = _normalize_lower_csv(MEMORY_BANK_TELEMETRY_FILE_PATTERNS_ENV)
+if not MEMORY_BANK_TELEMETRY_FILE_PATTERNS:
+    MEMORY_BANK_TELEMETRY_FILE_PATTERNS = [
+        "index__*.json",
+        "*_agg-latest.json",
+        "*_agg-*.json",
+        "*__agg-*.json",
+        "telemetry__*.json",
+        "*__state__*.json",
+        "*__stats__*.json",
+        "*__snapshots__*.json",
+        "*__health__*.json",
+        "*__allocations__*.json",
+    ]
+MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES = _normalize_lower_csv(MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES_ENV)
+if not MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES:
+    MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES = ["telemetry", "metrics", "signals", "overrides", "perf", "tmp"]
+MEMORY_BANK_TELEMETRY_MARKERS = _normalize_lower_csv(MEMORY_BANK_TELEMETRY_MARKERS_ENV)
+if not MEMORY_BANK_TELEMETRY_MARKERS:
+    MEMORY_BANK_TELEMETRY_MARKERS = [
+        "telemetry",
+        "metrics",
+        "latency",
+        "queue",
+        "health",
+        "status",
+        "snapshot",
+        "stats",
+        "allocations",
+        "_agg-",
+    ]
 RETRIEVAL_LOW_VALUE_BYPASS_TERMS = _normalize_lower_csv(RETRIEVAL_LOW_VALUE_BYPASS_TERMS_ENV)
 if not RETRIEVAL_LOW_VALUE_BYPASS_TERMS:
     RETRIEVAL_LOW_VALUE_BYPASS_TERMS = ["telemetry", "metrics", "latency", "queue", "health", "status", "debug"]
@@ -1216,6 +1653,7 @@ if not TRADING_DEFAULT_TOPIC_PREFIXES:
 HOT_MEMORY_FILE_PATTERNS = _normalize_lower_csv(HOT_MEMORY_FILE_PATTERNS_ENV)
 LETTA_EXCLUDED_FILE_PATTERNS = _normalize_lower_csv(LETTA_EXCLUDED_FILE_PATTERNS_ENV)
 LETTA_EXCLUDED_TOPIC_PREFIXES = _normalize_lower_csv(LETTA_EXCLUDED_TOPIC_PREFIXES_ENV)
+LETTA_LOW_VALUE_ROOT_JSON_PREFIXES = _normalize_lower_csv(LETTA_LOW_VALUE_ROOT_JSON_PREFIXES_ENV)
 LETTA_AUTO_PRUNE_STATUSES = _normalize_outbox_status_csv(LETTA_AUTO_PRUNE_STATUSES_ENV)
 if not LETTA_AUTO_PRUNE_STATUSES:
     LETTA_AUTO_PRUNE_STATUSES = ["pending", "retrying"]
@@ -1251,17 +1689,42 @@ def _normalize_retrieval_source_csv(raw: str | None) -> list[str]:
 DEFAULT_RETRIEVAL_FAST_SOURCES = _normalize_retrieval_source_csv(RETRIEVAL_FAST_SOURCES_ENV)
 if not DEFAULT_RETRIEVAL_FAST_SOURCES:
     DEFAULT_RETRIEVAL_FAST_SOURCES = [
-        RETRIEVAL_SOURCE_QDRANT,
-        RETRIEVAL_SOURCE_MONGO_RAW,
-        RETRIEVAL_SOURCE_MINDSDB,
         RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+        RETRIEVAL_SOURCE_QDRANT,
     ]
 DEFAULT_RETRIEVAL_SLOW_SOURCES = _normalize_retrieval_source_csv(RETRIEVAL_SLOW_SOURCES_ENV)
 if not DEFAULT_RETRIEVAL_SLOW_SOURCES:
     DEFAULT_RETRIEVAL_SLOW_SOURCES = [
+        RETRIEVAL_SOURCE_MINDSDB,
+        RETRIEVAL_SOURCE_MONGO_RAW,
         RETRIEVAL_SOURCE_LETTA,
         RETRIEVAL_SOURCE_MEMORY_BANK,
     ]
+RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES = _normalize_retrieval_source_csv(
+    RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES_ENV
+)
+if not RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:
+    RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES = [
+        RETRIEVAL_SOURCE_LETTA,
+        RETRIEVAL_SOURCE_MEMORY_BANK,
+    ]
+RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = _normalize_retrieval_source_csv(
+    RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES_ENV
+)
+if not RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES:
+    RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = [
+        RETRIEVAL_SOURCE_QDRANT,
+        RETRIEVAL_SOURCE_MINDSDB,
+        RETRIEVAL_SOURCE_MONGO_RAW,
+    ]
+RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES = _normalize_retrieval_source_csv(
+    RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES_ENV
+)
+if not RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES:
+    RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES = []
+RETRIEVAL_BACKLOG_GATING_TARGETS = _normalize_retrieval_source_csv(RETRIEVAL_BACKLOG_GATING_TARGETS_ENV)
+if not RETRIEVAL_BACKLOG_GATING_TARGETS:
+    RETRIEVAL_BACKLOG_GATING_TARGETS = [RETRIEVAL_SOURCE_LETTA]
 RETRIEVAL_MODE_FAST = "fast"
 RETRIEVAL_MODE_BALANCED = "balanced"
 RETRIEVAL_MODE_DEEP = "deep"
@@ -1272,6 +1735,27 @@ RETRIEVAL_MODES = (
 )
 if RETRIEVAL_MODE_DEFAULT not in RETRIEVAL_MODES:
     RETRIEVAL_MODE_DEFAULT = RETRIEVAL_MODE_BALANCED
+RETRIEVAL_INTENT_DECISION = "decision"
+RETRIEVAL_INTENT_OPS = "ops"
+RETRIEVAL_INTENT_RAW = "raw"
+RETRIEVAL_INTENTS = (
+    RETRIEVAL_INTENT_DECISION,
+    RETRIEVAL_INTENT_OPS,
+    RETRIEVAL_INTENT_RAW,
+)
+if RETRIEVAL_INTENT_DEFAULT not in RETRIEVAL_INTENTS:
+    RETRIEVAL_INTENT_DEFAULT = RETRIEVAL_INTENT_DECISION
+DEFAULT_RETRIEVAL_INTENT_SOURCES: dict[str, list[str]] = {
+    RETRIEVAL_INTENT_DECISION: _normalize_retrieval_source_csv(RETRIEVAL_INTENT_DECISION_SOURCES_ENV),
+    RETRIEVAL_INTENT_OPS: _normalize_retrieval_source_csv(RETRIEVAL_INTENT_OPS_SOURCES_ENV),
+    RETRIEVAL_INTENT_RAW: _normalize_retrieval_source_csv(RETRIEVAL_INTENT_RAW_SOURCES_ENV),
+}
+for _intent_name in RETRIEVAL_INTENTS:
+    if DEFAULT_RETRIEVAL_INTENT_SOURCES.get(_intent_name):
+        continue
+    DEFAULT_RETRIEVAL_INTENT_SOURCES[_intent_name] = list(
+        _normalize_retrieval_source_csv(RETRIEVAL_SOURCES_ENV)
+    )
 _RETRIEVAL_QUERY_SYNONYM_MAP_RAW = os.getenv("ORCH_RETRIEVAL_QUERY_SYNONYM_MAP", "").strip()
 RETRIEVAL_QUERY_SYNONYM_MAP: dict[str, list[str]] = {
     "recall": ["retrieve", "memory", "lookup"],
@@ -1302,6 +1786,7 @@ if _RETRIEVAL_QUERY_SYNONYM_MAP_RAW:
 
 
 def _default_recall_eval_case_set() -> dict[str, Any]:
+    default_project = RECALL_EVAL_DEFAULT_PROJECT or None
     return {
         "version": 1,
         "updatedAt": _utc_now(),
@@ -1313,24 +1798,310 @@ def _default_recall_eval_case_set() -> dict[str, Any]:
         },
         "cases": [
             {
-                "id": "health-surface",
-                "query": "health status",
+                "id": "retrieval-performance-surface",
+                "query": "discovery windows queue pressure",
+                "project": default_project,
+                "topic_path": "runbooks/performance",
                 "limit": 8,
-                "expected_substrings": ["health"],
+                "expected_substrings": ["qdrant", "topic_rollups"],
+                "retrieval_mode": "fast",
+                "retrieval_intent": "decision",
+                "sources": ["qdrant", "topic_rollups"],
+                "source_weights": {"qdrant": 1.0, "topic_rollups": 0.88},
+                "auto_escalate": False,
+                "query_expansion": False,
             },
             {
-                "id": "trading-telemetry-surface",
-                "query": "trading telemetry process",
+                "id": "retrieval-source-quality-surface",
+                "query": "source quality qdrant mindsdb letta",
+                "project": default_project,
+                "topic_path": "runbooks/performance",
                 "limit": 8,
-                "expected_substrings": ["trading"],
+                "expected_substrings": ["qdrant", "topic_rollups"],
+                "retrieval_mode": "fast",
+                "retrieval_intent": "decision",
+                "sources": ["qdrant", "topic_rollups"],
+                "source_weights": {"qdrant": 1.0, "topic_rollups": 0.88},
+                "auto_escalate": False,
+                "query_expansion": False,
             },
             {
-                "id": "retrieval-sources-surface",
-                "query": "letta mindsdb retrieval",
+                "id": "runtime-cutover-surface",
+                "query": "rust go runtime cutover status",
+                "project": default_project,
+                "topic_path": "ops/runtime",
                 "limit": 10,
-                "expected_substrings": ["letta", "mindsdb"],
+                "expected_substrings": ["qdrant", "topic_rollups"],
+                "retrieval_mode": "fast",
+                "retrieval_intent": "ops",
+                "sources": ["qdrant", "topic_rollups"],
+                "source_weights": {"qdrant": 1.0, "topic_rollups": 0.88},
+                "auto_escalate": False,
+                "query_expansion": False,
             },
         ],
+    }
+
+
+def _recall_eval_case_id(query: str, topic_path: str | None) -> str:
+    normalized_query = re.sub(r"[^a-z0-9]+", "-", str(query or "").strip().lower()).strip("-")
+    normalized_topic = re.sub(r"[^a-z0-9]+", "-", str(topic_path or "").strip().lower()).strip("-")
+    raw = f"{normalized_query}-{normalized_topic}".strip("-")
+    return (raw or "recall-case")[:80]
+
+
+def _recall_eval_expected_terms(query: str, topic_path: str | None) -> list[str]:
+    tokens: list[str] = []
+    for source in (str(topic_path or ""), str(query or "")):
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", source.lower()):
+            if token in {"with", "from", "that", "this", "status", "query", "topic", "path"}:
+                continue
+            if token not in tokens:
+                tokens.append(token)
+            if len(tokens) >= 4:
+                break
+        if len(tokens) >= 4:
+            break
+    if not tokens:
+        tokens = ["retrieval"]
+    return tokens[:3]
+
+
+def _persist_recall_eval_cases(payload: dict[str, Any]) -> None:
+    RECALL_EVAL_CASES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with RECALL_EVAL_CASES_PATH.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+async def _build_refreshed_recall_eval_case_set(
+    *,
+    max_cases: int,
+    min_hits: int,
+    project: str | None = None,
+    topic_prefix: str | None = None,
+) -> dict[str, Any]:
+    candidates = await _list_hot_retrieval_pathways(max(max_cases * 4, 20))
+    selected_cases: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    project_filter = str(project or "").strip() or None
+    prefix_filter = normalize_topic_path(topic_prefix) if topic_prefix else None
+    fast_eval_sources = _normalize_retrieval_sources(
+        [item.strip() for item in RECALL_EVAL_REFRESH_SOURCES_ENV.split(",") if item.strip()]
+    )
+    if not fast_eval_sources:
+        fast_eval_sources = [RETRIEVAL_SOURCE_QDRANT, RETRIEVAL_SOURCE_TOPIC_ROLLUPS]
+
+    def _default_source_weight(source: str) -> float:
+        if source == RETRIEVAL_SOURCE_QDRANT:
+            return 1.0
+        if source == RETRIEVAL_SOURCE_TOPIC_ROLLUPS:
+            return 0.88
+        if source == RETRIEVAL_SOURCE_MINDSDB:
+            return 0.8
+        if source == RETRIEVAL_SOURCE_MONGO_RAW:
+            return 0.75
+        if source == RETRIEVAL_SOURCE_MEMORY_BANK:
+            return 0.65
+        if source == RETRIEVAL_SOURCE_LETTA:
+            return 0.9
+        return 0.7
+
+    async def _has_rollup_support(
+        *,
+        query: str,
+        limit: int,
+        project_filter_value: str | None,
+        topic_filter_value: str | None,
+        retrieval_intent_value: str,
+        case_sources: list[str],
+    ) -> bool:
+        if not RECALL_EVAL_REFRESH_REQUIRE_ROLLUP_SUPPORT:
+            return True
+        if RETRIEVAL_SOURCE_TOPIC_ROLLUPS not in case_sources:
+            return True
+        rollup_rows, _, _, _ = await _run_memory_recall_pipeline(
+            query=query,
+            limit=limit,
+            project_filter=project_filter_value,
+            topic_filter=topic_filter_value,
+            sources=[RETRIEVAL_SOURCE_TOPIC_ROLLUPS],
+            source_weights={RETRIEVAL_SOURCE_TOPIC_ROLLUPS: 1.0},
+            preferences=None,
+            rerank_with_learning=True,
+            retrieval_mode=RETRIEVAL_MODE_FAST,
+            retrieval_intent=retrieval_intent_value,
+            agent_profile={},
+            auto_escalate=False,
+            query_expansion=False,
+        )
+        return bool(rollup_rows)
+
+    for entry in candidates:
+        if not isinstance(entry, dict):
+            continue
+        hits = int(entry.get("hits") or 0)
+        if hits < min_hits:
+            continue
+        query = re.sub(r"\s+", " ", str(entry.get("query") or "").strip())
+        if not query:
+            continue
+        case_project = str(entry.get("project_filter") or "").strip() or project_filter
+        if project_filter and case_project != project_filter:
+            continue
+        topic_path = normalize_topic_path(str(entry.get("topic_filter") or "")) or None
+        if prefix_filter and (not topic_path or not topic_path.startswith(prefix_filter)):
+            continue
+        case_id = _recall_eval_case_id(query, topic_path)
+        if case_id in seen_ids:
+            continue
+        seen_ids.add(case_id)
+        expected_terms = [source for source in fast_eval_sources if source]
+        for token in _recall_eval_expected_terms(query, topic_path):
+            if token not in expected_terms:
+                expected_terms.append(token)
+            if len(expected_terms) >= 4:
+                break
+        candidate_case = {
+            "id": case_id,
+            "query": query[:320],
+            "project": case_project,
+            "topic_path": topic_path,
+            "limit": 12,
+            "expected_substrings": expected_terms[:4],
+            "retrieval_mode": RETRIEVAL_MODE_FAST,
+            "retrieval_intent": _normalize_retrieval_intent(entry.get("retrieval_intent")),
+            "sources": list(fast_eval_sources),
+            "source_weights": {source: _default_source_weight(source) for source in fast_eval_sources},
+            "auto_escalate": False,
+            "query_expansion": False,
+        }
+        probe_results, _, _, _ = await _run_memory_recall_pipeline(
+            query=str(candidate_case["query"]),
+            limit=int(candidate_case["limit"]),
+            project_filter=case_project,
+            topic_filter=topic_path,
+            sources=list(fast_eval_sources),
+            source_weights=dict(candidate_case["source_weights"]),
+            preferences=None,
+            rerank_with_learning=True,
+            retrieval_mode=RETRIEVAL_MODE_FAST,
+            retrieval_intent=str(candidate_case["retrieval_intent"]),
+            agent_profile={},
+            auto_escalate=False,
+            query_expansion=False,
+        )
+        top_row = probe_results[0] if probe_results and isinstance(probe_results[0], dict) else {}
+        expected_files: set[str] = set()
+        top_file = _normalize_expected_file_token(str(top_row.get("file") or "")) if isinstance(top_row, dict) else ""
+        if top_file:
+            expected_files.add(top_file)
+        hit_rank = _match_rank_within_k(
+            probe_results,
+            expected_files=expected_files,
+            expected_terms=list(candidate_case["expected_substrings"]),
+            k=5,
+        )
+        if hit_rank is None:
+            continue
+        if not await _has_rollup_support(
+            query=str(candidate_case["query"]),
+            limit=int(candidate_case["limit"]),
+            project_filter_value=case_project,
+            topic_filter_value=topic_path,
+            retrieval_intent_value=str(candidate_case["retrieval_intent"]),
+            case_sources=list(fast_eval_sources),
+        ):
+            continue
+        if expected_files:
+            candidate_case["expected_files"] = sorted(expected_files)
+        selected_cases.append(candidate_case)
+        if len(selected_cases) >= max_cases:
+            break
+    if not selected_cases:
+        fallback = _default_recall_eval_case_set()
+        if project_filter:
+            for case in fallback.get("cases", []):
+                if isinstance(case, dict):
+                    case["project"] = project_filter
+                    if prefix_filter:
+                        case["topic_path"] = prefix_filter
+        fallback_cases = fallback.get("cases") if isinstance(fallback.get("cases"), list) else []
+        validated_cases: list[dict[str, Any]] = []
+        for case in fallback_cases:
+            if not isinstance(case, dict):
+                continue
+            case_sources = _normalize_retrieval_sources(case.get("sources"))
+            if not case_sources:
+                case_sources = list(fast_eval_sources)
+            case_weights = (
+                {
+                    str(key): float(value)
+                    for key, value in case.get("source_weights", {}).items()
+                    if str(key).strip()
+                }
+                if isinstance(case.get("source_weights"), dict)
+                else {source: _default_source_weight(source) for source in case_sources}
+            )
+            probe_results, _, _, _ = await _run_memory_recall_pipeline(
+                query=str(case.get("query") or ""),
+                limit=max(1, int(case.get("limit") or 10)),
+                project_filter=str(case.get("project") or "").strip() or None,
+                topic_filter=normalize_topic_path(str(case.get("topic_path") or "")) or None,
+                sources=case_sources,
+                source_weights=case_weights,
+                preferences=None,
+                rerank_with_learning=True,
+                retrieval_mode=_normalize_retrieval_mode(case.get("retrieval_mode")),
+                retrieval_intent=_normalize_retrieval_intent(case.get("retrieval_intent")),
+                agent_profile={},
+                auto_escalate=bool(case.get("auto_escalate", False)),
+                query_expansion=bool(case.get("query_expansion", False)),
+            )
+            expected_files = {
+                _normalize_expected_file_token(item)
+                for item in (case.get("expected_files") or [])
+                if _normalize_expected_file_token(item)
+            }
+            expected_terms = [
+                str(item).strip().lower()
+                for item in (case.get("expected_substrings") or [])
+                if str(item).strip()
+            ]
+            hit_rank = _match_rank_within_k(
+                probe_results,
+                expected_files=expected_files,
+                expected_terms=expected_terms,
+                k=5,
+            )
+            if hit_rank is None:
+                continue
+            if not await _has_rollup_support(
+                query=str(case.get("query") or ""),
+                limit=max(1, int(case.get("limit") or 10)),
+                project_filter_value=str(case.get("project") or "").strip() or None,
+                topic_filter_value=normalize_topic_path(str(case.get("topic_path") or "")) or None,
+                retrieval_intent_value=_normalize_retrieval_intent(case.get("retrieval_intent")),
+                case_sources=case_sources,
+            ):
+                continue
+            validated_cases.append(case)
+        if validated_cases:
+            fallback["cases"] = validated_cases
+        elif fallback_cases and not RECALL_EVAL_REFRESH_REQUIRE_ROLLUP_SUPPORT:
+            fallback["cases"] = fallback_cases[:1]
+        else:
+            fallback["cases"] = []
+        return fallback
+    return {
+        "version": 1,
+        "updatedAt": _utc_now(),
+        "k": 5,
+        "gate": {
+            "minRecallAtK": RECALL_EVAL_GATE_MIN_RECALL_AT_K,
+            "minMrr": RECALL_EVAL_GATE_MIN_MRR,
+            "minNumericExactness": RECALL_EVAL_GATE_MIN_NUMERIC_EXACTNESS,
+        },
+        "cases": selected_cases,
     }
 
 
@@ -2044,62 +2815,79 @@ async def _mindsdb_bootstrap() -> None:
             await asyncio.sleep(MINDSDB_AUTOSYNC_BACKOFF_SECS * attempt)
 
 
+async def _finalize_memory_write_item(
+    item: dict[str, Any],
+    *,
+    worker_id: int | None,
+    persisted_to_memory_bank: bool,
+) -> None:
+    global memory_write_last_at, memory_write_last_latency_ms
+    entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "project": item["project"],
+        "file": item["file"],
+        "topic_path": item.get("topic_path"),
+        "summary": item["summary"],
+        "contentLength": item.get("content_length"),
+    }
+    async with memory_write_history_lock:
+        memory_write_history.append(entry)
+    await _persist_memory_write(entry)
+    await _update_topic_tree(item["project"], item.get("topic_path") or DEFAULT_TOPIC_ROOT)
+    await _enqueue_memory_write_fanout(
+        {
+            "event_id": item.get("event_id"),
+            "project": item["project"],
+            "file": item["file"],
+            "summary": item["summary"],
+            "payload": item["payload"],
+            "topic_path": item.get("topic_path"),
+            "topic_tags": item.get("topic_tags"),
+            "letta_session": item.get("letta_session"),
+            "letta_context": item.get("letta_context"),
+            "letta_admit": item.get("letta_admit", True),
+            "mongo_persisted": item.get("mongo_persisted"),
+            "qdrant_collection": item.get("qdrant_collection"),
+            "raw_event": item.get("raw_event"),
+            "code_context": item.get("code_context"),
+        }
+    )
+    start_time = item.get("start_time")
+    if start_time is not None:
+        latency_ms = (asyncio.get_event_loop().time() - start_time) * 1000
+        memory_write_last_latency_ms = round(latency_ms, 2)
+        memory_write_last_at = datetime.utcnow().isoformat() + "Z"
+        asyncio.create_task(
+            trace_to_langfuse(
+                "write",
+                latency_ms,
+                {"project": item["project"], "file": item["file"]},
+            )
+        )
+    waiter = item.get("waiter")
+    if waiter:
+        waiter.set_result(True)
+    _json_log(
+        "memory.write.persisted" if persisted_to_memory_bank else "memory.write.persisted_fanout_only",
+        {
+            "project": item["project"],
+            "file": item["file"],
+            "worker": worker_id,
+            "persisted_to_memory_bank": persisted_to_memory_bank,
+        },
+    )
+
+
 async def _memory_bank_worker(worker_id: int) -> None:
     global memory_bank_queue_processed, memory_write_last_at, memory_write_last_latency_ms
     while True:
         item = await memory_bank_queue.get()
         try:
             await call_memory_tool("memory_bank_write", item["payload"])
-            entry = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "project": item["project"],
-                "file": item["file"],
-                "topic_path": item.get("topic_path"),
-                "summary": item["summary"],
-                "contentLength": item.get("content_length"),
-            }
-            async with memory_write_history_lock:
-                memory_write_history.append(entry)
-            await _persist_memory_write(entry)
-            await _update_topic_tree(item["project"], item.get("topic_path") or DEFAULT_TOPIC_ROOT)
-            await _enqueue_memory_write_fanout(
-                {
-                    "event_id": item.get("event_id"),
-                    "project": item["project"],
-                    "file": item["file"],
-                    "summary": item["summary"],
-                    "payload": item["payload"],
-                    "topic_path": item.get("topic_path"),
-                    "topic_tags": item.get("topic_tags"),
-                    "letta_session": item.get("letta_session"),
-                    "letta_context": item.get("letta_context"),
-                    "letta_admit": item.get("letta_admit", True),
-                    "mongo_persisted": item.get("mongo_persisted"),
-                    "qdrant_collection": item.get("qdrant_collection"),
-                    "raw_event": item.get("raw_event"),
-                }
-            )
-            start_time = item.get("start_time")
-            if start_time is not None:
-                latency_ms = (asyncio.get_event_loop().time() - start_time) * 1000
-                memory_write_last_latency_ms = round(latency_ms, 2)
-                memory_write_last_at = datetime.utcnow().isoformat() + "Z"
-                asyncio.create_task(
-                    trace_to_langfuse(
-                        "write",
-                        latency_ms,
-                        {"project": item["project"], "file": item["file"]},
-                    )
-                )
-            if item.get("waiter"):
-                item["waiter"].set_result(True)
-            _json_log(
-                "memory.write.persisted",
-                {
-                    "project": item["project"],
-                    "file": item["file"],
-                    "worker": worker_id,
-                },
+            await _finalize_memory_write_item(
+                item,
+                worker_id=worker_id,
+                persisted_to_memory_bank=True,
             )
         except Exception as exc:  # pragma: no cover
             _json_log(
@@ -2154,6 +2942,141 @@ def _parse_timestamp_to_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+_CODE_CONTEXT_SYMBOL_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "into",
+    "this",
+    "that",
+    "true",
+    "false",
+    "null",
+    "none",
+    "file",
+    "path",
+    "json",
+    "yaml",
+    "toml",
+    "http",
+    "https",
+    "read",
+    "write",
+}
+
+
+def _extract_code_symbols(text: str, limit: int = CODE_CONTEXT_ENRICH_MAX_SYMBOLS) -> list[str]:
+    raw = re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", str(text or ""))
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for token in raw:
+        lowered = token.lower()
+        if lowered in _CODE_CONTEXT_SYMBOL_STOPWORDS:
+            continue
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        symbols.append(lowered)
+        if len(symbols) >= max(1, limit):
+            break
+    return symbols
+
+
+def _extract_path_tokens(path_value: str, limit: int = 24) -> list[str]:
+    normalized = str(path_value or "").strip().replace("\\", "/").lower()
+    if not normalized:
+        return []
+    parts = [part for part in re.split(r"[^a-z0-9_]+", normalized) if part]
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if part in seen:
+            continue
+        seen.add(part)
+        tokens.append(part)
+        if len(tokens) >= max(1, limit):
+            break
+    return tokens
+
+
+def _build_code_context_metadata(
+    *,
+    file_name: str,
+    topic_path: str | None,
+    content: str,
+    summary: str,
+) -> dict[str, Any]:
+    if not CODE_CONTEXT_ENRICH_ENABLED:
+        return {}
+    symbols = _extract_code_symbols("\n".join([file_name, summary, content]))
+    path_tokens = _extract_path_tokens(file_name)
+    topic_tokens = _extract_path_tokens(topic_path or "")
+    return {
+        "symbols": symbols,
+        "path_tokens": path_tokens,
+        "topic_tokens": topic_tokens,
+        "updated_at": _utc_now(),
+    }
+
+
+def _code_context_adjustments(
+    *,
+    query: str,
+    row: dict[str, Any],
+) -> tuple[float, float, float]:
+    if not CODE_CONTEXT_ENRICH_ENABLED:
+        return 0.0, 0.0, 0.0
+    query_symbols = set(_extract_code_symbols(query))
+    query_path_tokens = set(_extract_path_tokens(query))
+    file_name = str(row.get("file") or "")
+    row_summary = str(row.get("summary") or "")
+    context = row.get("code_context")
+    if isinstance(context, dict):
+        row_symbols = set(
+            str(symbol).strip().lower()
+            for symbol in (context.get("symbols") if isinstance(context.get("symbols"), list) else [])
+            if str(symbol).strip()
+        )
+        row_path_tokens = set(
+            str(token).strip().lower()
+            for token in (
+                context.get("path_tokens")
+                if isinstance(context.get("path_tokens"), list)
+                else _extract_path_tokens(file_name)
+            )
+            if str(token).strip()
+        )
+        updated_ref = context.get("updated_at") or row.get("updated_at") or row.get("created_at")
+    else:
+        row_symbols = set(_extract_code_symbols(f"{file_name}\n{row_summary}"))
+        row_path_tokens = set(_extract_path_tokens(file_name))
+        updated_ref = row.get("updated_at") or row.get("created_at")
+
+    symbol_boost = 0.0
+    if query_symbols and row_symbols:
+        overlap = len(query_symbols.intersection(row_symbols))
+        symbol_boost = (overlap / max(1, len(query_symbols))) * CODE_CONTEXT_SYMBOL_OVERLAP_BOOST
+
+    path_boost = 0.0
+    if query_path_tokens and row_path_tokens:
+        overlap = len(query_path_tokens.intersection(row_path_tokens))
+        path_boost = (overlap / max(1, len(query_path_tokens))) * CODE_CONTEXT_FILEPATH_PROXIMITY_BOOST
+
+    recency_boost = 0.0
+    parsed = _parse_timestamp_to_datetime(updated_ref)
+    if parsed is not None:
+        age_hours = max(
+            0.0,
+            (datetime.now(timezone.utc) - parsed).total_seconds() / 3600.0,
+        )
+        half_life = max(1.0, CODE_CONTEXT_RECENCY_HALF_LIFE_HOURS)
+        recency_boost = CODE_CONTEXT_RECENCY_MAX_BOOST * math.exp((-math.log(2.0) * age_hours) / half_life)
+
+    return symbol_boost, path_boost, recency_boost
 
 
 def _fanout_coalescer_active_for_target(target_name: str) -> bool:
@@ -2211,11 +3134,42 @@ def _looks_low_value_topic_path(topic_path: str | None) -> bool:
     return False
 
 
+def _looks_memory_bank_telemetry_topic_path(topic_path: str | None) -> bool:
+    normalized = str(topic_path or "").strip().lower().strip("/")
+    if not normalized:
+        return False
+    for prefix in MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return False
+
+
+def _looks_memory_bank_telemetry_file(file_name: str | None, topic_path: str | None = None) -> bool:
+    lowered_file = str(file_name or "").strip().lower()
+    if not lowered_file:
+        return False
+    if _matches_any_glob(lowered_file, MEMORY_BANK_TELEMETRY_FILE_PATTERNS):
+        return True
+    normalized_topic = normalize_topic_path(str(topic_path or "")) or derive_topic_path(lowered_file, None)
+    if _looks_memory_bank_telemetry_topic_path(normalized_topic):
+        return True
+    base_name = lowered_file.rsplit("/", 1)[-1]
+    for marker in MEMORY_BANK_TELEMETRY_MARKERS:
+        token = str(marker or "").strip().lower()
+        if not token:
+            continue
+        if token in base_name:
+            return True
+    return False
+
+
 def _looks_low_value_file(file_name: str | None) -> bool:
     lowered = str(file_name or "").strip().lower()
     if not lowered:
         return False
     if "/_rollups/" in lowered:
+        return True
+    if _matches_any_glob(lowered, LOW_VALUE_FILE_PATTERNS):
         return True
     return any(lowered.endswith(suffix) for suffix in LOW_VALUE_FILE_SUFFIXES)
 
@@ -2229,6 +3183,25 @@ def _matches_any_glob(value: str | None, patterns: list[str]) -> bool:
         if not token:
             continue
         if fnmatch(lowered, token):
+            return True
+    return False
+
+
+def _looks_letta_root_json_low_value(file_name: str | None, topic_path: str | None) -> bool:
+    lowered_file = str(file_name or "").strip().lower()
+    if not lowered_file.endswith(".json"):
+        return False
+    normalized_topic = normalize_topic_path(str(topic_path or ""))
+    if normalized_topic and normalized_topic != DEFAULT_TOPIC_ROOT:
+        return False
+    if not LETTA_LOW_VALUE_ROOT_JSON_PREFIXES:
+        return False
+    base_name = lowered_file.rsplit("/", 1)[-1]
+    for prefix in LETTA_LOW_VALUE_ROOT_JSON_PREFIXES:
+        token = str(prefix or "").strip().lower()
+        if not token:
+            continue
+        if base_name.startswith(token):
             return True
     return False
 
@@ -2248,6 +3221,8 @@ def _is_letta_excluded_memory_record(file_name: str | None, topic_path: str | No
         return True, "excluded_file_pattern"
     if _looks_letta_excluded_topic_path(topic_path):
         return True, "excluded_topic_prefix"
+    if _looks_letta_root_json_low_value(file_name, topic_path):
+        return True, "excluded_root_json_prefix"
     return False, None
 
 
@@ -2264,6 +3239,8 @@ def _is_low_value_memory_record(
     if _looks_low_value_file(file_name):
         return True
     if _looks_low_value_topic_path(topic_path):
+        return True
+    if _looks_letta_root_json_low_value(file_name, topic_path):
         return True
     if include_short_summary:
         summary_len = len(str(summary or "").strip())
@@ -2486,6 +3463,7 @@ async def _memory_write_worker(
                                 "content": payload.get("summary") or "",
                                 "topic_path": payload.get("topic_path"),
                                 "topic_tags": payload.get("topic_tags") or [],
+                                "code_context": payload.get("code_context") or {},
                                 "collection_name": payload.get("qdrant_collection"),
                             }
                         )
@@ -2648,6 +3626,7 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
         "letta_session": item.get("letta_session"),
         "letta_context": item.get("letta_context") or {},
         "letta_admit": letta_admit,
+        "code_context": item.get("code_context") or {},
         "qdrant_collection": item.get("qdrant_collection"),
         "raw_event": item.get("raw_event"),
     }
@@ -2673,6 +3652,71 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
             **outbox_result,
         },
     )
+
+
+def _fastembed_adapter_enabled() -> bool:
+    if callable(load_adapter_flags):
+        with contextlib.suppress(Exception):
+            flags = load_adapter_flags()
+            return bool(getattr(flags, "fastembed_rs_enabled", False))
+    return os.getenv("ORCH_ADAPTER_FASTEMBED_RS_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _fastembed_adapter_ready() -> bool:
+    return _fastembed_adapter_enabled() and bool(FASTEMBED_RS_BASE_URL) and FastembedRsEmbeddingAdapter is not None
+
+
+async def _get_fastembed_adapter() -> Any:
+    global fastembed_adapter_instance
+    if not _fastembed_adapter_ready():
+        return None
+    if fastembed_adapter_instance is not None:
+        return fastembed_adapter_instance
+    async with fastembed_adapter_lock:
+        if fastembed_adapter_instance is not None:
+            return fastembed_adapter_instance
+        config = FastembedRsConfig(
+            base_url=FASTEMBED_RS_BASE_URL,
+            timeout_secs=FASTEMBED_RS_TIMEOUT_SECS,
+            model=FASTEMBED_RS_MODEL or None,
+            route=FASTEMBED_RS_ROUTE,
+        )
+        fastembed_adapter_instance = FastembedRsEmbeddingAdapter(config)
+    return fastembed_adapter_instance
+
+
+async def _fastembed_rs_embedding(text: str) -> list[float]:
+    global fastembed_adapter_attempts, fastembed_adapter_successes, fastembed_adapter_failures
+    global fastembed_adapter_last_error, fastembed_adapter_last_latency_ms
+    adapter = await _get_fastembed_adapter()
+    if adapter is None:
+        raise OrchestratorError("fastembed-rs adapter not configured")
+    started = time.monotonic()
+    fastembed_adapter_attempts += 1
+    try:
+        if RuntimeEmbeddingRequest is None:
+            raise OrchestratorError("runtime embedding adapter request model unavailable")
+        response = await adapter.embed(
+            RuntimeEmbeddingRequest(
+                texts=[text],
+                model=FASTEMBED_RS_MODEL or EMBEDDING_MODEL or None,
+            )
+        )
+    except Exception as exc:
+        fastembed_adapter_failures += 1
+        fastembed_adapter_last_error = str(exc).strip() or exc.__class__.__name__
+        raise
+    fastembed_adapter_successes += 1
+    fastembed_adapter_last_error = None
+    fastembed_adapter_last_latency_ms = (time.monotonic() - started) * 1000.0
+    if not response.vectors:
+        raise OrchestratorError("fastembed-rs returned no vectors")
+    return list(response.vectors[0])
 
 
 def _cheap_embedding(text: str, vector_size: int) -> list[float]:
@@ -2724,6 +3768,8 @@ async def _ollama_embedding(text: str) -> list[float]:
 
 
 async def embed_text(text: str) -> list[float]:
+    global fastembed_adapter_fallbacks
+
     def _cheap_fallback(provider: str, error: Exception) -> list[float]:
         if not EMBEDDING_FAIL_OPEN:
             raise OrchestratorError(str(error)) from error
@@ -2738,6 +3784,19 @@ async def embed_text(text: str) -> list[float]:
     cached = await _embedding_cache_get(cache_key)
     if cached is not None:
         return cached
+
+    if _fastembed_adapter_ready():
+        try:
+            vector = await _fastembed_rs_embedding(text)
+            await _embedding_cache_set(cache_key, vector)
+            return vector
+        except Exception as exc:
+            fastembed_adapter_fallbacks += 1
+            logger.warning(
+                "fastembed-rs adapter failed (%s); falling back to provider '%s'",
+                str(exc)[:240],
+                EMBEDDING_PROVIDER,
+            )
 
     provider = EMBEDDING_PROVIDER
     if provider in ("openai", "lmstudio", "openai-compatible"):
@@ -2864,6 +3923,14 @@ embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
 embedding_cache_hits = 0
 embedding_cache_misses = 0
 embedding_cache_evictions = 0
+fastembed_adapter_lock = asyncio.Lock()
+fastembed_adapter_instance = None
+fastembed_adapter_attempts = 0
+fastembed_adapter_successes = 0
+fastembed_adapter_failures = 0
+fastembed_adapter_fallbacks = 0
+fastembed_adapter_last_error: str | None = None
+fastembed_adapter_last_latency_ms: float | None = None
 letta_search_cache_lock = asyncio.Lock()
 letta_search_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 letta_search_cache_hits = 0
@@ -2874,11 +3941,18 @@ letta_search_warm_inflight: dict[str, float] = {}
 letta_search_warm_started = 0
 letta_search_warm_completed = 0
 letta_search_warm_failed = 0
+letta_search_warm_cooldown_until_monotonic = 0.0
 retrieval_pathway_cache_lock = asyncio.Lock()
 retrieval_pathway_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 retrieval_pathway_cache_hits = 0
 retrieval_pathway_cache_misses = 0
 retrieval_pathway_cache_evictions = 0
+retrieval_pathway_cache_stale_hits = 0
+retrieval_pathway_cache_swr_refresh_lock = asyncio.Lock()
+retrieval_pathway_cache_swr_refresh_inflight: dict[str, float] = {}
+retrieval_pathway_cache_swr_refresh_started = 0
+retrieval_pathway_cache_swr_refresh_completed = 0
+retrieval_pathway_cache_swr_refresh_failed = 0
 retrieval_pathway_cache_backend_hits = 0
 retrieval_pathway_cache_backend_misses = 0
 retrieval_pathway_cache_backend_errors = 0
@@ -2886,6 +3960,12 @@ retrieval_pathway_cache_backend_writes = 0
 retrieval_pathway_cache_backend_write_errors = 0
 retrieval_pathway_redis_client = None
 retrieval_pathway_redis_lock = asyncio.Lock()
+retrieval_pathway_negative_cache_lock = asyncio.Lock()
+retrieval_pathway_negative_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+retrieval_pathway_negative_cache_hits = 0
+retrieval_pathway_negative_cache_misses = 0
+retrieval_pathway_negative_cache_writes = 0
+retrieval_pathway_negative_cache_evictions = 0
 retrieval_template_cache_lock = asyncio.Lock()
 retrieval_template_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 retrieval_template_cache_hits = 0
@@ -2901,8 +3981,25 @@ retrieval_source_timeout_counts: dict[str, int] = {}
 retrieval_latency_mode_counts: dict[str, int] = {}
 retrieval_latency_updated_at: str | None = None
 retrieval_slow_source_cooldown_until: dict[str, float] = {}
+retrieval_slow_source_probe_attempts: dict[str, int] = {}
+retrieval_async_source_warm_lock = asyncio.Lock()
+retrieval_async_source_warm_inflight: dict[str, float] = {}
+retrieval_async_source_warm_started = 0
+retrieval_async_source_warm_completed = 0
+retrieval_async_source_warm_failed = 0
+mindsdb_retrieval_lz4_cooldown_until_monotonic = 0.0
+mindsdb_retrieval_lz4_hits = 0
+mindsdb_retrieval_lz4_skipped = 0
+mindsdb_retrieval_log_last_at: dict[str, float] = {}
 retrieval_lifecycle_lock = asyncio.Lock()
 retrieval_result_lifecycle: OrderedDict[str, dict[str, Any]] = OrderedDict()
+recall_deep_async_lock = asyncio.Lock()
+recall_deep_async_jobs: OrderedDict[str, dict[str, Any]] = OrderedDict()
+recall_deep_async_semaphore = asyncio.Semaphore(RECALL_DEEP_ASYNC_MAX_INFLIGHT)
+recall_deep_async_started = 0
+recall_deep_async_completed = 0
+recall_deep_async_failed = 0
+recall_deep_async_callback_failed = 0
 recall_quality_lock = asyncio.Lock()
 recall_quality_history: deque[dict[str, Any]] = deque(maxlen=RECALL_QUALITY_HISTORY_LIMIT)
 recall_quality_totals: dict[str, int] = {
@@ -3215,8 +4312,75 @@ def _letta_effective_timeout(timeout_secs: float | None) -> float:
     return max(1.0, min(float(LETTA_REQUEST_TIMEOUT_SECS), requested))
 
 
+def _exception_text(exc: Exception | BaseException) -> str:
+    text = str(exc or "").strip()
+    if text:
+        return text
+    return exc.__class__.__name__
+
+
 def _is_retrieval_timeout_error(exc: Exception) -> bool:
-    return isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException))
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
+        return True
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    return any(token in text for token in ("timeout", "timed out", "deadline exceeded", "operation expired"))
+
+
+def _source_errors_timeout_sources(source_errors: dict[str, Any] | None) -> list[str]:
+    if not isinstance(source_errors, dict):
+        return []
+    timeout_sources: list[str] = []
+    seen: set[str] = set()
+    for source, message in source_errors.items():
+        source_name = str(source or "").strip().lower()
+        if not source_name or source_name in seen:
+            continue
+        text = str(message or "").strip().lower()
+        if not text:
+            continue
+        if "timeout" in text or "timed out" in text or "deadline exceeded" in text or "operation expired" in text:
+            seen.add(source_name)
+            timeout_sources.append(source_name)
+    return timeout_sources
+
+
+def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    if "lz4" in text and ("decompress" in text or "decompressionfailed" in text):
+        return True
+    return (
+        "verification of flatbuffer-encoded footer failed" in text
+        or "file is too small to be a well-formed file" in text
+    )
+
+
+def _sanitize_mindsdb_query_text(query: str) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(query or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > MINDSDB_QUERY_TEXT_MAX_CHARS:
+        text = text[:MINDSDB_QUERY_TEXT_MAX_CHARS].rstrip()
+    return text
+
+
+def _mindsdb_retrieval_circuit_open(now_monotonic: float | None = None) -> bool:
+    if not MINDSDB_RETRIEVAL_CIRCUIT_ENABLED:
+        return False
+    now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+    return float(mindsdb_retrieval_lz4_cooldown_until_monotonic) > now
+
+
+def _log_mindsdb_retrieval_warning(key: str, message: str) -> None:
+    now = time.monotonic()
+    cooldown = max(1.0, MINDSDB_RETRIEVAL_LOG_COOLDOWN_SECS)
+    last = float(mindsdb_retrieval_log_last_at.get(key, 0.0) or 0.0)
+    if now - last < cooldown:
+        return
+    mindsdb_retrieval_log_last_at[key] = now
+    logger.warning("%s", message)
 
 
 def _letta_search_rows_from_payload(
@@ -3296,6 +4460,7 @@ async def _schedule_letta_search_cache_warm(
     prior_timeout_secs: float,
 ) -> None:
     global letta_search_warm_started, letta_search_warm_completed, letta_search_warm_failed
+    global letta_search_warm_cooldown_until_monotonic
     if (
         not RETRIEVAL_LETTA_ASYNC_WARM_ENABLED
         or not RETRIEVAL_LETTA_CACHE_ENABLED
@@ -3303,11 +4468,13 @@ async def _schedule_letta_search_cache_warm(
         or RETRIEVAL_LETTA_CACHE_MAX_KEYS <= 0
     ):
         return
-    warm_timeout = max(
-        float(prior_timeout_secs) + 1.0,
+    warm_timeout = min(
         RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS,
+        max(float(prior_timeout_secs) + 1.0, RETRIEVAL_LETTA_TIMEOUT_SECS),
     )
     now = time.monotonic()
+    if now < float(letta_search_warm_cooldown_until_monotonic):
+        return
     async with letta_search_warm_lock:
         stale_keys = [key for key, expires_at in letta_search_warm_inflight.items() if float(expires_at) <= now]
         for stale_key in stale_keys:
@@ -3320,7 +4487,7 @@ async def _schedule_letta_search_cache_warm(
         letta_search_warm_started += 1
 
     async def _runner() -> None:
-        global letta_search_warm_completed, letta_search_warm_failed
+        global letta_search_warm_completed, letta_search_warm_failed, letta_search_warm_cooldown_until_monotonic
         try:
             payload = await _fetch_letta_archival_payload(
                 agent_id=agent_id,
@@ -3341,7 +4508,10 @@ async def _schedule_letta_search_cache_warm(
             letta_search_warm_completed += 1
         except Exception as exc:
             letta_search_warm_failed += 1
-            logger.warning("Letta async warm failed: %s", exc)
+            letta_search_warm_cooldown_until_monotonic = (
+                time.monotonic() + RETRIEVAL_LETTA_ASYNC_WARM_FAILURE_COOLDOWN_SECS
+            )
+            logger.warning("Letta async warm failed: %s", _exception_text(exc))
         finally:
             async with letta_search_warm_lock:
                 letta_search_warm_inflight.pop(cache_key, None)
@@ -3361,13 +4531,18 @@ def _schedule_background_letta_query_warm(
         return
     if not _letta_config_enabled():
         return
+    if time.monotonic() < float(letta_search_warm_cooldown_until_monotonic):
+        return
 
     async def _runner() -> None:
         headers: dict[str, str] = {}
         if LETTA_API_KEY:
             headers["Authorization"] = f"Bearer {LETTA_API_KEY}"
         try:
-            agent_id = await _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers)
+            agent_id = await asyncio.wait_for(
+                _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers),
+                timeout=max(1.0, RETRIEVAL_LETTA_ASYNC_WARM_RESOLVE_TIMEOUT_SECS),
+            )
         except Exception as exc:
             logger.debug("Letta warm scheduling skipped: %s", exc)
             return
@@ -3395,11 +4570,234 @@ def _schedule_background_letta_query_warm(
     asyncio.create_task(_runner())
 
 
+def _retrieval_async_warm_key(
+    *,
+    source: str,
+    query: str,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+) -> str:
+    identity = "\n".join(
+        [
+            str(source or "").strip().lower(),
+            re.sub(r"\s+", " ", str(query or "").strip().lower()),
+            str(max(1, int(limit))),
+            str(project_filter or ""),
+            str(topic_filter or ""),
+        ]
+    ).encode("utf-8")
+    return hashlib.sha1(identity).hexdigest()
+
+
+def _degraded_source_probe_allowed(source: str) -> bool:
+    source_name = str(source or "").strip().lower()
+    if not source_name:
+        return False
+    attempts = int(retrieval_slow_source_probe_attempts.get(source_name, 0) or 0) + 1
+    retrieval_slow_source_probe_attempts[source_name] = attempts
+    probe_every = max(1, int(RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N))
+    if attempts % probe_every != 0:
+        return False
+    cooldown_until = float(retrieval_slow_source_cooldown_until.get(source_name, 0.0) or 0.0)
+    remaining = max(0.0, cooldown_until - time.monotonic())
+    min_recovery = max(1.0, float(RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS))
+    return remaining <= min_recovery
+
+
+def _retrieval_backlog_pressure_policy() -> dict[str, Any]:
+    policy: dict[str, Any] = {
+        "enabled": bool(RETRIEVAL_BACKLOG_GATING_ENABLED),
+        "targets": list(RETRIEVAL_BACKLOG_GATING_TARGETS),
+        "blocked_sources": [],
+        "summary_fresh": False,
+        "summary": {},
+        "thresholds": {
+            RETRIEVAL_SOURCE_LETTA: {
+                "outstandingMax": RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX,
+                "retryingMax": RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX,
+            }
+        },
+    }
+    if not RETRIEVAL_BACKLOG_GATING_ENABLED:
+        return policy
+    cached = _get_fanout_summary_cache()
+    if not _fanout_cache_fresh(cached):
+        _schedule_fanout_summary_refresh()
+    cache_updated = fanout_summary_cache.get("updated_monotonic")
+    summary_age = None
+    if isinstance(cache_updated, (int, float)):
+        summary_age = max(0.0, time.monotonic() - float(cache_updated))
+    if summary_age is not None and summary_age > max(0.0, RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS):
+        return policy
+    policy["summary_fresh"] = bool(_fanout_cache_fresh(cached))
+    by_target = cached.get("by_target") if isinstance(cached, dict) else {}
+    if not isinstance(by_target, dict):
+        return policy
+    blocked: list[str] = []
+    summary: dict[str, Any] = {}
+    for source_name in RETRIEVAL_BACKLOG_GATING_TARGETS:
+        if source_name != RETRIEVAL_SOURCE_LETTA:
+            continue
+        target_counts = by_target.get(source_name) if isinstance(by_target.get(source_name), dict) else {}
+        pending = int(target_counts.get("pending", 0) or 0)
+        retrying = int(target_counts.get("retrying", 0) or 0)
+        running = int(target_counts.get("running", 0) or 0)
+        outstanding = pending + retrying + running
+        summary[source_name] = {
+            "pending": pending,
+            "retrying": retrying,
+            "running": running,
+            "outstanding": outstanding,
+        }
+        if (
+            outstanding >= RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX
+            or retrying >= RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX
+        ):
+            blocked.append(source_name)
+    policy["summary"] = summary
+    policy["blocked_sources"] = sorted(set(blocked))
+    return policy
+
+
+def _schedule_background_source_warm(
+    *,
+    source: str,
+    query: str,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+    timeout_hint_secs: float,
+    force: bool = False,
+) -> None:
+    source_name = str(source or "").strip().lower()
+    if not source_name:
+        return
+    if source_name == RETRIEVAL_SOURCE_LETTA:
+        _schedule_background_letta_query_warm(
+            query=query,
+            limit=limit,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+            timeout_hint_secs=timeout_hint_secs,
+        )
+        return
+    if not RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES and not force:
+        return
+    if source_name not in {RETRIEVAL_SOURCE_MEMORY_BANK, RETRIEVAL_SOURCE_MONGO_RAW}:
+        return
+
+    async def _runner() -> None:
+        global retrieval_async_source_warm_started, retrieval_async_source_warm_completed
+        global retrieval_async_source_warm_failed
+        warm_key = _retrieval_async_warm_key(
+            source=source_name,
+            query=query,
+            limit=limit,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+        )
+        now = time.monotonic()
+        timeout_secs = max(1.0, float(timeout_hint_secs))
+        async with retrieval_async_source_warm_lock:
+            stale_keys = [
+                key
+                for key, expires_at in retrieval_async_source_warm_inflight.items()
+                if float(expires_at or 0.0) <= now
+            ]
+            for stale_key in stale_keys:
+                retrieval_async_source_warm_inflight.pop(stale_key, None)
+            if warm_key in retrieval_async_source_warm_inflight:
+                return
+            if len(retrieval_async_source_warm_inflight) >= RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT:
+                return
+            retrieval_async_source_warm_inflight[warm_key] = now + timeout_secs + 5.0
+            retrieval_async_source_warm_started += 1
+        try:
+            if source_name == RETRIEVAL_SOURCE_MEMORY_BANK:
+                await asyncio.wait_for(
+                    search_memory_bank_lexical(
+                        query,
+                        limit=max(1, int(limit)),
+                        project_filter=project_filter,
+                        topic_filter=topic_filter,
+                        time_budget_secs=timeout_secs,
+                    ),
+                    timeout=max(1.0, timeout_secs + 1.0),
+                )
+            elif source_name == RETRIEVAL_SOURCE_MONGO_RAW:
+                await asyncio.wait_for(
+                    search_mongo_raw(
+                        query,
+                        limit=max(1, int(limit)),
+                        project_filter=project_filter,
+                        topic_filter=topic_filter,
+                    ),
+                    timeout=max(1.0, timeout_secs + 1.0),
+                )
+            retrieval_async_source_warm_completed += 1
+        except Exception:
+            retrieval_async_source_warm_failed += 1
+        finally:
+            async with retrieval_async_source_warm_lock:
+                retrieval_async_source_warm_inflight.pop(warm_key, None)
+
+    asyncio.create_task(_runner())
+
+
+def _parse_qdrant_mode_int_map(raw: str, *, defaults: dict[str, int]) -> dict[str, int]:
+    parsed: dict[str, int] = dict(defaults)
+    payload = str(raw or "").strip()
+    if not payload:
+        return parsed
+    with contextlib.suppress(Exception):
+        candidate = json.loads(payload)
+        if isinstance(candidate, dict):
+            for mode, value in candidate.items():
+                normalized_mode = _normalize_retrieval_mode(str(mode))
+                normalized_value = max(0, int(value))
+                parsed[normalized_mode] = normalized_value
+    return parsed
+
+
+def _qdrant_mode_hnsw_ef(mode: str | None) -> int:
+    normalized = _normalize_retrieval_mode(mode)
+    mapping = _parse_qdrant_mode_int_map(QDRANT_SEARCH_MODE_HNSW_EF_ENV, defaults={})
+    value = mapping.get(normalized)
+    if value is None:
+        return int(max(0, QDRANT_SEARCH_HNSW_EF))
+    return int(max(0, value))
+
+
+def _qdrant_mode_limit_cap(mode: str | None, default_limit: int) -> int:
+    normalized = _normalize_retrieval_mode(mode)
+    defaults = {"fast": 80, "balanced": 120, "deep": 180}
+    mapping = _parse_qdrant_mode_int_map(QDRANT_SEARCH_MODE_LIMIT_CAPS_ENV, defaults=defaults)
+    cap = int(max(1, mapping.get(normalized, max(1, default_limit))))
+    return min(max(1, int(default_limit)), cap)
+
+
 def _normalize_retrieval_mode(mode: str | None) -> str:
     candidate = str(mode or RETRIEVAL_MODE_DEFAULT or RETRIEVAL_MODE_BALANCED).strip().lower()
     if candidate not in RETRIEVAL_MODES:
         return RETRIEVAL_MODE_BALANCED
     return candidate
+
+
+def _normalize_retrieval_intent(intent: str | None) -> str:
+    candidate = str(intent or RETRIEVAL_INTENT_DEFAULT or RETRIEVAL_INTENT_DECISION).strip().lower()
+    if candidate not in RETRIEVAL_INTENTS:
+        return RETRIEVAL_INTENT_DECISION
+    return candidate
+
+
+def _resolve_intent_default_sources(intent: str) -> list[str]:
+    normalized_intent = _normalize_retrieval_intent(intent)
+    sources = DEFAULT_RETRIEVAL_INTENT_SOURCES.get(normalized_intent) or []
+    normalized_sources = _normalize_retrieval_sources(list(sources))
+    if normalized_sources:
+        return normalized_sources
+    return _normalize_retrieval_sources(None)
 
 
 def _retrieval_mode_timeout_scale(mode: str) -> float:
@@ -3443,11 +4841,34 @@ def _resolve_retrieval_sources_for_mode(
     return _normalize_retrieval_sources(None)
 
 
+def _recall_e2e_budget_for_mode(mode: str) -> float:
+    normalized_mode = _normalize_retrieval_mode(mode)
+    if normalized_mode == RETRIEVAL_MODE_FAST and RECALL_E2E_BUDGET_FAST_SECS > 0.0:
+        return float(RECALL_E2E_BUDGET_FAST_SECS)
+    if normalized_mode == RETRIEVAL_MODE_BALANCED and RECALL_E2E_BUDGET_BALANCED_SECS > 0.0:
+        return float(RECALL_E2E_BUDGET_BALANCED_SECS)
+    if normalized_mode == RETRIEVAL_MODE_DEEP and RECALL_E2E_BUDGET_DEEP_SECS > 0.0:
+        return float(RECALL_E2E_BUDGET_DEEP_SECS)
+    return float(RECALL_E2E_BUDGET_SECS)
+
+
 def _json_clone(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, default=str))
     except Exception:
         return value
+
+
+def _dedupe_warning_messages(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for warning in items:
+        text = str(warning or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
 
 
 def _retrieval_weight_signature(source_weights: dict[str, float]) -> str:
@@ -3466,6 +4887,7 @@ def _retrieval_pathway_cache_key(
     sources: list[str],
     source_weights: dict[str, float],
     retrieval_mode: str,
+    retrieval_intent: str,
     learning_enabled: bool,
     positive_terms: set[str],
     negative_terms: set[str],
@@ -3473,6 +4895,7 @@ def _retrieval_pathway_cache_key(
     identity = "\n".join(
         [
             _normalize_retrieval_mode(retrieval_mode),
+            _normalize_retrieval_intent(retrieval_intent),
             str(limit),
             str(project_filter or ""),
             str(topic_filter or ""),
@@ -3647,7 +5070,7 @@ async def _retrieval_pathway_cache_backend_set(
 async def _retrieval_pathway_cache_get(
     key: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]] | None:
-    global retrieval_pathway_cache_hits, retrieval_pathway_cache_misses
+    global retrieval_pathway_cache_hits, retrieval_pathway_cache_misses, retrieval_pathway_cache_stale_hits
     if (
         not RETRIEVAL_PATHWAY_CACHE_ENABLED
         or RETRIEVAL_PATHWAY_CACHE_TTL_SECS <= 0
@@ -3655,11 +5078,13 @@ async def _retrieval_pathway_cache_get(
     ):
         return None
     now = time.monotonic()
+    stale_window_secs = max(0.0, RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS)
     async with retrieval_pathway_cache_lock:
         payload = retrieval_pathway_cache.get(key)
         if isinstance(payload, dict):
             expires_at = float(payload.get("expires_at") or 0.0)
-            if expires_at <= now:
+            stale_until = float(payload.get("stale_until") or expires_at)
+            if stale_until <= now:
                 retrieval_pathway_cache.pop(key, None)
             else:
                 value = payload.get("value")
@@ -3672,11 +5097,28 @@ async def _retrieval_pathway_cache_get(
                         and isinstance(retrieval_debug, dict)
                         and isinstance(warnings, list)
                     ):
+                        stale_hit = expires_at <= now
                         retrieval_pathway_cache.move_to_end(key)
                         retrieval_pathway_cache_hits += 1
+                        if stale_hit:
+                            retrieval_pathway_cache_stale_hits += 1
+                        cache_debug = dict(_json_clone(retrieval_debug))
+                        cache_meta = (
+                            cache_debug.get("cache")
+                            if isinstance(cache_debug.get("cache"), dict)
+                            else {}
+                        )
+                        cache_meta["pathway_stale"] = bool(stale_hit)
+                        cache_meta["pathway_stale_window_secs"] = stale_window_secs
+                        if stale_hit:
+                            cache_meta["pathway_stale_age_secs"] = round(
+                                max(0.0, now - expires_at),
+                                3,
+                            )
+                        cache_debug["cache"] = cache_meta
                         return (
                             [dict(row) for row in _json_clone(results) if isinstance(row, dict)],
-                            dict(_json_clone(retrieval_debug)),
+                            cache_debug,
                             [str(item) for item in _json_clone(warnings)],
                         )
                 retrieval_pathway_cache.pop(key, None)
@@ -3685,9 +5127,11 @@ async def _retrieval_pathway_cache_get(
     if backend_payload is not None:
         retrieval_pathway_cache_hits += 1
         expires_at = time.monotonic() + RETRIEVAL_PATHWAY_CACHE_TTL_SECS
+        stale_until = expires_at + stale_window_secs
         async with retrieval_pathway_cache_lock:
             retrieval_pathway_cache[key] = {
                 "expires_at": expires_at,
+                "stale_until": stale_until,
                 "value": {
                     "results": _json_clone(backend_payload[0]),
                     "retrieval_debug": _json_clone(backend_payload[1]),
@@ -3718,11 +5162,13 @@ async def _retrieval_pathway_cache_set(
     ):
         return
     expires_at = time.monotonic() + RETRIEVAL_PATHWAY_CACHE_TTL_SECS
+    stale_until = expires_at + max(0.0, RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS)
     cached_results = _json_clone(results)
     cached_debug = _json_clone(retrieval_debug)
     cached_warnings = _json_clone(warnings)
     payload = {
         "expires_at": expires_at,
+        "stale_until": stale_until,
         "value": {
             "results": cached_results,
             "retrieval_debug": cached_debug,
@@ -3741,6 +5187,157 @@ async def _retrieval_pathway_cache_set(
         retrieval_debug=dict(cached_debug) if isinstance(cached_debug, dict) else {},
         warnings=[str(item) for item in cached_warnings] if isinstance(cached_warnings, list) else [],
     )
+
+
+def _retrieval_pathway_negative_cache_query_eligible(query: str) -> bool:
+    if not RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED:
+        return False
+    normalized = re.sub(r"\s+", " ", str(query or "").strip())
+    return len(normalized) >= RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MIN_QUERY_CHARS
+
+
+async def _retrieval_pathway_negative_cache_get(key: str) -> dict[str, Any] | None:
+    global retrieval_pathway_negative_cache_hits, retrieval_pathway_negative_cache_misses
+    if (
+        not RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED
+        or RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS <= 0
+        or RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS <= 0
+    ):
+        return None
+    now = time.monotonic()
+    async with retrieval_pathway_negative_cache_lock:
+        payload = retrieval_pathway_negative_cache.get(key)
+        if not isinstance(payload, dict):
+            retrieval_pathway_negative_cache_misses += 1
+            return None
+        expires_at = float(payload.get("expires_at") or 0.0)
+        if expires_at <= now:
+            retrieval_pathway_negative_cache.pop(key, None)
+            retrieval_pathway_negative_cache_misses += 1
+            return None
+        value = payload.get("value")
+        if not isinstance(value, dict):
+            retrieval_pathway_negative_cache.pop(key, None)
+            retrieval_pathway_negative_cache_misses += 1
+            return None
+        retrieval_pathway_negative_cache.move_to_end(key)
+        retrieval_pathway_negative_cache_hits += 1
+        return dict(_json_clone(value))
+
+
+async def _retrieval_pathway_negative_cache_set(
+    key: str,
+    *,
+    retrieval_debug: dict[str, Any],
+    warnings: list[str],
+) -> None:
+    global retrieval_pathway_negative_cache_writes, retrieval_pathway_negative_cache_evictions
+    if (
+        not RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED
+        or RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS <= 0
+        or RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS <= 0
+    ):
+        return
+    payload = {
+        "expires_at": time.monotonic() + RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS,
+        "value": {
+            "retrieval_debug": _json_clone(retrieval_debug),
+            "warnings": _json_clone(_dedupe_warning_messages(warnings)),
+        },
+    }
+    async with retrieval_pathway_negative_cache_lock:
+        retrieval_pathway_negative_cache[key] = payload
+        retrieval_pathway_negative_cache.move_to_end(key)
+        retrieval_pathway_negative_cache_writes += 1
+        while len(retrieval_pathway_negative_cache) > RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS:
+            retrieval_pathway_negative_cache.popitem(last=False)
+            retrieval_pathway_negative_cache_evictions += 1
+
+
+async def _retrieval_pathway_negative_cache_invalidate(key: str) -> None:
+    async with retrieval_pathway_negative_cache_lock:
+        retrieval_pathway_negative_cache.pop(key, None)
+
+
+def _schedule_retrieval_pathway_swr_refresh(
+    *,
+    query: str,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+    sources: list[str],
+    explicit_source_override: bool,
+    source_weights: dict[str, float],
+    preferences: dict[str, Any] | None,
+    rerank_with_learning: bool,
+    retrieval_mode: str,
+    retrieval_intent: str,
+) -> None:
+    if (
+        not RETRIEVAL_PATHWAY_CACHE_ENABLED
+        or RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS <= 0
+        or RETRIEVAL_PATHWAY_SWR_REFRESH_MAX_INFLIGHT <= 0
+    ):
+        return
+    refresh_key = _retrieval_pathway_cache_key(
+        query=query,
+        limit=limit,
+        project_filter=project_filter,
+        topic_filter=topic_filter,
+        sources=sources,
+        source_weights=source_weights,
+        retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
+        learning_enabled=bool(rerank_with_learning),
+        positive_terms=set(),
+        negative_terms=set(),
+    )
+
+    async def _runner() -> None:
+        global retrieval_pathway_cache_swr_refresh_started
+        global retrieval_pathway_cache_swr_refresh_completed, retrieval_pathway_cache_swr_refresh_failed
+        now = time.monotonic()
+        async with retrieval_pathway_cache_swr_refresh_lock:
+            stale_keys = [
+                key
+                for key, expires_at in retrieval_pathway_cache_swr_refresh_inflight.items()
+                if float(expires_at or 0.0) <= now
+            ]
+            for stale_key in stale_keys:
+                retrieval_pathway_cache_swr_refresh_inflight.pop(stale_key, None)
+            if refresh_key in retrieval_pathway_cache_swr_refresh_inflight:
+                return
+            if len(retrieval_pathway_cache_swr_refresh_inflight) >= RETRIEVAL_PATHWAY_SWR_REFRESH_MAX_INFLIGHT:
+                return
+            max_window_secs = max(5.0, RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS)
+            retrieval_pathway_cache_swr_refresh_inflight[refresh_key] = now + max_window_secs
+            retrieval_pathway_cache_swr_refresh_started += 1
+        try:
+            await federated_search_memory(
+                query=query,
+                limit=max(1, int(limit)),
+                project_filter=project_filter,
+                topic_filter=topic_filter,
+                sources=list(sources),
+                explicit_source_override=explicit_source_override,
+                source_weights=dict(source_weights),
+                preferences=preferences,
+                rerank_with_learning=rerank_with_learning,
+                retrieval_mode=retrieval_mode,
+                retrieval_intent=retrieval_intent,
+                record_pathway_usage=False,
+                call_budget_secs=None,
+                bypass_pathway_cache=True,
+            )
+            retrieval_pathway_cache_swr_refresh_completed += 1
+        except Exception as exc:
+            retrieval_pathway_cache_swr_refresh_failed += 1
+            logger.debug("Retrieval pathway SWR refresh failed: %s", exc)
+        finally:
+            async with retrieval_pathway_cache_swr_refresh_lock:
+                retrieval_pathway_cache_swr_refresh_inflight.pop(refresh_key, None)
+
+    asyncio.create_task(_runner())
 
 
 def _retrieval_template_cache_key(mode: str, resolved_sources: list[str]) -> str:
@@ -3867,10 +5464,12 @@ def _retrieval_pathway_stat_key(
     topic_filter: str | None,
     sources: list[str],
     retrieval_mode: str,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> str:
     identity = "\n".join(
         [
             _normalize_retrieval_mode(retrieval_mode),
+            _normalize_retrieval_intent(retrieval_intent),
             str(project_filter or ""),
             str(topic_filter or ""),
             ",".join(sources),
@@ -3888,6 +5487,7 @@ async def _record_retrieval_pathway_observation(
     sources: list[str],
     source_weights: dict[str, float],
     retrieval_mode: str,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> None:
     query_text = re.sub(r"\s+", " ", str(query or "").strip())
     if not query_text:
@@ -3899,6 +5499,7 @@ async def _record_retrieval_pathway_observation(
         topic_filter=topic_filter,
         sources=sources,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
     )
     async with retrieval_pathway_stats_lock:
         entry = retrieval_pathway_stats.get(key)
@@ -3910,6 +5511,7 @@ async def _record_retrieval_pathway_observation(
                 "sources": list(sources),
                 "source_weights": dict(source_weights),
                 "retrieval_mode": _normalize_retrieval_mode(retrieval_mode),
+                "retrieval_intent": _normalize_retrieval_intent(retrieval_intent),
                 "hits": 0,
                 "first_seen_at": _utc_now(),
                 "first_seen_monotonic": now,
@@ -4049,6 +5651,29 @@ def _degraded_timeout_cap_for_source(source: str) -> float | None:
     return None
 
 
+def _base_source_timeout_for_mode(source: str, retrieval_mode: str) -> float:
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    timeout_scale = _retrieval_mode_timeout_scale(mode)
+    memory_timeout_cap = _retrieval_memory_timeout_cap_for_mode(mode)
+    source_name = str(source or "").strip().lower()
+    if source_name == RETRIEVAL_SOURCE_QDRANT:
+        return max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale)
+    if source_name == RETRIEVAL_SOURCE_MONGO_RAW:
+        return max(1.0, RETRIEVAL_MONGO_TIMEOUT_SECS * timeout_scale)
+    if source_name == RETRIEVAL_SOURCE_MINDSDB:
+        return max(1.0, RETRIEVAL_MINDSDB_TIMEOUT_SECS * timeout_scale)
+    if source_name == RETRIEVAL_SOURCE_LETTA:
+        return max(1.0, RETRIEVAL_LETTA_TIMEOUT_SECS * timeout_scale)
+    if source_name == RETRIEVAL_SOURCE_MEMORY_BANK:
+        return min(
+            max(1.0, RETRIEVAL_MEMORY_TIMEOUT_SECS * timeout_scale),
+            memory_timeout_cap,
+        )
+    if source_name == RETRIEVAL_SOURCE_TOPIC_ROLLUPS:
+        return max(1.0, RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS * timeout_scale)
+    return max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale)
+
+
 async def _retrieval_slow_source_runtime_policy(
     *,
     sources: list[str],
@@ -4060,31 +5685,97 @@ async def _retrieval_slow_source_runtime_policy(
         "explicit_source_override": bool(explicit_source_override),
         "degraded": {},
         "timeout_overrides": {},
+        "adaptive_timeout_enabled": bool(RETRIEVAL_ADAPTIVE_TIMEOUT_POLICY_ENABLED),
+        "adaptive_timeouts": {},
+        "adaptive_timeout_min_requests": RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS,
+        "adaptive_timeout_p95_factor": RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR,
+        "adaptive_timeout_max_scale": RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE,
+        "circuit_skip_enabled": bool(RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED),
+        "probe_every_n": RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N,
+        "probe_attempts": {},
         "cooldown_secs": RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS,
         "min_requests": RETRIEVAL_SLOW_SOURCE_STABILITY_MIN_REQUESTS,
         "timeout_rate_threshold": RETRIEVAL_SLOW_SOURCE_TIMEOUT_RATE_THRESHOLD,
         "error_rate_threshold": RETRIEVAL_SLOW_SOURCE_ERROR_RATE_THRESHOLD,
     }
-    if not RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED:
-        return policy
-    monitored_sources = [source for source in sources if source in DEFAULT_RETRIEVAL_SLOW_SOURCES]
-    if not monitored_sources:
-        return policy
     if explicit_source_override:
         return policy
+    unique_sources: list[str] = []
+    seen_sources: set[str] = set()
+    for source in sources:
+        source_name = str(source or "").strip().lower()
+        if not source_name or source_name in seen_sources:
+            continue
+        seen_sources.add(source_name)
+        unique_sources.append(source_name)
+    if not unique_sources:
+        return policy
+
+    monitored_sources = [source for source in unique_sources if source in DEFAULT_RETRIEVAL_SLOW_SOURCES]
     now = time.monotonic()
     degraded: dict[str, dict[str, Any]] = {}
     timeout_overrides: dict[str, float] = {}
+    adaptive_timeouts: dict[str, dict[str, Any]] = {}
     async with retrieval_latency_lock:
-        for source in monitored_sources:
-            source_name = str(source or "").strip().lower()
-            if not source_name:
-                continue
-            requests = max(0, int(retrieval_source_request_counts.get(source_name, 0) or 0))
-            errors = max(0, int(retrieval_source_error_counts.get(source_name, 0) or 0))
-            timeouts = max(0, int(retrieval_source_timeout_counts.get(source_name, 0) or 0))
+        samples_snapshot = {
+            source_name: list(samples)
+            for source_name, samples in retrieval_source_latency_samples.items()
+        }
+        request_counts = dict(retrieval_source_request_counts)
+        error_counts = dict(retrieval_source_error_counts)
+        timeout_counts = dict(retrieval_source_timeout_counts)
+        for source_name in unique_sources:
+            requests = max(0, int(request_counts.get(source_name, 0) or 0))
+            errors = max(0, int(error_counts.get(source_name, 0) or 0))
+            timeouts = max(0, int(timeout_counts.get(source_name, 0) or 0))
             timeout_rate = (timeouts / requests) if requests > 0 else 0.0
             error_rate = (errors / requests) if requests > 0 else 0.0
+            samples = [float(item) for item in samples_snapshot.get(source_name, [])]
+            p95_ms = _percentile(sorted(samples), 0.95) if samples else 0.0
+
+            if (
+                RETRIEVAL_ADAPTIVE_TIMEOUT_POLICY_ENABLED
+                and requests >= RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS
+                and p95_ms > 0.0
+            ):
+                base_timeout = _base_source_timeout_for_mode(source_name, retrieval_mode)
+                target_timeout = max(
+                    RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SECS,
+                    (p95_ms / 1000.0) * RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR,
+                )
+                max_timeout = max(base_timeout, base_timeout * RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE)
+                adjusted_timeout = min(max_timeout, target_timeout)
+                if (
+                    timeout_rate <= RETRIEVAL_ADAPTIVE_TIMEOUT_STEADY_TIMEOUT_RATE
+                    and error_rate <= RETRIEVAL_ADAPTIVE_TIMEOUT_STEADY_ERROR_RATE
+                ):
+                    adjusted_timeout = min(base_timeout, adjusted_timeout)
+                else:
+                    adjusted_timeout = max(base_timeout * 0.9, adjusted_timeout)
+                adjusted_timeout = max(0.5, adjusted_timeout)
+                timeout_overrides[source_name] = round(adjusted_timeout, 3)
+                adaptive_timeouts[source_name] = {
+                    "requests": requests,
+                    "p95_ms": round(p95_ms, 3),
+                    "base_timeout_secs": round(base_timeout, 3),
+                    "adjusted_timeout_secs": round(adjusted_timeout, 3),
+                    "timeout_rate": round(timeout_rate, 6),
+                    "error_rate": round(error_rate, 6),
+                }
+
+        if not RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED:
+            policy["timeout_overrides"] = timeout_overrides
+            policy["adaptive_timeouts"] = adaptive_timeouts
+            return policy
+
+        for source_name in monitored_sources:
+            requests = max(0, int(request_counts.get(source_name, 0) or 0))
+            errors = max(0, int(error_counts.get(source_name, 0) or 0))
+            timeouts = max(0, int(timeout_counts.get(source_name, 0) or 0))
+            timeout_rate = (timeouts / requests) if requests > 0 else 0.0
+            error_rate = (errors / requests) if requests > 0 else 0.0
+            samples = [float(item) for item in samples_snapshot.get(source_name, [])]
+            p95_ms = _percentile(sorted(samples), 0.95) if samples else 0.0
             cooldown_until = float(retrieval_slow_source_cooldown_until.get(source_name, 0.0) or 0.0)
             in_cooldown = cooldown_until > now
             threshold_hit = (
@@ -4100,23 +5791,32 @@ async def _retrieval_slow_source_runtime_policy(
                 in_cooldown = True
             elif not in_cooldown:
                 retrieval_slow_source_cooldown_until.pop(source_name, None)
+                retrieval_slow_source_probe_attempts[source_name] = 0
 
             is_degraded = bool(in_cooldown)
             if not is_degraded:
                 continue
+            probe_attempts = int(retrieval_slow_source_probe_attempts.get(source_name, 0) or 0)
+            policy_probe = policy.get("probe_attempts")
+            if isinstance(policy_probe, dict):
+                policy_probe[source_name] = probe_attempts
             degraded[source_name] = {
                 "requests": requests,
                 "errors": errors,
                 "timeouts": timeouts,
                 "timeout_rate": round(timeout_rate, 6),
                 "error_rate": round(error_rate, 6),
+                "p95_ms": round(p95_ms, 3),
                 "cooldown_remaining_secs": round(max(0.0, cooldown_until - now), 3),
+                "probe_attempts": probe_attempts,
             }
             cap = _degraded_timeout_cap_for_source(source_name)
             if cap is not None:
-                timeout_overrides[source_name] = max(1.0, float(cap))
+                existing = float(timeout_overrides.get(source_name, cap))
+                timeout_overrides[source_name] = max(1.0, min(existing, float(cap)))
     policy["degraded"] = degraded
     policy["timeout_overrides"] = timeout_overrides
+    policy["adaptive_timeouts"] = adaptive_timeouts
     return policy
 
 
@@ -4404,6 +6104,24 @@ def _build_retrieval_alerts(latency_snapshot: dict[str, Any]) -> dict[str, Any]:
                     ),
                 }
             )
+    mindsdb_cooldown_remaining = max(
+        0.0,
+        float(mindsdb_retrieval_lz4_cooldown_until_monotonic) - time.monotonic(),
+    )
+    if mindsdb_cooldown_remaining > 0.0:
+        alerts.append(
+            {
+                "code": "mindsdb_lz4_circuit_open",
+                "severity": "warn",
+                "source": RETRIEVAL_SOURCE_MINDSDB,
+                "metric": "lz4CircuitCooldownSecs",
+                "value": round(mindsdb_cooldown_remaining, 3),
+                "message": (
+                    f"MindsDB retrieval LZ4 circuit is open for another "
+                    f"{mindsdb_cooldown_remaining:.1f}s."
+                ),
+            }
+        )
 
     warmer_last_error = str(retrieval_pathway_warmer_state.get("lastError") or "").strip()
     warmer_errors = retrieval_pathway_warmer_state.get("lastResult")
@@ -4460,6 +6178,10 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             alerts["count"] = len(active)
     async with retrieval_pathway_cache_lock:
         pathway_cache_size = len(retrieval_pathway_cache)
+    async with retrieval_pathway_cache_swr_refresh_lock:
+        pathway_swr_inflight = len(retrieval_pathway_cache_swr_refresh_inflight)
+    async with retrieval_pathway_negative_cache_lock:
+        negative_cache_size = len(retrieval_pathway_negative_cache)
     async with retrieval_template_cache_lock:
         template_cache_size = len(retrieval_template_cache)
     async with retrieval_pathway_stats_lock:
@@ -4470,19 +6192,85 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         memory_read_refresh_inflight = len(memory_read_cache_refresh_inflight)
     async with letta_search_warm_lock:
         letta_warm_inflight = len(letta_search_warm_inflight)
+    async with retrieval_async_source_warm_lock:
+        async_warm_inflight = len(retrieval_async_source_warm_inflight)
+    async with recall_deep_async_lock:
+        deep_async_job_count = len(recall_deep_async_jobs)
+        deep_async_running = sum(
+            1
+            for item in recall_deep_async_jobs.values()
+            if isinstance(item, dict) and str(item.get("status") or "") == "running"
+        )
     lifecycle_state = await _retrieval_lifecycle_state_snapshot()
+    recent_rows = recall_quality.get("recent") if isinstance(recall_quality.get("recent"), list) else []
+    sample_count = len(recent_rows)
+    rollup_hits = 0
+    multi_source_hits = 0
+    top_scores: list[float] = []
+    for row in recent_rows:
+        if not isinstance(row, dict):
+            continue
+        row_sources = row.get("sources") if isinstance(row.get("sources"), list) else []
+        normalized_sources = {str(source).strip().lower() for source in row_sources if str(source).strip()}
+        if RETRIEVAL_SOURCE_TOPIC_ROLLUPS in normalized_sources:
+            rollup_hits += 1
+        if len(normalized_sources) >= 2:
+            multi_source_hits += 1
+        top_scores.append(max(0.0, float(row.get("topScore", 0.0) or 0.0)))
+    avg_top_score = round(sum(top_scores) / len(top_scores), 6) if top_scores else 0.0
+    mindsdb_cooldown_remaining = max(
+        0.0,
+        float(mindsdb_retrieval_lz4_cooldown_until_monotonic) - time.monotonic(),
+    )
+    runtime_flags = {
+        "useRustCodec": bool(getattr(MIGRATION_FLAGS, "use_rust_codec", False)),
+        "useRustMemory": bool(getattr(MIGRATION_FLAGS, "use_rust_memory", False)),
+        "useRustRetrieval": bool(getattr(MIGRATION_FLAGS, "use_rust_retrieval", False)),
+        "useGoOrchestrator": bool(getattr(MIGRATION_FLAGS, "use_go_orchestrator", False)),
+        "engineMode": str(getattr(MIGRATION_FLAGS, "engine_mode", "embedded")),
+        "shadowDualRun": bool(getattr(MIGRATION_FLAGS, "shadow_dual_run", False)),
+        "canaryEnabled": bool(getattr(MIGRATION_FLAGS, "canary_enabled", False)),
+    }
+    if callable(adapter_flags_snapshot):
+        adapter_flags = adapter_flags_snapshot()
+    else:
+        adapter_flags = {
+            "error": _runtime_adapter_registry_error or "adapter registry unavailable",
+        }
     return {
         "updatedAt": _utc_now(),
         "defaultMode": RETRIEVAL_MODE_DEFAULT,
+        "defaultIntent": RETRIEVAL_INTENT_DEFAULT,
+        "intents": list(RETRIEVAL_INTENTS),
         "modes": list(RETRIEVAL_MODES),
         "pathwayCache": {
             "enabled": RETRIEVAL_PATHWAY_CACHE_ENABLED,
             "ttlSecs": RETRIEVAL_PATHWAY_CACHE_TTL_SECS,
+            "staleWhileRevalidateSecs": RETRIEVAL_PATHWAY_CACHE_STALE_WHILE_REVALIDATE_SECS,
             "maxKeys": RETRIEVAL_PATHWAY_CACHE_MAX_KEYS,
             "currentKeys": pathway_cache_size,
             "hits": retrieval_pathway_cache_hits,
+            "staleHits": retrieval_pathway_cache_stale_hits,
             "misses": retrieval_pathway_cache_misses,
             "evictions": retrieval_pathway_cache_evictions,
+            "swrRefresh": {
+                "maxInflight": RETRIEVAL_PATHWAY_SWR_REFRESH_MAX_INFLIGHT,
+                "inflight": pathway_swr_inflight,
+                "started": retrieval_pathway_cache_swr_refresh_started,
+                "completed": retrieval_pathway_cache_swr_refresh_completed,
+                "failed": retrieval_pathway_cache_swr_refresh_failed,
+            },
+            "negativeCache": {
+                "enabled": RETRIEVAL_PATHWAY_NEGATIVE_CACHE_ENABLED,
+                "ttlSecs": RETRIEVAL_PATHWAY_NEGATIVE_CACHE_TTL_SECS,
+                "minQueryChars": RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MIN_QUERY_CHARS,
+                "maxKeys": RETRIEVAL_PATHWAY_NEGATIVE_CACHE_MAX_KEYS,
+                "currentKeys": negative_cache_size,
+                "hits": retrieval_pathway_negative_cache_hits,
+                "misses": retrieval_pathway_negative_cache_misses,
+                "writes": retrieval_pathway_negative_cache_writes,
+                "evictions": retrieval_pathway_negative_cache_evictions,
+            },
             "backend": {
                 "configured": RETRIEVAL_PATHWAY_CACHE_BACKEND,
                 "active": _retrieval_pathway_cache_backend_enabled(),
@@ -4494,6 +6282,20 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 "writeErrors": retrieval_pathway_cache_backend_write_errors,
                 "compress": RETRIEVAL_PATHWAY_REDIS_COMPRESS,
             },
+        },
+        "deepAsync": {
+            "enabled": RECALL_DEEP_ASYNC_ENABLED,
+            "defaultForDeep": RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP,
+            "maxInflight": RECALL_DEEP_ASYNC_MAX_INFLIGHT,
+            "maxJobs": RECALL_DEEP_ASYNC_MAX_JOBS,
+            "resultTtlSecs": RECALL_DEEP_ASYNC_RESULT_TTL_SECS,
+            "callbackTimeoutSecs": RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS,
+            "jobs": deep_async_job_count,
+            "running": deep_async_running,
+            "started": recall_deep_async_started,
+            "completed": recall_deep_async_completed,
+            "failed": recall_deep_async_failed,
+            "callbackFailed": recall_deep_async_callback_failed,
         },
         "memoryReadCache": {
             "failOpenEnabled": MEMMCP_READ_FAIL_OPEN_ENABLED,
@@ -4546,9 +6348,62 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 "completed": letta_search_warm_completed,
                 "failed": letta_search_warm_failed,
             },
+            "asyncSourceWarm": {
+                "enabled": RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES,
+                "maxInflight": RETRIEVAL_ASYNC_WARM_MAX_INFLIGHT,
+                "inflight": async_warm_inflight,
+                "started": retrieval_async_source_warm_started,
+                "completed": retrieval_async_source_warm_completed,
+                "failed": retrieval_async_source_warm_failed,
+            },
+        },
+        "sourceCircuit": {
+            "enabled": RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED and RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED,
+            "probeEveryN": RETRIEVAL_SLOW_SOURCE_CIRCUIT_PROBE_EVERY_N,
+            "cooldownSecs": RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS,
+            "minRecoveryCooldownSecs": RETRIEVAL_SLOW_SOURCE_CIRCUIT_MIN_RECOVERY_COOLDOWN_SECS,
+            "degradedSources": {
+                str(source): round(max(0.0, float(until) - time.monotonic()), 3)
+                for source, until in retrieval_slow_source_cooldown_until.items()
+                if float(until or 0.0) > time.monotonic()
+            },
+        },
+        "backlogGating": {
+            "enabled": RETRIEVAL_BACKLOG_GATING_ENABLED,
+            "targets": list(RETRIEVAL_BACKLOG_GATING_TARGETS),
+            "lettaOutstandingMax": RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX,
+            "lettaRetryingMax": RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX,
+            "freshTtlSecs": RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS,
+        },
+        "qdrantTuning": {
+            "baseHnswEf": QDRANT_SEARCH_HNSW_EF,
+            "modeHnswEf": _parse_qdrant_mode_int_map(QDRANT_SEARCH_MODE_HNSW_EF_ENV, defaults={}),
+            "modeLimitCaps": _parse_qdrant_mode_int_map(
+                QDRANT_SEARCH_MODE_LIMIT_CAPS_ENV,
+                defaults={"fast": 80, "balanced": 120, "deep": 180},
+            ),
+            "exact": QDRANT_SEARCH_EXACT,
+            "indexedOnly": QDRANT_SEARCH_INDEXED_ONLY,
+            "timeoutRetryEnabled": QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED,
+            "timeoutRetryLimitFactor": QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR,
         },
         "latency": latency,
         "recallQuality": recall_quality,
+        "qualityKpis": {
+            "sampleCount": sample_count,
+            "rollupHitRate": round((rollup_hits / sample_count), 6) if sample_count > 0 else 0.0,
+            "multiSourceConsensusRate": round((multi_source_hits / sample_count), 6) if sample_count > 0 else 0.0,
+            "avgTopScore": avg_top_score,
+            "mindsdbLz4CircuitOpen": mindsdb_cooldown_remaining > 0.0,
+            "mindsdbLz4CooldownRemainingSecs": round(mindsdb_cooldown_remaining, 3),
+            "mindsdbLz4Hits": int(mindsdb_retrieval_lz4_hits),
+            "mindsdbCircuitSkips": int(mindsdb_retrieval_lz4_skipped),
+        },
+        "runtimeCutover": {
+            **runtime_flags,
+            "rollbackPath": "python_fallback_available",
+        },
+        "adapterFlags": adapter_flags,
         "lifecycle": lifecycle_state,
         "alerts": alerts,
     }
@@ -4806,6 +6661,7 @@ async def _run_retrieval_pathway_warm_query(entry: dict[str, Any]) -> bool:
     sources = entry.get("sources") if isinstance(entry.get("sources"), list) else None
     source_weights = entry.get("source_weights") if isinstance(entry.get("source_weights"), dict) else None
     mode = _normalize_retrieval_mode(str(entry.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED))
+    intent = _normalize_retrieval_intent(str(entry.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT))
     limit = max(1, min(RETRIEVAL_PATHWAY_WARMER_LIMIT, 20))
     await federated_search_memory(
         query,
@@ -4817,6 +6673,7 @@ async def _run_retrieval_pathway_warm_query(entry: dict[str, Any]) -> bool:
         preferences=None,
         rerank_with_learning=False,
         retrieval_mode=mode,
+        retrieval_intent=intent,
         record_pathway_usage=False,
     )
     return True
@@ -5371,12 +7228,27 @@ memory_write_history = deque(maxlen=MEMORY_WRITE_HISTORY_LIMIT)
 memory_write_history_lock = asyncio.Lock()
 memory_write_dedupe_lock = asyncio.Lock()
 memory_write_dedupe_seen: dict[str, float] = {}
+memory_write_batch_idempotency_lock = asyncio.Lock()
+memory_write_batch_request_idempotency_seen: OrderedDict[str, dict[str, Any]] = OrderedDict()
+memory_write_batch_item_idempotency_seen: OrderedDict[str, dict[str, Any]] = OrderedDict()
+memory_write_batch_metrics: dict[str, int] = {
+    "accepted": 0,
+    "rejected": 0,
+    "requestIdempotentHits": 0,
+    "itemIdempotentHits": 0,
+    "itemSuccesses": 0,
+    "itemFailures": 0,
+}
 memory_write_latest_hash_lock = asyncio.Lock()
 memory_write_latest_hashes: dict[str, str] = {}
 memory_bank_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MEMORY_BANK_QUEUE_MAX)
 memory_bank_queue_tasks: list[asyncio.Task] = []
 memory_bank_queue_dropped = 0
 memory_bank_queue_processed = 0
+memory_bank_queue_skipped_low_value = 0
+memory_bank_telemetry_cleanup_state_lock = asyncio.Lock()
+memory_bank_telemetry_cleanup_state: dict[str, set[str]] = {}
+memory_bank_telemetry_cleanup_state_loaded = False
 memory_write_last_at: str | None = None
 memory_write_last_latency_ms: float | None = None
 memory_write_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MEMORY_WRITE_QUEUE_MAX)
@@ -5469,6 +7341,7 @@ def _default_agent_memory_profile() -> dict[str, Any]:
         sources = [RETRIEVAL_SOURCE_QDRANT]
     return {
         "retrieval_mode": RETRIEVAL_MODE_DEFAULT,
+        "retrieval_intent": RETRIEVAL_INTENT_DEFAULT,
         "sources": sources,
         "source_weights": {},
         "default_project": None,
@@ -5484,6 +7357,7 @@ def _normalize_agent_memory_profile_payload(payload: dict[str, Any] | None) -> d
     base = _default_agent_memory_profile()
     data = payload if isinstance(payload, dict) else {}
     retrieval_mode = _normalize_retrieval_mode(data.get("retrieval_mode"))
+    retrieval_intent = _normalize_retrieval_intent(data.get("retrieval_intent"))
     sources_raw = data.get("sources")
     sources = None
     if isinstance(sources_raw, list):
@@ -5505,6 +7379,7 @@ def _normalize_agent_memory_profile_payload(payload: dict[str, Any] | None) -> d
     default_project = default_project_raw or None
     return {
         "retrieval_mode": retrieval_mode or base["retrieval_mode"],
+        "retrieval_intent": retrieval_intent or base["retrieval_intent"],
         "sources": sources if sources is not None else list(base["sources"]),
         "source_weights": {
             source: weight
@@ -6113,6 +7988,74 @@ def _topic_rollup_path_prefixes(topic_path: str) -> list[str]:
     return ["/".join(segments[: idx + 1]) for idx in range(len(segments))]
 
 
+def _topic_rollup_file_partitions(
+    files: list[str],
+    *,
+    max_partitions: int = TOPIC_ROLLUP_FILE_PARTITIONS_MAX,
+) -> list[dict[str, Any]]:
+    if not files:
+        return []
+    max_partition_count = max(1, int(max_partitions))
+    buckets: dict[str, dict[str, Any]] = {}
+    for file_name in files:
+        normalized_file = normalize_memory_path(str(file_name or ""))
+        if not normalized_file:
+            continue
+        file_topic = normalize_topic_path(derive_topic_path(normalized_file, None))
+        if not file_topic:
+            file_topic = DEFAULT_TOPIC_ROOT
+        segments = [segment for segment in file_topic.split("/") if segment]
+        partition_path = "/".join(segments[:3]) if segments else DEFAULT_TOPIC_ROOT
+        bucket = buckets.get(partition_path)
+        if bucket is None:
+            bucket = {
+                "topic_path": partition_path,
+                "file_count": 0,
+                "sample_files": [],
+            }
+            buckets[partition_path] = bucket
+        bucket["file_count"] = int(bucket.get("file_count") or 0) + 1
+        sample_files = bucket.get("sample_files")
+        if not isinstance(sample_files, list):
+            sample_files = []
+            bucket["sample_files"] = sample_files
+        if normalized_file not in sample_files and len(sample_files) < TOPIC_ROLLUP_RAW_REFS_MAX:
+            sample_files.append(normalized_file)
+
+    partitions = sorted(
+        buckets.values(),
+        key=lambda item: (
+            -int(item.get("file_count") or 0),
+            str(item.get("topic_path") or ""),
+        ),
+    )
+    if len(partitions) > max_partition_count:
+        head = partitions[: max_partition_count - 1]
+        tail = partitions[max_partition_count - 1 :]
+        other_count = sum(int(item.get("file_count") or 0) for item in tail)
+        other_samples: list[str] = []
+        for item in tail:
+            for file_name in (item.get("sample_files") if isinstance(item.get("sample_files"), list) else []):
+                file_token = str(file_name or "").strip()
+                if not file_token or file_token in other_samples:
+                    continue
+                other_samples.append(file_token)
+                if len(other_samples) >= TOPIC_ROLLUP_RAW_REFS_MAX:
+                    break
+            if len(other_samples) >= TOPIC_ROLLUP_RAW_REFS_MAX:
+                break
+        if other_count > 0:
+            head.append(
+                {
+                    "topic_path": "__other__",
+                    "file_count": other_count,
+                    "sample_files": other_samples,
+                }
+            )
+        partitions = head
+    return partitions[:max_partition_count]
+
+
 def _new_topic_rollup_entry(path: str, *, event_count: int = 0, children: list[str] | None = None) -> dict[str, Any]:
     return {
         "path": path,
@@ -6180,6 +8123,10 @@ def _finalize_topic_rollup_entry(entry: dict[str, Any]) -> dict[str, Any]:
     entry.pop("_fact_seen", None)
     entry["uniqueFileCount"] = len(unique_files)
     entry["uniqueFiles"] = unique_files[:TOPIC_ROLLUP_MAX_UNIQUE_FILES]
+    entry["filePartitions"] = _topic_rollup_file_partitions(
+        unique_files,
+        max_partitions=TOPIC_ROLLUP_FILE_PARTITIONS_MAX,
+    )
 
     inferences: list[str] = []
     if int(entry.get("recentEventCount") or 0) > int(entry.get("uniqueFileCount") or 0) and int(
@@ -6997,6 +8944,56 @@ def memory_content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _memory_write_batch_cache_key(key: str, scope: str) -> str:
+    normalized_key = str(key or "").strip()
+    if not normalized_key:
+        return ""
+    digest = hashlib.sha256(f"{scope}:{normalized_key}".encode("utf-8")).hexdigest()
+    return f"{scope}:{digest}"
+
+
+async def _memory_write_batch_idempotency_get(
+    cache: OrderedDict[str, dict[str, Any]],
+    key: str,
+) -> dict[str, Any] | None:
+    if not key:
+        return None
+    now = time.monotonic()
+    ttl = max(30.0, MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS)
+    stale: list[str] = []
+    for cache_key, payload in list(cache.items()):
+        seen_at = float(payload.get("seenAtMonotonic") or 0.0)
+        if seen_at + ttl < now:
+            stale.append(cache_key)
+    for cache_key in stale:
+        cache.pop(cache_key, None)
+    payload = cache.get(key)
+    if payload is None:
+        return None
+    cache.move_to_end(key)
+    cached_result = payload.get("result")
+    if isinstance(cached_result, dict):
+        return dict(cached_result)
+    return None
+
+
+async def _memory_write_batch_idempotency_set(
+    cache: OrderedDict[str, dict[str, Any]],
+    key: str,
+    result: dict[str, Any],
+) -> None:
+    if not key:
+        return
+    cache[key] = {
+        "seenAtMonotonic": time.monotonic(),
+        "result": dict(result),
+    }
+    cache.move_to_end(key)
+    max_keys = max(128, MEMORY_WRITE_DEDUP_MAX_KEYS)
+    while len(cache) > max_keys:
+        cache.popitem(last=False)
+
+
 async def should_skip_duplicate_memory_write(dedupe_key: str, now_monotonic: float | None = None) -> bool:
     if not MEMORY_WRITE_DEDUP_ENABLED:
         return False
@@ -7107,6 +9104,7 @@ async def enqueue_hot_memory_rollup(item: dict[str, Any]) -> None:
                 "letta_session": item.get("letta_session"),
                 "letta_admit": bool(item.get("letta_admit", True)),
                 "letta_context": dict(item.get("letta_context") or {}),
+                "code_context": dict(item.get("code_context") or {}),
                 "qdrant_collection": item.get("qdrant_collection"),
                 "events_since_flush": 0,
                 "bytes_since_flush": 0,
@@ -7124,6 +9122,7 @@ async def enqueue_hot_memory_rollup(item: dict[str, Any]) -> None:
         entry["letta_session"] = item.get("letta_session")
         entry["letta_admit"] = bool(item.get("letta_admit", True))
         entry["letta_context"] = dict(item.get("letta_context") or {})
+        entry["code_context"] = dict(item.get("code_context") or {})
         entry["qdrant_collection"] = item.get("qdrant_collection")
         entry["last_seen_at"] = now_iso
         entry["last_seen_monotonic"] = now_monotonic
@@ -7134,6 +9133,7 @@ async def enqueue_hot_memory_rollup(item: dict[str, Any]) -> None:
 
 
 async def flush_hot_memory_rollups(force: bool = False) -> dict[str, Any]:
+    global memory_bank_queue_skipped_low_value
     interval_secs = max(1.0, HOT_MEMORY_ROLLUP_FLUSH_SECS)
     now_monotonic = time.monotonic()
     pending: list[tuple[str, dict[str, Any]]] = []
@@ -7157,6 +9157,7 @@ async def flush_hot_memory_rollups(force: bool = False) -> dict[str, Any]:
                 "letta_session": entry.get("letta_session"),
                 "letta_admit": bool(entry.get("letta_admit", True)),
                 "letta_context": dict(entry.get("letta_context") or {}),
+                "code_context": dict(entry.get("code_context") or {}),
                 "qdrant_collection": entry.get("qdrant_collection"),
                 "first_seen_at": entry.get("first_seen_at"),
                 "last_seen_at": entry.get("last_seen_at"),
@@ -7172,6 +9173,16 @@ async def flush_hot_memory_rollups(force: bool = False) -> dict[str, Any]:
     failures: list[str] = []
     for key, entry in pending:
         try:
+            source_file = str(entry.get("file") or "")
+            source_topic = normalize_topic_path(str(entry.get("topic_path") or "")) or derive_topic_path(
+                source_file, None
+            )
+            if MEMORY_BANK_TELEMETRY_GUARD_ENABLED and _looks_memory_bank_telemetry_file(
+                source_file,
+                source_topic,
+            ):
+                memory_bank_queue_skipped_low_value += 1
+                continue
             rollup_file = build_hot_memory_rollup_file(str(entry.get("file") or ""))
             rollup_content = build_hot_memory_rollup_content(entry)
             rollup_summary = str(entry.get("summary") or "")
@@ -7203,6 +9214,7 @@ async def flush_hot_memory_rollups(force: bool = False) -> dict[str, Any]:
                     "letta_session": entry.get("letta_session"),
                     "letta_admit": bool(entry.get("letta_admit", True)),
                     "letta_context": letta_context,
+                    "code_context": dict(entry.get("code_context") or {}),
                     "waiter": None,
                     "start_time": None,
                     "request_id": "hot-rollup",
@@ -9137,6 +11149,190 @@ async def _run_letta_low_value_retention_once() -> dict[str, Any]:
     }
 
 
+def _memory_bank_telemetry_tombstone_content(*, project: str, file_name: str, topic_path: str) -> str:
+    lines = [
+        "# ContextLattice Memory-Bank Cleanup",
+        "",
+        f"- archived_at: {_utc_now()}",
+        f"- project: {project}",
+        f"- file: {file_name}",
+        f"- topic_path: {topic_path or DEFAULT_TOPIC_ROOT}",
+        f"- reason: telemetry_low_value_cleanup",
+        "",
+        MEMORY_BANK_TELEMETRY_TOMBSTONE_CONTENT,
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _load_memory_bank_telemetry_cleanup_state_file() -> dict[str, set[str]]:
+    path = MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH
+    try:
+        if not path.exists():
+            return {}
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to load memory-bank cleanup state: %s", exc)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    state: dict[str, set[str]] = {}
+    for project_name, files in raw.items():
+        key = str(project_name or "").strip()
+        if not key or not isinstance(files, list):
+            continue
+        normalized = {
+            str(file_name or "").strip()
+            for file_name in files
+            if str(file_name or "").strip()
+        }
+        if normalized:
+            state[key] = normalized
+    return state
+
+
+def _persist_memory_bank_telemetry_cleanup_state_file(state: dict[str, set[str]]) -> None:
+    path = MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH
+    payload = {
+        str(project_name): sorted(files)
+        for project_name, files in state.items()
+        if str(project_name or "").strip() and files
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+async def _memory_bank_cleanup_state_get_snapshot() -> dict[str, set[str]]:
+    global memory_bank_telemetry_cleanup_state_loaded
+    async with memory_bank_telemetry_cleanup_state_lock:
+        if not memory_bank_telemetry_cleanup_state_loaded:
+            memory_bank_telemetry_cleanup_state.clear()
+            memory_bank_telemetry_cleanup_state.update(_load_memory_bank_telemetry_cleanup_state_file())
+            memory_bank_telemetry_cleanup_state_loaded = True
+        return {project: set(files) for project, files in memory_bank_telemetry_cleanup_state.items()}
+
+
+async def _memory_bank_cleanup_state_mark_processed(entries: list[tuple[str, str]]) -> None:
+    global memory_bank_telemetry_cleanup_state_loaded
+    if not entries:
+        return
+    async with memory_bank_telemetry_cleanup_state_lock:
+        if not memory_bank_telemetry_cleanup_state_loaded:
+            memory_bank_telemetry_cleanup_state.clear()
+            memory_bank_telemetry_cleanup_state.update(_load_memory_bank_telemetry_cleanup_state_file())
+            memory_bank_telemetry_cleanup_state_loaded = True
+        for project_name, file_name in entries:
+            project_key = str(project_name or "").strip()
+            file_key = str(file_name or "").strip()
+            if not project_key or not file_key:
+                continue
+            memory_bank_telemetry_cleanup_state.setdefault(project_key, set()).add(file_key)
+        try:
+            _persist_memory_bank_telemetry_cleanup_state_file(memory_bank_telemetry_cleanup_state)
+        except Exception as exc:
+            logger.warning("Failed to persist memory-bank cleanup state: %s", exc)
+
+
+async def run_memory_bank_telemetry_cleanup(
+    *,
+    project: str | None = None,
+    limit: int = MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    max_items = max(1, int(limit))
+    projects = [str(project).strip()] if str(project or "").strip() else await list_projects()
+    processed_state = await _memory_bank_cleanup_state_get_snapshot()
+    selected: list[tuple[str, str, str]] = []
+    scanned = 0
+    matched = 0
+    already_processed = 0
+    scan_truncated = False
+    for project_name in projects:
+        processed_files = processed_state.get(project_name) or set()
+        try:
+            files = await list_files(project_name)
+        except Exception as exc:
+            logger.warning("memory-bank cleanup skipped %s: %s", project_name, exc)
+            continue
+        for file_name in files:
+            scanned += 1
+            topic_path = derive_topic_path(file_name, None)
+            if not _looks_memory_bank_telemetry_file(file_name, topic_path):
+                continue
+            matched += 1
+            if file_name in processed_files:
+                already_processed += 1
+                continue
+            selected.append((project_name, file_name, topic_path))
+            if len(selected) >= max_items:
+                scan_truncated = True
+                break
+        if len(selected) >= max_items:
+            break
+    if dry_run:
+        return {
+            "ok": True,
+            "dryRun": True,
+            "project": str(project or "").strip() or None,
+            "scanned": scanned,
+            "matched": matched,
+            "alreadyProcessed": already_processed,
+            "selected": len(selected),
+            "scanTruncated": scan_truncated,
+            "sample": [
+                {"project": proj, "file": file_name, "topic_path": topic}
+                for proj, file_name, topic in selected[:25]
+            ],
+        }
+
+    concurrency = max(1, int(MEMORY_BANK_TELEMETRY_CLEANUP_MAX_CONCURRENCY))
+    semaphore = asyncio.Semaphore(concurrency)
+    updated = 0
+    failed = 0
+    errors: list[str] = []
+    processed_entries: list[tuple[str, str]] = []
+
+    async def _rewrite(project_name: str, file_name: str, topic_path: str) -> None:
+        nonlocal updated, failed
+        async with semaphore:
+            content = _memory_bank_telemetry_tombstone_content(
+                project=project_name,
+                file_name=file_name,
+                topic_path=topic_path,
+            )
+            try:
+                await call_memory_tool(
+                    "memory_bank_update",
+                    {
+                        "projectName": project_name,
+                        "fileName": file_name,
+                        "content": content,
+                    },
+                )
+                updated += 1
+                processed_entries.append((project_name, file_name))
+            except Exception as exc:
+                failed += 1
+                if len(errors) < 50:
+                    errors.append(f"{project_name}/{file_name}: {exc}")
+
+    await asyncio.gather(*[_rewrite(proj, file_name, topic) for proj, file_name, topic in selected])
+    await _memory_bank_cleanup_state_mark_processed(processed_entries)
+    return {
+        "ok": failed == 0,
+        "dryRun": False,
+        "project": str(project or "").strip() or None,
+        "scanned": scanned,
+        "matched": matched,
+        "alreadyProcessed": already_processed,
+        "selected": len(selected),
+        "scanTruncated": scan_truncated,
+        "updated": updated,
+        "failed": failed,
+        "errors": errors,
+    }
+
+
 def _record_sink_retention_run(
     *,
     result: dict[str, Any] | None,
@@ -10298,6 +12494,7 @@ async def _execute_task_action(task: dict[str, Any], worker_name: str) -> dict[s
             topic_path=str(payload.get("topic_path") or "").strip() or None,
             fetch_content=bool(payload.get("fetch_content", False)),
             retrieval_mode=str(payload.get("retrieval_mode") or "").strip() or None,
+            retrieval_intent=str(payload.get("retrieval_intent") or "").strip() or None,
             sources=payload.get("sources") if isinstance(payload.get("sources"), list) else None,
             source_weights=payload.get("source_weights") if isinstance(payload.get("source_weights"), dict) else None,
             rerank_with_learning=bool(payload.get("rerank_with_learning", True)),
@@ -10312,6 +12509,8 @@ async def _execute_task_action(task: dict[str, Any], worker_name: str) -> dict[s
             query_expansion=payload.get("query_expansion")
             if isinstance(payload.get("query_expansion"), bool)
             else None,
+            deep_async=False,
+            callback_url=None,
         )
         result = await search_memory(search_payload)
         return {"action": action, "result": result}
@@ -10532,6 +12731,30 @@ class MemoryWrite(BaseModel):
     fileName: str = Field(..., description="File name inside the project")
     content: str = Field(..., description="Payload to store")
     topicPath: str | None = Field(None, description="Optional topic path override")
+
+
+class MemoryWriteBatchItem(BaseModel):
+    projectName: str = Field(..., description="Project identifier")
+    fileName: str = Field(..., description="File name inside the project")
+    content: str = Field(..., description="Payload to store")
+    topicPath: str | None = Field(None, description="Optional topic path override")
+    itemId: str | None = Field(None, description="Optional caller-provided item identifier")
+    idempotencyKey: str | None = Field(None, description="Optional per-item idempotency key")
+
+
+class MemoryWriteBatchRequest(BaseModel):
+    items: list[MemoryWriteBatchItem] = Field(..., description="Write items")
+    idempotencyKey: str | None = Field(None, description="Optional request-level idempotency key")
+
+
+class BrowserContextIngest(BaseModel):
+    projectName: str = Field(..., description="Project identifier")
+    pageUrl: str = Field(..., description="Source URL")
+    title: str | None = Field(None, description="Optional page title")
+    textSnapshot: str = Field(..., description="Text-only snapshot from the page")
+    topicPath: str | None = Field(None, description="Optional topic path override")
+    agentId: str | None = Field(None, description="Agent identifier for provenance")
+    maxChars: int | None = Field(None, ge=200, le=40000, description="Optional snapshot truncation cap")
 
 
 class AgentTaskCreate(BaseModel):
@@ -11340,6 +13563,69 @@ def _grounding_numeric_value_set(grounding: dict[str, Any]) -> set[str]:
     return values
 
 
+RECALL_EVAL_TRANSIENT_ERROR_MARKERS = (
+    "timed out",
+    "timeout",
+    "deferred",
+    "call budget exhausted",
+    "temporarily unavailable",
+    "service unavailable",
+    "gateway timeout",
+    "upstream",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "rate limit",
+    "status=429",
+    "status=503",
+    "status=504",
+)
+
+
+def _recall_eval_response_has_transient_failure(search_response: dict[str, Any]) -> bool:
+    messages: list[str] = []
+    warnings = search_response.get("warnings")
+    if isinstance(warnings, list):
+        messages.extend(str(item or "") for item in warnings)
+    retrieval = search_response.get("retrieval")
+    if isinstance(retrieval, dict):
+        source_errors = retrieval.get("source_errors")
+        if isinstance(source_errors, dict):
+            messages.extend(str(item or "") for item in source_errors.values())
+    for raw in messages:
+        text = str(raw or "").strip().lower()
+        if not text:
+            continue
+        if any(marker in text for marker in RECALL_EVAL_TRANSIENT_ERROR_MARKERS):
+            return True
+    return False
+
+
+def _recall_eval_retry_modes(primary_mode: str | None) -> list[str]:
+    if RECALL_EVAL_TRANSIENT_RETRY_MAX_ATTEMPTS <= 0:
+        return []
+    configured = [
+        token.strip()
+        for token in RECALL_EVAL_TRANSIENT_RETRY_MODES_ENV.split(",")
+        if token.strip()
+    ]
+    if not configured:
+        configured = [RETRIEVAL_MODE_BALANCED, RETRIEVAL_MODE_DEEP]
+    normalized_primary = _normalize_retrieval_mode(primary_mode)
+    allowed = {RETRIEVAL_MODE_FAST, RETRIEVAL_MODE_BALANCED, RETRIEVAL_MODE_DEEP}
+    retry_modes: list[str] = []
+    seen: set[str] = {normalized_primary}
+    for token in configured:
+        normalized = _normalize_retrieval_mode(token)
+        if normalized not in allowed or normalized in seen:
+            continue
+        seen.add(normalized)
+        retry_modes.append(normalized)
+        if len(retry_modes) >= RECALL_EVAL_TRANSIENT_RETRY_MAX_ATTEMPTS:
+            break
+    return retry_modes
+
+
 def _build_context_pack_payload(
     *,
     query: str,
@@ -11384,20 +13670,87 @@ def _build_context_pack_payload(
     for row in results[: max(1, int(max_results))]:
         if not isinstance(row, dict):
             continue
-        result_rows.append(
-            {
-                "project": row.get("project"),
-                "file": row.get("file"),
-                "source": row.get("source"),
-                "score": float(row.get("score") or 0.0),
-                "topic_path": row.get("topic_path"),
-                "timestamp": _result_timestamp_iso(row),
-                "summary": _topic_rollup_sanitize_text(
-                    str(row.get("summary") or ""),
-                    max_chars=RECALL_GROUNDING_SNIPPET_CHARS,
-                ),
+        rendered_row = {
+            "project": row.get("project"),
+            "file": row.get("file"),
+            "source": row.get("source"),
+            "score": float(row.get("score") or 0.0),
+            "topic_path": row.get("topic_path"),
+            "timestamp": _result_timestamp_iso(row),
+            "summary": _topic_rollup_sanitize_text(
+                str(row.get("summary") or ""),
+                max_chars=RECALL_GROUNDING_SNIPPET_CHARS,
+            ),
+        }
+        topic_rollup = row.get("topic_rollup") if isinstance(row.get("topic_rollup"), dict) else None
+        if isinstance(topic_rollup, dict):
+            raw_refs = [
+                str(item)
+                for item in (topic_rollup.get("raw_refs") if isinstance(topic_rollup.get("raw_refs"), list) else [])
+                if str(item).strip()
+            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+            file_partitions = []
+            if isinstance(topic_rollup.get("file_partitions"), list):
+                for partition in topic_rollup.get("file_partitions"):
+                    if not isinstance(partition, dict):
+                        continue
+                    file_partitions.append(
+                        {
+                            "topic_path": str(partition.get("topic_path") or DEFAULT_TOPIC_ROOT),
+                            "file_count": int(partition.get("file_count") or 0),
+                            "sample_files": [
+                                str(item)
+                                for item in (
+                                    partition.get("sample_files")
+                                    if isinstance(partition.get("sample_files"), list)
+                                    else []
+                                )
+                                if str(item).strip()
+                            ][:TOPIC_ROLLUP_RAW_REFS_MAX],
+                        }
+                    )
+            rendered_row["topic_rollup"] = {
+                "event_count": int(topic_rollup.get("event_count") or 0),
+                "recent_event_count": int(topic_rollup.get("recent_event_count") or 0),
+                "unique_file_count": int(topic_rollup.get("unique_file_count") or 0),
+                "latest_timestamp": topic_rollup.get("latest_timestamp"),
+                "raw_refs": raw_refs,
+                "file_partitions": file_partitions,
             }
-        )
+            for raw_file in raw_refs:
+                key = f"{row.get('project')}:{raw_file}:rollup"
+                if key in seen_citations:
+                    continue
+                seen_citations.add(key)
+                citations.append(
+                    {
+                        "project": row.get("project"),
+                        "file": raw_file,
+                        "source": "topic_rollup_raw_ref",
+                        "topic_path": row.get("topic_path"),
+                        "timestamp": topic_rollup.get("latest_timestamp"),
+                    }
+                )
+            for partition in file_partitions:
+                partition_path = str(partition.get("topic_path") or DEFAULT_TOPIC_ROOT)
+                for file_name in partition.get("sample_files", []):
+                    sample_file = str(file_name or "").strip()
+                    if not sample_file:
+                        continue
+                    key = f"{row.get('project')}:{sample_file}:{partition_path}:rollup_partition"
+                    if key in seen_citations:
+                        continue
+                    seen_citations.add(key)
+                    citations.append(
+                        {
+                            "project": row.get("project"),
+                            "file": sample_file,
+                            "source": "topic_rollup_partition_ref",
+                            "topic_path": partition_path,
+                            "timestamp": topic_rollup.get("latest_timestamp"),
+                        }
+                    )
+        result_rows.append(rendered_row)
     return {
         "query": query,
         "generatedAt": _utc_now(),
@@ -11409,6 +13762,7 @@ def _build_context_pack_payload(
         "results": result_rows,
         "warnings": search_response.get("warnings") if isinstance(search_response.get("warnings"), list) else [],
         "retrievalMode": search_response.get("retrieval_mode"),
+        "retrievalIntent": search_response.get("retrieval_intent"),
         "agentId": search_response.get("agent_id"),
     }
 
@@ -12240,6 +14594,7 @@ def _qdrant_point_payload(
     vector: list[float],
     topic_path: str | None = None,
     topic_tags: list[str] | None = None,
+    code_context: dict[str, Any] | None = None,
 ) -> Any:
     payload_meta: dict[str, Any] = {
         "project": project,
@@ -12252,6 +14607,8 @@ def _qdrant_point_payload(
         payload_meta["topic_path"] = topic_path
     if topic_tags:
         payload_meta["topic_tags"] = topic_tags
+    if isinstance(code_context, dict) and code_context:
+        payload_meta["code_context"] = code_context
     if qdrant_models is None:
         raise RuntimeError("qdrant-client dependency is required for Qdrant operations")
     return qdrant_models.PointStruct(
@@ -12300,6 +14657,7 @@ async def push_batch_to_qdrant(items: list[dict[str, Any]]) -> None:
                 vectors[idx],
                 row.get("topic_path"),
                 row.get("topic_tags"),
+                row.get("code_context") if isinstance(row.get("code_context"), dict) else None,
             )
             for idx, row in enumerate(rows)
         ]
@@ -12332,6 +14690,7 @@ async def push_batch_to_qdrant(items: list[dict[str, Any]]) -> None:
                 _cheap_embedding(str(row.get("content") or ""), expected_dim),
                 row.get("topic_path"),
                 row.get("topic_tags"),
+                row.get("code_context") if isinstance(row.get("code_context"), dict) else None,
             )
             for row in rows
         ]
@@ -12428,9 +14787,11 @@ async def search_qdrant(
     limit: int = 10,
     project_filter: str | None = None,
     topic_filter: str | None = None,
+    retrieval_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search Qdrant for relevant notes."""
     start_time = asyncio.get_event_loop().time()
+    normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     try:
         query_vector = await asyncio.wait_for(
             embed_text(query),
@@ -12480,23 +14841,40 @@ async def search_qdrant(
                 return candidate
         return []
 
-    async def _run_search(vector: list[float]) -> Any:
+    effective_hnsw_ef = _qdrant_mode_hnsw_ef(normalized_mode)
+    search_params = None
+    if qdrant_models is not None and (
+        effective_hnsw_ef > 0
+        or QDRANT_SEARCH_EXACT
+        or QDRANT_SEARCH_INDEXED_ONLY
+    ):
+        search_params = qdrant_models.SearchParams(
+            hnsw_ef=effective_hnsw_ef if effective_hnsw_ef > 0 else None,
+            exact=bool(QDRANT_SEARCH_EXACT),
+            indexed_only=bool(QDRANT_SEARCH_INDEXED_ONLY),
+        )
+
+    async def _run_search(vector: list[float], requested_limit: int) -> Any:
+        bounded_limit = _qdrant_mode_limit_cap(normalized_mode, max(1, int(requested_limit)))
+
         async def _execute_search(client: Any, _: str) -> Any:
             if hasattr(client, "search"):
                 return await client.search(
                     collection_name=QDRANT_COLLECTION,
                     query_vector=vector,
                     query_filter=query_filter,
-                    limit=limit,
+                    limit=bounded_limit,
                     with_payload=True,
+                    search_params=search_params,
                 )
             if hasattr(client, "query_points"):
                 response = await client.query_points(
                     collection_name=QDRANT_COLLECTION,
                     query=vector,
                     query_filter=query_filter,
-                    limit=limit,
+                    limit=bounded_limit,
                     with_payload=True,
+                    search_params=search_params,
                 )
                 return _extract_points_from_query_response(response)
             raise RuntimeError("Qdrant client does not expose search/query_points")
@@ -12504,13 +14882,17 @@ async def search_qdrant(
         return await _qdrant_call("search", _execute_search)
 
     try:
-        hits = await _run_search(query_vector)
+        hits = await _run_search(query_vector, limit)
     except Exception as exc:
         expected_dim = _qdrant_expected_dim(str(exc))
-        if not expected_dim or expected_dim <= 0 or expected_dim == len(query_vector):
+        if expected_dim and expected_dim > 0 and expected_dim != len(query_vector):
+            fallback_vector = _cheap_embedding(query, expected_dim)
+            hits = await _run_search(fallback_vector, limit)
+        elif QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED and _is_retrieval_timeout_error(exc):
+            retry_limit = max(1, int(math.ceil(limit * QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR)))
+            hits = await _run_search(query_vector, retry_limit)
+        else:
             raise RuntimeError(f"Qdrant search failed: {exc}") from exc
-        fallback_vector = _cheap_embedding(query, expected_dim)
-        hits = await _run_search(fallback_vector)
 
     results = []
     for hit in hits:
@@ -12523,6 +14905,7 @@ async def search_qdrant(
             "summary": payload.get("summary"),
             "score": getattr(hit, "score", None),
             "topic_path": topic_path or None,
+            "code_context": payload.get("code_context") if isinstance(payload.get("code_context"), dict) else None,
         })
 
     latency_ms = (asyncio.get_event_loop().time() - start_time) * 1000
@@ -12544,6 +14927,7 @@ async def search_memory_bank_lexical(
     terms = _query_terms(query)
     if not terms:
         return []
+    query_targets_low_value_paths = _query_targets_low_value_paths(query)
     started = time.monotonic()
     budget_secs = max(
         0.75,
@@ -12570,6 +14954,11 @@ async def search_memory_bank_lexical(
     else:
         projects = await list_projects()
     projects = projects[:project_cap]
+    name_candidate_cap = max(
+        files_per_project,
+        scan_limit * 2,
+        limit * 4,
+    )
     candidates: list[tuple[float, str, str]] = []
     for project in projects:
         if _remaining_budget() <= 0.1:
@@ -12585,18 +14974,28 @@ async def search_memory_bank_lexical(
                 for file_name in files
                 if derive_topic_path(file_name, None).startswith(topic_filter)
             ]
-        files = files[:files_per_project]
         for file_name in files:
             if _remaining_budget() <= 0.05:
                 break
+            topic_path = derive_topic_path(file_name, None)
+            if (
+                MEMORY_BANK_TELEMETRY_GUARD_ENABLED
+                and not query_targets_low_value_paths
+                and _looks_memory_bank_telemetry_file(file_name, topic_path)
+            ):
+                continue
             name_score = _text_match_score(query, f"{project}\n{file_name}")
             if name_score <= 0:
                 continue
-            candidates.append((name_score, project, file_name))
+            if len(candidates) < name_candidate_cap:
+                heapq.heappush(candidates, (name_score, project, file_name))
+                continue
+            if name_score <= candidates[0][0]:
+                continue
+            heapq.heapreplace(candidates, (name_score, project, file_name))
     if not candidates:
         return []
-    candidates.sort(key=lambda row: row[0], reverse=True)
-    selected = candidates[:scan_limit]
+    selected = sorted(candidates, key=lambda row: row[0], reverse=True)[:scan_limit]
     parallelism = max(2, min(8, int(math.ceil(budget_secs * 1.5))))
     semaphore = asyncio.Semaphore(parallelism)
     rows: list[dict[str, Any]] = []
@@ -12665,17 +15064,44 @@ async def search_topic_rollups(
                 continue
             summary_snippets = topic.get("summarySnippets") if isinstance(topic.get("summarySnippets"), list) else []
             numeric_facts = topic.get("numericFacts") if isinstance(topic.get("numericFacts"), list) else []
+            file_partitions = topic.get("filePartitions") if isinstance(topic.get("filePartitions"), list) else []
             numeric_values = [
                 str(fact.get("value") or "")
                 for fact in numeric_facts
                 if isinstance(fact, dict) and str(fact.get("value") or "")
             ]
+            partition_terms: list[str] = []
+            partition_payload: list[dict[str, Any]] = []
+            for partition in file_partitions:
+                if not isinstance(partition, dict):
+                    continue
+                partition_path = str(partition.get("topic_path") or "").strip()
+                if partition_path:
+                    partition_terms.append(partition_path)
+                sample_files = [
+                    str(item)
+                    for item in (
+                        partition.get("sample_files")
+                        if isinstance(partition.get("sample_files"), list)
+                        else []
+                    )
+                    if str(item).strip()
+                ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+                partition_terms.extend(sample_files)
+                partition_payload.append(
+                    {
+                        "topic_path": partition_path or DEFAULT_TOPIC_ROOT,
+                        "file_count": int(partition.get("file_count") or 0),
+                        "sample_files": sample_files,
+                    }
+                )
             haystack = "\n".join(
                 [
                     project_name,
                     path,
                     *[str(item) for item in summary_snippets],
                     *numeric_values,
+                    *partition_terms,
                 ]
             )
             score = _text_match_score(query, haystack)
@@ -12700,6 +15126,21 @@ async def search_topic_rollups(
                         "event_count": int(topic.get("eventCount") or 0),
                         "recent_event_count": int(topic.get("recentEventCount") or 0),
                         "unique_file_count": int(topic.get("uniqueFileCount") or 0),
+                        "raw_refs": (
+                            [
+                                str(file_name)
+                                for file_name in (
+                                    topic.get("uniqueFiles") if isinstance(topic.get("uniqueFiles"), list) else []
+                                )
+                                if str(file_name).strip()
+                            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+                            or [
+                                file_name
+                                for partition in partition_payload
+                                for file_name in partition.get("sample_files", [])
+                            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+                        ),
+                        "file_partitions": partition_payload[:TOPIC_ROLLUP_FILE_PARTITIONS_MAX],
                         "latest_timestamp": topic.get("latestTimestamp"),
                     },
                 }
@@ -12736,6 +15177,7 @@ async def search_mongo_raw(
             "content_raw": 1,
             "topic_path": 1,
             "topic_tags": 1,
+            "code_context": 1,
             "created_at": 1,
             "updated_at": 1,
         }
@@ -12777,6 +15219,7 @@ async def search_mongo_raw(
                 "event_id": doc.get("event_id"),
                 "topic_path": doc.get("topic_path"),
                 "created_at": doc.get("created_at"),
+                "code_context": doc.get("code_context") if isinstance(doc.get("code_context"), dict) else None,
             }
         )
     rows.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
@@ -12789,12 +15232,24 @@ async def search_mindsdb_memory(
     project_filter: str | None = None,
     topic_filter: str | None = None,
 ) -> list[dict[str, Any]]:
+    global mindsdb_retrieval_lz4_cooldown_until_monotonic, mindsdb_retrieval_lz4_hits, mindsdb_retrieval_lz4_skipped
     if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
+        return []
+    if _mindsdb_retrieval_circuit_open():
+        mindsdb_retrieval_lz4_skipped += 1
+        remaining = max(0.0, mindsdb_retrieval_lz4_cooldown_until_monotonic - time.monotonic())
+        _log_mindsdb_retrieval_warning(
+            "circuit-open",
+            f"MindsDB retrieval temporarily skipped while LZ4 circuit is open ({remaining:.1f}s remaining).",
+        )
         return []
     try:
         await ensure_mindsdb_table()
     except Exception as exc:
-        logger.warning("MindsDB retrieval bootstrap failed: %s", exc)
+        _log_mindsdb_retrieval_warning("bootstrap", f"MindsDB retrieval bootstrap failed: {exc}")
+        return []
+    safe_query = _sanitize_mindsdb_query_text(query)
+    if not safe_query:
         return []
     table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     clauses: list[str] = []
@@ -12803,7 +15258,7 @@ async def search_mindsdb_memory(
     if topic_filter:
         escaped_topic = _escape_sql_literal(topic_filter)
         clauses.append(f"(file LIKE '{escaped_topic}/%' OR file LIKE '{escaped_topic}%')")
-    terms = _query_terms(query, max_terms=6)
+    terms = _query_terms(safe_query, max_terms=6)
     if terms:
         term_predicates = [
             f"LOWER(summary) LIKE '%{_escape_sql_literal(term.lower())}%'"
@@ -12826,14 +15281,30 @@ async def search_mindsdb_memory(
     try:
         raw = await _mindsdb_execute(sql)
     except Exception as exc:
-        logger.warning("MindsDB retrieval query failed: %s", exc)
+        if _is_mindsdb_lz4_decompress_error(exc):
+            mindsdb_retrieval_lz4_hits += 1
+            mindsdb_retrieval_lz4_cooldown_until_monotonic = (
+                time.monotonic() + MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS
+            )
+            _log_mindsdb_retrieval_warning(
+                "lz4",
+                (
+                    "MindsDB retrieval query failed with storage decode/format error; "
+                    f"circuit opened for {MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS:.1f}s."
+                ),
+            )
+        else:
+            _log_mindsdb_retrieval_warning(
+                "query",
+                f"MindsDB retrieval query failed: {exc}",
+            )
         return []
     rows: list[dict[str, Any]] = []
     for row in _mindsdb_rows(raw):
         project = str(row.get("project") or "")
         file_name = str(row.get("file") or "")
         summary = str(row.get("summary") or "")
-        score = _text_match_score(query, f"{project}\n{file_name}\n{summary}")
+        score = _text_match_score(safe_query, f"{project}\n{file_name}\n{summary}")
         if score <= 0 and terms:
             continue
         rows.append(
@@ -12944,7 +15415,9 @@ def _merge_federated_rows(
     query: str = "",
     source_quality_multipliers: dict[str, float] | None = None,
     lifecycle_snapshot: dict[str, dict[str, Any]] | None = None,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> list[dict[str, Any]]:
+    normalized_intent = _normalize_retrieval_intent(retrieval_intent)
     normalized_query = re.sub(r"\s+", " ", str(query or "").strip().lower())
     query_targets_low_value_paths = _query_targets_low_value_paths(normalized_query)
     query_numeric_values = set(
@@ -13006,6 +15479,13 @@ def _merge_federated_rows(
                 lifecycle_snapshot=lifecycle_records,
                 now_monotonic=now_monotonic,
             )
+            code_symbol_adjustment, code_path_adjustment, code_recency_adjustment = _code_context_adjustments(
+                query=normalized_query or query,
+                row=row,
+            )
+            code_context_adjustment = (
+                code_symbol_adjustment + code_path_adjustment + code_recency_adjustment
+            )
             fusion_adjustment = lexical_adjustment + numeric_adjustment
             weighted_base = base_score * source_weight * quality_multiplier
             composite_score = (
@@ -13013,6 +15493,7 @@ def _merge_federated_rows(
                 + learning_adjustment
                 + fusion_adjustment
                 + lifecycle_adjustment
+                + code_context_adjustment
             )
             low_value_row = _is_low_value_memory_record(
                 file_name=file_name,
@@ -13023,8 +15504,14 @@ def _merge_federated_rows(
             )
             low_value_penalty = 0.0
             low_value_suppressed = False
+            suppress_low_value = RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS
             if (
-                RETRIEVAL_LOW_VALUE_NON_LETTA_SUPPRESS
+                normalized_intent == RETRIEVAL_INTENT_RAW
+                and RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS
+            ):
+                suppress_low_value = False
+            if (
+                suppress_low_value
                 and source_name != RETRIEVAL_SOURCE_LETTA
                 and low_value_row
                 and not query_targets_low_value_paths
@@ -13047,6 +15534,10 @@ def _merge_federated_rows(
             normalized["numeric_adjustment"] = round(numeric_adjustment, 6)
             normalized["numeric_match_ratio"] = round(numeric_match_ratio, 6)
             normalized["lifecycle_adjustment"] = round(lifecycle_adjustment, 6)
+            normalized["code_context_adjustment"] = round(code_context_adjustment, 6)
+            normalized["code_symbol_adjustment"] = round(code_symbol_adjustment, 6)
+            normalized["code_path_adjustment"] = round(code_path_adjustment, 6)
+            normalized["code_recency_adjustment"] = round(code_recency_adjustment, 6)
             normalized["low_value"] = bool(low_value_row)
             normalized["low_value_penalty"] = round(low_value_penalty, 6)
             normalized["low_value_suppressed"] = bool(low_value_suppressed)
@@ -13081,15 +15572,19 @@ async def federated_search_memory(
     project_filter: str | None = None,
     topic_filter: str | None = None,
     sources: list[str] | None = None,
+    explicit_source_override: bool | None = None,
     source_weights: dict[str, float] | None = None,
     preferences: dict[str, Any] | None = None,
     rerank_with_learning: bool = True,
     retrieval_mode: str = RETRIEVAL_MODE_BALANCED,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
     record_pathway_usage: bool = True,
     call_budget_secs: float | None = None,
+    bypass_pathway_cache: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     federated_started_monotonic = time.monotonic()
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
+    resolved_intent = _normalize_retrieval_intent(retrieval_intent)
     normalized_call_budget_secs = (
         max(0.25, float(call_budget_secs))
         if call_budget_secs is not None
@@ -13111,10 +15606,11 @@ async def federated_search_memory(
     resolved_sources = _resolve_retrieval_sources_for_mode(mode=normalized_mode, sources=sources)
     resolved_weights = _normalize_retrieval_weights(source_weights)
     source_limit = _retrieval_mode_source_limit(limit, normalized_mode)
-    explicit_source_override = False
-    if sources:
+    explicit_source_override_resolved = bool(explicit_source_override)
+    if explicit_source_override is None and sources:
         default_sources = set(_resolve_retrieval_sources_for_mode(mode=normalized_mode, sources=None))
-        explicit_source_override = set(resolved_sources) != default_sources
+        explicit_source_override_resolved = set(resolved_sources) != default_sources
+    explicit_source_override = bool(explicit_source_override_resolved)
     warnings: list[str] = []
     template, template_cache_hit = await _get_retrieval_template(normalized_mode, resolved_sources)
     source_timeouts = {
@@ -13128,6 +15624,12 @@ async def federated_search_memory(
         sources=resolved_sources,
         retrieval_mode=normalized_mode,
         explicit_source_override=explicit_source_override,
+    )
+    backlog_policy = _retrieval_backlog_pressure_policy()
+    backlog_blocked_sources = set(
+        backlog_policy.get("blocked_sources")
+        if isinstance(backlog_policy.get("blocked_sources"), list)
+        else []
     )
     timeout_overrides = (
         runtime_policy.get("timeout_overrides")
@@ -13144,10 +15646,32 @@ async def federated_search_memory(
         for source in staged_slow_sources
         if source in degraded_sources
     ]
+    circuit_blocked_slow_sources: list[str] = []
+    degraded_probe_sources: list[str] = []
+    if (
+        RETRIEVAL_SLOW_SOURCE_STABILITY_ENABLED
+        and RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED
+        and not explicit_source_override
+    ):
+        for source in list(staged_slow_sources):
+            if source not in degraded_sources:
+                continue
+            if _degraded_source_probe_allowed(source):
+                degraded_probe_sources.append(source)
+                continue
+            circuit_blocked_slow_sources.append(source)
+    backlog_blocked_slow_sources: list[str] = []
+    if RETRIEVAL_BACKLOG_GATING_ENABLED and not explicit_source_override:
+        for source in list(staged_slow_sources):
+            if source in backlog_blocked_sources:
+                backlog_blocked_slow_sources.append(source)
     force_include_slow = bool(
         normalized_mode == RETRIEVAL_MODE_DEEP
+        and RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING
         and not explicit_source_override
         and not degraded_slow_sources
+        and not circuit_blocked_slow_sources
+        and not backlog_blocked_slow_sources
     )
     effective_source_timeouts = dict(source_timeouts)
     for source_name, capped_timeout in timeout_overrides.items():
@@ -13157,6 +15681,57 @@ async def federated_search_memory(
             1.0,
             min(float(effective_source_timeouts[source_name]), float(capped_timeout)),
         )
+    if (
+        RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS > 0.0
+        and not explicit_source_override
+        and RETRIEVAL_SOURCE_QDRANT in effective_source_timeouts
+        and RETRIEVAL_SOURCE_QDRANT in staged_fast_sources
+    ):
+        effective_source_timeouts[RETRIEVAL_SOURCE_QDRANT] = max(
+            1.0,
+            min(
+                float(effective_source_timeouts[RETRIEVAL_SOURCE_QDRANT]),
+                float(RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS),
+            ),
+        )
+    fail_open_continuation_sources: list[str] = []
+
+    def _schedule_fail_open_continuation(
+        source_name: str,
+        *,
+        timeout_only: bool,
+        error: Exception | None = None,
+    ) -> bool:
+        normalized = str(source_name or "").strip().lower()
+        if not normalized:
+            return False
+        if not RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED:
+            return False
+        if normalized not in RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:
+            return False
+        if timeout_only:
+            if error is None or not _is_retrieval_timeout_error(error):
+                return False
+        if normalized in fail_open_continuation_sources:
+            return False
+        warm_limit = (
+            min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+            if normalized == RETRIEVAL_SOURCE_LETTA
+            else source_limit
+        )
+        _schedule_background_source_warm(
+            source=normalized,
+            query=query,
+            limit=warm_limit,
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+            timeout_hint_secs=float(
+                effective_source_timeouts.get(normalized, RETRIEVAL_LETTA_TIMEOUT_SECS)
+            ),
+            force=True,
+        )
+        fail_open_continuation_sources.append(normalized)
+        return True
 
     async def _timed_source(
         source_name: str,
@@ -13191,6 +15766,7 @@ async def federated_search_memory(
                 limit=source_limit,
                 project_filter=project_filter,
                 topic_filter=topic_filter,
+                retrieval_mode=normalized_mode,
             )
         if source == RETRIEVAL_SOURCE_MONGO_RAW:
             return search_mongo_raw(
@@ -13248,11 +15824,21 @@ async def federated_search_memory(
                     batch_warnings.append(
                         f"{source} retrieval deferred before dispatch (call budget exhausted)."
                     )
-                    if source == RETRIEVAL_SOURCE_LETTA:
-                        letta_limit = min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
-                        _schedule_background_letta_query_warm(
+                    continuation_scheduled = _schedule_fail_open_continuation(
+                        source,
+                        timeout_only=False,
+                        error=None,
+                    )
+                    if source in staged_slow_sources and not continuation_scheduled:
+                        warm_limit = (
+                            min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                            if source == RETRIEVAL_SOURCE_LETTA
+                            else source_limit
+                        )
+                        _schedule_background_source_warm(
+                            source=source,
                             query=query,
-                            limit=letta_limit,
+                            limit=warm_limit,
                             project_filter=project_filter,
                             topic_filter=topic_filter,
                             timeout_hint_secs=float(
@@ -13279,6 +15865,14 @@ async def federated_search_memory(
                 if isinstance(outcome, Exception):
                     batch_errors[source] = str(outcome)
                     batch_warnings.append(f"{source} retrieval failed: {outcome}")
+                    if _schedule_fail_open_continuation(
+                        source,
+                        timeout_only=True,
+                        error=outcome,
+                    ):
+                        batch_warnings.append(
+                            f"{source} retrieval timed out; continuing asynchronously for cache warm."
+                        )
                     continue
                 batch_rows[source] = outcome
             return batch_rows, batch_errors, batch_warnings
@@ -13311,6 +15905,14 @@ async def federated_search_memory(
             except Exception as exc:
                 batch_errors[source] = str(exc)
                 batch_warnings.append(f"{source} retrieval failed: {exc}")
+                if _schedule_fail_open_continuation(
+                    source,
+                    timeout_only=True,
+                    error=exc,
+                ):
+                    batch_warnings.append(
+                        f"{source} retrieval timed out; continuing asynchronously for cache warm."
+                    )
                 continue
             batch_rows[source] = outcome
 
@@ -13325,11 +15927,21 @@ async def federated_search_memory(
                 batch_warnings.append(
                     f"{source} retrieval deferred after call budget reached; returning best-available results."
                 )
-                if source == RETRIEVAL_SOURCE_LETTA:
-                    letta_limit = min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
-                    _schedule_background_letta_query_warm(
+                continuation_scheduled = _schedule_fail_open_continuation(
+                    source,
+                    timeout_only=False,
+                    error=None,
+                )
+                if source in staged_slow_sources and not continuation_scheduled:
+                    warm_limit = (
+                        min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                        if source == RETRIEVAL_SOURCE_LETTA
+                        else source_limit
+                    )
+                    _schedule_background_source_warm(
+                        source=source,
                         query=query,
-                        limit=letta_limit,
+                        limit=warm_limit,
                         project_filter=project_filter,
                         topic_filter=topic_filter,
                         timeout_hint_secs=float(
@@ -13356,11 +15968,55 @@ async def federated_search_memory(
         sources=resolved_sources,
         source_weights=resolved_weights,
         retrieval_mode=normalized_mode,
+        retrieval_intent=resolved_intent,
         learning_enabled=learning_enabled,
         positive_terms=positive_terms,
         negative_terms=negative_terms,
     )
-    cached_bundle = await _retrieval_pathway_cache_get(pathway_cache_key)
+    negative_cache_eligible = _retrieval_pathway_negative_cache_query_eligible(query)
+    if not bypass_pathway_cache and negative_cache_eligible:
+        negative_cached = await _retrieval_pathway_negative_cache_get(pathway_cache_key)
+        if isinstance(negative_cached, dict):
+            cached_debug = (
+                negative_cached.get("retrieval_debug")
+                if isinstance(negative_cached.get("retrieval_debug"), dict)
+                else {}
+            )
+            cached_debug = dict(cached_debug)
+            cached_cache = cached_debug.get("cache") if isinstance(cached_debug.get("cache"), dict) else {}
+            cached_cache["pathway_negative_hit"] = True
+            cached_cache["pathway_hit"] = False
+            cached_cache["template_hit"] = template_cache_hit
+            cached_debug["cache"] = cached_cache
+            cached_debug["retrieval_mode"] = normalized_mode
+            cached_debug["retrieval_intent"] = resolved_intent
+            cached_debug.setdefault("sources", list(resolved_sources))
+            cached_debug.setdefault("source_weights", dict(resolved_weights))
+            cached_debug.setdefault("source_counts", {source: 0 for source in resolved_sources})
+            cached_debug.setdefault("source_errors", {})
+            cached_warnings = [
+                str(item)
+                for item in (
+                    negative_cached.get("warnings")
+                    if isinstance(negative_cached.get("warnings"), list)
+                    else []
+                )
+                if str(item).strip()
+            ]
+            if record_pathway_usage:
+                await _record_retrieval_pathway_observation(
+                    query=query,
+                    project_filter=project_filter,
+                    topic_filter=topic_filter,
+                    sources=resolved_sources,
+                    source_weights=resolved_weights,
+                    retrieval_mode=normalized_mode,
+                    retrieval_intent=resolved_intent,
+                )
+            return [], cached_debug, cached_warnings
+    cached_bundle = None
+    if not bypass_pathway_cache:
+        cached_bundle = await _retrieval_pathway_cache_get(pathway_cache_key)
     if cached_bundle is not None:
         cached_results, cached_debug, cached_warnings = cached_bundle
         cached_debug = dict(cached_debug)
@@ -13369,6 +16025,21 @@ async def federated_search_memory(
         cached_cache["template_hit"] = True
         cached_debug["cache"] = cached_cache
         cached_debug["retrieval_mode"] = normalized_mode
+        cache_stale = bool(cached_cache.get("pathway_stale"))
+        if cache_stale:
+            _schedule_retrieval_pathway_swr_refresh(
+                query=query,
+                limit=limit,
+                project_filter=project_filter,
+                topic_filter=topic_filter,
+                sources=resolved_sources,
+                explicit_source_override=explicit_source_override,
+                source_weights=resolved_weights,
+                preferences=preferences,
+                rerank_with_learning=rerank_with_learning,
+                retrieval_mode=normalized_mode,
+                retrieval_intent=resolved_intent,
+            )
         if record_pathway_usage:
             await _record_retrieval_pathway_observation(
                 query=query,
@@ -13377,6 +16048,7 @@ async def federated_search_memory(
                 sources=resolved_sources,
                 source_weights=resolved_weights,
                 retrieval_mode=normalized_mode,
+                retrieval_intent=resolved_intent,
             )
         return cached_results[:limit], cached_debug, cached_warnings
 
@@ -13388,6 +16060,10 @@ async def federated_search_memory(
     }
 
     slow_sources_skipped: list[str] = []
+    async_warm_slow_sources: list[str] = []
+    sync_fallback_slow_sources: list[str] = []
+    backlog_async_warm_slow_sources: list[str] = []
+    hard_sync_async_split_applied = False
     if staged_fetch_used:
         fast_rows, fast_errors, fast_warnings = await _run_source_batch(staged_fast_sources)
         results_by_source.update(fast_rows)
@@ -13413,6 +16089,7 @@ async def federated_search_memory(
                 for name, value in source_quality_multipliers.items()
             },
             lifecycle_snapshot=lifecycle_snapshot,
+            retrieval_intent=resolved_intent,
         )
         fast_merged.sort(
             key=lambda row: (
@@ -13438,20 +16115,156 @@ async def federated_search_memory(
                 or enough_fast_volume
             )
         )
+        needs_async_warm_after_skip = bool(
+            len(fast_merged) < max(limit, RETRIEVAL_SLOW_SOURCE_MIN_RESULTS)
+            or top_fast_score < RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE
+            or not enough_fast_diversity
+        )
+        allowed_slow_sources = [
+            source
+            for source in staged_slow_sources
+            if source not in circuit_blocked_slow_sources and source not in backlog_blocked_slow_sources
+        ]
+        forced_async_slow_sources: list[str] = []
+        if (
+            RETRIEVAL_SOURCE_MEMORY_BANK in allowed_slow_sources
+            and normalized_mode != RETRIEVAL_MODE_DEEP
+            and not explicit_source_override
+            and not RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED
+        ):
+            allowed_slow_sources = [
+                source
+                for source in allowed_slow_sources
+                if source != RETRIEVAL_SOURCE_MEMORY_BANK
+            ]
+            forced_async_slow_sources = [RETRIEVAL_SOURCE_MEMORY_BANK]
+        blocked_slow_sources = [
+            source
+            for source in staged_slow_sources
+            if source in circuit_blocked_slow_sources or source in backlog_blocked_slow_sources
+        ]
+        if blocked_slow_sources:
+            slow_sources_skipped.extend(blocked_slow_sources)
+        if forced_async_slow_sources:
+            slow_sources_skipped.extend(forced_async_slow_sources)
         if force_include_slow:
             skip_slow = False
-        if skip_slow and not explicit_source_override:
-            slow_sources_skipped = list(staged_slow_sources)
+        sync_slow_requires_explicit = bool(
+            (
+                RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT
+                or (
+                    RETRIEVAL_STRICT_FAST_SYNC_DEFAULT
+                    and normalized_mode in {RETRIEVAL_MODE_FAST, RETRIEVAL_MODE_BALANCED}
+                )
+            )
+            and normalized_mode != RETRIEVAL_MODE_DEEP
+        )
+        if sync_slow_requires_explicit and not explicit_source_override:
+            skip_slow = True
+            needs_async_warm_after_skip = True
+        if (
+            RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED
+            and not explicit_source_override
+            and backlog_blocked_slow_sources
+        ):
+            backlog_async_warm_slow_sources = [
+                source
+                for source in backlog_blocked_slow_sources
+                if source == RETRIEVAL_SOURCE_LETTA
+            ]
+        hard_split_enabled = bool(
+            RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED
+            and not explicit_source_override
+            and (normalized_mode != RETRIEVAL_MODE_DEEP or not RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING)
+        )
+        hard_sync_async_split_applied = hard_split_enabled
+        if hard_split_enabled:
+            min_fast_results = max(
+                1,
+                min(limit, RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS),
+            )
+            fallback_sources = [
+                source
+                for source in RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES
+                if source in allowed_slow_sources
+            ]
+            if sync_slow_requires_explicit and not explicit_source_override:
+                fallback_sources = []
+            if len(fast_merged) < min_fast_results and fallback_sources:
+                sync_fallback_slow_sources = list(fallback_sources)
+                async_warm_slow_sources = [
+                    source
+                    for source in allowed_slow_sources
+                    if source not in sync_fallback_slow_sources
+                ]
+                slow_sources_skipped.extend(async_warm_slow_sources)
+                slow_rows, slow_errors, slow_warnings = await _run_source_batch(sync_fallback_slow_sources)
+                results_by_source.update(slow_rows)
+                source_errors.update(slow_errors)
+                warnings.extend(slow_warnings)
+            else:
+                if needs_async_warm_after_skip:
+                    async_warm_slow_sources = list(allowed_slow_sources)
+                    slow_sources_skipped.extend(async_warm_slow_sources)
+                else:
+                    slow_sources_skipped.extend(list(allowed_slow_sources))
+        elif skip_slow and not explicit_source_override:
+            if needs_async_warm_after_skip:
+                async_warm_slow_sources = list(allowed_slow_sources)
+                slow_sources_skipped.extend(async_warm_slow_sources)
+            else:
+                slow_sources_skipped.extend(list(allowed_slow_sources))
         else:
-            slow_rows, slow_errors, slow_warnings = await _run_source_batch(staged_slow_sources)
+            sync_batch = sync_fallback_slow_sources or allowed_slow_sources
+            slow_rows, slow_errors, slow_warnings = await _run_source_batch(sync_batch)
             results_by_source.update(slow_rows)
             source_errors.update(slow_errors)
             warnings.extend(slow_warnings)
+        if backlog_async_warm_slow_sources:
+            async_warm_slow_sources.extend(backlog_async_warm_slow_sources)
+        should_schedule_async_warm = bool(async_warm_slow_sources) and (
+            RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES
+            or any(source == RETRIEVAL_SOURCE_LETTA for source in async_warm_slow_sources)
+        )
+        if should_schedule_async_warm:
+            for source in async_warm_slow_sources:
+                warm_limit = (
+                    min(source_limit, max(limit, RETRIEVAL_LETTA_SCAN_LIMIT))
+                    if source == RETRIEVAL_SOURCE_LETTA
+                    else source_limit
+                )
+                _schedule_background_source_warm(
+                    source=source,
+                    query=query,
+                    limit=warm_limit,
+                    project_filter=project_filter,
+                    topic_filter=topic_filter,
+                    timeout_hint_secs=float(
+                        effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
+                    ),
+                )
     else:
         batch_rows, batch_errors, batch_warnings = await _run_source_batch(resolved_sources)
         results_by_source.update(batch_rows)
         source_errors.update(batch_errors)
         warnings.extend(batch_warnings)
+
+    if slow_sources_skipped:
+        slow_sources_skipped = sorted(set(slow_sources_skipped))
+    if async_warm_slow_sources:
+        async_warm_slow_sources = sorted(set(async_warm_slow_sources))
+    if sync_fallback_slow_sources:
+        sync_fallback_slow_sources = sorted(set(sync_fallback_slow_sources))
+    if fail_open_continuation_sources:
+        fail_open_continuation_sources = sorted(set(fail_open_continuation_sources))
+    if backlog_async_warm_slow_sources:
+        backlog_async_warm_slow_sources = sorted(set(backlog_async_warm_slow_sources))
+    if circuit_blocked_slow_sources:
+        circuit_blocked_slow_sources = sorted(set(circuit_blocked_slow_sources))
+    if degraded_probe_sources:
+        degraded_probe_sources = sorted(set(degraded_probe_sources))
+    if backlog_blocked_slow_sources:
+        backlog_blocked_slow_sources = sorted(set(backlog_blocked_slow_sources))
 
     source_quality_snapshot = await _retrieval_source_quality_snapshot(
         sources=list(results_by_source.keys()) or list(resolved_sources)
@@ -13473,6 +16286,7 @@ async def federated_search_memory(
             for name, value in source_quality_multipliers.items()
         },
         lifecycle_snapshot=lifecycle_snapshot,
+        retrieval_intent=resolved_intent,
     )
     merged.sort(
         key=lambda row: (
@@ -13483,6 +16297,7 @@ async def federated_search_memory(
     )
     retrieval_debug = {
         "retrieval_mode": normalized_mode,
+        "retrieval_intent": resolved_intent,
         "sources": resolved_sources,
         "source_weights": resolved_weights,
         "source_counts": {
@@ -13498,9 +16313,13 @@ async def federated_search_memory(
             "enabled": staged_fetch_used,
             "explicit_source_override": explicit_source_override,
             "force_include_slow": force_include_slow,
+            "hard_sync_async_split": hard_sync_async_split_applied,
             "fast_sources": staged_fast_sources,
             "slow_sources": staged_slow_sources,
             "slow_sources_skipped": slow_sources_skipped,
+            "sync_fallback_sources": sync_fallback_slow_sources,
+            "async_warm_sources": async_warm_slow_sources,
+            "fail_open_continuation_sources": fail_open_continuation_sources,
             "slow_source_min_results": RETRIEVAL_SLOW_SOURCE_MIN_RESULTS,
             "slow_source_min_top_score": RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE,
             "slow_source_min_diversity": RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY,
@@ -13509,6 +16328,20 @@ async def federated_search_memory(
             "stability_enabled": bool(runtime_policy.get("enabled")),
             "degraded_sources": degraded_sources,
             "timeout_overrides": timeout_overrides,
+            "circuit_skip_enabled": RETRIEVAL_SLOW_SOURCE_CIRCUIT_SKIP_ENABLED,
+            "circuit_blocked_sources": circuit_blocked_slow_sources,
+            "degraded_probe_sources": degraded_probe_sources,
+            "backlog_gating_enabled": RETRIEVAL_BACKLOG_GATING_ENABLED,
+            "backlog_blocked_sources": backlog_blocked_slow_sources,
+            "backlog_async_warm_sources": backlog_async_warm_slow_sources,
+            "backlog_summary": backlog_policy.get("summary"),
+            "backlog_summary_fresh": backlog_policy.get("summary_fresh"),
+            "sync_slow_requires_explicit": sync_slow_requires_explicit if staged_fetch_used else RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT,
+            "strict_fast_sync_default": RETRIEVAL_STRICT_FAST_SYNC_DEFAULT,
+            "memory_bank_sync_non_deep_enabled": RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED,
+            "qdrant_sync_timeout_cap_secs": RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS,
+            "fail_open_timeout_continuation_enabled": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED,
+            "fail_open_timeout_continuation_sources": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES,
         },
         "learning_rerank": {
             "enabled": learning_enabled,
@@ -13539,7 +16372,18 @@ async def federated_search_memory(
     }
     final_results = merged[:limit]
     await _record_retrieval_lifecycle_observation(query=query, results=final_results)
-    cache_write_skipped = bool(call_budget_exhausted or deferred_sources)
+    deferred_budget_sources = sorted(set(deferred_sources))
+    critical_deferred_sources = [
+        source
+        for source in deferred_budget_sources
+        if (
+            explicit_source_override
+            or normalized_mode == RETRIEVAL_MODE_DEEP
+            or source in staged_fast_sources
+        )
+    ]
+    cache_write_skipped = bool(critical_deferred_sources)
+    retrieval_debug["call_budget"]["critical_deferred_sources"] = critical_deferred_sources
     retrieval_debug["call_budget"]["cacheWriteSkipped"] = cache_write_skipped
     if not cache_write_skipped:
         await _retrieval_pathway_cache_set(
@@ -13548,6 +16392,14 @@ async def federated_search_memory(
             retrieval_debug=retrieval_debug,
             warnings=warnings,
         )
+        if final_results:
+            await _retrieval_pathway_negative_cache_invalidate(pathway_cache_key)
+        elif negative_cache_eligible and not call_budget_exhausted and not deferred_budget_sources:
+            await _retrieval_pathway_negative_cache_set(
+                pathway_cache_key,
+                retrieval_debug=retrieval_debug,
+                warnings=warnings,
+            )
     else:
         warnings.append(
             "Response returned with partial results due call budget; deferred sources continue warming in background."
@@ -13560,6 +16412,7 @@ async def federated_search_memory(
             sources=resolved_sources,
             source_weights=resolved_weights,
             retrieval_mode=normalized_mode,
+            retrieval_intent=resolved_intent,
         )
     return final_results, retrieval_debug, warnings
 
@@ -13578,30 +16431,52 @@ async def _run_memory_recall_pipeline(
     agent_profile: dict[str, Any] | None = None,
     auto_escalate: bool = False,
     query_expansion: bool = True,
+    retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
+    normalized_intent = _normalize_retrieval_intent(retrieval_intent)
     profile = agent_profile if isinstance(agent_profile, dict) else {}
+    source_override_requested = bool(sources is not None)
+    if "_source_override_requested" in profile:
+        source_override_requested = bool(profile.get("_source_override_requested"))
     profile_sources = profile.get("sources") if isinstance(profile.get("sources"), list) else None
     profile_weights = profile.get("source_weights") if isinstance(profile.get("source_weights"), dict) else None
-    resolved_sources = sources if sources is not None else profile_sources
+    resolved_sources = sources if source_override_requested else profile_sources
     merged_weights = dict(profile_weights) if profile_weights else {}
     if source_weights:
         for key, value in source_weights.items():
             merged_weights[str(key)] = value
     resolved_weights = merged_weights if merged_weights else None
     expand_enabled = bool(query_expansion and RETRIEVAL_QUERY_EXPANSION_ENABLED)
-    query_variants = _expand_query_variants(query) if expand_enabled else [re.sub(r"\s+", " ", str(query).strip())]
+    base_query = re.sub(r"\s+", " ", str(query or "").strip())
+    query_variants = _expand_query_variants(query) if expand_enabled else [base_query]
     query_variants = [item for item in query_variants if item]
     if not query_variants:
-        query_variants = [str(query or "").strip()]
+        query_variants = [base_query]
     scoped_query = bool(str(project_filter or "").strip() or str(topic_filter or "").strip())
+    scoped_structural_variant_filtered = False
+    if scoped_query:
+        structural_aliases: set[str] = set()
+        if " " in base_query and "/" not in base_query:
+            structural_aliases = {
+                base_query.replace(" ", "/"),
+                base_query.replace(" ", "_"),
+            }
+        if structural_aliases:
+            filtered = [item for item in query_variants if item not in structural_aliases]
+            if filtered:
+                scoped_structural_variant_filtered = len(filtered) != len(query_variants)
+                query_variants = filtered
     max_variants_allowed = RETRIEVAL_QUERY_EXPANSION_MAX_VARIANTS
     max_escalation_steps = AGENT_RECALL_MAX_ESCALATION_STEPS
+    if normalized_mode == RETRIEVAL_MODE_FAST:
+        # Keep fast mode bounded to one variant to protect latency.
+        max_variants_allowed = 1
     if scoped_query:
         max_variants_allowed = min(max_variants_allowed, RECALL_SCOPED_QUERY_VARIANT_CAP)
         max_escalation_steps = min(max_escalation_steps, RECALL_SCOPED_QUERY_MAX_ESCALATION_STEPS)
     query_variants = query_variants[: max(1, int(max_variants_allowed))]
-    recall_budget_secs = float(RECALL_E2E_BUDGET_SECS)
+    recall_budget_secs = _recall_e2e_budget_for_mode(normalized_mode)
     recall_budget_enabled = recall_budget_secs > 0.0
     recall_started_monotonic = time.monotonic()
     recall_deadline_monotonic = (
@@ -13622,6 +16497,15 @@ async def _run_memory_recall_pipeline(
     min_results = int(profile.get("escalate_min_results") or AGENT_RECALL_ESCALATE_MIN_RESULTS)
     min_top_score = float(profile.get("escalate_min_top_score") or AGENT_RECALL_ESCALATE_MIN_TOP_SCORE)
     budget_exhausted = False
+    timeout_adaptive_enabled = bool(
+        RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED
+        and not source_override_requested
+    )
+    timeout_adaptive_skip_targets = {
+        source for source in RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES
+    }
+    timeout_adaptive_observed_sources: set[str] = set()
+    timeout_adaptive_skipped_sources: set[str] = set()
 
     for variant_index, query_variant in enumerate(query_variants):
         remaining_before_variant = _remaining_recall_budget_secs()
@@ -13666,18 +16550,50 @@ async def _run_memory_recall_pipeline(
                 break
             hop_count += 1
             call_budget_secs = float(remaining_before_hop) if remaining_before_hop is not None else None
+            hop_sources = resolved_sources
+            if timeout_adaptive_enabled and timeout_adaptive_skipped_sources:
+                candidate_sources = _resolve_retrieval_sources_for_mode(
+                    mode=hop_mode,
+                    sources=hop_sources,
+                )
+                filtered_sources = [
+                    source
+                    for source in candidate_sources
+                    if source not in timeout_adaptive_skipped_sources
+                ]
+                if filtered_sources and len(filtered_sources) < len(candidate_sources):
+                    hop_sources = filtered_sources
             hop_results, hop_debug, hop_warn = await federated_search_memory(
                 query_variant,
                 limit=limit,
                 project_filter=project_filter,
                 topic_filter=topic_filter,
-                sources=resolved_sources,
+                sources=hop_sources,
+                explicit_source_override=source_override_requested,
                 source_weights=resolved_weights,
                 preferences=preferences,
                 rerank_with_learning=rerank_with_learning,
                 retrieval_mode=hop_mode,
+                retrieval_intent=normalized_intent,
                 call_budget_secs=call_budget_secs,
             )
+            if timeout_adaptive_enabled and isinstance(hop_debug, dict):
+                timeout_sources = _source_errors_timeout_sources(
+                    hop_debug.get("source_errors") if isinstance(hop_debug.get("source_errors"), dict) else None
+                )
+                newly_skipped: list[str] = []
+                for source_name in timeout_sources:
+                    if source_name in timeout_adaptive_skip_targets:
+                        timeout_adaptive_observed_sources.add(source_name)
+                        if source_name not in timeout_adaptive_skipped_sources:
+                            timeout_adaptive_skipped_sources.add(source_name)
+                            newly_skipped.append(source_name)
+                if newly_skipped:
+                    hop_warnings.append(
+                        "Adaptive timeout policy skipped timed-out sources for remaining recall hops: "
+                        + ", ".join(sorted(newly_skipped))
+                        + "."
+                    )
             hop_result_sets.append(hop_results)
             hop_debugs.append(hop_debug)
             hop_warnings.extend(hop_warn)
@@ -13775,7 +16691,9 @@ async def _run_memory_recall_pipeline(
             "enabled": expand_enabled,
             "max_variants": max_variants_allowed,
             "scoped_query": scoped_query,
+            "scoped_structural_variant_filtered": scoped_structural_variant_filtered,
             "scoped_variant_cap": RECALL_SCOPED_QUERY_VARIANT_CAP,
+            "source_override_requested": source_override_requested,
             "variants_considered": query_variants,
             "variants_used": [record.get("query") for record in variant_debug_records],
         },
@@ -13797,6 +16715,13 @@ async def _run_memory_recall_pipeline(
                 for record in variant_debug_records
             ],
         },
+        "retrieval_intent": normalized_intent,
+        "timeout_adaptive": {
+            "enabled": timeout_adaptive_enabled,
+            "skip_targets": sorted(timeout_adaptive_skip_targets),
+            "observed_timeout_sources": sorted(timeout_adaptive_observed_sources),
+            "skipped_sources": sorted(timeout_adaptive_skipped_sources),
+        },
         "budget": {
             "enabled": recall_budget_enabled,
             "configuredSecs": recall_budget_secs if recall_budget_enabled else None,
@@ -13806,6 +16731,9 @@ async def _run_memory_recall_pipeline(
         },
     }
     best_debug["retrieval_mode"] = _normalize_retrieval_mode(str(best_debug.get("retrieval_mode") or normalized_mode))
+    best_debug["retrieval_intent"] = _normalize_retrieval_intent(
+        str(best_debug.get("retrieval_intent") or normalized_intent)
+    )
     best_debug["source_errors"] = source_errors
     best_debug["source_counts"] = source_counts
     best_debug["pipeline"] = pipeline_debug
@@ -14487,9 +17415,322 @@ def _prepare_content_for_storage(content: str) -> tuple[str, str | None]:
     return payload, None
 
 
+async def _execute_memory_write_batch(
+    payload: MemoryWriteBatchRequest,
+    request: Request,
+    source_path: str,
+) -> dict[str, Any]:
+    items = payload.items if isinstance(payload.items, list) else []
+    if not items:
+        async with memory_write_batch_idempotency_lock:
+            memory_write_batch_metrics["rejected"] = int(memory_write_batch_metrics.get("rejected", 0)) + 1
+        raise HTTPException(422, "items must contain at least one write")
+    if len(items) > MEMORY_WRITE_BATCH_MAX_ITEMS:
+        async with memory_write_batch_idempotency_lock:
+            memory_write_batch_metrics["rejected"] = int(memory_write_batch_metrics.get("rejected", 0)) + 1
+        raise HTTPException(422, f"batch exceeds MEMORY_WRITE_BATCH_MAX_ITEMS={MEMORY_WRITE_BATCH_MAX_ITEMS}")
+
+    request_key = _memory_write_batch_cache_key(payload.idempotencyKey or "", "request")
+    if request_key:
+        async with memory_write_batch_idempotency_lock:
+            cached_response = await _memory_write_batch_idempotency_get(
+                memory_write_batch_request_idempotency_seen,
+                request_key,
+            )
+            if cached_response is not None:
+                memory_write_batch_metrics["requestIdempotentHits"] = (
+                    int(memory_write_batch_metrics.get("requestIdempotentHits", 0)) + 1
+                )
+                replayed = dict(cached_response)
+                replayed["idempotentReplay"] = True
+                replayed["idempotencyScope"] = "request"
+                return replayed
+
+    results: list[dict[str, Any]] = []
+    successes = 0
+    failures = 0
+    local_item_cache: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(items):
+        item_key = _memory_write_batch_cache_key(item.idempotencyKey or "", "item")
+        cached_item: dict[str, Any] | None = None
+        if item_key and item_key in local_item_cache:
+            cached_item = dict(local_item_cache[item_key])
+        elif item_key:
+            async with memory_write_batch_idempotency_lock:
+                cached_item = await _memory_write_batch_idempotency_get(
+                    memory_write_batch_item_idempotency_seen,
+                    item_key,
+                )
+                if cached_item is not None:
+                    memory_write_batch_metrics["itemIdempotentHits"] = (
+                        int(memory_write_batch_metrics.get("itemIdempotentHits", 0)) + 1
+                    )
+                    local_item_cache[item_key] = dict(cached_item)
+
+        if cached_item is not None:
+            item_result = dict(cached_item)
+            item_result["index"] = index
+            item_result["itemId"] = item.itemId
+            item_result["idempotentReplay"] = True
+            item_result["idempotencyScope"] = "item"
+            results.append(item_result)
+            if bool(item_result.get("ok")):
+                successes += 1
+            else:
+                failures += 1
+            continue
+
+        try:
+            write_result = await write_memory(
+                MemoryWrite(
+                    projectName=item.projectName,
+                    fileName=item.fileName,
+                    content=item.content,
+                    topicPath=item.topicPath,
+                ),
+                request,
+            )
+            item_result = {
+                "index": index,
+                "itemId": item.itemId,
+                "ok": bool(write_result.get("ok", True)),
+                "event_id": write_result.get("event_id"),
+                "warnings": list(write_result.get("warnings") or []),
+                "fanout": dict(write_result.get("fanout") or {}),
+                "rollup_buffered": bool(write_result.get("rollup_buffered", False)),
+                "deduped": bool(write_result.get("deduped", False)),
+                "latest_hash_unchanged": bool(write_result.get("latest_hash_unchanged", False)),
+            }
+            successes += 1 if item_result["ok"] else 0
+            failures += 0 if item_result["ok"] else 1
+        except HTTPException as exc:
+            item_result = {
+                "index": index,
+                "itemId": item.itemId,
+                "ok": False,
+                "error": {
+                    "status": int(exc.status_code),
+                    "detail": str(exc.detail),
+                },
+                "warnings": [],
+                "fanout": {},
+            }
+            failures += 1
+        except Exception as exc:  # pragma: no cover - unexpected runtime path
+            item_result = {
+                "index": index,
+                "itemId": item.itemId,
+                "ok": False,
+                "error": {
+                    "status": 500,
+                    "detail": str(exc),
+                },
+                "warnings": [],
+                "fanout": {},
+            }
+            failures += 1
+
+        if item_key:
+            cacheable_result = {
+                key: value
+                for key, value in item_result.items()
+                if key not in {"index", "itemId"}
+            }
+            local_item_cache[item_key] = dict(cacheable_result)
+            async with memory_write_batch_idempotency_lock:
+                await _memory_write_batch_idempotency_set(
+                    memory_write_batch_item_idempotency_seen,
+                    item_key,
+                    cacheable_result,
+                )
+        results.append(item_result)
+
+    response = {
+        "ok": failures == 0,
+        "partial": failures > 0 and successes > 0,
+        "source": source_path,
+        "accepted": len(items),
+        "succeeded": successes,
+        "failed": failures,
+        "results": results,
+    }
+
+    async with memory_write_batch_idempotency_lock:
+        memory_write_batch_metrics["accepted"] = int(memory_write_batch_metrics.get("accepted", 0)) + 1
+        memory_write_batch_metrics["itemSuccesses"] = (
+            int(memory_write_batch_metrics.get("itemSuccesses", 0)) + successes
+        )
+        memory_write_batch_metrics["itemFailures"] = (
+            int(memory_write_batch_metrics.get("itemFailures", 0)) + failures
+        )
+        if request_key:
+            await _memory_write_batch_idempotency_set(
+                memory_write_batch_request_idempotency_seen,
+                request_key,
+                response,
+            )
+    return response
+
+
+def _ops_queue_status_next_actions(
+    *,
+    pending: int,
+    retrying: int,
+    failed: int,
+    queue_ratio: float,
+    queue_high_watermark: float,
+    retrying_high_threshold: int,
+    pending_high_threshold: int,
+    letta_backlog: int,
+    letta_soft_limit: int,
+    last_error: str,
+) -> list[str]:
+    actions: list[str] = []
+    if failed > 0:
+        actions.append(
+            "Inspect deadletters via /telemetry/fanout/deadletters and run targeted rehydrate for safe subsets."
+        )
+    if retrying >= retrying_high_threshold:
+        actions.append(
+            "Retry backlog is elevated; run /telemetry/fanout/gc and verify per-target upstream health before rehydrate."
+        )
+    if pending >= pending_high_threshold:
+        actions.append(
+            "Pending backlog exceeded threshold; temporarily reduce optional sources for reads and increase worker throughput carefully."
+        )
+    if queue_ratio >= queue_high_watermark:
+        actions.append(
+            "In-memory fanout queue crossed high watermark; keep backpressure enabled and avoid large write bursts."
+        )
+    if letta_backlog >= letta_soft_limit:
+        actions.append(
+            "Letta backlog is above soft limit; keep staged fetch and throttle low-value Letta fanout until queue normalizes."
+        )
+    if "mindsdb autosync error" in last_error.lower():
+        actions.append(
+            "MindsDB autosync is failing; disable/de-prioritize MindsDB fanout temporarily or fix table/format compatibility first."
+        )
+    if not actions:
+        actions.append("Queue pressure is within configured limits; continue monitoring trend snapshots.")
+    return actions
+
+
+async def _build_ops_queue_status_payload(
+    *,
+    include_deadletters: bool = True,
+    deadletter_limit: int = 100,
+    deadletter_target: str | None = None,
+    queue_high_watermark: float | None = None,
+    pending_high_threshold: int | None = None,
+    retrying_high_threshold: int | None = None,
+) -> dict[str, Any]:
+    summary = await get_fanout_summary()
+    by_status = summary.get("by_status") if isinstance(summary.get("by_status"), dict) else {}
+    by_target = summary.get("by_target") if isinstance(summary.get("by_target"), dict) else {}
+    pending = int(by_status.get("pending", 0) or 0)
+    retrying = int(by_status.get("retrying", 0) or 0)
+    running = int(by_status.get("running", 0) or 0)
+    failed = int(by_status.get("failed", 0) or 0)
+    succeeded = int(by_status.get("succeeded", 0) or 0)
+    queue_depth = memory_write_queue.qsize()
+    queue_max = max(1, MEMORY_WRITE_QUEUE_MAX)
+    queue_ratio = queue_depth / queue_max
+    high_watermark = _normalize_watermark(
+        float(queue_high_watermark)
+        if queue_high_watermark is not None
+        else FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK
+    )
+    default_pending_threshold = max(500, LETTA_ADMISSION_BACKLOG_SOFT_LIMIT * 2)
+    default_retry_threshold = max(200, LETTA_ADMISSION_BACKLOG_SOFT_LIMIT)
+    pending_threshold = max(1, int(pending_high_threshold or default_pending_threshold))
+    retry_threshold = max(1, int(retrying_high_threshold or default_retry_threshold))
+    letta_state = by_target.get(FANOUT_TARGET_LETTA) if isinstance(by_target.get(FANOUT_TARGET_LETTA), dict) else {}
+    letta_backlog = int(letta_state.get("pending", 0) or 0) + int(letta_state.get("retrying", 0) or 0)
+    deadletters: list[dict[str, Any]] = []
+    deadletters_by_target: dict[str, int] = {}
+    if include_deadletters:
+        deadletters = await list_fanout_jobs(
+            ["failed"],
+            limit=max(1, min(deadletter_limit, 500)),
+            target=str(deadletter_target or "").strip() or None,
+        )
+        for row in deadletters:
+            target = str(row.get("target") or "unknown").strip().lower() or "unknown"
+            deadletters_by_target[target] = deadletters_by_target.get(target, 0) + 1
+    next_actions = _ops_queue_status_next_actions(
+        pending=pending,
+        retrying=retrying,
+        failed=failed,
+        queue_ratio=queue_ratio,
+        queue_high_watermark=high_watermark,
+        retrying_high_threshold=retry_threshold,
+        pending_high_threshold=pending_threshold,
+        letta_backlog=letta_backlog,
+        letta_soft_limit=LETTA_ADMISSION_BACKLOG_SOFT_LIMIT,
+        last_error=str(outbox_health.get("lastError") or ""),
+    )
+    return {
+        "updatedAt": _utc_now(),
+        "queue": {
+            "pending": pending,
+            "retrying": retrying,
+            "running": running,
+            "succeeded": succeeded,
+            "failed": failed,
+            "totalOutstanding": max(0, pending + retrying + running),
+            "memoryWriteQueueDepth": queue_depth,
+            "memoryWriteQueueMax": queue_max,
+            "memoryWriteQueueRatio": round(queue_ratio, 6),
+            "highWatermark": high_watermark,
+            "pendingHighThreshold": pending_threshold,
+            "retryingHighThreshold": retry_threshold,
+            "highWatermarkExceeded": queue_ratio >= high_watermark,
+        },
+        "deadletters": {
+            "included": include_deadletters,
+            "count": len(deadletters),
+            "byTarget": deadletters_by_target,
+            "items": deadletters if include_deadletters else [],
+        },
+        "trend": {
+            "snapshotAt": _utc_now(),
+            "queueDepth": queue_depth,
+            "outstanding": max(0, pending + retrying + running),
+            "processed": memory_write_queue_processed,
+            "dropped": memory_write_queue_dropped,
+            "lastProcessedAt": outbox_health.get("lastProcessedAt"),
+            "lastBatchSize": outbox_health.get("lastBatchSize"),
+        },
+        "backpressure": {
+            "enabled": FANOUT_BACKPRESSURE_ENABLED,
+            "targets": FANOUT_BACKPRESSURE_TARGETS,
+            "queueHighWatermark": _normalize_watermark(FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK),
+            "maxSleepSecs": max(0.0, FANOUT_BACKPRESSURE_MAX_SLEEP_SECS),
+        },
+        "lettaAdmission": {
+            "enabled": LETTA_ADMISSION_ENABLED,
+            "softLimit": LETTA_ADMISSION_BACKLOG_SOFT_LIMIT,
+            "hardLimit": LETTA_ADMISSION_BACKLOG_HARD_LIMIT,
+            "backlog": letta_backlog,
+            "lastReason": letta_admission_last_reason or None,
+            "lastBacklog": letta_admission_last_backlog,
+        },
+        "health": {
+            "lastError": outbox_health.get("lastError"),
+            "lastProcessedAt": outbox_health.get("lastProcessedAt"),
+        },
+        "nextActions": next_actions,
+    }
+
+
+@app.post("/memory/write/batch")
+async def write_memory_batch(payload: MemoryWriteBatchRequest, request: Request):
+    return await _execute_memory_write_batch(payload, request, "/memory/write/batch")
+
+
 @app.post("/memory/write")
 async def write_memory(payload: MemoryWrite, request: Request):
-    global memory_write_queue_dropped
+    global memory_write_queue_dropped, memory_bank_queue_skipped_low_value
     start_time = asyncio.get_event_loop().time()
     file_name = normalize_memory_path(payload.fileName)
     if not file_name:
@@ -14503,6 +17744,12 @@ async def write_memory(payload: MemoryWrite, request: Request):
     topic_path = derive_topic_path(file_name, payload.topicPath)
     topic_tags = topic_tags_for_path(topic_path)
     summary = await summarize_content(content_to_store)
+    code_context = _build_code_context_metadata(
+        file_name=file_name,
+        topic_path=topic_path,
+        content=content_to_store,
+        summary=summary,
+    )
 
     async def _seed_mongo_retry(
         event_id: str,
@@ -14525,6 +17772,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "letta_context": local_letta_context or {},
             "qdrant_collection": QDRANT_COLLECTION,
             "raw_event": raw_event,
+            "code_context": code_context,
         }
         await enqueue_fanout_outbox(outbox_payload, [FANOUT_TARGET_MONGO_RAW], force_requeue=True)
         if memory_write_queue.full():
@@ -14631,16 +17879,29 @@ async def write_memory(payload: MemoryWrite, request: Request):
         topic_tags=topic_tags,
         request_id=request_id,
     )
+    if code_context:
+        raw_event["code_context"] = dict(code_context)
     payload_data = {
         "projectName": payload.projectName,
         "fileName": file_name,
         "content": content_to_store,
+        "code_context": dict(code_context),
     }
     warnings: list[str] = []
     if storage_policy_warning:
         warnings.append(storage_policy_warning)
+    memory_bank_low_value_excluded = bool(
+        MEMORY_BANK_TELEMETRY_GUARD_ENABLED
+        and _looks_memory_bank_telemetry_file(file_name, topic_path)
+    )
+    if memory_bank_low_value_excluded:
+        warnings.append(
+            "memory-bank persistence skipped for telemetry-like artifact; fanout sinks remain enabled"
+        )
     fanout_status: dict[str, str] = {
-        "memory_bank": "queued_rollup" if hot_rollup_mode else "queued",
+        "memory_bank": (
+            "skipped_low_value" if memory_bank_low_value_excluded else ("queued_rollup" if hot_rollup_mode else "queued")
+        ),
         FANOUT_TARGET_MONGO_RAW: "pending",
         FANOUT_TARGET_QDRANT: "deferred_rollup" if hot_rollup_mode else "pending",
         FANOUT_TARGET_MINDSDB: "deferred_rollup" if hot_rollup_mode else "pending",
@@ -14699,9 +17960,61 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "topic_path": topic_path,
             "source_kind": source_kind,
             "content_hash": content_hash,
+            "code_context": dict(code_context),
         }
         if not hot_rollup_mode:
             letta_context["content"] = content_to_store
+
+    if memory_bank_low_value_excluded:
+        memory_bank_queue_skipped_low_value += 1
+        await _finalize_memory_write_item(
+            {
+                "event_id": event_id,
+                "project": payload.projectName,
+                "file": file_name,
+                "payload": payload_data,
+                "summary": summary,
+                "topic_path": topic_path,
+                "topic_tags": topic_tags,
+                "content_length": len(content_to_store),
+                "letta_session": LETTA_AUTO_SESSION_ID if _letta_target_enabled() and letta_admitted else None,
+                "letta_admit": letta_admitted,
+                "letta_context": letta_context,
+                "waiter": None,
+                "start_time": start_time,
+                "request_id": request_id,
+                "raw_event": raw_event,
+                "mongo_persisted": mongo_persisted,
+                "qdrant_collection": QDRANT_COLLECTION,
+                "code_context": dict(code_context),
+            },
+            worker_id=None,
+            persisted_to_memory_bank=False,
+        )
+        if not mongo_persisted:
+            await _seed_mongo_retry(event_id, raw_event, letta_context)
+        fanout_summary = await get_fanout_summary()
+        retrying = int(fanout_summary.get("by_status", {}).get("retrying", 0))
+        failed = int(fanout_summary.get("by_status", {}).get("failed", 0))
+        if not _letta_target_enabled():
+            letta_stats = fanout_summary.get("by_target", {}).get(FANOUT_TARGET_LETTA, {})
+            retrying = max(0, retrying - int(letta_stats.get("retrying", 0)))
+            failed = max(0, failed - int(letta_stats.get("failed", 0)))
+        if failed > 0:
+            warnings.append(
+                f"fanout currently degraded: {failed} failed and {retrying} retrying jobs; durability outside memory-bank is lagging"
+            )
+        elif retrying > 0:
+            warnings.append(
+                f"fanout backlog detected: {retrying} jobs retrying; writes may be temporarily memory-bank-only"
+            )
+        return {
+            "ok": True,
+            "event_id": event_id,
+            "warnings": warnings,
+            "fanout": fanout_status,
+            "memory_bank_skipped_low_value": True,
+        }
 
     if hot_rollup_mode:
         rollup_file = build_hot_memory_rollup_file(file_name)
@@ -14718,6 +18031,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "letta_admit": letta_admitted,
                 "letta_context": letta_context or {},
                 "qdrant_collection": QDRANT_COLLECTION,
+                "code_context": dict(code_context),
             }
         )
         warnings.append(
@@ -14784,6 +18098,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "raw_event": raw_event,
             "mongo_persisted": mongo_persisted,
             "qdrant_collection": QDRANT_COLLECTION,
+            "code_context": dict(code_context),
         }
     )
     if not mongo_persisted:
@@ -14827,6 +18142,56 @@ async def write_memory(payload: MemoryWrite, request: Request):
         "warnings": warnings,
         "fanout": fanout_status,
     }
+
+
+@app.post("/memory/browser-context")
+async def write_browser_context(payload: BrowserContextIngest):
+    if not BROWSER_CONTEXT_INGEST_ENABLED:
+        raise HTTPException(503, "browser context ingest is disabled")
+    project_name = str(payload.projectName or "").strip()
+    if not project_name:
+        raise HTTPException(422, "projectName is required")
+    page_url = str(payload.pageUrl or "").strip()
+    if not page_url:
+        raise HTTPException(422, "pageUrl is required")
+    text_snapshot = str(payload.textSnapshot or "").strip()
+    if not text_snapshot:
+        raise HTTPException(422, "textSnapshot is required")
+    max_chars = int(payload.maxChars or 12000)
+    bounded_snapshot = text_snapshot[: max(200, min(40000, max_chars))]
+    file_name = _build_browser_context_file_name(page_url=page_url, title=payload.title)
+    title_text = str(payload.title or "").strip()
+    parsed = urlparse(page_url)
+    host = str(parsed.netloc or "").strip()
+    lines = [
+        f"# Browser Context Snapshot: {title_text or host or 'untitled'}",
+        "",
+        f"- url: {page_url}",
+        f"- host: {host or 'unknown'}",
+        f"- captured_at: {_utc_now()}",
+    ]
+    if payload.agentId:
+        lines.append(f"- agent_id: {str(payload.agentId).strip()}")
+    lines.extend(["", "## Snapshot", "", bounded_snapshot])
+    content = "\n".join(lines).strip() + "\n"
+    topic_path = normalize_topic_path(payload.topicPath) or "browser/context"
+    write_payload = MemoryWrite(
+        projectName=project_name,
+        fileName=file_name,
+        content=content,
+        topicPath=topic_path,
+    )
+    result = await write_memory(write_payload, _synthetic_request("/memory/browser-context"))
+    warnings = list(result.get("warnings") or [])
+    warnings.append("browser context persisted as text snapshot for retrieval/rerank")
+    result["warnings"] = warnings
+    result["browserContext"] = {
+        "project": write_payload.projectName,
+        "file": file_name,
+        "topicPath": topic_path,
+        "url": page_url,
+    }
+    return result
 
 
 @app.post("/ingest/trajectory")
@@ -15037,6 +18402,12 @@ async def get_memory_metrics():
             "workers": MEMORY_BANK_WORKERS,
             "processed": memory_bank_queue_processed,
             "dropped": memory_bank_queue_dropped,
+            "skippedLowValue": memory_bank_queue_skipped_low_value,
+        },
+        "memoryWriteBatch": {
+            "maxItems": MEMORY_WRITE_BATCH_MAX_ITEMS,
+            "idempotencyTtlSecs": max(30.0, MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS),
+            "metrics": dict(memory_write_batch_metrics),
         },
         "fanout": {
             "queueDepth": memory_write_queue.qsize(),
@@ -15117,6 +18488,7 @@ async def get_memory_metrics():
             "enabled": TOPIC_ROLLUP_ENABLED,
             "flushSecs": max(5.0, TOPIC_ROLLUP_FLUSH_SECS),
             "historyScanLimit": TOPIC_ROLLUP_HISTORY_SCAN_LIMIT,
+            "rawRefsMax": TOPIC_ROLLUP_RAW_REFS_MAX,
             "backfillHoldSecs": TOPIC_ROLLUP_BACKFILL_HOLD_SECS,
             "health": _topic_rollup_health_snapshot(),
             "generatedAt": topic_rollup_index.get("generatedAt"),
@@ -15129,6 +18501,22 @@ async def get_memory_metrics():
             "hits": embedding_cache_hits,
             "misses": embedding_cache_misses,
             "evictions": embedding_cache_evictions,
+            "fastembedRs": {
+                "enabled": _fastembed_adapter_enabled(),
+                "configured": bool(FASTEMBED_RS_BASE_URL),
+                "timeoutSecs": FASTEMBED_RS_TIMEOUT_SECS,
+                "route": FASTEMBED_RS_ROUTE,
+                "attempts": fastembed_adapter_attempts,
+                "successes": fastembed_adapter_successes,
+                "failures": fastembed_adapter_failures,
+                "fallbacks": fastembed_adapter_fallbacks,
+                "lastError": fastembed_adapter_last_error,
+                "lastLatencyMs": (
+                    round(float(fastembed_adapter_last_latency_ms), 3)
+                    if fastembed_adapter_last_latency_ms is not None
+                    else None
+                ),
+            },
         },
         "retrieval": {
             **retrieval_metrics,
@@ -15144,6 +18532,95 @@ async def get_memory_metrics():
 @app.get("/telemetry/retrieval")
 async def get_retrieval_metrics(limit: int = 20):
     return await _build_retrieval_metrics_payload(limit)
+
+
+@app.get("/telemetry/retrieval/source-quality")
+async def get_retrieval_source_quality(limit: int = 20):
+    payload = await _build_retrieval_metrics_payload(limit)
+    recall_quality = payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
+    latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
+    source_circuit = payload.get("sourceCircuit") if isinstance(payload.get("sourceCircuit"), dict) else {}
+    backlog_gating = payload.get("backlogGating") if isinstance(payload.get("backlogGating"), dict) else {}
+    latency_sources = latency.get("sources") if isinstance(latency.get("sources"), dict) else {}
+    by_source = recall_quality.get("bySource") if isinstance(recall_quality.get("bySource"), dict) else {}
+    baseline_source = RETRIEVAL_SOURCE_QDRANT
+    baseline_error_rate = float(
+        (
+            by_source.get(baseline_source, {}).get("errorRate")
+            if isinstance(by_source.get(baseline_source), dict)
+            else 0.0
+        )
+        or 0.0
+    )
+    rows: list[dict[str, Any]] = []
+    source_names = sorted(set(latency_sources.keys()) | set(by_source.keys()))
+    for source_name in source_names:
+        source_latency = (
+            latency_sources.get(source_name)
+            if isinstance(latency_sources.get(source_name), dict)
+            else {}
+        )
+        source_quality = (
+            by_source.get(source_name)
+            if isinstance(by_source.get(source_name), dict)
+            else {}
+        )
+        requests = int(source_latency.get("requests") or source_quality.get("requests") or 0)
+        timeouts = int(source_latency.get("timeouts") or 0)
+        timeout_rate = (float(timeouts) / float(requests)) if requests > 0 else 0.0
+        error_rate = float(source_quality.get("errorRate") or 0.0)
+        rows.append(
+            {
+                "source": source_name,
+                "requests": requests,
+                "timeouts": timeouts,
+                "timeoutRate": round(timeout_rate, 6),
+                "errorRate": round(error_rate, 6),
+                "errorRateDeltaVsQdrant": round(error_rate - baseline_error_rate, 6),
+                "p50Ms": float(source_latency.get("p50Ms") or 0.0),
+                "p95Ms": float(source_latency.get("p95Ms") or 0.0),
+                "p99Ms": float(source_latency.get("p99Ms") or 0.0),
+            }
+        )
+    rows.sort(key=lambda item: (item["timeoutRate"], item["errorRate"], item["p95Ms"]), reverse=True)
+    recommendations: list[str] = []
+    if rows and rows[0]["timeoutRate"] >= 0.25:
+        recommendations.append(
+            "At least one source has timeout rate >= 25%; keep it out of default decision path or reduce time budget."
+        )
+    if any(row["source"] == RETRIEVAL_SOURCE_LETTA and row["timeoutRate"] >= 0.5 for row in rows):
+        recommendations.append(
+            "Letta timeout rate is high; keep staged fetch + backlog admission and avoid blocking critical read path on Letta."
+        )
+    if any(row["source"] == RETRIEVAL_SOURCE_MINDSDB and row["errorRate"] > 0 for row in rows):
+        recommendations.append(
+            "MindsDB source errors are non-zero; verify table format and keep LZ4 circuit protection enabled."
+        )
+    degraded_sources = (
+        source_circuit.get("degradedSources")
+        if isinstance(source_circuit.get("degradedSources"), dict)
+        else {}
+    )
+    if degraded_sources:
+        names = ", ".join(sorted(degraded_sources.keys()))
+        recommendations.append(
+            f"Adaptive source circuit is currently open for: {names}. Continue using staged fetch + async warm while sources recover."
+        )
+    if (
+        backlog_gating.get("enabled")
+        and int(backlog_gating.get("lettaOutstandingMax") or 0) > 0
+    ):
+        recommendations.append(
+            "Backlog gating is enabled for slow sinks; high outbox pressure will suppress blocking reads from overloaded sources."
+        )
+    if not recommendations:
+        recommendations.append("Source quality is within expected bounds for current thresholds.")
+    return {
+        "updatedAt": payload.get("updatedAt"),
+        "baselineSource": baseline_source,
+        "sources": rows,
+        "recommendations": recommendations,
+    }
 
 
 @app.get("/telemetry/recall")
@@ -15226,6 +18703,7 @@ async def get_topic_rollup_metrics():
             "maxSummarySnippets": TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS,
             "maxNumericFacts": TOPIC_ROLLUP_MAX_NUMERIC_FACTS,
             "maxUniqueFiles": TOPIC_ROLLUP_MAX_UNIQUE_FILES,
+            "maxRawRefs": TOPIC_ROLLUP_RAW_REFS_MAX,
             "backfillHoldSecs": TOPIC_ROLLUP_BACKFILL_HOLD_SECS,
             "path": str(TOPIC_ROLLUP_PATH),
         },
@@ -15298,6 +18776,7 @@ async def get_fanout_metrics():
             "lowValueMinSummaryChars": LETTA_ADMISSION_LOW_VALUE_MIN_SUMMARY_CHARS,
             "excludedFilePatterns": LETTA_EXCLUDED_FILE_PATTERNS,
             "excludedTopicPrefixes": LETTA_EXCLUDED_TOPIC_PREFIXES,
+            "lowValueRootJsonPrefixes": LETTA_LOW_VALUE_ROOT_JSON_PREFIXES,
             "dropped": letta_admission_dropped,
             "lastReason": letta_admission_last_reason or None,
             "lastBacklog": letta_admission_last_backlog,
@@ -15363,10 +18842,49 @@ async def trigger_retention_run():
     return {"ok": not bool(result.get("errors")), "result": result}
 
 
+@app.post("/telemetry/memory/cleanup-low-value")
+async def trigger_memory_bank_cleanup_low_value(
+    project: str | None = None,
+    limit: int = MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT,
+    dry_run: bool = True,
+):
+    result = await run_memory_bank_telemetry_cleanup(
+        project=project,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    ok = bool(result.get("ok"))
+    return {"ok": ok, "result": result}
+
+
 @app.get("/telemetry/fanout/deadletters")
 async def get_fanout_deadletters(limit: int = 100, target: str | None = None):
     jobs = await list_fanout_jobs(["failed"], limit=limit, target=target)
     return {"items": jobs}
+
+
+@app.get("/ops/queue/status")
+async def get_ops_queue_status(
+    include_deadletters: bool = True,
+    deadletter_limit: int = 100,
+    deadletter_target: str | None = None,
+    queue_high_watermark: float | None = None,
+    pending_high_threshold: int | None = None,
+    retrying_high_threshold: int | None = None,
+):
+    return await _build_ops_queue_status_payload(
+        include_deadletters=include_deadletters,
+        deadletter_limit=deadletter_limit,
+        deadletter_target=deadletter_target,
+        queue_high_watermark=queue_high_watermark,
+        pending_high_threshold=pending_high_threshold,
+        retrying_high_threshold=retrying_high_threshold,
+    )
+
+
+@app.get("/ops/capabilities")
+async def get_ops_capabilities():
+    return _runner_capability_map_payload()
 
 
 @app.post("/telemetry/trading")
@@ -15495,6 +19013,10 @@ class MemorySearch(BaseModel):
         None,
         description="Retrieval depth mode (fast|balanced|deep)",
     )
+    retrieval_intent: str | None = Field(
+        None,
+        description="Retrieval intent policy (decision|ops|raw)",
+    )
     sources: list[str] | None = Field(
         None,
         description=(
@@ -15532,6 +19054,14 @@ class MemorySearch(BaseModel):
         None,
         description="Override profile query-expansion policy",
     )
+    deep_async: bool | None = Field(
+        None,
+        description="Run deep retrieval asynchronously and return a poll token",
+    )
+    callback_url: str | None = Field(
+        None,
+        description="Optional callback URL for deep async completion payload",
+    )
 
 
 class ContextPackRequest(BaseModel):
@@ -15541,6 +19071,7 @@ class ContextPackRequest(BaseModel):
     project: str | None = Field(None, description="Optional project filter")
     topic_path: str | None = Field(None, description="Optional topic path filter")
     retrieval_mode: str | None = Field(None, description="Optional retrieval mode override")
+    retrieval_intent: str | None = Field(None, description="Optional retrieval intent override")
     sources: list[str] | None = Field(None, description="Optional source override")
     source_weights: dict[str, float] | None = Field(None, description="Optional source weighting override")
     user_id: str | None = Field(None, description="User identifier for preference-aware reranking")
@@ -15553,6 +19084,7 @@ class ContextPackRequest(BaseModel):
 
 class AgentMemoryProfileUpdate(BaseModel):
     retrieval_mode: str | None = Field(None, description="Retrieval mode default for the agent")
+    retrieval_intent: str | None = Field(None, description="Retrieval intent default for the agent")
     sources: list[str] | None = Field(None, description="Default source list")
     source_weights: dict[str, float] | None = Field(None, description="Default source weights")
     default_project: str | None = Field(None, description="Default project scope for agent recall")
@@ -15578,6 +19110,7 @@ class RecallEvalCase(BaseModel):
     expected_substrings: list[str] | None = Field(None, description="Substrings expected in top-k summaries")
     expected_numeric: list[str] | None = Field(None, description="Numeric values expected verbatim in grounding")
     retrieval_mode: str | None = Field(None, description="Optional per-case retrieval mode override")
+    retrieval_intent: str | None = Field(None, description="Optional per-case retrieval intent override")
     sources: list[str] | None = Field(None, description="Optional per-case source override")
     source_weights: dict[str, float] | None = Field(None, description="Optional per-case source weighting override")
     agent_id: str | None = Field(None, description="Optional per-case agent profile")
@@ -15606,12 +19139,32 @@ class RecallEvalSavedRequest(BaseModel):
     gate_min_numeric_exactness: float | None = Field(None, ge=0.0, le=1.0)
 
 
+class RecallEvalRefreshRequest(BaseModel):
+    max_cases: int | None = Field(None, ge=1, le=20, description="Maximum number of refreshed cases")
+    min_hits: int | None = Field(None, ge=1, le=1000, description="Minimum pathway hits to include a case")
+    project: str | None = Field(None, description="Optional project filter override")
+    topic_prefix: str | None = Field(None, description="Optional topic prefix filter override")
+    run_evaluation: bool = Field(True, description="Run saved evaluation after refresh")
+    include_retrieval_debug: bool = Field(False, description="Include retrieval debug in post-refresh evaluation")
+    include_preferences: bool = Field(True, description="Enable preference-aware reranking in post-refresh evaluation")
+    user_id: str | None = Field(None, description="Optional user identifier for preference context")
+
+
 class TopicsListRequest(BaseModel):
     project: str | None = Field(None, description="Optional project scope")
     prefix: str | None = Field(None, description="Optional topic path prefix filter")
     limit: int = Field(200, ge=1, le=5000)
     min_count: int = Field(1, ge=1)
     depth: int = Field(8, ge=1, le=16)
+
+
+class OpsQueueStatusRequest(BaseModel):
+    include_deadletters: bool = Field(True, description="Include deadletter details")
+    deadletter_limit: int = Field(100, ge=1, le=500)
+    deadletter_target: str | None = Field(None, description="Optional target filter for deadletters")
+    queue_high_watermark: float | None = Field(None, ge=0.01, le=1.0)
+    pending_high_threshold: int | None = Field(None, ge=1)
+    retrying_high_threshold: int | None = Field(None, ge=1)
 
 
 class MessagingCommandIn(BaseModel):
@@ -15773,6 +19326,60 @@ def _synthetic_request(path: str) -> Request:
     return request
 
 
+def _slug_token(value: str, *, fallback: str = "context", max_len: int = 48) -> str:
+    lowered = str(value or "").strip().lower()
+    if not lowered:
+        return fallback
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    if not slug:
+        return fallback
+    return slug[: max(8, max_len)]
+
+
+def _build_browser_context_file_name(page_url: str, title: str | None) -> str:
+    parsed = urlparse(str(page_url or "").strip())
+    host = _slug_token(parsed.netloc or "unknown-host", fallback="unknown-host", max_len=48)
+    title_token = _slug_token(str(title or ""), fallback="snapshot", max_len=64)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"browser/{host}/{timestamp}_{title_token}.md"
+
+
+def _runner_capability_map_payload() -> dict[str, Any]:
+    if not MCP_CAPABILITY_MAP_ENABLED:
+        return {"enabled": False, "capabilities": {}}
+    use_go = bool(getattr(MIGRATION_FLAGS, "use_go_orchestrator", False))
+    use_rust_codec = bool(getattr(MIGRATION_FLAGS, "use_rust_codec", False))
+    use_rust_memory = bool(getattr(MIGRATION_FLAGS, "use_rust_memory", False))
+    use_rust_retrieval = bool(getattr(MIGRATION_FLAGS, "use_rust_retrieval", False))
+    default_runner = "go_scheduler" if use_go else "python_scheduler"
+    return {
+        "enabled": True,
+        "defaultRunner": default_runner,
+        "runtime": {
+            "useGoOrchestrator": use_go,
+            "useRustCodec": use_rust_codec,
+            "useRustMemory": use_rust_memory,
+            "useRustRetrieval": use_rust_retrieval,
+        },
+        "runnerContracts": {
+            "statusLifecycle": ["queued", "claimed", "partial", "succeeded", "failed"],
+            "allowedActions": list(TASK_ALLOWED_ACTIONS),
+            "securityStrict": bool(ORCH_SECURITY_STRICT),
+        },
+        "tools": {
+            "memory_write_batch": True,
+            "ops_queue_status": True,
+            "feedback_submit": True,
+            "browser_context_ingest": bool(BROWSER_CONTEXT_INGEST_ENABLED),
+        },
+        "integrations": {
+            "openclaw": bool(MESSAGING_INTEGRATIONS_ENABLED),
+            "ironclaw": bool(IRONCLAW_INTEGRATION_ENABLED),
+            "messagingIntegrations": bool(MESSAGING_INTEGRATIONS_ENABLED),
+        },
+    }
+
+
 async def _runtime_write_memory(payload: Any) -> dict[str, Any]:
     write_payload = MemoryWrite(
         projectName=str(getattr(payload, "project", "")).strip(),
@@ -15891,15 +19498,27 @@ async def _scheduler_submit_via_runtime(
             run_after=run_after,
             max_attempts=max_attempts,
         )
-    request = RuntimeTaskSubmitRequest(
-        title=title,
-        project=project,
-        agent=agent,
-        priority=priority,
-        payload=payload,
-        run_after=run_after,
-        max_attempts=max_attempts,
-    )
+    if RuntimeTaskSubmitRequest is None:
+        # Runtime bindings may be partially unavailable in lightweight test imports.
+        request = SimpleNamespace(
+            title=title,
+            project=project,
+            agent=agent,
+            priority=priority,
+            payload=payload,
+            run_after=run_after,
+            max_attempts=max_attempts,
+        )
+    else:
+        request = RuntimeTaskSubmitRequest(
+            title=title,
+            project=project,
+            agent=agent,
+            priority=priority,
+            payload=payload,
+            run_after=run_after,
+            max_attempts=max_attempts,
+        )
     return await runtime.scheduler.submit_task(request)
 
 
@@ -15952,6 +19571,7 @@ async def _retriever_search_with_grounding_via_runtime(
     preferences: dict[str, Any] | None,
     rerank_with_learning: bool,
     retrieval_mode: str,
+    retrieval_intent: str,
     agent_profile: dict[str, Any] | None,
     auto_escalate: bool,
     query_expansion: bool,
@@ -15968,6 +19588,7 @@ async def _retriever_search_with_grounding_via_runtime(
             preferences=preferences,
             rerank_with_learning=rerank_with_learning,
             retrieval_mode=retrieval_mode,
+            retrieval_intent=retrieval_intent,
             agent_profile=agent_profile,
             auto_escalate=auto_escalate,
             query_expansion=query_expansion,
@@ -15982,6 +19603,7 @@ async def _retriever_search_with_grounding_via_runtime(
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
         agent_profile=agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
@@ -16103,6 +19725,165 @@ def _format_recall_response(
     if warnings:
         lines.append("Warnings: " + " | ".join(str(item) for item in warnings[:2]))
     return "\n".join(lines)
+
+
+def _recall_deep_async_prune_locked(now: float) -> None:
+    stale_tokens = [
+        token
+        for token, payload in recall_deep_async_jobs.items()
+        if float(payload.get("expires_monotonic") or 0.0) <= now
+    ]
+    for token in stale_tokens:
+        recall_deep_async_jobs.pop(token, None)
+    while len(recall_deep_async_jobs) > RECALL_DEEP_ASYNC_MAX_JOBS:
+        recall_deep_async_jobs.popitem(last=False)
+
+
+def _recall_deep_async_expires_at_iso(expires_monotonic: float) -> str:
+    remaining = max(0.0, float(expires_monotonic) - time.monotonic())
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=remaining)
+    return expires_at.isoformat().replace("+00:00", "Z")
+
+
+async def _dispatch_recall_deep_async_callback(
+    *,
+    callback_url: str,
+    token: str,
+    status: str,
+    payload: dict[str, Any],
+) -> tuple[bool, str | None]:
+    timeout_secs = max(1.0, RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS)
+    body = {
+        "ok": status == "completed",
+        "token": token,
+        "status": status,
+        "payload": payload,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout_secs) as client:
+            response = await client.post(callback_url, json=body)
+        if response.status_code >= 400:
+            return False, f"callback status {response.status_code}"
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+async def _run_recall_deep_async_job(
+    *,
+    token: str,
+    payload_data: dict[str, Any],
+    callback_url: str | None,
+) -> None:
+    global recall_deep_async_started, recall_deep_async_completed
+    global recall_deep_async_failed, recall_deep_async_callback_failed
+    async with recall_deep_async_semaphore:
+        async with recall_deep_async_lock:
+            now = time.monotonic()
+            _recall_deep_async_prune_locked(now)
+            entry = recall_deep_async_jobs.get(token)
+            if not isinstance(entry, dict):
+                return
+            entry["status"] = "running"
+            entry["started_at"] = _utc_now()
+            entry["updated_at"] = _utc_now()
+            recall_deep_async_jobs.move_to_end(token)
+            recall_deep_async_started += 1
+
+        status = "completed"
+        result_payload: dict[str, Any] | None = None
+        error_text: str | None = None
+        try:
+            deep_payload = MemorySearch(**payload_data)
+            deep_payload.deep_async = False
+            deep_payload.callback_url = None
+            result = await search_memory(deep_payload)
+            result_payload = result if isinstance(result, dict) else {"result": result}
+        except Exception as exc:
+            status = "failed"
+            error_text = str(exc)
+            result_payload = {
+                "error": error_text,
+            }
+            logger.warning("Deep async memory search failed token=%s: %s", token, exc)
+
+        callback_failed = False
+        callback_error: str | None = None
+        if callback_url:
+            ok, callback_error = await _dispatch_recall_deep_async_callback(
+                callback_url=callback_url,
+                token=token,
+                status=status,
+                payload=result_payload or {},
+            )
+            callback_failed = not ok
+            if callback_failed:
+                recall_deep_async_callback_failed += 1
+
+        async with recall_deep_async_lock:
+            now = time.monotonic()
+            _recall_deep_async_prune_locked(now)
+            entry = recall_deep_async_jobs.get(token)
+            if not isinstance(entry, dict):
+                return
+            entry["status"] = status
+            entry["updated_at"] = _utc_now()
+            entry["completed_at"] = _utc_now()
+            entry["result"] = result_payload or {}
+            entry["error"] = error_text
+            if callback_url:
+                entry["callback"] = {
+                    "url": callback_url,
+                    "failed": callback_failed,
+                    "error": callback_error,
+                }
+            if status == "completed":
+                recall_deep_async_completed += 1
+            else:
+                recall_deep_async_failed += 1
+            recall_deep_async_jobs.move_to_end(token)
+
+
+async def _enqueue_recall_deep_async_job(
+    *,
+    payload: MemorySearch,
+    callback_url: str | None,
+) -> dict[str, Any]:
+    token = uuid.uuid4().hex
+    payload_data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    payload_data["deep_async"] = False
+    payload_data["callback_url"] = None
+    expires_monotonic = time.monotonic() + RECALL_DEEP_ASYNC_RESULT_TTL_SECS
+    async with recall_deep_async_lock:
+        now = time.monotonic()
+        _recall_deep_async_prune_locked(now)
+        recall_deep_async_jobs[token] = {
+            "token": token,
+            "status": "queued",
+            "created_at": _utc_now(),
+            "updated_at": _utc_now(),
+            "expires_monotonic": expires_monotonic,
+            "expires_at": _recall_deep_async_expires_at_iso(expires_monotonic),
+            "callback_url": callback_url,
+            "result": None,
+            "error": None,
+        }
+        recall_deep_async_jobs.move_to_end(token)
+    asyncio.create_task(
+        _run_recall_deep_async_job(
+            token=token,
+            payload_data=payload_data,
+            callback_url=callback_url,
+        )
+    )
+    return {
+        "ok": True,
+        "async": True,
+        "token": token,
+        "status": "queued",
+        "poll_url": f"/memory/search/async/{token}",
+        "expires_at": _recall_deep_async_expires_at_iso(expires_monotonic),
+    }
 
 
 def _messaging_directive_int(
@@ -16605,6 +20386,21 @@ async def _execute_messaging_command(
 @app.post("/memory/search")
 async def search_memory(payload: MemorySearch):
     """Federated retrieval across memory services with preference-aware reranking."""
+    requested_mode = _normalize_retrieval_mode(payload.retrieval_mode or RETRIEVAL_MODE_DEFAULT)
+    deep_async_requested = bool(payload.deep_async)
+    if bool(payload.deep_async) and not RECALL_DEEP_ASYNC_ENABLED:
+        raise HTTPException(503, "deep async retrieval is disabled")
+    if deep_async_requested:
+        if requested_mode != RETRIEVAL_MODE_DEEP:
+            raise HTTPException(422, "deep_async requires retrieval_mode='deep'")
+        callback_url = str(payload.callback_url or "").strip() or None
+        if callback_url:
+            _task_validate_callback_url(callback_url)
+        return await _enqueue_recall_deep_async_job(
+            payload=payload,
+            callback_url=callback_url,
+        )
+
     topic_filter = normalize_topic_path(payload.topic_path) if payload.topic_path else None
     profile_id = _normalize_agent_memory_profile_id(payload.agent_id)
     async with agent_memory_profile_lock:
@@ -16620,16 +20416,13 @@ async def search_memory(payload: MemorySearch):
     if not topic_filter and profile_topic_prefixes:
         topic_filter = str(profile_topic_prefixes[0] or "").strip() or None
     trading_scope_prefixes: list[str] = []
-    if (
-        not topic_filter
-        and not payload.topic_path
-        and not profile_topic_prefixes
-        and _looks_like_trading_project(project_filter)
-    ):
-        trading_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
     retrieval_mode = _normalize_retrieval_mode(
         payload.retrieval_mode
         or str(agent_profile.get("retrieval_mode") or RETRIEVAL_MODE_DEFAULT)
+    )
+    retrieval_intent = _normalize_retrieval_intent(
+        payload.retrieval_intent
+        or str(agent_profile.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT)
     )
     auto_escalate = (
         payload.auto_escalate
@@ -16644,6 +20437,48 @@ async def search_memory(payload: MemorySearch):
 
     preferences = None
     pre_warnings: list[str] = []
+    policy_debug: dict[str, Any] = {
+        "projectDefaultsApplied": False,
+        "intentDefaultSourcesApplied": False,
+        "intent": retrieval_intent,
+    }
+    requested_sources = payload.sources if isinstance(payload.sources, list) else None
+    policy_default_sources: list[str] | None = None
+    source_override_requested = bool(requested_sources is not None)
+    profile_sources = (
+        agent_profile.get("sources")
+        if isinstance(agent_profile.get("sources"), list)
+        else None
+    )
+    profile_sources_default = (
+        _normalize_retrieval_sources(profile_sources)
+        == _normalize_retrieval_sources(_default_agent_memory_profile().get("sources"))
+    )
+    if (
+        requested_sources is None
+        and _looks_like_trading_project(project_filter)
+        and profile_sources_default
+    ):
+        policy_default_sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_debug["projectDefaultsApplied"] = True
+        policy_debug["intentDefaultSourcesApplied"] = True
+        pre_warnings.append(
+            f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
+        )
+    effective_agent_profile = dict(agent_profile)
+    if policy_default_sources is not None and requested_sources is None:
+        effective_agent_profile["sources"] = list(policy_default_sources)
+        effective_agent_profile["_source_override_requested"] = False
+    else:
+        effective_agent_profile["_source_override_requested"] = source_override_requested
+    if (
+        not topic_filter
+        and not payload.topic_path
+        and not profile_topic_prefixes
+        and retrieval_intent != RETRIEVAL_INTENT_RAW
+        and _looks_like_trading_project(project_filter)
+    ):
+        trading_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
     project_suggestions: list[str] = []
     project_missing = False
     project_resolution: dict[str, Any] = {
@@ -16697,6 +20532,7 @@ async def search_memory(payload: MemorySearch):
         empty_grounding = _build_grounding_payload([])
         retrieval_debug = {
             "retrieval_mode": retrieval_mode,
+            "retrieval_intent": retrieval_intent,
             "source_errors": {},
             "source_counts": {},
             "project_resolution": project_resolution,
@@ -16707,20 +20543,28 @@ async def search_memory(payload: MemorySearch):
                 "matched_results": 0,
                 "total_results": 0,
             },
-        }
+                "policy": {
+                    **policy_debug,
+                    "effectiveSources": requested_sources or policy_default_sources or profile_sources or [],
+                    "sourceOverrideRequested": source_override_requested,
+                },
+            }
         response: dict[str, Any] = {
             "results": [],
             "preferences": preferences,
             "learning_enabled": LEARNING_LOOP_ENABLED,
             "retrieval_mode": retrieval_mode,
+            "retrieval_intent": retrieval_intent,
             "warnings": pre_warnings,
             "agent_id": profile_id,
             "degraded": True,
             "project_resolution": project_resolution,
             "project_suggestions": project_suggestions,
+            "retrieval_policy": policy_debug,
             "agent_profile": {
                 "id": profile_id,
                 "retrieval_mode": agent_profile.get("retrieval_mode"),
+                "retrieval_intent": agent_profile.get("retrieval_intent"),
                 "sources": agent_profile.get("sources"),
                 "source_weights": agent_profile.get("source_weights"),
                 "default_project": agent_profile.get("default_project"),
@@ -16756,12 +20600,13 @@ async def search_memory(payload: MemorySearch):
         limit=payload.limit,
         project_filter=project_filter,
         topic_filter=topic_filter,
-        sources=payload.sources,
+        sources=requested_sources,
         source_weights=payload.source_weights,
         preferences=preferences,
         rerank_with_learning=payload.rerank_with_learning,
         retrieval_mode=retrieval_mode,
-        agent_profile=agent_profile,
+        retrieval_intent=retrieval_intent,
+        agent_profile=effective_agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
     )
@@ -16789,8 +20634,7 @@ async def search_memory(payload: MemorySearch):
             pre_warnings.append(
                 "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
             )
-    if pre_warnings:
-        warnings = pre_warnings + warnings
+    warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
 
     if payload.fetch_content:
         runtime = await _get_migration_runtime()
@@ -16829,10 +20673,22 @@ async def search_memory(payload: MemorySearch):
         "retrieval_mode": _normalize_retrieval_mode(
             str(retrieval_debug.get("retrieval_mode") or retrieval_mode)
         ),
+        "retrieval_intent": _normalize_retrieval_intent(
+            str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
+        ),
         "warnings": warnings,
         "agent_id": profile_id,
         "project_resolution": project_resolution,
         "project_suggestions": project_suggestions,
+        "retrieval_policy": {
+            **policy_debug,
+            "effectiveSources": (
+                retrieval_debug.get("sources")
+                if isinstance(retrieval_debug.get("sources"), list)
+                else requested_sources or policy_default_sources or profile_sources or []
+            ),
+            "sourceOverrideRequested": source_override_requested,
+        },
         "degraded": bool(
             not results
             or (
@@ -16843,6 +20699,7 @@ async def search_memory(payload: MemorySearch):
         "agent_profile": {
             "id": profile_id,
             "retrieval_mode": agent_profile.get("retrieval_mode"),
+            "retrieval_intent": agent_profile.get("retrieval_intent"),
             "sources": agent_profile.get("sources"),
             "source_weights": agent_profile.get("source_weights"),
             "default_project": agent_profile.get("default_project"),
@@ -16857,8 +20714,57 @@ async def search_memory(payload: MemorySearch):
         retrieval_payload = dict(retrieval_debug)
         retrieval_payload["project_resolution"] = project_resolution
         retrieval_payload["topic_scope"] = topic_scope_debug
+        retrieval_payload["policy"] = {
+            **policy_debug,
+            "effectiveSources": (
+                retrieval_debug.get("sources")
+                if isinstance(retrieval_debug.get("sources"), list)
+                else requested_sources or policy_default_sources or profile_sources or []
+            ),
+            "sourceOverrideRequested": source_override_requested,
+        }
         response["retrieval"] = retrieval_payload
     return response
+
+
+@app.get("/memory/search/async/{token}")
+async def get_memory_search_async(token: str, include_result: bool = True):
+    token_value = str(token or "").strip()
+    if not token_value:
+        raise HTTPException(422, "token is required")
+    async with recall_deep_async_lock:
+        _recall_deep_async_prune_locked(time.monotonic())
+        entry = recall_deep_async_jobs.get(token_value)
+        if not isinstance(entry, dict):
+            raise HTTPException(404, "async search token not found or expired")
+        payload = {
+            "ok": True,
+            "async": True,
+            "token": token_value,
+            "status": str(entry.get("status") or "unknown"),
+            "created_at": entry.get("created_at"),
+            "updated_at": entry.get("updated_at"),
+            "completed_at": entry.get("completed_at"),
+            "expires_at": entry.get("expires_at"),
+            "poll_url": f"/memory/search/async/{token_value}",
+        }
+        callback_url = str(entry.get("callback_url") or "").strip()
+        if callback_url:
+            callback_meta = (
+                entry.get("callback")
+                if isinstance(entry.get("callback"), dict)
+                else {}
+            )
+            payload["callback"] = {
+                "url": callback_url,
+                "failed": bool(callback_meta.get("failed")),
+                "error": callback_meta.get("error"),
+            }
+        status = str(entry.get("status") or "")
+        if include_result and status in {"completed", "failed"}:
+            payload["result"] = entry.get("result")
+            payload["error"] = entry.get("error")
+    return payload
 
 
 @app.post("/memory/context-pack")
@@ -16871,6 +20777,7 @@ async def get_memory_context_pack(payload: ContextPackRequest):
             fetch_content=False,
             topic_path=payload.topic_path,
             retrieval_mode=payload.retrieval_mode,
+            retrieval_intent=payload.retrieval_intent,
             sources=payload.sources,
             source_weights=payload.source_weights,
             rerank_with_learning=True,
@@ -16881,6 +20788,8 @@ async def get_memory_context_pack(payload: ContextPackRequest):
             agent_id=payload.agent_id,
             auto_escalate=payload.auto_escalate,
             query_expansion=payload.query_expansion,
+            deep_async=False,
+            callback_url=None,
         )
     )
     context_pack = _build_context_pack_payload(
@@ -16894,6 +20803,7 @@ async def get_memory_context_pack(payload: ContextPackRequest):
         "context_pack": context_pack,
         "warnings": search_response.get("warnings") if isinstance(search_response, dict) else [],
         "retrieval_mode": search_response.get("retrieval_mode") if isinstance(search_response, dict) else None,
+        "retrieval_intent": search_response.get("retrieval_intent") if isinstance(search_response, dict) else None,
         "agent_id": search_response.get("agent_id") if isinstance(search_response, dict) else None,
     }
     if payload.include_retrieval_debug and isinstance(search_response, dict):
@@ -16920,6 +20830,10 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         or ""
     ).strip() or None
     sources = request_payload.get("sources") if isinstance(request_payload.get("sources"), list) else None
+    source_override_requested = bool(sources is not None)
+    policy_default_sources: list[str] | None = None
+    source_override_requested = bool(sources is not None)
+    policy_default_sources: list[str] | None = None
     source_weights = (
         request_payload.get("source_weights")
         if isinstance(request_payload.get("source_weights"), dict)
@@ -16932,7 +20846,15 @@ async def engine_retrieval_query(payload: dict[str, Any]):
     )
     rerank_with_learning = bool(request_payload.get("rerank_with_learning", True))
     retrieval_mode = str(request_payload.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED)
+    retrieval_intent = _normalize_retrieval_intent(
+        request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
+    )
     pre_warnings: list[str] = []
+    policy_debug: dict[str, Any] = {
+        "projectDefaultsApplied": False,
+        "intentDefaultSourcesApplied": False,
+        "intent": retrieval_intent,
+    }
     explicit_project = str(project_filter or "").strip()
     project_filter, alias_hops = _resolve_project_alias(project_filter)
     project_resolution: dict[str, Any] = {
@@ -16956,8 +20878,22 @@ async def engine_retrieval_query(payload: dict[str, Any]):
                 project_filter = canonical_match
                 project_resolution["resolved"] = project_filter
                 project_resolution["verified"] = True
+    if (
+        sources is None
+        and _looks_like_trading_project(project_filter)
+    ):
+        policy_default_sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_debug["projectDefaultsApplied"] = True
+        policy_debug["intentDefaultSourcesApplied"] = True
+        pre_warnings.append(
+            f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
+        )
     topic_scope_prefixes: list[str] = []
-    if not topic_filter and _looks_like_trading_project(project_filter):
+    if (
+        not topic_filter
+        and retrieval_intent != RETRIEVAL_INTENT_RAW
+        and _looks_like_trading_project(project_filter)
+    ):
         topic_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
         pre_warnings.append(
             "Applied default trading scope to decision/report/profitability topics."
@@ -16967,11 +20903,13 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         limit=limit,
         project_filter=project_filter,
         topic_filter=topic_filter,
-        sources=sources,
+        sources=sources or policy_default_sources,
+        explicit_source_override=source_override_requested,
         source_weights=source_weights,
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
+        retrieval_intent=retrieval_intent,
         record_pathway_usage=False,
         call_budget_secs=RECALL_E2E_BUDGET_SECS if RECALL_E2E_BUDGET_SECS > 0 else None,
     )
@@ -16999,10 +20937,22 @@ async def engine_retrieval_query(payload: dict[str, Any]):
             pre_warnings.append(
                 "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
             )
-    combined_warnings = pre_warnings + warnings if pre_warnings else warnings
+    combined_warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
     retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
+        str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
+    )
     retrieval_payload["project_resolution"] = project_resolution
     retrieval_payload["topic_scope"] = topic_scope_debug
+    retrieval_payload["policy"] = {
+        **policy_debug,
+        "effectiveSources": (
+            retrieval_debug.get("sources")
+            if isinstance(retrieval_debug.get("sources"), list)
+            else sources or policy_default_sources or []
+        ),
+        "sourceOverrideRequested": source_override_requested,
+    }
     return {
         "results": results,
         "retrieval_debug": retrieval_payload,
@@ -17029,6 +20979,8 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         or ""
     ).strip() or None
     sources = request_payload.get("sources") if isinstance(request_payload.get("sources"), list) else None
+    source_override_requested = bool(sources is not None)
+    policy_default_sources: list[str] | None = None
     source_weights = (
         request_payload.get("source_weights")
         if isinstance(request_payload.get("source_weights"), dict)
@@ -17041,6 +20993,9 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     )
     rerank_with_learning = bool(request_payload.get("rerank_with_learning", True))
     retrieval_mode = str(request_payload.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED)
+    retrieval_intent = _normalize_retrieval_intent(
+        request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
+    )
     agent_profile = (
         request_payload.get("agent_profile")
         if isinstance(request_payload.get("agent_profile"), dict)
@@ -17049,6 +21004,11 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     auto_escalate = bool(request_payload.get("auto_escalate", False))
     query_expansion = bool(request_payload.get("query_expansion", True))
     pre_warnings: list[str] = []
+    policy_debug: dict[str, Any] = {
+        "projectDefaultsApplied": False,
+        "intentDefaultSourcesApplied": False,
+        "intent": retrieval_intent,
+    }
     explicit_project = str(project_filter or "").strip()
     project_filter, alias_hops = _resolve_project_alias(project_filter)
     project_resolution: dict[str, Any] = {
@@ -17072,8 +21032,28 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
                 project_filter = canonical_match
                 project_resolution["resolved"] = project_filter
                 project_resolution["verified"] = True
+    if (
+        sources is None
+        and _looks_like_trading_project(project_filter)
+    ):
+        policy_default_sources = _resolve_intent_default_sources(retrieval_intent)
+        policy_debug["projectDefaultsApplied"] = True
+        policy_debug["intentDefaultSourcesApplied"] = True
+        pre_warnings.append(
+            f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
+        )
+    effective_agent_profile = dict(agent_profile) if isinstance(agent_profile, dict) else {}
+    if policy_default_sources is not None and sources is None:
+        effective_agent_profile["sources"] = list(policy_default_sources)
+        effective_agent_profile["_source_override_requested"] = False
+    else:
+        effective_agent_profile["_source_override_requested"] = source_override_requested
     topic_scope_prefixes: list[str] = []
-    if not topic_filter and _looks_like_trading_project(project_filter):
+    if (
+        not topic_filter
+        and retrieval_intent != RETRIEVAL_INTENT_RAW
+        and _looks_like_trading_project(project_filter)
+    ):
         topic_scope_prefixes = list(TRADING_DEFAULT_TOPIC_PREFIXES)
         pre_warnings.append(
             "Applied default trading scope to decision/report/profitability topics."
@@ -17088,7 +21068,8 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         preferences=preferences,
         rerank_with_learning=rerank_with_learning,
         retrieval_mode=retrieval_mode,
-        agent_profile=agent_profile,
+        retrieval_intent=retrieval_intent,
+        agent_profile=effective_agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
     )
@@ -17117,10 +21098,22 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
             pre_warnings.append(
                 "Trading scope found no matching topic prefixes; returning unscoped retrieval rows."
             )
-    combined_warnings = pre_warnings + warnings if pre_warnings else warnings
+    combined_warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
     retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
+        str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
+    )
     retrieval_payload["project_resolution"] = project_resolution
     retrieval_payload["topic_scope"] = topic_scope_debug
+    retrieval_payload["policy"] = {
+        **policy_debug,
+        "effectiveSources": (
+            retrieval_debug.get("sources")
+            if isinstance(retrieval_debug.get("sources"), list)
+            else sources or policy_default_sources or []
+        ),
+        "sourceOverrideRequested": source_override_requested,
+    }
     return {
         "results": results,
         "retrieval_debug": retrieval_payload,
@@ -17366,6 +21359,41 @@ async def get_saved_recall_eval_cases():
     }
 
 
+@app.post("/memory/recall/eval-cases/refresh")
+async def refresh_saved_recall_eval_cases(payload: RecallEvalRefreshRequest):
+    max_cases = int(payload.max_cases or RECALL_EVAL_REFRESH_MAX_CASES)
+    min_hits = int(payload.min_hits or RECALL_EVAL_REFRESH_MIN_HITS)
+    refreshed = await _build_refreshed_recall_eval_case_set(
+        max_cases=max_cases,
+        min_hits=min_hits,
+        project=payload.project,
+        topic_prefix=payload.topic_prefix,
+    )
+    _persist_recall_eval_cases(refreshed)
+    cases = refreshed.get("cases") if isinstance(refreshed.get("cases"), list) else []
+    response: dict[str, Any] = {
+        "ok": True,
+        "savedCaseSet": {
+            "path": str(RECALL_EVAL_CASES_PATH),
+            "version": refreshed.get("version"),
+            "updatedAt": refreshed.get("updatedAt"),
+            "count": len(cases),
+            "maxCases": max_cases,
+            "minHits": min_hits,
+        },
+    }
+    if payload.run_evaluation:
+        evaluation = await evaluate_saved_recall_cases(
+            RecallEvalSavedRequest(
+                include_retrieval_debug=payload.include_retrieval_debug,
+                include_preferences=payload.include_preferences,
+                user_id=payload.user_id,
+            )
+        )
+        response["evaluation"] = evaluation
+    return response
+
+
 @app.post("/memory/recall/evaluate")
 async def evaluate_memory_recall(payload: RecallEvalRequest):
     if not payload.cases:
@@ -17380,28 +21408,6 @@ async def evaluate_memory_recall(payload: RecallEvalRequest):
 
     for index, case in enumerate(payload.cases, start=1):
         case_id = str(case.id or f"case-{index}").strip() or f"case-{index}"
-        search_response = await search_memory(
-            MemorySearch(
-                query=case.query,
-                limit=case.limit,
-                project=case.project,
-                fetch_content=False,
-                topic_path=case.topic_path,
-                retrieval_mode=case.retrieval_mode,
-                sources=case.sources,
-                source_weights=case.source_weights,
-                rerank_with_learning=True,
-                include_retrieval_debug=payload.include_retrieval_debug,
-                include_grounding=True,
-                user_id=payload.user_id,
-                include_preferences=payload.include_preferences,
-                agent_id=case.agent_id,
-                auto_escalate=case.auto_escalate,
-                query_expansion=case.query_expansion,
-            )
-        )
-        results = search_response.get("results") if isinstance(search_response.get("results"), list) else []
-        grounding = search_response.get("grounding") if isinstance(search_response.get("grounding"), dict) else {}
         expected_files = {
             _normalize_expected_file_token(item)
             for item in (case.expected_files or [])
@@ -17420,22 +21426,121 @@ async def evaluate_memory_recall(payload: RecallEvalRequest):
                 continue
             expected_numeric_seen.add(value)
             expected_numeric_list.append(value)
-        matched_rank = _match_rank_within_k(
-            results,
-            expected_files=expected_files,
-            expected_terms=expected_terms,
-            k=k,
+        effective_retrieval_debug = bool(
+            payload.include_retrieval_debug or RECALL_EVAL_TRANSIENT_RETRY_ENABLED
         )
+
+        async def _run_case_search(mode_override: str | None = None) -> dict[str, Any]:
+            return await search_memory(
+                MemorySearch(
+                    query=case.query,
+                    limit=case.limit,
+                    project=case.project,
+                    fetch_content=False,
+                    topic_path=case.topic_path,
+                    retrieval_mode=mode_override if mode_override is not None else case.retrieval_mode,
+                    retrieval_intent=case.retrieval_intent,
+                    sources=case.sources,
+                    source_weights=case.source_weights,
+                    rerank_with_learning=True,
+                    include_retrieval_debug=effective_retrieval_debug,
+                    include_grounding=True,
+                    user_id=payload.user_id,
+                    include_preferences=payload.include_preferences,
+                    agent_id=case.agent_id,
+                    auto_escalate=case.auto_escalate,
+                    query_expansion=case.query_expansion,
+                    deep_async=False,
+                    callback_url=None,
+                )
+            )
+
+        def _evaluate_case_search(search_response: dict[str, Any]) -> tuple[
+            list[dict[str, Any]],
+            dict[str, Any],
+            int | None,
+            bool,
+            float,
+            list[str],
+        ]:
+            results = search_response.get("results") if isinstance(search_response.get("results"), list) else []
+            grounding = search_response.get("grounding") if isinstance(search_response.get("grounding"), dict) else {}
+            matched_rank = _match_rank_within_k(
+                results,
+                expected_files=expected_files,
+                expected_terms=expected_terms,
+                k=k,
+            )
+            hit = matched_rank is not None
+            reciprocal_rank = 0.0 if matched_rank is None else (1.0 / float(matched_rank))
+            found_numeric = _grounding_numeric_value_set(grounding)
+            numeric_matches = [value for value in expected_numeric_list if value in found_numeric]
+            return results, grounding, matched_rank, hit, reciprocal_rank, numeric_matches
+
+        search_response = await _run_case_search()
+        results, grounding, matched_rank, hit, reciprocal_rank, numeric_matches = _evaluate_case_search(search_response)
+        initial_hit = hit
+        combined_warnings = (
+            search_response.get("warnings") if isinstance(search_response.get("warnings"), list) else []
+        )
+        attempt_modes = [
+            str(search_response.get("retrieval_mode") or _normalize_retrieval_mode(case.retrieval_mode))
+        ]
+        retry_attempts = 0
+        transient_retry_triggered = False
+
+        if (
+            RECALL_EVAL_TRANSIENT_RETRY_ENABLED
+            and not hit
+            and _recall_eval_response_has_transient_failure(search_response)
+        ):
+            transient_retry_triggered = True
+            for retry_mode in _recall_eval_retry_modes(case.retrieval_mode):
+                retry_attempts += 1
+                retry_response = await _run_case_search(retry_mode)
+                retry_warnings = (
+                    retry_response.get("warnings")
+                    if isinstance(retry_response.get("warnings"), list)
+                    else []
+                )
+                combined_warnings = _dedupe_warning_messages(combined_warnings + retry_warnings)
+                attempt_modes.append(
+                    str(retry_response.get("retrieval_mode") or _normalize_retrieval_mode(retry_mode))
+                )
+                (
+                    retry_results,
+                    retry_grounding,
+                    retry_matched_rank,
+                    retry_hit,
+                    retry_reciprocal_rank,
+                    retry_numeric_matches,
+                ) = _evaluate_case_search(retry_response)
+                improved = False
+                if retry_hit and not hit:
+                    improved = True
+                elif retry_hit and hit:
+                    current_rank = matched_rank if matched_rank is not None else 1_000_000
+                    candidate_rank = retry_matched_rank if retry_matched_rank is not None else 1_000_000
+                    improved = candidate_rank < current_rank
+                elif not hit and not retry_hit and len(retry_results) > len(results):
+                    improved = True
+                if improved:
+                    search_response = retry_response
+                    results = retry_results
+                    grounding = retry_grounding
+                    matched_rank = retry_matched_rank
+                    hit = retry_hit
+                    reciprocal_rank = retry_reciprocal_rank
+                    numeric_matches = retry_numeric_matches
+                if hit:
+                    break
+
         has_expectations = bool(expected_files or expected_terms)
-        hit = matched_rank is not None
-        reciprocal_rank = 0.0 if matched_rank is None else (1.0 / float(matched_rank))
         if has_expectations:
             evaluated_cases += 1
             if hit:
                 recall_hits += 1
             reciprocal_rank_sum += reciprocal_rank
-        found_numeric = _grounding_numeric_value_set(grounding)
-        numeric_matches = [value for value in expected_numeric_list if value in found_numeric]
         numeric_expected_total += len(expected_numeric_list)
         numeric_matched_total += len(numeric_matches)
         case_report = {
@@ -17452,9 +21557,13 @@ async def evaluate_memory_recall(payload: RecallEvalRequest):
             "expected_substrings": expected_terms,
             "expected_numeric": expected_numeric_list,
             "matched_numeric": numeric_matches,
-            "warnings": search_response.get("warnings") if isinstance(search_response.get("warnings"), list) else [],
+            "warnings": combined_warnings,
             "retrieval_mode": search_response.get("retrieval_mode"),
             "agent_id": search_response.get("agent_id"),
+            "retry_attempts": retry_attempts,
+            "transient_retry_triggered": transient_retry_triggered,
+            "transient_retry_recovered": bool(transient_retry_triggered and not initial_hit and hit),
+            "attempt_modes": attempt_modes,
         }
         if payload.include_retrieval_debug:
             case_report["retrieval"] = search_response.get("retrieval")
@@ -17739,6 +21848,32 @@ async def tool_topics_list(payload: TopicsListRequest):
             min_count=payload.min_count,
             depth=payload.depth,
         )
+
+
+@app.post("/tools/capability_map")
+async def tool_capability_map():
+    return _runner_capability_map_payload()
+
+
+@app.post("/tools/ops_queue_status")
+async def tool_ops_queue_status(payload: OpsQueueStatusRequest):
+    return await _build_ops_queue_status_payload(
+        include_deadletters=payload.include_deadletters,
+        deadletter_limit=payload.deadletter_limit,
+        deadletter_target=payload.deadletter_target,
+        queue_high_watermark=payload.queue_high_watermark,
+        pending_high_threshold=payload.pending_high_threshold,
+        retrying_high_threshold=payload.retrying_high_threshold,
+    )
+
+
+@app.post("/tools/memory_write_batch")
+async def tool_memory_write_batch(payload: MemoryWriteBatchRequest):
+    return await _execute_memory_write_batch(
+        payload,
+        _synthetic_request("/tools/memory_write_batch"),
+        "/tools/memory_write_batch",
+    )
 
 
 @app.post("/feedback")
