@@ -34,17 +34,21 @@ def run_case(
     mode: str,
     limit: int,
     runs: int,
+    vary_query: bool = False,
 ) -> dict[str, Any]:
     latencies: list[float] = []
     errors: list[str] = []
-    for _ in range(max(1, runs)):
+    for idx in range(max(1, runs)):
+        effective_query = query
+        if vary_query:
+            effective_query = f"{query} :: run-{idx + 1}"
         started = time.perf_counter()
         try:
             resp = client.post(
                 f"{base_url}/memory/search",
                 headers=headers,
                 json={
-                    "query": query,
+                    "query": effective_query,
                     "project": project,
                     "limit": limit,
                     "include_retrieval_debug": True,
@@ -86,21 +90,38 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "query": "source quality",
             "mode": "fast",
             "limit": 8,
+            "vary_query": False,
         },
         "deep_recall": {
             "query": "deep retrieval stability timeout source quality",
             "mode": "deep",
             "limit": 16,
+            "vary_query": False,
         },
         "ops_focus": {
             "query": "fanout queue pressure deadletters letta backlog",
             "mode": "balanced",
             "limit": 12,
+            "vary_query": False,
+        },
+        "embedding_stress": {
+            "query": "embedding adapter throughput probe",
+            "mode": "fast",
+            "limit": 10,
+            "vary_query": True,
         },
     }
     matrix: dict[str, Any] = {}
     with httpx.Client(timeout=args.timeout) as client:
         source_quality = None
+        adapter_metrics_before = None
+        adapter_metrics_after = None
+        metrics_before = client.get(f"{base_url}/telemetry/metrics", headers=headers)
+        if metrics_before.status_code < 400:
+            payload_before = metrics_before.json()
+            embedding_cache_before = payload_before.get("embeddingCache") if isinstance(payload_before, dict) else None
+            if isinstance(embedding_cache_before, dict):
+                adapter_metrics_before = embedding_cache_before.get("fastembedRs")
         with client.stream("GET", f"{base_url}/telemetry/retrieval/source-quality", headers=headers) as resp:
             if resp.status_code < 400:
                 source_quality = json.loads(resp.read().decode("utf-8"))
@@ -114,7 +135,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 mode=str(case["mode"]),
                 limit=int(case["limit"]),
                 runs=args.runs,
+                vary_query=bool(case.get("vary_query", False)),
             )
+        metrics_after = client.get(f"{base_url}/telemetry/metrics", headers=headers)
+        if metrics_after.status_code < 400:
+            payload_after = metrics_after.json()
+            embedding_cache_after = payload_after.get("embeddingCache") if isinstance(payload_after, dict) else None
+            if isinstance(embedding_cache_after, dict):
+                adapter_metrics_after = embedding_cache_after.get("fastembedRs")
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "baseUrl": base_url,
@@ -129,6 +157,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         },
         "matrix": matrix,
         "sourceQuality": source_quality,
+        "adapterTelemetry": {
+            "before": adapter_metrics_before,
+            "after": adapter_metrics_after,
+        },
         "notes": [
             "Use this script before/after each adapter spike.",
             "Keep runtime defaults unchanged unless benchmark + recall gates pass.",

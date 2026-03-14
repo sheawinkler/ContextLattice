@@ -1,0 +1,258 @@
+{
+  "adapterTelemetry": {
+    "after": null,
+    "before": null
+  },
+  "baseUrl": "http://127.0.0.1:8075",
+  "candidates": {
+    "EmbedAnything": "adapter spike pending",
+    "edgevec": "adapter spike pending",
+    "fastembed-rs": "adapter spike pending",
+    "swiftide": "pipeline pattern reference",
+    "zvec": "benchmark-only candidate"
+  },
+  "generatedAt": "2026-03-14T09:31:10.815736+00:00",
+  "matrix": {
+    "deep_recall": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 94.173,
+        "mean": 42.382,
+        "min": 13.683,
+        "p50": 36.967,
+        "p95": 74.145,
+        "p99": 90.168
+      },
+      "runs": 12
+    },
+    "embedding_stress": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 60.309,
+        "mean": 30.644,
+        "min": 11.352,
+        "p50": 28.029,
+        "p95": 55.288,
+        "p99": 59.305
+      },
+      "runs": 12
+    },
+    "ops_focus": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 82.492,
+        "mean": 43.763,
+        "min": 14.296,
+        "p50": 44.091,
+        "p95": 75.512,
+        "p99": 81.096
+      },
+      "runs": 12
+    },
+    "short_context": {
+      "errorCount": 0,
+      "errors": [],
+      "latencyMs": {
+        "max": 53.667,
+        "mean": 28.915,
+        "min": 18.5,
+        "p50": 25.046,
+        "p95": 46.076,
+        "p99": 52.149
+      },
+      "runs": 12
+    }
+  },
+  "notes": [
+    "Use this script before/after each adapter spike.",
+    "Keep runtime defaults unchanged unless benchmark + recall gates pass."
+  ],
+  "project": "perf_shortlist",
+  "runsPerCase": 12,
+  "sourceQuality": {
+    "baselineSource": "qdrant",
+    "lifetimeSources": [
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 8006.135,
+        "p95Ms": 10067.009,
+        "p99Ms": 11647.013,
+        "requests": 215,
+        "source": "letta",
+        "timeoutRate": 1.0,
+        "timeouts": 215
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 3002.771,
+        "p95Ms": 3777.597,
+        "p99Ms": 4095.081,
+        "requests": 207,
+        "source": "memory_bank",
+        "timeoutRate": 0.908213,
+        "timeouts": 188
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 0.237,
+        "p95Ms": 5049.479,
+        "p99Ms": 6255.516,
+        "requests": 220,
+        "source": "mindsdb",
+        "timeoutRate": 0.172727,
+        "timeouts": 38
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 4002.113,
+        "p95Ms": 5011.584,
+        "p99Ms": 5967.36,
+        "requests": 225,
+        "source": "mongo_raw",
+        "timeoutRate": 0.977778,
+        "timeouts": 220
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 282.424,
+        "p95Ms": 8005.981,
+        "p99Ms": 8556.172,
+        "requests": 233,
+        "source": "qdrant",
+        "timeoutRate": 0.111588,
+        "timeouts": 26
+      },
+      {
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "p50Ms": 1.049,
+        "p95Ms": 15.139,
+        "p99Ms": 37.143,
+        "requests": 221,
+        "source": "topic_rollups",
+        "timeoutRate": 0.0,
+        "timeouts": 0
+      }
+    ],
+    "recommendations": [
+      "At least one source has timeout rate >= 25%; keep it out of default decision path or reduce time budget.",
+      "Letta timeout rate is high; keep staged fetch + backlog admission and avoid blocking critical read path on Letta.",
+      "Backlog gating is enabled for slow sinks; high outbox pressure will suppress blocking reads from overloaded sources."
+    ],
+    "sources": [
+      {
+        "budgetExceeded": 0,
+        "budgetExceededRate": 0.0,
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "errors": 0,
+        "lifetimeRequests": 215,
+        "lifetimeTimeouts": 215,
+        "p50Ms": 8006.135,
+        "p95Ms": 10067.009,
+        "p99Ms": 11647.013,
+        "requests": 215,
+        "source": "letta",
+        "timeoutRate": 1.0,
+        "timeouts": 215
+      },
+      {
+        "budgetExceeded": 0,
+        "budgetExceededRate": 0.0,
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "errors": 0,
+        "lifetimeRequests": 225,
+        "lifetimeTimeouts": 220,
+        "p50Ms": 4002.113,
+        "p95Ms": 5011.584,
+        "p99Ms": 5967.36,
+        "requests": 225,
+        "source": "mongo_raw",
+        "timeoutRate": 0.977778,
+        "timeouts": 220
+      },
+      {
+        "budgetExceeded": 0,
+        "budgetExceededRate": 0.0,
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "errors": 0,
+        "lifetimeRequests": 207,
+        "lifetimeTimeouts": 188,
+        "p50Ms": 3002.771,
+        "p95Ms": 3777.597,
+        "p99Ms": 4095.081,
+        "requests": 207,
+        "source": "memory_bank",
+        "timeoutRate": 0.908213,
+        "timeouts": 188
+      },
+      {
+        "budgetExceeded": 0,
+        "budgetExceededRate": 0.0,
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "errors": 0,
+        "lifetimeRequests": 220,
+        "lifetimeTimeouts": 38,
+        "p50Ms": 0.237,
+        "p95Ms": 5049.479,
+        "p99Ms": 6255.516,
+        "requests": 220,
+        "source": "mindsdb",
+        "timeoutRate": 0.172727,
+        "timeouts": 38
+      },
+      {
+        "budgetExceeded": 0,
+        "budgetExceededRate": 0.0,
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "errors": 0,
+        "lifetimeRequests": 233,
+        "lifetimeTimeouts": 26,
+        "p50Ms": 282.424,
+        "p95Ms": 8005.981,
+        "p99Ms": 8556.172,
+        "requests": 233,
+        "source": "qdrant",
+        "timeoutRate": 0.111588,
+        "timeouts": 26
+      },
+      {
+        "budgetExceeded": 0,
+        "budgetExceededRate": 0.0,
+        "errorRate": 0.0,
+        "errorRateDeltaVsQdrant": 0.0,
+        "errors": 0,
+        "lifetimeRequests": 221,
+        "lifetimeTimeouts": 0,
+        "p50Ms": 1.049,
+        "p95Ms": 15.139,
+        "p99Ms": 37.143,
+        "requests": 221,
+        "source": "topic_rollups",
+        "timeoutRate": 0.0,
+        "timeouts": 0
+      }
+    ],
+    "updatedAt": "2026-03-14T09:31:08.998557Z",
+    "window": {
+      "active": false,
+      "endAt": null,
+      "minutes": 0,
+      "sampleCount": 0,
+      "startAt": null,
+      "windowSecs": 0.0
+    }
+  }
+}

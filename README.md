@@ -111,6 +111,16 @@ ORCH_FASTEMBED_RS_ROUTE=/embed
 ORCH_FASTEMBED_RS_TIMEOUT_SECS=2.5
 ```
 
+When enabled, orchestrator Qdrant write fanout uses batched embeddings (`embed_text_batch`) to reduce per-item adapter overhead.
+
+Optional lexical guard for staged retrieval (policy-aware slow-source deferral):
+
+```bash
+GO_RETRIEVAL_LEXICAL_GUARD_ENABLED=true
+GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE=0.55
+GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS=1
+```
+
 Optional mode-aware Qdrant tuning:
 
 ```bash
@@ -329,6 +339,9 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `ORCH_RUST_RETRIEVAL_VECTOR_BACKEND` (`auto|qdrant_remote|usearch_ann`)
   - `ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND` (`auto|none|tantivy_lexical`)
   - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT`
+  - `GO_RETRIEVAL_LEXICAL_GUARD_ENABLED`
+  - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE`
+  - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS`
   - `USE_GO_ORCHESTRATOR`
   - `CONTEXTLATTICE_ENGINE_MODE` (`embedded` or `service`)
   - `CONTEXTLATTICE_ENGINE_URL`

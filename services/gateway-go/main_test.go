@@ -591,6 +591,173 @@ func TestStagedRetrievalSuppressesSlowTimeoutWarningsWhenFastSourcesSucceed(t *t
 	}
 }
 
+func TestStagedRetrievalLexicalGuardDefersSyncSlowFallback(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_LEXICAL_GUARD_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE", "0.4")
+	t.Setenv("GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS", "1")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups,mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", "2")
+	t.Setenv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", "2")
+	t.Setenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "0.2")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		sources, _ := request["sources"].([]any)
+		source := ""
+		if len(sources) > 0 {
+			source = strings.TrimSpace(strings.ToLower(anyToString(sources[0])))
+		}
+		if source == "mindsdb" {
+			time.Sleep(450 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if source == "topic_rollups" {
+			_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"runbook.md","summary":"profitability baseline ladder tuning","score":0.95,"source":"topic_rollups"}],"warnings":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"profitability baseline ladder","limit":5,"retrieval_mode":"balanced","backend_policy":{"lexical_backend":"tantivy_lexical"}}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if !strings.Contains(warnings, "lexical backend policy deferred sync slow-source fallback") {
+		t.Fatalf("expected lexical guard warning, got %v", payload["warnings"])
+	}
+	if strings.Contains(warnings, "mindsdb retrieval sync budget exceeded") {
+		t.Fatalf("did not expect sync slow fallback timeout warning, got %v", payload["warnings"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	staged, _ := debug["staged_fetch"].(map[string]any)
+	if applied, ok := staged["lexical_guard_applied"].(bool); !ok || !applied {
+		t.Fatalf("expected lexical_guard_applied=true, got %#v", staged["lexical_guard_applied"])
+	}
+	if fallbackSources := anyToStringSlice(staged["sync_fallback_slow_sources"]); len(fallbackSources) != 0 {
+		t.Fatalf("expected no sync fallback sources, got %v", fallbackSources)
+	}
+	errorsMap, _ := debug["source_errors"].(map[string]any)
+	if _, exists := errorsMap["mindsdb"]; exists {
+		t.Fatalf("expected mindsdb to be deferred from sync source errors, got %#v", errorsMap["mindsdb"])
+	}
+}
+
+func TestStagedRetrievalWithoutLexicalGuardRunsSyncSlowFallback(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_LEXICAL_GUARD_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE", "0.4")
+	t.Setenv("GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS", "1")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups,mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", "2")
+	t.Setenv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", "2")
+	t.Setenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "0.2")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		sources, _ := request["sources"].([]any)
+		source := ""
+		if len(sources) > 0 {
+			source = strings.TrimSpace(strings.ToLower(anyToString(sources[0])))
+		}
+		if source == "mindsdb" {
+			time.Sleep(450 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if source == "topic_rollups" {
+			_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"runbook.md","summary":"profitability baseline ladder tuning","score":0.95,"source":"topic_rollups"}],"warnings":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"profitability baseline ladder","limit":5,"retrieval_mode":"balanced","backend_policy":{"lexical_backend":"auto"}}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	staged, _ := debug["staged_fetch"].(map[string]any)
+	if applied, _ := staged["lexical_guard_applied"].(bool); applied {
+		t.Fatalf("expected lexical_guard_applied=false, got true")
+	}
+	fallbackSources := anyToStringSlice(staged["sync_fallback_slow_sources"])
+	if len(fallbackSources) != 1 || fallbackSources[0] != "mindsdb" {
+		t.Fatalf("expected sync fallback mindsdb, got %v", fallbackSources)
+	}
+	errorsMap, _ := debug["source_errors"].(map[string]any)
+	mindsdbErr, _ := errorsMap["mindsdb"].(map[string]any)
+	if kind := strings.TrimSpace(anyToString(mindsdbErr["kind"])); kind != "budget_exceeded" {
+		t.Fatalf("expected mindsdb source error kind budget_exceeded, got %#v", mindsdbErr)
+	}
+}
+
 func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
