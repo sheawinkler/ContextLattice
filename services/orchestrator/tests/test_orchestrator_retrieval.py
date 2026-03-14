@@ -1603,6 +1603,69 @@ async def test_retrieval_pathway_cache_set_writes_backend(monkeypatch: pytest.Mo
     assert calls["set"] == 1
 
 
+def test_retrieval_pathway_cache_backend_redis_mirror_is_write_only(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_BACKEND", "redis_mirror")
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_REDIS_URL", "redis://cache.local:6379/0")
+    monkeypatch.setattr(orchestrator, "redis_async", object())
+    assert orchestrator._retrieval_pathway_cache_backend_mode() == "redis_mirror"
+    assert orchestrator._retrieval_pathway_cache_backend_enabled() is True
+    assert orchestrator._retrieval_pathway_cache_backend_read_enabled() is False
+    assert orchestrator._retrieval_pathway_cache_backend_write_enabled() is True
+
+
+@pytest.mark.asyncio
+async def test_retrieval_pathway_cache_backend_get_skips_in_redis_mirror_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_BACKEND", "redis_mirror")
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_REDIS_URL", "redis://cache.local:6379/0")
+    monkeypatch.setattr(orchestrator, "redis_async", object())
+    called = {"client": 0}
+
+    async def _client():
+        called["client"] += 1
+        return object()
+
+    monkeypatch.setattr(orchestrator, "_get_retrieval_pathway_redis_client", _client)
+    payload = await orchestrator._retrieval_pathway_cache_backend_get("abc")
+    assert payload is None
+    assert called["client"] == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieval_pathway_cache_backend_set_writes_in_redis_mirror_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_BACKEND", "redis_mirror")
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_REDIS_URL", "redis://cache.local:6379/0")
+    monkeypatch.setattr(orchestrator, "redis_async", object())
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_REDIS_TIMEOUT_SECS", 0.5)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_TTL_SECS", 60.0)
+    monkeypatch.setattr(orchestrator, "retrieval_pathway_cache_backend_writes", 0)
+    captured: dict[str, Any] = {}
+
+    class _FakeRedis:
+        async def set(self, key: str, payload: bytes, ex: int):
+            captured["key"] = key
+            captured["payload"] = payload
+            captured["ex"] = ex
+            return True
+
+    async def _client():
+        return _FakeRedis()
+
+    monkeypatch.setattr(orchestrator, "_get_retrieval_pathway_redis_client", _client)
+    await orchestrator._retrieval_pathway_cache_backend_set(
+        "write-through-key",
+        results=[{"project": "alpha", "file": "notes/a.md", "summary": "cached", "score": 0.7}],
+        retrieval_debug={"cache": {"pathway_hit": False}},
+        warnings=["cached"],
+    )
+    assert captured["key"].endswith("write-through-key")
+    assert captured["ex"] == 60
+    assert orchestrator.retrieval_pathway_cache_backend_writes == 1
+
+
 @pytest.mark.asyncio
 async def test_federated_search_stale_cache_hit_schedules_swr_refresh(monkeypatch: pytest.MonkeyPatch):
     schedule_calls: list[dict[str, Any]] = []
@@ -5600,6 +5663,58 @@ async def test_scheduler_submit_via_runtime_uses_scheduler_adapter(monkeypatch: 
     assert result["id"] == "runtime-task"
     assert captured["title"] == "runtime-test"
     assert captured["project"] == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_retriever_runtime_request_includes_rust_backend_policy(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+
+    class _FakeRetriever:
+        async def search_with_grounding(self, request):
+            captured["backend_policy"] = dict(getattr(request, "backend_policy", {}) or {})
+            return SimpleNamespace(
+                results=[{"summary": "ok", "score": 0.9}],
+                retrieval_debug={"retrieval_mode": "balanced"},
+                warnings=[],
+                grounding={"facts": []},
+            )
+
+    class _FakeRuntime:
+        retriever = _FakeRetriever()
+
+    async def _runtime():
+        return _FakeRuntime()
+
+    monkeypatch.setattr(orchestrator, "_get_migration_runtime", _runtime)
+    monkeypatch.setattr(orchestrator, "RUST_RETRIEVAL_VECTOR_BACKEND", "qdrant_remote")
+    monkeypatch.setattr(orchestrator, "RUST_RETRIEVAL_LEXICAL_BACKEND", "auto")
+    monkeypatch.setattr(orchestrator, "RUST_RETRIEVAL_BACKEND_STRICT", False)
+
+    _results, debug, _warnings, _grounding = await orchestrator._retriever_search_with_grounding_via_runtime(
+        query="alpha",
+        limit=5,
+        project_filter="alpha",
+        topic_filter=None,
+        sources=["qdrant", "topic_rollups"],
+        source_weights={"qdrant": 1.0},
+        preferences={
+            "rust_backend_policy": {
+                "vector_backend": "usearch_ann",
+                "lexical_backend": "tantivy_lexical",
+                "strict": True,
+            }
+        },
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+        retrieval_intent="decision",
+        agent_profile=None,
+        auto_escalate=False,
+        query_expansion=False,
+    )
+    assert captured["backend_policy"]["vector_backend"] == "usearch_ann"
+    assert captured["backend_policy"]["lexical_backend"] == "tantivy_lexical"
+    assert captured["backend_policy"]["strict"] is True
+    assert debug["runtime"]["rust_backend_policy"]["vector_backend"] == "usearch_ann"
 
 
 @pytest.mark.asyncio

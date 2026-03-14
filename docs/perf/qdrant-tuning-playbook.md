@@ -16,6 +16,7 @@ gmake bench-qdrant-tuning
 
 Latest sample artifact:
 - `bench/results/qdrant_tuning_20260313T213430Z.json`
+- `bench/results/qdrant_tuning_latest.json` (auto-refreshed by `bench/qdrant_tuning_matrix.py`)
 
 ## Tuning Matrix
 Evaluate one profile change at a time:
@@ -47,6 +48,18 @@ For each profile:
 Recommended starter profile for mixed workloads:
 - `ORCH_QDRANT_SEARCH_MODE_HNSW_EF={"fast":48,"balanced":96,"deep":128}`
 - `ORCH_QDRANT_SEARCH_MODE_LIMIT_CAPS={"fast":80,"balanced":120,"deep":180}`
+
+Promoted profile (2026-03-14 canary target):
+- Keep `ORCH_QDRANT_SEARCH_MODE_HNSW_EF={"fast":48,"balanced":96,"deep":128}`
+- Keep `ORCH_QDRANT_SEARCH_MODE_LIMIT_CAPS={"fast":80,"balanced":120,"deep":180}`
+- Keep mode caps aligned with staged fetch:
+  - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS=6`
+  - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_BALANCED_SECS=7`
+  - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS=10`
+- Rollback profile:
+  - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS=4`
+  - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_BALANCED_SECS=5`
+  - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS=7`
 
 ## Rollout
 1. Canary on non-critical workloads.

@@ -190,6 +190,22 @@ QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR = min(
     1.0,
     max(0.2, float(os.getenv("ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR", "0.5"))),
 )
+RUST_RETRIEVAL_VECTOR_BACKEND = os.getenv(
+    "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND",
+    "auto",
+).strip().lower() or "auto"
+if RUST_RETRIEVAL_VECTOR_BACKEND not in {"auto", "qdrant_remote", "usearch_ann"}:
+    RUST_RETRIEVAL_VECTOR_BACKEND = "auto"
+RUST_RETRIEVAL_LEXICAL_BACKEND = os.getenv(
+    "ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND",
+    "auto",
+).strip().lower() or "auto"
+if RUST_RETRIEVAL_LEXICAL_BACKEND not in {"auto", "none", "tantivy_lexical"}:
+    RUST_RETRIEVAL_LEXICAL_BACKEND = "auto"
+RUST_RETRIEVAL_BACKEND_STRICT = os.getenv(
+    "ORCH_RUST_RETRIEVAL_BACKEND_STRICT",
+    "false",
+).lower() in ("1", "true", "yes", "on")
 QDRANT_URL = QDRANT_CLUSTER_ENDPOINT if QDRANT_USE_CLOUD and QDRANT_CLUSTER_ENDPOINT else QDRANT_LOCAL_URL
 QDRANT_COLLECTION = os.getenv("ORCH_QDRANT_COLLECTION", "memmcp_notes")
 MINDSDB_URL = os.getenv("MINDSDB_URL", "http://mindsdb:47334")
@@ -451,7 +467,7 @@ RETRIEVAL_PATHWAY_CACHE_BACKEND = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND",
     "memory",
 ).strip().lower()
-if RETRIEVAL_PATHWAY_CACHE_BACKEND not in {"memory", "redis"}:
+if RETRIEVAL_PATHWAY_CACHE_BACKEND not in {"memory", "redis", "redis_mirror"}:
     RETRIEVAL_PATHWAY_CACHE_BACKEND = "memory"
 RETRIEVAL_PATHWAY_REDIS_URL = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_REDIS_URL",
@@ -4955,12 +4971,24 @@ def _retrieval_pathway_cache_key(
     return hashlib.sha1(identity).hexdigest()
 
 
+def _retrieval_pathway_cache_backend_mode() -> str:
+    if RETRIEVAL_PATHWAY_CACHE_BACKEND not in {"redis", "redis_mirror"}:
+        return "memory"
+    if not RETRIEVAL_PATHWAY_REDIS_URL or redis_async is None:
+        return "memory"
+    return RETRIEVAL_PATHWAY_CACHE_BACKEND
+
+
 def _retrieval_pathway_cache_backend_enabled() -> bool:
-    return (
-        RETRIEVAL_PATHWAY_CACHE_BACKEND == "redis"
-        and bool(RETRIEVAL_PATHWAY_REDIS_URL)
-        and redis_async is not None
-    )
+    return _retrieval_pathway_cache_backend_mode() in {"redis", "redis_mirror"}
+
+
+def _retrieval_pathway_cache_backend_read_enabled() -> bool:
+    return _retrieval_pathway_cache_backend_mode() == "redis"
+
+
+def _retrieval_pathway_cache_backend_write_enabled() -> bool:
+    return _retrieval_pathway_cache_backend_mode() in {"redis", "redis_mirror"}
 
 
 def _retrieval_pathway_redis_key(key: str) -> str:
@@ -5053,7 +5081,7 @@ async def _retrieval_pathway_cache_backend_get(
     key: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]] | None:
     global retrieval_pathway_cache_backend_hits, retrieval_pathway_cache_backend_misses, retrieval_pathway_cache_backend_errors
-    if not _retrieval_pathway_cache_backend_enabled():
+    if not _retrieval_pathway_cache_backend_read_enabled():
         return None
     client = await _get_retrieval_pathway_redis_client()
     if client is None:
@@ -5086,7 +5114,7 @@ async def _retrieval_pathway_cache_backend_set(
     warnings: list[str],
 ) -> None:
     global retrieval_pathway_cache_backend_writes, retrieval_pathway_cache_backend_write_errors
-    if not _retrieval_pathway_cache_backend_enabled():
+    if not _retrieval_pathway_cache_backend_write_enabled():
         return
     client = await _get_retrieval_pathway_redis_client()
     if client is None:
@@ -6282,6 +6310,7 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         "engineMode": str(getattr(MIGRATION_FLAGS, "engine_mode", "embedded")),
         "shadowDualRun": bool(getattr(MIGRATION_FLAGS, "shadow_dual_run", False)),
         "canaryEnabled": bool(getattr(MIGRATION_FLAGS, "canary_enabled", False)),
+        "rustRetrievalBackendPolicy": _default_rust_retrieval_backend_policy(),
     }
     if callable(adapter_flags_snapshot):
         adapter_flags = adapter_flags_snapshot()
@@ -6325,7 +6354,10 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             },
             "backend": {
                 "configured": RETRIEVAL_PATHWAY_CACHE_BACKEND,
+                "mode": _retrieval_pathway_cache_backend_mode(),
                 "active": _retrieval_pathway_cache_backend_enabled(),
+                "readEnabled": _retrieval_pathway_cache_backend_read_enabled(),
+                "writeEnabled": _retrieval_pathway_cache_backend_write_enabled(),
                 "redisConfigured": bool(RETRIEVAL_PATHWAY_REDIS_URL),
                 "hits": retrieval_pathway_cache_backend_hits,
                 "misses": retrieval_pathway_cache_backend_misses,
@@ -19959,6 +19991,68 @@ async def _scheduler_retry_via_runtime(
     return await runtime.scheduler.retry(task_id=task_id, error=error, worker=worker)
 
 
+def _normalize_rust_retrieval_backend_choice(
+    value: Any,
+    *,
+    allowed: set[str],
+    default: str,
+) -> str:
+    token = str(value or "").strip().lower()
+    if token in allowed:
+        return token
+    return default
+
+
+def _default_rust_retrieval_backend_policy() -> dict[str, Any]:
+    return {
+        "vector_backend": _normalize_rust_retrieval_backend_choice(
+            RUST_RETRIEVAL_VECTOR_BACKEND,
+            allowed={"auto", "qdrant_remote", "usearch_ann"},
+            default="auto",
+        ),
+        "lexical_backend": _normalize_rust_retrieval_backend_choice(
+            RUST_RETRIEVAL_LEXICAL_BACKEND,
+            allowed={"auto", "none", "tantivy_lexical"},
+            default="auto",
+        ),
+        "strict": bool(RUST_RETRIEVAL_BACKEND_STRICT),
+    }
+
+
+def _resolve_rust_retrieval_backend_policy(
+    *,
+    preferences: dict[str, Any] | None,
+    agent_profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    policy = _default_rust_retrieval_backend_policy()
+    overrides: list[dict[str, Any]] = []
+    if isinstance(agent_profile, dict):
+        for key in ("rust_retrieval_backend_policy", "rust_backend_policy"):
+            candidate = agent_profile.get(key)
+            if isinstance(candidate, dict):
+                overrides.append(candidate)
+    if isinstance(preferences, dict):
+        candidate = preferences.get("rust_backend_policy")
+        if isinstance(candidate, dict):
+            overrides.append(candidate)
+    for override in overrides:
+        if "vector_backend" in override:
+            policy["vector_backend"] = _normalize_rust_retrieval_backend_choice(
+                override.get("vector_backend"),
+                allowed={"auto", "qdrant_remote", "usearch_ann"},
+                default=policy["vector_backend"],
+            )
+        if "lexical_backend" in override:
+            policy["lexical_backend"] = _normalize_rust_retrieval_backend_choice(
+                override.get("lexical_backend"),
+                allowed={"auto", "none", "tantivy_lexical"},
+                default=policy["lexical_backend"],
+            )
+        if "strict" in override:
+            policy["strict"] = bool(override.get("strict"))
+    return policy
+
+
 async def _retriever_search_with_grounding_via_runtime(
     *,
     query: str,
@@ -20006,12 +20100,19 @@ async def _retriever_search_with_grounding_via_runtime(
         agent_profile=agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
+        backend_policy=_resolve_rust_retrieval_backend_policy(
+            preferences=preferences,
+            agent_profile=agent_profile,
+        ),
     )
     response = await runtime.retriever.search_with_grounding(request)
     results = list(getattr(response, "results", []) or [])
     retrieval_debug = dict(getattr(response, "retrieval_debug", {}) or {})
     warnings = list(getattr(response, "warnings", []) or [])
     grounding = dict(getattr(response, "grounding", {}) or {})
+    runtime_debug = retrieval_debug.get("runtime") if isinstance(retrieval_debug.get("runtime"), dict) else {}
+    runtime_debug["rust_backend_policy"] = dict(request.backend_policy or {})
+    retrieval_debug["runtime"] = runtime_debug
     return results, retrieval_debug, warnings, grounding
 
 

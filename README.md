@@ -326,6 +326,9 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `USE_RUST_CODEC`
   - `USE_RUST_MEMORY`
   - `USE_RUST_RETRIEVAL`
+  - `ORCH_RUST_RETRIEVAL_VECTOR_BACKEND` (`auto|qdrant_remote|usearch_ann`)
+  - `ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND` (`auto|none|tantivy_lexical`)
+  - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT`
   - `USE_GO_ORCHESTRATOR`
   - `CONTEXTLATTICE_ENGINE_MODE` (`embedded` or `service`)
   - `CONTEXTLATTICE_ENGINE_URL`
@@ -362,6 +365,12 @@ USE_RUST_MEMORY=false
 USE_RUST_RETRIEVAL=false
 USE_GO_ORCHESTRATOR=false
 ```
+
+Pathway cache backend modes:
+
+- `ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND=memory` (in-memory only)
+- `ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND=redis` (read/write Redis backend)
+- `ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND=redis_mirror` (write-through mirror only; read path stays in-memory)
 
 ## Model Runtime
 
