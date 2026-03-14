@@ -268,6 +268,77 @@ func toSourceSet(sources []string) map[string]struct{} {
 	return set
 }
 
+func normalizeRustBackendChoice(raw string, allowed map[string]struct{}, fallback string) string {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	if value == "" {
+		return fallback
+	}
+	if _, ok := allowed[value]; ok {
+		return value
+	}
+	return fallback
+}
+
+func defaultRustBackendPolicy() map[string]any {
+	vectorAllowed := map[string]struct{}{
+		"auto":          {},
+		"qdrant_remote": {},
+		"usearch_ann":   {},
+	}
+	lexicalAllowed := map[string]struct{}{
+		"auto":            {},
+		"none":            {},
+		"tantivy_lexical": {},
+	}
+	return map[string]any{
+		"vector_backend": normalizeRustBackendChoice(
+			os.Getenv("ORCH_RUST_RETRIEVAL_VECTOR_BACKEND"),
+			vectorAllowed,
+			"auto",
+		),
+		"lexical_backend": normalizeRustBackendChoice(
+			os.Getenv("ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND"),
+			lexicalAllowed,
+			"auto",
+		),
+		"strict": envBool("ORCH_RUST_RETRIEVAL_BACKEND_STRICT", false),
+	}
+}
+
+func resolveRustBackendPolicy(raw any) map[string]any {
+	resolved := defaultRustBackendPolicy()
+	policy, ok := raw.(map[string]any)
+	if !ok {
+		return resolved
+	}
+	if value, ok := policy["vector_backend"]; ok {
+		resolved["vector_backend"] = normalizeRustBackendChoice(
+			anyToString(value),
+			map[string]struct{}{
+				"auto":          {},
+				"qdrant_remote": {},
+				"usearch_ann":   {},
+			},
+			anyToString(resolved["vector_backend"]),
+		)
+	}
+	if value, ok := policy["lexical_backend"]; ok {
+		resolved["lexical_backend"] = normalizeRustBackendChoice(
+			anyToString(value),
+			map[string]struct{}{
+				"auto":            {},
+				"none":            {},
+				"tantivy_lexical": {},
+			},
+			anyToString(resolved["lexical_backend"]),
+		)
+	}
+	if value, ok := policy["strict"]; ok {
+		resolved["strict"] = anyToBool(value)
+	}
+	return resolved
+}
+
 func loadRetrievalPolicy() retrievalPolicy {
 	policy := retrievalPolicy{}
 	policy.enabled = envBool("GO_RETRIEVAL_STAGED_ENABLED", true)
@@ -600,6 +671,32 @@ func anyToInt(value any, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func anyToBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.TrimSpace(strings.ToLower(typed)) {
+		case "1", "true", "yes", "on":
+			return true
+		default:
+			return false
+		}
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	case int64:
+		return typed != 0
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return parsed != 0
+		}
+	}
+	return false
 }
 
 func clampInt(value int, minValue int, maxValue int) int {
@@ -1232,6 +1329,8 @@ func (s *server) executeRetrieval(
 	if retrievalIntent == "" {
 		retrievalIntent = "decision"
 	}
+	rustBackendPolicy := resolveRustBackendPolicy(requestPayload["backend_policy"])
+	requestPayload["backend_policy"] = rustBackendPolicy
 	explicitSources := anyToStringSlice(requestPayload["sources"])
 	explicitSourceOverride := len(explicitSources) > 0
 	resolvedSources := explicitSources
@@ -1499,6 +1598,7 @@ func (s *server) executeRetrieval(
 			},
 			"fail_open_timeout_continuation_enabled": s.retrieval.failOpenContinuationEnabled,
 			"timeout_adaptive_skip_enabled":          s.retrieval.timeoutAdaptiveSkipEnabled,
+			"runtime_backend_policy":                 rustBackendPolicy,
 		},
 		"staged_fetch": map[string]any{
 			"enabled":                          true,

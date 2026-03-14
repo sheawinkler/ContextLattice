@@ -150,6 +150,8 @@ def main() -> None:
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(rendered + "\n", encoding="utf-8")
+    latest = path.parent / "qdrant_tuning_latest.json"
+    latest.write_text(rendered + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

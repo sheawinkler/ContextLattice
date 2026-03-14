@@ -591,6 +591,78 @@ func TestStagedRetrievalSuppressesSlowTimeoutWarningsWhenFastSourcesSucceed(t *t
 	}
 }
 
+func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RUST_RETRIEVAL_VECTOR_BACKEND", "qdrant_remote")
+	t.Setenv("ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND", "auto")
+	t.Setenv("ORCH_RUST_RETRIEVAL_BACKEND_STRICT", "false")
+
+	capturedPolicy := map[string]any{}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		if backendPolicy, ok := request["backend_policy"].(map[string]any); ok {
+			for key, value := range backendPolicy {
+				capturedPolicy[key] = value
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"rollup.md","summary":"row","score":0.9,"source":"topic_rollups"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"balanced","backend_policy":{"vector_backend":"usearch_ann","lexical_backend":"tantivy_lexical","strict":true}}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	policyBlock, _ := debug["source_policy"].(map[string]any)
+	runtimePolicy, _ := policyBlock["runtime_backend_policy"].(map[string]any)
+	if strings.TrimSpace(anyToString(runtimePolicy["vector_backend"])) != "usearch_ann" {
+		t.Fatalf("expected vector backend override propagated, got %#v", runtimePolicy)
+	}
+	if strings.TrimSpace(anyToString(runtimePolicy["lexical_backend"])) != "tantivy_lexical" {
+		t.Fatalf("expected lexical backend override propagated, got %#v", runtimePolicy)
+	}
+	if strict, ok := runtimePolicy["strict"].(bool); !ok || !strict {
+		t.Fatalf("expected strict=true propagated, got %#v", runtimePolicy)
+	}
+	if strings.TrimSpace(anyToString(capturedPolicy["vector_backend"])) != "usearch_ann" {
+		t.Fatalf("expected backend subcall payload to include policy, got %#v", capturedPolicy)
+	}
+}
+
 func TestHealthzIncludesBackendStatus(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
