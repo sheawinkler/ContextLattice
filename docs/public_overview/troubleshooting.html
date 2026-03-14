@@ -46,7 +46,7 @@
           <li>Run 60-second diagnostics and confirm API key/auth path.</li>
           <li>Resolve startup blockers (env wiring, port binds, container crash loops).</li>
           <li>Check fanout and retention telemetry before deeper sink-specific actions.</li>
-          <li>Confirm agent/tool read timeout matches retrieval mode (fast 25s, balanced 60s, deep 75s).</li>
+          <li>Confirm agent/tool read timeout matches retrieval mode (fast 25s, balanced 60s, deep 75s), then poll or stream deep async jobs for final completion.</li>
           <li>Use mode-specific restart playbook (Lite or Full).</li>
         </ol>
       </article>
@@ -145,7 +145,7 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention 
         <article class="card component-card">
           <h3>Read timeouts on deep retrieval</h3>
           <p><strong>Impact:</strong> caller reports timeout even though staged retrieval and async warm may still be in progress.</p>
-          <p><strong>Action:</strong> keep staged fetch enabled, set caller timeout by mode, and retry once to leverage warm cache.</p>
+          <p><strong>Action:</strong> keep staged fetch enabled, set caller timeout by mode, and use deep async partial responses (<code>job_id</code> + <code>poll_url</code>/<code>events_url</code>) instead of blocking slow-source reads.</p>
 <pre><code># .env (or caller env)
 CONTEXTLATTICE_READ_TIMEOUT_SECS=75
 # alias supported:
@@ -157,8 +157,14 @@ ORCH_RETRIEVAL_ENABLE_STAGED_FETCH=true
 ORCH_RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED=true
 # prevent sync slow-source blocking in non-deep modes unless caller explicitly sets sources
 ORCH_RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT=true
-# let deep mode block on slow sources when needed
-ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING=true
+# do not block deep mode on slow sources; return partial + job_id
+ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING=false
+ORCH_RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP=true
+ORCH_RECALL_DEEP_ASYNC_PARTIAL_ENABLED=true
+ORCH_RECALL_DEEP_ASYNC_PARTIAL_MODE=fast
+ORCH_RECALL_DEEP_ASYNC_PERSIST_ENABLED=true
+ORCH_RECALL_DEEP_ASYNC_STORE_BACKEND=mongo
+ORCH_RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT=true
 # mode-level recall budgets
 ORCH_RECALL_E2E_BUDGET_FAST_SECS=25
 ORCH_RECALL_E2E_BUDGET_BALANCED_SECS=60

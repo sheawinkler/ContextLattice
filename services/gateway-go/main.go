@@ -462,6 +462,9 @@ func isProxyPath(path string) bool {
 	if strings.HasPrefix(path, "/memory/search/async/") {
 		return true
 	}
+	if strings.HasPrefix(path, "/memory/search/jobs/") {
+		return true
+	}
 	switch path {
 	case "/v1/retrieval/query",
 		"/v1/retrieval/query-with-grounding",
@@ -489,6 +492,10 @@ func isProxyPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isStreamingProxyPath(path string) bool {
+	return strings.HasPrefix(path, "/memory/search/jobs/") && strings.HasSuffix(path, "/events")
 }
 
 func (s *server) copyHeaders(dst http.Header, src http.Header) {
@@ -540,6 +547,11 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	}
 	req.Header.Set("X-ContextLattice-Gateway", "gateway-go")
 
+	if isStreamingProxyPath(r.URL.Path) && strings.EqualFold(r.Method, http.MethodGet) {
+		s.proxyStream(w, req)
+		return
+	}
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
@@ -569,6 +581,59 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
+}
+
+func (s *server) proxyStream(w http.ResponseWriter, req *http.Request) {
+	resp, err := s.client.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":      "backend unavailable",
+			"detail":     err.Error(),
+			"backendUrl": s.backendURL,
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		if strings.EqualFold(key, "Content-Length") {
+			continue
+		}
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "text/event-stream")
+	}
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
+	buffer := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+				return
+			}
+			flusher.Flush()
+		}
+		if readErr == nil {
+			continue
+		}
+		if errors.Is(readErr, io.EOF) {
+			return
+		}
+		return
+	}
 }
 
 func (s *server) backendHealthy(ctx context.Context) bool {
@@ -1848,6 +1913,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/health", s.retrievalHealth)
 	mux.HandleFunc("/memory/search", s.proxy)
 	mux.HandleFunc("/memory/search/async/", s.proxy)
+	mux.HandleFunc("/memory/search/jobs/", s.proxy)
 	mux.HandleFunc("/memory/recall/eval-cases", s.proxy)
 	mux.HandleFunc("/memory/recall/eval-cases/refresh", s.proxy)
 	mux.HandleFunc("/memory/recall/evaluate/saved", s.proxy)

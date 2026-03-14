@@ -170,6 +170,45 @@ func TestProxyForwardsAsyncMemorySearchPath(t *testing.T) {
 	}
 }
 
+func TestProxyForwardsAsyncMemorySearchEventsPath(t *testing.T) {
+	var capturedPath string
+	var capturedQuery string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: snapshot\ndata: {\"status\":\"running\"}\n\n"))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/memory/search/jobs/token-123/events?include_result=false")
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "event: snapshot") {
+		t.Fatalf("expected stream payload, got %s", string(body))
+	}
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %s", resp.Header.Get("Content-Type"))
+	}
+	if capturedPath != "/memory/search/jobs/token-123/events" {
+		t.Fatalf("expected events path proxied, got %s", capturedPath)
+	}
+	if capturedQuery != "include_result=false" {
+		t.Fatalf("expected query params forwarded, got %s", capturedQuery)
+	}
+}
+
 func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	var capturedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
