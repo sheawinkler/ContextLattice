@@ -83,6 +83,16 @@ cp .env.example .env
 ln -svf ../../.env infra/compose/.env
 ```
 
+Strict runtime lock (prevents tuning drift across restarts):
+
+```bash
+gmake env-lock-apply
+gmake env-lock-check
+```
+
+`config/env/strict_runtime.env` is the single source of truth for critical runtime/tuning keys.
+`gmake up`, `gmake mem-up`, and release/lite launch targets auto-apply this lock before compose starts.
+
 Optional Letta backlog auto-prune tuning in `.env`:
 
 ```bash
@@ -126,6 +136,22 @@ Optional mode-aware Qdrant tuning:
 ```bash
 ORCH_QDRANT_SEARCH_MODE_HNSW_EF={"fast":48,"balanced":96,"deep":128}
 ORCH_QDRANT_SEARCH_MODE_LIMIT_CAPS={"fast":80,"balanced":120,"deep":180}
+ORCH_QDRANT_FILTERLESS_LIMIT_CAP=96
+ORCH_QDRANT_WARMUP_ENABLED=true
+ORCH_QDRANT_WARMUP_DELAY_SECS=2
+ORCH_QDRANT_WARMUP_TIMEOUT_SECS=20
+```
+
+Deep async durability + telemetry store routing:
+
+```bash
+ORCH_RECALL_DEEP_ASYNC_PERSIST_ENABLED=true
+ORCH_RECALL_DEEP_ASYNC_STORE_BACKEND=mongo
+ORCH_RECALL_DEEP_ASYNC_MONGO_DB=memmcp_raw
+ORCH_RECALL_DEEP_ASYNC_MONGO_COLLECTION=recall_deep_async_jobs
+ORCH_TELEMETRY_DB=memmcp_raw
+ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
+ORCH_TELEMETRY_PERSIST_ENABLED=true
 ```
 
 ### 2) One-command quickstart (recommended)
@@ -139,6 +165,7 @@ This command:
 - links compose env
 - generates `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` if missing
 - applies secure local defaults
+- applies strict runtime tuning lock
 - boots the stack
 - runs smoke + auth-safe health checks
 
@@ -236,8 +263,9 @@ Required behavior:
    - fast: 25s
    - balanced: 60s
    - deep (or explicit `letta`/`memory_bank` sources): 75s
-   Fast/balanced modes keep slow sources async by default unless explicitly requested (`sources=[...]`); deep mode can still block on slow sources.
-   If the first deep read times out, retry the same query once; staged fetch plus circuit/backlog gating returns best-available results first and can warm slow sources on follow-up.
+   Fast/balanced modes keep slow sources async by default unless explicitly requested (`sources=[...]`).
+   Deep mode now defaults to async completion: you get immediate partial results plus `job_id`/`poll_url`/`events_url`, then fetch final results from `GET /memory/search/jobs/{job_id}` (or `/memory/search/async/{job_id}`) or stream updates from `GET /memory/search/jobs/{job_id}/events`.
+   If a deep read returns partials, show those immediately and poll once after 5-15s for warmed slow-source completion.
 ```
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`

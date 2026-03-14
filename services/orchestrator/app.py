@@ -23,12 +23,12 @@ from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, AsyncIterator, Dict
 from urllib.parse import unquote, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, ORJSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, ORJSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 try:
@@ -190,6 +190,34 @@ QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR = min(
     1.0,
     max(0.2, float(os.getenv("ORCH_QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR", "0.5"))),
 )
+QDRANT_FILTERLESS_LIMIT_CAP = max(
+    8,
+    int(os.getenv("ORCH_QDRANT_FILTERLESS_LIMIT_CAP", "96")),
+)
+QDRANT_WARMUP_ENABLED = os.getenv(
+    "ORCH_QDRANT_WARMUP_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+QDRANT_WARMUP_DELAY_SECS = max(
+    0.0,
+    float(os.getenv("ORCH_QDRANT_WARMUP_DELAY_SECS", "2")),
+)
+QDRANT_WARMUP_TIMEOUT_SECS = max(
+    1.0,
+    float(os.getenv("ORCH_QDRANT_WARMUP_TIMEOUT_SECS", "20")),
+)
+QDRANT_WARMUP_LIMIT = max(
+    1,
+    int(os.getenv("ORCH_QDRANT_WARMUP_LIMIT", "8")),
+)
+QDRANT_WARMUP_QUERIES = [
+    item.strip()
+    for item in os.getenv(
+        "ORCH_QDRANT_WARMUP_QUERIES",
+        "latency baseline,recall quality,orchestrator retrieval,topic rollup index",
+    ).split(",")
+    if item.strip()
+]
 RUST_RETRIEVAL_VECTOR_BACKEND = os.getenv(
     "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND",
     "auto",
@@ -262,6 +290,16 @@ LETTA_ARCHIVAL_INCLUDE_CONTENT = os.getenv("LETTA_ARCHIVAL_INCLUDE_CONTENT", "fa
 MONGO_RAW_URI = os.getenv("MONGODB_URI", "mongodb://mongo:27017")
 MONGO_RAW_DB = os.getenv("MONGO_RAW_DB", "memmcp_raw")
 MONGO_RAW_COLLECTION = os.getenv("MONGO_RAW_COLLECTION", "memory_write_events")
+TELEMETRY_DB = os.getenv("ORCH_TELEMETRY_DB", MONGO_RAW_DB).strip()
+TELEMETRY_COLLECTION = os.getenv("ORCH_TELEMETRY_COLLECTION", "retrieval_telemetry").strip()
+TELEMETRY_PERSIST_ENABLED = os.getenv(
+    "ORCH_TELEMETRY_PERSIST_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+TELEMETRY_PERSIST_INTERVAL_SECS = max(
+    5.0,
+    float(os.getenv("ORCH_TELEMETRY_PERSIST_INTERVAL_SECS", "30")),
+)
 MONGO_RAW_ENABLED = os.getenv("MONGO_RAW_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MONGO_RAW_CONNECT_TIMEOUT_MS = int(os.getenv("MONGO_RAW_CONNECT_TIMEOUT_MS", "5000"))
 MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS = int(os.getenv("MONGO_RAW_SERVER_SELECTION_TIMEOUT_MS", "5000"))
@@ -1102,6 +1140,54 @@ RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS = max(
     1.0,
     float(os.getenv("ORCH_RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS", "6")),
 )
+RECALL_DEEP_ASYNC_PARTIAL_ENABLED = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_PARTIAL_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_DEEP_ASYNC_PARTIAL_MODE = str(
+    os.getenv("ORCH_RECALL_DEEP_ASYNC_PARTIAL_MODE", "fast")
+).strip().lower() or "fast"
+RECALL_DEEP_ASYNC_PERSIST_ENABLED = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_PERSIST_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_DEEP_ASYNC_STORE_BACKEND = str(
+    os.getenv("ORCH_RECALL_DEEP_ASYNC_STORE_BACKEND", "mongo")
+).strip().lower() or "mongo"
+if RECALL_DEEP_ASYNC_STORE_BACKEND not in {"mongo", "memory"}:
+    RECALL_DEEP_ASYNC_STORE_BACKEND = "memory"
+RECALL_DEEP_ASYNC_MONGO_DB = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_MONGO_DB",
+    TELEMETRY_DB or MONGO_RAW_DB,
+).strip()
+RECALL_DEEP_ASYNC_MONGO_COLLECTION = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_MONGO_COLLECTION",
+    "recall_deep_async_jobs",
+).strip()
+RECALL_DEEP_ASYNC_RECOVER_ON_STARTUP = os.getenv(
+    "ORCH_RECALL_DEEP_ASYNC_RECOVER_ON_STARTUP",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RECALL_DEEP_ASYNC_RECOVER_LIMIT = max(
+    64,
+    int(os.getenv("ORCH_RECALL_DEEP_ASYNC_RECOVER_LIMIT", "2000")),
+)
+RECALL_DEEP_ASYNC_SSE_HEARTBEAT_SECS = max(
+    3.0,
+    float(os.getenv("ORCH_RECALL_DEEP_ASYNC_SSE_HEARTBEAT_SECS", "15")),
+)
+RECALL_DEEP_ASYNC_SSE_QUEUE_SIZE = max(
+    4,
+    int(os.getenv("ORCH_RECALL_DEEP_ASYNC_SSE_QUEUE_SIZE", "32")),
+)
+RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT = os.getenv(
+    "ORCH_RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW = os.getenv(
+    "ORCH_RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 TOPIC_ROLLUP_ENABLED = os.getenv("TOPIC_ROLLUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TOPIC_ROLLUP_FLUSH_SECS = float(os.getenv("TOPIC_ROLLUP_FLUSH_SECS", "45"))
 TOPIC_ROLLUP_HISTORY_SCAN_LIMIT = max(50, int(os.getenv("TOPIC_ROLLUP_HISTORY_SCAN_LIMIT", "600")))
@@ -4216,6 +4302,13 @@ recall_deep_async_started = 0
 recall_deep_async_completed = 0
 recall_deep_async_failed = 0
 recall_deep_async_callback_failed = 0
+recall_deep_async_store_restored = 0
+recall_deep_async_store_writes = 0
+recall_deep_async_store_write_failed = 0
+recall_deep_async_store_reads = 0
+recall_deep_async_store_read_failed = 0
+recall_deep_async_subscribers_lock = asyncio.Lock()
+recall_deep_async_subscribers: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
 recall_quality_lock = asyncio.Lock()
 recall_quality_history: deque[dict[str, Any]] = deque(maxlen=RECALL_QUALITY_HISTORY_LIMIT)
 recall_quality_totals: dict[str, int] = {
@@ -4307,6 +4400,20 @@ retrieval_pathway_warmer_state: dict[str, Any] = {
     "lastSkipped": 0,
     "lastError": None,
     "lastResult": {},
+}
+qdrant_warmup_task: asyncio.Task[Any] | None = None
+qdrant_warmup_state: dict[str, Any] = {
+    "enabled": QDRANT_WARMUP_ENABLED,
+    "delaySecs": QDRANT_WARMUP_DELAY_SECS,
+    "timeoutSecs": QDRANT_WARMUP_TIMEOUT_SECS,
+    "limit": QDRANT_WARMUP_LIMIT,
+    "queries": list(QDRANT_WARMUP_QUERIES),
+    "running": False,
+    "lastRunAt": None,
+    "lastDurationMs": None,
+    "lastError": None,
+    "runs": 0,
+    "lastWarmed": 0,
 }
 recall_monitor_lock = asyncio.Lock()
 recall_monitor_history: deque[dict[str, Any]] = deque(maxlen=RECALL_MONITOR_HISTORY_LIMIT)
@@ -6519,6 +6626,15 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         }
     return {
         "updatedAt": _utc_now(),
+        "telemetryPersistence": {
+            "enabled": TELEMETRY_PERSIST_ENABLED,
+            "intervalSecs": TELEMETRY_PERSIST_INTERVAL_SECS,
+            "mongoDb": TELEMETRY_DB,
+            "mongoCollection": TELEMETRY_COLLECTION,
+            "writes": telemetry_persist_writes,
+            "writeFailed": telemetry_persist_write_failed,
+            "lastPersistedAt": telemetry_persist_last_at,
+        },
         "defaultMode": RETRIEVAL_MODE_DEFAULT,
         "defaultIntent": RETRIEVAL_INTENT_DEFAULT,
         "intents": list(RETRIEVAL_INTENTS),
@@ -6569,6 +6685,8 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         "deepAsync": {
             "enabled": RECALL_DEEP_ASYNC_ENABLED,
             "defaultForDeep": RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP,
+            "partialEnabled": RECALL_DEEP_ASYNC_PARTIAL_ENABLED,
+            "partialMode": _resolve_deep_async_partial_mode(),
             "maxInflight": RECALL_DEEP_ASYNC_MAX_INFLIGHT,
             "maxJobs": RECALL_DEEP_ASYNC_MAX_JOBS,
             "resultTtlSecs": RECALL_DEEP_ASYNC_RESULT_TTL_SECS,
@@ -6579,6 +6697,21 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             "completed": recall_deep_async_completed,
             "failed": recall_deep_async_failed,
             "callbackFailed": recall_deep_async_callback_failed,
+            "store": {
+                "persistEnabled": RECALL_DEEP_ASYNC_PERSIST_ENABLED,
+                "backendConfigured": RECALL_DEEP_ASYNC_STORE_BACKEND,
+                "backendActive": _deep_async_store_backend_mode(),
+                "mongoDb": RECALL_DEEP_ASYNC_MONGO_DB,
+                "mongoCollection": RECALL_DEEP_ASYNC_MONGO_COLLECTION,
+                "recoverOnStartup": RECALL_DEEP_ASYNC_RECOVER_ON_STARTUP,
+                "recoverLimit": RECALL_DEEP_ASYNC_RECOVER_LIMIT,
+                "restored": recall_deep_async_store_restored,
+                "reads": recall_deep_async_store_reads,
+                "readFailed": recall_deep_async_store_read_failed,
+                "writes": recall_deep_async_store_writes,
+                "writeFailed": recall_deep_async_store_write_failed,
+                "sseHeartbeatSecs": RECALL_DEEP_ASYNC_SSE_HEARTBEAT_SECS,
+            },
         },
         "memoryReadCache": {
             "failOpenEnabled": MEMMCP_READ_FAIL_OPEN_ENABLED,
@@ -6665,10 +6798,12 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 QDRANT_SEARCH_MODE_LIMIT_CAPS_ENV,
                 defaults={"fast": 80, "balanced": 120, "deep": 180},
             ),
+            "filterlessLimitCap": QDRANT_FILTERLESS_LIMIT_CAP,
             "exact": QDRANT_SEARCH_EXACT,
             "indexedOnly": QDRANT_SEARCH_INDEXED_ONLY,
             "timeoutRetryEnabled": QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED,
             "timeoutRetryLimitFactor": QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR,
+            "warmup": dict(qdrant_warmup_state),
         },
         "latency": latency,
         "recallQuality": recall_quality,
@@ -7053,6 +7188,50 @@ async def _retrieval_pathway_warmer_worker() -> None:
         await asyncio.sleep(interval)
 
 
+async def _qdrant_warmup_worker() -> None:
+    qdrant_warmup_state["running"] = True
+    started = time.monotonic()
+    warmed = 0
+    error_text: str | None = None
+    try:
+        delay = max(0.0, QDRANT_WARMUP_DELAY_SECS)
+        if delay > 0.0:
+            await asyncio.sleep(delay)
+        for query in list(QDRANT_WARMUP_QUERIES):
+            text = str(query or "").strip()
+            if not text:
+                continue
+            try:
+                await asyncio.wait_for(
+                    search_qdrant(
+                        text,
+                        limit=max(1, min(QDRANT_WARMUP_LIMIT, 16)),
+                        project_filter=None,
+                        topic_filter=None,
+                        retrieval_mode=RETRIEVAL_MODE_FAST,
+                    ),
+                    timeout=max(1.0, QDRANT_WARMUP_TIMEOUT_SECS),
+                )
+                warmed += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                error_text = str(exc)[:400]
+                logger.debug("Qdrant warmup query failed (%s): %s", text[:80], exc)
+    except asyncio.CancelledError:
+        qdrant_warmup_state["running"] = False
+        raise
+    except Exception as exc:
+        error_text = str(exc)[:400]
+    finally:
+        qdrant_warmup_state["running"] = False
+        qdrant_warmup_state["lastRunAt"] = _utc_now()
+        qdrant_warmup_state["lastDurationMs"] = round((time.monotonic() - started) * 1000, 2)
+        qdrant_warmup_state["runs"] = int(qdrant_warmup_state.get("runs", 0) or 0) + 1
+        qdrant_warmup_state["lastWarmed"] = warmed
+        qdrant_warmup_state["lastError"] = error_text
+
+
 def _should_log_http_request(status: int, duration_ms: float) -> bool:
     if status >= 400:
         return True
@@ -7299,6 +7478,11 @@ telemetry_state: Dict[str, Any] = {
         "flushedEvents": 0,
     },
 }
+telemetry_persist_lock = asyncio.Lock()
+telemetry_persist_last_monotonic = 0.0
+telemetry_persist_writes = 0
+telemetry_persist_write_failed = 0
+telemetry_persist_last_at: str | None = None
 trading_metrics_state: Dict[str, Any] = {
     "updatedAt": None,
     "openPositions": 0,
@@ -7334,8 +7518,19 @@ async def start_background_tasks() -> None:
     global memory_bank_queue_tasks, letta_write_queue_tasks, outbox_gc_task, hot_memory_rollup_task
     global topic_rollup_task
     global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, letta_auto_prune_task
+    global qdrant_warmup_task
     if MONGO_RAW_ENABLED:
         await init_mongo_client()
+    if RECALL_DEEP_ASYNC_PERSIST_ENABLED:
+        restored = await _restore_recall_deep_async_jobs_from_store()
+        loaded = int(restored.get("loaded", 0) or 0)
+        resumed = int(restored.get("resumed", 0) or 0)
+        if loaded > 0 or resumed > 0:
+            logger.warning(
+                "Deep async restore loaded=%s resumed=%s",
+                loaded,
+                resumed,
+            )
     if _use_mongo_outbox():
         await init_fanout_outbox_mongo_client()
     recovered = await recover_stale_running_jobs()
@@ -7387,6 +7582,8 @@ async def start_background_tasks() -> None:
         retrieval_pathway_warmer_task = asyncio.create_task(_retrieval_pathway_warmer_worker())
     if RECALL_MONITOR_ENABLED and recall_monitor_task is None:
         recall_monitor_task = asyncio.create_task(_recall_monitor_worker())
+    if QDRANT_WARMUP_ENABLED and qdrant_warmup_task is None:
+        qdrant_warmup_task = asyncio.create_task(_qdrant_warmup_worker())
     if HOT_MEMORY_ROLLUP_ENABLED and hot_memory_rollup_task is None:
         hot_memory_rollup_task = asyncio.create_task(_hot_memory_rollup_worker())
     if TOPIC_ROLLUP_ENABLED and topic_rollup_task is None:
@@ -7415,6 +7612,7 @@ async def close_mcp_client() -> None:
     global topic_rollup_task
     global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, task_scheduler_task, agent_task_worker_tasks
     global letta_auto_prune_task
+    global qdrant_warmup_task
     global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
     if task_scheduler_task is not None:
         task_scheduler_task.cancel()
@@ -7469,6 +7667,13 @@ async def close_mcp_client() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await recall_monitor_task
         recall_monitor_task = None
+    if qdrant_warmup_task is not None:
+        qdrant_warmup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await qdrant_warmup_task
+        qdrant_warmup_task = None
+    async with recall_deep_async_subscribers_lock:
+        recall_deep_async_subscribers.clear()
     if MCP_CLIENT is not None:
         await MCP_CLIENT.aclose()
         MCP_CLIENT = None
@@ -9605,6 +9810,15 @@ async def init_mongo_client() -> bool:
             coll = client[MONGO_RAW_DB][MONGO_RAW_COLLECTION]
             coll.create_index("event_id", unique=True)
             coll.create_index("created_at")
+            telemetry_coll = client[TELEMETRY_DB][TELEMETRY_COLLECTION]
+            telemetry_coll.create_index("created_at")
+            telemetry_coll.create_index("source")
+            recall_jobs_coll = client[RECALL_DEEP_ASYNC_MONGO_DB][RECALL_DEEP_ASYNC_MONGO_COLLECTION]
+            recall_jobs_coll.create_index("token", unique=True)
+            recall_jobs_coll.create_index("updated_at")
+            recall_jobs_coll.create_index("status")
+            with contextlib.suppress(Exception):
+                recall_jobs_coll.create_index("expires_at_dt", expireAfterSeconds=0)
             # Force an initial round-trip so startup reports failures early.
             client.admin.command("ping")
             return client
@@ -9684,6 +9898,64 @@ async def persist_raw_events_to_mongo(events: list[dict[str, Any]]) -> tuple[boo
         return True, None
     except Exception as exc:  # pragma: no cover - driver/network specific
         return False, str(exc)
+
+
+async def _persist_retrieval_telemetry_snapshot(snapshot: dict[str, Any]) -> None:
+    global telemetry_persist_last_monotonic, telemetry_persist_writes, telemetry_persist_write_failed
+    global telemetry_persist_last_at
+    if not TELEMETRY_PERSIST_ENABLED:
+        return
+    if not MONGO_RAW_ENABLED or MongoClient is None:
+        return
+    now = time.monotonic()
+    if (now - telemetry_persist_last_monotonic) < TELEMETRY_PERSIST_INTERVAL_SECS:
+        return
+    async with telemetry_persist_lock:
+        now_locked = time.monotonic()
+        if (now_locked - telemetry_persist_last_monotonic) < TELEMETRY_PERSIST_INTERVAL_SECS:
+            return
+        if not await init_mongo_client():
+            return
+        assert MONGO_CLIENT is not None
+        telemetry_coll = MONGO_CLIENT[TELEMETRY_DB][TELEMETRY_COLLECTION]
+        captured_at = _utc_now()
+        window_id = captured_at[:16]
+        event_id = hashlib.sha256(f"retrieval:{window_id}".encode("utf-8")).hexdigest()[:24]
+        payload = {
+            "event_id": event_id,
+            "type": "retrieval.telemetry",
+            "captured_at": captured_at,
+            "summary": {
+                "defaultMode": snapshot.get("defaultMode"),
+                "defaultIntent": snapshot.get("defaultIntent"),
+                "sourceLatency": (
+                    (snapshot.get("latency") or {}).get("sources")
+                    if isinstance(snapshot.get("latency"), dict)
+                    else {}
+                ),
+                "alerts": snapshot.get("alerts"),
+                "deepAsync": snapshot.get("deepAsync"),
+                "qdrantTuning": snapshot.get("qdrantTuning"),
+                "sourceCircuit": snapshot.get("sourceCircuit"),
+                "backlogGating": snapshot.get("backlogGating"),
+            },
+        }
+
+        def _upsert() -> None:
+            telemetry_coll.update_one(
+                {"event_id": event_id},
+                {"$setOnInsert": {"created_at": captured_at}, "$set": payload},
+                upsert=True,
+            )
+
+        try:
+            await asyncio.to_thread(_upsert)
+            telemetry_persist_last_monotonic = now_locked
+            telemetry_persist_last_at = captured_at
+            telemetry_persist_writes += 1
+        except Exception as exc:
+            telemetry_persist_write_failed += 1
+            logger.warning("Retrieval telemetry persistence failed: %s", exc)
 
 
 def _use_mongo_outbox() -> bool:
@@ -15413,6 +15685,8 @@ async def search_qdrant(
 
     async def _run_search(vector: list[float], requested_limit: int) -> Any:
         bounded_limit = _qdrant_mode_limit_cap(normalized_mode, max(1, int(requested_limit)))
+        if query_filter is None and QDRANT_FILTERLESS_LIMIT_CAP > 0:
+            bounded_limit = min(bounded_limit, int(QDRANT_FILTERLESS_LIMIT_CAP))
 
         async def _execute_search(client: Any, _: str) -> Any:
             if hasattr(client, "search"):
@@ -16176,6 +16450,20 @@ async def federated_search_memory(
     }
     staged_fast_sources = [str(source) for source in (template.get("staged_fast_sources") or [])]
     staged_slow_sources = [str(source) for source in (template.get("staged_slow_sources") or [])]
+    if (
+        normalized_mode == RETRIEVAL_MODE_DEEP
+        and RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT
+        and not explicit_source_override
+        and resolved_intent != RETRIEVAL_INTENT_RAW
+        and RETRIEVAL_SOURCE_MONGO_RAW in staged_fast_sources
+    ):
+        staged_fast_sources = [
+            source
+            for source in staged_fast_sources
+            if source != RETRIEVAL_SOURCE_MONGO_RAW
+        ]
+        if RETRIEVAL_SOURCE_MONGO_RAW not in staged_slow_sources:
+            staged_slow_sources.append(RETRIEVAL_SOURCE_MONGO_RAW)
     staged_fetch_used = bool(template.get("staged_fetch_used"))
     runtime_policy = await _retrieval_slow_source_runtime_policy(
         sources=resolved_sources,
@@ -16721,6 +17009,7 @@ async def federated_search_memory(
     async_warm_slow_sources: list[str] = []
     sync_fallback_slow_sources: list[str] = []
     backlog_async_warm_slow_sources: list[str] = []
+    mongo_raw_intent_async_sources: list[str] = []
     hard_sync_async_split_applied = False
     if staged_fetch_used:
         fast_rows, fast_errors, fast_warnings = await _run_source_batch(
@@ -16805,6 +17094,23 @@ async def federated_search_memory(
                 if source != RETRIEVAL_SOURCE_MEMORY_BANK
             ]
             forced_async_slow_sources = [RETRIEVAL_SOURCE_MEMORY_BANK]
+        if (
+            RETRIEVAL_SOURCE_MONGO_RAW in allowed_slow_sources
+            and normalized_mode == RETRIEVAL_MODE_DEEP
+            and not explicit_source_override
+            and RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT
+            and resolved_intent != RETRIEVAL_INTENT_RAW
+        ):
+            allowed_slow_sources = [
+                source
+                for source in allowed_slow_sources
+                if source != RETRIEVAL_SOURCE_MONGO_RAW
+            ]
+            if RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW:
+                forced_async_slow_sources.append(RETRIEVAL_SOURCE_MONGO_RAW)
+                mongo_raw_intent_async_sources.append(RETRIEVAL_SOURCE_MONGO_RAW)
+            else:
+                slow_sources_skipped.append(RETRIEVAL_SOURCE_MONGO_RAW)
         blocked_slow_sources = [
             source
             for source in staged_slow_sources
@@ -16814,6 +17120,7 @@ async def federated_search_memory(
             slow_sources_skipped.extend(blocked_slow_sources)
         if forced_async_slow_sources:
             slow_sources_skipped.extend(forced_async_slow_sources)
+            async_warm_slow_sources.extend(forced_async_slow_sources)
         if force_include_slow:
             skip_slow = False
         sync_slow_requires_explicit = bool(
@@ -16900,6 +17207,10 @@ async def federated_search_memory(
         should_schedule_async_warm = bool(async_warm_slow_sources) and (
             RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES
             or any(source == RETRIEVAL_SOURCE_LETTA for source in async_warm_slow_sources)
+            or (
+                RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW
+                and RETRIEVAL_SOURCE_MONGO_RAW in async_warm_slow_sources
+            )
         )
         if should_schedule_async_warm:
             for source in async_warm_slow_sources:
@@ -16916,6 +17227,10 @@ async def federated_search_memory(
                     topic_filter=topic_filter,
                     timeout_hint_secs=float(
                         effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
+                    ),
+                    force=bool(
+                        source == RETRIEVAL_SOURCE_MONGO_RAW
+                        and RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW
                     ),
                 )
     else:
@@ -16944,6 +17259,11 @@ async def federated_search_memory(
         degraded_probe_sources = sorted(set(degraded_probe_sources))
     if backlog_blocked_slow_sources:
         backlog_blocked_slow_sources = sorted(set(backlog_blocked_slow_sources))
+    if mongo_raw_intent_async_sources:
+        mongo_raw_intent_async_sources = sorted(set(mongo_raw_intent_async_sources))
+        warnings.append(
+            "mongo_raw deep retrieval ran asynchronously for non-raw intent to protect response latency."
+        )
 
     source_quality_snapshot = await _retrieval_source_quality_snapshot(
         sources=list(results_by_source.keys()) or list(resolved_sources)
@@ -17018,6 +17338,9 @@ async def federated_search_memory(
             "sync_slow_requires_explicit": sync_slow_requires_explicit if staged_fetch_used else RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT,
             "strict_fast_sync_default": RETRIEVAL_STRICT_FAST_SYNC_DEFAULT,
             "memory_bank_sync_non_deep_enabled": RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED,
+            "mongo_raw_deep_sync_only_for_raw_intent": RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT,
+            "mongo_raw_deep_async_warm_non_raw": RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW,
+            "mongo_raw_intent_async_sources": mongo_raw_intent_async_sources,
             "qdrant_sync_timeout_cap_secs": RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS,
             "fail_open_timeout_continuation_enabled": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED,
             "fail_open_timeout_continuation_sources": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES,
@@ -19262,7 +19585,10 @@ async def get_memory_metrics():
 
 @app.get("/telemetry/retrieval")
 async def get_retrieval_metrics(limit: int = 20):
-    return await _build_retrieval_metrics_payload(limit)
+    payload = await _build_retrieval_metrics_payload(limit)
+    if TELEMETRY_PERSIST_ENABLED:
+        asyncio.create_task(_persist_retrieval_telemetry_snapshot(payload))
+    return payload
 
 
 async def _retrieval_source_quality_window_snapshot(window_secs: float) -> dict[str, Any]:
@@ -20750,6 +21076,282 @@ def _format_recall_response(
     return "\n".join(lines)
 
 
+def _parse_iso_datetime_utc(value: str | None) -> datetime | None:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed
+
+
+def _deep_async_store_backend_mode() -> str:
+    if not RECALL_DEEP_ASYNC_PERSIST_ENABLED:
+        return "memory"
+    if RECALL_DEEP_ASYNC_STORE_BACKEND != "mongo":
+        return "memory"
+    if MongoClient is None or not MONGO_RAW_ENABLED:
+        return "memory"
+    return "mongo"
+
+
+async def _get_recall_deep_async_store_collection() -> Any | None:
+    if _deep_async_store_backend_mode() != "mongo":
+        return None
+    if not await init_mongo_client():
+        return None
+    assert MONGO_CLIENT is not None
+    return MONGO_CLIENT[RECALL_DEEP_ASYNC_MONGO_DB][RECALL_DEEP_ASYNC_MONGO_COLLECTION]
+
+
+def _build_recall_deep_async_job_payload(
+    token: str,
+    entry: dict[str, Any],
+    *,
+    include_result: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": True,
+        "async": True,
+        "job_id": token,
+        "token": token,
+        "status": str(entry.get("status") or "unknown"),
+        "async_status": str(entry.get("status") or "unknown"),
+        "created_at": entry.get("created_at"),
+        "updated_at": entry.get("updated_at"),
+        "started_at": entry.get("started_at"),
+        "completed_at": entry.get("completed_at"),
+        "expires_at": entry.get("expires_at"),
+        "poll_url": f"/memory/search/async/{token}",
+        "job_poll_url": f"/memory/search/jobs/{token}",
+        "events_url": f"/memory/search/jobs/{token}/events",
+    }
+    callback_url = str(entry.get("callback_url") or "").strip()
+    if callback_url:
+        callback_meta = (
+            entry.get("callback")
+            if isinstance(entry.get("callback"), dict)
+            else {}
+        )
+        payload["callback"] = {
+            "url": callback_url,
+            "failed": bool(callback_meta.get("failed")),
+            "error": callback_meta.get("error"),
+        }
+    status = str(entry.get("status") or "").strip().lower()
+    if include_result and status in {"completed", "failed"}:
+        payload["result"] = entry.get("result")
+        payload["error"] = entry.get("error")
+    return payload
+
+
+def _recall_deep_async_doc_from_entry(token: str, entry: dict[str, Any]) -> dict[str, Any]:
+    expires_at = str(entry.get("expires_at") or "").strip()
+    expires_dt = _parse_iso_datetime_utc(expires_at)
+    payload = {
+        "token": token,
+        "status": str(entry.get("status") or "queued"),
+        "created_at": entry.get("created_at"),
+        "updated_at": entry.get("updated_at"),
+        "started_at": entry.get("started_at"),
+        "completed_at": entry.get("completed_at"),
+        "expires_at": expires_at,
+        "callback_url": entry.get("callback_url"),
+        "callback": entry.get("callback") if isinstance(entry.get("callback"), dict) else None,
+        "payload_data": entry.get("payload_data") if isinstance(entry.get("payload_data"), dict) else None,
+        "result": entry.get("result"),
+        "error": entry.get("error"),
+    }
+    if isinstance(expires_dt, datetime):
+        payload["expires_at_dt"] = expires_dt
+    return payload
+
+
+def _recall_deep_async_entry_from_doc(
+    token: str,
+    doc: dict[str, Any],
+) -> tuple[dict[str, Any] | None, bool]:
+    expires_at = str(doc.get("expires_at") or "").strip()
+    expires_dt = _parse_iso_datetime_utc(expires_at)
+    if expires_dt is None:
+        candidate = doc.get("expires_at_dt")
+        if isinstance(candidate, datetime):
+            expires_dt = candidate.astimezone(timezone.utc) if candidate.tzinfo else candidate.replace(tzinfo=timezone.utc)
+            expires_at = expires_dt.isoformat().replace("+00:00", "Z")
+    if expires_dt is None:
+        return None, False
+    remaining = (expires_dt - datetime.now(timezone.utc)).total_seconds()
+    if remaining <= 0:
+        return None, False
+    status = str(doc.get("status") or "queued").strip().lower()
+    if status not in {"queued", "running", "completed", "failed"}:
+        status = "failed"
+    payload_data = doc.get("payload_data") if isinstance(doc.get("payload_data"), dict) else None
+    callback_url = str(doc.get("callback_url") or "").strip() or None
+    should_resume = bool(status in {"queued", "running"} and isinstance(payload_data, dict))
+    if status == "running":
+        # Running jobs on a prior process are resumed as queued jobs.
+        status = "queued"
+    entry: dict[str, Any] = {
+        "token": token,
+        "status": status,
+        "created_at": doc.get("created_at"),
+        "updated_at": doc.get("updated_at"),
+        "started_at": doc.get("started_at"),
+        "completed_at": doc.get("completed_at"),
+        "expires_monotonic": time.monotonic() + remaining,
+        "expires_at": expires_at,
+        "callback_url": callback_url,
+        "callback": doc.get("callback") if isinstance(doc.get("callback"), dict) else None,
+        "payload_data": payload_data,
+        "result": doc.get("result"),
+        "error": doc.get("error"),
+    }
+    return entry, should_resume
+
+
+async def _persist_recall_deep_async_job_entry(token: str, entry: dict[str, Any]) -> None:
+    global recall_deep_async_store_writes, recall_deep_async_store_write_failed
+    collection = await _get_recall_deep_async_store_collection()
+    if collection is None:
+        return
+    document = _recall_deep_async_doc_from_entry(token, entry)
+    created_at = document.get("created_at") or _utc_now()
+    document_for_set = dict(document)
+    document_for_set.pop("created_at", None)
+
+    def _upsert() -> None:
+        collection.update_one(
+            {"token": token},
+            {
+                "$set": document_for_set,
+                "$setOnInsert": {"created_at": created_at},
+            },
+            upsert=True,
+        )
+
+    try:
+        await asyncio.to_thread(_upsert)
+        recall_deep_async_store_writes += 1
+    except Exception as exc:
+        recall_deep_async_store_write_failed += 1
+        logger.warning("Deep async job persistence failed token=%s: %s", token, exc)
+
+
+async def _publish_recall_deep_async_status_event(token: str, entry: dict[str, Any]) -> None:
+    payload = _build_recall_deep_async_job_payload(token, entry, include_result=True)
+    async with recall_deep_async_subscribers_lock:
+        subscribers = list(recall_deep_async_subscribers.get(token, []))
+    for queue in subscribers:
+        if queue.full():
+            with contextlib.suppress(Exception):
+                queue.get_nowait()
+        with contextlib.suppress(Exception):
+            queue.put_nowait(payload)
+
+
+async def _restore_recall_deep_async_job_from_store(token: str) -> bool:
+    global recall_deep_async_store_reads, recall_deep_async_store_read_failed, recall_deep_async_store_restored
+    collection = await _get_recall_deep_async_store_collection()
+    if collection is None:
+        return False
+
+    def _find_one() -> dict[str, Any] | None:
+        return collection.find_one({"token": token})
+
+    try:
+        document = await asyncio.to_thread(_find_one)
+        recall_deep_async_store_reads += 1
+    except Exception as exc:
+        recall_deep_async_store_read_failed += 1
+        logger.warning("Deep async job lookup failed token=%s: %s", token, exc)
+        return False
+    if not isinstance(document, dict):
+        return False
+    entry, should_resume = _recall_deep_async_entry_from_doc(token, document)
+    if not isinstance(entry, dict):
+        return False
+    async with recall_deep_async_lock:
+        _recall_deep_async_prune_locked(time.monotonic())
+        recall_deep_async_jobs[token] = entry
+        recall_deep_async_jobs.move_to_end(token)
+    recall_deep_async_store_restored += 1
+    payload_data = entry.get("payload_data") if isinstance(entry.get("payload_data"), dict) else None
+    callback_url = str(entry.get("callback_url") or "").strip() or None
+    if should_resume and payload_data:
+        asyncio.create_task(
+            _run_recall_deep_async_job(
+                token=token,
+                payload_data=payload_data,
+                callback_url=callback_url,
+            )
+        )
+    return True
+
+
+async def _restore_recall_deep_async_jobs_from_store() -> dict[str, int]:
+    global recall_deep_async_store_reads, recall_deep_async_store_read_failed, recall_deep_async_store_restored
+    result = {"loaded": 0, "resumed": 0}
+    if not RECALL_DEEP_ASYNC_RECOVER_ON_STARTUP:
+        return result
+    collection = await _get_recall_deep_async_store_collection()
+    if collection is None:
+        return result
+
+    def _load_docs() -> list[dict[str, Any]]:
+        cursor = collection.find({}).sort("updated_at", -1).limit(RECALL_DEEP_ASYNC_RECOVER_LIMIT)
+        return [row for row in cursor if isinstance(row, dict)]
+
+    try:
+        docs = await asyncio.to_thread(_load_docs)
+        recall_deep_async_store_reads += 1
+    except Exception as exc:
+        recall_deep_async_store_read_failed += 1
+        logger.warning("Deep async job restore failed: %s", exc)
+        return result
+
+    resume_jobs: list[tuple[str, dict[str, Any], str | None]] = []
+    async with recall_deep_async_lock:
+        _recall_deep_async_prune_locked(time.monotonic())
+        for doc in docs:
+            token = str(doc.get("token") or "").strip()
+            if not token:
+                continue
+            entry, should_resume = _recall_deep_async_entry_from_doc(token, doc)
+            if not isinstance(entry, dict):
+                continue
+            recall_deep_async_jobs[token] = entry
+            recall_deep_async_jobs.move_to_end(token)
+            result["loaded"] += 1
+            if should_resume:
+                payload_data = entry.get("payload_data") if isinstance(entry.get("payload_data"), dict) else None
+                if payload_data:
+                    callback_url = str(entry.get("callback_url") or "").strip() or None
+                    resume_jobs.append((token, payload_data, callback_url))
+        _recall_deep_async_prune_locked(time.monotonic())
+
+    for token, payload_data, callback_url in resume_jobs:
+        asyncio.create_task(
+            _run_recall_deep_async_job(
+                token=token,
+                payload_data=payload_data,
+                callback_url=callback_url,
+            )
+        )
+        result["resumed"] += 1
+
+    recall_deep_async_store_restored += result["loaded"]
+    return result
+
+
 def _recall_deep_async_prune_locked(now: float) -> None:
     stale_tokens = [
         token
@@ -20778,6 +21380,7 @@ async def _dispatch_recall_deep_async_callback(
     timeout_secs = max(1.0, RECALL_DEEP_ASYNC_CALLBACK_TIMEOUT_SECS)
     body = {
         "ok": status == "completed",
+        "job_id": token,
         "token": token,
         "status": status,
         "payload": payload,
@@ -20800,6 +21403,7 @@ async def _run_recall_deep_async_job(
 ) -> None:
     global recall_deep_async_started, recall_deep_async_completed
     global recall_deep_async_failed, recall_deep_async_callback_failed
+    entry_snapshot: dict[str, Any] | None = None
     async with recall_deep_async_semaphore:
         async with recall_deep_async_lock:
             now = time.monotonic()
@@ -20812,6 +21416,11 @@ async def _run_recall_deep_async_job(
             entry["updated_at"] = _utc_now()
             recall_deep_async_jobs.move_to_end(token)
             recall_deep_async_started += 1
+            entry_snapshot = dict(entry)
+
+        if isinstance(entry_snapshot, dict):
+            await _persist_recall_deep_async_job_entry(token, entry_snapshot)
+            await _publish_recall_deep_async_status_event(token, entry_snapshot)
 
         status = "completed"
         result_payload: dict[str, Any] | None = None
@@ -20843,6 +21452,7 @@ async def _run_recall_deep_async_job(
             if callback_failed:
                 recall_deep_async_callback_failed += 1
 
+        final_snapshot: dict[str, Any] | None = None
         async with recall_deep_async_lock:
             now = time.monotonic()
             _recall_deep_async_prune_locked(now)
@@ -20865,6 +21475,11 @@ async def _run_recall_deep_async_job(
             else:
                 recall_deep_async_failed += 1
             recall_deep_async_jobs.move_to_end(token)
+            final_snapshot = dict(entry)
+
+        if isinstance(final_snapshot, dict):
+            await _persist_recall_deep_async_job_entry(token, final_snapshot)
+            await _publish_recall_deep_async_status_event(token, final_snapshot)
 
 
 async def _enqueue_recall_deep_async_job(
@@ -20877,6 +21492,7 @@ async def _enqueue_recall_deep_async_job(
     payload_data["deep_async"] = False
     payload_data["callback_url"] = None
     expires_monotonic = time.monotonic() + RECALL_DEEP_ASYNC_RESULT_TTL_SECS
+    entry_snapshot: dict[str, Any] | None = None
     async with recall_deep_async_lock:
         now = time.monotonic()
         _recall_deep_async_prune_locked(now)
@@ -20888,10 +21504,15 @@ async def _enqueue_recall_deep_async_job(
             "expires_monotonic": expires_monotonic,
             "expires_at": _recall_deep_async_expires_at_iso(expires_monotonic),
             "callback_url": callback_url,
+            "payload_data": payload_data,
             "result": None,
             "error": None,
         }
         recall_deep_async_jobs.move_to_end(token)
+        entry_snapshot = dict(recall_deep_async_jobs[token])
+    if isinstance(entry_snapshot, dict):
+        await _persist_recall_deep_async_job_entry(token, entry_snapshot)
+        await _publish_recall_deep_async_status_event(token, entry_snapshot)
     asyncio.create_task(
         _run_recall_deep_async_job(
             token=token,
@@ -20902,11 +21523,111 @@ async def _enqueue_recall_deep_async_job(
     return {
         "ok": True,
         "async": True,
+        "job_id": token,
         "token": token,
         "status": "queued",
         "poll_url": f"/memory/search/async/{token}",
+        "job_poll_url": f"/memory/search/jobs/{token}",
+        "events_url": f"/memory/search/jobs/{token}/events",
         "expires_at": _recall_deep_async_expires_at_iso(expires_monotonic),
     }
+
+
+def _resolve_deep_async_requested(payload: MemorySearch, requested_mode: str) -> tuple[bool, bool]:
+    if payload.deep_async is None:
+        auto_enabled = bool(
+            RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP
+            and _normalize_retrieval_mode(requested_mode) == RETRIEVAL_MODE_DEEP
+        )
+        return auto_enabled, auto_enabled
+    requested = bool(payload.deep_async)
+    return requested, False
+
+
+def _resolve_deep_async_partial_mode() -> str:
+    mode = _normalize_retrieval_mode(RECALL_DEEP_ASYNC_PARTIAL_MODE)
+    if mode == RETRIEVAL_MODE_DEEP:
+        # Keep the immediate branch low-latency; deep completion runs in background.
+        return RETRIEVAL_MODE_FAST
+    return mode
+
+
+async def _build_recall_deep_async_partial_response(payload: MemorySearch) -> tuple[dict[str, Any] | None, str | None]:
+    if not RECALL_DEEP_ASYNC_PARTIAL_ENABLED:
+        return None, None
+    partial_mode = _resolve_deep_async_partial_mode()
+    payload_data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    payload_data["deep_async"] = False
+    payload_data["callback_url"] = None
+    payload_data["retrieval_mode"] = partial_mode
+    requested_sources = (
+        payload_data.get("sources")
+        if isinstance(payload_data.get("sources"), list)
+        else None
+    )
+    if not requested_sources:
+        payload_data["sources"] = list(DEFAULT_RETRIEVAL_FAST_SOURCES)
+    payload_data["auto_escalate"] = False
+    payload_data["query_expansion"] = False
+    try:
+        partial_payload = MemorySearch(**payload_data)
+        partial_response = await search_memory(partial_payload)
+        if isinstance(partial_response, dict):
+            return partial_response, partial_mode
+    except Exception as exc:
+        logger.warning("Deep async partial recall failed; returning token-only response: %s", exc)
+    return None, partial_mode
+
+
+def _attach_recall_deep_async_metadata(
+    *,
+    base_response: dict[str, Any] | None,
+    async_meta: dict[str, Any],
+    deep_async_auto: bool,
+    partial_mode: str | None,
+) -> dict[str, Any]:
+    payload = dict(base_response) if isinstance(base_response, dict) else {}
+    token = str(async_meta.get("token") or async_meta.get("job_id") or "").strip()
+    status = str(async_meta.get("status") or "queued").strip() or "queued"
+    poll_url = str(async_meta.get("poll_url") or "").strip()
+    job_poll_url = str(async_meta.get("job_poll_url") or "").strip()
+    events_url = str(async_meta.get("events_url") or "").strip()
+    expires_at = async_meta.get("expires_at")
+
+    payload["ok"] = True
+    payload["async"] = True
+    payload["status"] = status
+    payload["async_status"] = status
+    if token:
+        payload["token"] = token
+        payload["job_id"] = token
+    if poll_url:
+        payload["poll_url"] = poll_url
+    if job_poll_url:
+        payload["job_poll_url"] = job_poll_url
+    if events_url:
+        payload["events_url"] = events_url
+    if expires_at:
+        payload["expires_at"] = expires_at
+    payload["deep_async_auto"] = bool(deep_async_auto)
+
+    if partial_mode:
+        payload["partial"] = True
+        payload["partial_mode"] = partial_mode
+    if "results" not in payload:
+        payload["results"] = []
+    if "warnings" not in payload or not isinstance(payload.get("warnings"), list):
+        payload["warnings"] = []
+    availability_note = (
+        "Deep retrieval is running asynchronously. "
+        + (f"Poll {job_poll_url or poll_url} " if (job_poll_url or poll_url) else "")
+        + (f"or stream {events_url} " if events_url else "")
+        + "for completed slow-source recall."
+    ).strip()
+    payload["warnings"] = _dedupe_warning_messages(
+        [str(item) for item in payload.get("warnings", [])] + [availability_note]
+    )
+    return payload
 
 
 def _messaging_directive_int(
@@ -21410,8 +22131,8 @@ async def _execute_messaging_command(
 async def search_memory(payload: MemorySearch):
     """Federated retrieval across memory services with preference-aware reranking."""
     requested_mode = _normalize_retrieval_mode(payload.retrieval_mode or RETRIEVAL_MODE_DEFAULT)
-    deep_async_requested = bool(payload.deep_async)
-    if bool(payload.deep_async) and not RECALL_DEEP_ASYNC_ENABLED:
+    deep_async_requested, deep_async_auto = _resolve_deep_async_requested(payload, requested_mode)
+    if deep_async_requested and not RECALL_DEEP_ASYNC_ENABLED:
         raise HTTPException(503, "deep async retrieval is disabled")
     if deep_async_requested:
         if requested_mode != RETRIEVAL_MODE_DEEP:
@@ -21419,9 +22140,16 @@ async def search_memory(payload: MemorySearch):
         callback_url = str(payload.callback_url or "").strip() or None
         if callback_url:
             _task_validate_callback_url(callback_url)
-        return await _enqueue_recall_deep_async_job(
+        async_meta = await _enqueue_recall_deep_async_job(
             payload=payload,
             callback_url=callback_url,
+        )
+        partial_response, partial_mode = await _build_recall_deep_async_partial_response(payload)
+        return _attach_recall_deep_async_metadata(
+            base_response=partial_response,
+            async_meta=async_meta,
+            deep_async_auto=deep_async_auto,
+            partial_mode=partial_mode,
         )
 
     topic_filter = normalize_topic_path(payload.topic_path) if payload.topic_path else None
@@ -21757,39 +22485,91 @@ async def get_memory_search_async(token: str, include_result: bool = True):
     token_value = str(token or "").strip()
     if not token_value:
         raise HTTPException(422, "token is required")
+    entry: dict[str, Any] | None = None
     async with recall_deep_async_lock:
         _recall_deep_async_prune_locked(time.monotonic())
-        entry = recall_deep_async_jobs.get(token_value)
-        if not isinstance(entry, dict):
-            raise HTTPException(404, "async search token not found or expired")
-        payload = {
-            "ok": True,
-            "async": True,
-            "token": token_value,
-            "status": str(entry.get("status") or "unknown"),
-            "created_at": entry.get("created_at"),
-            "updated_at": entry.get("updated_at"),
-            "completed_at": entry.get("completed_at"),
-            "expires_at": entry.get("expires_at"),
-            "poll_url": f"/memory/search/async/{token_value}",
-        }
-        callback_url = str(entry.get("callback_url") or "").strip()
-        if callback_url:
-            callback_meta = (
-                entry.get("callback")
-                if isinstance(entry.get("callback"), dict)
-                else {}
-            )
-            payload["callback"] = {
-                "url": callback_url,
-                "failed": bool(callback_meta.get("failed")),
-                "error": callback_meta.get("error"),
-            }
-        status = str(entry.get("status") or "")
-        if include_result and status in {"completed", "failed"}:
-            payload["result"] = entry.get("result")
-            payload["error"] = entry.get("error")
-    return payload
+        candidate = recall_deep_async_jobs.get(token_value)
+        if isinstance(candidate, dict):
+            entry = dict(candidate)
+    if entry is None:
+        restored = await _restore_recall_deep_async_job_from_store(token_value)
+        if restored:
+            async with recall_deep_async_lock:
+                candidate = recall_deep_async_jobs.get(token_value)
+                if isinstance(candidate, dict):
+                    entry = dict(candidate)
+    if not isinstance(entry, dict):
+        raise HTTPException(404, "async search token not found or expired")
+    return _build_recall_deep_async_job_payload(
+        token_value,
+        entry,
+        include_result=include_result,
+    )
+
+
+@app.get("/memory/search/jobs/{job_id}")
+async def get_memory_search_job(job_id: str, include_result: bool = True):
+    return await get_memory_search_async(job_id, include_result=include_result)
+
+
+@app.get("/memory/search/jobs/{job_id}/events")
+async def stream_memory_search_job_events(job_id: str, include_result: bool = True):
+    token = str(job_id or "").strip()
+    if not token:
+        raise HTTPException(422, "job_id is required")
+    snapshot = await get_memory_search_async(token, include_result=include_result)
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=RECALL_DEEP_ASYNC_SSE_QUEUE_SIZE)
+    async with recall_deep_async_subscribers_lock:
+        subscribers = recall_deep_async_subscribers.setdefault(token, [])
+        subscribers.append(queue)
+
+    def _sse_frame(event_name: str, payload: dict[str, Any]) -> bytes:
+        body = json.dumps(payload, default=str, separators=(",", ":"))
+        return f"event: {event_name}\ndata: {body}\n\n".encode("utf-8")
+
+    async def _stream() -> AsyncIterator[bytes]:
+        try:
+            yield _sse_frame("snapshot", snapshot)
+            status = str(snapshot.get("status") or "").strip().lower()
+            if status in {"completed", "failed"}:
+                return
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=max(3.0, RECALL_DEEP_ASYNC_SSE_HEARTBEAT_SECS),
+                    )
+                except asyncio.TimeoutError:
+                    yield b": keep-alive\n\n"
+                    continue
+                payload = dict(message)
+                if not include_result:
+                    payload.pop("result", None)
+                    payload.pop("error", None)
+                event_status = str(payload.get("status") or "").strip().lower()
+                event_name = "update"
+                if event_status == "completed":
+                    event_name = "completed"
+                elif event_status == "failed":
+                    event_name = "failed"
+                yield _sse_frame(event_name, payload)
+                if event_status in {"completed", "failed"}:
+                    return
+        finally:
+            async with recall_deep_async_subscribers_lock:
+                subscribers = recall_deep_async_subscribers.get(token) or []
+                recall_deep_async_subscribers[token] = [
+                    item for item in subscribers if item is not queue
+                ]
+                if not recall_deep_async_subscribers[token]:
+                    recall_deep_async_subscribers.pop(token, None)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_stream(), media_type="text/event-stream", headers=headers)
 
 
 @app.post("/memory/context-pack")

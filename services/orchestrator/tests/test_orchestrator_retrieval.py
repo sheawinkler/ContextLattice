@@ -1128,6 +1128,131 @@ async def test_federated_search_deep_mode_includes_slow_sources_for_explicit_ove
 
 
 @pytest.mark.asyncio
+async def test_federated_search_deep_mode_defers_mongo_raw_for_non_raw_intent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = {"qdrant": 0, "mongo_raw": 0}
+    warmed: list[str] = []
+
+    async def _qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        return [
+            {
+                "project": "alpha",
+                "file": f"fast/{idx}.md",
+                "summary": "high-confidence answer from fast source",
+                "score": 0.95 - (idx * 0.01),
+                "source": "qdrant",
+            }
+            for idx in range(8)
+        ]
+
+    async def _mongo(*args, **kwargs):
+        calls["mongo_raw"] += 1
+        return [{"project": "alpha", "file": "raw/a.log", "summary": "raw row", "score": 0.4, "source": "mongo_raw"}]
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    def _warm(**kwargs):
+        warmed.append(str(kwargs.get("source") or ""))
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _mongo)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "_schedule_background_source_warm", _warm)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_RESULTS", 2)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE", 0.55)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY", 1)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW", True)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT, orchestrator.RETRIEVAL_SOURCE_MONGO_RAW],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA],
+    )
+
+    _, debug, warnings = await orchestrator.federated_search_memory(
+        "alpha",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="deep",
+        retrieval_intent="decision",
+    )
+
+    assert calls["qdrant"] == 1
+    assert calls["mongo_raw"] == 0
+    assert orchestrator.RETRIEVAL_SOURCE_MONGO_RAW in debug["staged_fetch"]["async_warm_sources"]
+    assert orchestrator.RETRIEVAL_SOURCE_MONGO_RAW in debug["source_policy"]["mongo_raw_intent_async_sources"]
+    assert orchestrator.RETRIEVAL_SOURCE_MONGO_RAW in warmed
+    assert any("mongo_raw deep retrieval ran asynchronously" in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
+async def test_federated_search_deep_mode_keeps_mongo_raw_sync_for_raw_intent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = {"qdrant": 0, "mongo_raw": 0}
+
+    async def _qdrant(*args, **kwargs):
+        calls["qdrant"] += 1
+        return [{"project": "alpha", "file": "fast/a.md", "summary": "fast result", "score": 0.75, "source": "qdrant"}]
+
+    async def _mongo(*args, **kwargs):
+        calls["mongo_raw"] += 1
+        return [{"project": "alpha", "file": "raw/a.log", "summary": "raw row", "score": 0.68, "source": "mongo_raw"}]
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_qdrant", _qdrant)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _mongo)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _empty)
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW", True)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_QDRANT, orchestrator.RETRIEVAL_SOURCE_MONGO_RAW],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_LETTA],
+    )
+
+    _, debug, _ = await orchestrator.federated_search_memory(
+        "alpha raw logs",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="deep",
+        retrieval_intent="raw",
+    )
+
+    assert calls["qdrant"] == 1
+    assert calls["mongo_raw"] == 1
+    assert debug["source_policy"]["mongo_raw_intent_async_sources"] == []
+
+
+@pytest.mark.asyncio
 async def test_federated_search_deep_mode_does_not_force_degraded_slow_sources(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -2622,6 +2747,7 @@ async def test_memory_search_deep_async_returns_poll_token(monkeypatch: pytest.M
         }
 
     monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_PARTIAL_ENABLED", False)
     monkeypatch.setattr(orchestrator, "_enqueue_recall_deep_async_job", _enqueue)
     response = await orchestrator.search_memory(
         orchestrator.MemorySearch(
@@ -2632,6 +2758,7 @@ async def test_memory_search_deep_async_returns_poll_token(monkeypatch: pytest.M
     )
     assert response["async"] is True
     assert response["token"] == "tok-1"
+    assert response["job_id"] == "tok-1"
     assert captured["callback_url"] is None
 
 
@@ -2647,6 +2774,88 @@ async def test_memory_search_deep_async_requires_deep_mode(monkeypatch: pytest.M
             )
         )
     assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_memory_search_deep_async_returns_partial_plus_job(monkeypatch: pytest.MonkeyPatch):
+    async def _enqueue(*, payload: Any, callback_url: str | None):
+        return {
+            "ok": True,
+            "async": True,
+            "token": "tok-partial",
+            "job_id": "tok-partial",
+            "status": "queued",
+            "poll_url": "/memory/search/async/tok-partial",
+            "job_poll_url": "/memory/search/jobs/tok-partial",
+            "expires_at": "2026-03-14T00:00:00Z",
+        }
+
+    async def _partial(payload: Any):
+        return (
+            {
+                "results": [
+                    {
+                        "project": "alpha",
+                        "file": "notes/quick.md",
+                        "summary": "quick partial",
+                        "score": 0.81,
+                        "source": "topic_rollups",
+                    }
+                ],
+                "warnings": ["Sources returned now: topic_rollups."],
+                "retrieval_mode": "fast",
+                "retrieval_intent": "decision",
+                "degraded": False,
+            },
+            "fast",
+        )
+
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "_enqueue_recall_deep_async_job", _enqueue)
+    monkeypatch.setattr(orchestrator, "_build_recall_deep_async_partial_response", _partial)
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="deep partial",
+            retrieval_mode="deep",
+            deep_async=True,
+        )
+    )
+    assert response["async"] is True
+    assert response["partial"] is True
+    assert response["token"] == "tok-partial"
+    assert response["job_id"] == "tok-partial"
+    assert response["job_poll_url"] == "/memory/search/jobs/tok-partial"
+    assert response["results"][0]["source"] == "topic_rollups"
+    assert any("Deep retrieval is running asynchronously" in warning for warning in response["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_memory_search_deep_async_default_for_deep(monkeypatch: pytest.MonkeyPatch):
+    async def _enqueue(*, payload: Any, callback_url: str | None):
+        return {
+            "ok": True,
+            "async": True,
+            "token": "tok-auto",
+            "job_id": "tok-auto",
+            "status": "queued",
+            "poll_url": "/memory/search/async/tok-auto",
+            "job_poll_url": "/memory/search/jobs/tok-auto",
+        }
+
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_DEFAULT_FOR_DEEP", True)
+    monkeypatch.setattr(orchestrator, "RECALL_DEEP_ASYNC_PARTIAL_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "_enqueue_recall_deep_async_job", _enqueue)
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="auto deep async",
+            retrieval_mode="deep",
+            deep_async=None,
+        )
+    )
+    assert response["async"] is True
+    assert response["deep_async_auto"] is True
+    assert response["token"] == "tok-auto"
 
 
 @pytest.mark.asyncio
@@ -2668,7 +2877,62 @@ async def test_get_memory_search_async_returns_completed_result(monkeypatch: pyt
         }
     response = await orchestrator.get_memory_search_async(token)
     assert response["status"] == "completed"
+    assert response["job_id"] == token
+    assert response["job_poll_url"] == f"/memory/search/jobs/{token}"
+    assert response["events_url"] == f"/memory/search/jobs/{token}/events"
     assert response["result"]["results"][0]["project"] == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_get_memory_search_job_alias_returns_completed_result(monkeypatch: pytest.MonkeyPatch):
+    token = "tok-status-alias"
+    expires = time.monotonic() + 120.0
+    async with orchestrator.recall_deep_async_lock:
+        orchestrator.recall_deep_async_jobs.clear()
+        orchestrator.recall_deep_async_jobs[token] = {
+            "token": token,
+            "status": "completed",
+            "created_at": "2026-03-12T00:00:00Z",
+            "updated_at": "2026-03-12T00:00:01Z",
+            "completed_at": "2026-03-12T00:00:01Z",
+            "expires_monotonic": expires,
+            "expires_at": orchestrator._recall_deep_async_expires_at_iso(expires),
+            "result": {"results": [{"project": "alpha"}]},
+            "error": None,
+        }
+    response = await orchestrator.get_memory_search_job(token)
+    assert response["status"] == "completed"
+    assert response["job_id"] == token
+
+
+@pytest.mark.asyncio
+async def test_stream_memory_search_job_events_returns_snapshot_for_completed_job():
+    token = "tok-events"
+    expires = time.monotonic() + 120.0
+    async with orchestrator.recall_deep_async_lock:
+        orchestrator.recall_deep_async_jobs.clear()
+        orchestrator.recall_deep_async_jobs[token] = {
+            "token": token,
+            "status": "completed",
+            "created_at": "2026-03-12T00:00:00Z",
+            "updated_at": "2026-03-12T00:00:01Z",
+            "completed_at": "2026-03-12T00:00:01Z",
+            "expires_monotonic": expires,
+            "expires_at": orchestrator._recall_deep_async_expires_at_iso(expires),
+            "result": {"results": [{"project": "alpha"}]},
+            "error": None,
+        }
+    response = await orchestrator.stream_memory_search_job_events(token)
+    assert response.media_type == "text/event-stream"
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, str):
+            chunks.append(chunk.encode("utf-8"))
+        else:
+            chunks.append(bytes(chunk))
+    payload = b"".join(chunks).decode("utf-8")
+    assert "event: snapshot" in payload
+    assert "\"status\":\"completed\"" in payload
 
 
 @pytest.mark.asyncio

@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -82,6 +82,7 @@ all: launch
 
 # ---- Compose lifecycle ----
 up:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > if [ -n "$(PROFILES)" ]; then echo ">> compose up (build) [profiles: $(PROFILES)] with $(ENV_FILE)"; else echo ">> compose up (build) with $(ENV_FILE)"; fi
 > $(DC) $(PROFILE_ARGS) up -d --build
 
@@ -266,7 +267,14 @@ env-print:
 > @echo "LETTA_PORT=$(LETTA_PORT)"
 
 env-check:
+> @ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --check
 > @$(DC) config >/dev/null && echo "compose syntax: OK"
+
+env-lock-check:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --check
+
+env-lock-apply:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 
 # ===== Local sidecars: MLX server + OpenAI router (pidfile-managed) =====
 ENV_FILE ?= .env
@@ -442,6 +450,7 @@ quickstart:
 > mkdir -p infra/compose
 > ln -svf "../../$(ENV_FILE)" infra/compose/.env >/dev/null
 > BOOTSTRAP=1 scripts/first_run.sh
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > ORCH_KEY="$$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)"; \
 > curl -fsS "http://127.0.0.1:8075/health" | jq . >/dev/null; \
 > curl -fsS -H "x-api-key: $$ORCH_KEY" "http://127.0.0.1:8075/status" | jq . >/dev/null; \
@@ -455,6 +464,7 @@ mem-up-full:
 
 .PHONY: mem-up-lite mem-down-lite mem-ps-lite
 mem-up-lite:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > docker compose -f docker-compose.lite.yml up -d --build
 
 mem-down-lite:
@@ -464,9 +474,11 @@ mem-ps-lite:
 > docker compose -f docker-compose.lite.yml ps
 
 mem-up-release:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > docker compose -f docker-compose.yml -f docker-compose.release.lock.yml up -d --build
 
 mem-up-lite-release:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > docker compose -f docker-compose.lite.yml -f docker-compose.release.lock.yml up -d --build
 
 release-lock-verify:
