@@ -192,6 +192,8 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | j
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq
 curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
   "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" | jq
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  "http://127.0.0.1:8075/maintenance/telemetry/purge?dry_run=true&include_qdrant=true&include_mindsdb=true&include_letta=true" | jq
 ```
 
 ### 7) First-run toggles (optional)
@@ -285,6 +287,16 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - Outbox protection: fanout retries, coalescing windows, and target-level backpressure to protect core durability.
 - Storage pressure controls: retention runner, low-value TTL pruning, optional snapshot pruning, and external NVMe cold path support.
 - Retrieval path: parallel source reads with orchestrator merge/rank loop and preference-learning feedback.
+- Telemetry routing guards (default-on): telemetry-like writes are filtered out of `qdrant`/`mindsdb`/`letta` fanout.
+
+Telemetry routing/cleanup toggles:
+
+```bash
+ORCH_QDRANT_TELEMETRY_GUARD_ENABLED=true
+ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED=true
+ORCH_LETTA_TELEMETRY_GUARD_ENABLED=true
+MINDSDB_LOW_VALUE_RETENTION_HOURS=48
+```
 
 ### v2.0.0 Runtime Comparison (v1 legacy vs v2 cutover)
 
@@ -454,6 +466,7 @@ Ingress endpoints:
 - `POST /telemetry/fanout/letta/auto-prune/run`
 - `GET /telemetry/retention`
 - `POST /telemetry/retention/run`
+- `POST /maintenance/telemetry/purge`
 
 ## Docs Index
 

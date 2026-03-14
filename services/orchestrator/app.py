@@ -1309,8 +1309,21 @@ SINK_RETENTION_MAX_DELETES_PER_RUN = max(1, int(os.getenv("SINK_RETENTION_MAX_DE
 QDRANT_LOW_VALUE_RETENTION_HOURS = float(os.getenv("QDRANT_LOW_VALUE_RETENTION_HOURS", "72"))
 LETTA_LOW_VALUE_RETENTION_HOURS = float(os.getenv("LETTA_LOW_VALUE_RETENTION_HOURS", "48"))
 MONGO_RAW_LOW_VALUE_RETENTION_HOURS = float(os.getenv("MONGO_RAW_LOW_VALUE_RETENTION_HOURS", "0"))
+MINDSDB_LOW_VALUE_RETENTION_HOURS = float(os.getenv("MINDSDB_LOW_VALUE_RETENTION_HOURS", "48"))
 MEMORY_BANK_TELEMETRY_GUARD_ENABLED = os.getenv(
     "ORCH_MEMORY_BANK_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+QDRANT_TELEMETRY_GUARD_ENABLED = os.getenv(
+    "ORCH_QDRANT_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MINDSDB_TELEMETRY_GUARD_ENABLED = os.getenv(
+    "ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+LETTA_TELEMETRY_GUARD_ENABLED = os.getenv(
+    "ORCH_LETTA_TELEMETRY_GUARD_ENABLED",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 MEMORY_BANK_TELEMETRY_FILE_PATTERNS_ENV = os.getenv(
@@ -3179,6 +3192,24 @@ def _looks_memory_bank_telemetry_file(file_name: str | None, topic_path: str | N
     return False
 
 
+def _is_telemetry_memory_record(
+    file_name: str | None,
+    topic_path: str | None = None,
+    summary: str | None = None,
+) -> bool:
+    if _looks_memory_bank_telemetry_file(file_name, topic_path):
+        return True
+    if str(file_name or "").strip() or str(topic_path or "").strip():
+        return False
+    lowered_summary = str(summary or "").strip().lower()
+    if lowered_summary:
+        for marker in MEMORY_BANK_TELEMETRY_MARKERS:
+            token = str(marker or "").strip().lower()
+            if token and token in lowered_summary:
+                return True
+    return False
+
+
 def _looks_low_value_file(file_name: str | None) -> bool:
     lowered = str(file_name or "").strip().lower()
     if not lowered:
@@ -3616,11 +3647,31 @@ async def _memory_write_worker(
 async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
     global memory_write_queue_dropped
     letta_admit = bool(item.get("letta_admit", True))
-    fanout_targets = [FANOUT_TARGET_QDRANT, FANOUT_TARGET_MINDSDB]
+    file_name = str(item.get("file") or "")
+    topic_path = str(item.get("topic_path") or "")
+    summary = str(item.get("summary") or "")
+    telemetry_like = _is_telemetry_memory_record(file_name, topic_path, summary)
+    qdrant_enabled = not (telemetry_like and QDRANT_TELEMETRY_GUARD_ENABLED)
+    mindsdb_enabled = not (telemetry_like and MINDSDB_TELEMETRY_GUARD_ENABLED)
+    letta_enabled = not (telemetry_like and LETTA_TELEMETRY_GUARD_ENABLED)
+
+    fanout_targets: list[str] = []
+    if qdrant_enabled:
+        fanout_targets.append(FANOUT_TARGET_QDRANT)
+    if mindsdb_enabled:
+        fanout_targets.append(FANOUT_TARGET_MINDSDB)
     if not item.get("mongo_persisted"):
         fanout_targets.insert(0, FANOUT_TARGET_MONGO_RAW)
-    if item.get("letta_session") and _letta_target_enabled() and letta_admit:
+    if item.get("letta_session") and _letta_target_enabled() and letta_admit and letta_enabled:
         fanout_targets.append(FANOUT_TARGET_LETTA)
+    elif item.get("letta_session") and not letta_enabled:
+        _json_log(
+            "memory.write.letta_telemetry_skipped",
+            {
+                "project": item.get("project"),
+                "file": item.get("file"),
+            },
+        )
     elif item.get("letta_session") and not letta_admit:
         _json_log(
             "memory.write.letta_admission_skipped",
@@ -11298,6 +11349,55 @@ async def _run_mongo_low_value_retention_once() -> dict[str, Any]:
     return await asyncio.to_thread(_cleanup)
 
 
+async def _run_mindsdb_low_value_retention_once() -> dict[str, Any]:
+    hours = max(0.0, MINDSDB_LOW_VALUE_RETENTION_HOURS)
+    if hours <= 0:
+        return {"enabled": False, "reason": "MINDSDB_LOW_VALUE_RETENTION_HOURS<=0", "scanned": 0, "deleted": 0}
+    if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
+        return {"enabled": False, "reason": "mindsdb autosync disabled", "scanned": 0, "deleted": 0}
+    await ensure_mindsdb_table()
+    table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
+    cutoff_iso = _retention_cutoff_iso(hours)
+    max_scan = max(100, SINK_RETENTION_SCAN_LIMIT)
+    max_deletes = max(1, SINK_RETENTION_MAX_DELETES_PER_RUN)
+    select_query = (
+        f"SELECT project, file, summary, created_at "
+        f"FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
+        f"WHERE created_at < '{_escape_sql_literal(cutoff_iso)}' "
+        f"ORDER BY created_at ASC LIMIT {max_scan};"
+    )
+    rows = _mindsdb_rows(await _mindsdb_execute(select_query))
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        if len(selected) >= max_deletes:
+            break
+        file_name = str(row.get("file") or "")
+        topic_path = normalize_topic_path(derive_topic_path(file_name, None))
+        summary = str(row.get("summary") or "")
+        if not _is_telemetry_memory_record(file_name, topic_path, summary):
+            continue
+        selected.append(row)
+    deleted = 0
+    for row in selected:
+        delete_query = (
+            f"DELETE FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
+            f"WHERE project = '{_escape_sql_literal(str(row.get('project') or ''))}' "
+            f"AND file = '{_escape_sql_literal(str(row.get('file') or ''))}' "
+            f"AND summary = '{_escape_sql_literal(str(row.get('summary') or ''))}' "
+            f"AND created_at = '{_escape_sql_literal(str(row.get('created_at') or ''))}';"
+        )
+        await _mindsdb_execute(delete_query)
+        deleted += 1
+    return {
+        "enabled": True,
+        "cutoffIso": cutoff_iso,
+        "table": f"{MINDSDB_AUTOSYNC_DB}.{table_name}",
+        "scanned": len(rows),
+        "deleteCandidates": len(selected),
+        "deleted": deleted,
+    }
+
+
 async def _run_letta_low_value_retention_once() -> dict[str, Any]:
     hours = max(0.0, LETTA_LOW_VALUE_RETENTION_HOURS)
     if hours <= 0:
@@ -11375,6 +11475,200 @@ async def _run_letta_low_value_retention_once() -> dict[str, Any]:
     return {
         "enabled": True,
         "cutoffIso": cutoff_dt.isoformat().replace("+00:00", "Z"),
+        "scanned": scanned,
+        "deleteCandidates": delete_candidates,
+        "deleted": deleted,
+    }
+
+
+async def _run_qdrant_telemetry_purge_once(
+    *,
+    scan_limit: int,
+    max_deletes: int,
+    dry_run: bool,
+) -> dict[str, Any]:
+    if qdrant_models is None:
+        raise OrchestratorError("qdrant-client dependency is required for telemetry purge")
+    scan_limit = max(100, scan_limit)
+    max_deletes = max(1, max_deletes)
+    scanned = 0
+    candidates: list[Any] = []
+    offset: Any = None
+    while scanned < scan_limit and len(candidates) < max_deletes:
+        page_limit = min(256, scan_limit - scanned)
+        points, next_offset = await _qdrant_call(
+            "telemetry_purge_scroll",
+            lambda client, _: client.scroll(
+                collection_name=QDRANT_COLLECTION,
+                limit=page_limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            ),
+        )
+        if not points:
+            break
+        for point in points:
+            scanned += 1
+            payload_row = getattr(point, "payload", None) or {}
+            file_name = str(payload_row.get("file") or "")
+            topic_path = str(payload_row.get("topic_path") or "")
+            summary = str(payload_row.get("summary") or "")
+            if not _is_telemetry_memory_record(file_name, topic_path, summary):
+                continue
+            point_id = getattr(point, "id", None)
+            if point_id is None:
+                continue
+            candidates.append(point_id)
+            if len(candidates) >= max_deletes:
+                break
+        offset = next_offset
+        if offset is None:
+            break
+    deleted = 0
+    if not dry_run and candidates:
+        for id_batch in _chunk_values(candidates, max(1, SINK_RETENTION_DELETE_BATCH)):
+            await _qdrant_call(
+                "telemetry_purge_delete",
+                lambda client, _: client.delete(
+                    collection_name=QDRANT_COLLECTION,
+                    points_selector=qdrant_models.PointIdsList(points=id_batch),
+                    wait=True,
+                ),
+            )
+            deleted += len(id_batch)
+    return {
+        "enabled": True,
+        "dryRun": bool(dry_run),
+        "scanned": scanned,
+        "deleteCandidates": len(candidates),
+        "deleted": deleted,
+    }
+
+
+async def _run_mindsdb_telemetry_purge_once(
+    *,
+    scan_limit: int,
+    max_deletes: int,
+    dry_run: bool,
+) -> dict[str, Any]:
+    if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
+        return {"enabled": False, "reason": "mindsdb autosync disabled", "scanned": 0, "deleted": 0}
+    await ensure_mindsdb_table()
+    table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
+    scan_limit = max(100, scan_limit)
+    max_deletes = max(1, max_deletes)
+    select_query = (
+        f"SELECT project, file, summary, created_at "
+        f"FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
+        f"ORDER BY created_at ASC LIMIT {scan_limit};"
+    )
+    rows = _mindsdb_rows(await _mindsdb_execute(select_query))
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        if len(selected) >= max_deletes:
+            break
+        file_name = str(row.get("file") or "")
+        topic_path = normalize_topic_path(derive_topic_path(file_name, None))
+        summary = str(row.get("summary") or "")
+        if not _is_telemetry_memory_record(file_name, topic_path, summary):
+            continue
+        selected.append(row)
+    deleted = 0
+    if not dry_run:
+        for row in selected:
+            delete_query = (
+                f"DELETE FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
+                f"WHERE project = '{_escape_sql_literal(str(row.get('project') or ''))}' "
+                f"AND file = '{_escape_sql_literal(str(row.get('file') or ''))}' "
+                f"AND summary = '{_escape_sql_literal(str(row.get('summary') or ''))}' "
+                f"AND created_at = '{_escape_sql_literal(str(row.get('created_at') or ''))}';"
+            )
+            await _mindsdb_execute(delete_query)
+            deleted += 1
+    return {
+        "enabled": True,
+        "dryRun": bool(dry_run),
+        "table": f"{MINDSDB_AUTOSYNC_DB}.{table_name}",
+        "scanned": len(rows),
+        "deleteCandidates": len(selected),
+        "deleted": deleted,
+    }
+
+
+async def _run_letta_telemetry_purge_once(
+    *,
+    scan_limit: int,
+    max_deletes: int,
+    dry_run: bool,
+) -> dict[str, Any]:
+    if not _letta_config_enabled():
+        return {"enabled": False, "reason": "letta not configured", "scanned": 0, "deleted": 0}
+    headers: dict[str, str] = {}
+    if LETTA_API_KEY:
+        headers["Authorization"] = f"Bearer {LETTA_API_KEY}"
+    page_limit = max(10, min(LETTA_RETENTION_PAGE_LIMIT, 200))
+    scan_limit = max(100, scan_limit)
+    max_deletes = max(1, min(max_deletes, LETTA_RETENTION_MAX_DELETES_PER_RUN))
+    agent_id = await _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers)
+    client = await _get_letta_client()
+    scanned = 0
+    deleted = 0
+    delete_candidates = 0
+    after: str | None = None
+    while scanned < scan_limit and delete_candidates < max_deletes:
+        params: dict[str, Any] = {"limit": page_limit, "ascending": True}
+        if after:
+            params["after"] = after
+        resp = await client.get(
+            f"{LETTA_URL}/v1/agents/{agent_id}/archival-memory",
+            params=params,
+            headers=headers,
+            timeout=LETTA_REQUEST_TIMEOUT_SECS,
+        )
+        if resp.status_code >= 400:
+            raise OrchestratorError(
+                f"Letta telemetry purge list failed: status={resp.status_code} body={resp.text[:240]}"
+            )
+        rows = resp.json() if resp.content else []
+        if not isinstance(rows, list) or not rows:
+            break
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            scanned += 1
+            after = str(row.get("id") or "") or after
+            parsed = _parse_letta_archival_content(str(row.get("text") or ""))
+            if not _is_telemetry_memory_record(
+                parsed.get("file"),
+                parsed.get("topic_path"),
+                parsed.get("summary"),
+            ):
+                continue
+            memory_id = str(row.get("id") or "").strip()
+            if not memory_id:
+                continue
+            delete_candidates += 1
+            if dry_run:
+                continue
+            delete_resp = await client.delete(
+                f"{LETTA_URL}/v1/agents/{agent_id}/archival-memory/{memory_id}",
+                headers=headers,
+                timeout=LETTA_REQUEST_TIMEOUT_SECS,
+            )
+            if delete_resp.status_code in (200, 202, 204, 404):
+                deleted += 1
+            elif delete_resp.status_code >= 400:
+                raise OrchestratorError(
+                    f"Letta telemetry purge delete failed: status={delete_resp.status_code} body={delete_resp.text[:240]}"
+                )
+            if delete_candidates >= max_deletes:
+                break
+        if len(rows) < page_limit:
+            break
+    return {
+        "enabled": True,
+        "dryRun": bool(dry_run),
         "scanned": scanned,
         "deleteCandidates": delete_candidates,
         "deleted": deleted,
@@ -11598,6 +11892,13 @@ async def run_sink_retention_once() -> dict[str, Any]:
         except Exception as exc:
             errors["mongo_raw"] = str(exc)
         try:
+            sinks["mindsdb"] = await asyncio.wait_for(
+                _run_mindsdb_low_value_retention_once(),
+                timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
+            )
+        except Exception as exc:
+            errors["mindsdb"] = str(exc)
+        try:
             sinks["letta"] = await asyncio.wait_for(
                 _run_letta_low_value_retention_once(),
                 timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
@@ -11631,9 +11932,10 @@ async def _sink_retention_worker() -> None:
         try:
             result = await run_sink_retention_once()
             logger.info(
-                "sink retention: qdrant_deleted=%s mongo_deleted=%s letta_deleted=%s errors=%s",
+                "sink retention: qdrant_deleted=%s mongo_deleted=%s mindsdb_deleted=%s letta_deleted=%s errors=%s",
                 ((result.get("sinks") or {}).get("qdrant") or {}).get("deleted"),
                 ((result.get("sinks") or {}).get("mongo_raw") or {}).get("deleted"),
+                ((result.get("sinks") or {}).get("mindsdb") or {}).get("deleted"),
                 ((result.get("sinks") or {}).get("letta") or {}).get("deleted"),
                 result.get("errors"),
             )
@@ -18304,23 +18606,33 @@ async def write_memory(payload: MemoryWrite, request: Request):
     warnings: list[str] = []
     if storage_policy_warning:
         warnings.append(storage_policy_warning)
+    telemetry_like_record = _is_telemetry_memory_record(file_name, topic_path, summary)
+    qdrant_telemetry_skipped = telemetry_like_record and QDRANT_TELEMETRY_GUARD_ENABLED
+    mindsdb_telemetry_skipped = telemetry_like_record and MINDSDB_TELEMETRY_GUARD_ENABLED
+    letta_telemetry_skipped = telemetry_like_record and LETTA_TELEMETRY_GUARD_ENABLED
     memory_bank_low_value_excluded = bool(
         MEMORY_BANK_TELEMETRY_GUARD_ENABLED
         and _looks_memory_bank_telemetry_file(file_name, topic_path)
     )
     if memory_bank_low_value_excluded:
+        warnings.append("memory-bank persistence skipped for telemetry-like artifact")
+    if telemetry_like_record and (qdrant_telemetry_skipped or mindsdb_telemetry_skipped or letta_telemetry_skipped):
         warnings.append(
-            "memory-bank persistence skipped for telemetry-like artifact; fanout sinks remain enabled"
+            "telemetry-like artifact routed to telemetry sink path; qdrant/mindsdb/letta fanout filtered"
         )
     fanout_status: dict[str, str] = {
         "memory_bank": (
             "skipped_low_value" if memory_bank_low_value_excluded else ("queued_rollup" if hot_rollup_mode else "queued")
         ),
         FANOUT_TARGET_MONGO_RAW: "pending",
-        FANOUT_TARGET_QDRANT: "deferred_rollup" if hot_rollup_mode else "pending",
-        FANOUT_TARGET_MINDSDB: "deferred_rollup" if hot_rollup_mode else "pending",
+        FANOUT_TARGET_QDRANT: (
+            "skipped_low_value" if qdrant_telemetry_skipped else ("deferred_rollup" if hot_rollup_mode else "pending")
+        ),
+        FANOUT_TARGET_MINDSDB: (
+            "skipped_low_value" if mindsdb_telemetry_skipped else ("deferred_rollup" if hot_rollup_mode else "pending")
+        ),
         FANOUT_TARGET_LANGFUSE: "disabled" if not LANGFUSE_API_KEY else ("deferred_rollup" if hot_rollup_mode else "pending"),
-        FANOUT_TARGET_LETTA: "disabled",
+        FANOUT_TARGET_LETTA: "skipped_low_value" if letta_telemetry_skipped else "disabled",
     }
     mongo_persisted = False
     mongo_ok, mongo_error = await persist_raw_event_to_mongo(raw_event)
@@ -18336,7 +18648,9 @@ async def write_memory(payload: MemoryWrite, request: Request):
     letta_context = None
     if LETTA_AUTO_SESSION_ID:
         source_kind = "high_frequency_rollup" if hot_rollup_mode else "memory_write"
-        if LETTA_REQUIRE_API_KEY and not LETTA_API_KEY:
+        if letta_telemetry_skipped:
+            fanout_status[FANOUT_TARGET_LETTA] = "skipped_low_value"
+        elif LETTA_REQUIRE_API_KEY and not LETTA_API_KEY:
             fanout_status[FANOUT_TARGET_LETTA] = "disabled"
             warnings.append("Letta sync disabled because LETTA_REQUIRE_API_KEY is true and LETTA_API_KEY is empty")
         elif not letta_runtime_enabled:
@@ -19410,6 +19724,7 @@ async def get_retention_metrics():
         "thresholdHours": {
             "qdrant": QDRANT_LOW_VALUE_RETENTION_HOURS,
             "mongo_raw": MONGO_RAW_LOW_VALUE_RETENTION_HOURS,
+            "mindsdb": MINDSDB_LOW_VALUE_RETENTION_HOURS,
             "letta": LETTA_LOW_VALUE_RETENTION_HOURS,
         },
         "state": sink_retention_state,
@@ -19420,6 +19735,65 @@ async def get_retention_metrics():
 async def trigger_retention_run():
     result = await run_sink_retention_once()
     return {"ok": not bool(result.get("errors")), "result": result}
+
+
+@app.post("/maintenance/telemetry/purge")
+async def purge_telemetry_from_retrieval_sinks(
+    dry_run: bool = True,
+    scan_limit: int = 5000,
+    max_deletes_per_sink: int = 5000,
+    include_qdrant: bool = True,
+    include_mindsdb: bool = True,
+    include_letta: bool = True,
+):
+    scan_limit = max(100, int(scan_limit))
+    max_deletes = max(1, int(max_deletes_per_sink))
+    sinks: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    if include_qdrant:
+        try:
+            sinks["qdrant"] = await asyncio.wait_for(
+                _run_qdrant_telemetry_purge_once(
+                    scan_limit=scan_limit,
+                    max_deletes=max_deletes,
+                    dry_run=dry_run,
+                ),
+                timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
+            )
+        except Exception as exc:
+            errors["qdrant"] = str(exc)
+    if include_mindsdb:
+        try:
+            sinks["mindsdb"] = await asyncio.wait_for(
+                _run_mindsdb_telemetry_purge_once(
+                    scan_limit=scan_limit,
+                    max_deletes=max_deletes,
+                    dry_run=dry_run,
+                ),
+                timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
+            )
+        except Exception as exc:
+            errors["mindsdb"] = str(exc)
+    if include_letta:
+        try:
+            sinks["letta"] = await asyncio.wait_for(
+                _run_letta_telemetry_purge_once(
+                    scan_limit=scan_limit,
+                    max_deletes=max_deletes,
+                    dry_run=dry_run,
+                ),
+                timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
+            )
+        except Exception as exc:
+            errors["letta"] = str(exc)
+    return {
+        "ok": not bool(errors),
+        "dryRun": bool(dry_run),
+        "scanLimit": scan_limit,
+        "maxDeletesPerSink": max_deletes,
+        "sinks": sinks,
+        "errors": errors,
+    }
 
 
 @app.post("/telemetry/memory/cleanup-low-value")

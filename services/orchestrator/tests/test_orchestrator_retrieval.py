@@ -5044,11 +5044,15 @@ async def test_run_sink_retention_once_collects_partial_errors(monkeypatch: pyte
     async def _mongo():
         raise RuntimeError("mongo unavailable")
 
+    async def _mindsdb():
+        return {"enabled": True, "deleted": 1}
+
     async def _letta():
         return {"enabled": True, "deleted": 0}
 
     monkeypatch.setattr(orchestrator, "_run_qdrant_low_value_retention_once", _qdrant)
     monkeypatch.setattr(orchestrator, "_run_mongo_low_value_retention_once", _mongo)
+    monkeypatch.setattr(orchestrator, "_run_mindsdb_low_value_retention_once", _mindsdb)
     monkeypatch.setattr(orchestrator, "_run_letta_low_value_retention_once", _letta)
     orchestrator.sink_retention_state.update(
         {
@@ -5063,6 +5067,7 @@ async def test_run_sink_retention_once_collects_partial_errors(monkeypatch: pyte
     result = await orchestrator.run_sink_retention_once()
     assert result["ok"] is False
     assert result["sinks"]["qdrant"]["deleted"] == 2
+    assert result["sinks"]["mindsdb"]["deleted"] == 1
     assert "mongo_raw" in result["errors"]
     assert orchestrator.sink_retention_state["runs"] == 1
 
@@ -5402,8 +5407,108 @@ async def test_write_memory_skips_memory_bank_for_telemetry_low_value(monkeypatc
     response = await orchestrator.write_memory(payload, request)
     assert response["ok"] is True
     assert response["fanout"]["memory_bank"] == "skipped_low_value"
+    assert response["fanout"]["qdrant"] == "skipped_low_value"
+    assert response["fanout"]["mindsdb"] == "skipped_low_value"
+    assert response["fanout"]["letta"] == "skipped_low_value"
     assert response["memory_bank_skipped_low_value"] is True
     assert finalized and finalized[0]["persisted_to_memory_bank"] is False
+
+
+@pytest.mark.asyncio
+async def test_enqueue_memory_write_fanout_filters_telemetry_targets(monkeypatch: pytest.MonkeyPatch):
+    captured_targets: list[str] = []
+
+    async def _fake_enqueue(event_payload: dict[str, Any], targets: list[str], force_requeue: bool = False):
+        del event_payload, force_requeue
+        captured_targets.extend(targets)
+        return {"inserted": len(targets)}
+
+    monkeypatch.setattr(orchestrator, "enqueue_fanout_outbox", _fake_enqueue)
+    monkeypatch.setattr(orchestrator, "memory_write_queue", asyncio.Queue(maxsize=8))
+    monkeypatch.setattr(orchestrator, "_letta_target_enabled", lambda: True)
+    monkeypatch.setattr(orchestrator, "QDRANT_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LETTA_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LANGFUSE_API_KEY", "")
+
+    await orchestrator._enqueue_memory_write_fanout(
+        {
+            "event_id": "evt-telemetry",
+            "project": "alpha",
+            "file": "telemetry/queue__state__20260310T020603091Z.json",
+            "summary": "queue depth telemetry snapshot",
+            "topic_path": "telemetry/queue",
+            "letta_session": "agent-1",
+            "letta_admit": True,
+            "mongo_persisted": False,
+        }
+    )
+
+    assert captured_targets == ["mongo_raw"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_memory_write_fanout_keeps_knowledge_targets(monkeypatch: pytest.MonkeyPatch):
+    captured_targets: list[str] = []
+
+    async def _fake_enqueue(event_payload: dict[str, Any], targets: list[str], force_requeue: bool = False):
+        del event_payload, force_requeue
+        captured_targets.extend(targets)
+        return {"inserted": len(targets)}
+
+    monkeypatch.setattr(orchestrator, "enqueue_fanout_outbox", _fake_enqueue)
+    monkeypatch.setattr(orchestrator, "memory_write_queue", asyncio.Queue(maxsize=8))
+    monkeypatch.setattr(orchestrator, "_letta_target_enabled", lambda: True)
+    monkeypatch.setattr(orchestrator, "QDRANT_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LETTA_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "LANGFUSE_API_KEY", "")
+
+    await orchestrator._enqueue_memory_write_fanout(
+        {
+            "event_id": "evt-knowledge",
+            "project": "alpha",
+            "file": "runbooks/profitability/baseline.md",
+            "summary": "profitability ladder and promotion gates",
+            "topic_path": "runbooks/profitability",
+            "letta_session": "agent-1",
+            "letta_admit": True,
+            "mongo_persisted": False,
+        }
+    )
+
+    assert captured_targets == ["mongo_raw", "qdrant", "mindsdb", "letta"]
+
+
+@pytest.mark.asyncio
+async def test_purge_telemetry_from_retrieval_sinks_dispatches(monkeypatch: pytest.MonkeyPatch):
+    async def _fake_qdrant(*, scan_limit: int, max_deletes: int, dry_run: bool):
+        return {"enabled": True, "dryRun": dry_run, "scanned": scan_limit, "deleteCandidates": max_deletes, "deleted": 0}
+
+    async def _fake_mindsdb(*, scan_limit: int, max_deletes: int, dry_run: bool):
+        return {"enabled": True, "dryRun": dry_run, "scanned": scan_limit, "deleteCandidates": max_deletes, "deleted": 0}
+
+    async def _fake_letta(*, scan_limit: int, max_deletes: int, dry_run: bool):
+        return {"enabled": True, "dryRun": dry_run, "scanned": scan_limit, "deleteCandidates": max_deletes, "deleted": 0}
+
+    monkeypatch.setattr(orchestrator, "_run_qdrant_telemetry_purge_once", _fake_qdrant)
+    monkeypatch.setattr(orchestrator, "_run_mindsdb_telemetry_purge_once", _fake_mindsdb)
+    monkeypatch.setattr(orchestrator, "_run_letta_telemetry_purge_once", _fake_letta)
+
+    result = await orchestrator.purge_telemetry_from_retrieval_sinks(
+        dry_run=True,
+        scan_limit=250,
+        max_deletes_per_sink=120,
+        include_qdrant=True,
+        include_mindsdb=True,
+        include_letta=True,
+    )
+
+    assert result["ok"] is True
+    assert result["dryRun"] is True
+    assert result["errors"] == {}
+    assert set(result["sinks"].keys()) == {"qdrant", "mindsdb", "letta"}
+    assert all((result["sinks"][name] or {}).get("deleteCandidates") == 120 for name in result["sinks"])
 
 
 def test_letta_transient_error_detection_and_threshold(monkeypatch: pytest.MonkeyPatch):
