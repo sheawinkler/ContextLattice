@@ -1008,23 +1008,25 @@ func (s *server) scheduleContinuationWarm(
 }
 
 type sourceCallResult struct {
-	source   string
-	phase    string
-	rows     []map[string]any
-	warnings []string
-	err      error
-	timedOut bool
-	timeout  time.Duration
-	latency  time.Duration
+	source         string
+	phase          string
+	rows           []map[string]any
+	warnings       []string
+	err            error
+	timedOut       bool
+	budgetExceeded bool
+	timeout        time.Duration
+	latency        time.Duration
 }
 
 type sourceBatchOutput struct {
-	rows                map[string][]map[string]any
-	sourceErrors        map[string]map[string]any
-	warnings            []string
-	timedOutSources     []string
-	continuationSources []string
-	skippedSources      []string
+	rows                  map[string][]map[string]any
+	sourceErrors          map[string]map[string]any
+	warnings              []string
+	timedOutSources       []string
+	budgetExceededSources []string
+	continuationSources   []string
+	skippedSources        []string
 }
 
 func (s *server) runSourceBatch(
@@ -1036,6 +1038,7 @@ func (s *server) runSourceBatch(
 	phase string,
 	explicitSourceOverride bool,
 	syncPhase bool,
+	suppressSlowTimeoutWarnings bool,
 	adaptiveSkipped map[string]struct{},
 ) sourceBatchOutput {
 	output := sourceBatchOutput{
@@ -1046,6 +1049,7 @@ func (s *server) runSourceBatch(
 	if len(sources) == 0 {
 		return output
 	}
+	slowSet := toSourceSet(s.retrieval.slowSources)
 	resultsCh := make(chan sourceCallResult, len(sources))
 	var started int
 	for _, source := range sources {
@@ -1075,13 +1079,23 @@ func (s *server) runSourceBatch(
 			rows, warnings, err := s.callBackendSourceQuery(sourceCtx, incomingHeaders, baseRequest, sourceName, explicitSourceOverride)
 			latency := time.Since(start)
 			timedOut := false
+			budgetExceeded := false
 			if err != nil {
 				timedOut = isTimeoutError(err) || errors.Is(sourceCtx.Err(), context.DeadlineExceeded)
+				if timedOut && syncPhase && !explicitSourceOverride {
+					if _, isSlow := slowSet[sourceName]; isSlow {
+						budgetExceeded = true
+					}
+				}
 			}
 			status := "ok"
 			if err != nil {
 				if timedOut {
-					status = "timeout"
+					if budgetExceeded {
+						status = "budget_exceeded"
+					} else {
+						status = "timeout"
+					}
 				} else {
 					status = "error"
 				}
@@ -1093,14 +1107,15 @@ func (s *server) runSourceBatch(
 				LatencyMs: latency.Milliseconds(),
 			})
 			resultsCh <- sourceCallResult{
-				source:   sourceName,
-				phase:    phase,
-				rows:     rows,
-				warnings: warnings,
-				err:      err,
-				timedOut: timedOut,
-				timeout:  timeout,
-				latency:  latency,
+				source:         sourceName,
+				phase:          phase,
+				rows:           rows,
+				warnings:       warnings,
+				err:            err,
+				timedOut:       timedOut,
+				budgetExceeded: budgetExceeded,
+				timeout:        timeout,
+				latency:        latency,
 			}
 		}(normalized, sourceTimeout)
 	}
@@ -1116,27 +1131,50 @@ func (s *server) runSourceBatch(
 			}
 		}
 		if result.err != nil {
+			errorKind := "error"
+			if result.timedOut {
+				if result.budgetExceeded {
+					errorKind = "budget_exceeded"
+				} else {
+					errorKind = "timeout"
+				}
+			}
 			errorPayload := map[string]any{
-				"error":        result.err.Error(),
-				"timeout":      result.timedOut,
-				"phase":        result.phase,
-				"timeout_secs": result.timeout.Seconds(),
-				"latency_ms":   result.latency.Milliseconds(),
+				"error":           result.err.Error(),
+				"kind":            errorKind,
+				"timeout":         result.timedOut && !result.budgetExceeded,
+				"timed_out":       result.timedOut,
+				"budget_exceeded": result.budgetExceeded,
+				"phase":           result.phase,
+				"timeout_secs":    result.timeout.Seconds(),
+				"latency_ms":      result.latency.Milliseconds(),
 			}
 			output.sourceErrors[result.source] = errorPayload
 			if result.timedOut {
-				output.timedOutSources = append(output.timedOutSources, result.source)
-				output.warnings = append(
-					output.warnings,
-					result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
-				)
+				if result.budgetExceeded {
+					output.budgetExceededSources = append(output.budgetExceededSources, result.source)
+					if !suppressSlowTimeoutWarnings {
+						output.warnings = append(
+							output.warnings,
+							result.source+" retrieval sync budget exceeded after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
+						)
+					}
+				} else {
+					output.timedOutSources = append(output.timedOutSources, result.source)
+					output.warnings = append(
+						output.warnings,
+						result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
+					)
+				}
 				if s.shouldScheduleContinuation(result.source) {
 					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-timeout") {
 						output.continuationSources = append(output.continuationSources, result.source)
-						output.warnings = append(
-							output.warnings,
-							result.source+" timed out; continuing asynchronously for cache warm.",
-						)
+						if !suppressSlowTimeoutWarnings || !result.budgetExceeded {
+							output.warnings = append(
+								output.warnings,
+								result.source+" timed out; continuing asynchronously for cache warm.",
+							)
+						}
 					}
 				}
 			} else {
@@ -1147,6 +1185,7 @@ func (s *server) runSourceBatch(
 
 	output.warnings = dedupeWarnings(output.warnings)
 	output.timedOutSources = normalizeSourceList(output.timedOutSources)
+	output.budgetExceededSources = normalizeSourceList(output.budgetExceededSources)
 	output.continuationSources = normalizeSourceList(output.continuationSources)
 	output.skippedSources = normalizeSourceList(output.skippedSources)
 	return output
@@ -1211,6 +1250,7 @@ func (s *server) executeRetrieval(
 	sourceErrors := map[string]map[string]any{}
 	sourceRows := map[string][]map[string]any{}
 	timedOutObserved := map[string]struct{}{}
+	budgetExceededObserved := map[string]struct{}{}
 	adaptiveSkipped := map[string]struct{}{}
 	continuationSources := []string{}
 	asyncWarmSlowSources := []string{}
@@ -1225,6 +1265,7 @@ func (s *server) executeRetrieval(
 		"fast",
 		explicitSourceOverride,
 		true,
+		false,
 		adaptiveSkipped,
 	)
 	for source, rows := range fastBatch.rows {
@@ -1241,8 +1282,12 @@ func (s *server) executeRetrieval(
 		}
 	}
 	continuationSources = append(continuationSources, fastBatch.continuationSources...)
+	for _, source := range fastBatch.budgetExceededSources {
+		budgetExceededObserved[source] = struct{}{}
+	}
 
 	merged := mergeRows(sourceRows, limit)
+	fastPathFailed := len(merged) == 0 || len(fastBatch.sourceErrors) > 0
 	skipSlow := !explicitSourceOverride && (retrievalMode != "deep" || !s.retrieval.deepBlocking)
 	if len(slowSources) > 0 {
 		if skipSlow {
@@ -1282,6 +1327,7 @@ func (s *server) executeRetrieval(
 					"slow-sync-fallback",
 					explicitSourceOverride,
 					true,
+					!fastPathFailed,
 					adaptiveSkipped,
 				)
 				for source, rows := range slowBatch.rows {
@@ -1298,6 +1344,9 @@ func (s *server) executeRetrieval(
 					}
 				}
 				continuationSources = append(continuationSources, slowBatch.continuationSources...)
+				for _, source := range slowBatch.budgetExceededSources {
+					budgetExceededObserved[source] = struct{}{}
+				}
 				fallbackSet := toSourceSet(fallback)
 				for _, source := range slowSources {
 					if _, used := fallbackSet[source]; used {
@@ -1318,6 +1367,7 @@ func (s *server) executeRetrieval(
 				"slow-sync",
 				explicitSourceOverride,
 				true,
+				!fastPathFailed,
 				adaptiveSkipped,
 			)
 			for source, rows := range slowBatch.rows {
@@ -1334,6 +1384,9 @@ func (s *server) executeRetrieval(
 				}
 			}
 			continuationSources = append(continuationSources, slowBatch.continuationSources...)
+			for _, source := range slowBatch.budgetExceededSources {
+				budgetExceededObserved[source] = struct{}{}
+			}
 		}
 	}
 
@@ -1359,6 +1412,52 @@ func (s *server) executeRetrieval(
 	}
 
 	merged = mergeRows(sourceRows, limit)
+	returnedSources := make([]string, 0, len(sourceRows))
+	for source, rows := range sourceRows {
+		if len(rows) == 0 {
+			continue
+		}
+		returnedSources = append(returnedSources, source)
+	}
+	sort.Strings(returnedSources)
+	deferredCandidatesSet := map[string]struct{}{}
+	for _, source := range asyncWarmSlowSources {
+		deferredCandidatesSet[source] = struct{}{}
+	}
+	for _, source := range continuationSources {
+		deferredCandidatesSet[source] = struct{}{}
+	}
+	for source := range budgetExceededObserved {
+		deferredCandidatesSet[source] = struct{}{}
+	}
+	deferredCandidates := make([]string, 0, len(deferredCandidatesSet))
+	for source := range deferredCandidatesSet {
+		deferredCandidates = append(deferredCandidates, source)
+	}
+	sort.Strings(deferredCandidates)
+	hasMaterialSourceErrors := false
+	for _, payload := range sourceErrors {
+		kind := strings.TrimSpace(strings.ToLower(anyToString(payload["kind"])))
+		if kind == "" {
+			kind = "error"
+		}
+		if kind == "timeout" || kind == "error" {
+			hasMaterialSourceErrors = true
+			break
+		}
+	}
+	if len(returnedSources) > 0 && (len(deferredCandidates) > 0 || hasMaterialSourceErrors) {
+		warnings = append(
+			warnings,
+			"Sources returned now: "+strings.Join(returnedSources, ", ")+".",
+		)
+	}
+	if len(deferredCandidates) > 0 {
+		warnings = append(
+			warnings,
+			"Additional context may be available later from: "+strings.Join(deferredCandidates, ", ")+". Re-run after cache warm or use deep mode / longer timeout budgets for blocking retrieval.",
+		)
+	}
 
 	sourceCounts := make(map[string]int, len(sourceRows))
 	for source, rows := range sourceRows {
@@ -1374,6 +1473,11 @@ func (s *server) executeRetrieval(
 		skippedList = append(skippedList, source)
 	}
 	sort.Strings(skippedList)
+	budgetExceededList := make([]string, 0, len(budgetExceededObserved))
+	for source := range budgetExceededObserved {
+		budgetExceededList = append(budgetExceededList, source)
+	}
+	sort.Strings(budgetExceededList)
 	debug := map[string]any{
 		"retrieval_mode":   retrievalMode,
 		"retrieval_intent": retrievalIntent,
@@ -1406,6 +1510,7 @@ func (s *server) executeRetrieval(
 			"fail_open_continuation_sources":   continuationSources,
 			"timeout_adaptive_skipped_sources": skippedList,
 			"timed_out_sources":                timedOutList,
+			"budget_exceeded_sources":          budgetExceededList,
 		},
 	}
 
