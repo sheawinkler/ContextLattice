@@ -3735,6 +3735,45 @@ async def _fastembed_rs_embedding(text: str) -> list[float]:
     return list(response.vectors[0])
 
 
+async def _fastembed_rs_embedding_batch(texts: list[str]) -> list[list[float]]:
+    global fastembed_adapter_attempts, fastembed_adapter_successes, fastembed_adapter_failures
+    global fastembed_adapter_batch_calls, fastembed_adapter_batch_items
+    global fastembed_adapter_batch_failures, fastembed_adapter_last_error, fastembed_adapter_last_latency_ms
+    adapter = await _get_fastembed_adapter()
+    if adapter is None:
+        raise OrchestratorError("fastembed-rs adapter not configured")
+    normalized = [str(text) for text in texts if str(text)]
+    if not normalized:
+        return []
+    started = time.monotonic()
+    fastembed_adapter_attempts += len(normalized)
+    fastembed_adapter_batch_calls += 1
+    fastembed_adapter_batch_items += len(normalized)
+    try:
+        if RuntimeEmbeddingRequest is None:
+            raise OrchestratorError("runtime embedding adapter request model unavailable")
+        response = await adapter.embed(
+            RuntimeEmbeddingRequest(
+                texts=normalized,
+                model=FASTEMBED_RS_MODEL or EMBEDDING_MODEL or None,
+            )
+        )
+    except Exception as exc:
+        fastembed_adapter_failures += len(normalized)
+        fastembed_adapter_batch_failures += 1
+        fastembed_adapter_last_error = str(exc).strip() or exc.__class__.__name__
+        raise
+    fastembed_adapter_successes += len(normalized)
+    fastembed_adapter_last_error = None
+    fastembed_adapter_last_latency_ms = (time.monotonic() - started) * 1000.0
+    vectors = [list(vector) for vector in response.vectors]
+    if len(vectors) < len(normalized):
+        raise OrchestratorError(
+            f"fastembed-rs returned {len(vectors)} vectors for {len(normalized)} texts"
+        )
+    return vectors[: len(normalized)]
+
+
 def _cheap_embedding(text: str, vector_size: int) -> list[float]:
     """Cheap deterministic embedding used when no provider is configured."""
 
@@ -3767,6 +3806,39 @@ async def _openai_like_embedding(text: str) -> list[float]:
     return payloads[0]["embedding"]
 
 
+async def _openai_like_embedding_batch(texts: list[str]) -> list[list[float]]:
+    if not EMBEDDING_BASE_URL:
+        raise OrchestratorError("EMBEDDING_BASE_URL is not set for openai provider")
+    if not texts:
+        return []
+    url = EMBEDDING_BASE_URL.rstrip("/") + "/v1/embeddings"
+    headers = {"content-type": "application/json"}
+    if EMBEDDING_API_KEY:
+        headers["authorization"] = f"Bearer {EMBEDDING_API_KEY}"
+    payload = {"model": EMBEDDING_MODEL, "input": list(texts)}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code != 200:
+        raise OrchestratorError(f"Embedding request failed: {resp.text}")
+    data = resp.json()
+    payloads = data.get("data") or []
+    if not payloads:
+        raise OrchestratorError("Embedding provider returned no data")
+    vectors: list[list[float]] = []
+    for item in payloads:
+        if not isinstance(item, dict):
+            continue
+        embedding = item.get("embedding")
+        if not isinstance(embedding, list):
+            continue
+        vectors.append([float(value) for value in embedding])
+    if len(vectors) < len(texts):
+        raise OrchestratorError(
+            f"Embedding provider returned {len(vectors)} vectors for {len(texts)} inputs"
+        )
+    return vectors[: len(texts)]
+
+
 async def _ollama_embedding(text: str) -> list[float]:
     url = OLLAMA_BASE_URL.rstrip("/") + "/api/embeddings"
     payload = {"model": EMBEDDING_MODEL, "prompt": text}
@@ -3783,18 +3855,57 @@ async def _ollama_embedding(text: str) -> list[float]:
     return vector
 
 
+def _embedding_provider_fallback_vector(text: str, provider: str, error: Exception) -> list[float]:
+    if not EMBEDDING_FAIL_OPEN:
+        raise OrchestratorError(str(error)) from error
+    logger.warning(
+        "Embedding provider '%s' failed (%s); using deterministic cheap fallback",
+        provider,
+        str(error)[:300],
+    )
+    return _cheap_embedding(text, FALLBACK_EMBED_DIM)
+
+
+async def _embed_via_configured_provider(text: str) -> list[float]:
+    provider = EMBEDDING_PROVIDER
+    if provider in ("openai", "lmstudio", "openai-compatible"):
+        try:
+            return await _openai_like_embedding(text)
+        except OrchestratorError as exc:
+            return _embedding_provider_fallback_vector(text, provider, exc)
+        except Exception as exc:  # pragma: no cover - network failure
+            return _embedding_provider_fallback_vector(text, provider, exc)
+    if provider == "ollama":
+        try:
+            return await _ollama_embedding(text)
+        except OrchestratorError as exc:
+            return _embedding_provider_fallback_vector(text, provider, exc)
+        except Exception as exc:  # pragma: no cover
+            return _embedding_provider_fallback_vector(text, provider, exc)
+    return _cheap_embedding(text, FALLBACK_EMBED_DIM)
+
+
+async def _embed_batch_via_configured_provider(texts: list[str]) -> list[list[float]]:
+    provider = EMBEDDING_PROVIDER
+    if not texts:
+        return []
+    if provider in ("openai", "lmstudio", "openai-compatible"):
+        try:
+            return await _openai_like_embedding_batch(texts)
+        except OrchestratorError as exc:
+            return [_embedding_provider_fallback_vector(text, provider, exc) for text in texts]
+        except Exception as exc:  # pragma: no cover - network failure
+            return [_embedding_provider_fallback_vector(text, provider, exc) for text in texts]
+    if provider == "ollama":
+        vectors: list[list[float]] = []
+        for text in texts:
+            vectors.append(await _embed_via_configured_provider(text))
+        return vectors
+    return [_cheap_embedding(text, FALLBACK_EMBED_DIM) for text in texts]
+
+
 async def embed_text(text: str) -> list[float]:
     global fastembed_adapter_fallbacks
-
-    def _cheap_fallback(provider: str, error: Exception) -> list[float]:
-        if not EMBEDDING_FAIL_OPEN:
-            raise OrchestratorError(str(error)) from error
-        logger.warning(
-            "Embedding provider '%s' failed (%s); using deterministic cheap fallback",
-            provider,
-            str(error)[:300],
-        )
-        return _cheap_embedding(text, FALLBACK_EMBED_DIM)
 
     cache_key = _embedding_cache_key(text)
     cached = await _embedding_cache_get(cache_key)
@@ -3814,29 +3925,63 @@ async def embed_text(text: str) -> list[float]:
                 EMBEDDING_PROVIDER,
             )
 
-    provider = EMBEDDING_PROVIDER
-    if provider in ("openai", "lmstudio", "openai-compatible"):
-        try:
-            vector = await _openai_like_embedding(text)
-            await _embedding_cache_set(cache_key, vector)
-            return vector
-        except OrchestratorError as exc:
-            return _cheap_fallback(provider, exc)
-        except Exception as exc:  # pragma: no cover - network failure
-            return _cheap_fallback(provider, exc)
-    if provider == "ollama":
-        try:
-            vector = await _ollama_embedding(text)
-            await _embedding_cache_set(cache_key, vector)
-            return vector
-        except OrchestratorError as exc:
-            return _cheap_fallback(provider, exc)
-        except Exception as exc:  # pragma: no cover
-            return _cheap_fallback(provider, exc)
-    # default fallback
-    vector = _cheap_embedding(text, FALLBACK_EMBED_DIM)
+    vector = await _embed_via_configured_provider(text)
     await _embedding_cache_set(cache_key, vector)
     return vector
+
+
+async def embed_text_batch(texts: list[str]) -> list[list[float]]:
+    global fastembed_adapter_fallbacks
+    normalized = [str(text or "") for text in texts]
+    if not normalized:
+        return []
+
+    results: list[list[float] | None] = [None] * len(normalized)
+    pending_by_text: OrderedDict[str, list[int]] = OrderedDict()
+    for idx, text in enumerate(normalized):
+        cache_key = _embedding_cache_key(text)
+        cached = await _embedding_cache_get(cache_key)
+        if cached is not None:
+            results[idx] = cached
+            continue
+        pending_by_text.setdefault(text, []).append(idx)
+
+    pending_texts = list(pending_by_text.keys())
+    pending_vectors: dict[str, list[float]] = {}
+    if pending_texts and _fastembed_adapter_ready():
+        try:
+            batch_vectors = await _fastembed_rs_embedding_batch(pending_texts)
+            for text, vector in zip(pending_texts, batch_vectors):
+                pending_vectors[text] = list(vector)
+        except Exception as exc:
+            fastembed_adapter_fallbacks += len(pending_texts)
+            logger.warning(
+                "fastembed-rs batch adapter failed (%s); falling back to provider '%s'",
+                str(exc)[:240],
+                EMBEDDING_PROVIDER,
+            )
+
+    unresolved = [text for text in pending_texts if text not in pending_vectors]
+    if unresolved:
+        provider_vectors = await _embed_batch_via_configured_provider(unresolved)
+        for text, vector in zip(unresolved, provider_vectors):
+            pending_vectors[text] = list(vector)
+
+    for text, indexes in pending_by_text.items():
+        vector = pending_vectors.get(text)
+        if vector is None:
+            vector = _cheap_embedding(text, FALLBACK_EMBED_DIM)
+        for idx in indexes:
+            results[idx] = list(vector)
+            await _embedding_cache_set(_embedding_cache_key(normalized[idx]), vector)
+
+    finalized: list[list[float]] = []
+    for idx, vector in enumerate(results):
+        if vector is None:
+            vector = _cheap_embedding(normalized[idx], FALLBACK_EMBED_DIM)
+            await _embedding_cache_set(_embedding_cache_key(normalized[idx]), vector)
+        finalized.append(list(vector))
+    return finalized
 
 
 DEFAULT_RESPONSE_CLASS = ORJSONResponse if orjson is not None else JSONResponse
@@ -3945,6 +4090,9 @@ fastembed_adapter_attempts = 0
 fastembed_adapter_successes = 0
 fastembed_adapter_failures = 0
 fastembed_adapter_fallbacks = 0
+fastembed_adapter_batch_calls = 0
+fastembed_adapter_batch_items = 0
+fastembed_adapter_batch_failures = 0
 fastembed_adapter_last_error: str | None = None
 fastembed_adapter_last_latency_ms: float | None = None
 letta_search_cache_lock = asyncio.Lock()
@@ -14736,10 +14884,8 @@ async def push_batch_to_qdrant(items: list[dict[str, Any]]) -> None:
         grouped.setdefault(collection, []).append(item)
 
     for collection, rows in grouped.items():
-        vectors: list[list[float]] = []
-        for row in rows:
-            content = str(row.get("content") or "")
-            vectors.append(await embed_text(content))
+        contents = [str(row.get("content") or "") for row in rows]
+        vectors = await embed_text_batch(contents)
 
         vector_dim = len(vectors[0]) if vectors else 0
         try:
@@ -18778,6 +18924,9 @@ async def get_memory_metrics():
                 "successes": fastembed_adapter_successes,
                 "failures": fastembed_adapter_failures,
                 "fallbacks": fastembed_adapter_fallbacks,
+                "batchCalls": fastembed_adapter_batch_calls,
+                "batchItems": fastembed_adapter_batch_items,
+                "batchFailures": fastembed_adapter_batch_failures,
                 "lastError": fastembed_adapter_last_error,
                 "lastLatencyMs": (
                     round(float(fastembed_adapter_last_latency_ms), 3)

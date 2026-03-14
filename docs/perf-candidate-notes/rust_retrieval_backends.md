@@ -28,4 +28,9 @@ cargo test -p context_retrieval --features "qdrant_remote usearch_ann tantivy_le
   - `ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND=auto|none|tantivy_lexical`
   - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT=true|false`
 - Runtime request path now carries `backend_policy` and surfaces it in retrieval debug (`runtime.rust_backend_policy` and `source_policy.runtime_backend_policy`).
+- Gateway staged-retrieval lexical guard spike is now available behind env flags:
+  - `GO_RETRIEVAL_LEXICAL_GUARD_ENABLED`
+  - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE`
+  - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS`
+  - behavior: if `backend_policy.lexical_backend=tantivy_lexical` and fast-phase lexical coverage is strong, sync slow fallback is deferred and continued asynchronously.
 - Run side-by-side recall/latency benchmarks against current Python path.

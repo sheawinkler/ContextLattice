@@ -3614,6 +3614,60 @@ async def test_embed_text_fastembed_fallbacks_to_provider(monkeypatch: pytest.Mo
     assert orchestrator.fastembed_adapter_fallbacks == 1
 
 
+@pytest.mark.asyncio
+async def test_embed_text_batch_prefers_fastembed_adapter(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_ready", lambda: True)
+
+    captured: dict[str, Any] = {}
+
+    async def _fastembed_batch(texts: list[str]):
+        captured["texts"] = list(texts)
+        return [[float(idx), float(idx) + 0.5] for idx, _ in enumerate(texts, start=1)]
+
+    async def _cache_get(_key: str):
+        return None
+
+    cache_writes: list[list[float]] = []
+
+    async def _cache_set(_key: str, vector: list[float]):
+        cache_writes.append(list(vector))
+
+    monkeypatch.setattr(orchestrator, "_fastembed_rs_embedding_batch", _fastembed_batch)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_get", _cache_get)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_set", _cache_set)
+    rows = await orchestrator.embed_text_batch(["alpha", "beta", "alpha"])
+    assert captured["texts"] == ["alpha", "beta"]
+    assert rows == [[1.0, 1.5], [2.0, 2.5], [1.0, 1.5]]
+    assert len(cache_writes) == 3
+
+
+@pytest.mark.asyncio
+async def test_embed_text_batch_fastembed_fallbacks_to_provider_batch(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_ready", lambda: True)
+    monkeypatch.setattr(orchestrator, "EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setattr(orchestrator, "fastembed_adapter_fallbacks", 0)
+
+    async def _fastembed_batch(_texts: list[str]):
+        raise RuntimeError("adapter unavailable")
+
+    async def _openai_batch(texts: list[str]):
+        return [[float(len(text)), 0.0] for text in texts]
+
+    async def _cache_get(_key: str):
+        return None
+
+    async def _cache_set(_key: str, _vector: list[float]):
+        return None
+
+    monkeypatch.setattr(orchestrator, "_fastembed_rs_embedding_batch", _fastembed_batch)
+    monkeypatch.setattr(orchestrator, "_openai_like_embedding_batch", _openai_batch)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_get", _cache_get)
+    monkeypatch.setattr(orchestrator, "_embedding_cache_set", _cache_set)
+    rows = await orchestrator.embed_text_batch(["ab", "cdef", "ab"])
+    assert rows == [[2.0, 0.0], [4.0, 0.0], [2.0, 0.0]]
+    assert orchestrator.fastembed_adapter_fallbacks == 2
+
+
 def test_qdrant_mode_helpers(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "QDRANT_SEARCH_HNSW_EF", 64)
     monkeypatch.setattr(orchestrator, "QDRANT_SEARCH_MODE_HNSW_EF_ENV", "{\"fast\":32,\"deep\":140}")

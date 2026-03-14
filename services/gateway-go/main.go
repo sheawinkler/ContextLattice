@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 const (
@@ -43,6 +44,9 @@ type retrievalPolicy struct {
 	slowSources                 []string
 	syncFallbackSources         []string
 	minFastResults              int
+	lexicalGuardEnabled         bool
+	lexicalGuardMinCoverage     float64
+	lexicalGuardMinResults      int
 	deepBlocking                bool
 	qdrantSyncTimeoutCap        time.Duration
 	qdrantSyncTimeoutCapByMode  map[string]time.Duration
@@ -226,6 +230,18 @@ func envInt(name string, fallback int) int {
 	return value
 }
 
+func envFloat(name string, fallback float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
 func csvListEnv(name string, fallback string) []string {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -352,6 +368,18 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.minFastResults = envInt("ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", 2)
 	if policy.minFastResults < 1 {
 		policy.minFastResults = 1
+	}
+	policy.lexicalGuardEnabled = envBool("GO_RETRIEVAL_LEXICAL_GUARD_ENABLED", true)
+	policy.lexicalGuardMinCoverage = envFloat("GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE", 0.55)
+	if policy.lexicalGuardMinCoverage < 0 {
+		policy.lexicalGuardMinCoverage = 0
+	}
+	if policy.lexicalGuardMinCoverage > 1 {
+		policy.lexicalGuardMinCoverage = 1
+	}
+	policy.lexicalGuardMinResults = envInt("GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS", 1)
+	if policy.lexicalGuardMinResults < 1 {
+		policy.lexicalGuardMinResults = 1
 	}
 	policy.deepBlocking = envBool("ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING", false)
 	policy.qdrantSyncTimeoutCap = envDurationSeconds("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", 4)
@@ -584,6 +612,9 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			},
 			"failOpenContinuationEnabled":     s.retrieval.failOpenContinuationEnabled,
 			"timeoutAdaptiveSkipEnabled":      s.retrieval.timeoutAdaptiveSkipEnabled,
+			"lexicalGuardEnabled":             s.retrieval.lexicalGuardEnabled,
+			"lexicalGuardMinCoverage":         s.retrieval.lexicalGuardMinCoverage,
+			"lexicalGuardMinResults":          s.retrieval.lexicalGuardMinResults,
 			"continuationMaxInflight":         s.retrieval.continuationMaxInflight,
 			"subcallDisableExpansion":         s.retrieval.subcallDisableExpansion,
 			"subcallDisableAutoEscalate":      s.retrieval.subcallDisableAutoEscalate,
@@ -1305,6 +1336,52 @@ func classifySources(allSources []string, fastSet map[string]struct{}, slowSet m
 	return normalizeSourceList(fast), normalizeSourceList(slow)
 }
 
+func lexicalTokenSet(text string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return tokens
+	}
+	parts := strings.FieldsFunc(lower, func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_')
+	})
+	for _, part := range parts {
+		if len(part) < 3 {
+			continue
+		}
+		tokens[part] = struct{}{}
+	}
+	return tokens
+}
+
+func lexicalCoverageScore(query string, rows []map[string]any) float64 {
+	queryTokens := lexicalTokenSet(query)
+	if len(queryTokens) == 0 || len(rows) == 0 {
+		return 0
+	}
+	matched := make(map[string]struct{})
+	for _, row := range rows {
+		corpus := strings.TrimSpace(
+			anyToString(row["summary"]) + " " +
+				anyToString(row["file"]) + " " +
+				anyToString(row["topic_path"]),
+		)
+		if corpus == "" {
+			continue
+		}
+		rowTokens := lexicalTokenSet(corpus)
+		if len(rowTokens) == 0 {
+			continue
+		}
+		for token := range queryTokens {
+			if _, ok := rowTokens[token]; ok {
+				matched[token] = struct{}{}
+			}
+		}
+	}
+	return float64(len(matched)) / float64(len(queryTokens))
+}
+
 func (s *server) executeRetrieval(
 	ctx context.Context,
 	incomingHeaders http.Header,
@@ -1386,11 +1463,29 @@ func (s *server) executeRetrieval(
 	}
 
 	merged := mergeRows(sourceRows, limit)
+	lexicalBackend := strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["lexical_backend"])))
+	lexicalGuardEligible := s.retrieval.lexicalGuardEnabled && !explicitSourceOverride && lexicalBackend == "tantivy_lexical"
+	lexicalGuardCoverage := 0.0
+	lexicalGuardApplied := false
+	if lexicalGuardEligible {
+		lexicalGuardCoverage = lexicalCoverageScore(query, merged)
+	}
 	fastPathFailed := len(merged) == 0 || len(fastBatch.sourceErrors) > 0
 	skipSlow := !explicitSourceOverride && (retrievalMode != "deep" || !s.retrieval.deepBlocking)
 	if len(slowSources) > 0 {
 		if skipSlow {
 			needsFallback := len(merged) < s.retrieval.minFastResults
+			if needsFallback &&
+				lexicalGuardEligible &&
+				len(merged) >= s.retrieval.lexicalGuardMinResults &&
+				lexicalGuardCoverage >= s.retrieval.lexicalGuardMinCoverage {
+				needsFallback = false
+				lexicalGuardApplied = true
+				warnings = append(
+					warnings,
+					"Lexical backend policy deferred sync slow-source fallback; continuing asynchronously for cache warm.",
+				)
+			}
 			if needsFallback {
 				fallback := []string{}
 				if len(s.retrieval.syncFallbackSources) > 0 {
@@ -1598,6 +1693,9 @@ func (s *server) executeRetrieval(
 			},
 			"fail_open_timeout_continuation_enabled": s.retrieval.failOpenContinuationEnabled,
 			"timeout_adaptive_skip_enabled":          s.retrieval.timeoutAdaptiveSkipEnabled,
+			"lexical_guard_enabled":                  s.retrieval.lexicalGuardEnabled,
+			"lexical_guard_min_coverage":             s.retrieval.lexicalGuardMinCoverage,
+			"lexical_guard_min_results":              s.retrieval.lexicalGuardMinResults,
 			"runtime_backend_policy":                 rustBackendPolicy,
 		},
 		"staged_fetch": map[string]any{
@@ -1611,6 +1709,9 @@ func (s *server) executeRetrieval(
 			"timeout_adaptive_skipped_sources": skippedList,
 			"timed_out_sources":                timedOutList,
 			"budget_exceeded_sources":          budgetExceededList,
+			"lexical_backend":                  lexicalBackend,
+			"lexical_guard_applied":            lexicalGuardApplied,
+			"lexical_guard_coverage":           lexicalGuardCoverage,
 		},
 	}
 
