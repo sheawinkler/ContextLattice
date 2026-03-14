@@ -3978,6 +3978,7 @@ retrieval_source_latency_samples: dict[str, deque[float]] = {}
 retrieval_source_request_counts: dict[str, int] = {}
 retrieval_source_error_counts: dict[str, int] = {}
 retrieval_source_timeout_counts: dict[str, int] = {}
+retrieval_source_budget_exceeded_counts: dict[str, int] = {}
 retrieval_latency_mode_counts: dict[str, int] = {}
 retrieval_latency_updated_at: str | None = None
 retrieval_slow_source_cooldown_until: dict[str, float] = {}
@@ -4010,6 +4011,7 @@ recall_quality_totals: dict[str, int] = {
 }
 recall_quality_source_requests: dict[str, int] = {}
 recall_quality_source_errors: dict[str, int] = {}
+recall_quality_source_budget_exceeded: dict[str, int] = {}
 recall_quality_updated_at: str | None = None
 agent_memory_profile_lock = asyncio.Lock()
 agent_memory_profiles: dict[str, dict[str, Any]] = {}
@@ -4328,6 +4330,40 @@ def _is_retrieval_timeout_error(exc: Exception) -> bool:
     return any(token in text for token in ("timeout", "timed out", "deadline exceeded", "operation expired"))
 
 
+def _normalize_source_error_detail(value: Any) -> dict[str, Any]:
+    source_payload = value if isinstance(value, dict) else {}
+    raw_error = str(source_payload.get("error") or source_payload.get("message") or value or "").strip()
+    timeout_flag = bool(source_payload.get("timeout"))
+    timed_out_flag = bool(source_payload.get("timed_out") or timeout_flag)
+    budget_exceeded_flag = bool(source_payload.get("budget_exceeded"))
+    kind = str(source_payload.get("kind") or "").strip().lower()
+    error_text = raw_error.lower()
+    if not kind:
+        if budget_exceeded_flag or "budget exceeded" in error_text or "deferred after call budget" in error_text:
+            kind = "budget_exceeded"
+        elif (
+            timed_out_flag
+            or "timeout" in error_text
+            or "timed out" in error_text
+            or "deadline exceeded" in error_text
+            or "operation expired" in error_text
+        ):
+            kind = "timeout"
+        elif raw_error:
+            kind = "error"
+        else:
+            kind = "unknown"
+    timeout_effective = bool(kind == "timeout")
+    budget_exceeded_effective = bool(kind == "budget_exceeded")
+    return {
+        "error": raw_error,
+        "kind": kind,
+        "timeout": timeout_effective,
+        "timed_out": bool(timeout_effective or timed_out_flag),
+        "budget_exceeded": budget_exceeded_effective,
+    }
+
+
 def _source_errors_timeout_sources(source_errors: dict[str, Any] | None) -> list[str]:
     if not isinstance(source_errors, dict):
         return []
@@ -4337,13 +4373,22 @@ def _source_errors_timeout_sources(source_errors: dict[str, Any] | None) -> list
         source_name = str(source or "").strip().lower()
         if not source_name or source_name in seen:
             continue
-        text = str(message or "").strip().lower()
-        if not text:
+        detail = _normalize_source_error_detail(message)
+        if detail.get("kind") != "timeout":
             continue
-        if "timeout" in text or "timed out" in text or "deadline exceeded" in text or "operation expired" in text:
-            seen.add(source_name)
-            timeout_sources.append(source_name)
+        seen.add(source_name)
+        timeout_sources.append(source_name)
     return timeout_sources
+
+
+def _source_errors_has_material_failures(source_errors: dict[str, Any] | None) -> bool:
+    if not isinstance(source_errors, dict):
+        return False
+    for payload in source_errors.values():
+        detail = _normalize_source_error_detail(payload)
+        if detail.get("kind") in {"timeout", "error"}:
+            return True
+    return False
 
 
 def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
@@ -5575,6 +5620,7 @@ async def _record_retrieval_source_latency(
     duration_ms: float,
     ok: bool,
     timed_out: bool,
+    budget_exceeded: bool = False,
     retrieval_mode: str,
 ) -> None:
     global retrieval_latency_updated_at
@@ -5600,6 +5646,10 @@ async def _record_retrieval_source_latency(
             retrieval_source_timeout_counts[source_name] = int(
                 retrieval_source_timeout_counts.get(source_name, 0) or 0
             ) + 1
+        if budget_exceeded:
+            retrieval_source_budget_exceeded_counts[source_name] = int(
+                retrieval_source_budget_exceeded_counts.get(source_name, 0) or 0
+            ) + 1
         retrieval_latency_mode_counts[mode_name] = int(
             retrieval_latency_mode_counts.get(mode_name, 0) or 0
         ) + 1
@@ -5615,6 +5665,7 @@ async def _retrieval_latency_snapshot() -> dict[str, Any]:
         request_counts = dict(retrieval_source_request_counts)
         error_counts = dict(retrieval_source_error_counts)
         timeout_counts = dict(retrieval_source_timeout_counts)
+        budget_exceeded_counts = dict(retrieval_source_budget_exceeded_counts)
         mode_counts = dict(retrieval_latency_mode_counts)
         updated_at = retrieval_latency_updated_at
     sources: dict[str, Any] = {}
@@ -5627,6 +5678,7 @@ async def _retrieval_latency_snapshot() -> dict[str, Any]:
             "requests": int(request_counts.get(source, 0) or 0),
             "errors": int(error_counts.get(source, 0) or 0),
             "timeouts": int(timeout_counts.get(source, 0) or 0),
+            "budgetExceeded": int(budget_exceeded_counts.get(source, 0) or 0),
             "p50Ms": round(_percentile(sorted_samples, 0.50), 3),
             "p95Ms": round(_percentile(sorted_samples, 0.95), 3),
             "p99Ms": round(_percentile(sorted_samples, 0.99), 3),
@@ -13818,6 +13870,7 @@ async def _record_recall_quality_observation(
     stale_hit = bool(results) and _is_result_stale(results[0])
     source_errors = retrieval_debug.get("source_errors") if isinstance(retrieval_debug, dict) else {}
     source_counts = retrieval_debug.get("source_counts") if isinstance(retrieval_debug, dict) else {}
+    source_error_kinds: dict[str, str] = {}
     async with recall_quality_lock:
         recall_quality_totals["requests"] = int(recall_quality_totals.get("requests", 0) or 0) + 1
         if no_hit:
@@ -13840,11 +13893,19 @@ async def _record_recall_quality_observation(
                 source_name = str(source or "").strip().lower()
                 if not source_name:
                     continue
-                if not str(error_text or "").strip():
+                detail = _normalize_source_error_detail(error_text)
+                kind = str(detail.get("kind") or "").strip().lower()
+                if not str(detail.get("error") or "").strip():
                     continue
-                recall_quality_source_errors[source_name] = int(
-                    recall_quality_source_errors.get(source_name, 0) or 0
-                ) + 1
+                source_error_kinds[source_name] = kind or "unknown"
+                if kind == "budget_exceeded":
+                    recall_quality_source_budget_exceeded[source_name] = int(
+                        recall_quality_source_budget_exceeded.get(source_name, 0) or 0
+                    ) + 1
+                else:
+                    recall_quality_source_errors[source_name] = int(
+                        recall_quality_source_errors.get(source_name, 0) or 0
+                    ) + 1
         recall_quality_history.append(
             {
                 "timestamp": _utc_now(),
@@ -13860,7 +13921,9 @@ async def _record_recall_quality_observation(
                         if str(row.get("source") or "").strip()
                     }
                 ),
+                "sourceCounts": dict(source_counts) if isinstance(source_counts, dict) else {},
                 "sourceErrors": dict(source_errors) if isinstance(source_errors, dict) else {},
+                "sourceErrorKinds": source_error_kinds,
             }
         )
         recall_quality_updated_at = _utc_now()
@@ -13871,6 +13934,7 @@ async def _recall_quality_snapshot() -> dict[str, Any]:
         totals = dict(recall_quality_totals)
         source_requests = dict(recall_quality_source_requests)
         source_errors = dict(recall_quality_source_errors)
+        source_budget_exceeded = dict(recall_quality_source_budget_exceeded)
         history_tail = list(recall_quality_history)[-50:]
         updated_at = recall_quality_updated_at
     requests = max(0, int(totals.get("requests", 0) or 0))
@@ -13878,13 +13942,26 @@ async def _recall_quality_snapshot() -> dict[str, Any]:
     low_conf = max(0, int(totals.get("lowConfidence", 0) or 0))
     stale_hit = max(0, int(totals.get("staleHit", 0) or 0))
     by_source: dict[str, dict[str, Any]] = {}
-    for source, req_count in source_requests.items():
+    source_names = sorted(
+        set(source_requests.keys())
+        | set(source_errors.keys())
+        | set(source_budget_exceeded.keys())
+    )
+    for source in source_names:
+        req_count = source_requests.get(source, 0)
         requests_count = max(0, int(req_count or 0))
         errors_count = max(0, int(source_errors.get(source, 0) or 0))
+        budget_exceeded_count = max(0, int(source_budget_exceeded.get(source, 0) or 0))
         by_source[source] = {
             "requests": requests_count,
             "errors": errors_count,
+            "budgetExceeded": budget_exceeded_count,
             "errorRate": round((errors_count / requests_count), 6) if requests_count > 0 else 0.0,
+            "budgetExceededRate": (
+                round((budget_exceeded_count / requests_count), 6)
+                if requests_count > 0
+                else 0.0
+            ),
         }
     return {
         "updatedAt": updated_at,
@@ -15696,6 +15773,14 @@ async def federated_search_memory(
         )
     fail_open_continuation_sources: list[str] = []
 
+    slow_source_set = set(staged_slow_sources)
+    if not slow_source_set:
+        slow_source_set = {
+            source
+            for source in resolved_sources
+            if source in DEFAULT_RETRIEVAL_SLOW_SOURCES
+        }
+
     def _schedule_fail_open_continuation(
         source_name: str,
         *,
@@ -15733,9 +15818,49 @@ async def federated_search_memory(
         fail_open_continuation_sources.append(normalized)
         return True
 
+    def _slow_sync_timeout_budget_exceeded(source_name: str, phase_label: str) -> bool:
+        normalized = str(source_name or "").strip().lower()
+        if not normalized or explicit_source_override:
+            return False
+        if normalized not in slow_source_set:
+            return False
+        return phase_label in {"slow-sync", "slow-sync-fallback", "all-sync"}
+
+    def _source_error_payload(
+        *,
+        source_name: str,
+        phase_label: str,
+        timeout_secs: float | None,
+        exc: Exception | None,
+        deferred: bool = False,
+        budget_exceeded: bool = False,
+    ) -> dict[str, Any]:
+        message = str(exc or "").strip()
+        if deferred and not message:
+            message = f"{source_name} retrieval deferred after call budget reached"
+        kind = "error"
+        timed_out = bool(exc is not None and _is_retrieval_timeout_error(exc))
+        if deferred or budget_exceeded:
+            kind = "budget_exceeded"
+        elif timed_out:
+            kind = "timeout"
+        timeout_flag = bool(timed_out and kind == "timeout")
+        payload = {
+            "error": message,
+            "kind": kind,
+            "timeout": timeout_flag,
+            "timed_out": timed_out,
+            "budget_exceeded": bool(kind == "budget_exceeded"),
+            "phase": phase_label,
+        }
+        if timeout_secs is not None:
+            payload["timeout_secs"] = round(max(0.0, float(timeout_secs)), 3)
+        return payload
+
     async def _timed_source(
         source_name: str,
         timeout_secs: float,
+        timeout_as_budget_exceeded: bool,
         coro: Any,
     ) -> list[dict[str, Any]]:
         started = time.monotonic()
@@ -15755,7 +15880,8 @@ async def federated_search_memory(
                 source=source_name,
                 duration_ms=(time.monotonic() - started) * 1000,
                 ok=ok,
-                timed_out=timed_out,
+                timed_out=bool(timed_out and not timeout_as_budget_exceeded),
+                budget_exceeded=bool(timed_out and timeout_as_budget_exceeded),
                 retrieval_mode=normalized_mode,
             )
 
@@ -15810,17 +15936,29 @@ async def federated_search_memory(
 
     async def _run_source_batch(
         source_batch: list[str],
-    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str], list[str]]:
+        *,
+        phase_label: str,
+        suppress_slow_timeout_warnings: bool = False,
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any], list[str]]:
         nonlocal call_budget_exhausted
         batch_rows: dict[str, list[dict[str, Any]]] = {}
-        batch_errors: dict[str, str] = {}
+        batch_errors: dict[str, Any] = {}
         batch_warnings: list[str] = []
         if call_deadline_monotonic is not None:
             remaining = _remaining_call_budget_secs()
             if remaining is not None and remaining <= 0.0:
                 call_budget_exhausted = True
                 for source in source_batch:
-                    batch_errors[source] = f"{source} retrieval deferred before dispatch (call budget exhausted)"
+                    batch_errors[source] = _source_error_payload(
+                        source_name=source,
+                        phase_label=phase_label,
+                        timeout_secs=effective_source_timeouts.get(source),
+                        exc=OrchestratorError(
+                            f"{source} retrieval deferred before dispatch (call budget exhausted)"
+                        ),
+                        deferred=True,
+                        budget_exceeded=True,
+                    )
                     batch_warnings.append(
                         f"{source} retrieval deferred before dispatch (call budget exhausted)."
                     )
@@ -15854,6 +15992,7 @@ async def federated_search_memory(
                 _timed_source(
                     source,
                     timeout,
+                    _slow_sync_timeout_budget_exceeded(source, phase_label),
                     _build_source_coro(source, timeout),
                 )
             )
@@ -15863,13 +16002,31 @@ async def federated_search_memory(
             gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
             for source, outcome in zip(tasks.keys(), gathered):
                 if isinstance(outcome, Exception):
-                    batch_errors[source] = str(outcome)
-                    batch_warnings.append(f"{source} retrieval failed: {outcome}")
-                    if _schedule_fail_open_continuation(
+                    timeout_secs = float(
+                        effective_source_timeouts.get(source, RETRIEVAL_QDRANT_TIMEOUT_SECS)
+                    )
+                    timeout_hit = _is_retrieval_timeout_error(outcome)
+                    budget_exceeded = bool(
+                        timeout_hit and _slow_sync_timeout_budget_exceeded(source, phase_label)
+                    )
+                    batch_errors[source] = _source_error_payload(
+                        source_name=source,
+                        phase_label=phase_label,
+                        timeout_secs=timeout_secs,
+                        exc=outcome,
+                        budget_exceeded=budget_exceeded,
+                    )
+                    should_show_timeout_warning = not (
+                        suppress_slow_timeout_warnings and budget_exceeded
+                    )
+                    if should_show_timeout_warning:
+                        batch_warnings.append(f"{source} retrieval failed: {outcome}")
+                    continuation_scheduled = _schedule_fail_open_continuation(
                         source,
                         timeout_only=True,
                         error=outcome,
-                    ):
+                    )
+                    if continuation_scheduled and should_show_timeout_warning:
                         batch_warnings.append(
                             f"{source} retrieval timed out; continuing asynchronously for cache warm."
                         )
@@ -15900,16 +16057,32 @@ async def federated_search_memory(
 
         for task in done_total:
             source = task_to_source.get(task) or "unknown"
+            timeout_secs = float(effective_source_timeouts.get(source, RETRIEVAL_QDRANT_TIMEOUT_SECS))
             try:
                 outcome = task.result()
             except Exception as exc:
-                batch_errors[source] = str(exc)
-                batch_warnings.append(f"{source} retrieval failed: {exc}")
-                if _schedule_fail_open_continuation(
+                timeout_hit = _is_retrieval_timeout_error(exc)
+                budget_exceeded = bool(
+                    timeout_hit and _slow_sync_timeout_budget_exceeded(source, phase_label)
+                )
+                batch_errors[source] = _source_error_payload(
+                    source_name=source,
+                    phase_label=phase_label,
+                    timeout_secs=timeout_secs,
+                    exc=exc,
+                    budget_exceeded=budget_exceeded,
+                )
+                should_show_timeout_warning = not (
+                    suppress_slow_timeout_warnings and budget_exceeded
+                )
+                if should_show_timeout_warning:
+                    batch_warnings.append(f"{source} retrieval failed: {exc}")
+                continuation_scheduled = _schedule_fail_open_continuation(
                     source,
                     timeout_only=True,
                     error=exc,
-                ):
+                )
+                if continuation_scheduled and should_show_timeout_warning:
                     batch_warnings.append(
                         f"{source} retrieval timed out; continuing asynchronously for cache warm."
                     )
@@ -15921,8 +16094,13 @@ async def federated_search_memory(
                 source = task_to_source.get(task) or "unknown"
                 task.cancel()
                 deferred_sources.append(source)
-                batch_errors[source] = (
-                    f"{source} retrieval deferred after call budget reached"
+                batch_errors[source] = _source_error_payload(
+                    source_name=source,
+                    phase_label=phase_label,
+                    timeout_secs=effective_source_timeouts.get(source),
+                    exc=OrchestratorError(f"{source} retrieval deferred after call budget reached"),
+                    deferred=True,
+                    budget_exceeded=True,
                 )
                 batch_warnings.append(
                     f"{source} retrieval deferred after call budget reached; returning best-available results."
@@ -15953,7 +16131,7 @@ async def federated_search_memory(
         return batch_rows, batch_errors, batch_warnings
 
     results_by_source: dict[str, list[dict[str, Any]]] = {}
-    source_errors: dict[str, str] = {}
+    source_errors: dict[str, Any] = {}
     positive_terms, negative_terms = _extract_learning_terms(preferences)
     learning_enabled = bool(
         rerank_with_learning
@@ -16065,7 +16243,11 @@ async def federated_search_memory(
     backlog_async_warm_slow_sources: list[str] = []
     hard_sync_async_split_applied = False
     if staged_fetch_used:
-        fast_rows, fast_errors, fast_warnings = await _run_source_batch(staged_fast_sources)
+        fast_rows, fast_errors, fast_warnings = await _run_source_batch(
+            staged_fast_sources,
+            phase_label="fast",
+            suppress_slow_timeout_warnings=False,
+        )
         results_by_source.update(fast_rows)
         source_errors.update(fast_errors)
         warnings.extend(fast_warnings)
@@ -16107,6 +16289,11 @@ async def federated_search_memory(
             if len(fast_rows.get(source_name, [])) > 0
         )
         enough_fast_diversity = fast_sources_with_hits >= RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY
+        fast_has_material_errors = any(
+            _normalize_source_error_detail(error_payload).get("kind") in {"timeout", "error"}
+            for error_payload in fast_errors.values()
+        )
+        fast_sources_failed = bool(not fast_merged or fast_has_material_errors)
         skip_slow = bool(
             len(fast_merged) >= min_results_for_skip
             and enough_fast_diversity
@@ -16198,7 +16385,11 @@ async def federated_search_memory(
                     if source not in sync_fallback_slow_sources
                 ]
                 slow_sources_skipped.extend(async_warm_slow_sources)
-                slow_rows, slow_errors, slow_warnings = await _run_source_batch(sync_fallback_slow_sources)
+                slow_rows, slow_errors, slow_warnings = await _run_source_batch(
+                    sync_fallback_slow_sources,
+                    phase_label="slow-sync-fallback",
+                    suppress_slow_timeout_warnings=not fast_sources_failed,
+                )
                 results_by_source.update(slow_rows)
                 source_errors.update(slow_errors)
                 warnings.extend(slow_warnings)
@@ -16216,7 +16407,11 @@ async def federated_search_memory(
                 slow_sources_skipped.extend(list(allowed_slow_sources))
         else:
             sync_batch = sync_fallback_slow_sources or allowed_slow_sources
-            slow_rows, slow_errors, slow_warnings = await _run_source_batch(sync_batch)
+            slow_rows, slow_errors, slow_warnings = await _run_source_batch(
+                sync_batch,
+                phase_label="slow-sync",
+                suppress_slow_timeout_warnings=not fast_sources_failed,
+            )
             results_by_source.update(slow_rows)
             source_errors.update(slow_errors)
             warnings.extend(slow_warnings)
@@ -16244,7 +16439,11 @@ async def federated_search_memory(
                     ),
                 )
     else:
-        batch_rows, batch_errors, batch_warnings = await _run_source_batch(resolved_sources)
+        batch_rows, batch_errors, batch_warnings = await _run_source_batch(
+            resolved_sources,
+            phase_label="all-sync",
+            suppress_slow_timeout_warnings=False,
+        )
         results_by_source.update(batch_rows)
         source_errors.update(batch_errors)
         warnings.extend(batch_warnings)
@@ -16370,9 +16569,46 @@ async def federated_search_memory(
             "deferred_sources": sorted(set(deferred_sources)),
         },
     }
+    returned_sources = sorted(
+        {
+            source
+            for source, rows in results_by_source.items()
+            if isinstance(rows, list) and len(rows) > 0
+        }
+    )
+    budget_exceeded_sources = sorted(
+        {
+            source_name
+            for source_name, error_payload in source_errors.items()
+            if _normalize_source_error_detail(error_payload).get("kind") == "budget_exceeded"
+        }
+    )
+    deferred_budget_sources = sorted(set(deferred_sources))
+    should_emit_source_availability_summary = bool(
+        budget_exceeded_sources
+        or deferred_budget_sources
+        or _source_errors_has_material_failures(source_errors)
+    )
+    deferred_context_sources = sorted(
+        set(
+            list(async_warm_slow_sources)
+            + list(fail_open_continuation_sources)
+            + list(backlog_async_warm_slow_sources)
+            + list(deferred_budget_sources)
+            + budget_exceeded_sources
+        )
+    )
+    if returned_sources and should_emit_source_availability_summary:
+        warnings.append("Sources returned now: " + ", ".join(returned_sources) + ".")
+    if deferred_context_sources and should_emit_source_availability_summary:
+        warnings.append(
+            "Additional context may be available later from: "
+            + ", ".join(deferred_context_sources)
+            + ". Re-run after cache warm or use deep mode / longer timeout budgets for blocking retrieval."
+        )
+    retrieval_debug["staged_fetch"]["budget_exceeded_sources"] = budget_exceeded_sources
     final_results = merged[:limit]
     await _record_retrieval_lifecycle_observation(query=query, results=final_results)
-    deferred_budget_sources = sorted(set(deferred_sources))
     critical_deferred_sources = [
         source
         for source in deferred_budget_sources
@@ -18534,8 +18770,78 @@ async def get_retrieval_metrics(limit: int = 20):
     return await _build_retrieval_metrics_payload(limit)
 
 
+async def _retrieval_source_quality_window_snapshot(window_secs: float) -> dict[str, Any]:
+    now_dt = datetime.now(timezone.utc)
+    effective_window_secs = max(60.0, min(float(window_secs), 86400.0))
+    start_dt = now_dt - timedelta(seconds=effective_window_secs)
+    async with recall_quality_lock:
+        history = list(recall_quality_history)
+    sample_count = 0
+    per_source: dict[str, dict[str, int]] = {}
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        parsed_timestamp = _parse_timestamp_to_datetime(row.get("timestamp"))
+        if parsed_timestamp is None or parsed_timestamp < start_dt:
+            continue
+        sample_count += 1
+        source_counts = row.get("sourceCounts") if isinstance(row.get("sourceCounts"), dict) else {}
+        if source_counts:
+            for source_name, request_count in source_counts.items():
+                normalized = str(source_name or "").strip().lower()
+                if not normalized:
+                    continue
+                entry = per_source.setdefault(
+                    normalized,
+                    {"requests": 0, "timeouts": 0, "errors": 0, "budgetExceeded": 0},
+                )
+                entry["requests"] += max(0, int(request_count or 0))
+        else:
+            row_sources = row.get("sources") if isinstance(row.get("sources"), list) else []
+            for source_name in row_sources:
+                normalized = str(source_name or "").strip().lower()
+                if not normalized:
+                    continue
+                entry = per_source.setdefault(
+                    normalized,
+                    {"requests": 0, "timeouts": 0, "errors": 0, "budgetExceeded": 0},
+                )
+                entry["requests"] += 1
+        source_error_kinds = row.get("sourceErrorKinds") if isinstance(row.get("sourceErrorKinds"), dict) else {}
+        if not source_error_kinds:
+            source_errors = row.get("sourceErrors") if isinstance(row.get("sourceErrors"), dict) else {}
+            source_error_kinds = {
+                str(source_name or "").strip().lower(): _normalize_source_error_detail(payload).get("kind")
+                for source_name, payload in source_errors.items()
+                if str(source_name or "").strip()
+            }
+        for source_name, kind_value in source_error_kinds.items():
+            normalized = str(source_name or "").strip().lower()
+            kind = str(kind_value or "").strip().lower()
+            if not normalized or not kind:
+                continue
+            entry = per_source.setdefault(
+                normalized,
+                {"requests": 0, "timeouts": 0, "errors": 0, "budgetExceeded": 0},
+            )
+            if kind == "budget_exceeded":
+                entry["budgetExceeded"] += 1
+            elif kind == "timeout":
+                entry["timeouts"] += 1
+                entry["errors"] += 1
+            else:
+                entry["errors"] += 1
+    return {
+        "windowSecs": round(effective_window_secs, 3),
+        "startAt": start_dt.isoformat().replace("+00:00", "Z"),
+        "endAt": now_dt.isoformat().replace("+00:00", "Z"),
+        "sampleCount": sample_count,
+        "sources": per_source,
+    }
+
+
 @app.get("/telemetry/retrieval/source-quality")
-async def get_retrieval_source_quality(limit: int = 20):
+async def get_retrieval_source_quality(limit: int = 20, window_mins: int = 0):
     payload = await _build_retrieval_metrics_payload(limit)
     recall_quality = payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
     latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
@@ -18552,8 +18858,30 @@ async def get_retrieval_source_quality(limit: int = 20):
         )
         or 0.0
     )
+    window_enabled = int(window_mins) > 0
+    window_snapshot = (
+        await _retrieval_source_quality_window_snapshot(
+            max(1, int(window_mins)) * 60.0
+        )
+        if window_enabled
+        else {
+            "windowSecs": 0.0,
+            "startAt": None,
+            "endAt": None,
+            "sampleCount": 0,
+            "sources": {},
+        }
+    )
+    window_sources = (
+        window_snapshot.get("sources")
+        if isinstance(window_snapshot.get("sources"), dict)
+        else {}
+    )
+    window_sample_count = max(0, int(window_snapshot.get("sampleCount") or 0))
+    use_window_metrics = window_enabled and window_sample_count > 0
     rows: list[dict[str, Any]] = []
-    source_names = sorted(set(latency_sources.keys()) | set(by_source.keys()))
+    lifetime_rows: list[dict[str, Any]] = []
+    source_names = sorted(set(latency_sources.keys()) | set(by_source.keys()) | set(window_sources.keys()))
     for source_name in source_names:
         source_latency = (
             latency_sources.get(source_name)
@@ -18569,7 +18897,7 @@ async def get_retrieval_source_quality(limit: int = 20):
         timeouts = int(source_latency.get("timeouts") or 0)
         timeout_rate = (float(timeouts) / float(requests)) if requests > 0 else 0.0
         error_rate = float(source_quality.get("errorRate") or 0.0)
-        rows.append(
+        lifetime_rows.append(
             {
                 "source": source_name,
                 "requests": requests,
@@ -18582,11 +18910,73 @@ async def get_retrieval_source_quality(limit: int = 20):
                 "p99Ms": float(source_latency.get("p99Ms") or 0.0),
             }
         )
+        window_row = (
+            window_sources.get(source_name)
+            if isinstance(window_sources.get(source_name), dict)
+            else {}
+        )
+        window_requests = int(window_row.get("requests") or 0)
+        window_timeouts = int(window_row.get("timeouts") or 0)
+        window_errors = int(window_row.get("errors") or 0)
+        window_budget_exceeded = int(window_row.get("budgetExceeded") or 0)
+        window_timeout_rate = (
+            (float(window_timeouts) / float(window_requests))
+            if window_requests > 0
+            else 0.0
+        )
+        window_error_rate = (
+            (float(window_errors) / float(window_requests))
+            if window_requests > 0
+            else 0.0
+        )
+        window_budget_exceeded_rate = (
+            (float(window_budget_exceeded) / float(window_requests))
+            if window_requests > 0
+            else 0.0
+        )
+        rows.append(
+            {
+                "source": source_name,
+                "requests": window_requests if use_window_metrics else requests,
+                "timeouts": window_timeouts if use_window_metrics else timeouts,
+                "budgetExceeded": window_budget_exceeded if use_window_metrics else 0,
+                "errors": window_errors if use_window_metrics else int(round(error_rate * requests)),
+                "timeoutRate": (
+                    round(window_timeout_rate, 6)
+                    if use_window_metrics
+                    else round(timeout_rate, 6)
+                ),
+                "budgetExceededRate": (
+                    round(window_budget_exceeded_rate, 6)
+                    if use_window_metrics
+                    else 0.0
+                ),
+                "errorRate": (
+                    round(window_error_rate, 6)
+                    if use_window_metrics
+                    else round(error_rate, 6)
+                ),
+                "errorRateDeltaVsQdrant": (
+                    round(window_error_rate - baseline_error_rate, 6)
+                    if use_window_metrics
+                    else round(error_rate - baseline_error_rate, 6)
+                ),
+                "p50Ms": float(source_latency.get("p50Ms") or 0.0),
+                "p95Ms": float(source_latency.get("p95Ms") or 0.0),
+                "p99Ms": float(source_latency.get("p99Ms") or 0.0),
+                "lifetimeRequests": requests,
+                "lifetimeTimeouts": timeouts,
+            }
+        )
     rows.sort(key=lambda item: (item["timeoutRate"], item["errorRate"], item["p95Ms"]), reverse=True)
     recommendations: list[str] = []
     if rows and rows[0]["timeoutRate"] >= 0.25:
         recommendations.append(
             "At least one source has timeout rate >= 25%; keep it out of default decision path or reduce time budget."
+        )
+    if any(row.get("budgetExceededRate", 0.0) >= 0.25 for row in rows):
+        recommendations.append(
+            "Budget-exceeded rates are elevated for slower sources; this is expected with fail-open staged retrieval. Use deep mode or longer blocking budgets when completeness is more important than latency."
         )
     if any(row["source"] == RETRIEVAL_SOURCE_LETTA and row["timeoutRate"] >= 0.5 for row in rows):
         recommendations.append(
@@ -18618,7 +19008,16 @@ async def get_retrieval_source_quality(limit: int = 20):
     return {
         "updatedAt": payload.get("updatedAt"),
         "baselineSource": baseline_source,
+        "window": {
+            "minutes": max(0, int(window_mins)),
+            "windowSecs": window_snapshot.get("windowSecs"),
+            "startAt": window_snapshot.get("startAt"),
+            "endAt": window_snapshot.get("endAt"),
+            "sampleCount": window_snapshot.get("sampleCount"),
+            "active": use_window_metrics,
+        },
         "sources": rows,
+        "lifetimeSources": lifetime_rows,
         "recommendations": recommendations,
     }
 
@@ -20693,7 +21092,9 @@ async def search_memory(payload: MemorySearch):
             not results
             or (
                 isinstance(retrieval_debug.get("source_errors"), dict)
-                and bool(retrieval_debug.get("source_errors"))
+                and _source_errors_has_material_failures(
+                    retrieval_debug.get("source_errors")
+                )
             )
         ),
         "agent_profile": {

@@ -6,7 +6,7 @@ import json
 import sys
 import time
 from types import SimpleNamespace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -690,6 +690,145 @@ async def test_federated_search_applies_qdrant_sync_timeout_cap(monkeypatch: pyt
     assert calls["rollups"] == 1
     assert elapsed < 1.5
     assert any("qdrant retrieval failed" in item.lower() for item in warnings)
+
+
+@pytest.mark.asyncio
+async def test_federated_search_suppresses_slow_timeout_warning_when_fast_sources_succeed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def _rollups(*args, **kwargs):
+        return [
+            {
+                "project": "alpha",
+                "file": "rollup.md",
+                "summary": "fast row",
+                "score": 0.91,
+                "source": "topic_rollups",
+            }
+        ]
+
+    async def _slow_mindsdb(*args, **kwargs):
+        await asyncio.sleep(1.2)
+        return []
+
+    async def _empty(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(orchestrator, "search_topic_rollups", _rollups)
+    monkeypatch.setattr(orchestrator, "search_mindsdb_memory", _slow_mindsdb)
+    monkeypatch.setattr(orchestrator, "search_qdrant", _empty)
+    monkeypatch.setattr(orchestrator, "search_mongo_raw", _empty)
+    monkeypatch.setattr(orchestrator, "search_letta_archival", _empty)
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _empty)
+    monkeypatch.setattr(orchestrator, "_schedule_background_source_warm", lambda **_kwargs: None)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_PATHWAY_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_SPLIT_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", 2)
+    monkeypatch.setattr(
+        orchestrator,
+        "RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_MINDSDB],
+    )
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_STRICT_FAST_SYNC_DEFAULT", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MINDSDB_TIMEOUT_SECS", 0.2)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_FAST_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_SLOW_SOURCES",
+        [orchestrator.RETRIEVAL_SOURCE_MINDSDB],
+    )
+
+    _results, debug, warnings = await orchestrator.federated_search_memory(
+        "alpha staged suppression",
+        limit=5,
+        sources=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+    )
+
+    joined = " | ".join(str(item) for item in warnings).lower()
+    assert "mindsdb retrieval failed" not in joined
+    assert "sources returned now: topic_rollups." in joined
+    assert "additional context may be available later from: mindsdb." in joined
+    mindsdb_error = debug["source_errors"]["mindsdb"]
+    assert isinstance(mindsdb_error, dict)
+    assert mindsdb_error.get("kind") == "budget_exceeded"
+    assert mindsdb_error.get("timeout") is False
+
+
+@pytest.mark.asyncio
+async def test_retrieval_source_quality_endpoint_uses_rolling_window(monkeypatch: pytest.MonkeyPatch):
+    async def _metrics(_limit: int):
+        return {
+            "updatedAt": "2026-03-14T00:00:00Z",
+            "recallQuality": {
+                "bySource": {
+                    "qdrant": {"errorRate": 0.1, "requests": 10},
+                    "mindsdb": {"errorRate": 0.2, "requests": 10},
+                }
+            },
+            "latency": {
+                "sources": {
+                    "qdrant": {"requests": 100, "timeouts": 10, "p50Ms": 100.0, "p95Ms": 400.0, "p99Ms": 600.0},
+                    "mindsdb": {"requests": 80, "timeouts": 8, "p50Ms": 90.0, "p95Ms": 500.0, "p99Ms": 700.0},
+                }
+            },
+            "sourceCircuit": {},
+            "backlogGating": {"enabled": True, "lettaOutstandingMax": 700},
+        }
+
+    monkeypatch.setattr(orchestrator, "_build_retrieval_metrics_payload", _metrics)
+
+    now = datetime.now(timezone.utc)
+    recent_ts = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    old_ts = (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    async with orchestrator.recall_quality_lock:
+        existing = list(orchestrator.recall_quality_history)
+        orchestrator.recall_quality_history.clear()
+        orchestrator.recall_quality_history.append(
+            {
+                "timestamp": old_ts,
+                "sourceCounts": {"qdrant": 50},
+                "sourceErrorKinds": {"qdrant": "timeout"},
+                "sourceErrors": {"qdrant": "qdrant retrieval timed out"},
+                "sources": ["qdrant"],
+            }
+        )
+        orchestrator.recall_quality_history.append(
+            {
+                "timestamp": recent_ts,
+                "sourceCounts": {"qdrant": 4, "mindsdb": 2},
+                "sourceErrorKinds": {"qdrant": "timeout", "mindsdb": "budget_exceeded"},
+                "sourceErrors": {
+                    "qdrant": {"kind": "timeout", "error": "qdrant retrieval timed out"},
+                    "mindsdb": {"kind": "budget_exceeded", "error": "mindsdb retrieval sync budget exceeded"},
+                },
+                "sources": ["qdrant", "mindsdb"],
+            }
+        )
+    try:
+        payload = await orchestrator.get_retrieval_source_quality(limit=20, window_mins=30)
+    finally:
+        async with orchestrator.recall_quality_lock:
+            orchestrator.recall_quality_history.clear()
+            for row in existing:
+                orchestrator.recall_quality_history.append(row)
+
+    assert payload["window"]["sampleCount"] == 1
+    rows = {row["source"]: row for row in payload["sources"]}
+    assert rows["qdrant"]["requests"] == 4
+    assert rows["qdrant"]["timeouts"] == 1
+    assert rows["qdrant"]["timeoutRate"] == 0.25
+    assert rows["mindsdb"]["budgetExceeded"] == 1
+    assert rows["mindsdb"]["budgetExceededRate"] == 0.5
+    assert rows["mindsdb"]["timeoutRate"] == 0.0
+    assert isinstance(payload.get("lifetimeSources"), list)
 
 
 @pytest.mark.asyncio
