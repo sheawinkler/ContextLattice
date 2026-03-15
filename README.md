@@ -152,6 +152,10 @@ ORCH_RECALL_DEEP_ASYNC_MONGO_COLLECTION=recall_deep_async_jobs
 ORCH_TELEMETRY_DB=memmcp_raw
 ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
 ORCH_TELEMETRY_PERSIST_ENABLED=true
+ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=false
+ORCH_MEMORY_BANK_SEARCH_BACKEND=native
+ORCH_MEMORY_BANK_SPIKE_HTTP_URL=
+ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE=/search
 ```
 
 ### 2) One-command quickstart (recommended)
@@ -217,6 +221,8 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/fanout | jq '.lettaAutoPrune'
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  "http://127.0.0.1:8075/telemetry/memory/cleanup-low-value/chunked?dry_run=true&project_batch=10&per_project_limit=250" | jq
 curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
   "http://127.0.0.1:8075/telemetry/fanout/letta/auto-prune/run?force=false" | jq
 curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
@@ -316,10 +322,14 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - Storage pressure controls: retention runner, low-value TTL pruning, optional snapshot pruning, and external NVMe cold path support.
 - Retrieval path: parallel source reads with orchestrator merge/rank loop and preference-learning feedback.
 - Telemetry routing guards (default-on): telemetry-like writes are filtered out of `qdrant`/`mindsdb`/`letta` fanout.
+- Memory-bank policy: default non-critical source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=false`) with explicit opt-in and optional non-ANE spike backend lane.
 
 Telemetry routing/cleanup toggles:
 
 ```bash
+ORCH_MEMORY_BANK_TELEMETRY_GUARD_ENABLED=true
+ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES=telemetry,metrics,signals,overrides
+ORCH_MEMORY_BANK_TELEMETRY_MARKERS=telemetry,metrics,__state__,__stats__,__snapshots__,__health__,__allocations__,_agg-,queue__
 ORCH_QDRANT_TELEMETRY_GUARD_ENABLED=true
 ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED=true
 ORCH_LETTA_TELEMETRY_GUARD_ENABLED=true

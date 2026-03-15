@@ -3163,6 +3163,127 @@ async def test_memory_search_applies_trading_project_intent_sources(monkeypatch:
     assert response["retrieval_policy"]["effectiveSources"] == orchestrator._resolve_intent_default_sources("decision")
 
 
+def test_normalize_retrieval_sources_respects_memory_bank_default_policy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator,
+        "RETRIEVAL_SOURCES_ENV",
+        ",".join(
+            [
+                orchestrator.RETRIEVAL_SOURCE_QDRANT,
+                orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK,
+                orchestrator.RETRIEVAL_SOURCE_LETTA,
+            ]
+        ),
+    )
+    default_sources = orchestrator._normalize_retrieval_sources(
+        None,
+        explicit_source_override=False,
+    )
+    explicit_sources = orchestrator._normalize_retrieval_sources(
+        [
+            orchestrator.RETRIEVAL_SOURCE_QDRANT,
+            orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK,
+        ],
+        explicit_source_override=True,
+    )
+    assert orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK not in default_sources
+    assert orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK in explicit_sources
+
+
+@pytest.mark.asyncio
+async def test_run_memory_recall_pipeline_filters_profile_memory_bank_when_default_off(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    async def _federated(query: str, **kwargs):
+        captured["query"] = query
+        captured["sources"] = list(kwargs.get("sources") or [])
+        captured["explicit"] = bool(kwargs.get("explicit_source_override"))
+        return [], {"sources": list(kwargs.get("sources") or []), "source_errors": {}, "source_counts": {}}, []
+
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "federated_search_memory", _federated)
+    monkeypatch.setattr(orchestrator, "AGENT_RECALL_ESCALATION_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_QUERY_EXPANSION_ENABLED", False)
+
+    _results, debug, _warnings, _grounding = await orchestrator._run_memory_recall_pipeline(
+        query="latency profile",
+        limit=5,
+        project_filter="alpha",
+        topic_filter=None,
+        sources=None,
+        source_weights=None,
+        preferences=None,
+        rerank_with_learning=False,
+        retrieval_mode="balanced",
+        retrieval_intent="decision",
+        agent_profile={
+            "sources": [
+                orchestrator.RETRIEVAL_SOURCE_QDRANT,
+                orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK,
+            ],
+            "_source_override_requested": False,
+        },
+        auto_escalate=False,
+        query_expansion=False,
+    )
+
+    assert captured["explicit"] is False
+    assert orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK not in captured["sources"]
+    assert orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK not in (debug.get("sources") or [])
+
+
+@pytest.mark.asyncio
+async def test_memory_search_effective_sources_filter_memory_bank_when_default_off(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    async def _pipeline(**kwargs):
+        captured.update(kwargs)
+        return (
+            [],
+            {"retrieval_mode": "balanced", "retrieval_intent": "decision", "source_errors": {}, "source_counts": {}},
+            [],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "TRADING_PROJECT_HINTS", ["algotraderv2_rust"])
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator,
+        "DEFAULT_RETRIEVAL_INTENT_SOURCES",
+        {
+            "decision": [
+                orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+                orchestrator.RETRIEVAL_SOURCE_QDRANT,
+                orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK,
+            ],
+            "ops": [orchestrator.RETRIEVAL_SOURCE_QDRANT],
+            "raw": [orchestrator.RETRIEVAL_SOURCE_MONGO_RAW],
+        },
+    )
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="profitability tuning",
+            project="algotraderv2_rust",
+            include_retrieval_debug=True,
+        )
+    )
+
+    assert orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK not in (
+        captured["agent_profile"].get("sources") or []
+    )
+    assert orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK not in (
+        response["retrieval_policy"].get("effectiveSources") or []
+    )
+
+
 @pytest.mark.asyncio
 async def test_memory_search_raw_intent_skips_trading_scope(monkeypatch: pytest.MonkeyPatch):
     async def _pipeline(**_kwargs):
@@ -4987,6 +5108,14 @@ def test_memory_bank_telemetry_classifier_helpers():
         "runbooks/profitability/baseline_ladder.md",
         "runbooks/profitability",
     )
+    assert not orchestrator._looks_memory_bank_telemetry_file(
+        "notes/agent-checkpoints/2026-03-14-mindsdb-telemetry-phase-proposal.md",
+        "notes/agent-checkpoints",
+    )
+    assert orchestrator._looks_memory_bank_telemetry_file(
+        "notes/telemetry-overview.md",
+        "telemetry/live",
+    )
 
 
 @pytest.mark.asyncio
@@ -5059,6 +5188,94 @@ async def test_search_memory_bank_lexical_skips_telemetry_unless_query_targets_i
     )
     assert telemetry_rows
     assert reads["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_search_memory_bank_lexical_backend_disabled_short_circuits(monkeypatch: pytest.MonkeyPatch):
+    async def _unexpected(*_args, **_kwargs):
+        raise AssertionError("list_files should not be called when memory-bank backend is disabled")
+
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_SPIKE_BACKEND", "disabled")
+    monkeypatch.setattr(orchestrator, "list_files", _unexpected)
+
+    rows = await orchestrator.search_memory_bank_lexical(
+        "profitability baseline ladder",
+        project_filter="alpha",
+        limit=5,
+        time_budget_secs=2.0,
+    )
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_search_memory_bank_lexical_spike_fallbacks_to_native(monkeypatch: pytest.MonkeyPatch):
+    async def _files(_project: str):
+        return ["runbooks/profitability/baseline_ladder.md"]
+
+    async def _read(_project: str, file_name: str, **_kwargs):
+        if file_name.endswith("baseline_ladder.md"):
+            return "Baseline ladder tuning notes with concrete profitability changes."
+        return ""
+
+    async def _summary(content: str, max_length: int = 500):
+        return content[:max_length]
+
+    start_fallbacks = int(orchestrator.memory_bank_spike_fallbacks)
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_SPIKE_BACKEND", "meilisearch_spike")
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_SPIKE_HTTP_URL", "")
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE", True)
+    monkeypatch.setattr(orchestrator, "list_files", _files)
+    monkeypatch.setattr(orchestrator, "read_project_file", _read)
+    monkeypatch.setattr(orchestrator, "summarize_content", _summary)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_FILES_PER_PROJECT", 8)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_SCAN_LIMIT", 12)
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", True)
+
+    rows = await orchestrator.search_memory_bank_lexical(
+        "profitability baseline ladder",
+        project_filter="alpha",
+        limit=6,
+        time_budget_secs=5.0,
+    )
+    assert rows
+    assert rows[0]["file"] == "runbooks/profitability/baseline_ladder.md"
+    assert int(orchestrator.memory_bank_spike_fallbacks) >= start_fallbacks + 1
+
+
+@pytest.mark.asyncio
+async def test_memory_bank_cleanup_chunked_batches_projects(monkeypatch: pytest.MonkeyPatch):
+    async def _projects():
+        return ["alpha", "beta", "gamma"]
+
+    async def _cleanup(*, project: str | None, limit: int, dry_run: bool):
+        return {
+            "ok": True,
+            "dryRun": dry_run,
+            "project": project,
+            "scanned": 5,
+            "matched": 2,
+            "alreadyProcessed": 1,
+            "selected": 1,
+            "updated": 0,
+            "failed": 0,
+            "limit": limit,
+        }
+
+    monkeypatch.setattr(orchestrator, "list_projects", _projects)
+    monkeypatch.setattr(orchestrator, "run_memory_bank_telemetry_cleanup", _cleanup)
+
+    result = await orchestrator.run_memory_bank_telemetry_cleanup_chunked(
+        start_after=None,
+        project_batch=2,
+        per_project_limit=50,
+        dry_run=True,
+    )
+
+    assert result["ok"] is True
+    assert result["nextStartAfter"] == "beta"
+    assert result["totals"]["projectsProcessed"] == 2
+    assert result["totals"]["selected"] == 2
+    assert len(result["projects"]) == 2
 
 
 def test_merge_rows_respects_raw_intent_low_value_policy(monkeypatch: pytest.MonkeyPatch):
