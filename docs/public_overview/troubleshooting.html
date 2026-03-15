@@ -132,8 +132,10 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/ops/capabilities | j
         <article class="card component-card">
           <h3>Disk pressure</h3>
           <p><strong>Impact:</strong> service resets or degraded latency under retention lag.</p>
-          <p><strong>Action:</strong> run retention now and verify qdrant/mongo volume paths.</p>
+          <p><strong>Action:</strong> run retention now, run chunked memory-bank low-value cleanup (safe batches), and verify qdrant/mongo volume paths.</p>
 <pre><code>curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention/run | jq
+curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
+  "http://127.0.0.1:8075/telemetry/memory/cleanup-low-value/chunked?dry_run=true&project_batch=10&per_project_limit=250" | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention | jq</code></pre>
         </article>
         <article class="card component-card">

@@ -815,6 +815,10 @@ RETRIEVAL_SLOW_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SLOW_SOURCES",
     "mindsdb,mongo_raw,letta,memory_bank",
 )
+RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED = os.getenv(
     "ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED",
     "true",
@@ -1421,11 +1425,11 @@ MEMORY_BANK_TELEMETRY_FILE_PATTERNS_ENV = os.getenv(
 )
 MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES_ENV = os.getenv(
     "ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES",
-    "telemetry,metrics,signals,overrides,perf,tmp",
+    "telemetry,metrics,signals,overrides",
 )
 MEMORY_BANK_TELEMETRY_MARKERS_ENV = os.getenv(
     "ORCH_MEMORY_BANK_TELEMETRY_MARKERS",
-    "telemetry,metrics,latency,queue,health,status,snapshot,stats,allocations,_agg-",
+    "telemetry,metrics,__state__,__stats__,__snapshots__,__health__,__allocations__,_agg-,queue__",
 )
 MEMORY_BANK_TELEMETRY_CLEANUP_MAX_CONCURRENCY = max(
     1,
@@ -1442,6 +1446,29 @@ MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT = max(
     1,
     int(os.getenv("ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT", "5000")),
 )
+MEMORY_BANK_SPIKE_BACKEND = str(
+    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "native")
+).strip().lower()
+if MEMORY_BANK_SPIKE_BACKEND not in {
+    "native",
+    "disabled",
+    "meilisearch_spike",
+    "quickwit_spike",
+    "tantivy_spike",
+}:
+    MEMORY_BANK_SPIKE_BACKEND = "native"
+MEMORY_BANK_SPIKE_HTTP_URL = str(os.getenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL", "")).strip()
+MEMORY_BANK_SPIKE_SEARCH_ROUTE = str(
+    os.getenv("ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE", "/search")
+).strip() or "/search"
+MEMORY_BANK_SPIKE_TIMEOUT_SECS = max(
+    0.2,
+    float(os.getenv("ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS", "1.5")),
+)
+MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE = os.getenv(
+    "ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH = Path(
     os.getenv(
         "ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH",
@@ -1789,6 +1816,20 @@ RETRIEVAL_SOURCES = (
 )
 
 
+def _apply_memory_bank_default_source_policy(
+    sources: list[str],
+    *,
+    explicit_override: bool,
+) -> list[str]:
+    if RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED or explicit_override:
+        return list(sources)
+    return [
+        source
+        for source in sources
+        if source != RETRIEVAL_SOURCE_MEMORY_BANK
+    ]
+
+
 def _normalize_retrieval_source_csv(raw: str | None) -> list[str]:
     requested = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
     normalized: list[str] = []
@@ -1815,6 +1856,12 @@ if not DEFAULT_RETRIEVAL_SLOW_SOURCES:
         RETRIEVAL_SOURCE_LETTA,
         RETRIEVAL_SOURCE_MEMORY_BANK,
     ]
+if not RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED:
+    DEFAULT_RETRIEVAL_SLOW_SOURCES = [
+        source
+        for source in DEFAULT_RETRIEVAL_SLOW_SOURCES
+        if source != RETRIEVAL_SOURCE_MEMORY_BANK
+    ]
 RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES = _normalize_retrieval_source_csv(
     RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES_ENV
 )
@@ -1823,6 +1870,10 @@ if not RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:
         RETRIEVAL_SOURCE_LETTA,
         RETRIEVAL_SOURCE_MEMORY_BANK,
     ]
+RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES = _apply_memory_bank_default_source_policy(
+    RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES,
+    explicit_override=False,
+)
 RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = _normalize_retrieval_source_csv(
     RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES_ENV
 )
@@ -1870,6 +1921,11 @@ for _intent_name in RETRIEVAL_INTENTS:
         continue
     DEFAULT_RETRIEVAL_INTENT_SOURCES[_intent_name] = list(
         _normalize_retrieval_source_csv(RETRIEVAL_SOURCES_ENV)
+    )
+for _intent_name in RETRIEVAL_INTENTS:
+    DEFAULT_RETRIEVAL_INTENT_SOURCES[_intent_name] = _apply_memory_bank_default_source_policy(
+        DEFAULT_RETRIEVAL_INTENT_SOURCES.get(_intent_name) or [],
+        explicit_override=False,
     )
 _RETRIEVAL_QUERY_SYNONYM_MAP_RAW = os.getenv("ORCH_RETRIEVAL_QUERY_SYNONYM_MAP", "").strip()
 RETRIEVAL_QUERY_SYNONYM_MAP: dict[str, list[str]] = {
@@ -2001,7 +2057,8 @@ async def _build_refreshed_recall_eval_case_set(
     project_filter = str(project or "").strip() or None
     prefix_filter = normalize_topic_path(topic_prefix) if topic_prefix else None
     fast_eval_sources = _normalize_retrieval_sources(
-        [item.strip() for item in RECALL_EVAL_REFRESH_SOURCES_ENV.split(",") if item.strip()]
+        [item.strip() for item in RECALL_EVAL_REFRESH_SOURCES_ENV.split(",") if item.strip()],
+        explicit_source_override=False,
     )
     if not fast_eval_sources:
         fast_eval_sources = [RETRIEVAL_SOURCE_QDRANT, RETRIEVAL_SOURCE_TOPIC_ROLLUPS]
@@ -2145,7 +2202,10 @@ async def _build_refreshed_recall_eval_case_set(
         for case in fallback_cases:
             if not isinstance(case, dict):
                 continue
-            case_sources = _normalize_retrieval_sources(case.get("sources"))
+            case_sources = _normalize_retrieval_sources(
+                case.get("sources"),
+                explicit_source_override=False,
+            )
             if not case_sources:
                 case_sources = list(fast_eval_sources)
             case_weights = (
@@ -3269,9 +3329,21 @@ def _looks_memory_bank_telemetry_file(file_name: str | None, topic_path: str | N
     if _looks_memory_bank_telemetry_topic_path(normalized_topic):
         return True
     base_name = lowered_file.rsplit("/", 1)[-1]
+    if base_name.endswith((".md", ".markdown", ".rst", ".adoc", ".txt")):
+        # Avoid classifying human-authored docs/checkpoints as telemetry solely due to marker words.
+        return False
     for marker in MEMORY_BANK_TELEMETRY_MARKERS:
         token = str(marker or "").strip().lower()
         if not token:
+            continue
+        if token in {"telemetry", "metrics", "latency", "queue", "health", "status", "snapshot", "stats", "allocations"}:
+            if (
+                base_name.startswith(f"{token}__")
+                or f"__{token}__" in base_name
+                or base_name.endswith(f"__{token}.json")
+                or base_name.endswith(f"_{token}.json")
+            ):
+                return True
             continue
         if token in base_name:
             return True
@@ -4232,6 +4304,12 @@ fastembed_adapter_batch_items = 0
 fastembed_adapter_batch_failures = 0
 fastembed_adapter_last_error: str | None = None
 fastembed_adapter_last_latency_ms: float | None = None
+memory_bank_spike_attempts = 0
+memory_bank_spike_successes = 0
+memory_bank_spike_failures = 0
+memory_bank_spike_fallbacks = 0
+memory_bank_spike_last_error: str | None = None
+memory_bank_spike_last_latency_ms: float | None = None
 letta_search_cache_lock = asyncio.Lock()
 letta_search_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 letta_search_cache_hits = 0
@@ -5161,10 +5239,13 @@ def _normalize_retrieval_intent(intent: str | None) -> str:
 def _resolve_intent_default_sources(intent: str) -> list[str]:
     normalized_intent = _normalize_retrieval_intent(intent)
     sources = DEFAULT_RETRIEVAL_INTENT_SOURCES.get(normalized_intent) or []
-    normalized_sources = _normalize_retrieval_sources(list(sources))
+    normalized_sources = _normalize_retrieval_sources(
+        list(sources),
+        explicit_source_override=False,
+    )
     if normalized_sources:
         return normalized_sources
-    return _normalize_retrieval_sources(None)
+    return _normalize_retrieval_sources(None, explicit_source_override=False)
 
 
 def _retrieval_mode_timeout_scale(mode: str) -> float:
@@ -5201,11 +5282,14 @@ def _resolve_retrieval_sources_for_mode(
     sources: list[str] | None,
 ) -> list[str]:
     if sources:
-        return _normalize_retrieval_sources(sources)
+        return _normalize_retrieval_sources(
+            sources,
+            explicit_source_override=True,
+        )
     normalized_mode = _normalize_retrieval_mode(mode)
     if normalized_mode == RETRIEVAL_MODE_FAST:
         return list(DEFAULT_RETRIEVAL_FAST_SOURCES)
-    return _normalize_retrieval_sources(None)
+    return _normalize_retrieval_sources(None, explicit_source_override=False)
 
 
 def _recall_e2e_budget_for_mode(mode: str) -> float:
@@ -6733,6 +6817,25 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             "refreshCompleted": memory_read_cache_refresh_completed,
             "refreshFailed": memory_read_cache_refresh_failed,
         },
+        "memoryBankBackend": {
+            "defaultEnabled": RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED,
+            "mode": MEMORY_BANK_SPIKE_BACKEND,
+            "spikeUrlConfigured": bool(MEMORY_BANK_SPIKE_HTTP_URL),
+            "spikeRoute": MEMORY_BANK_SPIKE_SEARCH_ROUTE,
+            "spikeTimeoutSecs": MEMORY_BANK_SPIKE_TIMEOUT_SECS,
+            "fallbackToNative": MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE,
+            "attempts": memory_bank_spike_attempts,
+            "successes": memory_bank_spike_successes,
+            "failures": memory_bank_spike_failures,
+            "fallbacks": memory_bank_spike_fallbacks,
+            "lastError": memory_bank_spike_last_error,
+            "lastLatencyMs": (
+                round(float(memory_bank_spike_last_latency_ms), 3)
+                if memory_bank_spike_last_latency_ms is not None
+                else None
+            ),
+            "telemetryGuardEnabled": MEMORY_BANK_TELEMETRY_GUARD_ENABLED,
+        },
         "templateCache": {
             "enabled": RETRIEVAL_PATHWAY_TEMPLATE_CACHE_ENABLED,
             "ttlSecs": RETRIEVAL_PATHWAY_TEMPLATE_CACHE_TTL_SECS,
@@ -7825,6 +7928,10 @@ def _normalize_agent_memory_profile_id(agent_id: str | None) -> str:
 
 def _default_agent_memory_profile() -> dict[str, Any]:
     sources = _normalize_retrieval_source_csv(RETRIEVAL_SOURCES_ENV)
+    sources = _apply_memory_bank_default_source_policy(
+        sources,
+        explicit_override=False,
+    )
     if not sources:
         sources = [RETRIEVAL_SOURCE_QDRANT]
     return {
@@ -7849,7 +7956,9 @@ def _normalize_agent_memory_profile_payload(payload: dict[str, Any] | None) -> d
     sources_raw = data.get("sources")
     sources = None
     if isinstance(sources_raw, list):
-        sources = _normalize_retrieval_sources([str(item) for item in sources_raw if str(item).strip()])
+        sources = _normalize_retrieval_source_csv(
+            ",".join(str(item) for item in sources_raw if str(item).strip())
+        )
     source_weights_raw = data.get("source_weights")
     source_weights = (
         _normalize_retrieval_weights(source_weights_raw)
@@ -12131,6 +12240,78 @@ async def run_memory_bank_telemetry_cleanup(
     }
 
 
+async def run_memory_bank_telemetry_cleanup_chunked(
+    *,
+    project: str | None = None,
+    start_after: str | None = None,
+    project_batch: int = 12,
+    per_project_limit: int = 250,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    explicit_project = str(project or "").strip()
+    all_projects: list[str] = []
+    if explicit_project:
+        projects = [explicit_project]
+    else:
+        project_rows = [str(item or "").strip() for item in await list_projects() if str(item or "").strip()]
+        unique_projects = sorted(set(project_rows))
+        all_projects = unique_projects
+        if start_after:
+            marker = str(start_after).strip()
+            unique_projects = [name for name in unique_projects if name > marker]
+        batch_size = max(1, int(project_batch))
+        projects = unique_projects[:batch_size]
+
+    per_project_cap = max(1, int(per_project_limit))
+    project_results: list[dict[str, Any]] = []
+    totals = {
+        "projectsProcessed": 0,
+        "scanned": 0,
+        "matched": 0,
+        "alreadyProcessed": 0,
+        "selected": 0,
+        "updated": 0,
+        "failed": 0,
+    }
+    next_start_after: str | None = None
+
+    for project_name in projects:
+        result = await run_memory_bank_telemetry_cleanup(
+            project=project_name,
+            limit=per_project_cap,
+            dry_run=dry_run,
+        )
+        project_results.append(result)
+        totals["projectsProcessed"] += 1
+        totals["scanned"] += int(result.get("scanned", 0) or 0)
+        totals["matched"] += int(result.get("matched", 0) or 0)
+        totals["alreadyProcessed"] += int(result.get("alreadyProcessed", 0) or 0)
+        totals["selected"] += int(result.get("selected", 0) or 0)
+        totals["updated"] += int(result.get("updated", 0) or 0)
+        totals["failed"] += int(result.get("failed", 0) or 0)
+        next_start_after = project_name
+
+    if explicit_project:
+        next_start_after = None
+    else:
+        marker = next_start_after or str(start_after or "").strip()
+        remaining = [name for name in all_projects if marker and name > marker]
+        if not remaining:
+            next_start_after = None
+
+    return {
+        "ok": totals["failed"] == 0,
+        "dryRun": bool(dry_run),
+        "project": explicit_project or None,
+        "startAfter": str(start_after or "").strip() or None,
+        "nextStartAfter": next_start_after,
+        "projectBatch": max(1, int(project_batch)),
+        "perProjectLimit": per_project_cap,
+        "totals": totals,
+        "projects": project_results,
+    }
+
+
 def _record_sink_retention_run(
     *,
     result: dict[str, Any] | None,
@@ -14000,7 +14181,16 @@ def _parse_mcp_name_list(result: dict[str, Any]) -> list[str]:
     return deduped
 
 
-def _normalize_retrieval_sources(sources: list[str] | None) -> list[str]:
+def _normalize_retrieval_sources(
+    sources: list[str] | None,
+    *,
+    explicit_source_override: bool | None = None,
+) -> list[str]:
+    explicit_override = (
+        bool(explicit_source_override)
+        if explicit_source_override is not None
+        else bool(sources is not None)
+    )
     if sources:
         requested = [str(item).strip().lower() for item in sources if str(item).strip()]
     else:
@@ -14012,6 +14202,10 @@ def _normalize_retrieval_sources(sources: list[str] | None) -> list[str]:
             continue
         seen.add(source)
         normalized.append(source)
+    normalized = _apply_memory_bank_default_source_policy(
+        normalized,
+        explicit_override=explicit_override,
+    )
     if not normalized:
         normalized = [RETRIEVAL_SOURCE_QDRANT]
     return normalized
@@ -15755,8 +15949,104 @@ async def search_memory_bank_lexical(
     topic_filter: str | None = None,
     time_budget_secs: float | None = None,
 ) -> list[dict[str, Any]]:
+    global memory_bank_spike_fallbacks
+
+    def _memory_bank_backend_mode() -> str:
+        return MEMORY_BANK_SPIKE_BACKEND
+
+    async def _search_memory_bank_spike_backend(
+        *,
+        backend_mode: str,
+        search_query: str,
+        search_limit: int,
+        project_name: str | None,
+        topic_path: str | None,
+        budget_secs: float,
+    ) -> list[dict[str, Any]]:
+        global memory_bank_spike_attempts, memory_bank_spike_successes, memory_bank_spike_failures
+        global memory_bank_spike_last_error, memory_bank_spike_last_latency_ms
+
+        if backend_mode in {"native", "disabled"}:
+            return []
+        if not MEMORY_BANK_SPIKE_HTTP_URL:
+            raise OrchestratorError("memory-bank spike backend URL is not configured")
+
+        route = MEMORY_BANK_SPIKE_SEARCH_ROUTE.strip() or "/search"
+        if not route.startswith("/"):
+            route = "/" + route
+        url = MEMORY_BANK_SPIKE_HTTP_URL.rstrip("/") + route
+        payload: dict[str, Any] = {
+            "query": search_query,
+            "limit": max(1, int(search_limit)),
+            "backend": backend_mode,
+        }
+        if project_name:
+            payload["project"] = project_name
+        if topic_path:
+            payload["topic_path"] = topic_path
+        timeout_secs = max(0.2, min(MEMORY_BANK_SPIKE_TIMEOUT_SECS, max(0.2, float(budget_secs))))
+
+        memory_bank_spike_attempts += 1
+        started = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=timeout_secs) as client:
+                response = await client.post(url, json=payload)
+            response.raise_for_status()
+            response_payload = response.json()
+            rows_raw = (
+                response_payload.get("results")
+                if isinstance(response_payload, dict) and isinstance(response_payload.get("results"), list)
+                else response_payload.get("rows")
+                if isinstance(response_payload, dict) and isinstance(response_payload.get("rows"), list)
+                else []
+            )
+            parsed_rows: list[dict[str, Any]] = []
+            for row in rows_raw:
+                if not isinstance(row, dict):
+                    continue
+                project_name = str(row.get("project") or project_filter or "").strip()
+                file_name = str(row.get("file") or row.get("path") or "").strip()
+                summary = str(row.get("summary") or row.get("content") or "").strip()
+                if not project_name or not file_name or not summary:
+                    continue
+                score = max(
+                    0.0,
+                    float(
+                        row.get("score")
+                        if row.get("score") is not None
+                        else _text_match_score(search_query, f"{file_name}\n{summary}")
+                    ),
+                )
+                parsed_rows.append(
+                    {
+                        "project": project_name,
+                        "file": file_name,
+                        "summary": summary,
+                        "score": score,
+                        "source": RETRIEVAL_SOURCE_MEMORY_BANK,
+                        "topic_path": normalize_topic_path(str(row.get("topic_path") or "")) or derive_topic_path(
+                            file_name,
+                            None,
+                        ),
+                        "backend": backend_mode,
+                    }
+                )
+            parsed_rows.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+            memory_bank_spike_successes += 1
+            memory_bank_spike_last_error = None
+            memory_bank_spike_last_latency_ms = (time.monotonic() - started) * 1000.0
+            return parsed_rows[: max(1, int(search_limit))]
+        except Exception as exc:
+            memory_bank_spike_failures += 1
+            memory_bank_spike_last_error = str(exc).strip() or exc.__class__.__name__
+            memory_bank_spike_last_latency_ms = (time.monotonic() - started) * 1000.0
+            raise
+
     terms = _query_terms(query)
     if not terms:
+        return []
+    backend_mode = _memory_bank_backend_mode()
+    if backend_mode == "disabled":
         return []
     query_targets_low_value_paths = _query_targets_low_value_paths(query)
     started = time.monotonic()
@@ -15767,6 +16057,27 @@ async def search_memory_bank_lexical(
 
     def _remaining_budget() -> float:
         return max(0.0, budget_secs - (time.monotonic() - started))
+
+    if backend_mode != "native":
+        try:
+            spike_rows = await _search_memory_bank_spike_backend(
+                backend_mode=backend_mode,
+                search_query=query,
+                search_limit=limit,
+                project_name=project_filter,
+                topic_path=topic_filter,
+                budget_secs=budget_secs,
+            )
+            if spike_rows:
+                return spike_rows[:limit]
+            if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
+                return []
+            memory_bank_spike_fallbacks += 1
+        except Exception as exc:
+            if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
+                return []
+            memory_bank_spike_fallbacks += 1
+            logger.debug("Memory-bank spike backend %s failed (%s); using native fallback", backend_mode, exc)
 
     project_cap = min(
         max(1, RETRIEVAL_MEMORY_PROJECT_LIMIT),
@@ -17337,6 +17648,7 @@ async def federated_search_memory(
             "backlog_summary_fresh": backlog_policy.get("summary_fresh"),
             "sync_slow_requires_explicit": sync_slow_requires_explicit if staged_fetch_used else RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT,
             "strict_fast_sync_default": RETRIEVAL_STRICT_FAST_SYNC_DEFAULT,
+            "memory_bank_default_enabled": RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED,
             "memory_bank_sync_non_deep_enabled": RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED,
             "mongo_raw_deep_sync_only_for_raw_intent": RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT,
             "mongo_raw_deep_async_warm_non_raw": RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW,
@@ -17480,7 +17792,16 @@ async def _run_memory_recall_pipeline(
         source_override_requested = bool(profile.get("_source_override_requested"))
     profile_sources = profile.get("sources") if isinstance(profile.get("sources"), list) else None
     profile_weights = profile.get("source_weights") if isinstance(profile.get("source_weights"), dict) else None
-    resolved_sources = sources if source_override_requested else profile_sources
+    if source_override_requested:
+        resolved_sources = _normalize_retrieval_sources(
+            sources,
+            explicit_source_override=True,
+        )
+    else:
+        resolved_sources = _normalize_retrieval_sources(
+            profile_sources,
+            explicit_source_override=False,
+        )
     merged_weights = dict(profile_weights) if profile_weights else {}
     if source_weights:
         for key, value in source_weights.items():
@@ -20137,6 +20458,24 @@ async def trigger_memory_bank_cleanup_low_value(
     return {"ok": ok, "result": result}
 
 
+@app.post("/telemetry/memory/cleanup-low-value/chunked")
+async def trigger_memory_bank_cleanup_low_value_chunked(
+    project: str | None = None,
+    start_after: str | None = None,
+    project_batch: int = 12,
+    per_project_limit: int = 250,
+    dry_run: bool = True,
+):
+    result = await run_memory_bank_telemetry_cleanup_chunked(
+        project=project,
+        start_after=start_after,
+        project_batch=project_batch,
+        per_project_limit=per_project_limit,
+        dry_run=dry_run,
+    )
+    return {"ok": bool(result.get("ok")), "result": result}
+
+
 @app.get("/telemetry/fanout/deadletters")
 async def get_fanout_deadletters(limit: int = 100, target: str | None = None):
     jobs = await list_fanout_jobs(["failed"], limit=limit, target=target)
@@ -22202,9 +22541,29 @@ async def search_memory(payload: MemorySearch):
         else None
     )
     profile_sources_default = (
-        _normalize_retrieval_sources(profile_sources)
-        == _normalize_retrieval_sources(_default_agent_memory_profile().get("sources"))
+        _normalize_retrieval_sources(profile_sources, explicit_source_override=False)
+        == _normalize_retrieval_sources(
+            _default_agent_memory_profile().get("sources"),
+            explicit_source_override=False,
+        )
     )
+    def _policy_effective_sources() -> list[str]:
+        if requested_sources is not None:
+            return _normalize_retrieval_sources(
+                requested_sources,
+                explicit_source_override=True,
+            )
+        if policy_default_sources is not None:
+            return _normalize_retrieval_sources(
+                policy_default_sources,
+                explicit_source_override=False,
+            )
+        if profile_sources is not None:
+            return _normalize_retrieval_sources(
+                profile_sources,
+                explicit_source_override=False,
+            )
+        return []
     if (
         requested_sources is None
         and _looks_like_trading_project(project_filter)
@@ -22296,7 +22655,7 @@ async def search_memory(payload: MemorySearch):
             },
                 "policy": {
                     **policy_debug,
-                    "effectiveSources": requested_sources or policy_default_sources or profile_sources or [],
+                    "effectiveSources": _policy_effective_sources(),
                     "sourceOverrideRequested": source_override_requested,
                 },
             }
@@ -22433,11 +22792,11 @@ async def search_memory(payload: MemorySearch):
         "project_suggestions": project_suggestions,
         "retrieval_policy": {
             **policy_debug,
-            "effectiveSources": (
-                retrieval_debug.get("sources")
-                if isinstance(retrieval_debug.get("sources"), list)
-                else requested_sources or policy_default_sources or profile_sources or []
-            ),
+                "effectiveSources": (
+                    retrieval_debug.get("sources")
+                    if isinstance(retrieval_debug.get("sources"), list)
+                    else _policy_effective_sources()
+                ),
             "sourceOverrideRequested": source_override_requested,
         },
         "degraded": bool(
@@ -22472,7 +22831,7 @@ async def search_memory(payload: MemorySearch):
             "effectiveSources": (
                 retrieval_debug.get("sources")
                 if isinstance(retrieval_debug.get("sources"), list)
-                else requested_sources or policy_default_sources or profile_sources or []
+                else _policy_effective_sources()
             ),
             "sourceOverrideRequested": source_override_requested,
         }
@@ -22693,6 +23052,18 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         pre_warnings.append(
             f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
         )
+    def _policy_effective_sources() -> list[str]:
+        if isinstance(sources, list):
+            return _normalize_retrieval_sources(
+                sources,
+                explicit_source_override=True,
+            )
+        if isinstance(policy_default_sources, list):
+            return _normalize_retrieval_sources(
+                policy_default_sources,
+                explicit_source_override=False,
+            )
+        return []
     topic_scope_prefixes: list[str] = []
     if (
         not topic_filter
@@ -22754,7 +23125,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         "effectiveSources": (
             retrieval_debug.get("sources")
             if isinstance(retrieval_debug.get("sources"), list)
-            else sources or policy_default_sources or []
+            else _policy_effective_sources()
         ),
         "sourceOverrideRequested": source_override_requested,
     }
@@ -22847,6 +23218,18 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         pre_warnings.append(
             f"Applied trading retrieval source defaults for intent '{retrieval_intent}'."
         )
+    def _policy_effective_sources() -> list[str]:
+        if isinstance(sources, list):
+            return _normalize_retrieval_sources(
+                sources,
+                explicit_source_override=True,
+            )
+        if isinstance(policy_default_sources, list):
+            return _normalize_retrieval_sources(
+                policy_default_sources,
+                explicit_source_override=False,
+            )
+        return []
     effective_agent_profile = dict(agent_profile) if isinstance(agent_profile, dict) else {}
     if policy_default_sources is not None and sources is None:
         effective_agent_profile["sources"] = list(policy_default_sources)
@@ -22915,7 +23298,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         "effectiveSources": (
             retrieval_debug.get("sources")
             if isinstance(retrieval_debug.get("sources"), list)
-            else sources or policy_default_sources or []
+            else _policy_effective_sources()
         ),
         "sourceOverrideRequested": source_override_requested,
     }
