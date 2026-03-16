@@ -112,24 +112,27 @@ ORCH_MCP_CAPABILITY_MAP_ENABLED=true
 ORCH_BROWSER_CONTEXT_INGEST_ENABLED=true
 ```
 
-Optional fastembed-rs adapter spike (feature-flagged):
+Fastembed adapter runtime (service-backed):
 
 ```bash
 ORCH_ADAPTER_FASTEMBED_RS_ENABLED=true
-ORCH_FASTEMBED_RS_BASE_URL=http://fastembed-rs:8080
+ORCH_FASTEMBED_RS_BASE_URL=http://fastembed-sidecar:8080
 ORCH_FASTEMBED_RS_ROUTE=/embed
+ORCH_FASTEMBED_RS_MODEL=BAAI/bge-small-en-v1.5
 ORCH_FASTEMBED_RS_TIMEOUT_SECS=2.5
 ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE=true
-ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE=bench/results/fastembed_gate_latest.json
+ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE=/app/data/gates/fastembed_gate_latest.json
 ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS=172800
 ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_OVERRIDE=true
 ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_REASON=manual_16pct_promotion_2026-03-16
+FASTEMBED_DEFAULT_MODEL=BAAI/bge-small-en-v1.5
+FASTEMBED_MAX_BATCH=256
 ```
 
 When enabled, orchestrator Qdrant write fanout uses batched embeddings (`embed_text_batch`) to reduce per-item adapter overhead.
 If gate mode is enabled, fastembed activates only when the benchmark gate artifact reports `passed=true`.
 Manual promotion override is available for explicitly approved cases; telemetry still reports the raw gate result and marks override activation separately.
-Recommended gate refresh command (warmed multi-run to reduce noisy pass/fail flips):
+`fastembed-gate-refresh` now runs this refresh loop automatically in compose; manual command remains available:
 
 ```bash
 python3 bench/perf_shortlist_matrix.py \
@@ -139,7 +142,19 @@ python3 bench/perf_shortlist_matrix.py \
   --gate-repeats 3 \
   --gate-aggregate median \
   --baseline bench/results/perf_shortlist_matrix_baseline.json \
-  --gate-output bench/results/fastembed_gate_latest.json
+  --gate-output /app/data/gates/fastembed_gate_latest.json
+```
+
+If the gate refresher starts before orchestrator readiness, it retries quickly via:
+
+```bash
+GATE_REFRESH_FAILURE_RETRY_SECS=45
+```
+
+Gateway staged retrieval now returns `continuation_async.events_url` when slow-source continuation is scheduled. Subscribe via SSE to get non-blocking completion updates:
+
+```bash
+GET /memory/search/continuations/{token}/events
 ```
 
 Optional lexical guard for staged retrieval (policy-aware slow-source deferral):
@@ -520,6 +535,7 @@ Ingress endpoints:
 
 - `POST /memory/write`
 - `POST /memory/search`
+- `GET /memory/search/continuations/{token}/events`
 - `POST /tools/feedback_submit`
 - `POST /integrations/messaging/command`
 - `POST /integrations/messaging/openclaw`

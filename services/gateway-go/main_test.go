@@ -943,3 +943,128 @@ func TestHealthzIncludesBackendStatus(t *testing.T) {
 		t.Fatalf("expected backendHealth=true, got %v", payload["backendHealth"])
 	}
 }
+
+func TestContinuationEventsEndpointStreamsHistoryAndUpdates(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	token := "cont-token-test"
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "queued",
+		"status": "queued",
+		"source": "letta",
+	})
+
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/memory/search/continuations/" + token + "/events")
+	if err != nil {
+		t.Fatalf("events request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %s", resp.Header.Get("Content-Type"))
+	}
+
+	firstChunkCh := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := resp.Body.Read(buf)
+		firstChunkCh <- string(buf[:n])
+	}()
+	var firstChunk string
+	select {
+	case firstChunk = <-firstChunkCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial continuation stream chunk")
+	}
+	if !strings.Contains(firstChunk, "event: snapshot") {
+		t.Fatalf("expected snapshot event in first chunk, got: %s", firstChunk)
+	}
+
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "completed",
+		"status": "ok",
+		"source": "letta",
+	})
+
+	updateChunkCh := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := resp.Body.Read(buf)
+		updateChunkCh <- string(buf[:n])
+	}()
+	var updateChunk string
+	select {
+	case updateChunk = <-updateChunkCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for continuation update chunk")
+	}
+	if !strings.Contains(updateChunk, "event: update") && !strings.Contains(updateChunk, "event: heartbeat") {
+		t.Fatalf("expected update or heartbeat event, got: %s", updateChunk)
+	}
+}
+
+func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS", "3")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_WINDOW", "32")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR", "1.4")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SCALE", "0.5")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE", "2.0")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_WEIGHT", "0.2")
+	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_CAP", "4")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS", "20")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	s.recordAdaptiveObservation(sourceLetta, 25*time.Second, false)
+	s.recordAdaptiveObservation(sourceLetta, 30*time.Second, false)
+	s.recordAdaptiveObservation(sourceLetta, 28*time.Second, false)
+
+	adjustedNoBacklog, detailNoBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false)
+	if adjustedNoBacklog <= 20*time.Second {
+		t.Fatalf("expected adaptive timeout to exceed base timeout, got %s", adjustedNoBacklog)
+	}
+	if adjusted, _ := detailNoBacklog["adjusted"].(bool); !adjusted {
+		t.Fatalf("expected adaptive detail adjusted=true, got %#v", detailNoBacklog)
+	}
+
+	s.incrementContinuationBacklog(sourceLetta)
+	s.incrementContinuationBacklog(sourceLetta)
+	s.incrementContinuationBacklog(sourceLetta)
+	defer s.decrementContinuationBacklog(sourceLetta)
+	defer s.decrementContinuationBacklog(sourceLetta)
+	defer s.decrementContinuationBacklog(sourceLetta)
+
+	adjustedWithBacklog, detailWithBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false)
+	if adjustedWithBacklog >= adjustedNoBacklog {
+		t.Fatalf("expected backlog pressure to reduce adaptive timeout: no_backlog=%s with_backlog=%s", adjustedNoBacklog, adjustedWithBacklog)
+	}
+	backlogInFlight := anyToInt(detailWithBacklog["backlog_inflight"], 0)
+	if backlogInFlight < 1 {
+		t.Fatalf("expected backlog_inflight in adaptive detail, got %#v", detailWithBacklog)
+	}
+}

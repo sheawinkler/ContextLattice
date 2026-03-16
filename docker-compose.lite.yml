@@ -82,6 +82,24 @@ services:
       retries: 10
     restart: unless-stopped
 
+  fastembed-sidecar:
+    build: { context: ., dockerfile: Dockerfile.fastembed }
+    environment:
+      FASTEMBED_DEFAULT_MODEL: ${FASTEMBED_DEFAULT_MODEL:-BAAI/bge-small-en-v1.5}
+      FASTEMBED_CACHE_DIR: /models
+      FASTEMBED_MAX_BATCH: ${FASTEMBED_MAX_BATCH:-256}
+    volumes:
+      - ${FASTEMBED_MODEL_CACHE:-fastembed_model_cache}:/models
+    expose: ["8080"]
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   contextlattice-orchestrator:
     build: { context: ., dockerfile: Dockerfile.orchestrator }
     depends_on:
@@ -90,6 +108,8 @@ services:
       orchestrator-go:
         condition: service_started
       gateway-go:
+        condition: service_started
+      fastembed-sidecar:
         condition: service_started
     environment:
       CONTEXTLATTICE_HTTP_URL: ${CONTEXTLATTICE_HTTP_URL:-${MEMMCP_HTTP_URL:-http://memorymcp-http:59081/mcp}}
@@ -120,13 +140,13 @@ services:
       QDRANT_CLIENT_TIMEOUT_SECS: ${QDRANT_CLIENT_TIMEOUT_SECS:-30}
       ORCH_ADAPTER_FASTEMBED_RS_ENABLED: ${ORCH_ADAPTER_FASTEMBED_RS_ENABLED:-false}
       ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE: ${ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE:-false}
-      ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE: ${ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE:-bench/results/fastembed_gate_latest.json}
+      ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE: ${ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE:-/app/data/gates/fastembed_gate_latest.json}
       ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS: ${ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS:-172800}
       ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_OVERRIDE: ${ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_OVERRIDE:-false}
       ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_REASON: ${ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_REASON:-}
-      ORCH_FASTEMBED_RS_BASE_URL: ${ORCH_FASTEMBED_RS_BASE_URL:-}
+      ORCH_FASTEMBED_RS_BASE_URL: ${ORCH_FASTEMBED_RS_BASE_URL:-http://fastembed-sidecar:8080}
       ORCH_FASTEMBED_RS_ROUTE: ${ORCH_FASTEMBED_RS_ROUTE:-/embed}
-      ORCH_FASTEMBED_RS_MODEL: ${ORCH_FASTEMBED_RS_MODEL:-}
+      ORCH_FASTEMBED_RS_MODEL: ${ORCH_FASTEMBED_RS_MODEL:-BAAI/bge-small-en-v1.5}
       ORCH_FASTEMBED_RS_TIMEOUT_SECS: ${ORCH_FASTEMBED_RS_TIMEOUT_SECS:-2.5}
       MESSAGING_INTEGRATIONS_ENABLED: ${MESSAGING_INTEGRATIONS_ENABLED:-true}
       MESSAGING_WEBHOOK_PUBLIC: ${MESSAGING_WEBHOOK_PUBLIC:-false}
@@ -186,6 +206,35 @@ services:
         hard: 65536
     restart: unless-stopped
 
+  fastembed-gate-refresh:
+    build:
+      context: .
+      dockerfile: Dockerfile.gate-refresh
+    depends_on:
+      contextlattice-orchestrator:
+        condition: service_started
+    environment:
+      GATE_REFRESH_BASE_URL: ${GATE_REFRESH_BASE_URL:-http://contextlattice-orchestrator:8075}
+      GATE_REFRESH_API_KEY: ${GATE_REFRESH_API_KEY:-${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${MEMMCP_ORCHESTRATOR_API_KEY:-}}}
+      GATE_REFRESH_PROJECT: ${GATE_REFRESH_PROJECT:-contextlattice}
+      GATE_REFRESH_INTERVAL_SECS: ${GATE_REFRESH_INTERVAL_SECS:-1800}
+      GATE_REFRESH_MIN_PAUSE_SECS: ${GATE_REFRESH_MIN_PAUSE_SECS:-30}
+      GATE_REFRESH_FAILURE_RETRY_SECS: ${GATE_REFRESH_FAILURE_RETRY_SECS:-45}
+      GATE_REFRESH_TIMEOUT_SECS: ${GATE_REFRESH_TIMEOUT_SECS:-45}
+      GATE_REFRESH_RUNS: ${GATE_REFRESH_RUNS:-10}
+      GATE_REFRESH_BASELINE: ${GATE_REFRESH_BASELINE:-/app/bench/results/perf_shortlist_matrix_baseline.json}
+      GATE_REFRESH_OUTPUT: ${GATE_REFRESH_OUTPUT:-/app/data/bench/perf_shortlist_matrix_latest.json}
+      GATE_REFRESH_GATE_OUTPUT: ${GATE_REFRESH_GATE_OUTPUT:-/app/data/gates/fastembed_gate_latest.json}
+      GATE_REFRESH_WARMUPS: ${GATE_REFRESH_WARMUPS:-1}
+      GATE_REFRESH_REPEATS: ${GATE_REFRESH_REPEATS:-3}
+      GATE_REFRESH_AGGREGATE: ${GATE_REFRESH_AGGREGATE:-median}
+      GATE_REFRESH_GATE_SLEEP_SECS: ${GATE_REFRESH_GATE_SLEEP_SECS:-1}
+      GATE_REFRESH_GATE_MIN_IMPROVEMENT_PCT: ${GATE_REFRESH_GATE_MIN_IMPROVEMENT_PCT:-20}
+      GATE_REFRESH_GATE_MAX_ERROR_REGRESSION: ${GATE_REFRESH_GATE_MAX_ERROR_REGRESSION:-0.005}
+    volumes:
+      - ${ORCHESTRATOR_DATA:-orchestrator_data}:/app/data
+    restart: unless-stopped
+
   orchestrator-go:
     build:
       context: .
@@ -205,6 +254,17 @@ services:
       dockerfile: Dockerfile.gateway-go
     environment:
       PORT: ${GO_GATEWAY_PORT_INTERNAL:-8091}
+      GO_RETRIEVAL_CONTINUATION_EVENT_HISTORY: ${GO_RETRIEVAL_CONTINUATION_EVENT_HISTORY:-32}
+      GO_RETRIEVAL_CONTINUATION_EVENT_TTL_SECS: ${GO_RETRIEVAL_CONTINUATION_EVENT_TTL_SECS:-900}
+      GO_RETRIEVAL_CONTINUATION_SSE_HEARTBEAT_SECS: ${GO_RETRIEVAL_CONTINUATION_SSE_HEARTBEAT_SECS:-15}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_ENABLED: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_ENABLED:-true}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS:-8}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_WINDOW: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_WINDOW:-128}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR:-1.4}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SCALE: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SCALE:-0.6}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE:-1.8}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_WEIGHT: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_WEIGHT:-0.12}
+      GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_CAP: ${GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_CAP:-6}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_GATEWAY_PORT_INTERNAL:-8091}/healthz >/dev/null || exit 1"]
       interval: 30s
@@ -217,3 +277,4 @@ volumes:
   mongo_data: {}
   memory_bank_data: {}
   orchestrator_data: {}
+  fastembed_model_cache: {}

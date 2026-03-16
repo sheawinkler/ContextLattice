@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -38,35 +39,46 @@ var defaultAllSources = []string{
 }
 
 type retrievalPolicy struct {
-	enabled                     bool
-	defaultSources              []string
-	fastSources                 []string
-	slowSources                 []string
-	syncFallbackSources         []string
-	rustQualityFallbackEnabled  bool
-	rustQualityFallbackSources  []string
-	rustQualityFallbackMode     string
-	minFastResults              int
-	lexicalGuardEnabled         bool
-	lexicalGuardMinCoverage     float64
-	lexicalGuardMinResults      int
-	deepBlocking                bool
-	qdrantSyncTimeoutCap        time.Duration
-	qdrantSyncTimeoutCapByMode  map[string]time.Duration
-	failOpenContinuationEnabled bool
-	failOpenContinuationSources map[string]struct{}
-	timeoutAdaptiveSkipEnabled  bool
-	timeoutAdaptiveSkipSources  map[string]struct{}
-	sourceTimeouts              map[string]time.Duration
-	continuationTimeoutDefault  time.Duration
-	continuationTimeoutBySource map[string]time.Duration
-	continuationMaxInflight     int
-	subcallDisableExpansion     bool
-	subcallDisableAutoEscalate  bool
-	telemetryBatchEnabled       bool
-	telemetryBatchFlushInterval time.Duration
-	telemetryBatchSize          int
-	telemetryBatchDropLogEvery  uint64
+	enabled                      bool
+	defaultSources               []string
+	fastSources                  []string
+	slowSources                  []string
+	syncFallbackSources          []string
+	rustQualityFallbackEnabled   bool
+	rustQualityFallbackSources   []string
+	rustQualityFallbackMode      string
+	minFastResults               int
+	lexicalGuardEnabled          bool
+	lexicalGuardMinCoverage      float64
+	lexicalGuardMinResults       int
+	deepBlocking                 bool
+	qdrantSyncTimeoutCap         time.Duration
+	qdrantSyncTimeoutCapByMode   map[string]time.Duration
+	failOpenContinuationEnabled  bool
+	failOpenContinuationSources  map[string]struct{}
+	timeoutAdaptiveSkipEnabled   bool
+	timeoutAdaptiveSkipSources   map[string]struct{}
+	sourceTimeouts               map[string]time.Duration
+	continuationTimeoutDefault   time.Duration
+	continuationTimeoutBySource  map[string]time.Duration
+	continuationMaxInflight      int
+	subcallDisableExpansion      bool
+	subcallDisableAutoEscalate   bool
+	telemetryBatchEnabled        bool
+	telemetryBatchFlushInterval  time.Duration
+	telemetryBatchSize           int
+	telemetryBatchDropLogEvery   uint64
+	adaptiveTimeoutEnabled       bool
+	adaptiveTimeoutMinRequests   int
+	adaptiveTimeoutWindow        int
+	adaptiveTimeoutP95Factor     float64
+	adaptiveTimeoutMinScale      float64
+	adaptiveTimeoutMaxScale      float64
+	adaptiveTimeoutBacklogWeight float64
+	adaptiveTimeoutBacklogCap    int
+	continuationEventHistory     int
+	continuationEventTTL         time.Duration
+	continuationSSEHeartbeat     time.Duration
 }
 
 type retrievalEvent struct {
@@ -85,6 +97,12 @@ type retrievalTelemetry struct {
 	dropped       atomic.Uint64
 	stop          chan struct{}
 	stopped       chan struct{}
+}
+
+type adaptiveSourceStats struct {
+	latencyMs []float64
+	requests  int
+	timeouts  int
 }
 
 func newRetrievalTelemetry(policy retrievalPolicy) *retrievalTelemetry {
@@ -187,11 +205,18 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 type server struct {
-	backendURL      string
-	client          *http.Client
-	retrieval       retrievalPolicy
-	telemetry       *retrievalTelemetry
-	continuationSem chan struct{}
+	backendURL              string
+	client                  *http.Client
+	retrieval               retrievalPolicy
+	telemetry               *retrievalTelemetry
+	continuationSem         chan struct{}
+	adaptiveMu              sync.Mutex
+	adaptiveBySource        map[string]*adaptiveSourceStats
+	continuationMu          sync.Mutex
+	continuationInFlight    map[string]int
+	continuationSubscribers map[string][]chan map[string]any
+	continuationHistory     map[string][]map[string]any
+	continuationExpiry      map[string]time.Time
 }
 
 func envDurationSeconds(name string, fallback float64) time.Duration {
@@ -285,6 +310,40 @@ func toSourceSet(sources []string) map[string]struct{} {
 		set[source] = struct{}{}
 	}
 	return set
+}
+
+func percentileFloat(values []float64, pct float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	if len(values) == 1 {
+		return values[0]
+	}
+	if pct <= 0 {
+		return values[0]
+	}
+	if pct >= 1 {
+		return values[len(values)-1]
+	}
+	index := pct * float64(len(values)-1)
+	low := int(index)
+	high := low + 1
+	if high >= len(values) {
+		high = len(values) - 1
+	}
+	weight := index - float64(low)
+	return values[low]*(1.0-weight) + values[high]*weight
+}
+
+func roundFloat(value float64, places int) float64 {
+	if places < 0 {
+		return value
+	}
+	pow := 1.0
+	for i := 0; i < places; i++ {
+		pow *= 10.0
+	}
+	return float64(int64(value*pow+0.5)) / pow
 }
 
 func normalizeRustBackendChoice(raw string, allowed map[string]struct{}, fallback string) string {
@@ -476,6 +535,53 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if policy.telemetryBatchDropLogEvery == 0 {
 		policy.telemetryBatchDropLogEvery = 100
 	}
+	policy.adaptiveTimeoutEnabled = envBool("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_ENABLED", true)
+	policy.adaptiveTimeoutMinRequests = envInt("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS", 8)
+	if policy.adaptiveTimeoutMinRequests < 1 {
+		policy.adaptiveTimeoutMinRequests = 1
+	}
+	policy.adaptiveTimeoutWindow = envInt("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_WINDOW", 128)
+	if policy.adaptiveTimeoutWindow < 8 {
+		policy.adaptiveTimeoutWindow = 8
+	}
+	policy.adaptiveTimeoutP95Factor = envFloat("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_P95_FACTOR", 1.4)
+	if policy.adaptiveTimeoutP95Factor <= 0 {
+		policy.adaptiveTimeoutP95Factor = 1.4
+	}
+	policy.adaptiveTimeoutMinScale = envFloat("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_SCALE", 0.6)
+	if policy.adaptiveTimeoutMinScale <= 0 {
+		policy.adaptiveTimeoutMinScale = 0.6
+	}
+	if policy.adaptiveTimeoutMinScale > 1 {
+		policy.adaptiveTimeoutMinScale = 1
+	}
+	policy.adaptiveTimeoutMaxScale = envFloat("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MAX_SCALE", 1.8)
+	if policy.adaptiveTimeoutMaxScale < 1 {
+		policy.adaptiveTimeoutMaxScale = 1
+	}
+	if policy.adaptiveTimeoutMaxScale < policy.adaptiveTimeoutMinScale {
+		policy.adaptiveTimeoutMaxScale = policy.adaptiveTimeoutMinScale
+	}
+	policy.adaptiveTimeoutBacklogWeight = envFloat("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_WEIGHT", 0.12)
+	if policy.adaptiveTimeoutBacklogWeight < 0 {
+		policy.adaptiveTimeoutBacklogWeight = 0
+	}
+	policy.adaptiveTimeoutBacklogCap = envInt("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_BACKLOG_CAP", 6)
+	if policy.adaptiveTimeoutBacklogCap < 1 {
+		policy.adaptiveTimeoutBacklogCap = 1
+	}
+	policy.continuationEventHistory = envInt("GO_RETRIEVAL_CONTINUATION_EVENT_HISTORY", 32)
+	if policy.continuationEventHistory < 4 {
+		policy.continuationEventHistory = 4
+	}
+	policy.continuationEventTTL = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_EVENT_TTL_SECS", 900)
+	if policy.continuationEventTTL < 30*time.Second {
+		policy.continuationEventTTL = 30 * time.Second
+	}
+	policy.continuationSSEHeartbeat = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_SSE_HEARTBEAT_SECS", 15)
+	if policy.continuationSSEHeartbeat < 3*time.Second {
+		policy.continuationSSEHeartbeat = 3 * time.Second
+	}
 	return policy
 }
 
@@ -488,11 +594,16 @@ func newServer() *server {
 	policy := loadRetrievalPolicy()
 	t := newRetrievalTelemetry(policy)
 	s := &server{
-		backendURL:      backendURL,
-		client:          &http.Client{Timeout: timeout},
-		retrieval:       policy,
-		telemetry:       t,
-		continuationSem: make(chan struct{}, policy.continuationMaxInflight),
+		backendURL:              backendURL,
+		client:                  &http.Client{Timeout: timeout},
+		retrieval:               policy,
+		telemetry:               t,
+		continuationSem:         make(chan struct{}, policy.continuationMaxInflight),
+		adaptiveBySource:        make(map[string]*adaptiveSourceStats),
+		continuationInFlight:    make(map[string]int),
+		continuationSubscribers: make(map[string][]chan map[string]any),
+		continuationHistory:     make(map[string][]map[string]any),
+		continuationExpiry:      make(map[string]time.Time),
 	}
 	t.start()
 	return s
@@ -537,6 +648,21 @@ func isProxyPath(path string) bool {
 
 func isStreamingProxyPath(path string) bool {
 	return strings.HasPrefix(path, "/memory/search/jobs/") && strings.HasSuffix(path, "/events")
+}
+
+func continuationEventsToken(path string) string {
+	const prefix = "/memory/search/continuations/"
+	const suffix = "/events"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return ""
+	}
+	trimmed := strings.TrimPrefix(path, prefix)
+	trimmed = strings.TrimSuffix(trimmed, suffix)
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" || strings.Contains(trimmed, "/") {
+		return ""
+	}
+	return trimmed
 }
 
 func (s *server) copyHeaders(dst http.Header, src http.Header) {
@@ -677,6 +803,83 @@ func (s *server) proxyStream(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func writeSSEJSONEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload map[string]any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("event: " + event + "\n")); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("data: " + string(body) + "\n\n")); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+func (s *server) continuationEvents(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(r.Method, http.MethodGet) {
+		w.Header().Set("Allow", "GET")
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	token := continuationEventsToken(r.URL.Path)
+	if token == "" {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "continuation stream not found"})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming unsupported"})
+		return
+	}
+	updates := make(chan map[string]any, s.retrieval.continuationEventHistory)
+	history, exists := s.registerContinuationSubscriber(token, updates)
+	if !exists {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "continuation stream expired or unknown"})
+		return
+	}
+	defer s.unregisterContinuationSubscriber(token, updates)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	for _, item := range history {
+		if err := writeSSEJSONEvent(w, flusher, "snapshot", item); err != nil {
+			return
+		}
+	}
+	_ = writeSSEJSONEvent(w, flusher, "ready", map[string]any{
+		"token": token,
+		"at":    nowUTCISO(),
+	})
+
+	heartbeat := time.NewTicker(s.retrieval.continuationSSEHeartbeat)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			if err := writeSSEJSONEvent(w, flusher, "heartbeat", map[string]any{
+				"token": token,
+				"at":    nowUTCISO(),
+			}); err != nil {
+				return
+			}
+		case event := <-updates:
+			if err := writeSSEJSONEvent(w, flusher, "update", event); err != nil {
+				return
+			}
+		}
+	}
+}
+
 func (s *server) backendHealthy(ctx context.Context) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.backendURL+"/health", nil)
 	if err != nil {
@@ -721,7 +924,18 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 				"deep":     s.retrieval.qdrantSyncTimeoutCapByMode["deep"].Seconds(),
 			},
 			"failOpenContinuationEnabled":     s.retrieval.failOpenContinuationEnabled,
+			"continuationEventHistory":        s.retrieval.continuationEventHistory,
+			"continuationEventTTLSecs":        s.retrieval.continuationEventTTL.Seconds(),
+			"continuationSSEHeartbeatSecs":    s.retrieval.continuationSSEHeartbeat.Seconds(),
 			"timeoutAdaptiveSkipEnabled":      s.retrieval.timeoutAdaptiveSkipEnabled,
+			"adaptiveTimeoutEnabled":          s.retrieval.adaptiveTimeoutEnabled,
+			"adaptiveTimeoutMinRequests":      s.retrieval.adaptiveTimeoutMinRequests,
+			"adaptiveTimeoutWindow":           s.retrieval.adaptiveTimeoutWindow,
+			"adaptiveTimeoutP95Factor":        s.retrieval.adaptiveTimeoutP95Factor,
+			"adaptiveTimeoutMinScale":         s.retrieval.adaptiveTimeoutMinScale,
+			"adaptiveTimeoutMaxScale":         s.retrieval.adaptiveTimeoutMaxScale,
+			"adaptiveTimeoutBacklogWeight":    s.retrieval.adaptiveTimeoutBacklogWeight,
+			"adaptiveTimeoutBacklogCap":       s.retrieval.adaptiveTimeoutBacklogCap,
 			"lexicalGuardEnabled":             s.retrieval.lexicalGuardEnabled,
 			"lexicalGuardMinCoverage":         s.retrieval.lexicalGuardMinCoverage,
 			"lexicalGuardMinResults":          s.retrieval.lexicalGuardMinResults,
@@ -1115,12 +1329,165 @@ func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
 	return s.retrieval.qdrantSyncTimeoutCap
 }
 
+func (s *server) recordAdaptiveObservation(source string, latency time.Duration, timedOut bool) {
+	if !s.retrieval.adaptiveTimeoutEnabled {
+		return
+	}
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return
+	}
+	ms := float64(latency.Milliseconds())
+	if ms < 1 {
+		ms = 1
+	}
+	s.adaptiveMu.Lock()
+	defer s.adaptiveMu.Unlock()
+	entry := s.adaptiveBySource[normalized]
+	if entry == nil {
+		entry = &adaptiveSourceStats{}
+		s.adaptiveBySource[normalized] = entry
+	}
+	entry.requests += 1
+	if timedOut {
+		entry.timeouts += 1
+	}
+	entry.latencyMs = append(entry.latencyMs, ms)
+	window := s.retrieval.adaptiveTimeoutWindow
+	if window < 8 {
+		window = 8
+	}
+	if len(entry.latencyMs) > window {
+		entry.latencyMs = append([]float64(nil), entry.latencyMs[len(entry.latencyMs)-window:]...)
+	}
+}
+
+func (s *server) continuationBacklog(source string) int {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return 0
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	return int(s.continuationInFlight[normalized])
+}
+
+func (s *server) incrementContinuationBacklog(source string) {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	s.continuationInFlight[normalized] = int(s.continuationInFlight[normalized]) + 1
+}
+
+func (s *server) decrementContinuationBacklog(source string) {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	current := int(s.continuationInFlight[normalized])
+	if current <= 1 {
+		delete(s.continuationInFlight, normalized)
+		return
+	}
+	s.continuationInFlight[normalized] = current - 1
+}
+
+func (s *server) adaptiveTimeoutForSource(source string, base time.Duration) (time.Duration, map[string]any) {
+	detail := map[string]any{
+		"enabled":           s.retrieval.adaptiveTimeoutEnabled,
+		"base_timeout_secs": roundFloat(base.Seconds(), 3),
+		"adjusted":          false,
+	}
+	if !s.retrieval.adaptiveTimeoutEnabled {
+		return base, detail
+	}
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return base, detail
+	}
+	s.adaptiveMu.Lock()
+	entry := s.adaptiveBySource[normalized]
+	if entry == nil || entry.requests < s.retrieval.adaptiveTimeoutMinRequests || len(entry.latencyMs) == 0 {
+		requests := 0
+		if entry != nil {
+			requests = entry.requests
+		}
+		s.adaptiveMu.Unlock()
+		detail["reason"] = "insufficient_observations"
+		detail["requests"] = requests
+		detail["min_requests"] = s.retrieval.adaptiveTimeoutMinRequests
+		detail["backlog_inflight"] = s.continuationBacklog(normalized)
+		return base, detail
+	}
+	latencyCopy := append([]float64(nil), entry.latencyMs...)
+	requests := entry.requests
+	timeouts := entry.timeouts
+	s.adaptiveMu.Unlock()
+	sort.Float64s(latencyCopy)
+	p95Ms := percentileFloat(latencyCopy, 0.95)
+	timeoutRate := 0.0
+	if requests > 0 {
+		timeoutRate = float64(timeouts) / float64(requests)
+	}
+
+	baseSecs := base.Seconds()
+	targetSecs := (p95Ms / 1000.0) * s.retrieval.adaptiveTimeoutP95Factor
+	minSecs := baseSecs * s.retrieval.adaptiveTimeoutMinScale
+	maxSecs := baseSecs * s.retrieval.adaptiveTimeoutMaxScale
+	if targetSecs < minSecs {
+		targetSecs = minSecs
+	}
+	if targetSecs > maxSecs {
+		targetSecs = maxSecs
+	}
+	adjustedSecs := targetSecs
+
+	backlog := s.continuationBacklog(normalized)
+	if backlog > 0 {
+		capped := backlog
+		if capped > s.retrieval.adaptiveTimeoutBacklogCap {
+			capped = s.retrieval.adaptiveTimeoutBacklogCap
+		}
+		penalty := 1.0 - (float64(capped) * s.retrieval.adaptiveTimeoutBacklogWeight)
+		minPenalty := s.retrieval.adaptiveTimeoutMinScale
+		if penalty < minPenalty {
+			penalty = minPenalty
+		}
+		adjustedSecs = adjustedSecs * penalty
+		if adjustedSecs < minSecs {
+			adjustedSecs = minSecs
+		}
+	}
+
+	if adjustedSecs < 0.5 {
+		adjustedSecs = 0.5
+	}
+	adjusted := time.Duration(adjustedSecs * float64(time.Second))
+	detail["adjusted"] = adjusted != base
+	detail["p95_ms"] = roundFloat(p95Ms, 3)
+	detail["requests"] = requests
+	detail["timeouts"] = timeouts
+	detail["timeout_rate"] = roundFloat(timeoutRate, 6)
+	detail["p95_factor"] = roundFloat(s.retrieval.adaptiveTimeoutP95Factor, 3)
+	detail["min_scale"] = roundFloat(s.retrieval.adaptiveTimeoutMinScale, 3)
+	detail["max_scale"] = roundFloat(s.retrieval.adaptiveTimeoutMaxScale, 3)
+	detail["backlog_inflight"] = backlog
+	detail["backlog_weight"] = roundFloat(s.retrieval.adaptiveTimeoutBacklogWeight, 3)
+	detail["adjusted_timeout_secs"] = roundFloat(adjusted.Seconds(), 3)
+	return adjusted, detail
+}
+
 func (s *server) resolveSourceTimeout(
 	source string,
 	retrievalMode string,
 	syncPhase bool,
 	explicitSourceOverride bool,
-) time.Duration {
+) (time.Duration, map[string]any) {
 	timeout, ok := s.retrieval.sourceTimeouts[source]
 	if !ok || timeout <= 0 {
 		timeout = 8 * time.Second
@@ -1128,10 +1495,20 @@ func (s *server) resolveSourceTimeout(
 	if syncPhase && !explicitSourceOverride && source == sourceQdrant {
 		capDuration := s.resolveQdrantSyncCap(retrievalMode)
 		if capDuration > 0 && timeout > capDuration {
-			return capDuration
+			timeout = capDuration
 		}
 	}
-	return timeout
+	detail := map[string]any{
+		"enabled":               false,
+		"base_timeout_secs":     roundFloat(timeout.Seconds(), 3),
+		"adjusted":              false,
+		"adjusted_timeout_secs": roundFloat(timeout.Seconds(), 3),
+	}
+	if syncPhase && !explicitSourceOverride {
+		adjusted, adaptive := s.adaptiveTimeoutForSource(source, timeout)
+		return adjusted, adaptive
+	}
+	return timeout, detail
 }
 
 func (s *server) resolveContinuationTimeout(source string) time.Duration {
@@ -1215,32 +1592,190 @@ func (s *server) callBackendSourceQuery(
 	return rows, warnings, nil
 }
 
+func cloneAnyMap(input map[string]any) map[string]any {
+	if input == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func nowUTCISO() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func continuationTokenForRequest(query string, request map[string]any) string {
+	payload := map[string]any{
+		"query":   strings.TrimSpace(query),
+		"project": strings.TrimSpace(anyToString(request["project"])),
+		"topic":   strings.TrimSpace(anyToString(request["topic_path"])),
+		"time":    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	encoded, _ := json.Marshal(payload)
+	sum := sha1.Sum(encoded)
+	return fmtHex16(sum[:])
+}
+
+func fmtHex16(bytes []byte) string {
+	if len(bytes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i < len(bytes); i++ {
+		if i >= 8 {
+			break
+		}
+		b.WriteString(strconv.FormatInt(int64(bytes[i]>>4), 16))
+		b.WriteString(strconv.FormatInt(int64(bytes[i]&0x0f), 16))
+	}
+	return b.String()
+}
+
+func (s *server) pruneContinuationLocked(now time.Time) {
+	if len(s.continuationExpiry) == 0 {
+		return
+	}
+	for token, expiry := range s.continuationExpiry {
+		if expiry.After(now) {
+			continue
+		}
+		delete(s.continuationExpiry, token)
+		delete(s.continuationHistory, token)
+		delete(s.continuationSubscribers, token)
+	}
+}
+
+func (s *server) publishContinuationEvent(token string, payload map[string]any) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	event := cloneAnyMap(payload)
+	if strings.TrimSpace(anyToString(event["at"])) == "" {
+		event["at"] = nowUTCISO()
+	}
+	event["token"] = token
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	s.pruneContinuationLocked(time.Now().UTC())
+	if s.retrieval.continuationEventTTL > 0 {
+		s.continuationExpiry[token] = time.Now().UTC().Add(s.retrieval.continuationEventTTL)
+	}
+	history := append(s.continuationHistory[token], event)
+	if len(history) > s.retrieval.continuationEventHistory {
+		history = append([]map[string]any(nil), history[len(history)-s.retrieval.continuationEventHistory:]...)
+	}
+	s.continuationHistory[token] = history
+	for _, subscriber := range s.continuationSubscribers[token] {
+		select {
+		case subscriber <- cloneAnyMap(event):
+		default:
+		}
+	}
+}
+
+func (s *server) registerContinuationSubscriber(token string, subscriber chan map[string]any) ([]map[string]any, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, false
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	s.pruneContinuationLocked(time.Now().UTC())
+	history, historyOk := s.continuationHistory[token]
+	if !historyOk {
+		if _, exists := s.continuationExpiry[token]; !exists {
+			return nil, false
+		}
+		history = nil
+	}
+	s.continuationSubscribers[token] = append(s.continuationSubscribers[token], subscriber)
+	out := make([]map[string]any, 0, len(history))
+	for _, row := range history {
+		out = append(out, cloneAnyMap(row))
+	}
+	return out, true
+}
+
+func (s *server) unregisterContinuationSubscriber(token string, subscriber chan map[string]any) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	subscribers := s.continuationSubscribers[token]
+	if len(subscribers) == 0 {
+		return
+	}
+	filtered := make([]chan map[string]any, 0, len(subscribers))
+	for _, candidate := range subscribers {
+		if candidate == subscriber {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	if len(filtered) == 0 {
+		delete(s.continuationSubscribers, token)
+		return
+	}
+	s.continuationSubscribers[token] = filtered
+}
+
 func (s *server) scheduleContinuationWarm(
 	incomingHeaders http.Header,
 	baseRequest map[string]any,
 	source string,
 	reason string,
+	streamToken string,
 ) bool {
 	select {
 	case s.continuationSem <- struct{}{}:
 	default:
 		log.Printf("continuation warm skipped source=%s reason=%s detail=max_inflight", source, reason)
+		s.publishContinuationEvent(streamToken, map[string]any{
+			"event":  "skipped",
+			"status": "max_inflight",
+			"source": source,
+			"reason": reason,
+		})
 		return false
 	}
+	s.incrementContinuationBacklog(source)
+	s.publishContinuationEvent(streamToken, map[string]any{
+		"event":  "queued",
+		"status": "queued",
+		"source": source,
+		"reason": reason,
+	})
 	go func() {
 		defer func() { <-s.continuationSem }()
+		defer s.decrementContinuationBacklog(source)
 		timeout := s.resolveContinuationTimeout(source)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		start := time.Now()
 		_, _, err := s.callBackendSourceQuery(ctx, incomingHeaders, baseRequest, source, true)
 		status := "ok"
+		errorText := ""
 		if err != nil {
 			status = "error"
+			errorText = err.Error()
 			log.Printf("continuation warm failed source=%s reason=%s error=%s", source, reason, err)
 		}
 		latency := time.Since(start).Milliseconds()
 		s.telemetry.record(retrievalEvent{Source: source, Phase: "continuation", Status: status, LatencyMs: latency})
+		s.publishContinuationEvent(streamToken, map[string]any{
+			"event":      "completed",
+			"status":     status,
+			"source":     source,
+			"reason":     reason,
+			"latency_ms": latency,
+			"error":      errorText,
+		})
 	}()
 	return true
 }
@@ -1265,6 +1800,8 @@ type sourceBatchOutput struct {
 	budgetExceededSources []string
 	continuationSources   []string
 	skippedSources        []string
+	effectiveTimeoutsSecs map[string]float64
+	adaptiveBudgets       map[string]map[string]any
 }
 
 func (s *server) runSourceBatch(
@@ -1278,11 +1815,14 @@ func (s *server) runSourceBatch(
 	syncPhase bool,
 	suppressSlowTimeoutWarnings bool,
 	adaptiveSkipped map[string]struct{},
+	continuationToken string,
 ) sourceBatchOutput {
 	output := sourceBatchOutput{
-		rows:         make(map[string][]map[string]any),
-		sourceErrors: make(map[string]map[string]any),
-		warnings:     []string{},
+		rows:                  make(map[string][]map[string]any),
+		sourceErrors:          make(map[string]map[string]any),
+		warnings:              []string{},
+		effectiveTimeoutsSecs: make(map[string]float64),
+		adaptiveBudgets:       make(map[string]map[string]any),
 	}
 	if len(sources) == 0 {
 		return output
@@ -1304,12 +1844,14 @@ func (s *server) runSourceBatch(
 			continue
 		}
 		started += 1
-		sourceTimeout := s.resolveSourceTimeout(
+		sourceTimeout, adaptiveBudget := s.resolveSourceTimeout(
 			normalized,
 			retrievalMode,
 			syncPhase,
 			explicitSourceOverride,
 		)
+		output.effectiveTimeoutsSecs[normalized] = roundFloat(sourceTimeout.Seconds(), 3)
+		output.adaptiveBudgets[normalized] = adaptiveBudget
 		go func(sourceName string, timeout time.Duration) {
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -1405,7 +1947,7 @@ func (s *server) runSourceBatch(
 					)
 				}
 				if s.shouldScheduleContinuation(result.source) {
-					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-timeout") {
+					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-timeout", continuationToken) {
 						output.continuationSources = append(output.continuationSources, result.source)
 						if !suppressSlowTimeoutWarnings || !result.budgetExceeded {
 							output.warnings = append(
@@ -1419,6 +1961,11 @@ func (s *server) runSourceBatch(
 				output.warnings = append(output.warnings, result.source+" retrieval failed: "+result.err.Error())
 			}
 		}
+		s.recordAdaptiveObservation(
+			result.source,
+			result.latency,
+			result.timedOut || result.budgetExceeded,
+		)
 	}
 
 	output.warnings = dedupeWarnings(output.warnings)
@@ -1593,12 +2140,15 @@ func (s *server) executeRetrieval(
 	warnings := []string{}
 	sourceErrors := map[string]map[string]any{}
 	sourceRows := map[string][]map[string]any{}
+	effectiveTimeouts := map[string]float64{}
+	adaptiveBudgets := map[string]map[string]any{}
 	timedOutObserved := map[string]struct{}{}
 	budgetExceededObserved := map[string]struct{}{}
 	adaptiveSkipped := map[string]struct{}{}
 	continuationSources := []string{}
 	asyncWarmSlowSources := []string{}
 	syncFallbackSlowSources := []string{}
+	continuationToken := continuationTokenForRequest(query, requestPayload)
 
 	fastBatch := s.runSourceBatch(
 		ctx,
@@ -1611,12 +2161,19 @@ func (s *server) executeRetrieval(
 		true,
 		false,
 		adaptiveSkipped,
+		continuationToken,
 	)
 	for source, rows := range fastBatch.rows {
 		sourceRows[source] = rows
 	}
 	for source, payload := range fastBatch.sourceErrors {
 		sourceErrors[source] = payload
+	}
+	for source, timeoutSecs := range fastBatch.effectiveTimeoutsSecs {
+		effectiveTimeouts[source] = timeoutSecs
+	}
+	for source, budget := range fastBatch.adaptiveBudgets {
+		adaptiveBudgets[source] = budget
 	}
 	warnings = append(warnings, fastBatch.warnings...)
 	for _, source := range fastBatch.timedOutSources {
@@ -1685,12 +2242,19 @@ func (s *server) executeRetrieval(
 							true,
 							!fastPathFailed,
 							adaptiveSkipped,
+							continuationToken,
 						)
 						for source, rows := range rustBatch.rows {
 							sourceRows[source] = rows
 						}
 						for source, payload := range rustBatch.sourceErrors {
 							sourceErrors[source] = payload
+						}
+						for source, timeoutSecs := range rustBatch.effectiveTimeoutsSecs {
+							effectiveTimeouts[source] = timeoutSecs
+						}
+						for source, budget := range rustBatch.adaptiveBudgets {
+							adaptiveBudgets[source] = budget
 						}
 						warnings = append(warnings, rustBatch.warnings...)
 						for _, source := range rustBatch.timedOutSources {
@@ -1749,12 +2313,19 @@ func (s *server) executeRetrieval(
 					true,
 					!fastPathFailed,
 					adaptiveSkipped,
+					continuationToken,
 				)
 				for source, rows := range slowBatch.rows {
 					sourceRows[source] = rows
 				}
 				for source, payload := range slowBatch.sourceErrors {
 					sourceErrors[source] = payload
+				}
+				for source, timeoutSecs := range slowBatch.effectiveTimeoutsSecs {
+					effectiveTimeouts[source] = timeoutSecs
+				}
+				for source, budget := range slowBatch.adaptiveBudgets {
+					adaptiveBudgets[source] = budget
 				}
 				warnings = append(warnings, slowBatch.warnings...)
 				for _, source := range slowBatch.timedOutSources {
@@ -1789,12 +2360,19 @@ func (s *server) executeRetrieval(
 				true,
 				!fastPathFailed,
 				adaptiveSkipped,
+				continuationToken,
 			)
 			for source, rows := range slowBatch.rows {
 				sourceRows[source] = rows
 			}
 			for source, payload := range slowBatch.sourceErrors {
 				sourceErrors[source] = payload
+			}
+			for source, timeoutSecs := range slowBatch.effectiveTimeoutsSecs {
+				effectiveTimeouts[source] = timeoutSecs
+			}
+			for source, budget := range slowBatch.adaptiveBudgets {
+				adaptiveBudgets[source] = budget
 			}
 			warnings = append(warnings, slowBatch.warnings...)
 			for _, source := range slowBatch.timedOutSources {
@@ -1812,7 +2390,7 @@ func (s *server) executeRetrieval(
 
 	asyncWarmSlowSources = normalizeSourceList(asyncWarmSlowSources)
 	for _, source := range asyncWarmSlowSources {
-		if s.scheduleContinuationWarm(incomingHeaders, requestPayload, source, "slow-async-warm") {
+		if s.scheduleContinuationWarm(incomingHeaders, requestPayload, source, "slow-async-warm", continuationToken) {
 			continuationSources = append(continuationSources, source)
 		}
 	}
@@ -1952,6 +2530,14 @@ func (s *server) executeRetrieval(
 			},
 			"fail_open_timeout_continuation_enabled": s.retrieval.failOpenContinuationEnabled,
 			"timeout_adaptive_skip_enabled":          s.retrieval.timeoutAdaptiveSkipEnabled,
+			"adaptive_timeout_enabled":               s.retrieval.adaptiveTimeoutEnabled,
+			"adaptive_timeout_min_requests":          s.retrieval.adaptiveTimeoutMinRequests,
+			"adaptive_timeout_window":                s.retrieval.adaptiveTimeoutWindow,
+			"adaptive_timeout_p95_factor":            s.retrieval.adaptiveTimeoutP95Factor,
+			"adaptive_timeout_min_scale":             s.retrieval.adaptiveTimeoutMinScale,
+			"adaptive_timeout_max_scale":             s.retrieval.adaptiveTimeoutMaxScale,
+			"adaptive_timeout_backlog_weight":        s.retrieval.adaptiveTimeoutBacklogWeight,
+			"adaptive_timeout_backlog_cap":           s.retrieval.adaptiveTimeoutBacklogCap,
 			"lexical_guard_enabled":                  s.retrieval.lexicalGuardEnabled,
 			"lexical_guard_min_coverage":             s.retrieval.lexicalGuardMinCoverage,
 			"lexical_guard_min_results":              s.retrieval.lexicalGuardMinResults,
@@ -1979,6 +2565,8 @@ func (s *server) executeRetrieval(
 			"rust_quality_fallback_applied":    rustQualityFallbackApplied,
 			"rust_quality_fallback_sources":    rustQualityFallbackSourcesUsed,
 			"rust_quality_fallback_mode":       rustQualityFallbackModeUsed,
+			"effective_timeout_secs":           effectiveTimeouts,
+			"adaptive_timeout_budget":          adaptiveBudgets,
 		},
 	}
 
@@ -1997,6 +2585,14 @@ func (s *server) executeRetrieval(
 			"budget_exceeded_sources": budgetExceededList,
 			"skipped_sources":         skippedList,
 		},
+	}
+	if len(continuationSources) > 0 && continuationToken != "" {
+		response["continuation_async"] = map[string]any{
+			"token":           continuationToken,
+			"events_url":      "/memory/search/continuations/" + continuationToken + "/events",
+			"pending_sources": continuationSources,
+			"heartbeat_secs":  s.retrieval.continuationSSEHeartbeat.Seconds(),
+		}
 	}
 	if includeGrounding {
 		response["grounding"] = buildGrounding(merged)
@@ -2124,6 +2720,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)
 	mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)
 	mux.HandleFunc("/v1/retrieval/health", s.retrievalHealth)
+	mux.HandleFunc("/memory/search/continuations/", s.continuationEvents)
 	mux.HandleFunc("/memory/search", s.proxy)
 	mux.HandleFunc("/memory/search/async/", s.proxy)
 	mux.HandleFunc("/memory/search/jobs/", s.proxy)
