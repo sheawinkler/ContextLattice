@@ -2826,6 +2826,8 @@ async def test_memory_search_deep_async_returns_partial_plus_job(monkeypatch: py
     assert response["job_id"] == "tok-partial"
     assert response["job_poll_url"] == "/memory/search/jobs/tok-partial"
     assert response["results"][0]["source"] == "topic_rollups"
+    assert response["retrieval_lifecycle"]["status"] == "queued"
+    assert response["retrieval_lifecycle"]["partial"] is True
     assert any("Deep retrieval is running asynchronously" in warning for warning in response["warnings"])
 
 
@@ -3316,6 +3318,38 @@ async def test_memory_search_raw_intent_skips_trading_scope(monkeypatch: pytest.
     )
 
     assert response["retrieval"]["topic_scope"]["applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_memory_search_includes_retrieval_lifecycle_pending_sources(monkeypatch: pytest.MonkeyPatch):
+    async def _pipeline(**_kwargs):
+        return (
+            [],
+            {
+                "retrieval_mode": "deep",
+                "retrieval_intent": "decision",
+                "source_errors": {},
+                "source_counts": {"topic_rollups": 0},
+                "staged_fetch": {"async_warm_sources": ["letta"]},
+            },
+            ["slow sources still warming"],
+            {"strict_numeric_copy": True, "facts": [], "numeric_facts": []},
+        )
+
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
+
+    response = await orchestrator.search_memory(
+        orchestrator.MemorySearch(
+            query="deep recall",
+            retrieval_mode="deep",
+        )
+    )
+
+    assert response["result_state"] == "pending"
+    assert response["retrieval_lifecycle"]["status"] == "partial"
+    assert response["retrieval_lifecycle"]["sources"]["pending"] == ["letta"]
+    assert "retry_after_cache_warm" in response["retrieval_lifecycle"]["next_actions"]
 
 
 @pytest.mark.asyncio
@@ -3948,6 +3982,20 @@ async def test_build_refreshed_recall_eval_case_set_requires_rollup_support(monk
     assert payload["cases"] == []
 
 
+def test_fastembed_adapter_enabled_honors_gate(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "FASTEMBED_RS_GATE_REQUIRED", True)
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_enabled_by_flag", lambda: True)
+    monkeypatch.setattr(orchestrator, "_fastembed_gate_status", lambda: {"passed": False})
+    assert orchestrator._fastembed_adapter_enabled() is False
+
+
+def test_fastembed_adapter_enabled_without_gate_requirement(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "FASTEMBED_RS_GATE_REQUIRED", False)
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_enabled_by_flag", lambda: True)
+    monkeypatch.setattr(orchestrator, "_fastembed_gate_status", lambda: {"passed": False})
+    assert orchestrator._fastembed_adapter_enabled() is True
+
+
 @pytest.mark.asyncio
 async def test_embed_text_prefers_fastembed_adapter(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "_fastembed_adapter_ready", lambda: True)
@@ -4244,6 +4292,97 @@ async def test_tool_memory_write_batch_request_and_item_idempotency(monkeypatch:
     assert second["idempotentReplay"] is True
     assert second["idempotencyScope"] == "request"
     assert orchestrator.memory_write_batch_metrics["requestIdempotentHits"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_tool_feedback_submit_request_idempotency(monkeypatch: pytest.MonkeyPatch):
+    calls = {"count": 0}
+
+    async def _create_feedback_record(
+        project: str | None,
+        user_id: str | None,
+        source: str | None,
+        task_id: str | None,
+        rating: int | None,
+        sentiment: str | None,
+        tags: list[str] | None,
+        content: str | None,
+        topic_path: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        calls["count"] += 1
+        return {
+            "id": f"fb-{calls['count']}",
+            "project": project,
+            "user_id": user_id,
+            "source": source,
+            "task_id": task_id,
+            "rating": rating,
+            "sentiment": sentiment,
+            "tags": tags,
+            "content": content,
+            "topic_path": topic_path,
+            "metadata": metadata,
+            "created_at": "2026-03-15T00:00:00Z",
+        }
+
+    async def _persist(_record: dict[str, Any]) -> tuple[bool, str | None]:
+        return True, None
+
+    async def _list_feedback(_project: str | None, _user_id: str | None, _source: str | None, _limit: int):
+        return [{"source": "agent", "content": "great", "rating": 5, "topic_path": "runbooks"}]
+
+    monkeypatch.setattr(orchestrator, "create_feedback_record", _create_feedback_record)
+    monkeypatch.setattr(orchestrator, "_persist_feedback_to_memory", _persist)
+    monkeypatch.setattr(orchestrator, "list_feedback_records", _list_feedback)
+    monkeypatch.setattr(orchestrator, "LEARNING_LOOP_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "feedback_submit_idempotency_seen", orchestrator.OrderedDict())
+    monkeypatch.setattr(
+        orchestrator,
+        "feedback_submit_metrics",
+        {"accepted": 0, "rejected": 0, "idempotentHits": 0, "persisted": 0, "persistFailed": 0},
+    )
+
+    payload = orchestrator.FeedbackSubmitRequest(
+        project="alpha",
+        user_id="u1",
+        rating=5,
+        content="Great retrieval quality",
+        tags=["quality", "qdrant"],
+        idempotencyKey="feedback-1",
+        include_preferences=True,
+    )
+    first = await orchestrator.tool_feedback_submit(payload)
+    second = await orchestrator.tool_feedback_submit(payload)
+
+    assert first["ok"] is True
+    assert first["feedback"]["id"] == "fb-1"
+    assert first["learning"]["memoryIndexed"] is True
+    assert second["idempotentReplay"] is True
+    assert second["idempotencyScope"] == "request"
+    assert calls["count"] == 1
+    assert orchestrator.feedback_submit_metrics["accepted"] == 1
+    assert orchestrator.feedback_submit_metrics["idempotentHits"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_feedback_submit_rejects_malformed_tag(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "feedback_submit_idempotency_seen", orchestrator.OrderedDict())
+    monkeypatch.setattr(
+        orchestrator,
+        "feedback_submit_metrics",
+        {"accepted": 0, "rejected": 0, "idempotentHits": 0, "persisted": 0, "persistFailed": 0},
+    )
+    with pytest.raises(orchestrator.HTTPException) as exc:
+        await orchestrator.tool_feedback_submit(
+            orchestrator.FeedbackSubmitRequest(
+                project="alpha",
+                content="bad tag input",
+                tags=["has space"],
+            )
+        )
+    assert exc.value.status_code == 422
+    assert orchestrator.feedback_submit_metrics["rejected"] == 1
 
 
 def test_sanitize_mindsdb_query_text_truncates_controls():

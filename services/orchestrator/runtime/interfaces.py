@@ -19,6 +19,7 @@ class RetrievalRequest:
     agent_profile: dict[str, Any] | None = None
     auto_escalate: bool = False
     query_expansion: bool = True
+    traffic_class: str = "user"
     backend_policy: dict[str, Any] | None = None
 
 

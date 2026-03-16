@@ -218,15 +218,27 @@ QDRANT_WARMUP_QUERIES = [
     ).split(",")
     if item.strip()
 ]
+QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED = os.getenv(
+    "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP = os.getenv(
+    "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+QDRANT_PAYLOAD_INDEX_HARDEN_WAIT = os.getenv(
+    "ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT",
+    "false",
+).lower() in ("1", "true", "yes", "on")
 RUST_RETRIEVAL_VECTOR_BACKEND = os.getenv(
     "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND",
-    "auto",
+    "qdrant_remote",
 ).strip().lower() or "auto"
 if RUST_RETRIEVAL_VECTOR_BACKEND not in {"auto", "qdrant_remote", "usearch_ann"}:
     RUST_RETRIEVAL_VECTOR_BACKEND = "auto"
 RUST_RETRIEVAL_LEXICAL_BACKEND = os.getenv(
     "ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND",
-    "auto",
+    "tantivy_lexical",
 ).strip().lower() or "auto"
 if RUST_RETRIEVAL_LEXICAL_BACKEND not in {"auto", "none", "tantivy_lexical"}:
     RUST_RETRIEVAL_LEXICAL_BACKEND = "auto"
@@ -331,6 +343,10 @@ HIGH_RISK_ACTIONS = [
 ]
 PREFERENCE_MAX_ENTRIES = int(os.getenv("PREFERENCE_MAX_ENTRIES", "25"))
 FEEDBACK_MAX_CONTENT = int(os.getenv("FEEDBACK_MAX_CONTENT", "2000"))
+FEEDBACK_TAG_MAX_COUNT = max(1, int(os.getenv("FEEDBACK_TAG_MAX_COUNT", "16")))
+FEEDBACK_TAG_MAX_LENGTH = max(8, int(os.getenv("FEEDBACK_TAG_MAX_LENGTH", "64")))
+FEEDBACK_METADATA_MAX_KEYS = max(1, int(os.getenv("FEEDBACK_METADATA_MAX_KEYS", "32")))
+FEEDBACK_METADATA_MAX_BYTES = max(128, int(os.getenv("FEEDBACK_METADATA_MAX_BYTES", "4096")))
 DEFAULT_TOPIC_ROOT = os.getenv("DEFAULT_TOPIC_ROOT", "root")
 
 EMBEDDING_PROVIDER = os.getenv("ORCH_EMBED_PROVIDER", os.getenv("EMBEDDING_PROVIDER", "cheap")).lower()
@@ -345,6 +361,18 @@ FASTEMBED_RS_TIMEOUT_SECS = max(
     0.2,
     float(os.getenv("ORCH_FASTEMBED_RS_TIMEOUT_SECS", "2.5")),
 )
+FASTEMBED_RS_GATE_REQUIRED = os.getenv(
+    "ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+FASTEMBED_RS_GATE_MAX_AGE_SECS = max(
+    60.0,
+    float(os.getenv("ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS", "172800")),
+)
+FASTEMBED_RS_GATE_FILE = os.getenv(
+    "ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE",
+    "bench/results/fastembed_gate_latest.json",
+).strip()
 FALLBACK_EMBED_DIM = int(os.getenv("ORCH_EMBED_DIM", os.getenv("EMBEDDING_DIM", "32")))
 EMBEDDING_FAIL_OPEN = os.getenv("ORCH_EMBED_FAIL_OPEN", "true").lower() in ("1", "true", "yes", "on")
 EMBEDDING_CACHE_ENABLED = os.getenv("EMBEDDING_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -503,13 +531,17 @@ RETRIEVAL_PATHWAY_SWR_REFRESH_MAX_INFLIGHT = max(
 )
 RETRIEVAL_PATHWAY_CACHE_BACKEND = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND",
-    "memory",
+    "redis_mirror",
 ).strip().lower()
 if RETRIEVAL_PATHWAY_CACHE_BACKEND not in {"memory", "redis", "redis_mirror"}:
-    RETRIEVAL_PATHWAY_CACHE_BACKEND = "memory"
+    RETRIEVAL_PATHWAY_CACHE_BACKEND = "redis_mirror"
 RETRIEVAL_PATHWAY_REDIS_URL = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_REDIS_URL",
     os.getenv("REDIS_URL", ""),
+).strip()
+RETRIEVAL_PATHWAY_REDIS_AUTH = os.getenv(
+    "ORCH_RETRIEVAL_PATHWAY_REDIS_AUTH",
+    os.getenv("REDIS_AUTH", ""),
 ).strip()
 RETRIEVAL_PATHWAY_REDIS_PREFIX = os.getenv(
     "ORCH_RETRIEVAL_PATHWAY_REDIS_PREFIX",
@@ -774,6 +806,18 @@ RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS = max(
 RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES",
     "",
+)
+RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED = os.getenv(
+    "ORCH_RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES_ENV = os.getenv(
+    "ORCH_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES",
+    "qdrant,topic_rollups",
+)
+RETRIEVAL_RUST_QUALITY_FALLBACK_MODE = (
+    os.getenv("ORCH_RETRIEVAL_RUST_QUALITY_FALLBACK_MODE", "balanced").strip().lower()
+    or "balanced"
 )
 RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED = os.getenv(
     "ORCH_RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED",
@@ -1224,6 +1268,10 @@ MEMORY_WRITE_BATCH_MAX_ITEMS = max(1, int(os.getenv("MEMORY_WRITE_BATCH_MAX_ITEM
 MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS = max(
     30.0,
     float(os.getenv("MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS", "900")),
+)
+FEEDBACK_SUBMIT_IDEMPOTENCY_TTL_SECS = max(
+    30.0,
+    float(os.getenv("FEEDBACK_SUBMIT_IDEMPOTENCY_TTL_SECS", "900")),
 )
 MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED = os.getenv(
     "MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED",
@@ -1888,6 +1936,14 @@ RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES = _normalize_retrieval_source_csv(
 )
 if not RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES:
     RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES = []
+RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES = _normalize_retrieval_source_csv(
+    RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES_ENV
+)
+if not RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES:
+    RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES = [
+        RETRIEVAL_SOURCE_QDRANT,
+        RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+    ]
 RETRIEVAL_BACKLOG_GATING_TARGETS = _normalize_retrieval_source_csv(RETRIEVAL_BACKLOG_GATING_TARGETS_ENV)
 if not RETRIEVAL_BACKLOG_GATING_TARGETS:
     RETRIEVAL_BACKLOG_GATING_TARGETS = [RETRIEVAL_SOURCE_LETTA]
@@ -1901,6 +1957,8 @@ RETRIEVAL_MODES = (
 )
 if RETRIEVAL_MODE_DEFAULT not in RETRIEVAL_MODES:
     RETRIEVAL_MODE_DEFAULT = RETRIEVAL_MODE_BALANCED
+if RETRIEVAL_RUST_QUALITY_FALLBACK_MODE not in RETRIEVAL_MODES:
+    RETRIEVAL_RUST_QUALITY_FALLBACK_MODE = RETRIEVAL_MODE_BALANCED
 RETRIEVAL_INTENT_DECISION = "decision"
 RETRIEVAL_INTENT_OPS = "ops"
 RETRIEVAL_INTENT_RAW = "raw"
@@ -1908,6 +1966,14 @@ RETRIEVAL_INTENTS = (
     RETRIEVAL_INTENT_DECISION,
     RETRIEVAL_INTENT_OPS,
     RETRIEVAL_INTENT_RAW,
+)
+TRAFFIC_CLASS_USER = "user"
+TRAFFIC_CLASS_SYNTHETIC = "synthetic"
+TRAFFIC_CLASS_BENCHMARK = "benchmark"
+TRAFFIC_CLASSES = (
+    TRAFFIC_CLASS_USER,
+    TRAFFIC_CLASS_SYNTHETIC,
+    TRAFFIC_CLASS_BENCHMARK,
 )
 if RETRIEVAL_INTENT_DEFAULT not in RETRIEVAL_INTENTS:
     RETRIEVAL_INTENT_DEFAULT = RETRIEVAL_INTENT_DECISION
@@ -2105,6 +2171,7 @@ async def _build_refreshed_recall_eval_case_set(
             agent_profile={},
             auto_escalate=False,
             query_expansion=False,
+            traffic_class=TRAFFIC_CLASS_SYNTHETIC,
         )
         return bool(rollup_rows)
 
@@ -2161,6 +2228,7 @@ async def _build_refreshed_recall_eval_case_set(
             agent_profile={},
             auto_escalate=False,
             query_expansion=False,
+            traffic_class=TRAFFIC_CLASS_SYNTHETIC,
         )
         top_row = probe_results[0] if probe_results and isinstance(probe_results[0], dict) else {}
         expected_files: set[str] = set()
@@ -2231,6 +2299,7 @@ async def _build_refreshed_recall_eval_case_set(
                 agent_profile={},
                 auto_escalate=bool(case.get("auto_escalate", False)),
                 query_expansion=bool(case.get("query_expansion", False)),
+                traffic_class=TRAFFIC_CLASS_SYNTHETIC,
             )
             expected_files = {
                 _normalize_expected_file_token(item)
@@ -3880,6 +3949,85 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
 
 
 def _fastembed_adapter_enabled() -> bool:
+    base_enabled = _fastembed_adapter_enabled_by_flag()
+    if not base_enabled:
+        return False
+    gate = _fastembed_gate_status()
+    if FASTEMBED_RS_GATE_REQUIRED and not bool(gate.get("passed")):
+        return False
+    return True
+
+
+def _fastembed_gate_file_path() -> Path | None:
+    token = str(FASTEMBED_RS_GATE_FILE or "").strip()
+    if not token:
+        return None
+    candidate = Path(token).expanduser()
+    if candidate.is_absolute():
+        return candidate
+    return Path.cwd() / candidate
+
+
+def _fastembed_gate_status() -> dict[str, Any]:
+    path = _fastembed_gate_file_path()
+    if path is None:
+        return {
+            "required": bool(FASTEMBED_RS_GATE_REQUIRED),
+            "passed": not FASTEMBED_RS_GATE_REQUIRED,
+            "available": False,
+            "reason": "gate_file_missing",
+        }
+    cached = fastembed_gate_status_cache.get("status")
+    now = time.monotonic()
+    cache_age = now - float(fastembed_gate_status_cache.get("loadedAtMonotonic") or 0.0)
+    with contextlib.suppress(Exception):
+        stat = path.stat()
+        mtime = float(stat.st_mtime)
+        if (
+            cached is not None
+            and fastembed_gate_status_cache.get("path") == str(path)
+            and float(fastembed_gate_status_cache.get("mtime") or -1.0) == mtime
+            and cache_age <= 3.0
+        ):
+            return dict(cached)
+        age_secs = max(0.0, time.time() - mtime)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        passed_raw = bool(payload.get("passed"))
+        stale = age_secs > FASTEMBED_RS_GATE_MAX_AGE_SECS
+        passed = bool(passed_raw and not stale)
+        reason = str(payload.get("reason") or "").strip() or ("stale_gate_result" if stale else "ok")
+        status = {
+            "required": bool(FASTEMBED_RS_GATE_REQUIRED),
+            "available": True,
+            "passed": passed,
+            "reason": reason,
+            "ageSecs": round(age_secs, 3),
+            "maxAgeSecs": round(float(FASTEMBED_RS_GATE_MAX_AGE_SECS), 3),
+            "path": str(path),
+            "generatedAt": payload.get("generatedAt"),
+            "metrics": payload.get("metrics"),
+            "thresholds": payload.get("thresholds"),
+        }
+        fastembed_gate_status_cache["path"] = str(path)
+        fastembed_gate_status_cache["mtime"] = mtime
+        fastembed_gate_status_cache["loadedAtMonotonic"] = now
+        fastembed_gate_status_cache["status"] = dict(status)
+        return status
+    status = {
+        "required": bool(FASTEMBED_RS_GATE_REQUIRED),
+        "available": False,
+        "passed": not FASTEMBED_RS_GATE_REQUIRED,
+        "reason": "gate_file_unreadable",
+        "path": str(path),
+    }
+    fastembed_gate_status_cache["path"] = str(path)
+    fastembed_gate_status_cache["mtime"] = None
+    fastembed_gate_status_cache["loadedAtMonotonic"] = now
+    fastembed_gate_status_cache["status"] = dict(status)
+    return status
+
+
+def _fastembed_adapter_enabled_by_flag() -> bool:
     if callable(load_adapter_flags):
         with contextlib.suppress(Exception):
             flags = load_adapter_flags()
@@ -4304,6 +4452,12 @@ fastembed_adapter_batch_items = 0
 fastembed_adapter_batch_failures = 0
 fastembed_adapter_last_error: str | None = None
 fastembed_adapter_last_latency_ms: float | None = None
+fastembed_gate_status_cache: dict[str, Any] = {
+    "path": None,
+    "mtime": None,
+    "loadedAtMonotonic": 0.0,
+    "status": None,
+}
 memory_bank_spike_attempts = 0
 memory_bank_spike_successes = 0
 memory_bank_spike_failures = 0
@@ -4359,6 +4513,12 @@ retrieval_source_error_counts: dict[str, int] = {}
 retrieval_source_timeout_counts: dict[str, int] = {}
 retrieval_source_budget_exceeded_counts: dict[str, int] = {}
 retrieval_latency_mode_counts: dict[str, int] = {}
+retrieval_source_latency_samples_by_class: dict[str, dict[str, deque[float]]] = {}
+retrieval_source_request_counts_by_class: dict[str, dict[str, int]] = {}
+retrieval_source_error_counts_by_class: dict[str, dict[str, int]] = {}
+retrieval_source_timeout_counts_by_class: dict[str, dict[str, int]] = {}
+retrieval_source_budget_exceeded_counts_by_class: dict[str, dict[str, int]] = {}
+retrieval_latency_mode_counts_by_class: dict[str, dict[str, int]] = {}
 retrieval_latency_updated_at: str | None = None
 retrieval_slow_source_cooldown_until: dict[str, float] = {}
 retrieval_slow_source_probe_attempts: dict[str, int] = {}
@@ -4398,10 +4558,16 @@ recall_quality_totals: dict[str, int] = {
 recall_quality_source_requests: dict[str, int] = {}
 recall_quality_source_errors: dict[str, int] = {}
 recall_quality_source_budget_exceeded: dict[str, int] = {}
+recall_quality_totals_by_class: dict[str, dict[str, int]] = {}
+recall_quality_source_requests_by_class: dict[str, dict[str, int]] = {}
+recall_quality_source_errors_by_class: dict[str, dict[str, int]] = {}
+recall_quality_source_budget_exceeded_by_class: dict[str, dict[str, int]] = {}
 recall_quality_updated_at: str | None = None
 agent_memory_profile_lock = asyncio.Lock()
 agent_memory_profiles: dict[str, dict[str, Any]] = {}
 qdrant_collection_dim_cache: dict[str, int] = {}
+qdrant_payload_index_cache_lock = asyncio.Lock()
+qdrant_payload_index_cache: dict[str, dict[str, Any]] = {}
 topic_rollup_last_snapshot_for_delta: dict[str, Any] = {}
 MCP_SESSION_ID: str | None = None
 MONGO_CLIENT = None
@@ -4492,6 +4658,19 @@ qdrant_warmup_state: dict[str, Any] = {
     "lastError": None,
     "runs": 0,
     "lastWarmed": 0,
+}
+qdrant_payload_index_task: asyncio.Task[Any] | None = None
+qdrant_payload_index_state: dict[str, Any] = {
+    "enabled": QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED,
+    "onStartup": QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP,
+    "wait": QDRANT_PAYLOAD_INDEX_HARDEN_WAIT,
+    "fields": ["project", "file", "topic_path", "topic_tags", "ts"],
+    "running": False,
+    "lastRunAt": None,
+    "lastDurationMs": None,
+    "lastError": None,
+    "runs": 0,
+    "lastResult": {},
 }
 recall_monitor_lock = asyncio.Lock()
 recall_monitor_history: deque[dict[str, Any]] = deque(maxlen=RECALL_MONITOR_HISTORY_LIMIT)
@@ -4789,6 +4968,190 @@ def _source_errors_has_material_failures(source_errors: dict[str, Any] | None) -
         if detail.get("kind") in {"timeout", "error"}:
             return True
     return False
+
+
+def _build_source_availability_payload(retrieval_debug: dict[str, Any] | None) -> dict[str, Any]:
+    debug = retrieval_debug if isinstance(retrieval_debug, dict) else {}
+    source_counts_raw = debug.get("source_counts")
+    source_counts = (
+        source_counts_raw
+        if isinstance(source_counts_raw, dict)
+        else {}
+    )
+    source_errors_raw = debug.get("source_errors")
+    source_errors = (
+        source_errors_raw
+        if isinstance(source_errors_raw, dict)
+        else {}
+    )
+    staged_fetch = debug.get("staged_fetch") if isinstance(debug.get("staged_fetch"), dict) else {}
+    call_budget = debug.get("call_budget") if isinstance(debug.get("call_budget"), dict) else {}
+
+    sources: list[str] = []
+    for value in debug.get("sources", []) if isinstance(debug.get("sources"), list) else []:
+        source_name = str(value or "").strip().lower()
+        if source_name and source_name not in sources:
+            sources.append(source_name)
+    for source_name in source_counts.keys():
+        token = str(source_name or "").strip().lower()
+        if token and token not in sources:
+            sources.append(token)
+    for source_name in source_errors.keys():
+        token = str(source_name or "").strip().lower()
+        if token and token not in sources:
+            sources.append(token)
+
+    returned_now = sorted(
+        {
+            str(source or "").strip().lower()
+            for source, count in source_counts.items()
+            if str(source or "").strip() and int(count or 0) > 0
+        }
+    )
+    timed_out_sources = sorted(
+        set(_source_errors_timeout_sources(source_errors))
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("timed_out_sources")
+                if isinstance(staged_fetch.get("timed_out_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+    )
+    failed_sources = sorted(
+        {
+            str(source or "").strip().lower()
+            for source, payload in source_errors.items()
+            if _normalize_source_error_detail(payload).get("kind") == "error"
+            and str(source or "").strip()
+        }
+    )
+    budget_exceeded_sources = sorted(
+        {
+            str(source or "").strip().lower()
+            for source, payload in source_errors.items()
+            if _normalize_source_error_detail(payload).get("kind") == "budget_exceeded"
+            and str(source or "").strip()
+        }
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("budget_exceeded_sources")
+                if isinstance(staged_fetch.get("budget_exceeded_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                call_budget.get("deferred_sources")
+                if isinstance(call_budget.get("deferred_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+    )
+    skipped_sources = sorted(
+        {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("slow_sources_skipped")
+                if isinstance(staged_fetch.get("slow_sources_skipped"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("timeout_adaptive_skipped_sources")
+                if isinstance(staged_fetch.get("timeout_adaptive_skipped_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+    )
+    pending_sources = sorted(
+        {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("async_warm_sources")
+                if isinstance(staged_fetch.get("async_warm_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("async_warm_slow_sources")
+                if isinstance(staged_fetch.get("async_warm_slow_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                staged_fetch.get("fail_open_continuation_sources")
+                if isinstance(staged_fetch.get("fail_open_continuation_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+        | set(budget_exceeded_sources)
+        | {
+            str(source or "").strip().lower()
+            for source in (
+                call_budget.get("critical_deferred_sources")
+                if isinstance(call_budget.get("critical_deferred_sources"), list)
+                else []
+            )
+            if str(source or "").strip()
+        }
+    )
+
+    ordered_sources = sorted(
+        {
+            *sources,
+            *returned_now,
+            *pending_sources,
+            *timed_out_sources,
+            *failed_sources,
+            *budget_exceeded_sources,
+            *skipped_sources,
+        }
+    )
+    status_by_source: dict[str, str] = {}
+    for source_name in ordered_sources:
+        status = "not_returned"
+        if source_name in returned_now:
+            status = "returned_now"
+        elif source_name in pending_sources:
+            status = "pending"
+        elif source_name in budget_exceeded_sources:
+            status = "budget_exceeded"
+        elif source_name in timed_out_sources:
+            status = "timed_out"
+        elif source_name in failed_sources:
+            status = "failed"
+        elif source_name in skipped_sources:
+            status = "skipped"
+        status_by_source[source_name] = status
+
+    return {
+        "sources": ordered_sources,
+        "returned_now": returned_now,
+        "pending_sources": pending_sources,
+        "timed_out_sources": timed_out_sources,
+        "failed_sources": failed_sources,
+        "budget_exceeded_sources": budget_exceeded_sources,
+        "skipped_sources": skipped_sources,
+        "status_by_source": status_by_source,
+    }
 
 
 def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
@@ -5236,6 +5599,15 @@ def _normalize_retrieval_intent(intent: str | None) -> str:
     return candidate
 
 
+def _normalize_traffic_class(value: Any) -> str:
+    candidate = str(value or "").strip().lower()
+    if not candidate:
+        return TRAFFIC_CLASS_USER
+    if candidate not in TRAFFIC_CLASSES:
+        return TRAFFIC_CLASS_USER
+    return candidate
+
+
 def _resolve_intent_default_sources(intent: str) -> list[str]:
     normalized_intent = _normalize_retrieval_intent(intent)
     sources = DEFAULT_RETRIEVAL_INTENT_SOURCES.get(normalized_intent) or []
@@ -5385,6 +5757,17 @@ def _retrieval_pathway_redis_key(key: str) -> str:
     return f"{RETRIEVAL_PATHWAY_REDIS_PREFIX}{key}"
 
 
+def _retrieval_pathway_redis_url_has_auth(url: str | None) -> bool:
+    token = str(url or "").strip()
+    if not token:
+        return False
+    try:
+        parsed = urlparse(token)
+    except Exception:
+        return False
+    return bool(parsed.password)
+
+
 async def _get_retrieval_pathway_redis_client():
     global retrieval_pathway_redis_client
     if not _retrieval_pathway_cache_backend_enabled():
@@ -5395,11 +5778,19 @@ async def _get_retrieval_pathway_redis_client():
         if retrieval_pathway_redis_client is not None:
             return retrieval_pathway_redis_client
         try:
+            redis_kwargs: dict[str, Any] = {
+                "decode_responses": False,
+                "socket_timeout": RETRIEVAL_PATHWAY_REDIS_TIMEOUT_SECS,
+                "socket_connect_timeout": RETRIEVAL_PATHWAY_REDIS_TIMEOUT_SECS,
+            }
+            if (
+                RETRIEVAL_PATHWAY_REDIS_AUTH
+                and not _retrieval_pathway_redis_url_has_auth(RETRIEVAL_PATHWAY_REDIS_URL)
+            ):
+                redis_kwargs["password"] = RETRIEVAL_PATHWAY_REDIS_AUTH
             client = redis_async.from_url(  # type: ignore[attr-defined]
                 RETRIEVAL_PATHWAY_REDIS_URL,
-                decode_responses=False,
-                socket_timeout=RETRIEVAL_PATHWAY_REDIS_TIMEOUT_SECS,
-                socket_connect_timeout=RETRIEVAL_PATHWAY_REDIS_TIMEOUT_SECS,
+                **redis_kwargs,
             )
             retrieval_pathway_redis_client = client
             return retrieval_pathway_redis_client
@@ -5791,6 +6182,7 @@ def _schedule_retrieval_pathway_swr_refresh(
                 record_pathway_usage=False,
                 call_budget_secs=None,
                 bypass_pathway_cache=True,
+                traffic_class=TRAFFIC_CLASS_SYNTHETIC,
             )
             retrieval_pathway_cache_swr_refresh_completed += 1
         except Exception as exc:
@@ -6040,6 +6432,7 @@ async def _record_retrieval_source_latency(
     timed_out: bool,
     budget_exceeded: bool = False,
     retrieval_mode: str,
+    traffic_class: str = TRAFFIC_CLASS_USER,
 ) -> None:
     global retrieval_latency_updated_at
     source_name = str(source or "").strip().lower()
@@ -6047,6 +6440,7 @@ async def _record_retrieval_source_latency(
         return
     duration = max(0.0, float(duration_ms))
     mode_name = _normalize_retrieval_mode(retrieval_mode)
+    class_name = _normalize_traffic_class(traffic_class)
     async with retrieval_latency_lock:
         samples = retrieval_source_latency_samples.get(source_name)
         if samples is None:
@@ -6071,21 +6465,38 @@ async def _record_retrieval_source_latency(
         retrieval_latency_mode_counts[mode_name] = int(
             retrieval_latency_mode_counts.get(mode_name, 0) or 0
         ) + 1
+
+        class_samples_by_source = retrieval_source_latency_samples_by_class.setdefault(class_name, {})
+        class_samples = class_samples_by_source.get(source_name)
+        if class_samples is None:
+            class_samples = deque(maxlen=RETRIEVAL_LATENCY_HISTORY_LIMIT)
+            class_samples_by_source[source_name] = class_samples
+        class_samples.append(duration)
+
+        class_request_counts = retrieval_source_request_counts_by_class.setdefault(class_name, {})
+        class_request_counts[source_name] = int(class_request_counts.get(source_name, 0) or 0) + 1
+        if not ok:
+            class_error_counts = retrieval_source_error_counts_by_class.setdefault(class_name, {})
+            class_error_counts[source_name] = int(class_error_counts.get(source_name, 0) or 0) + 1
+        if timed_out:
+            class_timeout_counts = retrieval_source_timeout_counts_by_class.setdefault(class_name, {})
+            class_timeout_counts[source_name] = int(class_timeout_counts.get(source_name, 0) or 0) + 1
+        if budget_exceeded:
+            class_budget_counts = retrieval_source_budget_exceeded_counts_by_class.setdefault(class_name, {})
+            class_budget_counts[source_name] = int(class_budget_counts.get(source_name, 0) or 0) + 1
+        class_mode_counts = retrieval_latency_mode_counts_by_class.setdefault(class_name, {})
+        class_mode_counts[mode_name] = int(class_mode_counts.get(mode_name, 0) or 0) + 1
         retrieval_latency_updated_at = _utc_now()
 
 
-async def _retrieval_latency_snapshot() -> dict[str, Any]:
-    async with retrieval_latency_lock:
-        samples_by_source = {
-            source: list(samples)
-            for source, samples in retrieval_source_latency_samples.items()
-        }
-        request_counts = dict(retrieval_source_request_counts)
-        error_counts = dict(retrieval_source_error_counts)
-        timeout_counts = dict(retrieval_source_timeout_counts)
-        budget_exceeded_counts = dict(retrieval_source_budget_exceeded_counts)
-        mode_counts = dict(retrieval_latency_mode_counts)
-        updated_at = retrieval_latency_updated_at
+def _build_retrieval_latency_sources_payload(
+    *,
+    samples_by_source: dict[str, list[float]],
+    request_counts: dict[str, int],
+    error_counts: dict[str, int],
+    timeout_counts: dict[str, int],
+    budget_exceeded_counts: dict[str, int],
+) -> dict[str, Any]:
     sources: dict[str, Any] = {}
     for source, samples in samples_by_source.items():
         sorted_samples = sorted(float(item) for item in samples)
@@ -6104,11 +6515,74 @@ async def _retrieval_latency_snapshot() -> dict[str, Any]:
             "maxMs": round(sorted_samples[-1], 3),
             "avgMs": round(sum(sorted_samples) / len(sorted_samples), 3),
         }
+    return sources
+
+
+async def _retrieval_latency_snapshot() -> dict[str, Any]:
+    async with retrieval_latency_lock:
+        samples_by_source = {
+            source: list(samples)
+            for source, samples in retrieval_source_latency_samples.items()
+        }
+        request_counts = dict(retrieval_source_request_counts)
+        error_counts = dict(retrieval_source_error_counts)
+        timeout_counts = dict(retrieval_source_timeout_counts)
+        budget_exceeded_counts = dict(retrieval_source_budget_exceeded_counts)
+        mode_counts = dict(retrieval_latency_mode_counts)
+        samples_by_class = {
+            class_name: {
+                source: list(samples)
+                for source, samples in source_samples.items()
+            }
+            for class_name, source_samples in retrieval_source_latency_samples_by_class.items()
+        }
+        request_counts_by_class = {
+            class_name: dict(counts)
+            for class_name, counts in retrieval_source_request_counts_by_class.items()
+        }
+        error_counts_by_class = {
+            class_name: dict(counts)
+            for class_name, counts in retrieval_source_error_counts_by_class.items()
+        }
+        timeout_counts_by_class = {
+            class_name: dict(counts)
+            for class_name, counts in retrieval_source_timeout_counts_by_class.items()
+        }
+        budget_counts_by_class = {
+            class_name: dict(counts)
+            for class_name, counts in retrieval_source_budget_exceeded_counts_by_class.items()
+        }
+        mode_counts_by_class = {
+            class_name: dict(counts)
+            for class_name, counts in retrieval_latency_mode_counts_by_class.items()
+        }
+        updated_at = retrieval_latency_updated_at
+    sources = _build_retrieval_latency_sources_payload(
+        samples_by_source=samples_by_source,
+        request_counts=request_counts,
+        error_counts=error_counts,
+        timeout_counts=timeout_counts,
+        budget_exceeded_counts=budget_exceeded_counts,
+    )
+    by_traffic_class: dict[str, Any] = {}
+    for class_name in sorted(set(samples_by_class.keys()) | set(request_counts_by_class.keys())):
+        class_sources = _build_retrieval_latency_sources_payload(
+            samples_by_source=samples_by_class.get(class_name, {}),
+            request_counts=request_counts_by_class.get(class_name, {}),
+            error_counts=error_counts_by_class.get(class_name, {}),
+            timeout_counts=timeout_counts_by_class.get(class_name, {}),
+            budget_exceeded_counts=budget_counts_by_class.get(class_name, {}),
+        )
+        by_traffic_class[class_name] = {
+            "sources": class_sources,
+            "modes": mode_counts_by_class.get(class_name, {}),
+        }
     return {
         "updatedAt": updated_at,
         "historyLimit": RETRIEVAL_LATENCY_HISTORY_LIMIT,
         "sources": sources,
         "modes": mode_counts,
+        "byTrafficClass": by_traffic_class,
     }
 
 
@@ -6187,13 +6661,29 @@ async def _retrieval_slow_source_runtime_policy(
     timeout_overrides: dict[str, float] = {}
     adaptive_timeouts: dict[str, dict[str, Any]] = {}
     async with retrieval_latency_lock:
-        samples_snapshot = {
-            source_name: list(samples)
-            for source_name, samples in retrieval_source_latency_samples.items()
-        }
-        request_counts = dict(retrieval_source_request_counts)
-        error_counts = dict(retrieval_source_error_counts)
-        timeout_counts = dict(retrieval_source_timeout_counts)
+        user_samples = retrieval_source_latency_samples_by_class.get(TRAFFIC_CLASS_USER)
+        if isinstance(user_samples, dict) and user_samples:
+            samples_snapshot = {
+                source_name: list(samples)
+                for source_name, samples in user_samples.items()
+            }
+            request_counts = dict(
+                retrieval_source_request_counts_by_class.get(TRAFFIC_CLASS_USER, {})
+            )
+            error_counts = dict(
+                retrieval_source_error_counts_by_class.get(TRAFFIC_CLASS_USER, {})
+            )
+            timeout_counts = dict(
+                retrieval_source_timeout_counts_by_class.get(TRAFFIC_CLASS_USER, {})
+            )
+        else:
+            samples_snapshot = {
+                source_name: list(samples)
+                for source_name, samples in retrieval_source_latency_samples.items()
+            }
+            request_counts = dict(retrieval_source_request_counts)
+            error_counts = dict(retrieval_source_error_counts)
+            timeout_counts = dict(retrieval_source_timeout_counts)
         for source_name in unique_sources:
             requests = max(0, int(request_counts.get(source_name, 0) or 0))
             errors = max(0, int(error_counts.get(source_name, 0) or 0))
@@ -6656,6 +7146,12 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         template_cache_size = len(retrieval_template_cache)
     async with retrieval_pathway_stats_lock:
         pathway_stats_size = len(retrieval_pathway_stats)
+    async with qdrant_payload_index_cache_lock:
+        qdrant_payload_index_snapshot = {
+            collection: dict(payload)
+            for collection, payload in qdrant_payload_index_cache.items()
+            if isinstance(payload, dict)
+        }
     async with memory_read_cache_lock:
         memory_read_cache_size = len(memory_read_cache)
     async with memory_read_cache_refresh_lock:
@@ -6672,7 +7168,18 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             if isinstance(item, dict) and str(item.get("status") or "") == "running"
         )
     lifecycle_state = await _retrieval_lifecycle_state_snapshot()
-    recent_rows = recall_quality.get("recent") if isinstance(recall_quality.get("recent"), list) else []
+    recall_quality_user = (
+        recall_quality.get("byTrafficClass", {}).get(TRAFFIC_CLASS_USER)
+        if isinstance(recall_quality.get("byTrafficClass"), dict)
+        else None
+    )
+    recent_rows = (
+        recall_quality_user.get("recent")
+        if isinstance(recall_quality_user, dict) and isinstance(recall_quality_user.get("recent"), list)
+        else recall_quality.get("recent")
+        if isinstance(recall_quality.get("recent"), list)
+        else []
+    )
     sample_count = len(recent_rows)
     rollup_hits = 0
     multi_source_hits = 0
@@ -6758,6 +7265,10 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 "readEnabled": _retrieval_pathway_cache_backend_read_enabled(),
                 "writeEnabled": _retrieval_pathway_cache_backend_write_enabled(),
                 "redisConfigured": bool(RETRIEVAL_PATHWAY_REDIS_URL),
+                "redisAuthConfigured": bool(
+                    RETRIEVAL_PATHWAY_REDIS_AUTH
+                    or _retrieval_pathway_redis_url_has_auth(RETRIEVAL_PATHWAY_REDIS_URL)
+                ),
                 "hits": retrieval_pathway_cache_backend_hits,
                 "misses": retrieval_pathway_cache_backend_misses,
                 "errors": retrieval_pathway_cache_backend_errors,
@@ -6907,6 +7418,13 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             "timeoutRetryEnabled": QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED,
             "timeoutRetryLimitFactor": QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR,
             "warmup": dict(qdrant_warmup_state),
+            "payloadIndexHardening": {
+                "enabled": QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED,
+                "onStartup": QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP,
+                "wait": QDRANT_PAYLOAD_INDEX_HARDEN_WAIT,
+                "state": dict(qdrant_payload_index_state),
+                "collections": qdrant_payload_index_snapshot,
+            },
         },
         "latency": latency,
         "recallQuality": recall_quality,
@@ -6945,8 +7463,20 @@ async def _persist_recall_monitor_sample(sample: dict[str, Any]) -> None:
 
 
 async def _collect_recall_monitor_sample() -> dict[str, Any]:
-    quality = await _recall_quality_snapshot()
-    latency = await _retrieval_latency_snapshot()
+    quality_full = await _recall_quality_snapshot()
+    latency_full = await _retrieval_latency_snapshot()
+    quality = (
+        quality_full.get("byTrafficClass", {}).get(TRAFFIC_CLASS_USER)
+        if isinstance(quality_full.get("byTrafficClass"), dict)
+        and isinstance(quality_full.get("byTrafficClass", {}).get(TRAFFIC_CLASS_USER), dict)
+        else quality_full
+    )
+    latency = (
+        latency_full.get("byTrafficClass", {}).get(TRAFFIC_CLASS_USER)
+        if isinstance(latency_full.get("byTrafficClass"), dict)
+        and isinstance(latency_full.get("byTrafficClass", {}).get(TRAFFIC_CLASS_USER), dict)
+        else latency_full
+    )
     recall_alerts = _build_recall_quality_alerts(quality)
     retrieval_alerts = _build_retrieval_alerts(latency)
     by_source = quality.get("bySource") if isinstance(quality.get("bySource"), dict) else {}
@@ -7196,6 +7726,7 @@ async def _run_retrieval_pathway_warm_query(entry: dict[str, Any]) -> bool:
         retrieval_mode=mode,
         retrieval_intent=intent,
         record_pathway_usage=False,
+        traffic_class=TRAFFIC_CLASS_SYNTHETIC,
     )
     return True
 
@@ -7333,6 +7864,32 @@ async def _qdrant_warmup_worker() -> None:
         qdrant_warmup_state["runs"] = int(qdrant_warmup_state.get("runs", 0) or 0) + 1
         qdrant_warmup_state["lastWarmed"] = warmed
         qdrant_warmup_state["lastError"] = error_text
+
+
+async def _qdrant_payload_index_worker() -> None:
+    qdrant_payload_index_state["running"] = True
+    started = time.monotonic()
+    error_text: str | None = None
+    last_result: dict[str, Any] = {}
+    try:
+        last_result = await _ensure_qdrant_payload_indexes(QDRANT_COLLECTION, force=True)
+        if isinstance(last_result.get("failedFields"), dict) and last_result.get("failedFields"):
+            error_text = (
+                "failed fields: "
+                + ", ".join(sorted(str(name) for name in last_result["failedFields"].keys()))
+            )
+    except asyncio.CancelledError:
+        qdrant_payload_index_state["running"] = False
+        raise
+    except Exception as exc:
+        error_text = str(exc)[:400]
+    finally:
+        qdrant_payload_index_state["running"] = False
+        qdrant_payload_index_state["lastRunAt"] = _utc_now()
+        qdrant_payload_index_state["lastDurationMs"] = round((time.monotonic() - started) * 1000, 2)
+        qdrant_payload_index_state["runs"] = int(qdrant_payload_index_state.get("runs", 0) or 0) + 1
+        qdrant_payload_index_state["lastError"] = error_text
+        qdrant_payload_index_state["lastResult"] = last_result
 
 
 def _should_log_http_request(status: int, duration_ms: float) -> bool:
@@ -7621,7 +8178,7 @@ async def start_background_tasks() -> None:
     global memory_bank_queue_tasks, letta_write_queue_tasks, outbox_gc_task, hot_memory_rollup_task
     global topic_rollup_task
     global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, letta_auto_prune_task
-    global qdrant_warmup_task
+    global qdrant_warmup_task, qdrant_payload_index_task
     if MONGO_RAW_ENABLED:
         await init_mongo_client()
     if RECALL_DEEP_ASYNC_PERSIST_ENABLED:
@@ -7687,6 +8244,12 @@ async def start_background_tasks() -> None:
         recall_monitor_task = asyncio.create_task(_recall_monitor_worker())
     if QDRANT_WARMUP_ENABLED and qdrant_warmup_task is None:
         qdrant_warmup_task = asyncio.create_task(_qdrant_warmup_worker())
+    if (
+        QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED
+        and QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP
+        and qdrant_payload_index_task is None
+    ):
+        qdrant_payload_index_task = asyncio.create_task(_qdrant_payload_index_worker())
     if HOT_MEMORY_ROLLUP_ENABLED and hot_memory_rollup_task is None:
         hot_memory_rollup_task = asyncio.create_task(_hot_memory_rollup_worker())
     if TOPIC_ROLLUP_ENABLED and topic_rollup_task is None:
@@ -7715,7 +8278,7 @@ async def close_mcp_client() -> None:
     global topic_rollup_task
     global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, task_scheduler_task, agent_task_worker_tasks
     global letta_auto_prune_task
-    global qdrant_warmup_task
+    global qdrant_warmup_task, qdrant_payload_index_task
     global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
     if task_scheduler_task is not None:
         task_scheduler_task.cancel()
@@ -7775,6 +8338,11 @@ async def close_mcp_client() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await qdrant_warmup_task
         qdrant_warmup_task = None
+    if qdrant_payload_index_task is not None:
+        qdrant_payload_index_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await qdrant_payload_index_task
+        qdrant_payload_index_task = None
     async with recall_deep_async_subscribers_lock:
         recall_deep_async_subscribers.clear()
     if MCP_CLIENT is not None:
@@ -7800,6 +8368,8 @@ async def close_mcp_client() -> None:
         await LANGFUSE_CLIENT.aclose()
         LANGFUSE_CLIENT = None
     qdrant_collection_dim_cache.clear()
+    async with qdrant_payload_index_cache_lock:
+        qdrant_payload_index_cache.clear()
     MCP_SESSION_ID = None
     if FANOUT_OUTBOX_MONGO_CLIENT is not None and FANOUT_OUTBOX_MONGO_CLIENT is not MONGO_CLIENT:
         try:
@@ -7829,6 +8399,15 @@ memory_write_batch_metrics: dict[str, int] = {
     "itemIdempotentHits": 0,
     "itemSuccesses": 0,
     "itemFailures": 0,
+}
+feedback_submit_idempotency_lock = asyncio.Lock()
+feedback_submit_idempotency_seen: OrderedDict[str, dict[str, Any]] = OrderedDict()
+feedback_submit_metrics: dict[str, int] = {
+    "accepted": 0,
+    "rejected": 0,
+    "idempotentHits": 0,
+    "persisted": 0,
+    "persistFailed": 0,
 }
 memory_write_latest_hash_lock = asyncio.Lock()
 memory_write_latest_hashes: dict[str, str] = {}
@@ -12575,6 +13154,182 @@ def _feedback_metadata_json(metadata: dict[str, Any] | None) -> str | None:
     return json.dumps(metadata)
 
 
+def _feedback_submit_cache_key(key: str) -> str:
+    normalized = str(key or "").strip()
+    if not normalized:
+        return ""
+    digest = hashlib.sha256(f"feedback:{normalized}".encode("utf-8")).hexdigest()
+    return f"feedback:{digest}"
+
+
+def _feedback_submit_fingerprint(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+async def _feedback_submit_idempotency_lookup(
+    key: str,
+    fingerprint: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    if not key:
+        return None, False
+    now = time.monotonic()
+    stale: list[str] = []
+    ttl = max(30.0, FEEDBACK_SUBMIT_IDEMPOTENCY_TTL_SECS)
+    for cache_key, payload in list(feedback_submit_idempotency_seen.items()):
+        seen_at = float(payload.get("seenAtMonotonic") or 0.0)
+        if seen_at + ttl < now:
+            stale.append(cache_key)
+    for cache_key in stale:
+        feedback_submit_idempotency_seen.pop(cache_key, None)
+    payload = feedback_submit_idempotency_seen.get(key)
+    if payload is None:
+        return None, False
+    feedback_submit_idempotency_seen.move_to_end(key)
+    if str(payload.get("fingerprint") or "") != fingerprint:
+        return None, True
+    cached_result = payload.get("result")
+    if isinstance(cached_result, dict):
+        replay = dict(cached_result)
+        replay["idempotentReplay"] = True
+        replay["idempotencyScope"] = "request"
+        return replay, False
+    return None, False
+
+
+async def _feedback_submit_idempotency_store(
+    key: str,
+    fingerprint: str,
+    result: dict[str, Any],
+) -> None:
+    if not key:
+        return
+    feedback_submit_idempotency_seen[key] = {
+        "seenAtMonotonic": time.monotonic(),
+        "fingerprint": fingerprint,
+        "result": dict(result),
+    }
+    feedback_submit_idempotency_seen.move_to_end(key)
+    max_keys = max(128, MEMORY_WRITE_DEDUP_MAX_KEYS)
+    while len(feedback_submit_idempotency_seen) > max_keys:
+        feedback_submit_idempotency_seen.popitem(last=False)
+
+
+def _normalize_feedback_source(value: str | None, *, default: str) -> str:
+    source = str(value or default).strip().lower() or default
+    if source not in {"user", "agent", "system"}:
+        raise HTTPException(422, "source must be one of: user, agent, system")
+    return source
+
+
+def _normalize_feedback_sentiment(value: str | None) -> str | None:
+    sentiment = str(value or "").strip().lower()
+    if not sentiment:
+        return None
+    aliases = {
+        "good": "positive",
+        "liked": "positive",
+        "bad": "negative",
+        "disliked": "negative",
+    }
+    normalized = aliases.get(sentiment, sentiment)
+    if normalized not in {"positive", "neutral", "negative"}:
+        raise HTTPException(422, "sentiment must be one of: positive, neutral, negative")
+    return normalized
+
+
+def _normalize_feedback_tags(tags: list[str] | None) -> list[str] | None:
+    if tags is None:
+        return None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in tags:
+        tag = str(raw_tag or "").strip().lower()
+        if not tag:
+            continue
+        if len(tag) > FEEDBACK_TAG_MAX_LENGTH:
+            raise HTTPException(422, f"tag '{tag[:24]}' exceeds FEEDBACK_TAG_MAX_LENGTH={FEEDBACK_TAG_MAX_LENGTH}")
+        if not re.match(r"^[a-z0-9][a-z0-9:_./-]*$", tag):
+            raise HTTPException(422, f"tag '{tag}' is malformed")
+        if tag in seen:
+            continue
+        seen.add(tag)
+        normalized.append(tag)
+        if len(normalized) > FEEDBACK_TAG_MAX_COUNT:
+            raise HTTPException(422, f"tags exceed FEEDBACK_TAG_MAX_COUNT={FEEDBACK_TAG_MAX_COUNT}")
+    return normalized or None
+
+
+def _normalize_feedback_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    if metadata is None:
+        return None
+    if not isinstance(metadata, dict):
+        raise HTTPException(422, "metadata must be an object")
+    if len(metadata) > FEEDBACK_METADATA_MAX_KEYS:
+        raise HTTPException(422, f"metadata exceeds FEEDBACK_METADATA_MAX_KEYS={FEEDBACK_METADATA_MAX_KEYS}")
+    normalized: dict[str, Any] = {}
+    for key, value in metadata.items():
+        token = str(key or "").strip()
+        if not token:
+            continue
+        normalized[token] = value
+    encoded = json.dumps(normalized, separators=(",", ":"), default=str)
+    if len(encoded.encode("utf-8")) > FEEDBACK_METADATA_MAX_BYTES:
+        raise HTTPException(422, f"metadata exceeds FEEDBACK_METADATA_MAX_BYTES={FEEDBACK_METADATA_MAX_BYTES}")
+    return normalized or None
+
+
+def _validate_feedback_submit_payload(payload: FeedbackSubmitRequest) -> dict[str, Any]:
+    project = str(payload.project or "").strip() or None
+    user_id = str(payload.user_id or "").strip() or None
+    task_id = str(payload.task_id or "").strip() or None
+    topic_path = normalize_topic_path(payload.topic_path) if payload.topic_path else None
+    content_raw = str(payload.content or "").strip()
+    if len(content_raw) > FEEDBACK_MAX_CONTENT:
+        raise HTTPException(422, f"content exceeds FEEDBACK_MAX_CONTENT={FEEDBACK_MAX_CONTENT}")
+    content = content_raw or None
+    rating = payload.rating
+    sentiment = _normalize_feedback_sentiment(payload.sentiment)
+    tags = _normalize_feedback_tags(payload.tags)
+    metadata = _normalize_feedback_metadata(payload.metadata)
+    if not any([rating is not None, sentiment, tags, content, metadata]):
+        raise HTTPException(422, "feedback_submit requires at least one of rating/sentiment/tags/content/metadata")
+    source = _normalize_feedback_source(payload.source, default="agent")
+    return {
+        "project": project,
+        "user_id": user_id,
+        "source": source,
+        "task_id": task_id,
+        "rating": rating,
+        "sentiment": sentiment,
+        "tags": tags,
+        "content": content,
+        "topic_path": topic_path,
+        "metadata": metadata,
+    }
+
+
+async def _persist_feedback_to_memory(record: dict[str, Any]) -> tuple[bool, str | None]:
+    if not LEARNING_LOOP_ENABLED:
+        return False, None
+    if not record.get("project") or not record.get("content"):
+        return False, None
+    file_name = f"feedback/{record['id']}.md"
+    content = json.dumps(record, indent=2)
+    try:
+        await call_memory_tool(
+            "memory_bank_write",
+            {
+                "projectName": record["project"],
+                "fileName": file_name,
+                "content": content,
+            },
+        )
+    except Exception as exc:
+        return False, str(exc)
+    return True, None
+
+
 def _detect_action_type(payload: dict[str, Any] | None) -> str | None:
     if not payload:
         return None
@@ -13795,6 +14550,24 @@ class FeedbackCreate(BaseModel):
     metadata: dict[str, Any] | None = Field(None, description="Optional metadata")
 
 
+class FeedbackSubmitRequest(BaseModel):
+    project: str | None = Field(None, description="Project identifier")
+    user_id: str | None = Field(None, description="User identifier")
+    source: str | None = Field("agent", description="user|agent|system")
+    task_id: str | None = Field(None, description="Related task id")
+    rating: int | None = Field(None, ge=1, le=5)
+    sentiment: str | None = Field(None, description="positive|neutral|negative")
+    tags: list[str] | None = Field(None, description="Freeform tags")
+    content: str | None = Field(None, description="Feedback content")
+    topic_path: str | None = Field(None, description="Optional topic path")
+    metadata: dict[str, Any] | None = Field(None, description="Optional metadata")
+    idempotencyKey: str | None = Field(None, description="Optional idempotency key")
+    include_preferences: bool = Field(
+        True,
+        description="Include updated preference context in response when learning loop is enabled",
+    )
+
+
 class TelemetryMetrics(BaseModel):
     timestamp: datetime
     queueDepth: int = Field(ge=0)
@@ -14810,6 +15583,7 @@ async def _record_recall_quality_observation(
     *,
     results: list[dict[str, Any]],
     retrieval_debug: dict[str, Any],
+    traffic_class: str = TRAFFIC_CLASS_USER,
 ) -> None:
     global recall_quality_updated_at
     top_score = _top_result_score(results)
@@ -14818,6 +15592,7 @@ async def _record_recall_quality_observation(
     stale_hit = bool(results) and _is_result_stale(results[0])
     source_errors = retrieval_debug.get("source_errors") if isinstance(retrieval_debug, dict) else {}
     source_counts = retrieval_debug.get("source_counts") if isinstance(retrieval_debug, dict) else {}
+    class_name = _normalize_traffic_class(traffic_class)
     source_error_kinds: dict[str, str] = {}
     async with recall_quality_lock:
         recall_quality_totals["requests"] = int(recall_quality_totals.get("requests", 0) or 0) + 1
@@ -14827,6 +15602,17 @@ async def _record_recall_quality_observation(
             recall_quality_totals["lowConfidence"] = int(recall_quality_totals.get("lowConfidence", 0) or 0) + 1
         if stale_hit:
             recall_quality_totals["staleHit"] = int(recall_quality_totals.get("staleHit", 0) or 0) + 1
+        class_totals = recall_quality_totals_by_class.setdefault(
+            class_name,
+            {"requests": 0, "noHit": 0, "lowConfidence": 0, "staleHit": 0},
+        )
+        class_totals["requests"] = int(class_totals.get("requests", 0) or 0) + 1
+        if no_hit:
+            class_totals["noHit"] = int(class_totals.get("noHit", 0) or 0) + 1
+        if low_confidence:
+            class_totals["lowConfidence"] = int(class_totals.get("lowConfidence", 0) or 0) + 1
+        if stale_hit:
+            class_totals["staleHit"] = int(class_totals.get("staleHit", 0) or 0) + 1
         if isinstance(source_counts, dict):
             for source, count in source_counts.items():
                 source_name = str(source or "").strip().lower()
@@ -14836,6 +15622,8 @@ async def _record_recall_quality_observation(
                 recall_quality_source_requests[source_name] = int(
                     recall_quality_source_requests.get(source_name, 0) or 0
                 ) + delta
+                class_requests = recall_quality_source_requests_by_class.setdefault(class_name, {})
+                class_requests[source_name] = int(class_requests.get(source_name, 0) or 0) + delta
         if isinstance(source_errors, dict):
             for source, error_text in source_errors.items():
                 source_name = str(source or "").strip().lower()
@@ -14850,10 +15638,14 @@ async def _record_recall_quality_observation(
                     recall_quality_source_budget_exceeded[source_name] = int(
                         recall_quality_source_budget_exceeded.get(source_name, 0) or 0
                     ) + 1
+                    class_budget = recall_quality_source_budget_exceeded_by_class.setdefault(class_name, {})
+                    class_budget[source_name] = int(class_budget.get(source_name, 0) or 0) + 1
                 else:
                     recall_quality_source_errors[source_name] = int(
                         recall_quality_source_errors.get(source_name, 0) or 0
                     ) + 1
+                    class_errors = recall_quality_source_errors_by_class.setdefault(class_name, {})
+                    class_errors[source_name] = int(class_errors.get(source_name, 0) or 0) + 1
         recall_quality_history.append(
             {
                 "timestamp": _utc_now(),
@@ -14862,6 +15654,7 @@ async def _record_recall_quality_observation(
                 "noHit": no_hit,
                 "lowConfidence": low_confidence,
                 "staleHit": stale_hit,
+                "trafficClass": class_name,
                 "sources": sorted(
                     {
                         str(row.get("source") or "").strip().lower()
@@ -14877,14 +15670,14 @@ async def _record_recall_quality_observation(
         recall_quality_updated_at = _utc_now()
 
 
-async def _recall_quality_snapshot() -> dict[str, Any]:
-    async with recall_quality_lock:
-        totals = dict(recall_quality_totals)
-        source_requests = dict(recall_quality_source_requests)
-        source_errors = dict(recall_quality_source_errors)
-        source_budget_exceeded = dict(recall_quality_source_budget_exceeded)
-        history_tail = list(recall_quality_history)[-50:]
-        updated_at = recall_quality_updated_at
+def _build_recall_quality_payload(
+    *,
+    totals: dict[str, int],
+    source_requests: dict[str, int],
+    source_errors: dict[str, int],
+    source_budget_exceeded: dict[str, int],
+    history_tail: list[dict[str, Any]],
+) -> dict[str, Any]:
     requests = max(0, int(totals.get("requests", 0) or 0))
     no_hit = max(0, int(totals.get("noHit", 0) or 0))
     low_conf = max(0, int(totals.get("lowConfidence", 0) or 0))
@@ -14912,7 +15705,6 @@ async def _recall_quality_snapshot() -> dict[str, Any]:
             ),
         }
     return {
-        "updatedAt": updated_at,
         "requests": requests,
         "noHit": no_hit,
         "lowConfidence": low_conf,
@@ -14922,6 +15714,64 @@ async def _recall_quality_snapshot() -> dict[str, Any]:
         "staleHitRate": round((stale_hit / requests), 6) if requests > 0 else 0.0,
         "bySource": by_source,
         "recent": history_tail,
+    }
+
+
+async def _recall_quality_snapshot() -> dict[str, Any]:
+    async with recall_quality_lock:
+        totals = dict(recall_quality_totals)
+        source_requests = dict(recall_quality_source_requests)
+        source_errors = dict(recall_quality_source_errors)
+        source_budget_exceeded = dict(recall_quality_source_budget_exceeded)
+        history_tail = list(recall_quality_history)[-50:]
+        totals_by_class = {
+            class_name: dict(values)
+            for class_name, values in recall_quality_totals_by_class.items()
+        }
+        source_requests_by_class = {
+            class_name: dict(values)
+            for class_name, values in recall_quality_source_requests_by_class.items()
+        }
+        source_errors_by_class = {
+            class_name: dict(values)
+            for class_name, values in recall_quality_source_errors_by_class.items()
+        }
+        source_budget_by_class = {
+            class_name: dict(values)
+            for class_name, values in recall_quality_source_budget_exceeded_by_class.items()
+        }
+        updated_at = recall_quality_updated_at
+    payload = _build_recall_quality_payload(
+        totals=totals,
+        source_requests=source_requests,
+        source_errors=source_errors,
+        source_budget_exceeded=source_budget_exceeded,
+        history_tail=history_tail,
+    )
+    by_traffic_class: dict[str, Any] = {}
+    all_classes = (
+        set(totals_by_class.keys())
+        | set(source_requests_by_class.keys())
+        | set(source_errors_by_class.keys())
+        | set(source_budget_by_class.keys())
+    )
+    for class_name in sorted(all_classes):
+        class_history = [
+            row
+            for row in history_tail
+            if _normalize_traffic_class(row.get("trafficClass")) == class_name
+        ]
+        by_traffic_class[class_name] = _build_recall_quality_payload(
+            totals=totals_by_class.get(class_name, {}),
+            source_requests=source_requests_by_class.get(class_name, {}),
+            source_errors=source_errors_by_class.get(class_name, {}),
+            source_budget_exceeded=source_budget_by_class.get(class_name, {}),
+            history_tail=class_history,
+        )
+    return {
+        "updatedAt": updated_at,
+        **payload,
+        "byTrafficClass": by_traffic_class,
     }
 
 
@@ -15514,6 +16364,126 @@ async def read_project_file(
     return ""
 
 
+def _qdrant_payload_index_specs() -> list[tuple[str, Any]]:
+    if qdrant_models is None:
+        return []
+    keyword_schema = getattr(getattr(qdrant_models, "PayloadSchemaType", None), "KEYWORD", "keyword")
+    integer_schema = getattr(getattr(qdrant_models, "PayloadSchemaType", None), "INTEGER", "integer")
+    return [
+        ("project", keyword_schema),
+        ("file", keyword_schema),
+        ("topic_path", keyword_schema),
+        ("topic_tags", keyword_schema),
+        ("ts", integer_schema),
+    ]
+
+
+def _qdrant_collection_missing_error(exc: Exception | str | None) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    return ("404" in text) or ("not found" in text and "collection" in text)
+
+
+async def _ensure_qdrant_payload_indexes(
+    collection_name: str | None = None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    collection = str(collection_name or QDRANT_COLLECTION).strip() or QDRANT_COLLECTION
+    now_iso = _utc_now()
+    if not QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED:
+        result = {
+            "enabled": False,
+            "collection": collection,
+            "updatedAt": now_iso,
+            "indexed": [],
+            "existing": [],
+            "failedFields": {},
+            "collectionMissing": False,
+            "reason": "disabled",
+        }
+        async with qdrant_payload_index_cache_lock:
+            qdrant_payload_index_cache[collection] = dict(result)
+        qdrant_payload_index_state["lastRunAt"] = now_iso
+        qdrant_payload_index_state["lastResult"] = dict(result)
+        return result
+    if qdrant_models is None:
+        raise RuntimeError("qdrant-client dependency is required for Qdrant payload-index hardening")
+    async with qdrant_payload_index_cache_lock:
+        cached = qdrant_payload_index_cache.get(collection)
+        if isinstance(cached, dict) and not force:
+            failed_fields = cached.get("failedFields")
+            collection_missing = bool(cached.get("collectionMissing"))
+            if not collection_missing and not failed_fields:
+                return dict(cached)
+
+    try:
+        await _qdrant_call(
+            "payload_index_collection_info",
+            lambda client, _: client.get_collection(collection_name=collection),
+        )
+    except Exception as exc:
+        if _qdrant_collection_missing_error(exc):
+            result = {
+                "enabled": True,
+                "collection": collection,
+                "updatedAt": now_iso,
+                "indexed": [],
+                "existing": [],
+                "failedFields": {},
+                "collectionMissing": True,
+                "reason": str(exc)[:300],
+            }
+            async with qdrant_payload_index_cache_lock:
+                qdrant_payload_index_cache[collection] = dict(result)
+            qdrant_payload_index_state["lastRunAt"] = now_iso
+            qdrant_payload_index_state["lastResult"] = dict(result)
+            return result
+        raise
+
+    indexed: list[str] = []
+    existing: list[str] = []
+    failed_fields: dict[str, str] = {}
+    for field_name, field_schema in _qdrant_payload_index_specs():
+        try:
+            await _qdrant_call(
+                "ensure_payload_index",
+                lambda client, _: client.create_payload_index(
+                    collection_name=collection,
+                    field_name=field_name,
+                    field_schema=field_schema,
+                    wait=QDRANT_PAYLOAD_INDEX_HARDEN_WAIT,
+                ),
+            )
+            indexed.append(field_name)
+        except Exception as exc:
+            error_text = str(exc).strip()
+            lowered = error_text.lower()
+            if (
+                "already exists" in lowered
+                or "already indexed" in lowered
+                or "already has index" in lowered
+            ):
+                existing.append(field_name)
+                continue
+            failed_fields[field_name] = error_text[:300]
+    result = {
+        "enabled": True,
+        "collection": collection,
+        "updatedAt": now_iso,
+        "indexed": sorted(set(indexed)),
+        "existing": sorted(set(existing)),
+        "failedFields": failed_fields,
+        "collectionMissing": False,
+    }
+    async with qdrant_payload_index_cache_lock:
+        qdrant_payload_index_cache[collection] = dict(result)
+    qdrant_payload_index_state["lastRunAt"] = now_iso
+    qdrant_payload_index_state["lastResult"] = dict(result)
+    return result
+
+
 async def ensure_qdrant_collection(vector_size: int, collection_name: str | None = None) -> None:
     collection = collection_name or QDRANT_COLLECTION
     cached_size = qdrant_collection_dim_cache.get(collection)
@@ -15524,6 +16494,9 @@ async def ensure_qdrant_collection(vector_size: int, collection_name: str | None
                 f"existing={cached_size}, required={vector_size}. "
                 "Drop the collection or adjust the embedding model."
             )
+        if QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED:
+            with contextlib.suppress(Exception):
+                await _ensure_qdrant_payload_indexes(collection)
         return
     if qdrant_models is None:
         raise RuntimeError("qdrant-client dependency is required for Qdrant operations")
@@ -15573,6 +16546,17 @@ async def ensure_qdrant_collection(vector_size: int, collection_name: str | None
         logger.info("Created Qdrant collection %s on %s backend with dim=%s", collection, target, vector_size)
 
     await _qdrant_call("ensure_collection", _ensure_on_backend)
+    if QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED:
+        try:
+            result = await _ensure_qdrant_payload_indexes(collection)
+            if result.get("failedFields"):
+                logger.warning(
+                    "Qdrant payload index hardening completed with failures for %s: %s",
+                    collection,
+                    sorted(result["failedFields"].keys()),
+                )
+        except Exception as exc:
+            logger.warning("Qdrant payload index hardening failed for %s: %s", collection, exc)
 
 
 def _qdrant_expected_dim(error_text: str) -> int | None:
@@ -16723,10 +17707,12 @@ async def federated_search_memory(
     record_pathway_usage: bool = True,
     call_budget_secs: float | None = None,
     bypass_pathway_cache: bool = False,
+    traffic_class: str = TRAFFIC_CLASS_USER,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     federated_started_monotonic = time.monotonic()
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     resolved_intent = _normalize_retrieval_intent(retrieval_intent)
+    normalized_traffic_class = _normalize_traffic_class(traffic_class)
     normalized_call_budget_secs = (
         max(0.25, float(call_budget_secs))
         if call_budget_secs is not None
@@ -16940,6 +17926,7 @@ async def federated_search_memory(
         source_name: str,
         timeout_secs: float,
         timeout_as_budget_exceeded: bool,
+        retrieval_mode_for_metrics: str,
         coro: Any,
     ) -> list[dict[str, Any]]:
         started = time.monotonic()
@@ -16961,17 +17948,23 @@ async def federated_search_memory(
                 ok=ok,
                 timed_out=bool(timed_out and not timeout_as_budget_exceeded),
                 budget_exceeded=bool(timed_out and timeout_as_budget_exceeded),
-                retrieval_mode=normalized_mode,
+                retrieval_mode=_normalize_retrieval_mode(retrieval_mode_for_metrics),
+                traffic_class=normalized_traffic_class,
             )
 
-    def _build_source_coro(source: str, timeout_secs: float) -> Any:
+    def _build_source_coro(
+        source: str,
+        timeout_secs: float,
+        retrieval_mode_override: str | None = None,
+    ) -> Any:
+        source_mode = _normalize_retrieval_mode(retrieval_mode_override or normalized_mode)
         if source == RETRIEVAL_SOURCE_QDRANT:
             return search_qdrant(
                 query,
                 limit=source_limit,
                 project_filter=project_filter,
                 topic_filter=topic_filter,
-                retrieval_mode=normalized_mode,
+                retrieval_mode=source_mode,
             )
         if source == RETRIEVAL_SOURCE_MONGO_RAW:
             return search_mongo_raw(
@@ -17018,11 +18011,13 @@ async def federated_search_memory(
         *,
         phase_label: str,
         suppress_slow_timeout_warnings: bool = False,
+        retrieval_mode_override: str | None = None,
     ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any], list[str]]:
         nonlocal call_budget_exhausted
         batch_rows: dict[str, list[dict[str, Any]]] = {}
         batch_errors: dict[str, Any] = {}
         batch_warnings: list[str] = []
+        batch_mode = _normalize_retrieval_mode(retrieval_mode_override or normalized_mode)
         if call_deadline_monotonic is not None:
             remaining = _remaining_call_budget_secs()
             if remaining is not None and remaining <= 0.0:
@@ -17072,7 +18067,8 @@ async def federated_search_memory(
                     source,
                     timeout,
                     _slow_sync_timeout_budget_exceeded(source, phase_label),
-                    _build_source_coro(source, timeout),
+                    batch_mode,
+                    _build_source_coro(source, timeout, batch_mode),
                 )
             )
         if not tasks:
@@ -17322,6 +18318,10 @@ async def federated_search_memory(
     backlog_async_warm_slow_sources: list[str] = []
     mongo_raw_intent_async_sources: list[str] = []
     hard_sync_async_split_applied = False
+    rust_quality_fallback_attempted = False
+    rust_quality_fallback_applied = False
+    rust_quality_fallback_sources_used: list[str] = []
+    rust_quality_fallback_mode_used: str | None = None
     if staged_fetch_used:
         fast_rows, fast_errors, fast_warnings = await _run_source_batch(
             staged_fast_sources,
@@ -17468,6 +18468,76 @@ async def federated_search_memory(
                 1,
                 min(limit, RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS),
             )
+            needs_sync_fallback = len(fast_merged) < min_fast_results
+            rust_quality_candidates = [
+                source
+                for source in RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES
+                if source in staged_fast_sources
+            ]
+            if (
+                needs_sync_fallback
+                and RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED
+                and not explicit_source_override
+                and RUST_RETRIEVAL_LEXICAL_BACKEND == "tantivy_lexical"
+                and rust_quality_candidates
+            ):
+                rust_quality_fallback_attempted = True
+                rust_quality_fallback_sources_used = sorted(set(rust_quality_candidates))
+                rust_quality_fallback_mode_used = RETRIEVAL_RUST_QUALITY_FALLBACK_MODE
+                rust_rows, rust_errors, rust_warnings = await _run_source_batch(
+                    rust_quality_fallback_sources_used,
+                    phase_label="rust-quality-sync-fallback",
+                    suppress_slow_timeout_warnings=not fast_sources_failed,
+                    retrieval_mode_override=RETRIEVAL_RUST_QUALITY_FALLBACK_MODE,
+                )
+                results_by_source.update(rust_rows)
+                source_errors.update(rust_errors)
+                warnings.extend(rust_warnings)
+
+                fast_rows = {
+                    source: results_by_source.get(source, [])
+                    for source in staged_fast_sources
+                }
+                fast_merged = _merge_federated_rows(
+                    fast_rows,
+                    resolved_weights,
+                    positive_terms,
+                    negative_terms,
+                    learning_enabled=learning_enabled,
+                    query=query,
+                    source_quality_multipliers={
+                        str(name): float(value)
+                        for name, value in source_quality_multipliers.items()
+                    },
+                    lifecycle_snapshot=lifecycle_snapshot,
+                    retrieval_intent=resolved_intent,
+                )
+                fast_merged.sort(
+                    key=lambda row: (
+                        float(row.get("score") or 0.0),
+                        float(row.get("base_score") or 0.0),
+                    ),
+                    reverse=True,
+                )
+                top_fast_score = float(fast_merged[0].get("score") or 0.0) if fast_merged else 0.0
+                enough_fast_volume = len(fast_merged) >= max(min_results_for_skip, limit * 2)
+                fast_sources_with_hits = sum(
+                    1
+                    for source_name in staged_fast_sources
+                    if len(fast_rows.get(source_name, [])) > 0
+                )
+                enough_fast_diversity = fast_sources_with_hits >= RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY
+                needs_async_warm_after_skip = bool(
+                    len(fast_merged) < max(limit, RETRIEVAL_SLOW_SOURCE_MIN_RESULTS)
+                    or top_fast_score < RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE
+                    or not enough_fast_diversity
+                )
+                needs_sync_fallback = len(fast_merged) < min_fast_results
+                if not needs_sync_fallback:
+                    rust_quality_fallback_applied = True
+                    warnings.append(
+                        "Rust-first quality fallback satisfied minimum fast recall coverage; skipping sync slow-source fallback."
+                    )
             fallback_sources = [
                 source
                 for source in RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES
@@ -17475,7 +18545,7 @@ async def federated_search_memory(
             ]
             if sync_slow_requires_explicit and not explicit_source_override:
                 fallback_sources = []
-            if len(fast_merged) < min_fast_results and fallback_sources:
+            if needs_sync_fallback and fallback_sources:
                 sync_fallback_slow_sources = list(fallback_sources)
                 async_warm_slow_sources = [
                     source
@@ -17608,6 +18678,7 @@ async def federated_search_memory(
     retrieval_debug = {
         "retrieval_mode": normalized_mode,
         "retrieval_intent": resolved_intent,
+        "traffic_class": normalized_traffic_class,
         "sources": resolved_sources,
         "source_weights": resolved_weights,
         "source_counts": {
@@ -17633,6 +18704,10 @@ async def federated_search_memory(
             "slow_source_min_results": RETRIEVAL_SLOW_SOURCE_MIN_RESULTS,
             "slow_source_min_top_score": RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE,
             "slow_source_min_diversity": RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY,
+            "rust_quality_fallback_attempted": rust_quality_fallback_attempted,
+            "rust_quality_fallback_applied": rust_quality_fallback_applied,
+            "rust_quality_fallback_sources": rust_quality_fallback_sources_used,
+            "rust_quality_fallback_mode": rust_quality_fallback_mode_used,
         },
         "source_policy": {
             "stability_enabled": bool(runtime_policy.get("enabled")),
@@ -17653,6 +18728,9 @@ async def federated_search_memory(
             "mongo_raw_deep_sync_only_for_raw_intent": RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT,
             "mongo_raw_deep_async_warm_non_raw": RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW,
             "mongo_raw_intent_async_sources": mongo_raw_intent_async_sources,
+            "rust_quality_fallback_enabled": RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED,
+            "rust_quality_fallback_sources": RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES,
+            "rust_quality_fallback_mode": RETRIEVAL_RUST_QUALITY_FALLBACK_MODE,
             "qdrant_sync_timeout_cap_secs": RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS,
             "fail_open_timeout_continuation_enabled": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED,
             "fail_open_timeout_continuation_sources": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES,
@@ -17721,6 +18799,7 @@ async def federated_search_memory(
             + ", ".join(deferred_context_sources)
             + ". Re-run after cache warm or use deep mode / longer timeout budgets for blocking retrieval."
         )
+    retrieval_debug["source_availability"] = _build_source_availability_payload(retrieval_debug)
     retrieval_debug["staged_fetch"]["budget_exceeded_sources"] = budget_exceeded_sources
     final_results = merged[:limit]
     await _record_retrieval_lifecycle_observation(query=query, results=final_results)
@@ -17783,9 +18862,11 @@ async def _run_memory_recall_pipeline(
     auto_escalate: bool = False,
     query_expansion: bool = True,
     retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
+    traffic_class: str = TRAFFIC_CLASS_USER,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     normalized_intent = _normalize_retrieval_intent(retrieval_intent)
+    normalized_traffic_class = _normalize_traffic_class(traffic_class)
     profile = agent_profile if isinstance(agent_profile, dict) else {}
     source_override_requested = bool(sources is not None)
     if "_source_override_requested" in profile:
@@ -17936,6 +19017,7 @@ async def _run_memory_recall_pipeline(
                 retrieval_mode=hop_mode,
                 retrieval_intent=normalized_intent,
                 call_budget_secs=call_budget_secs,
+                traffic_class=normalized_traffic_class,
             )
             if timeout_adaptive_enabled and isinstance(hop_debug, dict):
                 timeout_sources = _source_errors_timeout_sources(
@@ -18076,6 +19158,7 @@ async def _run_memory_recall_pipeline(
             ],
         },
         "retrieval_intent": normalized_intent,
+        "traffic_class": normalized_traffic_class,
         "timeout_adaptive": {
             "enabled": timeout_adaptive_enabled,
             "skip_targets": sorted(timeout_adaptive_skip_targets),
@@ -18097,8 +19180,13 @@ async def _run_memory_recall_pipeline(
     best_debug["source_errors"] = source_errors
     best_debug["source_counts"] = source_counts
     best_debug["pipeline"] = pipeline_debug
+    best_debug["traffic_class"] = normalized_traffic_class
     grounding = _build_grounding_payload(merged_results)
-    await _record_recall_quality_observation(results=merged_results, retrieval_debug=best_debug)
+    await _record_recall_quality_observation(
+        results=merged_results,
+        retrieval_debug=best_debug,
+        traffic_class=normalized_traffic_class,
+    )
     if budget_exhausted:
         warnings_all.append(
             "Recall response budget reached; returning best-available partial results while slower sources continue warming."
@@ -19781,6 +20869,10 @@ async def get_memory_metrics():
             "idempotencyTtlSecs": max(30.0, MEMORY_WRITE_BATCH_IDEMPOTENCY_TTL_SECS),
             "metrics": dict(memory_write_batch_metrics),
         },
+        "feedbackSubmit": {
+            "idempotencyTtlSecs": max(30.0, FEEDBACK_SUBMIT_IDEMPOTENCY_TTL_SECS),
+            "metrics": dict(feedback_submit_metrics),
+        },
         "fanout": {
             "queueDepth": memory_write_queue.qsize(),
             "queueMax": MEMORY_WRITE_QUEUE_MAX,
@@ -19875,9 +20967,11 @@ async def get_memory_metrics():
             "evictions": embedding_cache_evictions,
             "fastembedRs": {
                 "enabled": _fastembed_adapter_enabled(),
+                "enabledByFlag": _fastembed_adapter_enabled_by_flag(),
                 "configured": bool(FASTEMBED_RS_BASE_URL),
                 "timeoutSecs": FASTEMBED_RS_TIMEOUT_SECS,
                 "route": FASTEMBED_RS_ROUTE,
+                "gate": _fastembed_gate_status(),
                 "attempts": fastembed_adapter_attempts,
                 "successes": fastembed_adapter_successes,
                 "failures": fastembed_adapter_failures,
@@ -19905,17 +20999,64 @@ async def get_memory_metrics():
 
 
 @app.get("/telemetry/retrieval")
-async def get_retrieval_metrics(limit: int = 20):
+async def get_retrieval_metrics(limit: int = 20, traffic_class: str = TRAFFIC_CLASS_USER):
     payload = await _build_retrieval_metrics_payload(limit)
-    if TELEMETRY_PERSIST_ENABLED:
+    traffic_class_token = str(traffic_class or "").strip().lower()
+    class_filter = None if traffic_class_token == "all" else _normalize_traffic_class(traffic_class_token)
+    if class_filter is not None:
+        latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
+        recall_quality = payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
+        latency_class = (
+            latency.get("byTrafficClass", {}).get(class_filter)
+            if isinstance(latency.get("byTrafficClass"), dict)
+            else None
+        )
+        recall_class = (
+            recall_quality.get("byTrafficClass", {}).get(class_filter)
+            if isinstance(recall_quality.get("byTrafficClass"), dict)
+            else None
+        )
+        if isinstance(latency_class, dict):
+            payload["latency"] = {
+                "updatedAt": latency.get("updatedAt"),
+                "historyLimit": latency.get("historyLimit"),
+                **latency_class,
+            }
+        if isinstance(recall_class, dict):
+            payload["recallQuality"] = {
+                "updatedAt": recall_quality.get("updatedAt"),
+                **recall_class,
+            }
+        filtered_alerts = _build_retrieval_alerts(
+            payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
+        )
+        filtered_recall_alerts = _build_recall_quality_alerts(
+            payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
+        )
+        if isinstance(filtered_alerts, dict) and filtered_recall_alerts:
+            active = filtered_alerts.get("active")
+            if isinstance(active, list):
+                active.extend(filtered_recall_alerts)
+                filtered_alerts["active"] = active
+                filtered_alerts["count"] = len(active)
+        payload["alerts"] = filtered_alerts
+    payload["trafficClass"] = class_filter or "all"
+    if TELEMETRY_PERSIST_ENABLED and (class_filter in {None, TRAFFIC_CLASS_USER}):
         asyncio.create_task(_persist_retrieval_telemetry_snapshot(payload))
     return payload
 
 
-async def _retrieval_source_quality_window_snapshot(window_secs: float) -> dict[str, Any]:
+async def _retrieval_source_quality_window_snapshot(
+    window_secs: float,
+    *,
+    traffic_class: str | None = TRAFFIC_CLASS_USER,
+) -> dict[str, Any]:
     now_dt = datetime.now(timezone.utc)
     effective_window_secs = max(60.0, min(float(window_secs), 86400.0))
     start_dt = now_dt - timedelta(seconds=effective_window_secs)
+    class_filter = None
+    if traffic_class is not None and str(traffic_class).strip().lower() != "all":
+        class_filter = _normalize_traffic_class(traffic_class)
     async with recall_quality_lock:
         history = list(recall_quality_history)
     sample_count = 0
@@ -19925,6 +21066,9 @@ async def _retrieval_source_quality_window_snapshot(window_secs: float) -> dict[
             continue
         parsed_timestamp = _parse_timestamp_to_datetime(row.get("timestamp"))
         if parsed_timestamp is None or parsed_timestamp < start_dt:
+            continue
+        row_class = _normalize_traffic_class(row.get("trafficClass"))
+        if class_filter is not None and row_class != class_filter:
             continue
         sample_count += 1
         source_counts = row.get("sourceCounts") if isinstance(row.get("sourceCounts"), dict) else {}
@@ -19983,14 +21127,47 @@ async def _retrieval_source_quality_window_snapshot(window_secs: float) -> dict[
 
 
 @app.get("/telemetry/retrieval/source-quality")
-async def get_retrieval_source_quality(limit: int = 20, window_mins: int = 0):
+async def get_retrieval_source_quality(
+    limit: int = 20,
+    window_mins: int = 0,
+    traffic_class: str = TRAFFIC_CLASS_USER,
+):
     payload = await _build_retrieval_metrics_payload(limit)
     recall_quality = payload.get("recallQuality") if isinstance(payload.get("recallQuality"), dict) else {}
     latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
     source_circuit = payload.get("sourceCircuit") if isinstance(payload.get("sourceCircuit"), dict) else {}
     backlog_gating = payload.get("backlogGating") if isinstance(payload.get("backlogGating"), dict) else {}
-    latency_sources = latency.get("sources") if isinstance(latency.get("sources"), dict) else {}
-    by_source = recall_quality.get("bySource") if isinstance(recall_quality.get("bySource"), dict) else {}
+    traffic_class_token = str(traffic_class or "").strip().lower()
+    class_filter = None if traffic_class_token == "all" else _normalize_traffic_class(traffic_class_token)
+    latency_selected = latency
+    recall_quality_selected = recall_quality
+    if class_filter is not None:
+        latency_by_class = (
+            latency.get("byTrafficClass")
+            if isinstance(latency.get("byTrafficClass"), dict)
+            else {}
+        )
+        recall_by_class = (
+            recall_quality.get("byTrafficClass")
+            if isinstance(recall_quality.get("byTrafficClass"), dict)
+            else {}
+        )
+        latency_selected = (
+            latency_by_class.get(class_filter)
+            if isinstance(latency_by_class.get(class_filter), dict)
+            else {"sources": {}, "modes": {}}
+        )
+        recall_quality_selected = (
+            recall_by_class.get(class_filter)
+            if isinstance(recall_by_class.get(class_filter), dict)
+            else {"bySource": {}, "recent": []}
+        )
+    latency_sources = latency_selected.get("sources") if isinstance(latency_selected.get("sources"), dict) else {}
+    by_source = (
+        recall_quality_selected.get("bySource")
+        if isinstance(recall_quality_selected.get("bySource"), dict)
+        else {}
+    )
     baseline_source = RETRIEVAL_SOURCE_QDRANT
     baseline_error_rate = float(
         (
@@ -20003,7 +21180,8 @@ async def get_retrieval_source_quality(limit: int = 20, window_mins: int = 0):
     window_enabled = int(window_mins) > 0
     window_snapshot = (
         await _retrieval_source_quality_window_snapshot(
-            max(1, int(window_mins)) * 60.0
+            max(1, int(window_mins)) * 60.0,
+            traffic_class=class_filter,
         )
         if window_enabled
         else {
@@ -20149,6 +21327,7 @@ async def get_retrieval_source_quality(limit: int = 20, window_mins: int = 0):
         recommendations.append("Source quality is within expected bounds for current thresholds.")
     return {
         "updatedAt": payload.get("updatedAt"),
+        "trafficClass": class_filter or "all",
         "baselineSource": baseline_source,
         "window": {
             "minutes": max(0, int(window_mins)),
@@ -20165,12 +21344,31 @@ async def get_retrieval_source_quality(limit: int = 20, window_mins: int = 0):
 
 
 @app.get("/telemetry/recall")
-async def get_recall_metrics():
+async def get_recall_metrics(traffic_class: str = TRAFFIC_CLASS_USER):
     snapshot = await _recall_quality_snapshot()
-    alerts = _build_recall_quality_alerts(snapshot)
+    traffic_class_token = str(traffic_class or "").strip().lower()
+    class_filter = None if traffic_class_token == "all" else _normalize_traffic_class(traffic_class_token)
+    selected_snapshot = snapshot
+    if class_filter is not None:
+        by_class = snapshot.get("byTrafficClass") if isinstance(snapshot.get("byTrafficClass"), dict) else {}
+        class_snapshot = by_class.get(class_filter) if isinstance(by_class.get(class_filter), dict) else {}
+        empty_quality = _build_recall_quality_payload(
+            totals={},
+            source_requests={},
+            source_errors={},
+            source_budget_exceeded={},
+            history_tail=[],
+        )
+        selected_snapshot = {
+            "updatedAt": snapshot.get("updatedAt"),
+            **empty_quality,
+            **class_snapshot,
+        }
+    alerts = _build_recall_quality_alerts(selected_snapshot)
     return {
         "updatedAt": _utc_now(),
-        "quality": snapshot,
+        "trafficClass": class_filter or "all",
+        "quality": selected_snapshot,
         "alerts": {
             "thresholds": {
                 "noHitRate": RECALL_ALERT_NO_HIT_RATE,
@@ -20443,6 +21641,40 @@ async def purge_telemetry_from_retrieval_sinks(
     }
 
 
+@app.post("/maintenance/qdrant/payload-indexes/harden")
+async def harden_qdrant_payload_indexes(
+    collection: str | None = None,
+    force: bool = False,
+):
+    started = time.monotonic()
+    qdrant_payload_index_state["running"] = True
+    result: dict[str, Any] = {}
+    error_text: str | None = None
+    try:
+        result = await _ensure_qdrant_payload_indexes(collection, force=force)
+        failed_fields = result.get("failedFields") if isinstance(result.get("failedFields"), dict) else {}
+        if failed_fields:
+            error_text = "failed fields: " + ", ".join(sorted(str(field) for field in failed_fields.keys()))
+    except Exception as exc:
+        error_text = str(exc)[:400]
+        raise HTTPException(500, f"Qdrant payload index hardening failed: {exc}") from exc
+    finally:
+        qdrant_payload_index_state["running"] = False
+        qdrant_payload_index_state["lastRunAt"] = _utc_now()
+        qdrant_payload_index_state["lastDurationMs"] = round((time.monotonic() - started) * 1000, 2)
+        qdrant_payload_index_state["runs"] = int(qdrant_payload_index_state.get("runs", 0) or 0) + 1
+        qdrant_payload_index_state["lastError"] = error_text
+        qdrant_payload_index_state["lastResult"] = dict(result) if isinstance(result, dict) else {}
+    return {
+        "ok": bool(
+            result
+            and not bool(result.get("collectionMissing"))
+            and not bool(result.get("failedFields"))
+        ),
+        "result": result,
+    }
+
+
 @app.post("/telemetry/memory/cleanup-low-value")
 async def trigger_memory_bank_cleanup_low_value(
     project: str | None = None,
@@ -20681,6 +21913,10 @@ class MemorySearch(BaseModel):
         None,
         description="Optional callback URL for deep async completion payload",
     )
+    traffic_class: str | None = Field(
+        None,
+        description="Telemetry partition class (user|synthetic|benchmark)",
+    )
 
 
 class ContextPackRequest(BaseModel):
@@ -20699,6 +21935,7 @@ class ContextPackRequest(BaseModel):
     agent_id: str | None = Field(None, description="Agent profile id")
     auto_escalate: bool | None = Field(None, description="Override agent auto-escalation policy")
     query_expansion: bool | None = Field(None, description="Override query expansion policy")
+    traffic_class: str | None = Field(None, description="Telemetry partition class (user|synthetic|benchmark)")
 
 
 class AgentMemoryProfileUpdate(BaseModel):
@@ -21256,7 +22493,9 @@ async def _retriever_search_with_grounding_via_runtime(
     agent_profile: dict[str, Any] | None,
     auto_escalate: bool,
     query_expansion: bool,
+    traffic_class: str = TRAFFIC_CLASS_USER,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
+    normalized_traffic_class = _normalize_traffic_class(traffic_class)
     runtime = await _get_migration_runtime()
     if runtime is None:
         return await _run_memory_recall_pipeline(
@@ -21273,6 +22512,7 @@ async def _retriever_search_with_grounding_via_runtime(
             agent_profile=agent_profile,
             auto_escalate=auto_escalate,
             query_expansion=query_expansion,
+            traffic_class=normalized_traffic_class,
         )
     request = RuntimeRetrievalRequest(
         query=query,
@@ -21288,6 +22528,7 @@ async def _retriever_search_with_grounding_via_runtime(
         agent_profile=agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
+        traffic_class=normalized_traffic_class,
         backend_policy=_resolve_rust_retrieval_backend_policy(
             preferences=preferences,
             agent_profile=agent_profile,
@@ -21300,6 +22541,7 @@ async def _retriever_search_with_grounding_via_runtime(
     grounding = dict(getattr(response, "grounding", {}) or {})
     runtime_debug = retrieval_debug.get("runtime") if isinstance(retrieval_debug.get("runtime"), dict) else {}
     runtime_debug["rust_backend_policy"] = dict(request.backend_policy or {})
+    runtime_debug["traffic_class"] = normalized_traffic_class
     retrieval_debug["runtime"] = runtime_debug
     return results, retrieval_debug, warnings, grounding
 
@@ -21489,6 +22731,14 @@ def _build_recall_deep_async_job_payload(
     if include_result and status in {"completed", "failed"}:
         payload["result"] = entry.get("result")
         payload["error"] = entry.get("error")
+    result_payload = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    payload["retrieval_lifecycle"] = _build_retrieval_lifecycle_payload(
+        result_state=result_payload.get("result_state") if isinstance(result_payload, dict) else None,
+        source_summary=result_payload.get("source_summary") if isinstance(result_payload, dict) else None,
+        async_status=status,
+        events_url=str(payload.get("events_url") or "").strip() or None,
+        poll_url=str(payload.get("job_poll_url") or payload.get("poll_url") or "").strip() or None,
+    )
     return payload
 
 
@@ -21966,7 +23216,85 @@ def _attach_recall_deep_async_metadata(
     payload["warnings"] = _dedupe_warning_messages(
         [str(item) for item in payload.get("warnings", [])] + [availability_note]
     )
+    payload["retrieval_lifecycle"] = _build_retrieval_lifecycle_payload(
+        result_state=payload.get("result_state"),
+        source_summary=payload.get("source_summary"),
+        async_status=status,
+        events_url=events_url or None,
+        poll_url=(job_poll_url or poll_url or None),
+    )
     return payload
+
+
+def _build_retrieval_lifecycle_payload(
+    *,
+    result_state: str | None,
+    source_summary: dict[str, Any] | None,
+    async_status: str | None = None,
+    events_url: str | None = None,
+    poll_url: str | None = None,
+) -> dict[str, Any]:
+    summary = source_summary if isinstance(source_summary, dict) else {}
+    returned_now = list(summary.get("returned_now") or [])
+    pending_sources = list(summary.get("pending_sources") or [])
+    failed_sources = list(summary.get("failed_sources") or [])
+    timed_out_sources = list(summary.get("timed_out_sources") or [])
+    budget_exceeded_sources = list(summary.get("budget_exceeded_sources") or [])
+    normalized_state = str(result_state or "").strip().lower()
+
+    async_status_token = str(async_status or "").strip().lower()
+    if async_status_token in {"queued", "running"}:
+        status = async_status_token
+    elif async_status_token == "failed":
+        status = "failed"
+    elif normalized_state == "degraded":
+        status = "failed"
+    elif normalized_state == "pending":
+        status = "partial"
+    else:
+        status = "succeeded"
+
+    effective_state = normalized_state
+    if not effective_state:
+        if status in {"queued", "running"}:
+            effective_state = "pending"
+        elif status == "failed":
+            effective_state = "degraded"
+        elif returned_now:
+            effective_state = "ready"
+        else:
+            effective_state = "empty"
+
+    partial = bool(
+        status == "partial"
+        or status in {"queued", "running"}
+        or pending_sources
+        or budget_exceeded_sources
+    )
+    next_actions: list[str] = []
+    if status in {"queued", "running"} or pending_sources or budget_exceeded_sources:
+        if poll_url:
+            next_actions.append("poll_job")
+        if events_url:
+            next_actions.append("stream_events")
+        next_actions.append("retry_after_cache_warm")
+    if status == "failed":
+        next_actions.append("retry_with_longer_timeout")
+
+    return {
+        "statusLifecycle": ["queued", "running", "partial", "succeeded", "failed"],
+        "status": status,
+        "result_state": effective_state,
+        "partial": partial,
+        "sources": {
+            "returned_now": returned_now,
+            "pending": pending_sources,
+            "failed": failed_sources,
+            "timed_out": timed_out_sources,
+            "budget_exceeded": budget_exceeded_sources,
+        },
+        "next_actions": next_actions,
+    }
 
 
 def _messaging_directive_int(
@@ -22514,6 +23842,7 @@ async def search_memory(payload: MemorySearch):
         payload.retrieval_intent
         or str(agent_profile.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT)
     )
+    traffic_class = _normalize_traffic_class(payload.traffic_class)
     auto_escalate = (
         payload.auto_escalate
         if isinstance(payload.auto_escalate, bool)
@@ -22643,6 +23972,7 @@ async def search_memory(payload: MemorySearch):
         retrieval_debug = {
             "retrieval_mode": retrieval_mode,
             "retrieval_intent": retrieval_intent,
+            "traffic_class": traffic_class,
             "source_errors": {},
             "source_counts": {},
             "project_resolution": project_resolution,
@@ -22665,9 +23995,21 @@ async def search_memory(payload: MemorySearch):
             "learning_enabled": LEARNING_LOOP_ENABLED,
             "retrieval_mode": retrieval_mode,
             "retrieval_intent": retrieval_intent,
+            "traffic_class": traffic_class,
             "warnings": pre_warnings,
             "agent_id": profile_id,
             "degraded": True,
+            "result_state": "degraded",
+            "source_summary": {
+                "sources": [],
+                "returned_now": [],
+                "pending_sources": [],
+                "timed_out_sources": [],
+                "failed_sources": [],
+                "budget_exceeded_sources": [],
+                "skipped_sources": [],
+            },
+            "source_status": {},
             "project_resolution": project_resolution,
             "project_suggestions": project_suggestions,
             "retrieval_policy": policy_debug,
@@ -22683,6 +24025,10 @@ async def search_memory(payload: MemorySearch):
                 "query_expansion": bool(agent_profile.get("query_expansion", True)),
             },
         }
+        response["retrieval_lifecycle"] = _build_retrieval_lifecycle_payload(
+            result_state=response.get("result_state"),
+            source_summary=response.get("source_summary"),
+        )
         if payload.include_grounding:
             response["grounding"] = empty_grounding
         if payload.include_retrieval_debug:
@@ -22719,6 +24065,7 @@ async def search_memory(payload: MemorySearch):
         agent_profile=effective_agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
+        traffic_class=traffic_class,
     )
     topic_scope_debug = {
         "applied": bool(trading_scope_prefixes),
@@ -22776,6 +24123,28 @@ async def search_memory(payload: MemorySearch):
                 )
                 result["content"] = None
 
+    source_availability = _build_source_availability_payload(retrieval_debug)
+    material_source_failures = (
+        _source_errors_has_material_failures(
+            retrieval_debug.get("source_errors")
+            if isinstance(retrieval_debug.get("source_errors"), dict)
+            else {}
+        )
+    )
+    pending_sources_for_state = (
+        source_availability.get("pending_sources")
+        if isinstance(source_availability.get("pending_sources"), list)
+        else []
+    )
+    if material_source_failures:
+        result_state = "degraded"
+    elif results:
+        result_state = "ready"
+    elif pending_sources_for_state:
+        result_state = "pending"
+    else:
+        result_state = "empty"
+
     response: dict[str, Any] = {
         "results": results,
         "preferences": preferences,
@@ -22786,10 +24155,22 @@ async def search_memory(payload: MemorySearch):
         "retrieval_intent": _normalize_retrieval_intent(
             str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
         ),
+        "traffic_class": traffic_class,
         "warnings": warnings,
         "agent_id": profile_id,
         "project_resolution": project_resolution,
         "project_suggestions": project_suggestions,
+        "result_state": result_state,
+        "source_summary": {
+            "sources": source_availability.get("sources", []),
+            "returned_now": source_availability.get("returned_now", []),
+            "pending_sources": source_availability.get("pending_sources", []),
+            "timed_out_sources": source_availability.get("timed_out_sources", []),
+            "failed_sources": source_availability.get("failed_sources", []),
+            "budget_exceeded_sources": source_availability.get("budget_exceeded_sources", []),
+            "skipped_sources": source_availability.get("skipped_sources", []),
+        },
+        "source_status": source_availability.get("status_by_source", {}),
         "retrieval_policy": {
             **policy_debug,
                 "effectiveSources": (
@@ -22799,15 +24180,7 @@ async def search_memory(payload: MemorySearch):
                 ),
             "sourceOverrideRequested": source_override_requested,
         },
-        "degraded": bool(
-            not results
-            or (
-                isinstance(retrieval_debug.get("source_errors"), dict)
-                and _source_errors_has_material_failures(
-                    retrieval_debug.get("source_errors")
-                )
-            )
-        ),
+        "degraded": bool(material_source_failures),
         "agent_profile": {
             "id": profile_id,
             "retrieval_mode": agent_profile.get("retrieval_mode"),
@@ -22820,10 +24193,15 @@ async def search_memory(payload: MemorySearch):
             "query_expansion": bool(agent_profile.get("query_expansion", True)),
         },
     }
+    response["retrieval_lifecycle"] = _build_retrieval_lifecycle_payload(
+        result_state=response.get("result_state"),
+        source_summary=response.get("source_summary"),
+    )
     if payload.include_grounding:
         response["grounding"] = grounding
     if payload.include_retrieval_debug:
         retrieval_payload = dict(retrieval_debug)
+        retrieval_payload["traffic_class"] = traffic_class
         retrieval_payload["project_resolution"] = project_resolution
         retrieval_payload["topic_scope"] = topic_scope_debug
         retrieval_payload["policy"] = {
@@ -22954,6 +24332,7 @@ async def get_memory_context_pack(payload: ContextPackRequest):
             query_expansion=payload.query_expansion,
             deep_async=False,
             callback_url=None,
+            traffic_class=payload.traffic_class,
         )
     )
     context_pack = _build_context_pack_payload(
@@ -22968,6 +24347,7 @@ async def get_memory_context_pack(payload: ContextPackRequest):
         "warnings": search_response.get("warnings") if isinstance(search_response, dict) else [],
         "retrieval_mode": search_response.get("retrieval_mode") if isinstance(search_response, dict) else None,
         "retrieval_intent": search_response.get("retrieval_intent") if isinstance(search_response, dict) else None,
+        "traffic_class": search_response.get("traffic_class") if isinstance(search_response, dict) else None,
         "agent_id": search_response.get("agent_id") if isinstance(search_response, dict) else None,
     }
     if payload.include_retrieval_debug and isinstance(search_response, dict):
@@ -23013,6 +24393,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
     retrieval_intent = _normalize_retrieval_intent(
         request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
     )
+    traffic_class = _normalize_traffic_class(request_payload.get("traffic_class"))
     pre_warnings: list[str] = []
     policy_debug: dict[str, Any] = {
         "projectDefaultsApplied": False,
@@ -23088,6 +24469,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         retrieval_intent=retrieval_intent,
         record_pathway_usage=False,
         call_budget_secs=RECALL_E2E_BUDGET_SECS if RECALL_E2E_BUDGET_SECS > 0 else None,
+        traffic_class=traffic_class,
     )
     topic_scope_debug = {
         "applied": bool(topic_scope_prefixes),
@@ -23115,6 +24497,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
             )
     combined_warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
     retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["traffic_class"] = traffic_class
     retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
         str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
     )
@@ -23172,6 +24555,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     retrieval_intent = _normalize_retrieval_intent(
         request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
     )
+    traffic_class = _normalize_traffic_class(request_payload.get("traffic_class"))
     agent_profile = (
         request_payload.get("agent_profile")
         if isinstance(request_payload.get("agent_profile"), dict)
@@ -23260,6 +24644,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         agent_profile=effective_agent_profile,
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
+        traffic_class=traffic_class,
     )
     topic_scope_debug = {
         "applied": bool(topic_scope_prefixes),
@@ -23288,6 +24673,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
             )
     combined_warnings = _dedupe_warning_messages(pre_warnings + warnings) if pre_warnings else _dedupe_warning_messages(warnings)
     retrieval_payload = dict(retrieval_debug)
+    retrieval_payload["traffic_class"] = traffic_class
     retrieval_payload["retrieval_intent"] = _normalize_retrieval_intent(
         str(retrieval_debug.get("retrieval_intent") or retrieval_intent)
     )
@@ -23640,6 +25026,7 @@ async def evaluate_memory_recall(payload: RecallEvalRequest):
                     query_expansion=case.query_expansion,
                     deep_async=False,
                     callback_url=None,
+                    traffic_class=TRAFFIC_CLASS_SYNTHETIC,
                 )
             )
 
@@ -24064,6 +25451,84 @@ async def tool_memory_write_batch(payload: MemoryWriteBatchRequest):
     )
 
 
+@app.post("/tools/feedback_submit")
+async def tool_feedback_submit(payload: FeedbackSubmitRequest):
+    try:
+        normalized = _validate_feedback_submit_payload(payload)
+    except HTTPException:
+        async with feedback_submit_idempotency_lock:
+            feedback_submit_metrics["rejected"] = int(feedback_submit_metrics.get("rejected", 0)) + 1
+        raise
+    fingerprint = _feedback_submit_fingerprint(normalized)
+    idempotency_key = _feedback_submit_cache_key(payload.idempotencyKey or "")
+
+    if idempotency_key:
+        async with feedback_submit_idempotency_lock:
+            replayed, mismatch = await _feedback_submit_idempotency_lookup(idempotency_key, fingerprint)
+            if mismatch:
+                feedback_submit_metrics["rejected"] = int(feedback_submit_metrics.get("rejected", 0)) + 1
+                raise HTTPException(409, "idempotencyKey was already used with a different payload")
+            if replayed is not None:
+                feedback_submit_metrics["idempotentHits"] = (
+                    int(feedback_submit_metrics.get("idempotentHits", 0)) + 1
+                )
+                return replayed
+
+    record = await create_feedback_record(
+        normalized.get("project"),
+        normalized.get("user_id"),
+        normalized.get("source"),
+        normalized.get("task_id"),
+        normalized.get("rating"),
+        normalized.get("sentiment"),
+        normalized.get("tags"),
+        normalized.get("content"),
+        normalized.get("topic_path"),
+        normalized.get("metadata"),
+    )
+    persisted, persist_error = await _persist_feedback_to_memory(record)
+    warnings: list[str] = []
+    if persist_error:
+        warnings.append(f"Feedback persisted, but memory index update failed: {persist_error}")
+
+    preferences = None
+    preference_updated = False
+    if LEARNING_LOOP_ENABLED and payload.include_preferences:
+        with contextlib.suppress(Exception):
+            records = await list_feedback_records(
+                normalized.get("project"),
+                normalized.get("user_id"),
+                None,
+                PREFERENCE_MAX_ENTRIES,
+            )
+            preferences = build_preference_context(records)
+            preference_updated = True
+
+    response: dict[str, Any] = {
+        "ok": True,
+        "feedback": record,
+        "learning": {
+            "enabled": LEARNING_LOOP_ENABLED,
+            "preferenceUpdated": preference_updated,
+            "memoryIndexed": persisted,
+        },
+    }
+    if preferences is not None:
+        response["preferences"] = preferences
+    if warnings:
+        response["warnings"] = warnings
+
+    async with feedback_submit_idempotency_lock:
+        feedback_submit_metrics["accepted"] = int(feedback_submit_metrics.get("accepted", 0)) + 1
+        if persisted:
+            feedback_submit_metrics["persisted"] = int(feedback_submit_metrics.get("persisted", 0)) + 1
+        if persist_error:
+            feedback_submit_metrics["persistFailed"] = int(feedback_submit_metrics.get("persistFailed", 0)) + 1
+        await _feedback_submit_idempotency_store(idempotency_key, fingerprint, response)
+
+    return response
+
+
 @app.post("/feedback")
 async def create_feedback(payload: FeedbackCreate):
     topic_path = normalize_topic_path(payload.topic_path) if payload.topic_path else None
@@ -24079,18 +25544,17 @@ async def create_feedback(payload: FeedbackCreate):
         topic_path,
         payload.metadata,
     )
-    if LEARNING_LOOP_ENABLED and record.get("project") and record.get("content"):
-        file_name = f"feedback/{record['id']}.md"
-        content = json.dumps(record, indent=2)
-        await call_memory_tool(
-            "memory_bank_write",
-            {
-                "projectName": record["project"],
-                "fileName": file_name,
-                "content": content,
-            },
-        )
-    return {"feedback": record}
+    persisted, persist_error = await _persist_feedback_to_memory(record)
+    response: dict[str, Any] = {
+        "feedback": record,
+        "learning": {
+            "enabled": LEARNING_LOOP_ENABLED,
+            "memoryIndexed": persisted,
+        },
+    }
+    if persist_error:
+        response["warnings"] = [f"Feedback persisted, but memory index update failed: {persist_error}"]
+    return response
 
 
 @app.get("/feedback")

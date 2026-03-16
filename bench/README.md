@@ -29,6 +29,8 @@ Optional knobs:
 
 Results are written to `bench/results/` as JSON.
 
+All benchmark harnesses set `traffic_class=benchmark` on retrieval calls so benchmark traffic is partitioned from user-facing recall telemetry.
+
 ## Phase 1+ Runtime Comparison
 
 `bench/phase1_runtime_comparison.py` records runtime adapter status plus retrieval latency for quick parity checks.
@@ -53,10 +55,24 @@ API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_AP
 python3 bench/perf_shortlist_matrix.py --api-key "$API_KEY" --runs 12
 ```
 
+Benchmark-gated fastembed rollout (compare candidate vs baseline and emit gate artifact):
+
+```bash
+python3 bench/perf_shortlist_matrix.py \
+  --api-key "$API_KEY" \
+  --runs 12 \
+  --baseline bench/results/perf_shortlist_matrix_baseline.json \
+  --gate-output bench/results/fastembed_gate_latest.json
+```
+
 Optional knobs:
 
 - `--project`
 - `--timeout`
+- `--baseline`
+- `--gate-min-improvement-pct`
+- `--gate-max-error-regression`
+- `--gate-output`
 - `--output`
 
 ## Qdrant Tuning Matrix

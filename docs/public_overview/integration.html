@@ -45,7 +45,7 @@
           <li>Bring the stack up and verify <code>/health</code> and authenticated <code>/status</code>.</li>
           <li>Run the write/search smoke test to confirm end-to-end memory behavior.</li>
           <li>Paste the human operator instruction block into your agent session.</li>
-          <li>Map your client/tooling surface to <code>/memory/write</code> and <code>/memory/search</code>.</li>
+          <li>Map your client/tooling surface to <code>/memory/write</code>, <code>/memory/search</code>, and <code>/tools/feedback_submit</code>.</li>
         </ol>
       </article>
     </section>
@@ -122,9 +122,10 @@ Runtime:
 Required behavior:
 1) Before planning, call POST /memory/search with a compact query and project/topic filters.
 2) During long tasks, checkpoint major decisions and outcomes with POST /memory/write.
-3) Before final answer, run one more POST /memory/search for recency.
-4) Keep writes compact (summaries, decisions, diffs), never dump full transcripts.
-5) If /memory/* fails, continue task and report degraded memory mode explicitly.</code></pre>
+3) Submit quality feedback with POST /tools/feedback_submit (use idempotencyKey).
+4) Before final answer, run one more POST /memory/search for recency.
+5) Keep writes compact (summaries, decisions, diffs), never dump full transcripts.
+6) If /memory/* fails, continue task and report degraded memory mode explicitly.</code></pre>
         <ul class="spec-list">
           <li><strong>Best practice:</strong> include <code>projectName</code>, <code>fileName</code>, and topic path on every write.</li>
           <li><strong>Quality loop:</strong> ask user for a short “context quality” rating after key outputs, then write that feedback.</li>
@@ -174,6 +175,7 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
           <ul class="spec-list">
             <li>Persist memory on key state changes: <code>POST /memory/write</code></li>
             <li>Retrieve context before response generation: <code>POST /memory/search</code></li>
+            <li>Submit outcome feedback for learning/rerank: <code>POST /tools/feedback_submit</code></li>
             <li>Persist browser snapshots for agent-visible pages: <code>POST /memory/browser-context</code></li>
             <li>Inspect active runner/tool contracts: <code>GET /ops/capabilities</code></li>
             <li>Refresh saved recall evaluation cases from live retrieval pathways: <code>POST /memory/recall/eval-cases/refresh</code></li>
@@ -215,6 +217,7 @@ export MEMMCP_ORCHESTRATOR_API_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{p
             <ul class="spec-list">
               <li><code>memory_recall_ctx</code> → <code>POST /memory/search</code></li>
               <li><code>memory_save_store</code> → <code>POST /memory/write</code></li>
+              <li><code>memory_feedback_submit</code> → <code>POST /tools/feedback_submit</code></li>
               <li><code>messenger command hook</code> → <code>POST /integrations/messaging/openclaw</code></li>
               <li><code>ironclaw command hook</code> → <code>POST /integrations/messaging/ironclaw</code></li>
               <li><code>healthbeat</code> → <code>GET /health</code> and <code>GET /status</code> with <code>x-api-key</code></li>

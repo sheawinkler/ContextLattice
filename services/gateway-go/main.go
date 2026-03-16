@@ -43,6 +43,9 @@ type retrievalPolicy struct {
 	fastSources                 []string
 	slowSources                 []string
 	syncFallbackSources         []string
+	rustQualityFallbackEnabled  bool
+	rustQualityFallbackSources  []string
+	rustQualityFallbackMode     string
 	minFastResults              int
 	lexicalGuardEnabled         bool
 	lexicalGuardMinCoverage     float64
@@ -310,12 +313,12 @@ func defaultRustBackendPolicy() map[string]any {
 		"vector_backend": normalizeRustBackendChoice(
 			os.Getenv("ORCH_RUST_RETRIEVAL_VECTOR_BACKEND"),
 			vectorAllowed,
-			"auto",
+			"qdrant_remote",
 		),
 		"lexical_backend": normalizeRustBackendChoice(
 			os.Getenv("ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND"),
 			lexicalAllowed,
-			"auto",
+			"tantivy_lexical",
 		),
 		"strict": envBool("ORCH_RUST_RETRIEVAL_BACKEND_STRICT", false),
 	}
@@ -365,6 +368,18 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.fastSources = csvListEnv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant")
 	policy.slowSources = csvListEnv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb,mongo_raw,letta,memory_bank")
 	policy.syncFallbackSources = csvListEnv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "mindsdb,mongo_raw")
+	policy.rustQualityFallbackEnabled = envBool("GO_RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", true)
+	policy.rustQualityFallbackSources = csvListEnv(
+		"GO_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES",
+		"qdrant,topic_rollups",
+	)
+	policy.rustQualityFallbackMode = strings.TrimSpace(strings.ToLower(os.Getenv("GO_RETRIEVAL_RUST_QUALITY_FALLBACK_MODE")))
+	if policy.rustQualityFallbackMode == "" {
+		policy.rustQualityFallbackMode = "balanced"
+	}
+	if policy.rustQualityFallbackMode != "fast" && policy.rustQualityFallbackMode != "balanced" && policy.rustQualityFallbackMode != "deep" {
+		policy.rustQualityFallbackMode = "balanced"
+	}
 	policy.minFastResults = envInt("ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS", 2)
 	if policy.minFastResults < 1 {
 		policy.minFastResults = 1
@@ -482,6 +497,7 @@ func isProxyPath(path string) bool {
 		"/tools/capability_map",
 		"/tools/ops_queue_status",
 		"/tools/memory_write_batch",
+		"/tools/feedback_submit",
 		"/v1/memory/put",
 		"/v1/memory/update",
 		"/v1/memory/get",
@@ -666,10 +682,14 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 		"description": "ContextLattice gateway-go retrieval/memory proxy",
 		"backendUrl":  s.backendURL,
 		"retrieval": map[string]any{
-			"stagedEnabled":            s.retrieval.enabled,
-			"fastSources":              s.retrieval.fastSources,
-			"slowSources":              s.retrieval.slowSources,
-			"qdrantSyncTimeoutCapSecs": s.retrieval.qdrantSyncTimeoutCap.Seconds(),
+			"stagedEnabled":              s.retrieval.enabled,
+			"fastSources":                s.retrieval.fastSources,
+			"slowSources":                s.retrieval.slowSources,
+			"syncFallbackSources":        s.retrieval.syncFallbackSources,
+			"rustQualityFallbackEnabled": s.retrieval.rustQualityFallbackEnabled,
+			"rustQualityFallbackSources": s.retrieval.rustQualityFallbackSources,
+			"rustQualityFallbackMode":    s.retrieval.rustQualityFallbackMode,
+			"qdrantSyncTimeoutCapSecs":   s.retrieval.qdrantSyncTimeoutCap.Seconds(),
 			"qdrantSyncTimeoutCapByModeSecs": map[string]any{
 				"fast":     s.retrieval.qdrantSyncTimeoutCapByMode["fast"].Seconds(),
 				"balanced": s.retrieval.qdrantSyncTimeoutCapByMode["balanced"].Seconds(),
@@ -1532,6 +1552,10 @@ func (s *server) executeRetrieval(
 	lexicalGuardEligible := s.retrieval.lexicalGuardEnabled && !explicitSourceOverride && lexicalBackend == "tantivy_lexical"
 	lexicalGuardCoverage := 0.0
 	lexicalGuardApplied := false
+	rustQualityFallbackAttempted := false
+	rustQualityFallbackApplied := false
+	rustQualityFallbackSourcesUsed := []string{}
+	rustQualityFallbackModeUsed := ""
 	if lexicalGuardEligible {
 		lexicalGuardCoverage = lexicalCoverageScore(query, merged)
 	}
@@ -1550,6 +1574,60 @@ func (s *server) executeRetrieval(
 					warnings,
 					"Lexical backend policy deferred sync slow-source fallback; continuing asynchronously for cache warm.",
 				)
+			}
+			if needsFallback {
+				if s.retrieval.rustQualityFallbackEnabled && lexicalBackend == "tantivy_lexical" {
+					rustFallbackSet := toSourceSet(s.retrieval.rustQualityFallbackSources)
+					rustFallback := []string{}
+					for _, source := range fastSources {
+						if _, ok := rustFallbackSet[source]; ok {
+							rustFallback = append(rustFallback, source)
+						}
+					}
+					rustFallback = normalizeSourceList(rustFallback)
+					if len(rustFallback) > 0 {
+						rustQualityFallbackAttempted = true
+						rustQualityFallbackSourcesUsed = append([]string(nil), rustFallback...)
+						rustQualityFallbackModeUsed = s.retrieval.rustQualityFallbackMode
+						rustRequest := cloneMap(requestPayload)
+						rustRequest["retrieval_mode"] = s.retrieval.rustQualityFallbackMode
+						rustBatch := s.runSourceBatch(
+							ctx,
+							incomingHeaders,
+							rustRequest,
+							rustFallback,
+							s.retrieval.rustQualityFallbackMode,
+							"rust-quality-sync-fallback",
+							explicitSourceOverride,
+							true,
+							!fastPathFailed,
+							adaptiveSkipped,
+						)
+						for source, rows := range rustBatch.rows {
+							sourceRows[source] = rows
+						}
+						for source, payload := range rustBatch.sourceErrors {
+							sourceErrors[source] = payload
+						}
+						warnings = append(warnings, rustBatch.warnings...)
+						for _, source := range rustBatch.timedOutSources {
+							timedOutObserved[source] = struct{}{}
+						}
+						continuationSources = append(continuationSources, rustBatch.continuationSources...)
+						for _, source := range rustBatch.budgetExceededSources {
+							budgetExceededObserved[source] = struct{}{}
+						}
+						merged = mergeRows(sourceRows, limit)
+						if len(merged) >= s.retrieval.minFastResults {
+							needsFallback = false
+							rustQualityFallbackApplied = true
+							warnings = append(
+								warnings,
+								"Rust-first quality fallback satisfied minimum recall coverage; slow-source sync fallback skipped.",
+							)
+						}
+					}
+				}
 			}
 			if needsFallback {
 				fallback := []string{}
@@ -1762,6 +1840,9 @@ func (s *server) executeRetrieval(
 			"lexical_guard_min_coverage":             s.retrieval.lexicalGuardMinCoverage,
 			"lexical_guard_min_results":              s.retrieval.lexicalGuardMinResults,
 			"runtime_backend_policy":                 rustBackendPolicy,
+			"rust_quality_fallback_enabled":          s.retrieval.rustQualityFallbackEnabled,
+			"rust_quality_fallback_sources":          s.retrieval.rustQualityFallbackSources,
+			"rust_quality_fallback_mode":             s.retrieval.rustQualityFallbackMode,
 		},
 		"staged_fetch": map[string]any{
 			"enabled":                          true,
@@ -1777,6 +1858,10 @@ func (s *server) executeRetrieval(
 			"lexical_backend":                  lexicalBackend,
 			"lexical_guard_applied":            lexicalGuardApplied,
 			"lexical_guard_coverage":           lexicalGuardCoverage,
+			"rust_quality_fallback_attempted":  rustQualityFallbackAttempted,
+			"rust_quality_fallback_applied":    rustQualityFallbackApplied,
+			"rust_quality_fallback_sources":    rustQualityFallbackSourcesUsed,
+			"rust_quality_fallback_mode":       rustQualityFallbackModeUsed,
 		},
 	}
 
@@ -1925,6 +2010,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/capability_map", s.proxy)
 	mux.HandleFunc("/tools/ops_queue_status", s.proxy)
 	mux.HandleFunc("/tools/memory_write_batch", s.proxy)
+	mux.HandleFunc("/tools/feedback_submit", s.proxy)
 	mux.HandleFunc("/v1/memory/put", s.proxy)
 	mux.HandleFunc("/v1/memory/update", s.proxy)
 	mux.HandleFunc("/v1/memory/get", s.proxy)

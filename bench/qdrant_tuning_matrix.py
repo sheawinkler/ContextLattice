@@ -51,6 +51,7 @@ def run_profile(
                     "include_retrieval_debug": True,
                     "include_grounding": True,
                     "limit": 12,
+                    "traffic_class": "benchmark",
                 },
             )
             elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -109,7 +110,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         tuning_snapshot: dict[str, Any] = {}
         try:
             telemetry_resp = client.get(
-                f"{base_url}/telemetry/retrieval",
+                f"{base_url}/telemetry/retrieval?traffic_class=benchmark",
                 headers=headers,
             )
             if telemetry_resp.status_code == 200:

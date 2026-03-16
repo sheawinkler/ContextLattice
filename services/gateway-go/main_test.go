@@ -244,6 +244,27 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 		t.Fatalf("expected /tools/memory_write_batch to be proxied, got %s", capturedPath)
 	}
 
+	reqFeedback, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/tools/feedback_submit",
+		strings.NewReader(`{"project":"alpha","content":"good result","tags":["quality"]}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	reqFeedback.Header.Set("Content-Type", "application/json")
+	respFeedback, err := http.DefaultClient.Do(reqFeedback)
+	if err != nil {
+		t.Fatalf("feedback submit request failed: %v", err)
+	}
+	defer respFeedback.Body.Close()
+	if respFeedback.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /tools/feedback_submit, got %d", respFeedback.StatusCode)
+	}
+	if capturedPath != "/tools/feedback_submit" {
+		t.Fatalf("expected /tools/feedback_submit to be proxied, got %s", capturedPath)
+	}
+
 	resp2, err := http.Get(gateway.URL + "/ops/queue/status?include_deadletters=false")
 	if err != nil {
 		t.Fatalf("ops queue request failed: %v", err)
