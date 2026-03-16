@@ -1508,6 +1508,9 @@ MEMORY_BANK_SPIKE_BACKEND_CHOICES = {
     "meilisearch_spike",
     "quickwit_spike",
     "tantivy_spike",
+    "lancedb_spike",
+    "trieve_spike",
+    "helixdb_spike",
 }
 MEMORY_BANK_SPIKE_BACKEND = str(
     os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "native")

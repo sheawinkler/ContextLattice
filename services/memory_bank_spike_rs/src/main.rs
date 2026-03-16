@@ -32,11 +32,21 @@ struct Config {
     refresh_secs: u64,
     max_docs: usize,
     max_content_chars: usize,
+    external_timeout_secs: u64,
     meili_url: String,
     meili_api_key: String,
     meili_index_uid: String,
     meili_sync_secs: u64,
     meili_task_timeout_secs: u64,
+    lancedb_url: String,
+    lancedb_search_route: String,
+    lancedb_api_key: String,
+    trieve_url: String,
+    trieve_search_route: String,
+    trieve_api_key: String,
+    helixdb_url: String,
+    helixdb_search_route: String,
+    helixdb_api_key: String,
 }
 
 impl Config {
@@ -46,6 +56,7 @@ impl Config {
         let refresh_secs = env_u64("MB_SPIKE_REFRESH_SECS", 120);
         let max_docs = env_usize("MB_SPIKE_MAX_DOCS", 50_000);
         let max_content_chars = env_usize("MB_SPIKE_MAX_CONTENT_CHARS", 4096);
+        let external_timeout_secs = env_u64("MB_SPIKE_EXTERNAL_TIMEOUT_SECS", 12);
         let meili_url = env_string("MB_SPIKE_MEILI_URL", "http://meilisearch:7700");
         let meili_api_key = env::var("MB_SPIKE_MEILI_API_KEY")
             .or_else(|_| env::var("MEILI_MASTER_KEY"))
@@ -55,17 +66,36 @@ impl Config {
         let meili_index_uid = env_string("MB_SPIKE_MEILI_INDEX", "contextlattice_memory");
         let meili_sync_secs = env_u64("MB_SPIKE_MEILI_SYNC_SECS", 300);
         let meili_task_timeout_secs = env_u64("MB_SPIKE_MEILI_TASK_TIMEOUT_SECS", 30);
+        let lancedb_url = env_string("MB_SPIKE_LANCEDB_URL", "");
+        let lancedb_search_route = env_string("MB_SPIKE_LANCEDB_SEARCH_ROUTE", "/search");
+        let lancedb_api_key = env_string("MB_SPIKE_LANCEDB_API_KEY", "");
+        let trieve_url = env_string("MB_SPIKE_TRIEVE_URL", "");
+        let trieve_search_route = env_string("MB_SPIKE_TRIEVE_SEARCH_ROUTE", "/search");
+        let trieve_api_key = env_string("MB_SPIKE_TRIEVE_API_KEY", "");
+        let helixdb_url = env_string("MB_SPIKE_HELIXDB_URL", "");
+        let helixdb_search_route = env_string("MB_SPIKE_HELIXDB_SEARCH_ROUTE", "/search");
+        let helixdb_api_key = env_string("MB_SPIKE_HELIXDB_API_KEY", "");
         Self {
             port,
             data_root,
             refresh_secs,
             max_docs,
             max_content_chars,
+            external_timeout_secs,
             meili_url,
             meili_api_key,
             meili_index_uid,
             meili_sync_secs,
             meili_task_timeout_secs,
+            lancedb_url,
+            lancedb_search_route,
+            lancedb_api_key,
+            trieve_url,
+            trieve_search_route,
+            trieve_api_key,
+            helixdb_url,
+            helixdb_search_route,
+            helixdb_api_key,
         }
     }
 }
@@ -187,6 +217,8 @@ struct HealthResponse {
     meili_url: String,
     meili_index_uid: String,
     meili_task_timeout_secs: u64,
+    external_timeout_secs: u64,
+    external_backends: HashMap<String, bool>,
 }
 
 #[derive(Serialize)]
@@ -248,9 +280,29 @@ async fn main() -> Result<()> {
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let snapshot = state.docs.read().await.clone();
+    let mut external_backends: HashMap<String, bool> = HashMap::new();
+    external_backends.insert(
+        "lancedb_spike".to_string(),
+        !state.cfg.lancedb_url.trim().is_empty(),
+    );
+    external_backends.insert(
+        "trieve_spike".to_string(),
+        !state.cfg.trieve_url.trim().is_empty(),
+    );
+    external_backends.insert(
+        "helixdb_spike".to_string(),
+        !state.cfg.helixdb_url.trim().is_empty(),
+    );
     let payload = HealthResponse {
         ok: true,
-        backend_modes: vec!["tantivy_spike", "quickwit_spike", "meilisearch_spike"],
+        backend_modes: vec![
+            "tantivy_spike",
+            "quickwit_spike",
+            "meilisearch_spike",
+            "lancedb_spike",
+            "trieve_spike",
+            "helixdb_spike",
+        ],
         docs_loaded: snapshot.docs.len(),
         fingerprint: snapshot.fingerprint,
         refreshed_at_unix_secs: snapshot.refreshed_at_unix_secs,
@@ -258,6 +310,8 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         meili_url: state.cfg.meili_url.clone(),
         meili_index_uid: state.cfg.meili_index_uid.clone(),
         meili_task_timeout_secs: state.cfg.meili_task_timeout_secs,
+        external_timeout_secs: state.cfg.external_timeout_secs,
+        external_backends,
     };
     (StatusCode::OK, Json(payload))
 }
@@ -320,6 +374,17 @@ async fn search(
             meili_search(
                 &state,
                 &snapshot,
+                query,
+                limit,
+                project_filter,
+                topic_filter.as_deref(),
+            )
+            .await
+        }
+        "lancedb_spike" | "trieve_spike" | "helixdb_spike" => {
+            external_adapter_search(
+                &state,
+                backend.as_str(),
                 query,
                 limit,
                 project_filter,
@@ -667,6 +732,155 @@ fn run_tantivy_query(
     Ok(out)
 }
 
+async fn external_adapter_search(
+    state: &AppState,
+    backend: &str,
+    query: &str,
+    limit: usize,
+    project_filter: Option<&str>,
+    topic_filter: Option<&str>,
+) -> Result<Vec<SearchResult>> {
+    let (base_url, route, api_key) = match backend {
+        "lancedb_spike" => (
+            state.cfg.lancedb_url.trim(),
+            state.cfg.lancedb_search_route.trim(),
+            state.cfg.lancedb_api_key.trim(),
+        ),
+        "trieve_spike" => (
+            state.cfg.trieve_url.trim(),
+            state.cfg.trieve_search_route.trim(),
+            state.cfg.trieve_api_key.trim(),
+        ),
+        "helixdb_spike" => (
+            state.cfg.helixdb_url.trim(),
+            state.cfg.helixdb_search_route.trim(),
+            state.cfg.helixdb_api_key.trim(),
+        ),
+        _ => ("", "", ""),
+    };
+    if base_url.is_empty() {
+        anyhow::bail!("{backend} endpoint is not configured");
+    }
+    let route = normalize_http_route(route);
+    let url = format!("{}{}", base_url.trim_end_matches('/'), route);
+
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "query".to_string(),
+        serde_json::Value::String(query.to_string()),
+    );
+    payload.insert(
+        "q".to_string(),
+        serde_json::Value::String(query.to_string()),
+    );
+    payload.insert("limit".to_string(), serde_json::Value::Number(limit.into()));
+    payload.insert("k".to_string(), serde_json::Value::Number(limit.into()));
+    payload.insert(
+        "backend".to_string(),
+        serde_json::Value::String(backend.to_string()),
+    );
+    if let Some(project) = project_filter {
+        if !project.trim().is_empty() {
+            payload.insert(
+                "project".to_string(),
+                serde_json::Value::String(project.trim().to_string()),
+            );
+        }
+    }
+    if let Some(topic) = topic_filter {
+        if !topic.trim().is_empty() {
+            payload.insert(
+                "topic_path".to_string(),
+                serde_json::Value::String(normalize_topic(topic)),
+            );
+        }
+    }
+
+    let mut request = state.client.post(url).json(&payload);
+    if !api_key.is_empty() {
+        request = request.header("x-api-key", api_key);
+        request = request.header("Authorization", format!("Bearer {api_key}"));
+    }
+    let timeout_secs = state.cfg.external_timeout_secs.max(1);
+    let response = request
+        .timeout(Duration::from_secs(timeout_secs))
+        .send()
+        .await
+        .with_context(|| format!("{backend} request failed"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|_| String::from("{\"error\":\"unable to read body\"}"));
+    if !status.is_success() {
+        anyhow::bail!(
+            "{backend} response failed: status={} body={}",
+            status.as_u16(),
+            body
+        );
+    }
+    let payload: serde_json::Value =
+        serde_json::from_str(&body).with_context(|| format!("parse {backend} response"))?;
+    let rows = payload
+        .get("results")
+        .or_else(|| payload.get("rows"))
+        .or_else(|| payload.get("hits"))
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out: Vec<SearchResult> = Vec::new();
+    for row in rows {
+        let project = row
+            .get("project")
+            .map(json_value_to_string)
+            .filter(|value| !value.is_empty())
+            .or_else(|| project_filter.map(|value| value.trim().to_string()))
+            .unwrap_or_default();
+        let file = row
+            .get("file")
+            .or_else(|| row.get("path"))
+            .map(json_value_to_string)
+            .unwrap_or_default();
+        let summary = row
+            .get("summary")
+            .or_else(|| row.get("content"))
+            .or_else(|| row.get("text"))
+            .map(json_value_to_string)
+            .unwrap_or_default();
+        if project.is_empty() || file.is_empty() || summary.is_empty() {
+            continue;
+        }
+        let score = row
+            .get("score")
+            .and_then(|value| value.as_f64())
+            .map(|value| value as f32)
+            .unwrap_or(0.0);
+        let topic_path = row
+            .get("topic_path")
+            .or_else(|| row.get("topic"))
+            .map(json_value_to_string)
+            .map(|value| normalize_topic(&value))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| derive_topic_path(&file));
+        if !matches_project_topic(&project, &topic_path, project_filter, topic_filter) {
+            continue;
+        }
+        out.push(SearchResult {
+            project,
+            file,
+            summary,
+            score,
+            topic_path,
+        });
+    }
+    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+    if out.len() > limit {
+        out.truncate(limit);
+    }
+    Ok(out)
+}
+
 async fn quickwit_search(
     state: &AppState,
     snapshot: &DocSnapshot,
@@ -884,7 +1098,10 @@ async fn ensure_meili_synced(state: &AppState, snapshot: &DocSnapshot) -> Result
             format!("Bearer {}", state.cfg.meili_api_key),
         );
     }
-    let create_resp = create_req.send().await.context("create meili index request")?;
+    let create_resp = create_req
+        .send()
+        .await
+        .context("create meili index request")?;
     if create_resp.status().as_u16() != 409 {
         let create_task_uid = parse_meili_task_uid(create_resp, "create index").await?;
         if let Some(task_uid) = create_task_uid {
@@ -897,10 +1114,10 @@ async fn ensure_meili_synced(state: &AppState, snapshot: &DocSnapshot) -> Result
         state.cfg.meili_url.trim_end_matches('/'),
         state.cfg.meili_index_uid
     );
-    let mut settings_req = state.client.put(settings_url).json(&serde_json::json!([
-        "project",
-        "topic_path"
-    ]));
+    let mut settings_req = state
+        .client
+        .put(settings_url)
+        .json(&serde_json::json!(["project", "topic_path"]));
     if !state.cfg.meili_api_key.is_empty() {
         settings_req = settings_req.header(
             "Authorization",
@@ -911,7 +1128,8 @@ async fn ensure_meili_synced(state: &AppState, snapshot: &DocSnapshot) -> Result
         .send()
         .await
         .context("set meili filterable attributes request")?;
-    let settings_task_uid = parse_meili_task_uid(settings_resp, "set filterable attributes").await?;
+    let settings_task_uid =
+        parse_meili_task_uid(settings_resp, "set filterable attributes").await?;
     if let Some(task_uid) = settings_task_uid {
         wait_for_meili_task(state, task_uid, "set filterable attributes").await?;
     }
@@ -1017,9 +1235,7 @@ async fn wait_for_meili_task(state: &AppState, task_uid: u64, action: &str) -> R
                 if action == "create index" && error_code == "index_already_exists" {
                     return Ok(());
                 }
-                anyhow::bail!(
-                    "meili task failed: action={action} uid={task_uid} payload={payload}"
-                )
+                anyhow::bail!("meili task failed: action={action} uid={task_uid} payload={payload}")
             }
             _ => {
                 if started.elapsed() >= timeout {
@@ -1036,10 +1252,34 @@ async fn wait_for_meili_task(state: &AppState, task_uid: u64, action: &str) -> R
 
 fn normalize_backend(input: &str) -> String {
     match input.trim().to_ascii_lowercase().as_str() {
+        "helixdb" | "helixdb_spike" => "helixdb_spike".to_string(),
+        "lancedb" | "lancedb_spike" => "lancedb_spike".to_string(),
         "meilisearch_spike" => "meilisearch_spike".to_string(),
         "quickwit_spike" => "quickwit_spike".to_string(),
         "tantivy_spike" => "tantivy_spike".to_string(),
+        "trieve" | "trieve_spike" => "trieve_spike".to_string(),
         _ => "tantivy_spike".to_string(),
+    }
+}
+
+fn normalize_http_route(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "/search".to_string();
+    }
+    if trimmed.starts_with('/') {
+        return trimmed.to_string();
+    }
+    format!("/{trimmed}")
+}
+
+fn json_value_to_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(s) => s.trim().to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(flag) => flag.to_string(),
+        other => other.to_string(),
     }
 }
 

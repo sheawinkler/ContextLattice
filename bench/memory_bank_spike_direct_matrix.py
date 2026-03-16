@@ -14,7 +14,15 @@ from typing import Any
 import httpx
 
 
-BACKENDS = ("quickwit_spike", "meilisearch_spike", "tantivy_spike")
+BACKENDS = (
+    "quickwit_spike",
+    "meilisearch_spike",
+    "tantivy_spike",
+    "lancedb_spike",
+    "trieve_spike",
+    "helixdb_spike",
+)
+DEFAULT_BACKENDS = ("quickwit_spike", "meilisearch_spike", "tantivy_spike")
 
 
 @dataclass(frozen=True)
@@ -245,14 +253,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Direct Rust memory-bank spike backend matrix (meili/quickwit/tantivy)."
+        description=(
+            "Direct Rust memory-bank spike backend matrix "
+            "(meili/quickwit/tantivy + optional adapter lanes)."
+        )
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8096")
     parser.add_argument("--project", default="contextlattice")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=45.0)
-    parser.add_argument("--backends", default=",".join(BACKENDS))
+    parser.add_argument("--backends", default=",".join(DEFAULT_BACKENDS))
     parser.add_argument("--cases", default=",".join(CASES.keys()))
     parser.add_argument("--cache-bust", action="store_true", default=True)
     parser.add_argument("--no-cache-bust", dest="cache_bust", action="store_false")

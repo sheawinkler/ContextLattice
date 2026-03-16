@@ -103,6 +103,7 @@ Optional knobs:
 
 - Rust backend lane request (`usearch_ann + tantivy_lexical`)
 - memory-bank lexical spike requests (`meilisearch_spike`, `quickwit_spike`, `tantivy_spike`)
+- optional external adapter lanes (`lancedb_spike`, `trieve_spike`, `helixdb_spike`)
 
 ```bash
 API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
@@ -123,6 +124,7 @@ Optional knobs:
 ## Direct Spike Backend Matrix
 
 `bench/memory_bank_spike_direct_matrix.py` benchmarks Rust spike backends directly against the sidecar HTTP service (`/search`) so lexical/index performance is measured without orchestrator fanout.
+By default it runs `quickwit_spike`, `meilisearch_spike`, and `tantivy_spike`; pass `--backends` to include adapter lanes (`lancedb_spike`, `trieve_spike`, `helixdb_spike`) when configured.
 
 ```bash
 python3 bench/memory_bank_spike_direct_matrix.py \

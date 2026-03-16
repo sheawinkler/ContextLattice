@@ -158,6 +158,51 @@ PROFILES: dict[str, ProfileConfig] = {
             "strict": False,
         },
     ),
+    "memory_bank_lancedb_spike": ProfileConfig(
+        description="Memory-bank spike lane request: lancedb_spike adapter.",
+        data_store="memory_bank(lancedb_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="lancedb-adapter+hnsw",
+        search_type="hybrid-lancedb-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "lancedb_spike",
+            "strict": False,
+        },
+    ),
+    "memory_bank_trieve_spike": ProfileConfig(
+        description="Memory-bank spike lane request: trieve_spike adapter.",
+        data_store="memory_bank(trieve_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="trieve-adapter+hnsw",
+        search_type="hybrid-trieve-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "trieve_spike",
+            "strict": False,
+        },
+    ),
+    "memory_bank_helixdb_spike": ProfileConfig(
+        description="Memory-bank spike lane request: helixdb_spike adapter.",
+        data_store="memory_bank(helixdb_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="helixdb-adapter+hnsw",
+        search_type="hybrid-helixdb-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "helixdb_spike",
+            "strict": False,
+        },
+    ),
 }
 
 
@@ -581,6 +626,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "memory_bank_meilisearch_spike",
         "memory_bank_quickwit_spike",
         "memory_bank_tantivy_spike",
+        "memory_bank_lancedb_spike",
+        "memory_bank_trieve_spike",
+        "memory_bank_helixdb_spike",
     ]
     if any(
         not bool(results.get(name, {}).get("memoryBankBackend", {}).get("before", {}).get("spikeUrlConfigured"))
