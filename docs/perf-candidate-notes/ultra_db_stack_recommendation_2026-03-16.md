@@ -7,7 +7,7 @@ Goal: seamless UX with low-tail read latency and high recall quality across sour
 
 ### Local measured runs
 
-- End-to-end matrix: `bench/results/backend_lane_matrix_20260316T102223Z.json`
+- End-to-end matrix: `bench/results/backend_lane_matrix_20260316T103732Z.json`
 - Direct sidecar matrix: `bench/results/memory_bank_spike_direct_matrix_20260316T103252Z.json`
 - Candidate probe: `bench/results/high_priority_candidate_probe_20260316T102234Z.json`
 
@@ -25,9 +25,9 @@ Goal: seamless UX with low-tail read latency and high recall quality across sour
 ## What The Local Data Says Right Now
 
 - Fastest direct lexical backend in latest full run: `quickwit_spike` (`avgP95Ms=21.867`, `avgResultCount=10.667`).
-- Most stable end-to-end profile: `baseline_qdrant_rollups` (`avgP95Ms=139.565`).
-- Rust lane (`usearch_ann + tantivy_lexical`) is close but slower in the latest run (`avgP95Ms=144.630`).
-- `lancedb_spike` is now functional, but current end-to-end profile has heavy tails.
+- Most stable end-to-end profile: `baseline_qdrant_rollups` (`avgP95Ms=109.093`).
+- Rust lane (`usearch_ann + tantivy_lexical`) is slower in the latest run (`avgP95Ms=224.298`).
+- `lancedb_spike` is functional and improved (`avgP95Ms=184.949`) but still slower than baseline.
 - `trieve_spike` and `helixdb_spike` are not configured; observed gains are fallback behavior.
 - Direct spike backend p95 is still volatile run-to-run, so promotion should continue to use multi-run median + p95/p99 gates.
 
