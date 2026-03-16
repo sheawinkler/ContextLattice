@@ -81,21 +81,49 @@ def _probe_search(client: httpx.Client, base_url: str, project: str) -> dict[str
     return rows
 
 
-def _candidate_url(arg_value: str, env_keys: list[str]) -> str:
+def _candidate_url(arg_value: str, env_keys: list[str], default_url: str = "") -> str:
     if arg_value.strip():
         return arg_value.strip()
     for key in env_keys:
         value = str(os.getenv(key, "")).strip()
         if value:
             return value
-    return ""
+    return default_url
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     candidates = {
-        "lancedb": _candidate_url(args.lancedb_url, ["LANCEDB_SPIKE_URL", "LANCEDB_URL"]),
-        "trieve": _candidate_url(args.trieve_url, ["TRIEVE_SPIKE_URL", "TRIEVE_URL"]),
-        "helixdb": _candidate_url(args.helixdb_url, ["HELIXDB_SPIKE_URL", "HELIXDB_URL"]),
+        "lancedb": _candidate_url(
+            args.lancedb_url,
+            ["LANCEDB_SPIKE_URL", "LANCEDB_URL", "MB_SPIKE_LANCEDB_URL", "MEMORY_BANK_SPIKE_RS_LANCEDB_URL"],
+            default_url="http://127.0.0.1:8097",
+        ),
+        "trieve": _candidate_url(
+            args.trieve_url,
+            ["TRIEVE_SPIKE_URL", "TRIEVE_URL", "MB_SPIKE_TRIEVE_URL", "MEMORY_BANK_SPIKE_RS_TRIEVE_URL"],
+            default_url="http://127.0.0.1:8098",
+        ),
+        "helixdb": _candidate_url(
+            args.helixdb_url,
+            ["HELIXDB_SPIKE_URL", "HELIXDB_URL", "MB_SPIKE_HELIXDB_URL", "MEMORY_BANK_SPIKE_RS_HELIXDB_URL"],
+            default_url="http://127.0.0.1:8099",
+        ),
+        "icm": _candidate_url(
+            args.icm_url,
+            ["ICM_SPIKE_URL", "ICM_URL", "MB_SPIKE_ICM_URL", "MEMORY_BANK_SPIKE_RS_ICM_URL"],
+        ),
+        "shodh": _candidate_url(
+            args.shodh_url,
+            ["SHODH_SPIKE_URL", "SHODH_URL", "MB_SPIKE_SHODH_URL", "MEMORY_BANK_SPIKE_RS_SHODH_URL"],
+        ),
+        "memvid": _candidate_url(
+            args.memvid_url,
+            ["MEMVID_SPIKE_URL", "MEMVID_URL", "MB_SPIKE_MEMVID_URL", "MEMORY_BANK_SPIKE_RS_MEMVID_URL"],
+        ),
+        "surrealdb": _candidate_url(
+            args.surrealdb_url,
+            ["SURREALDB_SPIKE_URL", "SURREALDB_URL", "MB_SPIKE_SURREALDB_URL", "MEMORY_BANK_SPIKE_RS_SURREALDB_URL"],
+        ),
     }
 
     out: dict[str, Any] = {
@@ -133,6 +161,10 @@ def main() -> None:
     parser.add_argument("--lancedb-url", default="")
     parser.add_argument("--trieve-url", default="")
     parser.add_argument("--helixdb-url", default="")
+    parser.add_argument("--icm-url", default="")
+    parser.add_argument("--shodh-url", default="")
+    parser.add_argument("--memvid-url", default="")
+    parser.add_argument("--surrealdb-url", default="")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
 
