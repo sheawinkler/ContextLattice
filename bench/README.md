@@ -96,3 +96,25 @@ Optional knobs:
 - `--project`
 - `--timeout`
 - `--output`
+
+## Backend Lane Matrix
+
+`bench/backend_lane_matrix.py` compares baseline `qdrant+topic_rollups` against:
+
+- Rust backend lane request (`usearch_ann + tantivy_lexical`)
+- memory-bank lexical spike requests (`meilisearch_spike`, `quickwit_spike`, `tantivy_spike`)
+
+```bash
+API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
+python3 bench/backend_lane_matrix.py --api-key "$API_KEY" --runs 3
+```
+
+Optional knobs:
+
+- `--base-url`
+- `--project`
+- `--timeout`
+- `--profiles`
+- `--cases`
+- `--cache-bust` / `--no-cache-bust`
+- `--output`

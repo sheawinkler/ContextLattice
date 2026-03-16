@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -51,6 +51,7 @@ help:
 > echo "  test-py: run Python tests (PYTEST_FOCUS=app|all; default app)"
 > echo "  bench-shortlist: run shortlist candidate performance matrix harness"
 > echo "  bench-qdrant-tuning: run qdrant tuning benchmark matrix harness"
+> echo "  bench-backend-lanes: run baseline vs rust lane vs lexical spike benchmark matrix"
 > echo "  launch-readiness-gate: accelerated soak + queue drain + backup drill + security preflight"
 > echo "  launch-readiness-gate-schedule*: schedule/status/cancel one-shot 04:30 America/Denver gate run"
 > echo "  qdrant-cloud-check: verify HTTP + gRPC to BYO Qdrant Cloud endpoint"
@@ -74,6 +75,10 @@ bench-shortlist:
 bench-qdrant-tuning:
 > api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}"; \
 > python3 bench/qdrant_tuning_matrix.py --api-key "$$api_key"
+
+bench-backend-lanes:
+> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}"; \
+> python3 bench/backend_lane_matrix.py --api-key "$$api_key"
 
 # ---- One-shot launcher ----
 
