@@ -140,12 +140,64 @@ services:
       retries: 10
     restart: unless-stopped
 
+  trieve-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${TRIEVE_SPIKE_ADAPTER_PORT_INTERNAL:-8098}
+      SPIKE_ADAPTER_NAME: trieve_spike
+      SPIKE_DATA_ROOT: /data/memory-bank
+      SPIKE_REFRESH_SECS: ${TRIEVE_SPIKE_ADAPTER_REFRESH_SECS:-120}
+      SPIKE_MAX_DOCS: ${TRIEVE_SPIKE_ADAPTER_MAX_DOCS:-50000}
+      SPIKE_MAX_CONTENT_CHARS: ${TRIEVE_SPIKE_ADAPTER_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${TRIEVE_SPIKE_ADAPTER_PORT:-8098}:${TRIEVE_SPIKE_ADAPTER_PORT_INTERNAL:-8098}"
+    expose: ["${TRIEVE_SPIKE_ADAPTER_PORT_INTERNAL:-8098}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${TRIEVE_SPIKE_ADAPTER_PORT_INTERNAL:-8098}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+
+  helixdb-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${HELIXDB_SPIKE_ADAPTER_PORT_INTERNAL:-8099}
+      SPIKE_ADAPTER_NAME: helixdb_spike
+      SPIKE_DATA_ROOT: /data/memory-bank
+      SPIKE_REFRESH_SECS: ${HELIXDB_SPIKE_ADAPTER_REFRESH_SECS:-120}
+      SPIKE_MAX_DOCS: ${HELIXDB_SPIKE_ADAPTER_MAX_DOCS:-50000}
+      SPIKE_MAX_CONTENT_CHARS: ${HELIXDB_SPIKE_ADAPTER_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${HELIXDB_SPIKE_ADAPTER_PORT:-8099}:${HELIXDB_SPIKE_ADAPTER_PORT_INTERNAL:-8099}"
+    expose: ["${HELIXDB_SPIKE_ADAPTER_PORT_INTERNAL:-8099}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${HELIXDB_SPIKE_ADAPTER_PORT_INTERNAL:-8099}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+
   memory-bank-spike-rs:
     build: { context: ., dockerfile: Dockerfile.memory-bank-spike-rs }
     depends_on:
       meilisearch:
         condition: service_started
       lancedb-spike-adapter:
+        condition: service_started
+      trieve-spike-adapter:
+        condition: service_started
+      helixdb-spike-adapter:
         condition: service_started
       memorymcp-http:
         condition: service_started
@@ -164,10 +216,10 @@ services:
       MB_SPIKE_LANCEDB_URL: ${MEMORY_BANK_SPIKE_RS_LANCEDB_URL:-http://lancedb-spike-adapter:8097}
       MB_SPIKE_LANCEDB_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_LANCEDB_SEARCH_ROUTE:-/search}
       MB_SPIKE_LANCEDB_API_KEY: ${MEMORY_BANK_SPIKE_RS_LANCEDB_API_KEY:-}
-      MB_SPIKE_TRIEVE_URL: ${MEMORY_BANK_SPIKE_RS_TRIEVE_URL:-}
+      MB_SPIKE_TRIEVE_URL: ${MEMORY_BANK_SPIKE_RS_TRIEVE_URL:-http://trieve-spike-adapter:8098}
       MB_SPIKE_TRIEVE_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_TRIEVE_SEARCH_ROUTE:-/search}
       MB_SPIKE_TRIEVE_API_KEY: ${MEMORY_BANK_SPIKE_RS_TRIEVE_API_KEY:-}
-      MB_SPIKE_HELIXDB_URL: ${MEMORY_BANK_SPIKE_RS_HELIXDB_URL:-}
+      MB_SPIKE_HELIXDB_URL: ${MEMORY_BANK_SPIKE_RS_HELIXDB_URL:-http://helixdb-spike-adapter:8099}
       MB_SPIKE_HELIXDB_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_HELIXDB_SEARCH_ROUTE:-/search}
       MB_SPIKE_HELIXDB_API_KEY: ${MEMORY_BANK_SPIKE_RS_HELIXDB_API_KEY:-}
     volumes:

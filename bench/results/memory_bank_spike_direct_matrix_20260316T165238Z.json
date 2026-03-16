@@ -14,7 +14,7 @@
     "deep_read",
     "ops_focus"
   ],
-  "generatedAt": "2026-03-16T17:09:04.447356+00:00",
+  "generatedAt": "2026-03-16T16:52:38.624388+00:00",
   "health": {
     "backend_modes": [
       "tantivy_spike",
@@ -24,19 +24,19 @@
       "trieve_spike",
       "helixdb_spike"
     ],
-    "docs_loaded": 19352,
+    "docs_loaded": 19341,
     "external_backends": {
       "helixdb_spike": true,
       "lancedb_spike": true,
       "trieve_spike": true
     },
     "external_timeout_secs": 12,
-    "fingerprint": 17902288430905178213,
+    "fingerprint": 3437628019510755751,
     "meili_index_uid": "contextlattice_memory",
     "meili_task_timeout_secs": 30,
     "meili_url": "http://meilisearch:7700",
     "ok": true,
-    "refreshed_at_unix_secs": 1773679983,
+    "refreshed_at_unix_secs": 1773679842,
     "spike_data_root": "/data/memory-bank"
   },
   "project": "contextlattice",
@@ -50,21 +50,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 170.861,
-            "mean": 126.807,
-            "min": 105.988,
-            "p50": 115.189,
-            "p95": 162.901,
-            "p99": 169.269
+            "max": 211.37,
+            "mean": 206.759,
+            "min": 200.809,
+            "p50": 208.097,
+            "p95": 211.043,
+            "p99": 211.304
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -83,21 +82,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 111.292,
-            "mean": 110.371,
-            "min": 109.804,
-            "p50": 110.195,
-            "p95": 111.185,
-            "p99": 111.27
+            "max": 199.512,
+            "mean": 178.07,
+            "min": 157.561,
+            "p50": 177.136,
+            "p95": 197.275,
+            "p99": 199.065
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -116,21 +114,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 156.904,
-            "mean": 126.418,
-            "min": 115.821,
-            "p50": 116.473,
-            "p95": 150.886,
-            "p99": 155.7
+            "max": 302.1,
+            "mean": 261.13,
+            "min": 215.592,
+            "p50": 265.699,
+            "p95": 298.46,
+            "p99": 301.372
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -146,9 +143,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 141.657,
+        "avgP95Ms": 235.593,
         "avgResultCount": 10.667,
-        "maxP95Ms": 162.901
+        "maxP95Ms": 298.46
       }
     },
     "lancedb_spike": {
@@ -159,28 +156,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 49.923,
-            "mean": 32.078,
-            "min": 18.699,
-            "p50": 29.846,
-            "p95": 47.902,
-            "p99": 49.519
+            "max": 75.348,
+            "mean": 57.31,
+            "min": 21.314,
+            "p50": 75.268,
+            "p95": 75.34,
+            "p99": 75.346
           },
           "resultCount": {
             "max": 16,
-            "mean": 8.25,
-            "min": 2
+            "mean": 16.0,
+            "min": 16
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 73.44,
-            "mean": 65.97
+            "max": 73.69,
+            "mean": 71.948
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -192,28 +188,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 66.069,
-            "mean": 36.344,
-            "min": 20.001,
-            "p50": 29.654,
-            "p95": 61.683,
-            "p99": 65.191
+            "max": 73.773,
+            "mean": 40.452,
+            "min": 19.582,
+            "p50": 28.0,
+            "p95": 69.196,
+            "p99": 72.858
           },
           "resultCount": {
             "max": 9,
-            "mean": 3.25,
-            "min": 0
+            "mean": 9.0,
+            "min": 9
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 89.711,
-            "mean": 44.664
+            "max": 91.732,
+            "mean": 90.107
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -225,28 +220,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 45.031,
-            "mean": 30.568,
-            "min": 17.605,
-            "p50": 29.817,
-            "p95": 43.995,
-            "p99": 44.824
+            "max": 59.936,
+            "mean": 49.05,
+            "min": 36.129,
+            "p50": 51.086,
+            "p95": 59.051,
+            "p99": 59.759
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 56.259,
-            "mean": 52.164
+            "max": 56.24,
+            "mean": 54.582
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -255,9 +249,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 51.193,
-        "avgResultCount": 6.5,
-        "maxP95Ms": 61.683
+        "avgP95Ms": 67.862,
+        "avgResultCount": 11.0,
+        "maxP95Ms": 75.34
       }
     },
     "meilisearch_spike": {
@@ -268,21 +262,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 5.605,
-            "mean": 4.172,
-            "min": 3.55,
-            "p50": 3.767,
-            "p95": 5.356,
-            "p99": 5.555
+            "max": 17.283,
+            "mean": 11.931,
+            "min": 9.048,
+            "p50": 9.462,
+            "p95": 16.501,
+            "p99": 17.126
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -301,21 +294,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 4.954,
-            "mean": 4.372,
-            "min": 3.888,
-            "p50": 4.323,
-            "p95": 4.898,
-            "p99": 4.943
+            "max": 12.932,
+            "mean": 8.214,
+            "min": 5.21,
+            "p50": 6.5,
+            "p95": 12.289,
+            "p99": 12.803
           },
           "resultCount": {
             "max": 1,
             "mean": 1.0,
             "min": 1
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -334,21 +326,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 6.707,
-            "mean": 6.085,
-            "min": 5.569,
-            "p50": 6.033,
-            "p95": 6.621,
-            "p99": 6.69
+            "max": 22524.633,
+            "mean": 7518.628,
+            "min": 12.314,
+            "p50": 18.938,
+            "p95": 20274.064,
+            "p99": 22074.519
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -357,16 +348,18 @@
             "max": 0.988,
             "mean": 0.988
           },
-          "warmupErrorCount": 0,
-          "warmupErrors": [],
+          "warmupErrorCount": 1,
+          "warmupErrors": [
+            "502:{\"error\":\"meili task timeout: action=upsert documents uid=232 timeout_secs=30\"}"
+          ],
           "warmups": 1
         }
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 5.625,
+        "avgP95Ms": 6767.618,
         "avgResultCount": 5.667,
-        "maxP95Ms": 6.621
+        "maxP95Ms": 20274.064
       }
     },
     "quickwit_spike": {
@@ -377,28 +370,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 1.829,
-            "mean": 1.619,
-            "min": 1.412,
-            "p50": 1.618,
-            "p95": 1.8,
-            "p99": 1.823
+            "max": 7.566,
+            "mean": 3.776,
+            "min": 1.818,
+            "p50": 1.944,
+            "p95": 7.004,
+            "p99": 7.454
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 54.641,
-            "mean": 54.641
+            "max": 54.612,
+            "mean": 54.612
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -410,28 +402,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 1.866,
-            "mean": 1.601,
-            "min": 1.246,
-            "p50": 1.647,
-            "p95": 1.834,
-            "p99": 1.86
+            "max": 37.26,
+            "mean": 19.106,
+            "min": 4.164,
+            "p50": 15.895,
+            "p95": 35.123,
+            "p99": 36.833
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 54.88,
-            "mean": 54.88
+            "max": 54.854,
+            "mean": 54.854
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -443,28 +434,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 3.04,
-            "mean": 1.995,
-            "min": 1.348,
-            "p50": 1.796,
-            "p95": 2.871,
-            "p99": 3.006
+            "max": 19.962,
+            "mean": 14.043,
+            "min": 10.027,
+            "p50": 12.139,
+            "p95": 19.179,
+            "p99": 19.805
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 63.747,
-            "mean": 63.747
+            "max": 63.714,
+            "mean": 63.714
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -473,9 +463,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 2.168,
+        "avgP95Ms": 20.435,
         "avgResultCount": 10.667,
-        "maxP95Ms": 2.871
+        "maxP95Ms": 35.123
       }
     },
     "tantivy_spike": {
@@ -486,28 +476,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 12.152,
-            "mean": 10.614,
-            "min": 9.528,
-            "p50": 10.387,
-            "p95": 11.934,
-            "p99": 12.109
+            "max": 16.179,
+            "mean": 12.349,
+            "min": 8.921,
+            "p50": 11.945,
+            "p95": 15.756,
+            "p99": 16.095
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 67.478,
-            "mean": 67.478
+            "max": 67.438,
+            "mean": 67.438
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -519,28 +508,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 19.552,
-            "mean": 14.566,
-            "min": 10.192,
-            "p50": 14.26,
-            "p95": 19.171,
-            "p99": 19.475
+            "max": 12.659,
+            "mean": 11.436,
+            "min": 9.73,
+            "p50": 11.92,
+            "p95": 12.585,
+            "p99": 12.644
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 78.229,
-            "mean": 78.229
+            "max": 78.192,
+            "mean": 78.192
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -552,28 +540,27 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 16.516,
-            "mean": 11.613,
-            "min": 9.825,
-            "p50": 10.054,
-            "p95": 15.554,
-            "p99": 16.324
+            "max": 15.712,
+            "mean": 13.124,
+            "min": 11.411,
+            "p50": 12.248,
+            "p95": 15.365,
+            "p99": 15.642
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 53.944,
-            "mean": 53.944
+            "max": 53.911,
+            "mean": 53.911
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -582,9 +569,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 15.553,
+        "avgP95Ms": 14.569,
         "avgResultCount": 10.667,
-        "maxP95Ms": 19.171
+        "maxP95Ms": 15.756
       }
     },
     "trieve_spike": {
@@ -595,21 +582,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 132.543,
-            "mean": 120.215,
-            "min": 112.342,
-            "p50": 117.988,
-            "p95": 130.501,
-            "p99": 132.135
+            "max": 179.37,
+            "mean": 169.098,
+            "min": 162.152,
+            "p50": 165.771,
+            "p95": 178.01,
+            "p99": 179.098
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -628,21 +614,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 136.861,
-            "mean": 128.838,
-            "min": 114.875,
-            "p50": 131.809,
-            "p95": 136.431,
-            "p99": 136.775
+            "max": 190.373,
+            "mean": 183.96,
+            "min": 176.114,
+            "p50": 185.394,
+            "p95": 189.875,
+            "p99": 190.273
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -661,21 +646,20 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 143.443,
-            "mean": 125.158,
-            "min": 113.704,
-            "p50": 121.743,
-            "p95": 140.86,
-            "p99": 142.927
+            "max": 166.312,
+            "mean": 159.113,
+            "min": 153.533,
+            "p50": 157.494,
+            "p95": 165.43,
+            "p99": 166.136
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 4,
+          "runs": 3,
           "statusCodes": [
-            200,
             200,
             200,
             200
@@ -691,11 +675,11 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 135.931,
+        "avgP95Ms": 177.772,
         "avgResultCount": 10.667,
-        "maxP95Ms": 140.86
+        "maxP95Ms": 189.875
       }
     }
   },
-  "runsPerCase": 4
+  "runsPerCase": 3
 }
