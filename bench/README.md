@@ -118,3 +118,23 @@ Optional knobs:
 - `--cases`
 - `--cache-bust` / `--no-cache-bust`
 - `--output`
+
+## Direct Spike Backend Matrix
+
+`bench/memory_bank_spike_direct_matrix.py` benchmarks Rust spike backends directly against the sidecar HTTP service (`/search`) so lexical/index performance is measured without orchestrator fanout.
+
+```bash
+python3 bench/memory_bank_spike_direct_matrix.py \
+  --base-url http://127.0.0.1:8096 \
+  --project contextlattice \
+  --runs 5
+```
+
+Optional knobs:
+
+- `--backends`
+- `--cases`
+- `--warmups`
+- `--cache-bust` / `--no-cache-bust`
+- `--timeout`
+- `--output`

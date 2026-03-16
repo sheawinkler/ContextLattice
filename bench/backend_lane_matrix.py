@@ -54,6 +54,10 @@ class CaseConfig:
 @dataclass(frozen=True)
 class ProfileConfig:
     description: str
+    data_store: str
+    data_model: str
+    index_type: str
+    search_type: str
     sources: list[str]
     source_weights: dict[str, float]
     backend_policy: dict[str, Any]
@@ -81,6 +85,10 @@ CASES: dict[str, CaseConfig] = {
 PROFILES: dict[str, ProfileConfig] = {
     "baseline_qdrant_rollups": ProfileConfig(
         description="Control lane with explicit qdrant + topic_rollups only.",
+        data_store="qdrant+topic_rollups",
+        data_model="dense-vector+object-rollup",
+        index_type="hnsw+partitioned-rollup",
+        search_type="semantic+rollup-hybrid",
         sources=["qdrant", "topic_rollups"],
         source_weights={"qdrant": 1.0, "topic_rollups": 0.9},
         backend_policy={
@@ -92,6 +100,10 @@ PROFILES: dict[str, ProfileConfig] = {
     ),
     "rust_lane_usearch_tantivy": ProfileConfig(
         description="Rust-first lane request: usearch_ann + tantivy_lexical.",
+        data_store="qdrant+topic_rollups+memory_bank(native)",
+        data_model="dense-vector+lexical",
+        index_type="usearch-ann+tantivy-lexical",
+        search_type="hybrid-semantic-lexical",
         sources=["qdrant", "topic_rollups", "memory_bank"],
         source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
         backend_policy={
@@ -103,6 +115,10 @@ PROFILES: dict[str, ProfileConfig] = {
     ),
     "memory_bank_meilisearch_spike": ProfileConfig(
         description="Memory-bank spike lane request: meilisearch_spike.",
+        data_store="memory_bank(meilisearch)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="meilisearch+hnsw",
+        search_type="hybrid-meili-semantic",
         sources=["qdrant", "topic_rollups", "memory_bank"],
         source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
         backend_policy={
@@ -114,6 +130,10 @@ PROFILES: dict[str, ProfileConfig] = {
     ),
     "memory_bank_quickwit_spike": ProfileConfig(
         description="Memory-bank spike lane request: quickwit_spike.",
+        data_store="memory_bank(quickwit_compat)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="inverted-index+hnsw",
+        search_type="hybrid-quickwit-compat-semantic",
         sources=["qdrant", "topic_rollups", "memory_bank"],
         source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
         backend_policy={
@@ -125,6 +145,10 @@ PROFILES: dict[str, ProfileConfig] = {
     ),
     "memory_bank_tantivy_spike": ProfileConfig(
         description="Memory-bank spike lane request: tantivy_spike.",
+        data_store="memory_bank(tantivy)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="tantivy-inverted+hnsw",
+        search_type="hybrid-tantivy-semantic",
         sources=["qdrant", "topic_rollups", "memory_bank"],
         source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
         backend_policy={
@@ -167,6 +191,26 @@ def _extract_memory_bank_backend_snapshot(payload: dict[str, Any]) -> dict[str, 
     }
 
 
+def _extract_source_latency_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    latency = payload.get("latency") if isinstance(payload.get("latency"), dict) else {}
+    sources = latency.get("sources") if isinstance(latency.get("sources"), dict) else {}
+    out: dict[str, Any] = {}
+    for source_name in sorted(sources.keys()):
+        row = sources.get(source_name)
+        if not isinstance(row, dict):
+            continue
+        out[str(source_name)] = {
+            "requests": int(row.get("requests") or 0),
+            "errors": int(row.get("errors") or 0),
+            "timeouts": int(row.get("timeouts") or 0),
+            "budgetExceeded": int(row.get("budgetExceeded") or 0),
+            "p50Ms": float(row.get("p50Ms") or 0.0),
+            "p95Ms": float(row.get("p95Ms") or 0.0),
+            "p99Ms": float(row.get("p99Ms") or 0.0),
+        }
+    return out
+
+
 def _delta_counter(after: dict[str, Any], before: dict[str, Any], key: str) -> int:
     return int(after.get(key) or 0) - int(before.get(key) or 0)
 
@@ -204,6 +248,7 @@ def run_case(
             "limit": case.limit,
             "retrieval_mode": case.retrieval_mode,
             "retrieval_intent": "decision",
+            "bypass_pathway_cache": True,
             "sources": list(profile.sources),
             "source_weights": dict(profile.source_weights),
             "backend_policy": dict(profile.backend_policy),
@@ -345,6 +390,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     with httpx.Client(timeout=float(args.timeout)) as client:
         overall_before = _fetch_retrieval_telemetry(client, base_url, headers)
         overall_before_mb = _extract_memory_bank_backend_snapshot(overall_before)
+        overall_before_sources = _extract_source_latency_snapshot(overall_before)
         for profile_name in requested_profiles:
             profile = PROFILES[profile_name]
             profile_before = _fetch_retrieval_telemetry(client, base_url, headers)
@@ -388,6 +434,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 profile_notes.append("requested backend policy differed from effective runtime policy on some runs.")
             results[profile_name] = {
                 "description": profile.description,
+                "profileDescriptor": {
+                    "data_store": profile.data_store,
+                    "data_model": profile.data_model,
+                    "index_type": profile.index_type,
+                    "search_type": profile.search_type,
+                },
                 "request": {
                     "sources": profile.sources,
                     "source_weights": profile.source_weights,
@@ -404,6 +456,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             }
         overall_after = _fetch_retrieval_telemetry(client, base_url, headers)
         overall_after_mb = _extract_memory_bank_backend_snapshot(overall_after)
+        overall_after_sources = _extract_source_latency_snapshot(overall_after)
 
     for profile_name, profile_payload in results.items():
         summary = profile_payload.get("summary", {})
@@ -460,6 +513,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "failures": _delta_counter(overall_after_mb, overall_before_mb, "failures"),
                 "fallbacks": _delta_counter(overall_after_mb, overall_before_mb, "fallbacks"),
             },
+        },
+        "overallSourceLatency": {
+            "before": overall_before_sources,
+            "after": overall_after_sources,
         },
         "recommendations": recommendations,
     }

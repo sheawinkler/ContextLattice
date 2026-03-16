@@ -4,13 +4,19 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ORCH_URL="${MEMMCP_ORCHESTRATOR_URL:-http://127.0.0.1:8075}"
-ORCH_API_KEY="${MEMMCP_ORCHESTRATOR_API_KEY:-}"
+ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-${MEMMCP_ORCHESTRATOR_URL:-http://127.0.0.1:8075}}"
+ORCH_API_KEY="${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${MEMMCP_ORCHESTRATOR_API_KEY:-}}"
 EXPORT_BASE="${MEMORY_BANK_EXPORT_DIR:-$ROOT_DIR/tmp/memory_exports}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 EXPORT_DIR="${EXPORT_DIR:-$EXPORT_BASE/$TIMESTAMP}"
-MEMMCP_DASHBOARD_URL="${MEMMCP_DASHBOARD_URL:-}"
-MEMMCP_DASHBOARD_API_KEY="${MEMMCP_DASHBOARD_API_KEY:-}"
+CONTEXTLATTICE_DASHBOARD_URL="${CONTEXTLATTICE_DASHBOARD_URL:-}"
+CONTEXTLATTICE_DASHBOARD_API_KEY="${CONTEXTLATTICE_DASHBOARD_API_KEY:-}"
+if [[ -z "$CONTEXTLATTICE_DASHBOARD_URL" ]]; then
+  CONTEXTLATTICE_DASHBOARD_URL="${MEMMCP_DASHBOARD_URL:-}"
+fi
+if [[ -z "$CONTEXTLATTICE_DASHBOARD_API_KEY" ]]; then
+  CONTEXTLATTICE_DASHBOARD_API_KEY="${MEMMCP_DASHBOARD_API_KEY:-}"
+fi
 
 if [[ -n "$ORCH_API_KEY" ]]; then
   ORCH_AUTH_HEADER=(-H "x-api-key: $ORCH_API_KEY")
@@ -82,9 +88,9 @@ done <<< "$projects"
 
 echo "Export complete."
 
-if [[ -n "$MEMMCP_DASHBOARD_URL" && -n "$MEMMCP_DASHBOARD_API_KEY" ]]; then
-  curl -fsS "$MEMMCP_DASHBOARD_URL/api/workspace/audit" \
+if [[ -n "$CONTEXTLATTICE_DASHBOARD_URL" && -n "$CONTEXTLATTICE_DASHBOARD_API_KEY" ]]; then
+  curl -fsS "$CONTEXTLATTICE_DASHBOARD_URL/api/workspace/audit" \
     -H "content-type: application/json" \
-    -H "x-api-key: $MEMMCP_DASHBOARD_API_KEY" \
+    -H "x-api-key: $CONTEXTLATTICE_DASHBOARD_API_KEY" \
     -d "{\"action\":\"memory.export\",\"targetType\":\"memory\",\"metadata\":{\"exportDir\":\"$EXPORT_DIR\",\"files\":$export_count}}" >/dev/null || true
 fi

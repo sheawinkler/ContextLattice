@@ -105,11 +105,17 @@ def render(status: dict | None, metrics: dict | None, trading: dict | None, use_
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ContextLattice terminal status dashboard")
-    parser.add_argument("--url", default=os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"))
+    parser.add_argument(
+        "--url",
+        default=os.getenv(
+            "CONTEXTLATTICE_ORCHESTRATOR_URL",
+            os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+        ),
+    )
     parser.add_argument("--interval", type=float, default=float(os.getenv("DASHBOARD_INTERVAL", "5")))
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--api-key", default=os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", ""))
+    parser.add_argument("--api-key", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", "")))
     args = parser.parse_args()
 
     use_color = supports_color(args.no_color)

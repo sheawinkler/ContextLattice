@@ -2,7 +2,7 @@
   "mcpProxy": {
     "baseURL": "http://localhost:9092",
     "addr": ":9092",
-    "name": "memMCP proxy",
+    "name": "ContextLattice proxy",
     "version": "1.0.0",
     "type": "streamable-http",
     "options": {

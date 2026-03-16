@@ -1,0 +1,268 @@
+services:
+  mcp-proxy:
+    command:
+    - --config
+    - /config/config.json
+    container_name: mcp-proxy
+    depends_on:
+      mcp-qdrant:
+        condition: service_started
+      memorybank-gateway:
+        condition: service_started
+      memorymcp-http:
+        condition: service_started
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    networks:
+      default: null
+    ports:
+    - mode: ingress
+      target: 9090
+      published: 9090
+      protocol: tcp
+    restart: unless-stopped
+    volumes:
+    - type: bind
+      source: /Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/infra/compose/configs/mcp-proxy.config.json
+      target: /config/config.json
+      read_only: true
+      bind:
+        create_host_path: true
+  mcp-qdrant:
+    build:
+      context: /Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/infra/compose
+      dockerfile: dockerfile
+    command:
+    - mcp-server-qdrant
+    - --transport
+    - streamable-http
+    depends_on:
+      qdrant:
+        condition: service_started
+    environment:
+      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      PORT: "8002"
+      QDRANT_COLLECTION: windsurf-memory
+      QDRANT_URL: http://qdrant:6333
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - |
+        bash -lc '
+          curl -fsS -H "accept: application/json" -H "content-type: application/json"
+          -d "{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}"
+          http://127.0.0.1:8002/mcp >/dev/null 2>&1
+          || curl -fsS -H "accept: application/json" -H "content-type: application/json"
+          -d "{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}"
+          http://127.0.0.1:8002/ >/dev/null 2>&1
+        '
+      timeout: 5s
+      interval: 10s
+      retries: 12
+    image: mem_mcp_lobehub_mcp-qdrant
+    networks:
+      default: null
+    ports:
+    - mode: ingress
+      target: 8002
+      protocol: tcp
+    - mode: ingress
+      target: 8002
+      published: 53124
+      protocol: tcp
+    restart: unless-stopped
+  memorymcp-http:
+    build:
+      context: /Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/infra/compose
+      dockerfile: Dockerfile.memorymcp
+    command:
+    - sh
+    - -lc
+    - |2
+
+        npx -y @lobehub/mcp-supergateway
+          --stdio 'npx -y @allpepper/memory-bank-mcp'
+          --outputTransport streamableHttp
+          --port 59081
+          --streamableHttpPath /mcp
+    depends_on:
+      mongo:
+        condition: service_started
+    environment:
+      MEMORY_BANK_ROOT: /data/memory-bank
+      MONGODB_URI: mongodb://mongo:27017
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -qO- http://127.0.0.1:59081/mcp >/dev/null 2>&1 || exit 1
+      - CMD
+      - node
+      - -e
+      - |
+        const http=require('http');
+        const req=http.request({host:'127.0.0.1',port:59081,path:'/mcp',method:'GET'},res=>process.exit(0));
+        req.on('error',()=>process.exit(1)); req.end();
+      - CMD
+      - node
+      - -e
+      - |
+        (function () {
+          const http = require('http');
+          const body = JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'hc-1',
+            method: 'tools/list',
+            params: {}
+          });
+          const req = http.request(
+            {
+              host: '127.0.0.1',
+              port: 59081,
+              path: '/mcp/',
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'accept': 'application/json, text/event-stream',
+                'MCP-Protocol-Version': '2025-06-18'
+              }
+            },
+            (res) => process.exit(res.statusCode >= 200 && res.statusCode < 500 ? 0 : 1)
+          );
+          req.on('error', () => process.exit(1));
+          req.write(body);
+          req.end();
+        })();
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
+    image: l337/memorymcp:local
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+    - type: volume
+      source: memory_bank_data
+      target: /data
+      volume: {}
+    - type: bind
+      source: /Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/infra/compose/data/memory-bank
+      target: /data/memory-bank
+      bind:
+        create_host_path: true
+  mindsdb:
+    environment:
+      MINDSDB_APIS: http,mysql
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - |
+        bash -lc '
+          curl -fsS -X POST http://127.0.0.1:47334/api/sql
+          -H "content-type: application/json"
+          -d "{\"query\":\"SELECT 1\"}" >/dev/null
+        '
+      timeout: 5s
+      interval: 10s
+      retries: 20
+    image: mindsdb/mindsdb:latest
+    networks:
+      default: null
+    ports:
+    - mode: ingress
+      target: 47334
+      protocol: tcp
+    - mode: ingress
+      target: 47337
+      protocol: tcp
+    restart: unless-stopped
+    volumes:
+    - type: volume
+      source: mindsdb_data
+      target: /root/.mindsdb
+      volume: {}
+    - type: volume
+      source: mindsdb_data
+      target: /var/lib/mindsdb
+      volume: {}
+  mindsdb-http-proxy:
+    build:
+      context: /Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/infra/compose
+      dockerfile: Dockerfile.mindsdb-http-proxy
+    command:
+    - sh
+    - -lc
+    - |2
+
+        pip install --no-cache-dir fastapi uvicorn httpx anyio &&
+        python scripts/mindsdb_http_proxy.py
+    depends_on:
+      mindsdb:
+        condition: service_started
+    environment:
+      BIND_HOST: 0.0.0.0
+      BIND_PORT: "8004"
+      MINDSDB_SSE_URL: http://mindsdb:47334/mcp/sse
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - nc -z 127.0.0.1 8004 || exit 1
+      - CMD-SHELL
+      - |
+        curl -fsS -H "accept: application/json" -H "content-type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}" http://127.0.0.1:8004/mcp >/dev/null || exit 1
+      timeout: 5s
+      interval: 10s
+      retries: 12
+    image: python:3.11-alpine
+    networks:
+      default: null
+    ports:
+    - mode: ingress
+      target: 8004
+      published: 8011
+      protocol: tcp
+    restart: unless-stopped
+    volumes:
+    - type: bind
+      source: /Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/infra/compose/scripts
+      target: /app/scripts
+      read_only: true
+      bind:
+        create_host_path: true
+    working_dir: /app
+  mongo:
+    image: mongo:7
+    networks:
+      default: null
+    restart: unless-stopped
+    volumes:
+    - type: volume
+      source: mongo_data
+      target: /data/db
+      volume: {}
+  qdrant:
+    image: qdrant/qdrant:latest
+    networks:
+      default: null
+    ports:
+    - mode: ingress
+      target: 6333
+      published: 6333
+      protocol: tcp
+    restart: unless-stopped
+    volumes:
+    - type: volume
+      source: qdrant_storage
+      target: /qdrant/storage
+      volume: {}
+networks:
+  default:
+    name: compose_default
+volumes:
+  memory_bank_data:
+    name: compose_memory_bank_data
+  mindsdb_data:
+    name: compose_mindsdb_data
+  mongo_data:
+    name: compose_mongo_data
+  qdrant_storage:
+    name: compose_qdrant_storage

@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 ENV_FILE="${ENV_FILE:-.env}"
-ORCH_URL="${MEMMCP_ORCHESTRATOR_URL:-${ORCH_BASE:-http://127.0.0.1:8075}}"
-ORCH_API_KEY="${MEMMCP_ORCHESTRATOR_API_KEY:-}"
+ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-${MEMMCP_ORCHESTRATOR_URL:-${ORCH_BASE:-http://127.0.0.1:8075}}}"
+ORCH_API_KEY="${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${MEMMCP_ORCHESTRATOR_API_KEY:-}}"
 MINDSDB_SQL_URL="${MINDSDB_SQL_URL:-http://127.0.0.1:47334/api/sql/query}"
 
 DB_NAME="${DB_NAME:-files_repair_$(date -u +%Y%m%d%H%M%S)}"
@@ -227,8 +227,8 @@ set_env_key "MINDSDB_AUTOSYNC_TABLE" "$TABLE_NAME"
 if bool_is_true "$RESTART_SERVICES"; then
   echo ">> restarting mindsdb + proxy + orchestrator"
   docker compose up -d mindsdb mindsdb-http-proxy >/dev/null
-  docker compose build memmcp-orchestrator >/dev/null
-  docker compose up -d memmcp-orchestrator >/dev/null
+  docker compose build contextlattice-orchestrator >/dev/null
+  docker compose up -d contextlattice-orchestrator >/dev/null
 fi
 
 for i in {1..90}; do

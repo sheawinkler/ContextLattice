@@ -17,11 +17,12 @@
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
         <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
         <a class="active" href="installation.html">Installation</a>
         <a href="integration.html">Integrations</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
-        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">v1</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
     </header>
 
@@ -180,7 +181,7 @@ ln -svf ../../.env infra/compose/.env
 BOOTSTRAP=1 scripts/first_run.sh
 
 # helper for authenticated orchestrator endpoints
-ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"</code></pre>
+ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"</code></pre>
       </article>
     </section>
 

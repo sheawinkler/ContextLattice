@@ -56,8 +56,8 @@
       </p>
       <p class="hero-local">One intelligent memory layer for apps and agents.</p>
       <div class="cta-row">
-        <a class="cta primary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">View v1 on GitHub</a>
-        <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Download v1 (ZIP)</a>
+        <a class="cta primary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">View on GitHub</a>
+        <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Download main (ZIP)</a>
       </div>
       <p class="muted-note">Clone: <code>git clone git@github.com:sheawinkler/ContextLattice.git</code></p>
       <div class="hero-art" aria-hidden="true">
@@ -130,11 +130,12 @@
         <a class="active" href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
         <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
         <a href="installation.html">Installation</a>
         <a href="integration.html">Integrations</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
-        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">v1</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
     </div>
 
@@ -178,7 +179,7 @@
         <article class="card">
           <div class="kicker">60-second verify</div>
           <h3>Prove service + auth in two calls</h3>
-<pre><code>ORCH_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+<pre><code>ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 curl -fsS http://127.0.0.1:8075/health | jq
 curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.service,.sinks'</code></pre>
         </article>
@@ -202,7 +203,7 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.servic
           retrieval precision over time. This is reinforced by RAG through Letta archival memory,
           alongside Qdrant, Mongo raw, MindsDB, and memory-bank fallback.
         </p>
-        <p class="muted-note">Read the detailed rollout notes on the <a href="updates.html">Updates page</a>.</p>
+        <p class="muted-note">Read the detailed rollout notes on the <a href="updates.html">Updates page</a> and the execution plan on the <a href="roadmap.html">V3 Roadmap</a>.</p>
       </article>
     </section>
 

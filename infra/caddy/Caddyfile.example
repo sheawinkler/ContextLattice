@@ -9,10 +9,10 @@ example.com {
   }
 
   handle_path /status* {
-    reverse_proxy memmcp-orchestrator:8075
+    reverse_proxy contextlattice-orchestrator:8075
   }
 
   handle {
-    reverse_proxy memmcp-orchestrator:8075
+    reverse_proxy contextlattice-orchestrator:8075
   }
 }

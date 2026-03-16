@@ -1,0 +1,26 @@
+FROM rust:1-bookworm AS builder
+
+WORKDIR /app
+COPY services/memory_bank_spike_rs/Cargo.toml ./Cargo.toml
+COPY services/memory_bank_spike_rs/src ./src
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates wget \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/target/release/memory-bank-spike-rs /usr/local/bin/memory-bank-spike-rs
+
+ENV PORT=8096
+ENV MB_SPIKE_DATA_ROOT=/data/memory-bank
+ENV MB_SPIKE_REFRESH_SECS=120
+ENV MB_SPIKE_MAX_DOCS=50000
+ENV MB_SPIKE_MAX_CONTENT_CHARS=4096
+ENV MB_SPIKE_MEILI_URL=http://meilisearch:7700
+ENV MB_SPIKE_MEILI_INDEX=contextlattice_memory
+ENV MB_SPIKE_MEILI_SYNC_SECS=300
+ENV MB_SPIKE_MEILI_TASK_TIMEOUT_SECS=30
+
+CMD ["memory-bank-spike-rs"]

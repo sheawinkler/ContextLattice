@@ -1,0 +1,36 @@
+{
+  "mcpProxy": {
+    "name": "local-proxy",
+    "host": "0.0.0.0",
+    "port": 9090,
+    "servers": {
+      "memory-bank": {
+        "type": "http",
+        "url": "http://host.docker.internal:59081/mcp",
+        "timeout": 30000,
+        "forwardHeaders": [
+          "x-session-id",
+          "accept",
+          "content-type"
+        ]
+      },
+      "mindsdb": {
+        "type": "http",
+        "url": "http://mindsdb-http-proxy:8004/mcp",
+        "timeout": 30000,
+        "forwardHeaders": [
+          "mcp-session-id",
+          "accept",
+          "content-type"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "slug": "mindsdb",
+      "transport": "streamable-http",
+      "endpoint": "http://mindsdb-http-proxy:8004/mcp"
+    }
+  ]
+}

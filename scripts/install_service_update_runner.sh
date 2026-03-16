@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LABEL="com.sheawinkler.memmcp-service-update"
+LABEL="com.sheawinkler.contextlattice-service-update"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$REPO_ROOT/logs"
 INTERVAL_SECONDS="${SERVICE_UPDATE_INTERVAL_SECONDS:-21600}"

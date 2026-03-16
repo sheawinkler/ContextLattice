@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lightweight task worker for memMCP agent tasks.
+Lightweight task worker for ContextLattice agent tasks.
 Claims tasks from the orchestrator and routes them to a runner (Trae, Letta, etc.)
 or a simple local model call when no runner is configured.
 """
@@ -17,7 +17,10 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-DEFAULT_ORCH_URL = os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075")
+DEFAULT_ORCH_URL = os.getenv(
+    "CONTEXTLATTICE_ORCHESTRATOR_URL",
+    os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+)
 DEFAULT_AGENT = os.getenv("TASK_AGENT", "trae")
 DEFAULT_PROVIDER = os.getenv("TASK_MODEL_PROVIDER", "ollama")
 DEFAULT_MODEL = os.getenv("TASK_MODEL", "qwen2.5-coder:7b")
@@ -183,6 +186,7 @@ def _handle_task(
             "TASK_MODEL": model,
             "TASK_BASE_URL": base_url,
             "TASK_API_KEY": api_key or "",
+            "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
             "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
         }
     )
@@ -236,7 +240,7 @@ def _handle_task(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="memMCP task agent worker")
+    parser = argparse.ArgumentParser(description="ContextLattice task agent worker")
     parser.add_argument("--task-agent", default=DEFAULT_AGENT, help="trae|letta|autogen|crewai|langgraph|openhands")
     parser.add_argument("--orchestrator-url", default=DEFAULT_ORCH_URL)
     parser.add_argument("--model-provider", default=DEFAULT_PROVIDER)

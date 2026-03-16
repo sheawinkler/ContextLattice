@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Monitor Opus (or any executor agent) progress via memMCP.
+Monitor Opus (or any executor agent) progress via ContextLattice.
 Polls task status and recent decisions to track implementation.
 """
 

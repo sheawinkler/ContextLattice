@@ -5,9 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 ENV_FILE="${ENV_FILE:-.env}"
-ORCH_URL="${MEMMCP_ORCHESTRATOR_URL:-${ORCH_BASE:-http://127.0.0.1:8075}}"
+ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-${MEMMCP_ORCHESTRATOR_URL:-${ORCH_BASE:-http://127.0.0.1:8075}}}"
 Q_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
-ORCH_API_KEY="${MEMMCP_ORCHESTRATOR_API_KEY:-}"
+ORCH_API_KEY="${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${MEMMCP_ORCHESTRATOR_API_KEY:-}}"
 
 TARGET_COLLECTION=""
 VECTOR_SIZE="${VECTOR_SIZE:-768}"
@@ -176,8 +176,8 @@ fi
 
 if bool_is_true "$RESTART_ORCHESTRATOR"; then
   echo ">> rebuilding/restarting orchestrator"
-  docker compose build memmcp-orchestrator >/dev/null
-  docker compose up -d memmcp-orchestrator >/dev/null
+  docker compose build contextlattice-orchestrator >/dev/null
+  docker compose up -d contextlattice-orchestrator >/dev/null
   for i in {1..90}; do
     if curl -fsS "$ORCH_URL/health" "${AUTH_HEADER[@]}" >/dev/null 2>&1; then
       break

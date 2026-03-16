@@ -1,0 +1,11 @@
+services:
+  memorymcp-http:
+    command:
+      - sh
+      - -lc
+      - >
+        npx -y @lobehub/mcp-supergateway
+          --stdio 'npx -y @allpepper/memory-bank-mcp'
+          --outputTransport streamableHttp
+          --port 59081
+          --streamableHttpPath /mcp/

@@ -1,0 +1,8 @@
+{
+  "listen": "0.0.0.0:9090",
+  "servers": [
+    { "name": "memory-bank", "transportType": "streamable-http", "url": "http://memorybank-gateway:9090/mcp" },
+    { "name": "mindsdb",     "transportType": "streamable-http", "url": "http://host.docker.internal:8011/mcp" },
+    { "name": "qdrant",      "transportType": "streamable-http", "url": "http://mcp-qdrant:8000/mcp" }
+  ]
+}

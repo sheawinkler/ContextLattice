@@ -1,0 +1,73 @@
+services:
+  # HTTP bridge for MemoryBank (stdio inside → HTTP on :59081)
+  memorymcp-http:
+    image: node:20-alpine
+    environment:
+      MEMORY_BANK_ROOT: "${MEMORY_BANK_ROOT:-/data}"
+    volumes:
+      - memory_bank_data:/data
+    command: >
+      sh -lc "
+        npx -y @lobehub/mcp-supergateway
+          --stdio 'npx -y @allpepper/memory-bank-mcp'
+          --outputTransport streamableHttp
+          --port 59081
+          --streamableHttpPath /mcp
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:59081/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+    restart: unless-stopped
+
+  # MindsDB HTTP proxy (your script)
+  mindsdb-http-proxy:
+    image: python:3.11-alpine
+    working_dir: /app
+    environment:
+      MINDSDB_SSE_URL: "${MINDSDB_SSE_URL:-http://mindsdb:47334/mcp/sse}"
+      BIND_HOST: "0.0.0.0"
+      BIND_PORT: "${MINDSDB_HTTP_PROXY_PORT:-8004}"
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: >
+      sh -lc "
+        pip install --no-cache-dir fastapi uvicorn httpx anyio &&
+        python scripts/mindsdb_http_proxy.py
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${MINDSDB_HTTP_PROXY_PORT:-8004} || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+    restart: unless-stopped
+
+  # Memory gateway (TBXark) — config only, host publishes :MEMORYBANK_HTTP_PORT → :9090
+  memorybank-gateway:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    command: ["/main","--config","/config/config.json"]
+    ports:
+      - "${MEMORYBANK_HTTP_PORT:-53126}:9090"
+    volumes:
+      - ./configs/memorybank-gateway.config.json:/config/config.json:ro
+    depends_on:
+      memorymcp-http:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Hub (TBXark) — single front door on :MCP_HUB_PORT → :9090
+  mcp-hub:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    command: ["/main","--config","/config/config.json"]
+    ports:
+      - "${MCP_HUB_PORT:-53000}:9090"
+    volumes:
+      - ./configs/mcp-hub.config.json:/config/config.json:ro
+    depends_on:
+      memorybank-gateway: { condition: service_started }
+      mindsdb-http-proxy: { condition: service_started }
+    restart: unless-stopped
+
+volumes:
+  memory_bank_data: {}

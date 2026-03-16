@@ -1,0 +1,14 @@
+{
+  "listen": "0.0.0.0:9090",
+  "servers": [
+    {
+      "name": "memory-bank",
+      "transportType": "stdio",
+      "command": "sh",
+      "args": [
+        "-lc",
+        "env MEMORY_BANK_ROOT=/data MONGODB_URI=mongodb://mongo:27017 npx -y @allpepper/memory-bank-mcp"
+      ]
+    }
+  ]
+}

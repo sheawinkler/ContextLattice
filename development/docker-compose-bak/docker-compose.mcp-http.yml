@@ -1,0 +1,4 @@
+services:
+  memorybank-gateway:
+    ports:
+      - "53126:9090"

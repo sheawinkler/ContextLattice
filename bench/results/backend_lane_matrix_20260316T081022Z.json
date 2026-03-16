@@ -1,0 +1,851 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "cacheBustQueries": true,
+  "cases": [
+    "short_context",
+    "deep_read",
+    "ops_focus"
+  ],
+  "generatedAt": "2026-03-16T08:10:22.739039+00:00",
+  "overallMemoryBankBackend": {
+    "after": {},
+    "before": {},
+    "delta": {
+      "attempts": 0,
+      "failures": 0,
+      "fallbacks": 0,
+      "successes": 0
+    }
+  },
+  "overallSourceLatency": {
+    "after": {},
+    "before": {}
+  },
+  "profiles": [
+    "baseline_qdrant_rollups",
+    "rust_lane_usearch_tantivy",
+    "memory_bank_meilisearch_spike",
+    "memory_bank_quickwit_spike",
+    "memory_bank_tantivy_spike"
+  ],
+  "project": "perf_backend_lanes",
+  "recommendations": [
+    "Rust lane request improved avg p95 by 23.304% vs baseline in this run.",
+    "Memory-bank spike sidecar URL is not configured; meilisearch/quickwit/tantivy spikes are currently fallback-only measurements."
+  ],
+  "results": {
+    "baseline_qdrant_rollups": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 18.598,
+            "mean": 13.266,
+            "min": 9.978,
+            "p50": 11.223,
+            "p95": 17.861,
+            "p99": 18.451
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 8.234,
+            "mean": 7.402,
+            "min": 5.865,
+            "p50": 8.106,
+            "p95": 8.221,
+            "p99": 8.231
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 163.321,
+            "mean": 72.419,
+            "min": 18.812,
+            "p50": 35.124,
+            "p95": 150.501,
+            "p99": 160.757
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Control lane with explicit qdrant + topic_rollups only.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "dense-vector+object-rollup",
+        "data_store": "qdrant+topic_rollups",
+        "index_type": "hnsw+partitioned-rollup",
+        "search_type": "semantic+rollup-hybrid"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "native",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 0.0,
+        "avgP95Ms": 58.861,
+        "maxP95Ms": 150.501,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_meilisearch_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 6.754,
+            "mean": 5.37,
+            "min": 3.432,
+            "p50": 5.923,
+            "p95": 6.671,
+            "p99": 6.737
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 6.563,
+            "mean": 5.561,
+            "min": 4.783,
+            "p50": 5.336,
+            "p95": 6.441,
+            "p99": 6.539
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 9.957,
+            "mean": 8.302,
+            "min": 7.153,
+            "p50": 7.797,
+            "p95": 9.741,
+            "p99": 9.914
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: meilisearch_spike.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(meilisearch)+qdrant+topic_rollups",
+        "index_type": "meilisearch+hnsw",
+        "search_type": "hybrid-meili-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "meilisearch_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 87.058,
+        "avgP95Ms": 7.618,
+        "maxP95Ms": 9.741,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_quickwit_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 14.054,
+            "mean": 10.019,
+            "min": 5.065,
+            "p50": 10.939,
+            "p95": 13.743,
+            "p99": 13.992
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 14.37,
+            "mean": 11.286,
+            "min": 7.342,
+            "p50": 12.144,
+            "p95": 14.148,
+            "p99": 14.326
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 15.132,
+            "mean": 8.924,
+            "min": 4.578,
+            "p50": 7.062,
+            "p95": 14.325,
+            "p99": 14.97
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: quickwit_spike.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(quickwit_compat)+qdrant+topic_rollups",
+        "index_type": "inverted-index+hnsw",
+        "search_type": "hybrid-quickwit-compat-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "quickwit_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 76.093,
+        "avgP95Ms": 14.072,
+        "maxP95Ms": 14.325,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_tantivy_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 15.689,
+            "mean": 10.081,
+            "min": 3.735,
+            "p50": 10.82,
+            "p95": 15.202,
+            "p99": 15.592
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 17.097,
+            "mean": 8.527,
+            "min": 3.798,
+            "p50": 4.687,
+            "p95": 15.856,
+            "p99": 16.849
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 15.416,
+            "mean": 11.911,
+            "min": 7.593,
+            "p50": 12.723,
+            "p95": 15.147,
+            "p99": 15.362
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: tantivy_spike.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(tantivy)+qdrant+topic_rollups",
+        "index_type": "tantivy-inverted+hnsw",
+        "search_type": "hybrid-tantivy-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "tantivy_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 73.833,
+        "avgP95Ms": 15.402,
+        "maxP95Ms": 15.856,
+        "policyMismatchTotal": 0
+      }
+    },
+    "rust_lane_usearch_tantivy": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 88.503,
+            "mean": 39.262,
+            "min": 9.271,
+            "p50": 20.013,
+            "p95": 81.654,
+            "p99": 87.133
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 49.105,
+            "mean": 22.77,
+            "min": 9.08,
+            "p50": 10.124,
+            "p95": 45.207,
+            "p99": 48.325
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 3,
+          "errorRate": 1.0,
+          "errors": [
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}",
+            "401:{\"ok\":false,\"error\":\"Invalid API key\"}"
+          ],
+          "latencyMs": {
+            "max": 8.812,
+            "mean": 7.157,
+            "min": 6.266,
+            "p50": 6.392,
+            "p95": 8.57,
+            "p99": 8.763
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            401,
+            401,
+            401
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Rust-first lane request: usearch_ann + tantivy_lexical.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "dense-vector+lexical",
+        "data_store": "qdrant+topic_rollups+memory_bank(native)",
+        "index_type": "usearch-ann+tantivy-lexical",
+        "search_type": "hybrid-semantic-lexical"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "tantivy_lexical",
+          "memory_bank_backend": "native",
+          "strict": true,
+          "vector_backend": "usearch_ann"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 23.304,
+        "avgP95Ms": 45.144,
+        "maxP95Ms": 81.654,
+        "policyMismatchTotal": 0
+      }
+    }
+  },
+  "runsPerCase": 3
+}

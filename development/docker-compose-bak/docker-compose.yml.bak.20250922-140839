@@ -1,0 +1,135 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports: ["6333:6333"]
+    volumes: ["qdrant_storage:/qdrant/storage"]
+    restart: unless-stopped
+
+  # Qdrant MCP (Streamable HTTP)
+  mcp-qdrant:
+    build: { context: ., dockerfile: dockerfile }
+    depends_on: [qdrant]
+    environment:
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+    ports: ["${QDRANT_MCP_PORT}:8002"]
+    restart: unless-stopped
+
+  mindsdb:
+    image: mindsdb/mindsdb:latest
+    environment:
+      MINDSDB_APIS: ${MINDSDB_APIS}
+    ports:
+      - "${MINDS_HTTP_PORT}:47334"   # HTTP API (/mcp, /mcp/sse)
+      - "${MINDSDB_MCP_PORT}:47337"  # SSE (on some builds)
+    volumes: ["mindsdb_data:/root/.mindsdb"]
+    restart: unless-stopped
+
+  # Memory Bank via stdio -> SSE proxy
+  memorybank-stdio:
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      MEMORY_BANK_ROOT: "/data"
+    volumes: ["memory_bank_data:/data"]
+    command: sh -lc "npx -y @allpepper/memory-bank-mcp"
+    restart: unless-stopped
+
+  memorybank-gateway:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    depends_on: [memorybank-stdio]
+    environment: { MEMORY_BANK_ROOT: "/data" }
+    volumes: ["memory_bank_data:/data"]
+    command: >
+      
+      --upstream stdio:memorymcp="npx -y @allpepper/memory-bank-mcp"
+      --pass-environment
+    ports: ["${MEMORYBANK_SSE_PORT}:9090"]
+    restart: unless-stopped
+
+  # MindsDB SSE -> HTTP using FastMCP
+  mindsdb-http-proxy:
+    build: { context: ., dockerfile: Dockerfile.mindsdb_http_proxy }
+    depends_on: [mindsdb]
+    environment:
+      MINDSDB_SSE_URL: ${MINDSDB_SSE_URL:-http://mindsdb:47334/mcp/sse}
+    restart: unless-stopped
+
+  # MCP Hub — single front door (one port; serves /mcp and /sse)
+  mcp-hub:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    depends_on: [mcp-qdrant, mindsdb, memorybank-gateway, mindsdb-http-proxy]
+    command: >
+      
+      --upstream http:qdrant\=http://mcp-qdrant:8002
+      --upstream http:mindsdb\=http://mindsdb-http-proxy:8004
+      --upstream sse:memorymcp=http://memorybank-gateway:${MEMORYBANK_SSE_PORT}/sse
+      --pass-environment
+    ports: ["${MCP_HUB_PORT}:9090"]
+    restart: unless-stopped
+
+  # Ollama (local, free LLMs)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports: ["11434:11434"]  # expose to host for testing
+    volumes: ["${HOME}/.ollama:/root/.ollama"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Letta (MemGPT successor) — prefers Ollama if OLLAMA_BASE_URL set
+  letta:
+    image: letta/letta:latest
+    container_name: letta
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: "http://ollama:11434" #via DNS
+    ports: ["${LETTA_PORT}:8283"]
+    volumes: ["letta_pg:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+  # Observability: Langfuse (app + Postgres)
+  lf-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${LF_DB_PASS}
+      POSTGRES_DB: ${LF_DB_NAME}
+      POSTGRES_USER: ${LF_DB_USER}
+    volumes: ["lf_pgdata:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+  langfuse:
+    image: ghcr.io/langfuse/langfuse:latest
+    depends_on: [lf-postgres]
+    environment:
+      DATABASE_URL: postgres://${LF_DB_USER}:${LF_DB_PASS}@${LF_DB_HOST}:5432/${LF_DB_NAME}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      NEXT_PUBLIC_HOST: "http://localhost:${LANGFUSE_PORT}"
+    ports: ["${LANGFUSE_PORT}:3000"]
+    restart: unless-stopped
+
+  # Evals: Promptfoo self-host
+  promptfoo:
+    image: ghcr.io/promptfoo/promptfoo:latest
+    working_dir: /work
+    volumes: ["./promptfoo:/work"]
+    ports: ["${PROMPTFOO_PORT:-15500}:15500"]
+    command: ["promptfoo","server","--port","15500"]
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage: {}
+  mindsdb_data: {}
+  memory_bank_data: {}
+  letta_pg: {}
+  lf_pgdata: {}

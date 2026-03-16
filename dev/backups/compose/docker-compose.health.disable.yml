@@ -1,0 +1,4 @@
+services:
+  memorymcp-http:     { healthcheck: { disable: true } }
+  mcp-qdrant:         { healthcheck: { disable: true } }
+  mindsdb-http-proxy: { healthcheck: { disable: true } }

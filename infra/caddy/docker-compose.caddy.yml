@@ -1,7 +1,7 @@
 services:
   caddy:
     image: caddy:2.9
-    container_name: memmcp-caddy
+    container_name: contextlattice-caddy
     restart: unless-stopped
     ports:
       - "80:80"

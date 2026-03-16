@@ -9,3 +9,4 @@ orjson==3.10.15
 prometheus-fastapi-instrumentator==7.1.0
 aiolimiter==1.1.0
 qdrant-client==1.16.2
+redis==5.2.1

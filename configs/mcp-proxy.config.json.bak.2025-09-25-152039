@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "memory-bank": {
+      "name": "memory-bank",
+      "type": "streamable-http",
+      "url": "http://memorymcp-http:59081/mcp",
+      "timeout": 30000,
+      "logEnabled": true,
+      "panicIfInvalid": false
+    },
+    "qdrant": {
+      "name": "qdrant",
+      "type": "streamable-http",
+      "url": "http://mcp-qdrant:8002/mcp",
+      "timeout": 30000,
+      "logEnabled": true,
+      "panicIfInvalid": false
+    },
+    "mindsdb": {
+      "name": "mindsdb",
+      "type": "streamable-http",
+      "url": "http://host.docker.internal:8011/mcp",
+      "timeout": 30000,
+      "logEnabled": true,
+      "panicIfInvalid": false
+    }
+  },
+  "mcpProxy": {
+    "addr": ":9090",
+    "baseURL": "http://127.0.0.1:9090",
+    "name": "MCP Proxy",
+    "version": "1.0.0",
+    "options": {
+      "panicIfInvalid": false,
+      "logEnabled": true
+    }
+  }
+}

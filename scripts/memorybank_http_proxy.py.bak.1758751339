@@ -1,0 +1,84 @@
+import os, sys, subprocess, threading
+from http import HTTPStatus
+from typing import Tuple
+from fastapi import FastAPI, Request, Response
+import uvicorn
+
+CMD = os.environ.get("MEMORYBANK_CMD", "npx -y @allpepper/memory-bank-mcp")
+SHELL = True  # run via /bin/sh -lc for npx
+app = FastAPI()
+_lock = threading.Lock()
+_log_path = os.path.join(os.path.dirname(__file__), "..", "logs", "memorybank-http.err")
+os.makedirs(os.path.dirname(os.path.abspath(_log_path)), exist_ok=True)
+
+# start stderr reader once
+if not _stderr_thread_started:
+    threading.Thread(target=_drain_stderr, daemon=True).start()
+    _stderr_thread_started=True
+
+def _drain_stderr():
+    try:
+        with open(_log_path, "ab", buffering=0) as f:
+            while True:
+                chunk = child.stderr.readline()
+                if not chunk:
+                    break
+                f.write(chunk)
+    except Exception:
+        pass
+
+# Start child MCP (stdio) once
+_stderr_thread_started=False
+\1
+
+# Start stderr reader once (after child exists)
+global _stderr_thread_started
+if not _stderr_thread_started:
+    threading.Thread(target=_drain_stderr, daemon=True).start()
+    _stderr_thread_started = True
+
+
+def _read_message() -> bytes:
+    # Parse LSP-style headers
+    headers = {}
+    line = b""
+    while True:
+        line = child.stdout.readline()
+        if not line:
+            return b""
+        line = line.strip(b"\r\n")
+        if line == b"":
+            break
+        k, v = line.split(b":", 1)
+        headers[k.strip().lower()] = v.strip()
+    length = int(headers.get(b"content-length", b"0"))
+    if length == 0:
+        return b""
+    body = child.stdout.read(length)
+    return body
+
+def _write_message(payload: bytes) -> None:
+    hdr = f"Content-Length: {len(payload)}\r\n\r\n".encode("utf-8")
+    child.stdin.write(hdr)
+    child.stdin.write(payload)
+    child.stdin.flush()
+
+@app.post("/mcp")
+async def mcp_proxy(req: Request):
+    body = await req.body()
+    if not body:
+        return Response(status_code=HTTPStatus.BAD_REQUEST)
+    with _lock:
+        try:
+            _write_message(body)
+            resp = _read_message()
+            if not resp:
+                return Response(status_code=HTTPStatus.BAD_GATEWAY)
+            return Response(content=resp, status_code=200, media_type="application/json")
+        except Exception as e:
+            return Response(content=str(e).encode(), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+if __name__ == "__main__":
+    host = os.environ.get("MEMORYBANK_HTTP_HOST", "127.0.0.1")
+    port = int(os.environ.get("MEMORYBANK_HTTP_PORT", "59081"))
+    uvicorn.run("memorybank_http_proxy:app", host=host, port=port, reload=False)

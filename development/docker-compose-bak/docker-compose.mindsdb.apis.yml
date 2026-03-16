@@ -1,0 +1,4 @@
+services:
+  mindsdb:
+    environment:
+      MINDSDB_APIS: "http,mysql"

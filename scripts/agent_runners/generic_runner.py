@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generic task runner for memMCP agent tasks (used by external agent shims)."""
+"""Generic task runner for ContextLattice agent tasks (used by external agent shims)."""
 
 from __future__ import annotations
 
@@ -109,7 +109,10 @@ def _format_result(task: dict[str, Any], output: str, agent_label: str) -> str:
 
 
 def main(agent_label: Optional[str] = None) -> int:
-    orchestrator_url = os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075")
+    orchestrator_url = os.getenv(
+        "CONTEXTLATTICE_ORCHESTRATOR_URL",
+        os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+    )
     task_id = os.getenv("TASK_ID")
     task_title = os.getenv("TASK_TITLE", "Task")
     task_project = os.getenv("TASK_PROJECT", "_global")

@@ -52,7 +52,7 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Load test memMCP /memory/write")
+    parser = argparse.ArgumentParser(description="Load test ContextLattice /memory/write")
     parser.add_argument("--url", default="http://127.0.0.1:8075/memory/write")
     parser.add_argument("--project", default="perf_test")
     parser.add_argument("--rate", type=float, default=100.0, help="requests per second")

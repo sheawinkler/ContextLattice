@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-LABEL="com.sheawinkler.memmcp-overview-sync"
+LABEL="com.sheawinkler.contextlattice-overview-sync"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$REPO_ROOT/logs"
 SYNC_INTERVAL_SECONDS="${SYNC_INTERVAL_SECONDS:-604800}"

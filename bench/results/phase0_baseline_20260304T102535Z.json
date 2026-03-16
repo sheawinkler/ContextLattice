@@ -1,0 +1,439 @@
+{
+  "run_id": "20260304T102535Z",
+  "started_at": "2026-03-04T10:28:41.906883Z",
+  "base_url": "http://127.0.0.1:8075",
+  "write_project": "perf_phase0_20260304t102535z",
+  "workloads": [
+    {
+      "name": "single_agent_short_context",
+      "requests": 15,
+      "concurrency": 1,
+      "duration_secs": 75.255,
+      "throughput_rps": 0.1993,
+      "success": 15,
+      "fail": 0,
+      "status_counts": {
+        "200": 15
+      },
+      "result_count_avg": 5,
+      "latency_ms": {
+        "min": 965.287,
+        "avg": 5016.253,
+        "p50": 1797.719,
+        "p95": 18050.941,
+        "p99": 18073.732,
+        "max": 18079.429
+      },
+      "sample_errors": []
+    },
+    {
+      "name": "multi_agent_medium_context",
+      "requests": 12,
+      "concurrency": 6,
+      "duration_secs": 48.7714,
+      "throughput_rps": 0.246,
+      "success": 8,
+      "fail": 4,
+      "status_counts": {
+        "200": 8,
+        "-1": 4
+      },
+      "result_count_avg": 0,
+      "latency_ms": {
+        "min": 1349.796,
+        "avg": 22314.959,
+        "p50": 21053.903,
+        "p95": 40002.845,
+        "p99": 40002.88,
+        "max": 40002.889
+      },
+      "sample_errors": [
+        "timed out",
+        "timed out",
+        "timed out",
+        "timed out"
+      ]
+    },
+    {
+      "name": "retrieval_heavy_queries",
+      "requests": 2,
+      "concurrency": 2,
+      "duration_secs": 40.0039,
+      "throughput_rps": 0.05,
+      "success": 0,
+      "fail": 2,
+      "status_counts": {
+        "-1": 2
+      },
+      "result_count_avg": 0,
+      "latency_ms": {
+        "min": 40002.485,
+        "avg": 40002.76,
+        "p50": 40002.76,
+        "p95": 40003.008,
+        "p99": 40003.03,
+        "max": 40003.035
+      },
+      "sample_errors": [
+        "timed out",
+        "timed out"
+      ]
+    },
+    {
+      "name": "high_frequency_state_updates",
+      "requests": 30,
+      "concurrency": 12,
+      "duration_secs": 5.3475,
+      "throughput_rps": 5.6101,
+      "success": 30,
+      "fail": 0,
+      "status_counts": {
+        "200": 30
+      },
+      "result_count_avg": 0,
+      "latency_ms": {
+        "min": 8.693,
+        "avg": 2135.222,
+        "p50": 449.122,
+        "p95": 4892.891,
+        "p99": 5096.665,
+        "max": 5179.66
+      },
+      "sample_errors": []
+    }
+  ],
+  "totals": {
+    "requests": 59,
+    "success": 53,
+    "fail": 6,
+    "success_rate": 0.898305
+  },
+  "snapshots": {
+    "status_before": {
+      "ok": true,
+      "status": 200,
+      "latency_ms": 5947.298
+    },
+    "retrieval_before": {
+      "ok": true,
+      "status": 200,
+      "latency_ms": 35.652
+    },
+    "recall_before": {
+      "ok": true,
+      "status": 200,
+      "latency_ms": 397.228
+    },
+    "docker_before": {
+      "containers": [
+        {
+          "name": "letta",
+          "cpu": "90.14%",
+          "mem": "1.447GiB / 54.58GiB",
+          "mem_perc": "2.65%",
+          "net_io": "8.9MB / 388MB",
+          "block_io": "367MB / 16MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-contextlattice-dashboard-1",
+          "cpu": "0.00%",
+          "mem": "480.3MiB / 54.58GiB",
+          "mem_perc": "0.86%",
+          "net_io": "35.2kB / 10.2kB",
+          "block_io": "227MB / 63MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-contextlattice-orchestrator-1",
+          "cpu": "8.59%",
+          "mem": "331.5MiB / 54.58GiB",
+          "mem_perc": "0.59%",
+          "net_io": "1.3GB / 178MB",
+          "block_io": "0B / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-langfuse-1",
+          "cpu": "0.00%",
+          "mem": "488.8MiB / 54.58GiB",
+          "mem_perc": "0.87%",
+          "net_io": "140kB / 38.5kB",
+          "block_io": "104MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-langfuse-worker-1",
+          "cpu": "1.21%",
+          "mem": "284MiB / 54.58GiB",
+          "mem_perc": "0.51%",
+          "net_io": "13.1MB / 55.2MB",
+          "block_io": "149MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-clickhouse-1",
+          "cpu": "5.41%",
+          "mem": "1.884GiB / 54.58GiB",
+          "mem_perc": "3.45%",
+          "net_io": "11.3kB / 1.69kB",
+          "block_io": "197MB / 13.7MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-minio-1",
+          "cpu": "0.13%",
+          "mem": "177.4MiB / 54.58GiB",
+          "mem_perc": "0.32%",
+          "net_io": "13.7kB / 2.95kB",
+          "block_io": "139MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-postgres-1",
+          "cpu": "9.05%",
+          "mem": "58.31MiB / 54.58GiB",
+          "mem_perc": "0.10%",
+          "net_io": "49.3kB / 216kB",
+          "block_io": "28.7MB / 4.1kB"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-redis-1",
+          "cpu": "0.58%",
+          "mem": "26.7MiB / 54.58GiB",
+          "mem_perc": "0.05%",
+          "net_io": "55.2MB / 13.1MB",
+          "block_io": "15.6MB / 3.83MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-mcp-hub-1",
+          "cpu": "0.00%",
+          "mem": "20.37MiB / 54.58GiB",
+          "mem_perc": "0.04%",
+          "net_io": "652kB / 702kB",
+          "block_io": "12.7MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-mcp-qdrant-1",
+          "cpu": "0.14%",
+          "mem": "309.9MiB / 54.58GiB",
+          "mem_perc": "0.55%",
+          "net_io": "455kB / 377kB",
+          "block_io": "200MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-memorymcp-http-1",
+          "cpu": "0.68%",
+          "mem": "119.4MiB / 54.58GiB",
+          "mem_perc": "0.21%",
+          "net_io": "1.02MB / 312kB",
+          "block_io": "0B / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-mindsdb-1",
+          "cpu": "105.37%",
+          "mem": "1.044GiB / 54.58GiB",
+          "mem_perc": "1.91%",
+          "net_io": "216MB / 239MB",
+          "block_io": "321MB / 940MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-mindsdb-http-proxy-1",
+          "cpu": "0.13%",
+          "mem": "95.24MiB / 54.58GiB",
+          "mem_perc": "0.17%",
+          "net_io": "49kB / 2.83kB",
+          "block_io": "41MB / 4.1kB"
+        },
+        {
+          "name": "mem_mcp_lobehub-mongo-1",
+          "cpu": "0.39%",
+          "mem": "3.297GiB / 54.58GiB",
+          "mem_perc": "6.04%",
+          "net_io": "116MB / 1.83GB",
+          "block_io": "97.3MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-promptfoo-1",
+          "cpu": "0.00%",
+          "mem": "152.5MiB / 54.58GiB",
+          "mem_perc": "0.27%",
+          "net_io": "27kB / 8.45kB",
+          "block_io": "65MB / 45.1kB"
+        },
+        {
+          "name": "mem_mcp_lobehub-qdrant-1",
+          "cpu": "0.35%",
+          "mem": "548.4MiB / 54.58GiB",
+          "mem_perc": "0.98%",
+          "net_io": "9.62MB / 79.7MB",
+          "block_io": "52.9MB / 0B"
+        },
+        {
+          "name": "ollama",
+          "cpu": "0.00%",
+          "mem": "407.8MiB / 54.58GiB",
+          "mem_perc": "0.73%",
+          "net_io": "3.63MB / 7.23MB",
+          "block_io": "36.7MB / 0B"
+        }
+      ]
+    },
+    "status_after": {
+      "ok": true,
+      "status": 200,
+      "latency_ms": 5142.35
+    },
+    "retrieval_after": {
+      "ok": true,
+      "status": 200,
+      "latency_ms": 211.305
+    },
+    "recall_after": {
+      "ok": true,
+      "status": 200,
+      "latency_ms": 117.397
+    },
+    "docker_after": {
+      "containers": [
+        {
+          "name": "letta",
+          "cpu": "69.86%",
+          "mem": "1.449GiB / 54.58GiB",
+          "mem_perc": "2.66%",
+          "net_io": "8.97MB / 388MB",
+          "block_io": "367MB / 18.2MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-contextlattice-dashboard-1",
+          "cpu": "0.03%",
+          "mem": "480.3MiB / 54.58GiB",
+          "mem_perc": "0.86%",
+          "net_io": "35.2kB / 10.2kB",
+          "block_io": "227MB / 63MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-contextlattice-orchestrator-1",
+          "cpu": "3.81%",
+          "mem": "322.3MiB / 54.58GiB",
+          "mem_perc": "0.58%",
+          "net_io": "1.36GB / 185MB",
+          "block_io": "0B / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-langfuse-1",
+          "cpu": "0.01%",
+          "mem": "488.8MiB / 54.58GiB",
+          "mem_perc": "0.87%",
+          "net_io": "141kB / 42.7kB",
+          "block_io": "104MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-langfuse-worker-1",
+          "cpu": "0.34%",
+          "mem": "284MiB / 54.58GiB",
+          "mem_perc": "0.51%",
+          "net_io": "13.3MB / 56.1MB",
+          "block_io": "149MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-clickhouse-1",
+          "cpu": "34.02%",
+          "mem": "1.848GiB / 54.58GiB",
+          "mem_perc": "3.39%",
+          "net_io": "11.3kB / 1.69kB",
+          "block_io": "197MB / 13.9MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-minio-1",
+          "cpu": "3.91%",
+          "mem": "187.8MiB / 54.58GiB",
+          "mem_perc": "0.34%",
+          "net_io": "13.7kB / 2.95kB",
+          "block_io": "139MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-postgres-1",
+          "cpu": "0.00%",
+          "mem": "58.31MiB / 54.58GiB",
+          "mem_perc": "0.10%",
+          "net_io": "49.3kB / 216kB",
+          "block_io": "28.7MB / 4.1kB"
+        },
+        {
+          "name": "mem_mcp_lobehub-lf-redis-1",
+          "cpu": "2.34%",
+          "mem": "26.71MiB / 54.58GiB",
+          "mem_perc": "0.05%",
+          "net_io": "56.1MB / 13.3MB",
+          "block_io": "15.6MB / 3.83MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-mcp-hub-1",
+          "cpu": "0.00%",
+          "mem": "20.36MiB / 54.58GiB",
+          "mem_perc": "0.04%",
+          "net_io": "663kB / 714kB",
+          "block_io": "12.7MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-mcp-qdrant-1",
+          "cpu": "0.16%",
+          "mem": "309.9MiB / 54.58GiB",
+          "mem_perc": "0.55%",
+          "net_io": "462kB / 383kB",
+          "block_io": "200MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-memorymcp-http-1",
+          "cpu": "0.19%",
+          "mem": "135.6MiB / 54.58GiB",
+          "mem_perc": "0.24%",
+          "net_io": "1.21MB / 388kB",
+          "block_io": "0B / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-mindsdb-1",
+          "cpu": "43.93%",
+          "mem": "1.045GiB / 54.58GiB",
+          "mem_perc": "1.92%",
+          "net_io": "221MB / 245MB",
+          "block_io": "321MB / 955MB"
+        },
+        {
+          "name": "mem_mcp_lobehub-mindsdb-http-proxy-1",
+          "cpu": "0.25%",
+          "mem": "95.24MiB / 54.58GiB",
+          "mem_perc": "0.17%",
+          "net_io": "49kB / 2.83kB",
+          "block_io": "41MB / 4.1kB"
+        },
+        {
+          "name": "mem_mcp_lobehub-mongo-1",
+          "cpu": "0.50%",
+          "mem": "3.289GiB / 54.58GiB",
+          "mem_perc": "6.03%",
+          "net_io": "117MB / 1.88GB",
+          "block_io": "97.3MB / 0B"
+        },
+        {
+          "name": "mem_mcp_lobehub-promptfoo-1",
+          "cpu": "0.00%",
+          "mem": "152.5MiB / 54.58GiB",
+          "mem_perc": "0.27%",
+          "net_io": "27kB / 8.45kB",
+          "block_io": "65MB / 45.1kB"
+        },
+        {
+          "name": "mem_mcp_lobehub-qdrant-1",
+          "cpu": "0.14%",
+          "mem": "569.3MiB / 54.58GiB",
+          "mem_perc": "1.02%",
+          "net_io": "9.92MB / 82.1MB",
+          "block_io": "52.9MB / 0B"
+        },
+        {
+          "name": "ollama",
+          "cpu": "0.18%",
+          "mem": "424MiB / 54.58GiB",
+          "mem_perc": "0.76%",
+          "net_io": "3.65MB / 7.26MB",
+          "block_io": "36.7MB / 0B"
+        }
+      ]
+    }
+  }
+}

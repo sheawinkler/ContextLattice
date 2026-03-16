@@ -41,8 +41,8 @@ check_not_placeholder() {
 
 echo ">> running production security preflight in $ROOT_DIR"
 
-check_equals MEMMCP_ENV production
-check_non_empty MEMMCP_ORCHESTRATOR_API_KEY
+check_equals CONTEXTLATTICE_ENV production
+check_non_empty CONTEXTLATTICE_ORCHESTRATOR_API_KEY
 check_equals ORCH_SECURITY_STRICT true
 check_equals ORCH_PUBLIC_STATUS false
 check_equals ORCH_PUBLIC_DOCS false

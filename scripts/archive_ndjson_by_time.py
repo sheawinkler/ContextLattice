@@ -2,7 +2,7 @@
 """Archive NDJSON files by timestamp, keeping a hot window.
 
 This is meant for append-only NDJSON history files (one JSON object per line),
-like the memmcp-orchestrator telemetry histories.
+like the contextlattice-orchestrator telemetry histories.
 
 Example:
   python scripts/archive_ndjson_by_time.py \
@@ -143,7 +143,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--cold-dir",
-        default=os.getenv("MEMMCP_COLD_ROOT", "./.data/cold/telemetry"),
+        default=os.getenv(
+            "CONTEXTLATTICE_COLD_ROOT",
+            os.getenv("MEMMCP_COLD_ROOT", "./.data/cold/telemetry"),
+        ),
     )
     parser.add_argument(
         "--timestamp-field",

@@ -1,0 +1,4 @@
+services:
+  memorymcp-http:
+    environment:
+      - DEBUG=*

@@ -1,0 +1,215 @@
+{
+  "generatedAt": "2026-03-16T07:35:52.759323+00:00",
+  "project": "contextlattice",
+  "results": {
+    "meilisearch_spike": {
+      "deep_read": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 9.433,
+          "mean": 8.096,
+          "p50": 9.355,
+          "p95": 9.425
+        },
+        "resultCount": {
+          "max": 0,
+          "mean": 0,
+          "min": 0
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "ops_focus": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 21.716,
+          "mean": 12.715,
+          "p50": 10.242,
+          "p95": 20.569
+        },
+        "resultCount": {
+          "max": 0,
+          "mean": 0,
+          "min": 0
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "short_context": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 38.39,
+          "mean": 17.524,
+          "p50": 7.156,
+          "p95": 35.266
+        },
+        "resultCount": {
+          "max": 0,
+          "mean": 0,
+          "min": 0
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "summary": {
+        "avgP95Ms": 21.753,
+        "maxP95Ms": 35.266
+      }
+    },
+    "quickwit_spike": {
+      "deep_read": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 2.854,
+          "mean": 2.182,
+          "p50": 2.528,
+          "p95": 2.821
+        },
+        "resultCount": {
+          "max": 16,
+          "mean": 16,
+          "min": 16
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "ops_focus": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 9.413,
+          "mean": 5.54,
+          "p50": 4.86,
+          "p95": 8.958
+        },
+        "resultCount": {
+          "max": 9,
+          "mean": 9,
+          "min": 9
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "short_context": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 4.973,
+          "mean": 2.373,
+          "p50": 1.228,
+          "p95": 4.599
+        },
+        "resultCount": {
+          "max": 8,
+          "mean": 8,
+          "min": 8
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "summary": {
+        "avgP95Ms": 5.459,
+        "maxP95Ms": 8.958
+      }
+    },
+    "tantivy_spike": {
+      "deep_read": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 31.363,
+          "mean": 22.885,
+          "p50": 18.958,
+          "p95": 30.122
+        },
+        "resultCount": {
+          "max": 16,
+          "mean": 16,
+          "min": 16
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "ops_focus": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 65.61,
+          "mean": 39.058,
+          "p50": 27.342,
+          "p95": 61.783
+        },
+        "resultCount": {
+          "max": 7,
+          "mean": 7,
+          "min": 7
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "short_context": {
+        "errorCount": 0,
+        "errors": [],
+        "latencyMs": {
+          "max": 13.217,
+          "mean": 12.347,
+          "p50": 12.844,
+          "p95": 13.18
+        },
+        "resultCount": {
+          "max": 8,
+          "mean": 8,
+          "min": 8
+        },
+        "runs": 3,
+        "statusCodes": [
+          200,
+          200,
+          200
+        ]
+      },
+      "summary": {
+        "avgP95Ms": 35.028,
+        "maxP95Ms": 61.783
+      }
+    }
+  },
+  "runsPerCase": 3,
+  "url": "http://memory-bank-spike-rs:8096/search"
+}

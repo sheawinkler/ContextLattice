@@ -1,0 +1,24 @@
+services:
+  memorybank-gateway:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    command: ["--config", "/config/config.json"]
+    volumes:
+      - ./configs/memorybank-gateway.config.json:/config/config.json:ro
+      - memory_bank_data:/data
+    depends_on:
+      mongo:
+        condition: service_started
+    ports:
+      - "53126:9090"
+    restart: unless-stopped
+
+  # Hard-disable the noisy stdio-only service and the broken supergateway
+  memorybank-stdio:
+    deploy:
+      replicas: 0
+    restart: "no"
+
+  memorymcp-http:
+    deploy:
+      replicas: 0
+    restart: "no"

@@ -1,0 +1,50 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports: ["6333:6333"]
+    volumes: ["qdrant_storage:/qdrant/storage"]
+    restart: unless-stopped
+
+  # Qdrant MCP (Streamable HTTP)
+  mcp-qdrant:
+    build: { context: ., dockerfile: dockerfile }
+    depends_on: [qdrant]
+    environment:
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+    ports: ["${QDRANT_MCP_PORT}:8002"]
+    restart: unless-stopped
+
+  mindsdb:
+    image: mindsdb/mindsdb:latest
+    environment:
+      MINDSDB_APIS: ${MINDSDB_APIS}
+    ports:
+      - "${MINDS_HTTP_PORT}:47334"   # HTTP API (/mcp, /mcp/sse)
+      - "${MINDSDB_MCP_PORT}:47337"  # SSE (on some builds)
+    volumes: ["mindsdb_data:/root/.mindsdb"]
+    restart: unless-stopped
+
+  # Memory Bank via stdio -> SSE proxy
+  memorybank-stdio:
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      MEMORY_BANK_ROOT: "/data"
+    volumes: ["memory_bank_data:/data"]
+    command: sh -lc "npx -y @allpepper/memory-bank-mcp"
+    restart: unless-stopped
+
+  memorybank-gateway:
+    command: ["/main", "--config", "/config/config.json"]
+    volumes:
+      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+  memorybank-gateway:
+    command: ["/main", "--config", "/config/config.json"]
+    volumes:
+      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+  memorybank-gateway:
+    command: ["/main", "--config", "/config/config.json"]
+    volumes:
+      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro

@@ -7,8 +7,14 @@ cd "$ROOT_DIR"
 RETENTION_DAYS="${MEMORY_BANK_RETENTION_DAYS:-90}"
 DRY_RUN="${MEMORY_BANK_PURGE_DRY_RUN:-0}"
 VERBOSE="${MEMORY_BANK_PURGE_VERBOSE:-0}"
-MEMMCP_DASHBOARD_URL="${MEMMCP_DASHBOARD_URL:-}"
-MEMMCP_DASHBOARD_API_KEY="${MEMMCP_DASHBOARD_API_KEY:-}"
+CONTEXTLATTICE_DASHBOARD_URL="${CONTEXTLATTICE_DASHBOARD_URL:-}"
+CONTEXTLATTICE_DASHBOARD_API_KEY="${CONTEXTLATTICE_DASHBOARD_API_KEY:-}"
+if [[ -z "$CONTEXTLATTICE_DASHBOARD_URL" ]]; then
+  CONTEXTLATTICE_DASHBOARD_URL="${MEMMCP_DASHBOARD_URL:-}"
+fi
+if [[ -z "$CONTEXTLATTICE_DASHBOARD_API_KEY" ]]; then
+  CONTEXTLATTICE_DASHBOARD_API_KEY="${MEMMCP_DASHBOARD_API_KEY:-}"
+fi
 
 resolve_memory_root() {
   if [[ -n "${MEMORY_BANK_PATH:-}" ]]; then
@@ -60,9 +66,9 @@ else
   fi
 fi
 
-if [[ -n "$MEMMCP_DASHBOARD_URL" && -n "$MEMMCP_DASHBOARD_API_KEY" ]]; then
-  curl -fsS "$MEMMCP_DASHBOARD_URL/api/workspace/audit" \
+if [[ -n "$CONTEXTLATTICE_DASHBOARD_URL" && -n "$CONTEXTLATTICE_DASHBOARD_API_KEY" ]]; then
+  curl -fsS "$CONTEXTLATTICE_DASHBOARD_URL/api/workspace/audit" \
     -H "content-type: application/json" \
-    -H "x-api-key: $MEMMCP_DASHBOARD_API_KEY" \
+    -H "x-api-key: $CONTEXTLATTICE_DASHBOARD_API_KEY" \
     -d "{\"action\":\"memory.purge\",\"targetType\":\"memory\",\"metadata\":{\"retentionDays\":$RETENTION_DAYS,\"files\":$purge_count,\"dryRun\":$DRY_RUN}}" >/dev/null || true
 fi

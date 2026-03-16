@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Agent orchestration helper for memMCP.
+Agent orchestration helper for ContextLattice.
 Enables multi-agent coordination through shared memory + task tracking.
 """
 
@@ -14,15 +14,16 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
-MEMMCP_ORCHESTRATOR_URL = os.getenv(
-    "MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"
+DEFAULT_ORCHESTRATOR_URL = os.getenv(
+    "CONTEXTLATTICE_ORCHESTRATOR_URL",
+    os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
 )
 
 
-class MemMCPOrchestrator:
-    """Helper for agent coordination via memMCP."""
+class ContextLatticeOrchestrator:
+    """Helper for agent coordination via ContextLattice."""
 
-    def __init__(self, orchestrator_url: str = MEMMCP_ORCHESTRATOR_URL):
+    def __init__(self, orchestrator_url: str = DEFAULT_ORCHESTRATOR_URL):
         self.base_url = orchestrator_url.rstrip("/")
         api_key = (
             os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
@@ -40,7 +41,7 @@ class MemMCPOrchestrator:
         return f"{encoded_project}/{'/'.join(parts)}" if parts else encoded_project
 
     def write(self, project: str, file_name: str, content: str) -> Dict[str, Any]:
-        """Write a file to memMCP."""
+        """Write a file to ContextLattice."""
         resp = self.client.post(
             f"{self.base_url}/memory/write",
             json={
@@ -53,7 +54,7 @@ class MemMCPOrchestrator:
         return resp.json()
 
     def read(self, project: str, file_name: str) -> str:
-        """Read a file from memMCP."""
+        """Read a file from ContextLattice."""
         path = self._encode_project_path(project, file_name)
         resp = self.client.get(f"{self.base_url}/memory/files/{path}")
         resp.raise_for_status()
@@ -215,10 +216,14 @@ class MemMCPOrchestrator:
         return resp.json()
 
 
-class TaskCoordinator:
-    """Coordinates tasks across multiple agents via memMCP."""
+# Backwards-compatible alias for external scripts importing the old symbol.
+MemMCPOrchestrator = ContextLatticeOrchestrator
 
-    def __init__(self, orchestrator: MemMCPOrchestrator, project: str):
+
+class TaskCoordinator:
+    """Coordinates tasks across multiple agents via ContextLattice."""
+
+    def __init__(self, orchestrator: ContextLatticeOrchestrator, project: str):
         self.orch = orchestrator
         self.project = project
 
@@ -311,7 +316,7 @@ def main():
         print("  create-tasks <project> <task_id> <tasks_json>")
         sys.exit(1)
 
-    orch = MemMCPOrchestrator()
+    orch = ContextLatticeOrchestrator()
     cmd = sys.argv[1]
 
     if cmd == "write":

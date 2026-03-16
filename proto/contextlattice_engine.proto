@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package contextlattice.engine.v1;
+
+message MemoryItem {
+  string id = 1;
+  string project = 2;
+  string file_name = 3;
+  string topic_path = 4;
+  string content = 5;
+  string metadata_json = 6;
+}
+
+message PutMemoryRequest {
+  MemoryItem item = 1;
+}
+
+message PutMemoryResponse {
+  string memory_id = 1;
+}
+
+message GetMemoryRequest {
+  string memory_id = 1;
+}
+
+message GetMemoryResponse {
+  MemoryItem item = 1;
+}
+
+message QueryMemoryRequest {
+  string query = 1;
+  uint32 limit = 2;
+  string project_filter = 3;
+  string topic_filter = 4;
+  string mode = 5;
+  string filters_json = 6;
+}
+
+message QueryMemoryResponse {
+  repeated MemoryItem items = 1;
+  string debug_json = 2;
+}
+
+message BatchPutRequest {
+  repeated MemoryItem items = 1;
+}
+
+message BatchPutResponse {
+  repeated string memory_ids = 1;
+}
+
+message BatchQueryRequest {
+  repeated QueryMemoryRequest requests = 1;
+}
+
+message BatchQueryResponse {
+  repeated QueryMemoryResponse responses = 1;
+}
+
+message StatsRequest {}
+
+message StatsResponse {
+  bool ok = 1;
+  string impl = 2;
+  string details_json = 3;
+}
+
+service ContextEngineService {
+  rpc PutMemory(PutMemoryRequest) returns (PutMemoryResponse);
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
+  rpc QueryMemory(QueryMemoryRequest) returns (QueryMemoryResponse);
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  rpc BatchQuery(BatchQueryRequest) returns (BatchQueryResponse);
+  rpc GetStats(StatsRequest) returns (StatsResponse);
+}

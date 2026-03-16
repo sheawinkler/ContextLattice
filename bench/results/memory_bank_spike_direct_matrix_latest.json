@@ -1,0 +1,398 @@
+{
+  "backends": [
+    "quickwit_spike",
+    "meilisearch_spike",
+    "tantivy_spike"
+  ],
+  "baseUrl": "http://127.0.0.1:8096",
+  "cacheBustQueries": true,
+  "cases": [
+    "short_context",
+    "deep_read",
+    "ops_focus"
+  ],
+  "generatedAt": "2026-03-16T08:02:21.855675+00:00",
+  "health": {
+    "backend_modes": [
+      "tantivy_spike",
+      "quickwit_spike",
+      "meilisearch_spike"
+    ],
+    "docs_loaded": 0,
+    "fingerprint": 0,
+    "meili_index_uid": "contextlattice_memory",
+    "meili_task_timeout_secs": 30,
+    "meili_url": "http://meilisearch:7700",
+    "ok": true,
+    "refreshed_at_unix_secs": 0,
+    "spike_data_root": "/data/memory-bank"
+  },
+  "project": "contextlattice",
+  "recommendations": [],
+  "results": {
+    "meilisearch_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 12.476,
+            "mean": 5.286,
+            "min": 3.358,
+            "p50": 4.387,
+            "p95": 9.836,
+            "p99": 11.948
+          },
+          "resultCount": {
+            "max": 7,
+            "mean": 7.0,
+            "min": 7
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.222,
+            "mean": 0.222
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 9.574,
+            "mean": 4.298,
+            "min": 2.657,
+            "p50": 3.528,
+            "p95": 8.06,
+            "p99": 9.271
+          },
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 9.304,
+            "mean": 5.108,
+            "min": 3.766,
+            "p50": 4.628,
+            "p95": 7.939,
+            "p99": 9.031
+          },
+          "resultCount": {
+            "max": 7,
+            "mean": 7.0,
+            "min": 7
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.988,
+            "mean": 0.97
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 8.612,
+        "avgResultCount": 4.667,
+        "maxP95Ms": 9.836
+      }
+    },
+    "quickwit_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 19.018,
+            "mean": 6.663,
+            "min": 2.54,
+            "p50": 4.536,
+            "p95": 15.252,
+            "p99": 18.265
+          },
+          "resultCount": {
+            "max": 16,
+            "mean": 16.0,
+            "min": 16
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 55.807,
+            "mean": 55.807
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 5.612,
+            "mean": 3.804,
+            "min": 2.44,
+            "p50": 3.828,
+            "p95": 5.295,
+            "p99": 5.549
+          },
+          "resultCount": {
+            "max": 5,
+            "mean": 5.0,
+            "min": 5
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 43.827,
+            "mean": 43.827
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 13.208,
+            "mean": 5.519,
+            "min": 1.942,
+            "p50": 4.36,
+            "p95": 11.729,
+            "p99": 12.912
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 66.257,
+            "mean": 66.257
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 10.759,
+        "avgResultCount": 9.667,
+        "maxP95Ms": 15.252
+      }
+    },
+    "tantivy_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 8.988,
+            "mean": 8.396,
+            "min": 7.813,
+            "p50": 8.412,
+            "p95": 8.967,
+            "p99": 8.984
+          },
+          "resultCount": {
+            "max": 16,
+            "mean": 16.0,
+            "min": 16
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 35.797,
+            "mean": 35.797
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 15.001,
+            "mean": 9.811,
+            "min": 8.069,
+            "p50": 9.277,
+            "p95": 13.244,
+            "p99": 14.65
+          },
+          "resultCount": {
+            "max": 5,
+            "mean": 5.0,
+            "min": 5
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 21.027,
+            "mean": 21.027
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 11.466,
+            "mean": 7.995,
+            "min": 6.595,
+            "p50": 7.154,
+            "p95": 10.76,
+            "p99": 11.325
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 8,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 37.357,
+            "mean": 37.357
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 10.99,
+        "avgResultCount": 9.667,
+        "maxP95Ms": 13.244
+      }
+    }
+  },
+  "runsPerCase": 8
+}

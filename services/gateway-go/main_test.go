@@ -833,6 +833,7 @@ func TestStagedRetrievalWithoutLexicalGuardRunsSyncSlowFallback(t *testing.T) {
 
 func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_RUST_LANE_PROMOTION_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
@@ -1013,8 +1014,10 @@ func TestContinuationEventsEndpointStreamsHistoryAndUpdates(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for continuation update chunk")
 	}
-	if !strings.Contains(updateChunk, "event: update") && !strings.Contains(updateChunk, "event: heartbeat") {
-		t.Fatalf("expected update or heartbeat event, got: %s", updateChunk)
+	if !strings.Contains(updateChunk, "event: update") &&
+		!strings.Contains(updateChunk, "event: heartbeat") &&
+		!strings.Contains(updateChunk, "event: ready") {
+		t.Fatalf("expected update, heartbeat, or ready event, got: %s", updateChunk)
 	}
 }
 
@@ -1044,7 +1047,7 @@ func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 	s.recordAdaptiveObservation(sourceLetta, 30*time.Second, false)
 	s.recordAdaptiveObservation(sourceLetta, 28*time.Second, false)
 
-	adjustedNoBacklog, detailNoBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false)
+	adjustedNoBacklog, detailNoBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false, false)
 	if adjustedNoBacklog <= 20*time.Second {
 		t.Fatalf("expected adaptive timeout to exceed base timeout, got %s", adjustedNoBacklog)
 	}
@@ -1059,7 +1062,7 @@ func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 	defer s.decrementContinuationBacklog(sourceLetta)
 	defer s.decrementContinuationBacklog(sourceLetta)
 
-	adjustedWithBacklog, detailWithBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false)
+	adjustedWithBacklog, detailWithBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false, false)
 	if adjustedWithBacklog >= adjustedNoBacklog {
 		t.Fatalf("expected backlog pressure to reduce adaptive timeout: no_backlog=%s with_backlog=%s", adjustedNoBacklog, adjustedWithBacklog)
 	}

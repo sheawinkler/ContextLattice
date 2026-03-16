@@ -207,6 +207,53 @@ services:
     restart: unless-stopped
     profiles: ["core"]
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-contextlattice_meili_dev_key}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - ${MEILI_DATA:-meili_data}:/meili_data
+    expose: ["7700"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7700/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
+  memory-bank-spike-rs:
+    build: { context: ., dockerfile: Dockerfile.memory-bank-spike-rs }
+    depends_on:
+      meilisearch:
+        condition: service_started
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}
+      MB_SPIKE_DATA_ROOT: /data/memory-bank
+      MB_SPIKE_REFRESH_SECS: ${MEMORY_BANK_SPIKE_RS_REFRESH_SECS:-120}
+      MB_SPIKE_MAX_DOCS: ${MEMORY_BANK_SPIKE_RS_MAX_DOCS:-50000}
+      MB_SPIKE_MAX_CONTENT_CHARS: ${MEMORY_BANK_SPIKE_RS_MAX_CONTENT_CHARS:-4096}
+      MB_SPIKE_MEILI_URL: ${MEMORY_BANK_SPIKE_RS_MEILI_URL:-http://meilisearch:7700}
+      MB_SPIKE_MEILI_API_KEY: ${MEILI_MASTER_KEY:-contextlattice_meili_dev_key}
+      MB_SPIKE_MEILI_INDEX: ${MEMORY_BANK_SPIKE_RS_MEILI_INDEX:-contextlattice_memory}
+      MB_SPIKE_MEILI_SYNC_SECS: ${MEMORY_BANK_SPIKE_RS_MEILI_SYNC_SECS:-300}
+      MB_SPIKE_MEILI_TASK_TIMEOUT_SECS: ${MEMORY_BANK_SPIKE_RS_MEILI_TASK_TIMEOUT_SECS:-30}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MEMORY_BANK_SPIKE_RS_PORT:-8096}:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}"
+    expose: ["${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
   # Observability: Langfuse (app + worker + Postgres + ClickHouse + Redis + MinIO)
   lf-postgres:
     image: postgres:16-alpine
@@ -390,6 +437,8 @@ services:
       gateway-go:
         condition: service_started
       fastembed-sidecar:
+        condition: service_started
+      memory-bank-spike-rs:
         condition: service_started
     environment:
       CONTEXTLATTICE_HTTP_URL: ${CONTEXTLATTICE_HTTP_URL:-${MEMMCP_HTTP_URL:-http://memorymcp-http:59081/mcp}}
@@ -694,9 +743,9 @@ services:
       ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES: ${ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES:-telemetry,metrics,signals,overrides}
       ORCH_MEMORY_BANK_TELEMETRY_MARKERS: ${ORCH_MEMORY_BANK_TELEMETRY_MARKERS:-telemetry,metrics,__state__,__stats__,__snapshots__,__health__,__allocations__,_agg-,queue__}
       ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-native}
-      ORCH_MEMORY_BANK_SPIKE_HTTP_URL: ${ORCH_MEMORY_BANK_SPIKE_HTTP_URL:-}
+      ORCH_MEMORY_BANK_SPIKE_HTTP_URL: ${ORCH_MEMORY_BANK_SPIKE_HTTP_URL:-http://memory-bank-spike-rs:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}}
       ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE: ${ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE:-/search}
-      ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS: ${ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS:-1.5}
+      ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS: ${ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS:-10.0}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:-true}
       ORCH_QDRANT_TELEMETRY_GUARD_ENABLED: ${ORCH_QDRANT_TELEMETRY_GUARD_ENABLED:-true}
       ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED: ${ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED:-true}
@@ -901,6 +950,7 @@ volumes:
   memory_bank_data: {}
   orchestrator_data: {}
   fastembed_model_cache: {}
+  meili_data: {}
   letta_pg: {}
   lf_pgdata: {}
   clickhouse_data: {}

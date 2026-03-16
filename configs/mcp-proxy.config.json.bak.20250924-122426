@@ -1,0 +1,11 @@
+{
+  "mcpProxy": {
+    "listen": "0.0.0.0:9090",
+    "servers": [
+      { "name": "qdrant-adv", "transportType": "streamable-http", "url": "http://mcp-qdrant-adv:8022/mcp" },
+      { "name": "qdrant",     "transportType": "streamable-http", "url": "http://mcp-qdrant:8002/mcp"  },
+      { "name": "mindsdb",    "transportType": "streamable-http", "url": "http://mindsdb-http-proxy:8004/mcp" }
+      /* MemoryBank will be added here after we wrap its stdio properly */
+    ]
+  }
+}
