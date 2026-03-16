@@ -34,3 +34,10 @@ cargo test -p context_retrieval --features "qdrant_remote usearch_ann tantivy_le
   - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS`
   - behavior: if `backend_policy.lexical_backend=tantivy_lexical` and fast-phase lexical coverage is strong, sync slow fallback is deferred and continued asynchronously.
 - Run side-by-side recall/latency benchmarks against current Python path.
+
+## Latest Spike Evidence (2026-03-16)
+
+- Detailed runbook and measurements: `docs/perf-candidate-notes/high_value_db_recommendation_20260316.md`
+- Current state:
+  - `trieve_spike` and `helixdb_spike` are now configured and return non-error results through dedicated adapters.
+  - Both are compatibility adapters over memory-bank data, not native Trieve/Helix engines.

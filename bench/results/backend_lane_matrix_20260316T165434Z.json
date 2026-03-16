@@ -6,20 +6,9 @@
     "deep_read",
     "ops_focus"
   ],
-  "generatedAt": "2026-03-16T17:09:34.506155+00:00",
+  "generatedAt": "2026-03-16T16:54:34.790231+00:00",
   "overallMemoryBankBackend": {
     "after": {
-      "attempts": 288,
-      "defaultEnabled": false,
-      "failures": 91,
-      "fallbacks": 93,
-      "lastError": null,
-      "lastLatencyMs": 120.81,
-      "mode": "native",
-      "spikeUrlConfigured": true,
-      "successes": 197
-    },
-    "before": {
       "attempts": 252,
       "defaultEnabled": false,
       "failures": 91,
@@ -30,11 +19,22 @@
       "spikeUrlConfigured": true,
       "successes": 161
     },
+    "before": {
+      "attempts": 216,
+      "defaultEnabled": false,
+      "failures": 85,
+      "fallbacks": 87,
+      "lastError": "Server error '502 Bad Gateway' for url 'http://memory-bank-spike-rs:8096/search'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+      "lastLatencyMs": 10.59,
+      "mode": "native",
+      "spikeUrlConfigured": true,
+      "successes": 131
+    },
     "delta": {
       "attempts": 36,
-      "failures": 0,
-      "fallbacks": 0,
-      "successes": 36
+      "failures": 6,
+      "fallbacks": 6,
+      "successes": 30
     }
   },
   "overallSourceLatency": {
@@ -42,19 +42,19 @@
       "qdrant": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 153.356,
-        "p95Ms": 835.434,
-        "p99Ms": 849.177,
-        "requests": 16,
+        "p50Ms": 130.294,
+        "p95Ms": 837.725,
+        "p99Ms": 849.635,
+        "requests": 14,
         "timeouts": 0
       },
       "topic_rollups": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 1.959,
-        "p95Ms": 5.77,
-        "p99Ms": 7.797,
-        "requests": 16,
+        "p50Ms": 2.087,
+        "p95Ms": 6.108,
+        "p99Ms": 7.865,
+        "requests": 14,
         "timeouts": 0
       }
     },
@@ -62,19 +62,19 @@
       "qdrant": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 153.356,
-        "p95Ms": 835.434,
-        "p99Ms": 849.177,
-        "requests": 16,
+        "p50Ms": 130.294,
+        "p95Ms": 837.725,
+        "p99Ms": 849.635,
+        "requests": 14,
         "timeouts": 0
       },
       "topic_rollups": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 1.959,
-        "p95Ms": 5.77,
-        "p99Ms": 7.797,
-        "requests": 16,
+        "p50Ms": 2.087,
+        "p95Ms": 6.108,
+        "p99Ms": 7.865,
+        "requests": 14,
         "timeouts": 0
       }
     }
@@ -91,7 +91,7 @@
   ],
   "project": "contextlattice",
   "recommendations": [
-    "Rust lane request regressed avg p95 by 54.705% vs baseline in this run."
+    "Rust lane request regressed avg p95 by 13.958% vs baseline in this run."
   ],
   "results": {
     "baseline_qdrant_rollups": {
@@ -109,12 +109,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 36.114,
-            "mean": 34.701,
-            "min": 33.288,
-            "p50": 34.701,
-            "p95": 35.973,
-            "p99": 36.086
+            "max": 153.202,
+            "mean": 144.379,
+            "min": 135.556,
+            "p50": 144.379,
+            "p95": 152.319,
+            "p99": 153.025
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -126,15 +126,15 @@
           "runs": 2,
           "sourceCountsSample": {
             "qdrant": 60,
-            "topic_rollups": 9
+            "topic_rollups": 8
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.296,
-            "mean": 1.296
+            "max": 1.298,
+            "mean": 1.298
           }
         },
         "ops_focus": {
@@ -150,12 +150,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 46.119,
-            "mean": 39.189,
-            "min": 32.259,
-            "p50": 39.189,
-            "p95": 45.426,
-            "p99": 45.98
+            "max": 112.727,
+            "mean": 105.009,
+            "min": 97.291,
+            "p50": 105.009,
+            "p95": 111.955,
+            "p99": 112.572
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -167,15 +167,15 @@
           "runs": 2,
           "sourceCountsSample": {
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 2
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.301,
-            "mean": 1.301
+            "max": 1.303,
+            "mean": 1.303
           }
         },
         "short_context": {
@@ -191,12 +191,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 23.8,
-            "mean": 23.294,
-            "min": 22.787,
-            "p50": 23.294,
-            "p95": 23.75,
-            "p99": 23.79
+            "max": 203.738,
+            "mean": 174.311,
+            "min": 144.884,
+            "p50": 174.311,
+            "p95": 200.796,
+            "p99": 203.15
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -208,41 +208,41 @@
           "runs": 2,
           "sourceCountsSample": {
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 8
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.284,
-            "mean": 1.284
+            "max": 1.286,
+            "mean": 1.286
           }
         }
       },
       "description": "Control lane with explicit qdrant + topic_rollups only.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 252,
+          "attempts": 216,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 465.5,
+          "failures": 85,
+          "fallbacks": 87,
+          "lastError": "Server error '502 Bad Gateway' for url 'http://memory-bank-spike-rs:8096/search'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+          "lastLatencyMs": 10.59,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 161
+          "successes": 131
         },
         "before": {
-          "attempts": 252,
+          "attempts": 216,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 465.5,
+          "failures": 85,
+          "fallbacks": 87,
+          "lastError": "Server error '502 Bad Gateway' for url 'http://memory-bank-spike-rs:8096/search'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+          "lastLatencyMs": 10.59,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 161
+          "successes": 131
         },
         "delta": {
           "attempts": 0,
@@ -277,8 +277,8 @@
       "summary": {
         "avgErrorRate": 0.0,
         "avgP95DeltaVsBaselinePct": 0.0,
-        "avgP95Ms": 35.05,
-        "maxP95Ms": 45.426,
+        "avgP95Ms": 155.023,
+        "maxP95Ms": 200.796,
         "policyMismatchTotal": 0
       }
     },
@@ -297,12 +297,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 177.396,
-            "mean": 170.081,
-            "min": 162.767,
-            "p50": 170.081,
-            "p95": 176.665,
-            "p99": 177.25
+            "max": 873.457,
+            "mean": 742.558,
+            "min": 611.659,
+            "p50": 742.558,
+            "p95": 860.367,
+            "p99": 870.839
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -322,8 +322,8 @@
             200
           ],
           "topScore": {
-            "max": 9.993,
-            "mean": 9.993
+            "max": 10.069,
+            "mean": 10.069
           }
         },
         "ops_focus": {
@@ -339,12 +339,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 142.337,
-            "mean": 141.5,
-            "min": 140.664,
-            "p50": 141.5,
-            "p95": 142.253,
-            "p99": 142.32
+            "max": 574.347,
+            "mean": 534.604,
+            "min": 494.861,
+            "p50": 534.604,
+            "p95": 570.373,
+            "p99": 573.552
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -357,7 +357,7 @@
           "sourceCountsSample": {
             "memory_bank": 20,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
@@ -381,12 +381,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 145.472,
-            "mean": 143.008,
-            "min": 140.544,
-            "p50": 143.008,
-            "p95": 145.226,
-            "p99": 145.423
+            "max": 1151.555,
+            "mean": 789.999,
+            "min": 428.443,
+            "p50": 789.999,
+            "p95": 1115.399,
+            "p99": 1144.324
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -399,41 +399,41 @@
           "sourceCountsSample": {
             "memory_bank": 24,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 12
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 12.468,
-            "mean": 12.467
+            "max": 12.543,
+            "mean": 12.543
           }
         }
       },
       "description": "Memory-bank spike lane request: helixdb_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 288,
+          "attempts": 252,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
           "lastError": null,
-          "lastLatencyMs": 120.81,
+          "lastLatencyMs": 465.5,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 197
+          "successes": 161
         },
         "before": {
-          "attempts": 282,
+          "attempts": 246,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
           "lastError": null,
-          "lastLatencyMs": 122.328,
+          "lastLatencyMs": 574.766,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 191
+          "successes": 155
         },
         "delta": {
           "attempts": 6,
@@ -469,9 +469,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -341.412,
-        "avgP95Ms": 154.715,
-        "maxP95Ms": 176.665,
+        "avgP95DeltaVsBaselinePct": -447.476,
+        "avgP95Ms": 848.713,
+        "maxP95Ms": 1115.399,
         "policyMismatchTotal": 0
       }
     },
@@ -490,12 +490,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 120.441,
-            "mean": 102.777,
-            "min": 85.114,
-            "p50": 102.777,
-            "p95": 118.674,
-            "p99": 120.087
+            "max": 1634.945,
+            "mean": 1179.693,
+            "min": 724.441,
+            "p50": 1179.693,
+            "p95": 1589.42,
+            "p99": 1625.84
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -515,8 +515,8 @@
             200
           ],
           "topScore": {
-            "max": 113.235,
-            "mean": 112.97
+            "max": 113.179,
+            "mean": 112.914
           }
         },
         "ops_focus": {
@@ -532,12 +532,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 115.869,
-            "mean": 102.204,
-            "min": 88.539,
-            "p50": 102.204,
-            "p95": 114.502,
-            "p99": 115.595
+            "max": 1123.451,
+            "mean": 817.88,
+            "min": 512.308,
+            "p50": 817.88,
+            "p95": 1092.894,
+            "p99": 1117.34
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -550,15 +550,15 @@
           "sourceCountsSample": {
             "memory_bank": 26,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 129.877,
-            "mean": 129.612
+            "max": 129.82,
+            "mean": 129.554
           }
         },
         "short_context": {
@@ -574,12 +574,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 72.107,
-            "mean": 65.385,
-            "min": 58.662,
-            "p50": 65.385,
-            "p95": 71.435,
-            "p99": 71.973
+            "max": 1398.431,
+            "mean": 1036.155,
+            "min": 673.878,
+            "p50": 1036.155,
+            "p95": 1362.203,
+            "p99": 1391.186
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -592,41 +592,41 @@
           "sourceCountsSample": {
             "memory_bank": 24,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 12
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 102.071,
-            "mean": 101.806
+            "max": 102.259,
+            "mean": 101.994
           }
         }
       },
       "description": "Memory-bank spike lane request: lancedb_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 276,
+          "attempts": 240,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
           "lastError": null,
-          "lastLatencyMs": 51.238,
+          "lastLatencyMs": 349.119,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 185
+          "successes": 149
         },
         "before": {
-          "attempts": 270,
+          "attempts": 234,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 56.201,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10136.9,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 179
+          "successes": 143
         },
         "delta": {
           "attempts": 6,
@@ -662,9 +662,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -189.692,
-        "avgP95Ms": 101.537,
-        "maxP95Ms": 118.674,
+        "avgP95DeltaVsBaselinePct": -769.659,
+        "avgP95Ms": 1348.172,
+        "maxP95Ms": 1589.42,
         "policyMismatchTotal": 0
       }
     },
@@ -683,12 +683,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 58.143,
-            "mean": 55.877,
-            "min": 53.612,
-            "p50": 55.877,
-            "p95": 57.916,
-            "p99": 58.097
+            "max": 11188.714,
+            "mean": 10760.517,
+            "min": 10332.319,
+            "p50": 10760.517,
+            "p95": 11145.895,
+            "p99": 11180.151
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -699,7 +699,7 @@
           },
           "runs": 2,
           "sourceCountsSample": {
-            "memory_bank": 8,
+            "memory_bank": 5,
             "qdrant": 60,
             "topic_rollups": 9
           },
@@ -708,8 +708,8 @@
             200
           ],
           "topScore": {
-            "max": 1.345,
-            "mean": 1.345
+            "max": 1.348,
+            "mean": 1.348
           }
         },
         "ops_focus": {
@@ -725,12 +725,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 103.921,
-            "mean": 83.217,
-            "min": 62.513,
-            "p50": 83.217,
-            "p95": 101.85,
-            "p99": 103.507
+            "max": 12136.833,
+            "mean": 12023.046,
+            "min": 11909.26,
+            "p50": 12023.046,
+            "p95": 12125.455,
+            "p99": 12134.558
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -741,17 +741,17 @@
           },
           "runs": 2,
           "sourceCountsSample": {
-            "memory_bank": 1,
+            "memory_bank": 2,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.35,
-            "mean": 1.35
+            "max": 1.353,
+            "mean": 1.352
           }
         },
         "short_context": {
@@ -767,12 +767,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 56.797,
-            "mean": 45.775,
-            "min": 34.752,
-            "p50": 45.775,
-            "p95": 55.695,
-            "p99": 56.577
+            "max": 10434.373,
+            "mean": 10402.274,
+            "min": 10370.175,
+            "p50": 10402.274,
+            "p95": 10431.163,
+            "p99": 10433.731
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -783,52 +783,54 @@
           },
           "runs": 2,
           "sourceCountsSample": {
-            "memory_bank": 11,
+            "memory_bank": 6,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 12
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.34,
-            "mean": 1.34
+            "max": 1.343,
+            "mean": 1.342
           }
         }
       },
       "description": "Memory-bank spike lane request: meilisearch_spike.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 270,
+          "attempts": 234,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 56.201,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10136.9,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 179
+          "successes": 143
         },
         "before": {
-          "attempts": 264,
+          "attempts": 228,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
+          "failures": 85,
+          "fallbacks": 87,
           "lastError": null,
-          "lastLatencyMs": 33.054,
+          "lastLatencyMs": 59.252,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 173
+          "successes": 143
         },
         "delta": {
           "attempts": 6,
-          "failures": 0,
-          "fallbacks": 0,
-          "successes": 6
+          "failures": 6,
+          "fallbacks": 6,
+          "successes": 0
         }
       },
-      "notes": [],
+      "notes": [
+        "spike backend attempts did not succeed during this run."
+      ],
       "profileDescriptor": {
         "data_model": "lexical+semantic",
         "data_store": "memory_bank(meilisearch)+qdrant+topic_rollups",
@@ -855,9 +857,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -104.907,
-        "avgP95Ms": 71.82,
-        "maxP95Ms": 101.85,
+        "avgP95DeltaVsBaselinePct": -7146.777,
+        "avgP95Ms": 11234.171,
+        "maxP95Ms": 12125.455,
         "policyMismatchTotal": 0
       }
     },
@@ -876,12 +878,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 62.021,
-            "mean": 59.71,
-            "min": 57.4,
-            "p50": 59.71,
-            "p95": 61.79,
-            "p99": 61.975
+            "max": 141.505,
+            "mean": 116.004,
+            "min": 90.503,
+            "p50": 116.004,
+            "p95": 138.955,
+            "p99": 140.995
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -901,8 +903,8 @@
             200
           ],
           "topScore": {
-            "max": 40.174,
-            "mean": 40.174
+            "max": 40.231,
+            "mean": 40.231
           }
         },
         "ops_focus": {
@@ -918,12 +920,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 55.561,
-            "mean": 48.797,
-            "min": 42.033,
-            "p50": 48.797,
-            "p95": 54.884,
-            "p99": 55.425
+            "max": 118.108,
+            "mean": 115.903,
+            "min": 113.698,
+            "p50": 115.903,
+            "p95": 117.887,
+            "p99": 118.064
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -936,15 +938,15 @@
           "sourceCountsSample": {
             "memory_bank": 15,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 34.287,
-            "mean": 34.287
+            "max": 34.273,
+            "mean": 34.273
           }
         },
         "short_context": {
@@ -960,12 +962,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 35.872,
-            "mean": 35.232,
-            "min": 34.593,
-            "p50": 35.232,
-            "p95": 35.808,
-            "p99": 35.859
+            "max": 6507.372,
+            "mean": 3317.912,
+            "min": 128.453,
+            "p50": 3317.912,
+            "p95": 6188.426,
+            "p99": 6443.583
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -978,41 +980,41 @@
           "sourceCountsSample": {
             "memory_bank": 21,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 12
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 45.089,
-            "mean": 45.089
+            "max": 45.144,
+            "mean": 45.144
           }
         }
       },
       "description": "Memory-bank spike lane request: quickwit_spike.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 258,
+          "attempts": 222,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
+          "failures": 85,
+          "fallbacks": 87,
           "lastError": null,
-          "lastLatencyMs": 9.88,
+          "lastLatencyMs": 44.305,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 167
+          "successes": 137
         },
         "before": {
-          "attempts": 252,
+          "attempts": 216,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 465.5,
+          "failures": 85,
+          "fallbacks": 87,
+          "lastError": "Server error '502 Bad Gateway' for url 'http://memory-bank-spike-rs:8096/search'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+          "lastLatencyMs": 10.59,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 161
+          "successes": 131
         },
         "delta": {
           "attempts": 6,
@@ -1048,9 +1050,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -45.013,
-        "avgP95Ms": 50.827,
-        "maxP95Ms": 61.79,
+        "avgP95DeltaVsBaselinePct": -1285.874,
+        "avgP95Ms": 2148.423,
+        "maxP95Ms": 6188.426,
         "policyMismatchTotal": 0
       }
     },
@@ -1069,12 +1071,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 72.078,
-            "mean": 64.131,
-            "min": 56.185,
-            "p50": 64.131,
-            "p95": 71.283,
-            "p99": 71.919
+            "max": 339.509,
+            "mean": 292.733,
+            "min": 245.957,
+            "p50": 292.733,
+            "p95": 334.832,
+            "p99": 338.574
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1094,8 +1096,8 @@
             200
           ],
           "topScore": {
-            "max": 42.073,
-            "mean": 42.073
+            "max": 42.051,
+            "mean": 42.051
           }
         },
         "ops_focus": {
@@ -1111,12 +1113,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 62.543,
-            "mean": 55.955,
-            "min": 49.366,
-            "p50": 55.955,
-            "p95": 61.885,
-            "p99": 62.412
+            "max": 114.054,
+            "mean": 113.864,
+            "min": 113.674,
+            "p50": 113.864,
+            "p95": 114.035,
+            "p99": 114.051
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1129,15 +1131,15 @@
           "sourceCountsSample": {
             "memory_bank": 13,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 48.717,
-            "mean": 48.717
+            "max": 48.697,
+            "mean": 48.697
           }
         },
         "short_context": {
@@ -1153,12 +1155,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 47.53,
-            "mean": 45.756,
-            "min": 43.982,
-            "p50": 45.756,
-            "p95": 47.352,
-            "p99": 47.494
+            "max": 2931.365,
+            "mean": 1543.008,
+            "min": 154.651,
+            "p50": 1543.008,
+            "p95": 2792.53,
+            "p99": 2903.598
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1171,41 +1173,41 @@
           "sourceCountsSample": {
             "memory_bank": 21,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 12
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 34.35,
-            "mean": 34.35
+            "max": 34.338,
+            "mean": 34.338
           }
         }
       },
       "description": "Memory-bank spike lane request: tantivy_spike.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 264,
+          "attempts": 228,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
+          "failures": 85,
+          "fallbacks": 87,
           "lastError": null,
-          "lastLatencyMs": 33.054,
+          "lastLatencyMs": 59.252,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 173
+          "successes": 143
         },
         "before": {
-          "attempts": 258,
+          "attempts": 222,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
+          "failures": 85,
+          "fallbacks": 87,
           "lastError": null,
-          "lastLatencyMs": 9.88,
+          "lastLatencyMs": 44.305,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 167
+          "successes": 137
         },
         "delta": {
           "attempts": 6,
@@ -1241,9 +1243,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -71.678,
-        "avgP95Ms": 60.173,
-        "maxP95Ms": 71.283,
+        "avgP95DeltaVsBaselinePct": -596.971,
+        "avgP95Ms": 1080.466,
+        "maxP95Ms": 2792.53,
         "policyMismatchTotal": 0
       }
     },
@@ -1262,12 +1264,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 164.282,
-            "mean": 160.981,
-            "min": 157.679,
-            "p50": 160.981,
-            "p95": 163.952,
-            "p99": 164.216
+            "max": 1404.519,
+            "mean": 1008.231,
+            "min": 611.943,
+            "p50": 1008.231,
+            "p95": 1364.89,
+            "p99": 1396.594
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1287,8 +1289,8 @@
             200
           ],
           "topScore": {
-            "max": 9.992,
-            "mean": 9.992
+            "max": 10.068,
+            "mean": 10.068
           }
         },
         "ops_focus": {
@@ -1304,12 +1306,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 141.532,
-            "mean": 141.03,
-            "min": 140.529,
-            "p50": 141.03,
-            "p95": 141.481,
-            "p99": 141.521
+            "max": 975.515,
+            "mean": 744.397,
+            "min": 513.278,
+            "p50": 744.397,
+            "p95": 952.403,
+            "p99": 970.892
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1322,7 +1324,7 @@
           "sourceCountsSample": {
             "memory_bank": 20,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
@@ -1346,12 +1348,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 164.989,
-            "mean": 153.98,
-            "min": 142.971,
-            "p50": 153.98,
-            "p95": 163.888,
-            "p99": 164.769
+            "max": 1223.348,
+            "mean": 955.687,
+            "min": 688.026,
+            "p50": 955.687,
+            "p95": 1196.582,
+            "p99": 1217.994
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1364,41 +1366,41 @@
           "sourceCountsSample": {
             "memory_bank": 24,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 12
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 12.467,
-            "mean": 12.467
+            "max": 12.542,
+            "mean": 12.542
           }
         }
       },
       "description": "Memory-bank spike lane request: trieve_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 282,
+          "attempts": 246,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
           "lastError": null,
-          "lastLatencyMs": 122.328,
+          "lastLatencyMs": 574.766,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 191
+          "successes": 155
         },
         "before": {
-          "attempts": 276,
+          "attempts": 240,
           "defaultEnabled": false,
           "failures": 91,
           "fallbacks": 93,
           "lastError": null,
-          "lastLatencyMs": 51.238,
+          "lastLatencyMs": 349.119,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 185
+          "successes": 149
         },
         "delta": {
           "attempts": 6,
@@ -1434,9 +1436,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -346.334,
-        "avgP95Ms": 156.44,
-        "maxP95Ms": 163.952,
+        "avgP95DeltaVsBaselinePct": -655.56,
+        "avgP95Ms": 1171.292,
+        "maxP95Ms": 1364.89,
         "policyMismatchTotal": 0
       }
     },
@@ -1455,12 +1457,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 66.28,
-            "mean": 61.173,
-            "min": 56.067,
-            "p50": 61.173,
-            "p95": 65.769,
-            "p99": 66.177
+            "max": 220.139,
+            "mean": 216.649,
+            "min": 213.158,
+            "p50": 216.649,
+            "p95": 219.79,
+            "p99": 220.069
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1480,8 +1482,8 @@
             200
           ],
           "topScore": {
-            "max": 1.325,
-            "mean": 1.325
+            "max": 1.328,
+            "mean": 1.328
           }
         },
         "ops_focus": {
@@ -1497,12 +1499,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 48.409,
-            "mean": 48.191,
-            "min": 47.974,
-            "p50": 48.191,
-            "p95": 48.387,
-            "p99": 48.404
+            "max": 139.977,
+            "mean": 132.935,
+            "min": 125.893,
+            "p50": 132.935,
+            "p95": 139.273,
+            "p99": 139.836
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1515,15 +1517,15 @@
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 60,
-            "topic_rollups": 4
+            "topic_rollups": 6
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.327,
-            "mean": 1.327
+            "max": 1.33,
+            "mean": 1.33
           }
         },
         "short_context": {
@@ -1539,12 +1541,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 48.627,
-            "mean": 47.522,
-            "min": 46.416,
-            "p50": 47.522,
-            "p95": 48.517,
-            "p99": 48.605
+            "max": 172.265,
+            "mean": 158.801,
+            "min": 145.337,
+            "p50": 158.801,
+            "p95": 170.919,
+            "p99": 171.996
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -1557,41 +1559,41 @@
           "sourceCountsSample": {
             "memory_bank": 6,
             "qdrant": 24,
-            "topic_rollups": 10
+            "topic_rollups": 8
           },
           "statusCodes": [
             200,
             200
           ],
           "topScore": {
-            "max": 1.311,
-            "mean": 1.311
+            "max": 1.313,
+            "mean": 1.313
           }
         }
       },
       "description": "Rust-first lane request: usearch_ann + tantivy_lexical.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 252,
+          "attempts": 216,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 465.5,
+          "failures": 85,
+          "fallbacks": 87,
+          "lastError": "Server error '502 Bad Gateway' for url 'http://memory-bank-spike-rs:8096/search'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+          "lastLatencyMs": 10.59,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 161
+          "successes": 131
         },
         "before": {
-          "attempts": 252,
+          "attempts": 216,
           "defaultEnabled": false,
-          "failures": 91,
-          "fallbacks": 93,
-          "lastError": null,
-          "lastLatencyMs": 465.5,
+          "failures": 85,
+          "fallbacks": 87,
+          "lastError": "Server error '502 Bad Gateway' for url 'http://memory-bank-spike-rs:8096/search'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+          "lastLatencyMs": 10.59,
           "mode": "native",
           "spikeUrlConfigured": true,
-          "successes": 161
+          "successes": 131
         },
         "delta": {
           "attempts": 0,
@@ -1627,9 +1629,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95DeltaVsBaselinePct": -54.705,
-        "avgP95Ms": 54.224,
-        "maxP95Ms": 65.769,
+        "avgP95DeltaVsBaselinePct": -13.958,
+        "avgP95Ms": 176.661,
+        "maxP95Ms": 219.79,
         "policyMismatchTotal": 0
       }
     }
