@@ -1,0 +1,48 @@
+{
+  "candidates": {
+    "helixdb": {
+      "cases": {},
+      "health": null,
+      "status": "skipped_unconfigured",
+      "url": ""
+    },
+    "lancedb": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 142.107,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 390.428,
+          "ok": true,
+          "resultCount": 4,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 493.55,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 103.38,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8097"
+    },
+    "trieve": {
+      "cases": {},
+      "health": null,
+      "status": "skipped_unconfigured",
+      "url": ""
+    }
+  },
+  "generatedAt": "2026-03-16T10:09:10.547629+00:00",
+  "project": "contextlattice"
+}

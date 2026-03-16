@@ -115,10 +115,37 @@ services:
       retries: 10
     restart: unless-stopped
 
+  lancedb-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.lancedb-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${LANCEDB_SPIKE_PORT_INTERNAL:-8097}
+      LANCEDB_SPIKE_DATA_ROOT: /data/memory-bank
+      LANCEDB_SPIKE_DB_URI: ${LANCEDB_SPIKE_DB_URI:-/data/lancedb_spike}
+      LANCEDB_SPIKE_TABLE: ${LANCEDB_SPIKE_TABLE:-memory_bank}
+      LANCEDB_SPIKE_REFRESH_SECS: ${LANCEDB_SPIKE_REFRESH_SECS:-120}
+      LANCEDB_SPIKE_MAX_DOCS: ${LANCEDB_SPIKE_MAX_DOCS:-50000}
+      LANCEDB_SPIKE_MAX_CONTENT_CHARS: ${LANCEDB_SPIKE_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${LANCEDB_SPIKE_PORT:-8097}:${LANCEDB_SPIKE_PORT_INTERNAL:-8097}"
+    expose: ["${LANCEDB_SPIKE_PORT_INTERNAL:-8097}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${LANCEDB_SPIKE_PORT_INTERNAL:-8097}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+
   memory-bank-spike-rs:
     build: { context: ., dockerfile: Dockerfile.memory-bank-spike-rs }
     depends_on:
       meilisearch:
+        condition: service_started
+      lancedb-spike-adapter:
         condition: service_started
       memorymcp-http:
         condition: service_started
@@ -134,7 +161,7 @@ services:
       MB_SPIKE_MEILI_SYNC_SECS: ${MEMORY_BANK_SPIKE_RS_MEILI_SYNC_SECS:-300}
       MB_SPIKE_MEILI_TASK_TIMEOUT_SECS: ${MEMORY_BANK_SPIKE_RS_MEILI_TASK_TIMEOUT_SECS:-30}
       MB_SPIKE_EXTERNAL_TIMEOUT_SECS: ${MEMORY_BANK_SPIKE_RS_EXTERNAL_TIMEOUT_SECS:-12}
-      MB_SPIKE_LANCEDB_URL: ${MEMORY_BANK_SPIKE_RS_LANCEDB_URL:-}
+      MB_SPIKE_LANCEDB_URL: ${MEMORY_BANK_SPIKE_RS_LANCEDB_URL:-http://lancedb-spike-adapter:8097}
       MB_SPIKE_LANCEDB_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_LANCEDB_SEARCH_ROUTE:-/search}
       MB_SPIKE_LANCEDB_API_KEY: ${MEMORY_BANK_SPIKE_RS_LANCEDB_API_KEY:-}
       MB_SPIKE_TRIEVE_URL: ${MEMORY_BANK_SPIKE_RS_TRIEVE_URL:-}

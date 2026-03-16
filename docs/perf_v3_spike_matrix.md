@@ -1,65 +1,61 @@
 # V3 Spike Backend Matrix (Rust Pivot)
 
-Generated: 2026-03-16
+Generated: 2026-03-16  
 Project: `contextlattice`
 
-## Run Artifacts
+## Run Artifacts (Latest)
 
-- Previous orchestrator matrix (pre-fix): `bench/results/backend_lane_matrix_v3_rust_pivot_timeout10_bypasscache_20260316T073507Z.json`
-- Previous direct matrix (pre-fix): `bench/results/memory_bank_spike_direct_matrix_tantivyfix_20260316T073551Z.json`
-- Reworked orchestrator matrix (post-fix): `bench/results/backend_lane_matrix_v3_rust_pivot_reworked_20260316T0803Z.json`
-- Reworked direct matrix (post-fix): `bench/results/memory_bank_spike_direct_matrix_v3_rust_pivot_20260316T0802Z.json`
+- End-to-end matrix (all profiles): `bench/results/backend_lane_matrix_20260316T102223Z.json`
+- Direct sidecar matrix (all spike backends): `bench/results/memory_bank_spike_direct_matrix_20260316T103252Z.json`
+- External candidate probe: `bench/results/high_priority_candidate_probe_20260316T102234Z.json`
 
-## What Changed
+## End-to-End Matrix (Orchestrator Path, Latest)
 
-- Rust sidecar now waits for Meilisearch task completion (`create index`, `settings`, `document upsert`).
-- Meilisearch document IDs are normalized to valid key format (with deterministic hash suffix).
-- Sidecar sync/index build paths are single-flight guarded.
-- Direct matrix harness now supports warmups (`--warmups`) so cold starts do not dominate p95.
-- Bench requests force real execution (`bypass_pathway_cache=true`) for fair lane comparison.
+| profile | avg p95 ms | delta vs baseline | note |
+|---|---:|---:|---|
+| baseline_qdrant_rollups | 139.565 | +0.000% | control lane |
+| rust_lane_usearch_tantivy | 144.630 | -3.629% | slight regression in this run |
+| memory_bank_helixdb_spike | 144.819 | -3.765% | fallback path (adapter unconfigured) |
+| memory_bank_trieve_spike | 180.554 | -29.369% | fallback path (adapter unconfigured) |
+| memory_bank_tantivy_spike | 1488.482 | -966.515% | heavy tail outliers |
+| memory_bank_quickwit_spike | 2398.805 | -1618.773% | heavy tail outliers |
+| memory_bank_lancedb_spike | 4149.369 | -2873.073% | heavy tail outliers |
+| memory_bank_meilisearch_spike | 10485.840 | -7413.230% | severe tail outliers |
 
-## End-to-End Matrix (Orchestrator + Sources, Post-Fix)
+Memory-bank backend delta for full run:
 
-| profile | data store | index | search | avg p95 ms | attempts | success | fail | fallback |
-|---|---|---|---|---:|---:|---:|---:|---:|
-| baseline_qdrant_rollups | qdrant+topic_rollups | hnsw+partitioned-rollup | semantic+rollup-hybrid | 95.334 | 0 | 0 | 0 | 0 |
-| rust_lane_usearch_tantivy | qdrant+topic_rollups+memory_bank(native) | usearch-ann+tantivy-lexical | hybrid-semantic-lexical | 213.195 | 0 | 0 | 0 | 0 |
-| memory_bank_meilisearch_spike | memory_bank(meilisearch)+qdrant+topic_rollups | meilisearch+hnsw | hybrid-meili-semantic | 206.289 | 9 | 9 | 0 | 3 |
-| memory_bank_quickwit_spike | memory_bank(quickwit_compat)+qdrant+topic_rollups | inverted-index+hnsw | hybrid-quickwit-compat-semantic | 238.510 | 9 | 9 | 0 | 0 |
-| memory_bank_tantivy_spike | memory_bank(tantivy)+qdrant+topic_rollups | tantivy-inverted+hnsw | hybrid-tantivy-semantic | 300.827 | 9 | 9 | 0 | 0 |
+- attempts: `54`
+- successes: `24`
+- failures: `30`
+- fallbacks: `30`
 
-Overall spike backend delta (post-fix run):
+Interpretation:
 
-- attempts: `27`
-- successes: `27`
-- failures: `0`
-- fallbacks: `3`
+- Profile-level p95 is currently dominated by intermittent multi-second tail events on memory-bank spike lanes.
+- Baseline (`qdrant + topic_rollups`) remains the only stable low-tail production lane in this sample.
+- `trieve_spike` and `helixdb_spike` are not configured; observed behavior is fallback, not true backend performance.
 
-## Direct Sidecar Matrix (Backend-Isolated, Post-Fix)
+## Direct Sidecar Matrix (Backend-Isolated, Latest)
 
 | backend | avg p95 ms | avg result count | avg error rate | max p95 ms |
 |---|---:|---:|---:|---:|
-| meilisearch_spike | 8.612 | 4.667 | 0.0 | 9.836 |
-| quickwit_spike | 10.759 | 9.667 | 0.0 | 15.252 |
-| tantivy_spike | 10.990 | 9.667 | 0.0 | 13.244 |
+| quickwit_spike | 21.867 | 10.667 | 0.0 | 39.621 |
+| tantivy_spike | 39.212 | 10.667 | 0.0 | 52.777 |
+| meilisearch_spike | 50.240 | 5.667 | 0.0 | 65.103 |
+| lancedb_spike | 57.044 | 9.444 | 0.0 | 64.457 |
+| trieve_spike | 10.581 | 0.000 | 1.0 | 22.294 |
+| helixdb_spike | 9.989 | 0.000 | 1.0 | 21.344 |
 
-## Fix Impact vs Earlier Runs
+Interpretation:
 
-- Meilisearch moved from ingest errors / zero reliable hits to successful indexing and direct hits.
-- Spike profile execution is now stable in both direct and orchestrator paths (no spike failures in the reworked matrix).
-- End-to-end latency remains dominated by qdrant + fanout orchestration path, not sidecar direct search time.
+- In isolation, `quickwit_spike` remains the fastest configured lexical lane in this run.
+- `lancedb_spike` is functional and medium-latency in direct mode.
+- Adapter readiness remains incomplete for `trieve_spike` and `helixdb_spike`.
+- End-to-end degradation is integration-path overhead/tail behavior, not just direct backend speed.
 
-## All Potential Source Snapshot (Deep Query)
+## Current Keep/Use Guidance
 
-From `POST /v1/retrieval/query-with-grounding` with sources `[qdrant, topic_rollups, memory_bank, letta, mindsdb, mongo_raw]`:
-
-| source | returned count |
-|---|---:|
-| qdrant | 28 |
-| topic_rollups | 4 |
-| memory_bank | 2 |
-| letta | 0 |
-| mindsdb | 0 |
-| mongo_raw | 0 |
-
-This confirms the spike backend lane is healthy while non-spike external sources remain sparse for this query/sample.
+- Keep production default on `qdrant + topic_rollups`.
+- Keep memory-bank spike experimentation behind policy/profile controls.
+- Prioritize quickwit-first tuning for memory-bank lexical enrichment.
+- Do not promote trieve/helix lanes until real adapter endpoints are configured and verified.

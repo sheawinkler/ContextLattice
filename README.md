@@ -414,6 +414,7 @@ V3 is focused on application efficacy, not speed in isolation:
 
 Roadmap documents:
 - full plan: `docs/v3-roadmap.md`
+- ultra DB stack recommendation: `docs/perf-candidate-notes/ultra_db_stack_recommendation_2026-03-16.md`
 - public roadmap page: `https://contextlattice.io/roadmap.html`
 
 Program graph:
