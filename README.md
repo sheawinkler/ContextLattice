@@ -122,10 +122,13 @@ ORCH_FASTEMBED_RS_TIMEOUT_SECS=2.5
 ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE=true
 ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE=bench/results/fastembed_gate_latest.json
 ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS=172800
+ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_OVERRIDE=true
+ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_REASON=manual_16pct_promotion_2026-03-16
 ```
 
 When enabled, orchestrator Qdrant write fanout uses batched embeddings (`embed_text_batch`) to reduce per-item adapter overhead.
 If gate mode is enabled, fastembed activates only when the benchmark gate artifact reports `passed=true`.
+Manual promotion override is available for explicitly approved cases; telemetry still reports the raw gate result and marks override activation separately.
 Recommended gate refresh command (warmed multi-run to reduce noisy pass/fail flips):
 
 ```bash
