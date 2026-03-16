@@ -369,6 +369,14 @@ FASTEMBED_RS_GATE_MAX_AGE_SECS = max(
     60.0,
     float(os.getenv("ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS", "172800")),
 )
+FASTEMBED_RS_PROMOTE_OVERRIDE = os.getenv(
+    "ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_OVERRIDE",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+FASTEMBED_RS_PROMOTE_REASON = os.getenv(
+    "ORCH_ADAPTER_FASTEMBED_RS_PROMOTE_REASON",
+    "",
+).strip()
 FASTEMBED_RS_GATE_FILE = os.getenv(
     "ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE",
     "bench/results/fastembed_gate_latest.json",
@@ -3954,9 +3962,28 @@ def _fastembed_adapter_enabled() -> bool:
     if not base_enabled:
         return False
     gate = _fastembed_gate_status()
-    if FASTEMBED_RS_GATE_REQUIRED and not bool(gate.get("passed")):
+    effective_passed = bool(gate.get("effectivePassed", gate.get("passed")))
+    if FASTEMBED_RS_GATE_REQUIRED and not effective_passed:
         return False
     return True
+
+
+def _apply_fastembed_promote_override(status: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(status)
+    required = bool(payload.get("required"))
+    passed = bool(payload.get("passed"))
+    override_enabled = bool(FASTEMBED_RS_PROMOTE_OVERRIDE)
+    override_active = bool(override_enabled and required and not passed)
+    reason = str(FASTEMBED_RS_PROMOTE_REASON or "").strip()
+    payload["promoteOverrideEnabled"] = override_enabled
+    payload["promoteOverrideReason"] = reason or None
+    payload["promoteOverrideActive"] = override_active
+    payload["effectivePassed"] = bool(passed or not required or override_active)
+    if override_active:
+        base_reason = str(payload.get("reason") or "threshold_not_met").strip() or "threshold_not_met"
+        override_note = reason or "manual_promotion_override"
+        payload["reason"] = f"{base_reason}; promoted_by_override={override_note}"
+    return payload
 
 
 def _fastembed_gate_file_path() -> Path | None:
@@ -3972,12 +3999,12 @@ def _fastembed_gate_file_path() -> Path | None:
 def _fastembed_gate_status() -> dict[str, Any]:
     path = _fastembed_gate_file_path()
     if path is None:
-        return {
+        return _apply_fastembed_promote_override({
             "required": bool(FASTEMBED_RS_GATE_REQUIRED),
             "passed": not FASTEMBED_RS_GATE_REQUIRED,
             "available": False,
             "reason": "gate_file_missing",
-        }
+        })
     cached = fastembed_gate_status_cache.get("status")
     now = time.monotonic()
     cache_age = now - float(fastembed_gate_status_cache.get("loadedAtMonotonic") or 0.0)
@@ -4012,6 +4039,7 @@ def _fastembed_gate_status() -> dict[str, Any]:
         fastembed_gate_status_cache["path"] = str(path)
         fastembed_gate_status_cache["mtime"] = mtime
         fastembed_gate_status_cache["loadedAtMonotonic"] = now
+        status = _apply_fastembed_promote_override(status)
         fastembed_gate_status_cache["status"] = dict(status)
         return status
     status = {
@@ -4021,6 +4049,7 @@ def _fastembed_gate_status() -> dict[str, Any]:
         "reason": "gate_file_unreadable",
         "path": str(path),
     }
+    status = _apply_fastembed_promote_override(status)
     fastembed_gate_status_cache["path"] = str(path)
     fastembed_gate_status_cache["mtime"] = None
     fastembed_gate_status_cache["loadedAtMonotonic"] = now

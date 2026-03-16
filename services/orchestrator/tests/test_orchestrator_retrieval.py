@@ -3996,6 +3996,33 @@ def test_fastembed_adapter_enabled_without_gate_requirement(monkeypatch: pytest.
     assert orchestrator._fastembed_adapter_enabled() is True
 
 
+def test_fastembed_adapter_enabled_with_effective_override(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "FASTEMBED_RS_GATE_REQUIRED", True)
+    monkeypatch.setattr(orchestrator, "_fastembed_adapter_enabled_by_flag", lambda: True)
+    monkeypatch.setattr(
+        orchestrator,
+        "_fastembed_gate_status",
+        lambda: {"passed": False, "effectivePassed": True},
+    )
+    assert orchestrator._fastembed_adapter_enabled() is True
+
+
+def test_apply_fastembed_promote_override_marks_effective_pass(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "FASTEMBED_RS_PROMOTE_OVERRIDE", True)
+    monkeypatch.setattr(orchestrator, "FASTEMBED_RS_PROMOTE_REASON", "manual_16pct_promotion")
+    status = orchestrator._apply_fastembed_promote_override(
+        {
+            "required": True,
+            "passed": False,
+            "reason": "threshold_not_met",
+        }
+    )
+    assert status["passed"] is False
+    assert status["effectivePassed"] is True
+    assert status["promoteOverrideActive"] is True
+    assert "manual_16pct_promotion" in str(status["reason"])
+
+
 @pytest.mark.asyncio
 async def test_embed_text_prefers_fastembed_adapter(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "_fastembed_adapter_ready", lambda: True)
