@@ -1494,16 +1494,17 @@ MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT = max(
     1,
     int(os.getenv("ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_DEFAULT_LIMIT", "5000")),
 )
-MEMORY_BANK_SPIKE_BACKEND = str(
-    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "native")
-).strip().lower()
-if MEMORY_BANK_SPIKE_BACKEND not in {
+MEMORY_BANK_SPIKE_BACKEND_CHOICES = {
     "native",
     "disabled",
     "meilisearch_spike",
     "quickwit_spike",
     "tantivy_spike",
-}:
+}
+MEMORY_BANK_SPIKE_BACKEND = str(
+    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "native")
+).strip().lower()
+if MEMORY_BANK_SPIKE_BACKEND not in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
     MEMORY_BANK_SPIKE_BACKEND = "native"
 MEMORY_BANK_SPIKE_HTTP_URL = str(os.getenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL", "")).strip()
 MEMORY_BANK_SPIKE_SEARCH_ROUTE = str(
@@ -16932,10 +16933,16 @@ async def search_memory_bank_lexical(
     project_filter: str | None = None,
     topic_filter: str | None = None,
     time_budget_secs: float | None = None,
+    backend_mode_override: str | None = None,
 ) -> list[dict[str, Any]]:
     global memory_bank_spike_fallbacks
 
     def _memory_bank_backend_mode() -> str:
+        if backend_mode_override is not None:
+            return _normalize_memory_bank_backend_choice(
+                backend_mode_override,
+                default=MEMORY_BANK_SPIKE_BACKEND,
+            )
         return MEMORY_BANK_SPIKE_BACKEND
 
     async def _search_memory_bank_spike_backend(
@@ -17708,11 +17715,22 @@ async def federated_search_memory(
     call_budget_secs: float | None = None,
     bypass_pathway_cache: bool = False,
     traffic_class: str = TRAFFIC_CLASS_USER,
+    backend_policy: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     federated_started_monotonic = time.monotonic()
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     resolved_intent = _normalize_retrieval_intent(retrieval_intent)
     normalized_traffic_class = _normalize_traffic_class(traffic_class)
+    runtime_backend_policy = (
+        dict(backend_policy)
+        if isinstance(backend_policy, dict)
+        else _default_rust_retrieval_backend_policy()
+    )
+    memory_bank_backend_effective = _normalize_memory_bank_backend_choice(
+        runtime_backend_policy.get("memory_bank_backend"),
+        default=MEMORY_BANK_SPIKE_BACKEND,
+    )
+    runtime_backend_policy["memory_bank_backend"] = memory_bank_backend_effective
     normalized_call_budget_secs = (
         max(0.25, float(call_budget_secs))
         if call_budget_secs is not None
@@ -17996,6 +18014,7 @@ async def federated_search_memory(
                 project_filter=project_filter,
                 topic_filter=topic_filter,
                 time_budget_secs=timeout_secs,
+                backend_mode_override=memory_bank_backend_effective,
             )
         if source == RETRIEVAL_SOURCE_TOPIC_ROLLUPS:
             return search_topic_rollups(
@@ -18725,12 +18744,15 @@ async def federated_search_memory(
             "strict_fast_sync_default": RETRIEVAL_STRICT_FAST_SYNC_DEFAULT,
             "memory_bank_default_enabled": RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED,
             "memory_bank_sync_non_deep_enabled": RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED,
+            "memory_bank_backend_configured": MEMORY_BANK_SPIKE_BACKEND,
+            "memory_bank_backend_effective": memory_bank_backend_effective,
             "mongo_raw_deep_sync_only_for_raw_intent": RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT,
             "mongo_raw_deep_async_warm_non_raw": RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW,
             "mongo_raw_intent_async_sources": mongo_raw_intent_async_sources,
             "rust_quality_fallback_enabled": RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED,
             "rust_quality_fallback_sources": RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES,
             "rust_quality_fallback_mode": RETRIEVAL_RUST_QUALITY_FALLBACK_MODE,
+            "runtime_backend_policy": runtime_backend_policy,
             "qdrant_sync_timeout_cap_secs": RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS,
             "fail_open_timeout_continuation_enabled": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED,
             "fail_open_timeout_continuation_sources": RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES,
@@ -18863,6 +18885,7 @@ async def _run_memory_recall_pipeline(
     query_expansion: bool = True,
     retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
     traffic_class: str = TRAFFIC_CLASS_USER,
+    backend_policy: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     normalized_intent = _normalize_retrieval_intent(retrieval_intent)
@@ -19018,6 +19041,7 @@ async def _run_memory_recall_pipeline(
                 retrieval_intent=normalized_intent,
                 call_budget_secs=call_budget_secs,
                 traffic_class=normalized_traffic_class,
+                backend_policy=backend_policy,
             )
             if timeout_adaptive_enabled and isinstance(hop_debug, dict):
                 timeout_sources = _source_errors_timeout_sources(
@@ -22428,6 +22452,20 @@ def _normalize_rust_retrieval_backend_choice(
     return default
 
 
+def _normalize_memory_bank_backend_choice(
+    value: Any,
+    *,
+    default: str | None = None,
+) -> str:
+    token = str(value or "").strip().lower()
+    if token in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
+        return token
+    fallback = str(default or MEMORY_BANK_SPIKE_BACKEND or "native").strip().lower()
+    if fallback in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
+        return fallback
+    return "native"
+
+
 def _default_rust_retrieval_backend_policy() -> dict[str, Any]:
     return {
         "vector_backend": _normalize_rust_retrieval_backend_choice(
@@ -22441,6 +22479,10 @@ def _default_rust_retrieval_backend_policy() -> dict[str, Any]:
             default="auto",
         ),
         "strict": bool(RUST_RETRIEVAL_BACKEND_STRICT),
+        "memory_bank_backend": _normalize_memory_bank_backend_choice(
+            MEMORY_BANK_SPIKE_BACKEND,
+            default="native",
+        ),
     }
 
 
@@ -22448,6 +22490,7 @@ def _resolve_rust_retrieval_backend_policy(
     *,
     preferences: dict[str, Any] | None,
     agent_profile: dict[str, Any] | None,
+    request_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy = _default_rust_retrieval_backend_policy()
     overrides: list[dict[str, Any]] = []
@@ -22460,6 +22503,8 @@ def _resolve_rust_retrieval_backend_policy(
         candidate = preferences.get("rust_backend_policy")
         if isinstance(candidate, dict):
             overrides.append(candidate)
+    if isinstance(request_policy, dict):
+        overrides.append(request_policy)
     for override in overrides:
         if "vector_backend" in override:
             policy["vector_backend"] = _normalize_rust_retrieval_backend_choice(
@@ -22475,6 +22520,11 @@ def _resolve_rust_retrieval_backend_policy(
             )
         if "strict" in override:
             policy["strict"] = bool(override.get("strict"))
+        if "memory_bank_backend" in override:
+            policy["memory_bank_backend"] = _normalize_memory_bank_backend_choice(
+                override.get("memory_bank_backend"),
+                default=policy.get("memory_bank_backend"),
+            )
     return policy
 
 
@@ -22496,6 +22546,10 @@ async def _retriever_search_with_grounding_via_runtime(
     traffic_class: str = TRAFFIC_CLASS_USER,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
     normalized_traffic_class = _normalize_traffic_class(traffic_class)
+    runtime_backend_policy = _resolve_rust_retrieval_backend_policy(
+        preferences=preferences,
+        agent_profile=agent_profile,
+    )
     runtime = await _get_migration_runtime()
     if runtime is None:
         return await _run_memory_recall_pipeline(
@@ -22513,6 +22567,7 @@ async def _retriever_search_with_grounding_via_runtime(
             auto_escalate=auto_escalate,
             query_expansion=query_expansion,
             traffic_class=normalized_traffic_class,
+            backend_policy=runtime_backend_policy,
         )
     request = RuntimeRetrievalRequest(
         query=query,
@@ -22529,10 +22584,7 @@ async def _retriever_search_with_grounding_via_runtime(
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
         traffic_class=normalized_traffic_class,
-        backend_policy=_resolve_rust_retrieval_backend_policy(
-            preferences=preferences,
-            agent_profile=agent_profile,
-        ),
+        backend_policy=runtime_backend_policy,
     )
     response = await runtime.retriever.search_with_grounding(request)
     results = list(getattr(response, "results", []) or [])
@@ -24388,6 +24440,16 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         if isinstance(request_payload.get("preferences"), dict)
         else None
     )
+    request_backend_policy = (
+        request_payload.get("backend_policy")
+        if isinstance(request_payload.get("backend_policy"), dict)
+        else None
+    )
+    backend_policy = _resolve_rust_retrieval_backend_policy(
+        preferences=preferences,
+        agent_profile=None,
+        request_policy=request_backend_policy,
+    )
     rerank_with_learning = bool(request_payload.get("rerank_with_learning", True))
     retrieval_mode = str(request_payload.get("retrieval_mode") or RETRIEVAL_MODE_BALANCED)
     retrieval_intent = _normalize_retrieval_intent(
@@ -24470,6 +24532,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         record_pathway_usage=False,
         call_budget_secs=RECALL_E2E_BUDGET_SECS if RECALL_E2E_BUDGET_SECS > 0 else None,
         traffic_class=traffic_class,
+        backend_policy=backend_policy,
     )
     topic_scope_debug = {
         "applied": bool(topic_scope_prefixes),
@@ -24511,6 +24574,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
             else _policy_effective_sources()
         ),
         "sourceOverrideRequested": source_override_requested,
+        "runtimeBackendPolicy": backend_policy,
     }
     return {
         "results": results,
@@ -24563,6 +24627,16 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
     )
     auto_escalate = bool(request_payload.get("auto_escalate", False))
     query_expansion = bool(request_payload.get("query_expansion", True))
+    request_backend_policy = (
+        request_payload.get("backend_policy")
+        if isinstance(request_payload.get("backend_policy"), dict)
+        else None
+    )
+    backend_policy = _resolve_rust_retrieval_backend_policy(
+        preferences=preferences,
+        agent_profile=agent_profile,
+        request_policy=request_backend_policy,
+    )
     pre_warnings: list[str] = []
     policy_debug: dict[str, Any] = {
         "projectDefaultsApplied": False,
@@ -24645,6 +24719,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         auto_escalate=auto_escalate,
         query_expansion=query_expansion,
         traffic_class=traffic_class,
+        backend_policy=backend_policy,
     )
     topic_scope_debug = {
         "applied": bool(topic_scope_prefixes),
@@ -24687,6 +24762,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
             else _policy_effective_sources()
         ),
         "sourceOverrideRequested": source_override_requested,
+        "runtimeBackendPolicy": backend_policy,
     }
     return {
         "results": results,

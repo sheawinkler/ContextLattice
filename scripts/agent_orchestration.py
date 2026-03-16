@@ -7,9 +7,10 @@ Enables multi-agent coordination through shared memory + task tracking.
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import httpx
 
@@ -23,7 +24,12 @@ class MemMCPOrchestrator:
 
     def __init__(self, orchestrator_url: str = MEMMCP_ORCHESTRATOR_URL):
         self.base_url = orchestrator_url.rstrip("/")
-        self.client = httpx.Client(timeout=30.0)
+        api_key = (
+            os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
+            or os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", "").strip()
+        )
+        headers = {"x-api-key": api_key} if api_key else None
+        self.client = httpx.Client(timeout=30.0, headers=headers)
 
     def _encode_project_path(self, project: str, file_name: str | None = None) -> str:
         encoded_project = quote(project, safe="")
@@ -71,18 +77,136 @@ class MemMCPOrchestrator:
         fetch_content: bool = False,
     ) -> List[Dict[str, Any]]:
         """Semantic search across memory."""
-        resp = self.client.post(
-            f"{self.base_url}/memory/search",
-            json={
-                "query": query,
-                "project": project,
-                "limit": limit,
-                "fetch_content": fetch_content,
-            },
+        payload = self.search_with_lifecycle(
+            query=query,
+            project=project,
+            limit=limit,
+            fetch_content=fetch_content,
+            wait_for_completion=False,
         )
+        return payload.get("results", []) if isinstance(payload, dict) else []
+
+    def _absolute_url(self, path_or_url: str) -> str:
+        token = str(path_or_url or "").strip()
+        if token.startswith("http://") or token.startswith("https://"):
+            return token
+        if not token.startswith("/"):
+            token = "/" + token
+        return urljoin(self.base_url + "/", token.lstrip("/"))
+
+    @staticmethod
+    def _lifecycle_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+        lifecycle = payload.get("retrieval_lifecycle") if isinstance(payload, dict) else {}
+        lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
+        status = str(lifecycle.get("status") or payload.get("status") or "").strip().lower()
+        sources = lifecycle.get("sources") if isinstance(lifecycle.get("sources"), dict) else {}
+        return {
+            "status": status or "unknown",
+            "result_state": str(lifecycle.get("result_state") or payload.get("result_state") or "").strip().lower() or None,
+            "returned_now": list(sources.get("returned_now") or []),
+            "pending": list(sources.get("pending") or payload.get("source_summary", {}).get("pending_sources", []) or []),
+            "failed": list(sources.get("failed") or payload.get("source_summary", {}).get("failed_sources", []) or []),
+            "timed_out": list(sources.get("timed_out") or payload.get("source_summary", {}).get("timed_out_sources", []) or []),
+            "budget_exceeded": list(
+                sources.get("budget_exceeded") or payload.get("source_summary", {}).get("budget_exceeded_sources", []) or []
+            ),
+            "next_actions": list(lifecycle.get("next_actions") or []),
+        }
+
+    def search_with_lifecycle(
+        self,
+        query: str,
+        project: Optional[str] = None,
+        limit: int = 10,
+        fetch_content: bool = False,
+        retrieval_mode: str = "balanced",
+        include_grounding: bool = True,
+        include_retrieval_debug: bool = False,
+        deep_async: Optional[bool] = None,
+        wait_for_completion: bool = False,
+        poll_interval_secs: float = 1.5,
+        max_wait_secs: float = 75.0,
+    ) -> Dict[str, Any]:
+        """
+        Search memory and expose retrieval lifecycle details.
+
+        For deep mode, async is enabled by default; callers can set
+        `wait_for_completion=True` to block until final deep results arrive.
+        """
+        mode = str(retrieval_mode or "balanced").strip().lower() or "balanced"
+        deep_async_value = deep_async
+        if deep_async_value is None and mode == "deep":
+            deep_async_value = True
+        request_payload = {
+            "query": query,
+            "project": project,
+            "limit": limit,
+            "fetch_content": fetch_content,
+            "retrieval_mode": mode,
+            "include_grounding": include_grounding,
+            "include_retrieval_debug": include_retrieval_debug,
+            "deep_async": bool(deep_async_value) if deep_async_value is not None else None,
+        }
+        if request_payload["deep_async"] is None:
+            request_payload.pop("deep_async", None)
+
+        resp = self.client.post(f"{self.base_url}/memory/search", json=request_payload)
         resp.raise_for_status()
-        data = resp.json()
-        return data.get("results", [])
+        initial = resp.json()
+        lifecycle = self._lifecycle_summary(initial)
+        results = initial.get("results") if isinstance(initial.get("results"), list) else []
+        output: Dict[str, Any] = {
+            "ok": True,
+            "query": query,
+            "project": project,
+            "retrieval_mode": mode,
+            "results": results,
+            "lifecycle": lifecycle,
+            "async": bool(initial.get("async")),
+            "token": initial.get("token") or initial.get("job_id"),
+            "poll_url": initial.get("job_poll_url") or initial.get("poll_url"),
+            "events_url": initial.get("events_url"),
+            "warnings": initial.get("warnings") if isinstance(initial.get("warnings"), list) else [],
+            "initial_response": initial,
+            "final_response": None,
+        }
+
+        status = lifecycle.get("status")
+        is_pending = status in {"queued", "running", "partial"} and bool(output.get("token"))
+        if not wait_for_completion or not is_pending:
+            return output
+
+        poll_url = str(output.get("poll_url") or "").strip()
+        if not poll_url:
+            return output
+
+        deadline = time.monotonic() + max(1.0, float(max_wait_secs))
+        poll_target = self._absolute_url(poll_url)
+        while time.monotonic() < deadline:
+            poll_resp = self.client.get(
+                poll_target,
+                params={"include_result": "true"},
+            )
+            if poll_resp.status_code == 404:
+                time.sleep(max(0.2, float(poll_interval_secs)))
+                continue
+            poll_resp.raise_for_status()
+            polled = poll_resp.json()
+            job_status = str(polled.get("status") or "").strip().lower()
+            if job_status in {"completed", "failed"}:
+                final_payload = polled.get("result") if isinstance(polled.get("result"), dict) else polled
+                output["final_response"] = final_payload
+                if isinstance(final_payload, dict):
+                    output["results"] = final_payload.get("results") if isinstance(final_payload.get("results"), list) else output["results"]
+                    output["warnings"] = (
+                        final_payload.get("warnings")
+                        if isinstance(final_payload.get("warnings"), list)
+                        else output["warnings"]
+                    )
+                    output["lifecycle"] = self._lifecycle_summary(final_payload)
+                return output
+            time.sleep(max(0.2, float(poll_interval_secs)))
+        return output
 
     def status(self) -> Dict[str, Any]:
         """Get orchestrator + service status."""
@@ -182,6 +306,7 @@ def main():
         print("  read <project> <file>")
         print("  list <project>")
         print("  search <query> [project]")
+        print("  search-lifecycle <query> [project] [mode] [wait]")
         print("  status")
         print("  create-tasks <project> <task_id> <tasks_json>")
         sys.exit(1)
@@ -209,6 +334,20 @@ def main():
         project = sys.argv[3] if len(sys.argv) > 3 else None
         results = orch.search(query, project=project)
         print(json.dumps(results, indent=2))
+
+    elif cmd == "search-lifecycle":
+        query = sys.argv[2]
+        project = sys.argv[3] if len(sys.argv) > 3 else None
+        mode = sys.argv[4] if len(sys.argv) > 4 else "balanced"
+        wait_flag = str(sys.argv[5]).strip().lower() if len(sys.argv) > 5 else ""
+        wait_for_completion = wait_flag in {"1", "true", "yes", "wait", "on"}
+        payload = orch.search_with_lifecycle(
+            query=query,
+            project=project,
+            retrieval_mode=mode,
+            wait_for_completion=wait_for_completion,
+        )
+        print(json.dumps(payload, indent=2))
 
     elif cmd == "status":
         status = orch.status()

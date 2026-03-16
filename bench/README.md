@@ -61,6 +61,9 @@ Benchmark-gated fastembed rollout (compare candidate vs baseline and emit gate a
 python3 bench/perf_shortlist_matrix.py \
   --api-key "$API_KEY" \
   --runs 12 \
+  --gate-warmups 1 \
+  --gate-repeats 3 \
+  --gate-aggregate median \
   --baseline bench/results/perf_shortlist_matrix_baseline.json \
   --gate-output bench/results/fastembed_gate_latest.json
 ```
@@ -72,6 +75,10 @@ Optional knobs:
 - `--baseline`
 - `--gate-min-improvement-pct`
 - `--gate-max-error-regression`
+- `--gate-warmups`
+- `--gate-repeats`
+- `--gate-aggregate`
+- `--gate-sleep-secs`
 - `--gate-output`
 - `--output`
 
