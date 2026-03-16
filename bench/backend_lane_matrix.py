@@ -161,6 +161,94 @@ PROFILES: dict[str, ProfileConfig] = {
 }
 
 
+def _seed_items(project: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "project": project,
+            "file_name": "bench/seed/source_quality.md",
+            "topic_path": "benchmarks/retrieval/source_quality",
+            "content": (
+                "source quality qdrant topic rollups retrieval coverage baseline. "
+                "staged retrieval should return grounded rows quickly."
+            ),
+        },
+        {
+            "project": project,
+            "file_name": "bench/seed/deep_stability.md",
+            "topic_path": "benchmarks/retrieval/deep_stability",
+            "content": (
+                "deep retrieval stability timeout source quality read performance. "
+                "prefer grounded context and deferred slow-source continuation."
+            ),
+        },
+        {
+            "project": project,
+            "file_name": "bench/seed/ops_queue.md",
+            "topic_path": "benchmarks/retrieval/ops",
+            "content": (
+                "fanout queue pressure deadletters backlog quality diagnostics. "
+                "operator-facing retrieval should surface returned and pending sources."
+            ),
+        },
+    ]
+
+
+def _seed_benchmark_corpus(
+    client: httpx.Client,
+    *,
+    base_url: str,
+    headers: dict[str, str],
+    project: str,
+) -> dict[str, Any]:
+    seeded = {"attempted": 0, "succeeded": 0, "errors": [], "verified": False, "verificationResults": 0}
+    for item in _seed_items(project):
+        seeded["attempted"] += 1
+        try:
+            resp = client.post(
+                f"{base_url}/v1/memory/put",
+                headers=headers,
+                json={"item": item},
+            )
+            if resp.status_code >= 400:
+                seeded["errors"].append(f"{resp.status_code}:{resp.text[:180]}")
+                continue
+            seeded["succeeded"] += 1
+        except Exception as exc:
+            seeded["errors"].append(str(exc))
+    if seeded["succeeded"] == 0:
+        return seeded
+    time.sleep(1.2)
+    verify_payload = {
+        "request": {
+            "query": CASES["short_context"].query,
+            "project": project,
+            "limit": 5,
+            "retrieval_mode": "fast",
+            "sources": ["qdrant", "topic_rollups"],
+            "traffic_class": "benchmark",
+        }
+    }
+    for _ in range(4):
+        try:
+            resp = client.post(
+                f"{base_url}/v1/retrieval/query-with-grounding",
+                headers=headers,
+                json=verify_payload,
+            )
+            if resp.status_code < 400:
+                payload = resp.json()
+                rows = payload.get("results") if isinstance(payload, dict) else []
+                count = len(rows) if isinstance(rows, list) else 0
+                seeded["verificationResults"] = count
+                if count > 0:
+                    seeded["verified"] = True
+                    break
+        except Exception:
+            pass
+        time.sleep(0.8)
+    return seeded
+
+
 def _fetch_retrieval_telemetry(client: httpx.Client, base_url: str, headers: dict[str, str]) -> dict[str, Any]:
     try:
         resp = client.get(f"{base_url}/telemetry/retrieval", headers=headers)
@@ -387,7 +475,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     baseline_profile = "baseline_qdrant_rollups"
     baseline_avg_p95 = None
 
+    seed_state: dict[str, Any] = {"attempted": 0, "succeeded": 0, "errors": [], "verified": False, "verificationResults": 0}
     with httpx.Client(timeout=float(args.timeout)) as client:
+        if bool(args.seed_corpus):
+            seed_state = _seed_benchmark_corpus(
+                client,
+                base_url=base_url,
+                headers=headers,
+                project=args.project,
+            )
         overall_before = _fetch_retrieval_telemetry(client, base_url, headers)
         overall_before_mb = _extract_memory_bank_backend_snapshot(overall_before)
         overall_before_sources = _extract_source_latency_snapshot(overall_before)
@@ -494,6 +590,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         recommendations.append(
             "Memory-bank spike sidecar URL is not configured; meilisearch/quickwit/tantivy spikes are currently fallback-only measurements."
         )
+    if bool(args.seed_corpus) and not bool(seed_state.get("verified")):
+        recommendations.append(
+            "Benchmark seed corpus writes did not verify as retrievable before matrix run; recall coverage may be sparse."
+        )
 
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -503,6 +603,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "cases": selected_cases,
         "profiles": requested_profiles,
         "cacheBustQueries": bool(args.cache_bust),
+        "seedCorpus": bool(args.seed_corpus),
+        "seedState": seed_state,
         "results": results,
         "overallMemoryBankBackend": {
             "before": overall_before_mb,
@@ -538,6 +640,8 @@ def main() -> None:
     parser.add_argument("--cases", default="short_context,deep_read,ops_focus")
     parser.add_argument("--cache-bust", action="store_true", default=True)
     parser.add_argument("--no-cache-bust", dest="cache_bust", action="store_false")
+    parser.add_argument("--seed-corpus", action="store_true", default=True)
+    parser.add_argument("--no-seed-corpus", dest="seed_corpus", action="store_false")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
 
