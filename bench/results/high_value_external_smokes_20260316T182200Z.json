@@ -1,0 +1,43 @@
+{
+  "generatedAt": "2026-03-16T18:22:00Z",
+  "project": "contextlattice",
+  "notes": "Populated-data external candidate smokes run from local workstation",
+  "results": [
+    {
+      "engine": "milvus",
+      "dataset_size": 5000,
+      "runs": 20,
+      "p50_ms": 8.12,
+      "p95_ms": 20.025,
+      "mean_ms": 15.443,
+      "max_ms": 146.842,
+      "avg_hits": 10,
+      "min_hits": 10,
+      "max_hits": 10
+    },
+    {
+      "engine": "weaviate",
+      "dataset_size": 2000,
+      "runs": 20,
+      "p50_ms": 17.382,
+      "p95_ms": 35.711,
+      "mean_ms": 18.142,
+      "max_ms": 43.819,
+      "avg_hits": 10,
+      "min_hits": 10,
+      "max_hits": 10
+    },
+    {
+      "engine": "postgres_pgvector",
+      "dataset_size": 5000,
+      "runs": 20,
+      "p50_ms": 4.015,
+      "p95_ms": 11.943,
+      "mean_ms": 5.642,
+      "max_ms": 18.833,
+      "avg_hits": 10,
+      "min_hits": 10,
+      "max_hits": 10
+    }
+  ]
+}
