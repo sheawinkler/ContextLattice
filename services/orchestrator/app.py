@@ -1516,14 +1516,61 @@ MEMORY_BANK_SPIKE_BACKEND_CHOICES = {
     "memvid_spike",
     "surrealdb_spike",
 }
+
+
+def _parse_memory_bank_backend_csv(value: str) -> list[str]:
+    backends: list[str] = []
+    for raw in str(value or "").split(","):
+        token = raw.strip().lower()
+        if not token or token in {"native", "disabled"}:
+            continue
+        if token not in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
+            continue
+        if token in backends:
+            continue
+        backends.append(token)
+    return backends
+
+
+def _memory_bank_timeout_override_secs(env_name: str) -> float | None:
+    raw = os.getenv(env_name)
+    if raw is None:
+        return None
+    token = str(raw).strip()
+    if not token:
+        return None
+    try:
+        return max(0.2, float(token))
+    except Exception:
+        return None
+
+
 MEMORY_BANK_SPIKE_BACKEND = str(
-    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "quickwit_spike")
+    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "surrealdb_spike")
 ).strip().lower()
 if MEMORY_BANK_SPIKE_BACKEND not in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
-    MEMORY_BANK_SPIKE_BACKEND = "quickwit_spike"
+    MEMORY_BANK_SPIKE_BACKEND = "surrealdb_spike"
 MEMORY_BANK_SPIKE_FALLBACK_BACKEND = str(
-    os.getenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND", "meilisearch_spike")
+    os.getenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND", "memvid_spike")
 ).strip().lower()
+MEMORY_BANK_SPIKE_FALLBACK_BACKENDS = _parse_memory_bank_backend_csv(
+    os.getenv(
+        "ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS",
+        "memvid_spike,shodh_spike,quickwit_spike",
+    )
+)
+if (
+    MEMORY_BANK_SPIKE_FALLBACK_BACKEND in MEMORY_BANK_SPIKE_BACKEND_CHOICES
+    and MEMORY_BANK_SPIKE_FALLBACK_BACKEND not in {"native", "disabled"}
+):
+    MEMORY_BANK_SPIKE_FALLBACK_BACKENDS = [
+        MEMORY_BANK_SPIKE_FALLBACK_BACKEND,
+        *[
+            backend
+            for backend in MEMORY_BANK_SPIKE_FALLBACK_BACKENDS
+            if backend != MEMORY_BANK_SPIKE_FALLBACK_BACKEND
+        ],
+    ]
 MEMORY_BANK_SPIKE_HTTP_URL = str(os.getenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL", "")).strip()
 MEMORY_BANK_SPIKE_SEARCH_ROUTE = str(
     os.getenv("ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE", "/search")
@@ -1532,6 +1579,16 @@ MEMORY_BANK_SPIKE_TIMEOUT_SECS = max(
     0.2,
     float(os.getenv("ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS", "1.5")),
 )
+MEMORY_BANK_SPIKE_TIMEOUT_OVERRIDES_SECS: dict[str, float] = {}
+for _backend, _env in (
+    ("icm_spike", "ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_ICM"),
+    ("shodh_spike", "ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_SHODH"),
+    ("memvid_spike", "ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_MEMVID"),
+    ("surrealdb_spike", "ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_SURREALDB"),
+):
+    _override = _memory_bank_timeout_override_secs(_env)
+    if _override is not None:
+        MEMORY_BANK_SPIKE_TIMEOUT_OVERRIDES_SECS[_backend] = _override
 MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE = os.getenv(
     "ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE",
     "true",
@@ -7375,9 +7432,11 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
         "memoryBankBackend": {
             "defaultEnabled": RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED,
             "mode": MEMORY_BANK_SPIKE_BACKEND,
+            "fallbackBackends": MEMORY_BANK_SPIKE_FALLBACK_BACKENDS,
             "spikeUrlConfigured": bool(MEMORY_BANK_SPIKE_HTTP_URL),
             "spikeRoute": MEMORY_BANK_SPIKE_SEARCH_ROUTE,
             "spikeTimeoutSecs": MEMORY_BANK_SPIKE_TIMEOUT_SECS,
+            "spikeTimeoutOverridesSecs": dict(MEMORY_BANK_SPIKE_TIMEOUT_OVERRIDES_SECS),
             "fallbackToNative": MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE,
             "attempts": memory_bank_spike_attempts,
             "successes": memory_bank_spike_successes,
@@ -17018,7 +17077,10 @@ async def search_memory_bank_lexical(
             payload["project"] = project_name
         if topic_path:
             payload["topic_path"] = topic_path
-        timeout_secs = max(0.2, min(MEMORY_BANK_SPIKE_TIMEOUT_SECS, max(0.2, float(budget_secs))))
+        timeout_cap = float(
+            MEMORY_BANK_SPIKE_TIMEOUT_OVERRIDES_SECS.get(backend_mode, MEMORY_BANK_SPIKE_TIMEOUT_SECS)
+        )
+        timeout_secs = max(0.2, min(timeout_cap, max(0.2, float(budget_secs))))
 
         memory_bank_spike_attempts += 1
         started = time.monotonic()
@@ -17082,12 +17144,14 @@ async def search_memory_bank_lexical(
     backend_mode = _memory_bank_backend_mode()
     if backend_mode == "disabled":
         return []
-    fallback_backend_mode = _normalize_memory_bank_backend_choice(
-        MEMORY_BANK_SPIKE_FALLBACK_BACKEND,
-        default="native",
-    )
-    if fallback_backend_mode in {"native", "disabled"} or fallback_backend_mode == backend_mode:
-        fallback_backend_mode = ""
+    fallback_candidates: list[str] = []
+    for configured in MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:
+        candidate = _normalize_memory_bank_backend_choice(configured, default="native")
+        if candidate in {"native", "disabled"} or candidate == backend_mode:
+            continue
+        if candidate in fallback_candidates:
+            continue
+        fallback_candidates.append(candidate)
     query_targets_low_value_paths = _query_targets_low_value_paths(query)
     started = time.monotonic()
     budget_secs = max(
@@ -17099,9 +17163,7 @@ async def search_memory_bank_lexical(
         return max(0.0, budget_secs - (time.monotonic() - started))
 
     if backend_mode != "native":
-        spike_candidates = [backend_mode]
-        if fallback_backend_mode and fallback_backend_mode not in spike_candidates:
-            spike_candidates.append(fallback_backend_mode)
+        spike_candidates = [backend_mode, *fallback_candidates]
         for idx, spike_backend in enumerate(spike_candidates):
             is_last_candidate = idx == (len(spike_candidates) - 1)
             try:
@@ -22578,7 +22640,7 @@ def _default_rust_retrieval_backend_policy() -> dict[str, Any]:
         "strict": bool(RUST_RETRIEVAL_BACKEND_STRICT),
         "memory_bank_backend": _normalize_memory_bank_backend_choice(
             MEMORY_BANK_SPIKE_BACKEND,
-            default="quickwit_spike",
+            default="surrealdb_spike",
         ),
     }
 
