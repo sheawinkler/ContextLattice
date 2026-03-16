@@ -111,18 +111,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "icm": _candidate_url(
             args.icm_url,
             ["ICM_SPIKE_URL", "ICM_URL", "MB_SPIKE_ICM_URL", "MEMORY_BANK_SPIKE_RS_ICM_URL"],
+            default_url="http://127.0.0.1:8100",
         ),
         "shodh": _candidate_url(
             args.shodh_url,
             ["SHODH_SPIKE_URL", "SHODH_URL", "MB_SPIKE_SHODH_URL", "MEMORY_BANK_SPIKE_RS_SHODH_URL"],
+            default_url="http://127.0.0.1:8101",
         ),
         "memvid": _candidate_url(
             args.memvid_url,
             ["MEMVID_SPIKE_URL", "MEMVID_URL", "MB_SPIKE_MEMVID_URL", "MEMORY_BANK_SPIKE_RS_MEMVID_URL"],
+            default_url="http://127.0.0.1:8102",
         ),
         "surrealdb": _candidate_url(
             args.surrealdb_url,
             ["SURREALDB_SPIKE_URL", "SURREALDB_URL", "MB_SPIKE_SURREALDB_URL", "MEMORY_BANK_SPIKE_RS_SURREALDB_URL"],
+            default_url="http://127.0.0.1:8103",
         ),
     }
 
