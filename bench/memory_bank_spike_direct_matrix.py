@@ -21,6 +21,10 @@ BACKENDS = (
     "lancedb_spike",
     "trieve_spike",
     "helixdb_spike",
+    "icm_spike",
+    "shodh_spike",
+    "memvid_spike",
+    "surrealdb_spike",
 )
 DEFAULT_BACKENDS = ("quickwit_spike", "meilisearch_spike", "tantivy_spike")
 
@@ -255,7 +259,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Direct Rust memory-bank spike backend matrix "
-            "(meili/quickwit/tantivy + optional adapter lanes)."
+            "(meili/quickwit/tantivy + optional adapter/external lanes)."
         )
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8096")
