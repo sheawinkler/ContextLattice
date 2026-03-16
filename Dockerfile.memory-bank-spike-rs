@@ -5,10 +5,7 @@ COPY services/memory_bank_spike_rs/Cargo.toml ./Cargo.toml
 COPY services/memory_bank_spike_rs/src ./src
 RUN cargo build --release
 
-FROM debian:bookworm-slim
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates wget \
-  && rm -rf /var/lib/apt/lists/*
+FROM python:3.12-slim
 
 WORKDIR /app
 COPY --from=builder /app/target/release/memory-bank-spike-rs /usr/local/bin/memory-bank-spike-rs

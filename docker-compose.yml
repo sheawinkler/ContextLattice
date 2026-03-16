@@ -299,6 +299,106 @@ services:
     restart: unless-stopped
     profiles: ["core"]
 
+  icm-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${ICM_SPIKE_ADAPTER_PORT_INTERNAL:-8100}
+      SPIKE_ADAPTER_NAME: icm_spike
+      SPIKE_DATA_ROOT: /data/memory-bank
+      SPIKE_REFRESH_SECS: ${ICM_SPIKE_ADAPTER_REFRESH_SECS:-120}
+      SPIKE_MAX_DOCS: ${ICM_SPIKE_ADAPTER_MAX_DOCS:-50000}
+      SPIKE_MAX_CONTENT_CHARS: ${ICM_SPIKE_ADAPTER_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${ICM_SPIKE_ADAPTER_PORT:-8100}:${ICM_SPIKE_ADAPTER_PORT_INTERNAL:-8100}"
+    expose: ["${ICM_SPIKE_ADAPTER_PORT_INTERNAL:-8100}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${ICM_SPIKE_ADAPTER_PORT_INTERNAL:-8100}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
+  shodh-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${SHODH_SPIKE_ADAPTER_PORT_INTERNAL:-8101}
+      SPIKE_ADAPTER_NAME: shodh_spike
+      SPIKE_DATA_ROOT: /data/memory-bank
+      SPIKE_REFRESH_SECS: ${SHODH_SPIKE_ADAPTER_REFRESH_SECS:-120}
+      SPIKE_MAX_DOCS: ${SHODH_SPIKE_ADAPTER_MAX_DOCS:-50000}
+      SPIKE_MAX_CONTENT_CHARS: ${SHODH_SPIKE_ADAPTER_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${SHODH_SPIKE_ADAPTER_PORT:-8101}:${SHODH_SPIKE_ADAPTER_PORT_INTERNAL:-8101}"
+    expose: ["${SHODH_SPIKE_ADAPTER_PORT_INTERNAL:-8101}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${SHODH_SPIKE_ADAPTER_PORT_INTERNAL:-8101}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
+  memvid-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${MEMVID_SPIKE_ADAPTER_PORT_INTERNAL:-8102}
+      SPIKE_ADAPTER_NAME: memvid_spike
+      SPIKE_DATA_ROOT: /data/memory-bank
+      SPIKE_REFRESH_SECS: ${MEMVID_SPIKE_ADAPTER_REFRESH_SECS:-120}
+      SPIKE_MAX_DOCS: ${MEMVID_SPIKE_ADAPTER_MAX_DOCS:-50000}
+      SPIKE_MAX_CONTENT_CHARS: ${MEMVID_SPIKE_ADAPTER_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MEMVID_SPIKE_ADAPTER_PORT:-8102}:${MEMVID_SPIKE_ADAPTER_PORT_INTERNAL:-8102}"
+    expose: ["${MEMVID_SPIKE_ADAPTER_PORT_INTERNAL:-8102}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${MEMVID_SPIKE_ADAPTER_PORT_INTERNAL:-8102}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
+  surrealdb-spike-adapter:
+    build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
+    depends_on:
+      memorymcp-http:
+        condition: service_started
+    environment:
+      PORT: ${SURREALDB_SPIKE_ADAPTER_PORT_INTERNAL:-8103}
+      SPIKE_ADAPTER_NAME: surrealdb_spike
+      SPIKE_DATA_ROOT: /data/memory-bank
+      SPIKE_REFRESH_SECS: ${SURREALDB_SPIKE_ADAPTER_REFRESH_SECS:-120}
+      SPIKE_MAX_DOCS: ${SURREALDB_SPIKE_ADAPTER_MAX_DOCS:-50000}
+      SPIKE_MAX_CONTENT_CHARS: ${SURREALDB_SPIKE_ADAPTER_MAX_CONTENT_CHARS:-4096}
+    volumes:
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${SURREALDB_SPIKE_ADAPTER_PORT:-8103}:${SURREALDB_SPIKE_ADAPTER_PORT_INTERNAL:-8103}"
+    expose: ["${SURREALDB_SPIKE_ADAPTER_PORT_INTERNAL:-8103}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${SURREALDB_SPIKE_ADAPTER_PORT_INTERNAL:-8103}/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+    profiles: ["core"]
+
   memory-bank-spike-rs:
     build: { context: ., dockerfile: Dockerfile.memory-bank-spike-rs }
     depends_on:
@@ -309,6 +409,14 @@ services:
       trieve-spike-adapter:
         condition: service_started
       helixdb-spike-adapter:
+        condition: service_started
+      icm-spike-adapter:
+        condition: service_started
+      shodh-spike-adapter:
+        condition: service_started
+      memvid-spike-adapter:
+        condition: service_started
+      surrealdb-spike-adapter:
         condition: service_started
       memorymcp-http:
         condition: service_started
@@ -333,16 +441,16 @@ services:
       MB_SPIKE_HELIXDB_URL: ${MEMORY_BANK_SPIKE_RS_HELIXDB_URL:-http://helixdb-spike-adapter:8099}
       MB_SPIKE_HELIXDB_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_HELIXDB_SEARCH_ROUTE:-/search}
       MB_SPIKE_HELIXDB_API_KEY: ${MEMORY_BANK_SPIKE_RS_HELIXDB_API_KEY:-}
-      MB_SPIKE_ICM_URL: ${MEMORY_BANK_SPIKE_RS_ICM_URL:-}
+      MB_SPIKE_ICM_URL: ${MEMORY_BANK_SPIKE_RS_ICM_URL:-http://icm-spike-adapter:8100}
       MB_SPIKE_ICM_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_ICM_SEARCH_ROUTE:-/search}
       MB_SPIKE_ICM_API_KEY: ${MEMORY_BANK_SPIKE_RS_ICM_API_KEY:-}
-      MB_SPIKE_SHODH_URL: ${MEMORY_BANK_SPIKE_RS_SHODH_URL:-}
+      MB_SPIKE_SHODH_URL: ${MEMORY_BANK_SPIKE_RS_SHODH_URL:-http://shodh-spike-adapter:8101}
       MB_SPIKE_SHODH_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_SHODH_SEARCH_ROUTE:-/search}
       MB_SPIKE_SHODH_API_KEY: ${MEMORY_BANK_SPIKE_RS_SHODH_API_KEY:-}
-      MB_SPIKE_MEMVID_URL: ${MEMORY_BANK_SPIKE_RS_MEMVID_URL:-}
+      MB_SPIKE_MEMVID_URL: ${MEMORY_BANK_SPIKE_RS_MEMVID_URL:-http://memvid-spike-adapter:8102}
       MB_SPIKE_MEMVID_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_MEMVID_SEARCH_ROUTE:-/search}
       MB_SPIKE_MEMVID_API_KEY: ${MEMORY_BANK_SPIKE_RS_MEMVID_API_KEY:-}
-      MB_SPIKE_SURREALDB_URL: ${MEMORY_BANK_SPIKE_RS_SURREALDB_URL:-}
+      MB_SPIKE_SURREALDB_URL: ${MEMORY_BANK_SPIKE_RS_SURREALDB_URL:-http://surrealdb-spike-adapter:8103}
       MB_SPIKE_SURREALDB_SEARCH_ROUTE: ${MEMORY_BANK_SPIKE_RS_SURREALDB_SEARCH_ROUTE:-/search}
       MB_SPIKE_SURREALDB_API_KEY: ${MEMORY_BANK_SPIKE_RS_SURREALDB_API_KEY:-}
     volumes:
@@ -351,7 +459,9 @@ services:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MEMORY_BANK_SPIKE_RS_PORT:-8096}:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}"
     expose: ["${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}/health >/dev/null || exit 1"]
+      test:
+        ["CMD-SHELL",
+         "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}/health', timeout=3)\""]
       interval: 20s
       timeout: 5s
       retries: 10

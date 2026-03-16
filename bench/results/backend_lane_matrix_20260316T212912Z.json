@@ -1,0 +1,802 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "cacheBustQueries": true,
+  "cases": [
+    "short_context",
+    "deep_read",
+    "ops_focus"
+  ],
+  "generatedAt": "2026-03-16T21:29:12.955775+00:00",
+  "overallMemoryBankBackend": {
+    "after": {},
+    "before": {},
+    "delta": {
+      "attempts": 0,
+      "failures": 0,
+      "fallbacks": 0,
+      "successes": 0
+    }
+  },
+  "overallSourceLatency": {
+    "after": {},
+    "before": {}
+  },
+  "profiles": [
+    "baseline_qdrant_rollups",
+    "memory_bank_icm_spike",
+    "memory_bank_shodh_spike",
+    "memory_bank_memvid_spike",
+    "memory_bank_surrealdb_spike"
+  ],
+  "project": "perf_backend_lanes",
+  "recommendations": [
+    "Rust lane request was neutral vs baseline in this run.",
+    "Memory-bank spike sidecar URL is not configured; meilisearch/quickwit/tantivy spikes are currently fallback-only measurements."
+  ],
+  "results": {
+    "baseline_qdrant_rollups": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 4.596,
+            "mean": 4.596,
+            "min": 4.596,
+            "p50": 4.596,
+            "p95": 4.596,
+            "p99": 4.596
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 5.075,
+            "mean": 5.075,
+            "min": 5.075,
+            "p50": 5.075,
+            "p95": 5.075,
+            "p99": 5.075
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 5.435,
+            "mean": 5.435,
+            "min": 5.435,
+            "p50": 5.435,
+            "p95": 5.435,
+            "p99": 5.435
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Control lane with explicit qdrant + topic_rollups only.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "dense-vector+object-rollup",
+        "data_store": "qdrant+topic_rollups",
+        "index_type": "hnsw+partitioned-rollup",
+        "search_type": "semantic+rollup-hybrid"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "native",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 0.0,
+        "avgP95Ms": 5.035,
+        "maxP95Ms": 5.435,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_icm_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 2.311,
+            "mean": 2.311,
+            "min": 2.311,
+            "p50": 2.311,
+            "p95": 2.311,
+            "p99": 2.311
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 2.485,
+            "mean": 2.485,
+            "min": 2.485,
+            "p50": 2.485,
+            "p95": 2.485,
+            "p99": 2.485
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 5.297,
+            "mean": 5.297,
+            "min": 5.297,
+            "p50": 5.297,
+            "p95": 5.297,
+            "p99": 5.297
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: icm_spike adapter.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(icm_adapter)+qdrant+topic_rollups",
+        "index_type": "icm-adapter+hnsw",
+        "search_type": "hybrid-icm-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "icm_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 33.188,
+        "avgP95Ms": 3.364,
+        "maxP95Ms": 5.297,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_memvid_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 3.665,
+            "mean": 3.665,
+            "min": 3.665,
+            "p50": 3.665,
+            "p95": 3.665,
+            "p99": 3.665
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 1.442,
+            "mean": 1.442,
+            "min": 1.442,
+            "p50": 1.442,
+            "p95": 1.442,
+            "p99": 1.442
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 5.371,
+            "mean": 5.371,
+            "min": 5.371,
+            "p50": 5.371,
+            "p95": 5.371,
+            "p99": 5.371
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: memvid_spike adapter.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(memvid_adapter)+qdrant+topic_rollups",
+        "index_type": "memvid-adapter+hnsw",
+        "search_type": "hybrid-memvid-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "memvid_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 30.626,
+        "avgP95Ms": 3.493,
+        "maxP95Ms": 5.371,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_shodh_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 6.374,
+            "mean": 6.374,
+            "min": 6.374,
+            "p50": 6.374,
+            "p95": 6.374,
+            "p99": 6.374
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 6.055,
+            "mean": 6.055,
+            "min": 6.055,
+            "p50": 6.055,
+            "p95": 6.055,
+            "p99": 6.055
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 1.912,
+            "mean": 1.912,
+            "min": 1.912,
+            "p50": 1.912,
+            "p95": 1.912,
+            "p99": 1.912
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: shodh_spike adapter.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(shodh_adapter)+qdrant+topic_rollups",
+        "index_type": "shodh-adapter+hnsw",
+        "search_type": "hybrid-shodh-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "shodh_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 5.065,
+        "avgP95Ms": 4.78,
+        "maxP95Ms": 6.374,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_surrealdb_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 1.533,
+            "mean": 1.533,
+            "min": 1.533,
+            "p50": 1.533,
+            "p95": 1.533,
+            "p99": 1.533
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 2.084,
+            "mean": 2.084,
+            "min": 2.084,
+            "p50": 2.084,
+            "p95": 2.084,
+            "p99": 2.084
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {},
+          "errorCount": 1,
+          "errorRate": 1.0,
+          "errors": [
+            "Server disconnected without sending a response."
+          ],
+          "latencyMs": {
+            "max": 2.009,
+            "mean": 2.009,
+            "min": 2.009,
+            "p50": 2.009,
+            "p95": 2.009,
+            "p99": 2.009
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 1,
+          "sourceCountsSample": {},
+          "statusCodes": [
+            0
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: surrealdb_spike adapter.",
+      "memoryBankBackend": {
+        "after": {},
+        "before": {},
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [
+        "memory-bank spike URL is not configured; spike backends can only fall back to native.",
+        "no spike backend attempts were recorded for this profile."
+      ],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(surrealdb_adapter)+qdrant+topic_rollups",
+        "index_type": "surrealdb-adapter+hnsw",
+        "search_type": "hybrid-surrealdb-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "surrealdb_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 1.0,
+        "avgP95DeltaVsBaselinePct": 62.761,
+        "avgP95Ms": 1.875,
+        "maxP95Ms": 2.084,
+        "policyMismatchTotal": 0
+      }
+    }
+  },
+  "runsPerCase": 1,
+  "seedCorpus": false,
+  "seedState": {
+    "attempted": 0,
+    "errors": [],
+    "succeeded": 0,
+    "verificationResults": 0,
+    "verified": false
+  }
+}

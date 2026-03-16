@@ -203,6 +203,66 @@ PROFILES: dict[str, ProfileConfig] = {
             "strict": False,
         },
     ),
+    "memory_bank_icm_spike": ProfileConfig(
+        description="Memory-bank spike lane request: icm_spike adapter.",
+        data_store="memory_bank(icm_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="icm-adapter+hnsw",
+        search_type="hybrid-icm-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "icm_spike",
+            "strict": False,
+        },
+    ),
+    "memory_bank_shodh_spike": ProfileConfig(
+        description="Memory-bank spike lane request: shodh_spike adapter.",
+        data_store="memory_bank(shodh_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="shodh-adapter+hnsw",
+        search_type="hybrid-shodh-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "shodh_spike",
+            "strict": False,
+        },
+    ),
+    "memory_bank_memvid_spike": ProfileConfig(
+        description="Memory-bank spike lane request: memvid_spike adapter.",
+        data_store="memory_bank(memvid_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="memvid-adapter+hnsw",
+        search_type="hybrid-memvid-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "memvid_spike",
+            "strict": False,
+        },
+    ),
+    "memory_bank_surrealdb_spike": ProfileConfig(
+        description="Memory-bank spike lane request: surrealdb_spike adapter.",
+        data_store="memory_bank(surrealdb_adapter)+qdrant+topic_rollups",
+        data_model="lexical+semantic",
+        index_type="surrealdb-adapter+hnsw",
+        search_type="hybrid-surrealdb-semantic",
+        sources=["qdrant", "topic_rollups", "memory_bank"],
+        source_weights={"qdrant": 1.0, "topic_rollups": 0.9, "memory_bank": 0.6},
+        backend_policy={
+            "vector_backend": "auto",
+            "lexical_backend": "auto",
+            "memory_bank_backend": "surrealdb_spike",
+            "strict": False,
+        },
+    ),
 }
 
 
@@ -629,6 +689,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "memory_bank_lancedb_spike",
         "memory_bank_trieve_spike",
         "memory_bank_helixdb_spike",
+        "memory_bank_icm_spike",
+        "memory_bank_shodh_spike",
+        "memory_bank_memvid_spike",
+        "memory_bank_surrealdb_spike",
     ]
     if any(
         not bool(results.get(name, {}).get("memoryBankBackend", {}).get("before", {}).get("spikeUrlConfigured"))
