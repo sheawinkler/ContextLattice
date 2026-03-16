@@ -831,6 +831,82 @@ func TestStagedRetrievalWithoutLexicalGuardRunsSyncSlowFallback(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalCoverageRescueQueryVariant(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_COVERAGE_RESCUE_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_COVERAGE_RESCUE_MIN_TOKENS", "2")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", "2")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		query := strings.TrimSpace(strings.ToLower(anyToString(request["query"])))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if strings.Contains(query, "run=1") {
+			_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+			return
+		}
+		if strings.Contains(query, "profitability baseline ladder") {
+			_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"runbook.md","summary":"profitability baseline ladder","score":0.91,"source":"topic_rollups"}],"warnings":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"profitability baseline ladder run=1","limit":5,"retrieval_mode":"balanced"}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("expected coverage rescue results, got %#v", payload["results"])
+	}
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if !strings.Contains(warnings, "coverage rescue query variant returned results") {
+		t.Fatalf("expected coverage rescue warning, got %v", payload["warnings"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	policy, _ := debug["source_policy"].(map[string]any)
+	if applied, ok := policy["coverage_rescue_applied"].(bool); !ok || !applied {
+		t.Fatalf("expected coverage_rescue_applied=true, got %#v", policy["coverage_rescue_applied"])
+	}
+	if strings.TrimSpace(anyToString(policy["coverage_rescue_query"])) != "profitability baseline ladder" {
+		t.Fatalf("expected coverage_rescue_query to be sanitized, got %#v", policy["coverage_rescue_query"])
+	}
+}
+
 func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("GO_RETRIEVAL_RUST_LANE_PROMOTION_ENABLED", "true")

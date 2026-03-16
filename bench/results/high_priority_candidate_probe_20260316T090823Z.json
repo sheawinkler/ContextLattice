@@ -1,0 +1,24 @@
+{
+  "candidates": {
+    "helixdb": {
+      "cases": {},
+      "health": null,
+      "status": "skipped_unconfigured",
+      "url": ""
+    },
+    "lancedb": {
+      "cases": {},
+      "health": null,
+      "status": "skipped_unconfigured",
+      "url": ""
+    },
+    "trieve": {
+      "cases": {},
+      "health": null,
+      "status": "skipped_unconfigured",
+      "url": ""
+    }
+  },
+  "generatedAt": "2026-03-16T09:08:24.081699+00:00",
+  "project": "perf_backend_lanes"
+}

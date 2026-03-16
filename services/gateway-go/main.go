@@ -53,6 +53,8 @@ type retrievalPolicy struct {
 	slowSyncTimeoutCap           time.Duration
 	rustLanePromotionEnabled     bool
 	topicPrefilterEnabled        bool
+	coverageRescueEnabled        bool
+	coverageRescueMinTokens      int
 	lexicalGuardEnabled          bool
 	lexicalGuardMinCoverage      float64
 	lexicalGuardMinResults       int
@@ -512,6 +514,11 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.slowSyncTimeoutCap = envDurationSeconds("GO_RETRIEVAL_SLOW_SYNC_TIMEOUT_CAP_SECS", 2.5)
 	policy.rustLanePromotionEnabled = envBool("GO_RETRIEVAL_RUST_LANE_PROMOTION_ENABLED", false)
 	policy.topicPrefilterEnabled = envBool("GO_RETRIEVAL_TOPIC_PREFILTER_ENABLED", true)
+	policy.coverageRescueEnabled = envBool("GO_RETRIEVAL_COVERAGE_RESCUE_ENABLED", true)
+	policy.coverageRescueMinTokens = envInt("GO_RETRIEVAL_COVERAGE_RESCUE_MIN_TOKENS", 2)
+	if policy.coverageRescueMinTokens < 1 {
+		policy.coverageRescueMinTokens = 1
+	}
 	policy.lexicalGuardEnabled = envBool("GO_RETRIEVAL_LEXICAL_GUARD_ENABLED", true)
 	policy.lexicalGuardMinCoverage = envFloat("GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE", 0.55)
 	if policy.lexicalGuardMinCoverage < 0 {
@@ -964,6 +971,8 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"slowSyncTimeoutCapSecs":     s.retrieval.slowSyncTimeoutCap.Seconds(),
 			"rustLanePromotionEnabled":   s.retrieval.rustLanePromotionEnabled,
 			"topicPrefilterEnabled":      s.retrieval.topicPrefilterEnabled,
+			"coverageRescueEnabled":      s.retrieval.coverageRescueEnabled,
+			"coverageRescueMinTokens":    s.retrieval.coverageRescueMinTokens,
 			"rustQualityFallbackEnabled": s.retrieval.rustQualityFallbackEnabled,
 			"rustQualityFallbackSources": s.retrieval.rustQualityFallbackSources,
 			"rustQualityFallbackMode":    s.retrieval.rustQualityFallbackMode,
@@ -1437,6 +1446,70 @@ func inferTopicPathFromQuery(query string) string {
 		}
 	}
 	return ""
+}
+
+func shouldDropCoverageToken(token string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(token))
+	if normalized == "" {
+		return true
+	}
+	if strings.HasPrefix(normalized, "profile=") ||
+		strings.HasPrefix(normalized, "case=") ||
+		strings.HasPrefix(normalized, "run=") ||
+		strings.HasPrefix(normalized, "nonce=") ||
+		strings.HasPrefix(normalized, "ts=") ||
+		strings.HasPrefix(normalized, "seed=") ||
+		strings.HasPrefix(normalized, "cache=") ||
+		strings.HasPrefix(normalized, "id=") {
+		return true
+	}
+	if strings.Contains(normalized, "::") {
+		return true
+	}
+	letters := 0
+	digits := 0
+	separators := 0
+	for _, r := range normalized {
+		switch {
+		case unicode.IsLetter(r):
+			letters += 1
+		case unicode.IsDigit(r):
+			digits += 1
+		case r == '-' || r == '_' || r == '=' || r == ':':
+			separators += 1
+		}
+	}
+	if len(normalized) >= 12 && digits >= letters {
+		return true
+	}
+	if separators >= 2 && digits > 0 && len(normalized) >= 10 {
+		return true
+	}
+	return false
+}
+
+func deriveCoverageRescueQuery(query string, minTokens int) (string, bool) {
+	tokens := strings.Fields(strings.TrimSpace(query))
+	if len(tokens) < minTokens {
+		return "", false
+	}
+	kept := make([]string, 0, len(tokens))
+	removed := 0
+	for _, token := range tokens {
+		if shouldDropCoverageToken(token) {
+			removed += 1
+			continue
+		}
+		kept = append(kept, token)
+	}
+	if removed == 0 || len(kept) < minTokens {
+		return "", false
+	}
+	normalized := strings.TrimSpace(strings.Join(kept, " "))
+	if normalized == "" || normalized == strings.TrimSpace(query) {
+		return "", false
+	}
+	return normalized, true
 }
 
 func (s *server) applyRustLanePromotionGate(policy map[string]any, trafficClass string) (map[string]any, bool) {
@@ -2304,6 +2377,9 @@ func (s *server) executeRetrieval(
 	continuationSources := []string{}
 	asyncWarmSlowSources := []string{}
 	syncFallbackSlowSources := []string{}
+	coverageRescueApplied := false
+	coverageRescueQuery := ""
+	coverageRescueSources := []string{}
 	continuationToken := continuationTokenForRequest(query, requestPayload)
 	minFastTarget := s.resolveMinFastResults(retrievalMode)
 
@@ -2548,6 +2624,72 @@ func (s *server) executeRetrieval(
 		}
 	}
 
+	if len(merged) == 0 && s.retrieval.coverageRescueEnabled {
+		if rescueQuery, rescueOK := deriveCoverageRescueQuery(query, s.retrieval.coverageRescueMinTokens); rescueOK {
+			rescuePayload := cloneMap(requestPayload)
+			rescuePayload["query"] = rescueQuery
+			rescueSources := append([]string(nil), fastSources...)
+			if len(rescueSources) == 0 {
+				rescueSources = append([]string(nil), resolvedSources...)
+			}
+			rescueSources = normalizeSourceList(rescueSources)
+			coverageRescueSources = append([]string(nil), rescueSources...)
+			rescueBatch := s.runSourceBatch(
+				ctx,
+				incomingHeaders,
+				rescuePayload,
+				rescueSources,
+				retrievalMode,
+				"coverage-rescue-fast",
+				explicitSourceOverride,
+				true,
+				false,
+				adaptiveSkipped,
+				continuationToken,
+			)
+			for source, rows := range rescueBatch.rows {
+				if len(rows) == 0 {
+					continue
+				}
+				sourceRows[source] = rows
+			}
+			for source, payload := range rescueBatch.sourceErrors {
+				sourceErrors[source] = payload
+			}
+			for source, timeoutSecs := range rescueBatch.effectiveTimeoutsSecs {
+				effectiveTimeouts[source] = timeoutSecs
+			}
+			for source, budget := range rescueBatch.adaptiveBudgets {
+				adaptiveBudgets[source] = budget
+			}
+			warnings = append(warnings, rescueBatch.warnings...)
+			for _, source := range rescueBatch.timedOutSources {
+				timedOutObserved[source] = struct{}{}
+				if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+					adaptiveSkipped[source] = struct{}{}
+				}
+			}
+			continuationSources = append(continuationSources, rescueBatch.continuationSources...)
+			for _, source := range rescueBatch.budgetExceededSources {
+				budgetExceededObserved[source] = struct{}{}
+			}
+			merged = mergeRows(sourceRows, limit)
+			coverageRescueQuery = rescueQuery
+			if len(merged) > 0 {
+				coverageRescueApplied = true
+				warnings = append(
+					warnings,
+					"Coverage rescue query variant returned results from fast sources. variant="+rescueQuery,
+				)
+			} else {
+				warnings = append(
+					warnings,
+					"Coverage rescue query variant did not return additional results. variant="+rescueQuery,
+				)
+			}
+		}
+	}
+
 	asyncWarmSlowSources = normalizeSourceList(asyncWarmSlowSources)
 	for _, source := range asyncWarmSlowSources {
 		if s.scheduleContinuationWarm(incomingHeaders, requestPayload, source, "slow-async-warm", continuationToken) {
@@ -2723,6 +2865,11 @@ func (s *server) executeRetrieval(
 			"rust_lane_gate_applied":                 rustLaneGateApplied,
 			"topic_prefilter_applied":                topicPrefilterApplied,
 			"topic_prefilter_hint":                   topicPrefilterHint,
+			"coverage_rescue_enabled":                s.retrieval.coverageRescueEnabled,
+			"coverage_rescue_min_tokens":             s.retrieval.coverageRescueMinTokens,
+			"coverage_rescue_applied":                coverageRescueApplied,
+			"coverage_rescue_query":                  coverageRescueQuery,
+			"coverage_rescue_sources":                coverageRescueSources,
 			"memory_bank_backend_effective":          strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
 			"rust_quality_fallback_enabled":          s.retrieval.rustQualityFallbackEnabled,
 			"rust_quality_fallback_sources":          s.retrieval.rustQualityFallbackSources,
@@ -2749,6 +2896,9 @@ func (s *server) executeRetrieval(
 			"rust_quality_fallback_mode":       rustQualityFallbackModeUsed,
 			"effective_timeout_secs":           effectiveTimeouts,
 			"adaptive_timeout_budget":          adaptiveBudgets,
+			"coverage_rescue_applied":          coverageRescueApplied,
+			"coverage_rescue_query":            coverageRescueQuery,
+			"coverage_rescue_sources":          coverageRescueSources,
 		},
 	}
 

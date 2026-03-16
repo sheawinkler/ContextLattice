@@ -117,6 +117,7 @@ Optional knobs:
 - `--profiles`
 - `--cases`
 - `--cache-bust` / `--no-cache-bust`
+- `--seed-corpus` / `--no-seed-corpus` (default: on; writes/validates a small benchmark corpus for recall coverage)
 - `--output`
 
 ## Direct Spike Backend Matrix
@@ -138,3 +139,17 @@ Optional knobs:
 - `--cache-bust` / `--no-cache-bust`
 - `--timeout`
 - `--output`
+
+## High-Priority External Candidate Probe
+
+`bench/high_priority_candidate_probe.py` checks readiness of optional external candidates from the current priority set (`lancedb`, `trieve`, `helixdb`).
+
+```bash
+python3 bench/high_priority_candidate_probe.py --project perf_backend_lanes
+```
+
+Optional endpoint env vars (or matching CLI flags):
+
+- `LANCEDB_SPIKE_URL`
+- `TRIEVE_SPIKE_URL`
+- `HELIXDB_SPIKE_URL`
