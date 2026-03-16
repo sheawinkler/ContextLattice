@@ -47,6 +47,18 @@ struct Config {
     helixdb_url: String,
     helixdb_search_route: String,
     helixdb_api_key: String,
+    icm_url: String,
+    icm_search_route: String,
+    icm_api_key: String,
+    shodh_url: String,
+    shodh_search_route: String,
+    shodh_api_key: String,
+    memvid_url: String,
+    memvid_search_route: String,
+    memvid_api_key: String,
+    surrealdb_url: String,
+    surrealdb_search_route: String,
+    surrealdb_api_key: String,
 }
 
 impl Config {
@@ -75,6 +87,18 @@ impl Config {
         let helixdb_url = env_string("MB_SPIKE_HELIXDB_URL", "");
         let helixdb_search_route = env_string("MB_SPIKE_HELIXDB_SEARCH_ROUTE", "/search");
         let helixdb_api_key = env_string("MB_SPIKE_HELIXDB_API_KEY", "");
+        let icm_url = env_string("MB_SPIKE_ICM_URL", "");
+        let icm_search_route = env_string("MB_SPIKE_ICM_SEARCH_ROUTE", "/search");
+        let icm_api_key = env_string("MB_SPIKE_ICM_API_KEY", "");
+        let shodh_url = env_string("MB_SPIKE_SHODH_URL", "");
+        let shodh_search_route = env_string("MB_SPIKE_SHODH_SEARCH_ROUTE", "/search");
+        let shodh_api_key = env_string("MB_SPIKE_SHODH_API_KEY", "");
+        let memvid_url = env_string("MB_SPIKE_MEMVID_URL", "");
+        let memvid_search_route = env_string("MB_SPIKE_MEMVID_SEARCH_ROUTE", "/search");
+        let memvid_api_key = env_string("MB_SPIKE_MEMVID_API_KEY", "");
+        let surrealdb_url = env_string("MB_SPIKE_SURREALDB_URL", "");
+        let surrealdb_search_route = env_string("MB_SPIKE_SURREALDB_SEARCH_ROUTE", "/search");
+        let surrealdb_api_key = env_string("MB_SPIKE_SURREALDB_API_KEY", "");
         Self {
             port,
             data_root,
@@ -96,6 +120,18 @@ impl Config {
             helixdb_url,
             helixdb_search_route,
             helixdb_api_key,
+            icm_url,
+            icm_search_route,
+            icm_api_key,
+            shodh_url,
+            shodh_search_route,
+            shodh_api_key,
+            memvid_url,
+            memvid_search_route,
+            memvid_api_key,
+            surrealdb_url,
+            surrealdb_search_route,
+            surrealdb_api_key,
         }
     }
 }
@@ -293,6 +329,22 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "helixdb_spike".to_string(),
         !state.cfg.helixdb_url.trim().is_empty(),
     );
+    external_backends.insert(
+        "icm_spike".to_string(),
+        !state.cfg.icm_url.trim().is_empty(),
+    );
+    external_backends.insert(
+        "shodh_spike".to_string(),
+        !state.cfg.shodh_url.trim().is_empty(),
+    );
+    external_backends.insert(
+        "memvid_spike".to_string(),
+        !state.cfg.memvid_url.trim().is_empty(),
+    );
+    external_backends.insert(
+        "surrealdb_spike".to_string(),
+        !state.cfg.surrealdb_url.trim().is_empty(),
+    );
     let payload = HealthResponse {
         ok: true,
         backend_modes: vec![
@@ -302,6 +354,10 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
             "lancedb_spike",
             "trieve_spike",
             "helixdb_spike",
+            "icm_spike",
+            "shodh_spike",
+            "memvid_spike",
+            "surrealdb_spike",
         ],
         docs_loaded: snapshot.docs.len(),
         fingerprint: snapshot.fingerprint,
@@ -755,6 +811,26 @@ async fn external_adapter_search(
             state.cfg.helixdb_url.trim(),
             state.cfg.helixdb_search_route.trim(),
             state.cfg.helixdb_api_key.trim(),
+        ),
+        "icm_spike" => (
+            state.cfg.icm_url.trim(),
+            state.cfg.icm_search_route.trim(),
+            state.cfg.icm_api_key.trim(),
+        ),
+        "shodh_spike" => (
+            state.cfg.shodh_url.trim(),
+            state.cfg.shodh_search_route.trim(),
+            state.cfg.shodh_api_key.trim(),
+        ),
+        "memvid_spike" => (
+            state.cfg.memvid_url.trim(),
+            state.cfg.memvid_search_route.trim(),
+            state.cfg.memvid_api_key.trim(),
+        ),
+        "surrealdb_spike" => (
+            state.cfg.surrealdb_url.trim(),
+            state.cfg.surrealdb_search_route.trim(),
+            state.cfg.surrealdb_api_key.trim(),
         ),
         _ => ("", "", ""),
     };
@@ -1253,9 +1329,13 @@ async fn wait_for_meili_task(state: &AppState, task_uid: u64, action: &str) -> R
 fn normalize_backend(input: &str) -> String {
     match input.trim().to_ascii_lowercase().as_str() {
         "helixdb" | "helixdb_spike" => "helixdb_spike".to_string(),
+        "icm" | "icm_spike" => "icm_spike".to_string(),
         "lancedb" | "lancedb_spike" => "lancedb_spike".to_string(),
+        "memvid" | "memvid_spike" => "memvid_spike".to_string(),
         "meilisearch_spike" => "meilisearch_spike".to_string(),
         "quickwit_spike" => "quickwit_spike".to_string(),
+        "shodh" | "shodh_memory" | "shodh_spike" => "shodh_spike".to_string(),
+        "surreal" | "surrealdb" | "surrealdb_spike" => "surrealdb_spike".to_string(),
         "tantivy_spike" => "tantivy_spike".to_string(),
         "trieve" | "trieve_spike" => "trieve_spike".to_string(),
         _ => "tantivy_spike".to_string(),

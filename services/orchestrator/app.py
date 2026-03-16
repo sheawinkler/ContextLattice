@@ -1511,12 +1511,19 @@ MEMORY_BANK_SPIKE_BACKEND_CHOICES = {
     "lancedb_spike",
     "trieve_spike",
     "helixdb_spike",
+    "icm_spike",
+    "shodh_spike",
+    "memvid_spike",
+    "surrealdb_spike",
 }
 MEMORY_BANK_SPIKE_BACKEND = str(
-    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "native")
+    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "quickwit_spike")
 ).strip().lower()
 if MEMORY_BANK_SPIKE_BACKEND not in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
-    MEMORY_BANK_SPIKE_BACKEND = "native"
+    MEMORY_BANK_SPIKE_BACKEND = "quickwit_spike"
+MEMORY_BANK_SPIKE_FALLBACK_BACKEND = str(
+    os.getenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND", "meilisearch_spike")
+).strip().lower()
 MEMORY_BANK_SPIKE_HTTP_URL = str(os.getenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL", "")).strip()
 MEMORY_BANK_SPIKE_SEARCH_ROUTE = str(
     os.getenv("ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE", "/search")
@@ -1527,6 +1534,10 @@ MEMORY_BANK_SPIKE_TIMEOUT_SECS = max(
 )
 MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE = os.getenv(
     "ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK = os.getenv(
+    "ORCH_MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH = Path(
@@ -17071,6 +17082,12 @@ async def search_memory_bank_lexical(
     backend_mode = _memory_bank_backend_mode()
     if backend_mode == "disabled":
         return []
+    fallback_backend_mode = _normalize_memory_bank_backend_choice(
+        MEMORY_BANK_SPIKE_FALLBACK_BACKEND,
+        default="native",
+    )
+    if fallback_backend_mode in {"native", "disabled"} or fallback_backend_mode == backend_mode:
+        fallback_backend_mode = ""
     query_targets_low_value_paths = _query_targets_low_value_paths(query)
     started = time.monotonic()
     budget_secs = max(
@@ -17082,25 +17099,47 @@ async def search_memory_bank_lexical(
         return max(0.0, budget_secs - (time.monotonic() - started))
 
     if backend_mode != "native":
-        try:
-            spike_rows = await _search_memory_bank_spike_backend(
-                backend_mode=backend_mode,
-                search_query=query,
-                search_limit=limit,
-                project_name=project_filter,
-                topic_path=topic_filter,
-                budget_secs=budget_secs,
-            )
-            if spike_rows:
-                return spike_rows[:limit]
-            if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
-                return []
-            memory_bank_spike_fallbacks += 1
-        except Exception as exc:
-            if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
-                return []
-            memory_bank_spike_fallbacks += 1
-            logger.debug("Memory-bank spike backend %s failed (%s); using native fallback", backend_mode, exc)
+        spike_candidates = [backend_mode]
+        if fallback_backend_mode and fallback_backend_mode not in spike_candidates:
+            spike_candidates.append(fallback_backend_mode)
+        for idx, spike_backend in enumerate(spike_candidates):
+            is_last_candidate = idx == (len(spike_candidates) - 1)
+            try:
+                spike_rows = await _search_memory_bank_spike_backend(
+                    backend_mode=spike_backend,
+                    search_query=query,
+                    search_limit=limit,
+                    project_name=project_filter,
+                    topic_path=topic_filter,
+                    budget_secs=budget_secs,
+                )
+                if spike_rows:
+                    return spike_rows[:limit]
+                if not MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK or is_last_candidate:
+                    if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
+                        return []
+                    memory_bank_spike_fallbacks += 1
+                    break
+                memory_bank_spike_fallbacks += 1
+                logger.debug(
+                    "Memory-bank spike backend %s returned no rows; trying fallback backend %s",
+                    spike_backend,
+                    spike_candidates[idx + 1],
+                )
+            except Exception as exc:
+                if not is_last_candidate:
+                    memory_bank_spike_fallbacks += 1
+                    logger.debug(
+                        "Memory-bank spike backend %s failed (%s); trying fallback backend %s",
+                        spike_backend,
+                        exc,
+                        spike_candidates[idx + 1],
+                    )
+                    continue
+                if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
+                    return []
+                memory_bank_spike_fallbacks += 1
+                logger.debug("Memory-bank spike backend %s failed (%s); using native fallback", spike_backend, exc)
 
     project_cap = min(
         max(1, RETRIEVAL_MEMORY_PROJECT_LIMIT),
@@ -22539,7 +22578,7 @@ def _default_rust_retrieval_backend_policy() -> dict[str, Any]:
         "strict": bool(RUST_RETRIEVAL_BACKEND_STRICT),
         "memory_bank_backend": _normalize_memory_bank_backend_choice(
             MEMORY_BANK_SPIKE_BACKEND,
-            default="native",
+            default="quickwit_spike",
         ),
     }
 

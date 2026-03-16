@@ -411,6 +411,10 @@ func defaultRustBackendPolicy() map[string]any {
 		"lancedb_spike":     {},
 		"trieve_spike":      {},
 		"helixdb_spike":     {},
+		"icm_spike":         {},
+		"shodh_spike":       {},
+		"memvid_spike":      {},
+		"surrealdb_spike":   {},
 	}
 	return map[string]any{
 		"vector_backend": normalizeRustBackendChoice(
@@ -427,7 +431,7 @@ func defaultRustBackendPolicy() map[string]any {
 		"memory_bank_backend": normalizeRustBackendChoice(
 			os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"),
 			memoryBankAllowed,
-			"native",
+			"quickwit_spike",
 		),
 	}
 }
@@ -475,6 +479,10 @@ func resolveRustBackendPolicy(raw any) map[string]any {
 				"lancedb_spike":     {},
 				"trieve_spike":      {},
 				"helixdb_spike":     {},
+				"icm_spike":         {},
+				"shodh_spike":       {},
+				"memvid_spike":      {},
+				"surrealdb_spike":   {},
 			},
 			anyToString(resolved["memory_bank_backend"]),
 		)

@@ -186,8 +186,9 @@ ORCH_RECALL_DEEP_ASYNC_MONGO_COLLECTION=recall_deep_async_jobs
 ORCH_TELEMETRY_DB=memmcp_raw
 ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
 ORCH_TELEMETRY_PERSIST_ENABLED=true
-ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=false
-ORCH_MEMORY_BANK_SEARCH_BACKEND=native
+ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true
+ORCH_MEMORY_BANK_SEARCH_BACKEND=quickwit_spike
+ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND=meilisearch_spike
 ORCH_MEMORY_BANK_SPIKE_HTTP_URL=http://memory-bank-spike-rs:8096
 ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE=/search
 MEMORY_BANK_SPIKE_RS_MEILI_URL=http://meilisearch:7700
@@ -372,7 +373,7 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - Storage pressure controls: retention runner, low-value TTL pruning, optional snapshot pruning, and external NVMe cold path support.
 - Retrieval path: parallel source reads with orchestrator merge/rank loop and preference-learning feedback.
 - Telemetry routing guards (default-on): telemetry-like writes are filtered out of `qdrant`/`mindsdb`/`letta` fanout.
-- Memory-bank policy: default non-critical source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=false`) with explicit opt-in and optional non-ANE spike backend lane.
+- Memory-bank policy: promoted fast-lane source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true`) with default `quickwit_spike` and `meilisearch_spike` fallback.
 
 Telemetry routing/cleanup toggles:
 
@@ -440,7 +441,8 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `ORCH_RUST_RETRIEVAL_VECTOR_BACKEND` (`auto|qdrant_remote|usearch_ann`)
   - `ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND` (`auto|none|tantivy_lexical`)
   - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT`
-  - `ORCH_MEMORY_BANK_SEARCH_BACKEND` (`native|disabled|meilisearch_spike|quickwit_spike|tantivy_spike`)
+  - `ORCH_MEMORY_BANK_SEARCH_BACKEND` (`native|disabled|meilisearch_spike|quickwit_spike|tantivy_spike|lancedb_spike|trieve_spike|helixdb_spike|icm_spike|shodh_spike|memvid_spike|surrealdb_spike`)
+  - `ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND`
   - `ORCH_MEMORY_BANK_SPIKE_HTTP_URL`
   - `MEMORY_BANK_SPIKE_RS_MEILI_URL`
   - `MEMORY_BANK_SPIKE_RS_MEILI_INDEX`
@@ -453,6 +455,9 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `GO_RETRIEVAL_SLOW_SYNC_TIMEOUT_CAP_SECS`
   - `GO_RETRIEVAL_RUST_LANE_PROMOTION_ENABLED`
   - `GO_RETRIEVAL_TOPIC_PREFILTER_ENABLED`
+
+V4 stack reference:
+- `docs/perf-candidate-notes/v4_stack_and_rust_exploration_plan_2026-03-16.md`
   - `USE_GO_ORCHESTRATOR`
   - `CONTEXTLATTICE_ENGINE_MODE` (`embedded` or `service`)
   - `CONTEXTLATTICE_ENGINE_URL`

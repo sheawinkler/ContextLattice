@@ -987,7 +987,15 @@ func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 }
 
 func TestResolveRustBackendPolicyAcceptsExtendedMemoryBackends(t *testing.T) {
-	cases := []string{"lancedb_spike", "trieve_spike", "helixdb_spike"}
+	cases := []string{
+		"lancedb_spike",
+		"trieve_spike",
+		"helixdb_spike",
+		"icm_spike",
+		"shodh_spike",
+		"memvid_spike",
+		"surrealdb_spike",
+	}
 	for _, backend := range cases {
 		resolved := resolveRustBackendPolicy(
 			map[string]any{
