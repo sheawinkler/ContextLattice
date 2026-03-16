@@ -986,6 +986,20 @@ func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	}
 }
 
+func TestResolveRustBackendPolicyAcceptsExtendedMemoryBackends(t *testing.T) {
+	cases := []string{"lancedb_spike", "trieve_spike", "helixdb_spike"}
+	for _, backend := range cases {
+		resolved := resolveRustBackendPolicy(
+			map[string]any{
+				"memory_bank_backend": backend,
+			},
+		)
+		if got := strings.TrimSpace(anyToString(resolved["memory_bank_backend"])); got != backend {
+			t.Fatalf("expected backend %q to be preserved, got %q", backend, got)
+		}
+	}
+}
+
 func TestHealthzIncludesBackendStatus(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {

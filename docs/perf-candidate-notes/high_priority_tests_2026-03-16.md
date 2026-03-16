@@ -4,6 +4,9 @@ Artifacts:
 - `bench/results/backend_lane_matrix_20260316T090443Z_seedfix.json`
 - `bench/results/memory_bank_spike_direct_matrix_20260316T090659Z_priority_round.json`
 - `bench/results/high_priority_candidate_probe_20260316T090823Z.json`
+- `bench/results/backend_lane_matrix_20260316T093119Z_external_adapters_live.json`
+- `bench/results/memory_bank_spike_direct_matrix_20260316T093119Z_extended_adapters_live.json`
+- `bench/results/high_priority_candidate_probe_20260316T093141Z_post_adapter_integration.json`
 
 ## Recall Coverage Fix Validation
 
@@ -36,9 +39,24 @@ Artifacts:
 | `trieve` | `skipped_unconfigured` | `-` |
 | `helixdb` | `skipped_unconfigured` | `-` |
 
+## Adapter Integration Pass (Rust sidecar + orchestrator/go policy)
+
+- Rust sidecar now exposes backend modes:
+  - `tantivy_spike`, `quickwit_spike`, `meilisearch_spike`
+  - `lancedb_spike`, `trieve_spike`, `helixdb_spike`
+- Adapter endpoints are currently unconfigured in `.env`:
+  - sidecar `/health` reports `external_backends=false` for all three adapter lanes
+  - direct calls return explicit `502 ... endpoint is not configured`
+- Orchestrator + gateway now preserve and propagate these backend policy values end-to-end.
+- Backend lane matrix confirms explicit fail-open behavior when adapter lanes are requested:
+  - each adapter profile recorded `attempts=3`, `failures=3`, `fallbacks=3`, `successes=0`
+  - retrieval still completed via native fallback path.
+
 ## Next Actions
 
 1. Keep seeded corpus validation enabled in benchmark matrix to prevent false sparse-hit regressions.
 2. Promote quickwit/tantivy direct-spike lane experiments first (best p95 among currently integrated spike backends).
-3. Wire at least one external candidate endpoint (`trieve` or `helixdb`) and rerun `high_priority_candidate_probe.py` with live URLs.
-4. Add a `lancedb` spike adapter lane only after endpoint contract is fixed (search + health parity).
+3. Wire at least one external candidate endpoint (`trieve` or `helixdb`) and rerun both:
+   - `bench/high_priority_candidate_probe.py`
+   - `bench/memory_bank_spike_direct_matrix.py --backends ...`
+4. Promote an adapter lane only after it shows non-zero results with error-rate <= existing spike lanes and lower p95 under cache-busted runs.

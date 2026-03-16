@@ -408,6 +408,9 @@ func defaultRustBackendPolicy() map[string]any {
 		"meilisearch_spike": {},
 		"quickwit_spike":    {},
 		"tantivy_spike":     {},
+		"lancedb_spike":     {},
+		"trieve_spike":      {},
+		"helixdb_spike":     {},
 	}
 	return map[string]any{
 		"vector_backend": normalizeRustBackendChoice(
@@ -469,6 +472,9 @@ func resolveRustBackendPolicy(raw any) map[string]any {
 				"meilisearch_spike": {},
 				"quickwit_spike":    {},
 				"tantivy_spike":     {},
+				"lancedb_spike":     {},
+				"trieve_spike":      {},
+				"helixdb_spike":     {},
 			},
 			anyToString(resolved["memory_bank_backend"]),
 		)

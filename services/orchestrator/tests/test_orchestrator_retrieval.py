@@ -6556,6 +6556,14 @@ async def test_retriever_runtime_request_includes_rust_backend_policy(monkeypatc
     assert debug["runtime"]["rust_backend_policy"]["vector_backend"] == "usearch_ann"
 
 
+def test_normalize_memory_bank_backend_accepts_extended_spike_modes():
+    for backend in ("lancedb_spike", "trieve_spike", "helixdb_spike"):
+        assert (
+            orchestrator._normalize_memory_bank_backend_choice(backend, default="native")
+            == backend
+        )
+
+
 @pytest.mark.asyncio
 async def test_engine_retrieval_health_endpoint():
     payload = await orchestrator.engine_retrieval_health()
