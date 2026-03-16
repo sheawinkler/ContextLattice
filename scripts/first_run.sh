@@ -186,7 +186,7 @@ configure_security_posture() {
   set_env_key "SECRETS_STORAGE_MODE" "$secrets_mode"
 
   if [[ "$INSECURE_LOCAL" == "1" ]]; then
-    set_env_key "MEMMCP_ENV" "development"
+    set_env_key "CONTEXTLATTICE_ENV" "development"
     set_env_key "ORCH_SECURITY_STRICT" "false"
     set_env_key "ORCH_PUBLIC_STATUS" "true"
     set_env_key "ORCH_PUBLIC_DOCS" "true"
@@ -196,18 +196,22 @@ configure_security_posture() {
     return 0
   fi
 
-  set_env_key "MEMMCP_ENV" "production"
+  set_env_key "CONTEXTLATTICE_ENV" "production"
   set_env_key "ORCH_SECURITY_STRICT" "true"
   set_env_key "ORCH_PUBLIC_STATUS" "false"
   set_env_key "ORCH_PUBLIC_DOCS" "false"
   set_env_key "MESSAGING_WEBHOOK_PUBLIC" "false"
   set_env_key "HOST_BIND_ADDRESS" "127.0.0.1"
 
-  api_key="$(get_env_key MEMMCP_ORCHESTRATOR_API_KEY)"
+  api_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
+  if [[ -z "${api_key}" ]]; then
+    # Legacy env key migration path.
+    api_key="$(get_env_key MEMMCP_ORCHESTRATOR_API_KEY)"
+  fi
   if [[ -z "${api_key}" ]]; then
     api_key="$(generate_api_key)"
-    set_env_key "MEMMCP_ORCHESTRATOR_API_KEY" "$api_key"
-    echo ">> generated MEMMCP_ORCHESTRATOR_API_KEY"
+    set_env_key "CONTEXTLATTICE_ORCHESTRATOR_API_KEY" "$api_key"
+    echo ">> generated CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
   fi
   echo ">> security posture: production defaults (loopback + auth) applied"
 }

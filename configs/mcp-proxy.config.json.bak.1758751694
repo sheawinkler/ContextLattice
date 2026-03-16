@@ -1,0 +1,6 @@
+{
+  "servers": [
+    { "slug": "memory-bank", "transport": "http", "endpoint": "http://memorymcp-http:59081/mcp" },
+    { "slug": "mindsdb",     "transport": "http", "endpoint": "http://mindsdb-http-proxy:8004/mcp" }
+  ]
+}

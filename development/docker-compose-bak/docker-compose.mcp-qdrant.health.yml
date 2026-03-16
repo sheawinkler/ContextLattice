@@ -1,0 +1,10 @@
+services:
+  mcp-qdrant:
+    healthcheck:
+      test: >
+        wget -qO- --header="accept: application/json" --header="content-type: application/json"
+        --post-data='{"jsonrpc":"2.0","id":"ping","method":"ping","params":{}}'
+        http://127.0.0.1:8002/mcp | grep -q '"result"' || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 12

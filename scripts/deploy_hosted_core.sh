@@ -22,16 +22,16 @@ $DOMAIN {
   }
 
   handle_path /status* {
-    reverse_proxy memmcp-orchestrator:8075
+    reverse_proxy contextlattice-orchestrator:8075
   }
 
   handle {
-    reverse_proxy memmcp-orchestrator:8075
+    reverse_proxy contextlattice-orchestrator:8075
   }
 }
 EOF2
 
-echo "[1/2] Bringing up core memMCP profile..."
+echo "[1/2] Bringing up core ContextLattice profile..."
 (cd "$ROOT_DIR" && COMPOSE_PROFILES="core" docker compose up -d --build)
 
 echo "[2/2] Launching Caddy reverse proxy for $DOMAIN ..."

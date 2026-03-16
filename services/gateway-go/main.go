@@ -48,6 +48,11 @@ type retrievalPolicy struct {
 	rustQualityFallbackSources   []string
 	rustQualityFallbackMode      string
 	minFastResults               int
+	minFastResultsByMode         map[string]int
+	disableSyncSlowFallback      bool
+	slowSyncTimeoutCap           time.Duration
+	rustLanePromotionEnabled     bool
+	topicPrefilterEnabled        bool
 	lexicalGuardEnabled          bool
 	lexicalGuardMinCoverage      float64
 	lexicalGuardMinResults       int
@@ -287,6 +292,33 @@ func csvListEnv(name string, fallback string) []string {
 	return normalizeSourceList(rows)
 }
 
+func intMapEnv(name string, fallback map[string]int) map[string]int {
+	resolved := map[string]int{}
+	for key, value := range fallback {
+		resolved[strings.TrimSpace(strings.ToLower(key))] = value
+	}
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return resolved
+	}
+	parsed := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return resolved
+	}
+	for key, value := range parsed {
+		normalized := strings.TrimSpace(strings.ToLower(key))
+		if normalized == "" {
+			continue
+		}
+		candidate := anyToInt(value, resolved[normalized])
+		if candidate < 1 {
+			candidate = 1
+		}
+		resolved[normalized] = candidate
+	}
+	return resolved
+}
+
 func normalizeSourceList(sources []string) []string {
 	out := make([]string, 0, len(sources))
 	seen := make(map[string]struct{})
@@ -468,6 +500,18 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if policy.minFastResults < 1 {
 		policy.minFastResults = 1
 	}
+	policy.minFastResultsByMode = intMapEnv(
+		"ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS_BY_MODE",
+		map[string]int{
+			"fast":     1,
+			"balanced": policy.minFastResults,
+			"deep":     policy.minFastResults + 1,
+		},
+	)
+	policy.disableSyncSlowFallback = envBool("GO_RETRIEVAL_DISABLE_SYNC_SLOW_FALLBACK", false)
+	policy.slowSyncTimeoutCap = envDurationSeconds("GO_RETRIEVAL_SLOW_SYNC_TIMEOUT_CAP_SECS", 2.5)
+	policy.rustLanePromotionEnabled = envBool("GO_RETRIEVAL_RUST_LANE_PROMOTION_ENABLED", false)
+	policy.topicPrefilterEnabled = envBool("GO_RETRIEVAL_TOPIC_PREFILTER_ENABLED", true)
 	policy.lexicalGuardEnabled = envBool("GO_RETRIEVAL_LEXICAL_GUARD_ENABLED", true)
 	policy.lexicalGuardMinCoverage = envFloat("GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE", 0.55)
 	if policy.lexicalGuardMinCoverage < 0 {
@@ -914,6 +958,12 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"fastSources":                s.retrieval.fastSources,
 			"slowSources":                s.retrieval.slowSources,
 			"syncFallbackSources":        s.retrieval.syncFallbackSources,
+			"minFastResults":             s.retrieval.minFastResults,
+			"minFastResultsByMode":       s.retrieval.minFastResultsByMode,
+			"disableSyncSlowFallback":    s.retrieval.disableSyncSlowFallback,
+			"slowSyncTimeoutCapSecs":     s.retrieval.slowSyncTimeoutCap.Seconds(),
+			"rustLanePromotionEnabled":   s.retrieval.rustLanePromotionEnabled,
+			"topicPrefilterEnabled":      s.retrieval.topicPrefilterEnabled,
 			"rustQualityFallbackEnabled": s.retrieval.rustQualityFallbackEnabled,
 			"rustQualityFallbackSources": s.retrieval.rustQualityFallbackSources,
 			"rustQualityFallbackMode":    s.retrieval.rustQualityFallbackMode,
@@ -1329,6 +1379,84 @@ func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
 	return s.retrieval.qdrantSyncTimeoutCap
 }
 
+func (s *server) resolveMinFastResults(mode string) int {
+	normalized := strings.TrimSpace(strings.ToLower(mode))
+	if value, ok := s.retrieval.minFastResultsByMode[normalized]; ok && value > 0 {
+		return value
+	}
+	if s.retrieval.minFastResults > 0 {
+		return s.retrieval.minFastResults
+	}
+	return 1
+}
+
+func normalizeTopicPathCandidate(value string) string {
+	segments := strings.Split(value, "/")
+	cleaned := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		candidate := strings.TrimSpace(strings.ToLower(segment))
+		candidate = strings.Trim(candidate, "[](){}\"'`.,:;")
+		if candidate == "" {
+			continue
+		}
+		if strings.Contains(candidate, "http") || strings.Contains(candidate, ".") {
+			return ""
+		}
+		valid := true
+		for _, r := range candidate {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' {
+				continue
+			}
+			valid = false
+			break
+		}
+		if !valid {
+			return ""
+		}
+		cleaned = append(cleaned, candidate)
+	}
+	if len(cleaned) < 2 {
+		return ""
+	}
+	if len(cleaned) > 6 {
+		cleaned = cleaned[:6]
+	}
+	return strings.Join(cleaned, "/")
+}
+
+func inferTopicPathFromQuery(query string) string {
+	for _, token := range strings.Fields(query) {
+		if strings.Count(token, "/") < 1 {
+			continue
+		}
+		if strings.Contains(token, "://") {
+			continue
+		}
+		if normalized := normalizeTopicPathCandidate(token); normalized != "" {
+			return normalized
+		}
+	}
+	return ""
+}
+
+func (s *server) applyRustLanePromotionGate(policy map[string]any, trafficClass string) (map[string]any, bool) {
+	resolved := cloneMap(policy)
+	if s.retrieval.rustLanePromotionEnabled {
+		return resolved, false
+	}
+	if strings.TrimSpace(strings.ToLower(trafficClass)) == "benchmark" {
+		return resolved, false
+	}
+	vectorBackend := strings.TrimSpace(strings.ToLower(anyToString(resolved["vector_backend"])))
+	strict := anyToBool(resolved["strict"])
+	if vectorBackend != "usearch_ann" || !strict {
+		return resolved, false
+	}
+	resolved["vector_backend"] = "qdrant_remote"
+	resolved["strict"] = false
+	return resolved, true
+}
+
 func (s *server) recordAdaptiveObservation(source string, latency time.Duration, timedOut bool) {
 	if !s.retrieval.adaptiveTimeoutEnabled {
 		return
@@ -1486,6 +1614,7 @@ func (s *server) resolveSourceTimeout(
 	source string,
 	retrievalMode string,
 	syncPhase bool,
+	isSlowSource bool,
 	explicitSourceOverride bool,
 ) (time.Duration, map[string]any) {
 	timeout, ok := s.retrieval.sourceTimeouts[source]
@@ -1497,6 +1626,9 @@ func (s *server) resolveSourceTimeout(
 		if capDuration > 0 && timeout > capDuration {
 			timeout = capDuration
 		}
+	}
+	if syncPhase && !explicitSourceOverride && isSlowSource && s.retrieval.slowSyncTimeoutCap > 0 && timeout > s.retrieval.slowSyncTimeoutCap {
+		timeout = s.retrieval.slowSyncTimeoutCap
 	}
 	detail := map[string]any{
 		"enabled":               false,
@@ -1844,10 +1976,12 @@ func (s *server) runSourceBatch(
 			continue
 		}
 		started += 1
+		_, isSlowSource := slowSet[normalized]
 		sourceTimeout, adaptiveBudget := s.resolveSourceTimeout(
 			normalized,
 			retrievalMode,
 			syncPhase,
+			isSlowSource,
 			explicitSourceOverride,
 		)
 		output.effectiveTimeoutsSecs[normalized] = roundFloat(sourceTimeout.Seconds(), 3)
@@ -2043,6 +2177,7 @@ func buildRetrievalLifecyclePayload(
 	resultState string,
 	returnedNow []string,
 	pending []string,
+	warming []string,
 	failed []string,
 	timedOut []string,
 	budgetExceeded []string,
@@ -2070,13 +2205,16 @@ func buildRetrievalLifecyclePayload(
 			status = "failed"
 		}
 	}
-	if status != "failed" && (len(pending) > 0 || len(budgetExceeded) > 0) {
+	if status != "failed" && (len(pending) > 0 || len(warming) > 0 || len(budgetExceeded) > 0) {
 		status = "partial"
 	}
-	partial := status == "partial" || len(pending) > 0 || len(budgetExceeded) > 0
+	partial := status == "partial" || len(pending) > 0 || len(warming) > 0 || len(budgetExceeded) > 0
 	nextActions := []string{}
 	if partial {
 		nextActions = append(nextActions, "retry_after_cache_warm")
+		if len(warming) > 0 {
+			nextActions = append(nextActions, "watch_continuation_events")
+		}
 	}
 	if status == "failed" {
 		nextActions = append(nextActions, "retry_with_longer_timeout")
@@ -2089,6 +2227,7 @@ func buildRetrievalLifecyclePayload(
 		"sources": map[string]any{
 			"returned_now":    returnedNow,
 			"pending":         pending,
+			"warming":         warming,
 			"failed":          failed,
 			"timed_out":       timedOut,
 			"budget_exceeded": budgetExceeded,
@@ -2121,8 +2260,25 @@ func (s *server) executeRetrieval(
 	if retrievalIntent == "" {
 		retrievalIntent = "decision"
 	}
+	trafficClass := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["traffic_class"])))
+	if trafficClass == "" {
+		trafficClass = "user"
+	}
 	rustBackendPolicy := resolveRustBackendPolicy(requestPayload["backend_policy"])
+	rustLaneGateApplied := false
+	rustBackendPolicy, rustLaneGateApplied = s.applyRustLanePromotionGate(rustBackendPolicy, trafficClass)
 	requestPayload["backend_policy"] = rustBackendPolicy
+	topicPrefilterHint := ""
+	topicPrefilterApplied := false
+	if s.retrieval.topicPrefilterEnabled &&
+		retrievalMode == "deep" &&
+		strings.TrimSpace(anyToString(requestPayload["topic_path"])) == "" {
+		topicPrefilterHint = inferTopicPathFromQuery(query)
+		if topicPrefilterHint != "" {
+			requestPayload["topic_path"] = topicPrefilterHint
+			topicPrefilterApplied = true
+		}
+	}
 	explicitSources := anyToStringSlice(requestPayload["sources"])
 	explicitSourceOverride := len(explicitSources) > 0
 	resolvedSources := explicitSources
@@ -2149,6 +2305,7 @@ func (s *server) executeRetrieval(
 	asyncWarmSlowSources := []string{}
 	syncFallbackSlowSources := []string{}
 	continuationToken := continuationTokenForRequest(query, requestPayload)
+	minFastTarget := s.resolveMinFastResults(retrievalMode)
 
 	fastBatch := s.runSourceBatch(
 		ctx,
@@ -2203,7 +2360,10 @@ func (s *server) executeRetrieval(
 	skipSlow := !explicitSourceOverride && (retrievalMode != "deep" || !s.retrieval.deepBlocking)
 	if len(slowSources) > 0 {
 		if skipSlow {
-			needsFallback := len(merged) < s.retrieval.minFastResults
+			needsFallback := len(merged) < minFastTarget
+			if needsFallback && s.retrieval.disableSyncSlowFallback {
+				needsFallback = false
+			}
 			if needsFallback &&
 				lexicalGuardEligible &&
 				len(merged) >= s.retrieval.lexicalGuardMinResults &&
@@ -2265,7 +2425,7 @@ func (s *server) executeRetrieval(
 							budgetExceededObserved[source] = struct{}{}
 						}
 						merged = mergeRows(sourceRows, limit)
-						if len(merged) >= s.retrieval.minFastResults {
+						if len(merged) >= minFastTarget {
 							needsFallback = false
 							rustQualityFallbackApplied = true
 							warnings = append(
@@ -2395,7 +2555,20 @@ func (s *server) executeRetrieval(
 		}
 	}
 	continuationSources = normalizeSourceList(continuationSources)
-	warnings = dedupeWarnings(warnings)
+	warmingSources := append([]string(nil), continuationSources...)
+
+	if rustLaneGateApplied {
+		warnings = append(
+			warnings,
+			"Rust strict backend lane was promoted to qdrant_remote/non-strict for non-benchmark traffic to preserve recall quality and reduce empty-result risk.",
+		)
+	}
+	if topicPrefilterApplied && topicPrefilterHint != "" {
+		warnings = append(
+			warnings,
+			"Applied topic prefilter hint from query for deep retrieval: "+topicPrefilterHint+".",
+		)
+	}
 
 	if len(asyncWarmSlowSources) > 0 {
 		warnings = append(warnings, "Staged fetch deferred slow sources: "+strings.Join(asyncWarmSlowSources, ", ")+".")
@@ -2505,6 +2678,7 @@ func (s *server) executeRetrieval(
 		resultState,
 		returnedSources,
 		deferredCandidates,
+		warmingSources,
 		failedSources,
 		timedOutList,
 		budgetExceededList,
@@ -2521,7 +2695,10 @@ func (s *server) executeRetrieval(
 			"slow_sources":                 s.retrieval.slowSources,
 			"sync_fallback_sources":        s.retrieval.syncFallbackSources,
 			"min_fast_results":             s.retrieval.minFastResults,
+			"min_fast_results_by_mode":     s.retrieval.minFastResultsByMode,
 			"deep_blocking":                s.retrieval.deepBlocking,
+			"disable_sync_slow_fallback":   s.retrieval.disableSyncSlowFallback,
+			"slow_sync_timeout_cap_secs":   s.retrieval.slowSyncTimeoutCap.Seconds(),
 			"qdrant_sync_timeout_cap_secs": s.retrieval.qdrantSyncTimeoutCap.Seconds(),
 			"qdrant_sync_timeout_cap_by_mode_secs": map[string]any{
 				"fast":     s.resolveQdrantSyncCap("fast").Seconds(),
@@ -2542,6 +2719,10 @@ func (s *server) executeRetrieval(
 			"lexical_guard_min_coverage":             s.retrieval.lexicalGuardMinCoverage,
 			"lexical_guard_min_results":              s.retrieval.lexicalGuardMinResults,
 			"runtime_backend_policy":                 rustBackendPolicy,
+			"traffic_class":                          trafficClass,
+			"rust_lane_gate_applied":                 rustLaneGateApplied,
+			"topic_prefilter_applied":                topicPrefilterApplied,
+			"topic_prefilter_hint":                   topicPrefilterHint,
 			"memory_bank_backend_effective":          strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
 			"rust_quality_fallback_enabled":          s.retrieval.rustQualityFallbackEnabled,
 			"rust_quality_fallback_sources":          s.retrieval.rustQualityFallbackSources,
@@ -2554,6 +2735,7 @@ func (s *server) executeRetrieval(
 			"slow_sources":                     slowSources,
 			"sync_fallback_slow_sources":       normalizeSourceList(syncFallbackSlowSources),
 			"async_warm_slow_sources":          asyncWarmSlowSources,
+			"warming_sources":                  warmingSources,
 			"fail_open_continuation_sources":   continuationSources,
 			"timeout_adaptive_skipped_sources": skippedList,
 			"timed_out_sources":                timedOutList,
@@ -2580,6 +2762,7 @@ func (s *server) executeRetrieval(
 			"sources":                 resolvedSources,
 			"returned_now":            returnedSources,
 			"pending_sources":         deferredCandidates,
+			"warming_sources":         warmingSources,
 			"timed_out_sources":       timedOutList,
 			"failed_sources":          failedSources,
 			"budget_exceeded_sources": budgetExceededList,

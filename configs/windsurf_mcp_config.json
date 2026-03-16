@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "memmcp": {
+    "contextlattice": {
       "transport": "streamable-http",
       "serverUrl": "http://127.0.0.1:53130/memorymcp/mcp"
     }

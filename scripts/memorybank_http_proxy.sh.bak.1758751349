@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+source .venv-router/bin/activate
+export MEMORYBANK_HTTP_HOST="${MEMORYBANK_HTTP_HOST:-127.0.0.1}"
+export MEMORYBANK_HTTP_PORT="${MEMORYBANK_HTTP_PORT:-59081}"
+mkdir -p logs
+# run the existing FastAPI app from your file
+exec uvicorn scripts.memorybank_http_proxy:app --host "$MEMORYBANK_HTTP_HOST" --port "$MEMORYBANK_HTTP_PORT" \
+  >> logs/memorybank-http.log 2>&1

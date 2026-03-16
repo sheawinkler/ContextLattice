@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "memory-bank": {
+      "name": "memory-bank",
+      "type": "streamable-http",
+      "url": "http://memorymcp-http:59081",
+      "timeout": 30000,
+      "logEnabled": true,
+      "panicIfInvalid": false
+    },
+    "qdrant": {
+      "name": "qdrant",
+      "type": "streamable-http",
+      "url": "http://mcp-qdrant:8002",
+      "timeout": 30000,
+      "logEnabled": true,
+      "panicIfInvalid": false
+    }
+  }
+}

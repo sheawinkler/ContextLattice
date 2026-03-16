@@ -188,8 +188,12 @@ ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
 ORCH_TELEMETRY_PERSIST_ENABLED=true
 ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=false
 ORCH_MEMORY_BANK_SEARCH_BACKEND=native
-ORCH_MEMORY_BANK_SPIKE_HTTP_URL=
+ORCH_MEMORY_BANK_SPIKE_HTTP_URL=http://memory-bank-spike-rs:8096
 ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE=/search
+MEMORY_BANK_SPIKE_RS_MEILI_URL=http://meilisearch:7700
+MEMORY_BANK_SPIKE_RS_MEILI_INDEX=contextlattice_memory
+MEMORY_BANK_SPIKE_RS_MEILI_TASK_TIMEOUT_SECS=30
+MEMORY_BANK_SPIKE_RS_PORT=8096
 ```
 
 ### 2) One-command quickstart (recommended)
@@ -436,9 +440,18 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND` (`auto|none|tantivy_lexical`)
   - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT`
   - `ORCH_MEMORY_BANK_SEARCH_BACKEND` (`native|disabled|meilisearch_spike|quickwit_spike|tantivy_spike`)
+  - `ORCH_MEMORY_BANK_SPIKE_HTTP_URL`
+  - `MEMORY_BANK_SPIKE_RS_MEILI_URL`
+  - `MEMORY_BANK_SPIKE_RS_MEILI_INDEX`
+  - `MEMORY_BANK_SPIKE_RS_MEILI_TASK_TIMEOUT_SECS`
   - `GO_RETRIEVAL_LEXICAL_GUARD_ENABLED`
   - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE`
   - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS`
+  - `ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS_BY_MODE` (JSON map, e.g. `{"fast":1,"balanced":2,"deep":3}`)
+  - `GO_RETRIEVAL_DISABLE_SYNC_SLOW_FALLBACK`
+  - `GO_RETRIEVAL_SLOW_SYNC_TIMEOUT_CAP_SECS`
+  - `GO_RETRIEVAL_RUST_LANE_PROMOTION_ENABLED`
+  - `GO_RETRIEVAL_TOPIC_PREFILTER_ENABLED`
   - `USE_GO_ORCHESTRATOR`
   - `CONTEXTLATTICE_ENGINE_MODE` (`embedded` or `service`)
   - `CONTEXTLATTICE_ENGINE_URL`
@@ -481,6 +494,13 @@ Pathway cache backend modes:
 - `ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND=memory` (in-memory only)
 - `ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND=redis` (read/write Redis backend)
 - `ORCH_RETRIEVAL_PATHWAY_CACHE_BACKEND=redis_mirror` (write-through mirror only; read path stays in-memory)
+
+Dashboard retrieval observability:
+- `contextlattice-dashboard` status page now includes a retrieval flow panel with:
+  - fast/deep mode selection
+  - returned/pending/warming/failed source chips
+  - continuation SSE event stream view
+  - rollup-first result ordering and raw evidence drill-down (`/v1/memory/get`)
 
 ## Model Runtime
 

@@ -1,0 +1,5 @@
+services:
+  memorybank-http:
+    image: busybox:stable
+    command: ["sh","-lc","echo 'memorybank-http is disabled by overlay'; sleep infinity"]
+    profiles: ["disabled"]

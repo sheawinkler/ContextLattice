@@ -1,0 +1,1071 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "cacheBustQueries": true,
+  "cases": [
+    "short_context",
+    "deep_read",
+    "ops_focus"
+  ],
+  "generatedAt": "2026-03-16T08:41:54.969112+00:00",
+  "overallMemoryBankBackend": {
+    "after": {
+      "attempts": 100,
+      "defaultEnabled": false,
+      "failures": 12,
+      "fallbacks": 58,
+      "lastError": null,
+      "lastLatencyMs": 107.057,
+      "mode": "native",
+      "spikeUrlConfigured": true,
+      "successes": 88
+    },
+    "before": {
+      "attempts": 55,
+      "defaultEnabled": false,
+      "failures": 1,
+      "fallbacks": 13,
+      "lastError": "ReadTimeout",
+      "lastLatencyMs": 10014.994,
+      "mode": "native",
+      "spikeUrlConfigured": true,
+      "successes": 54
+    },
+    "delta": {
+      "attempts": 45,
+      "failures": 11,
+      "fallbacks": 45,
+      "successes": 34
+    }
+  },
+  "overallSourceLatency": {
+    "after": {
+      "qdrant": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 245.185,
+        "p95Ms": 620.661,
+        "p99Ms": 704.325,
+        "requests": 20,
+        "timeouts": 0
+      },
+      "topic_rollups": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 1.76,
+        "p95Ms": 7.388,
+        "p99Ms": 10.824,
+        "requests": 20,
+        "timeouts": 0
+      }
+    },
+    "before": {
+      "qdrant": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 245.185,
+        "p95Ms": 620.661,
+        "p99Ms": 704.325,
+        "requests": 20,
+        "timeouts": 0
+      },
+      "topic_rollups": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 1.76,
+        "p95Ms": 7.388,
+        "p99Ms": 10.824,
+        "requests": 20,
+        "timeouts": 0
+      }
+    }
+  },
+  "profiles": [
+    "baseline_qdrant_rollups",
+    "rust_lane_usearch_tantivy",
+    "memory_bank_meilisearch_spike",
+    "memory_bank_quickwit_spike",
+    "memory_bank_tantivy_spike"
+  ],
+  "project": "perf_backend_lanes",
+  "recommendations": [
+    "Rust lane request regressed avg p95 by 80.482% vs baseline in this run."
+  ],
+  "results": {
+    "baseline_qdrant_rollups": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "native",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 70.19,
+            "mean": 66.328,
+            "min": 62.959,
+            "p50": 65.836,
+            "p95": 69.754,
+            "p99": 70.103
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "native",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 76.301,
+            "mean": 69.564,
+            "min": 65.89,
+            "p50": 66.502,
+            "p95": 75.321,
+            "p99": 76.105
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "native",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 17.567,
+            "mean": 14.196,
+            "min": 12.451,
+            "p50": 12.569,
+            "p95": 17.068,
+            "p99": 17.467
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Control lane with explicit qdrant + topic_rollups only.",
+      "memoryBankBackend": {
+        "after": {
+          "attempts": 55,
+          "defaultEnabled": false,
+          "failures": 1,
+          "fallbacks": 13,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10014.994,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 54
+        },
+        "before": {
+          "attempts": 55,
+          "defaultEnabled": false,
+          "failures": 1,
+          "fallbacks": 13,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10014.994,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 54
+        },
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "dense-vector+object-rollup",
+        "data_store": "qdrant+topic_rollups",
+        "index_type": "hnsw+partitioned-rollup",
+        "search_type": "semantic+rollup-hybrid"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "native",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95DeltaVsBaselinePct": 0.0,
+        "avgP95Ms": 54.048,
+        "maxP95Ms": 75.321,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_meilisearch_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "meilisearch_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 20687.804,
+            "mean": 20536.505,
+            "min": 20442.596,
+            "p50": 20479.117,
+            "p95": 20666.935,
+            "p99": 20683.63
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "meilisearch_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 20401.395,
+            "mean": 8793.195,
+            "min": 193.344,
+            "p50": 5784.846,
+            "p95": 18939.74,
+            "p99": 20109.064
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "meilisearch_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 10142.791,
+            "mean": 10113.858,
+            "min": 10061.139,
+            "p50": 10137.643,
+            "p95": 10142.276,
+            "p99": 10142.688
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: meilisearch_spike.",
+      "memoryBankBackend": {
+        "after": {
+          "attempts": 70,
+          "defaultEnabled": false,
+          "failures": 12,
+          "fallbacks": 28,
+          "lastError": null,
+          "lastLatencyMs": 20.889,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 58
+        },
+        "before": {
+          "attempts": 55,
+          "defaultEnabled": false,
+          "failures": 1,
+          "fallbacks": 13,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10014.994,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 54
+        },
+        "delta": {
+          "attempts": 15,
+          "failures": 11,
+          "fallbacks": 15,
+          "successes": 4
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(meilisearch)+qdrant+topic_rollups",
+        "index_type": "meilisearch+hnsw",
+        "search_type": "hybrid-meili-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "meilisearch_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95DeltaVsBaselinePct": -30581.957,
+        "avgP95Ms": 16582.984,
+        "maxP95Ms": 20666.935,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_quickwit_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "quickwit_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 5001.107,
+            "mean": 1925.651,
+            "min": 247.273,
+            "p50": 528.574,
+            "p95": 4553.853,
+            "p99": 4911.656
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "quickwit_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 260.745,
+            "mean": 248.841,
+            "min": 234.334,
+            "p50": 251.443,
+            "p95": 259.815,
+            "p99": 260.559
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "quickwit_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 1979.409,
+            "mean": 704.784,
+            "min": 65.682,
+            "p50": 69.261,
+            "p95": 1788.394,
+            "p99": 1941.206
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: quickwit_spike.",
+      "memoryBankBackend": {
+        "after": {
+          "attempts": 85,
+          "defaultEnabled": false,
+          "failures": 12,
+          "fallbacks": 43,
+          "lastError": null,
+          "lastLatencyMs": 12.668,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 73
+        },
+        "before": {
+          "attempts": 70,
+          "defaultEnabled": false,
+          "failures": 12,
+          "fallbacks": 28,
+          "lastError": null,
+          "lastLatencyMs": 20.889,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 58
+        },
+        "delta": {
+          "attempts": 15,
+          "failures": 0,
+          "fallbacks": 15,
+          "successes": 15
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(quickwit_compat)+qdrant+topic_rollups",
+        "index_type": "inverted-index+hnsw",
+        "search_type": "hybrid-quickwit-compat-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "quickwit_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95DeltaVsBaselinePct": -3971.727,
+        "avgP95Ms": 2200.687,
+        "maxP95Ms": 4553.853,
+        "policyMismatchTotal": 0
+      }
+    },
+    "memory_bank_tantivy_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "tantivy_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 515.559,
+            "mean": 404.235,
+            "min": 279.675,
+            "p50": 417.472,
+            "p95": 505.751,
+            "p99": 513.598
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "tantivy_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 499.286,
+            "mean": 434.99,
+            "min": 350.384,
+            "p50": 455.301,
+            "p95": 494.887,
+            "p99": 498.406
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "tantivy_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 1172.229,
+            "mean": 445.398,
+            "min": 63.574,
+            "p50": 100.391,
+            "p95": 1065.045,
+            "p99": 1150.792
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: tantivy_spike.",
+      "memoryBankBackend": {
+        "after": {
+          "attempts": 100,
+          "defaultEnabled": false,
+          "failures": 12,
+          "fallbacks": 58,
+          "lastError": null,
+          "lastLatencyMs": 107.057,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 88
+        },
+        "before": {
+          "attempts": 85,
+          "defaultEnabled": false,
+          "failures": 12,
+          "fallbacks": 43,
+          "lastError": null,
+          "lastLatencyMs": 12.668,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 73
+        },
+        "delta": {
+          "attempts": 15,
+          "failures": 0,
+          "fallbacks": 15,
+          "successes": 15
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(tantivy)+qdrant+topic_rollups",
+        "index_type": "tantivy-inverted+hnsw",
+        "search_type": "hybrid-tantivy-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "tantivy_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95DeltaVsBaselinePct": -1173.981,
+        "avgP95Ms": 688.561,
+        "maxP95Ms": 1065.045,
+        "policyMismatchTotal": 0
+      }
+    },
+    "rust_lane_usearch_tantivy": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "tantivy_lexical",
+            "memory_bank_backend": "native",
+            "strict": true,
+            "vector_backend": "usearch_ann"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 129.998,
+            "mean": 112.328,
+            "min": 90.055,
+            "p50": 116.93,
+            "p95": 128.691,
+            "p99": 129.737
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "tantivy_lexical",
+            "memory_bank_backend": "native",
+            "strict": true,
+            "vector_backend": "usearch_ann"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 149.569,
+            "mean": 127.085,
+            "min": 115.224,
+            "p50": 116.462,
+            "p95": 146.258,
+            "p99": 148.907
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "tantivy_lexical",
+            "memory_bank_backend": "native",
+            "strict": true,
+            "vector_backend": "usearch_ann"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 17.872,
+            "mean": 15.43,
+            "min": 12.337,
+            "p50": 16.08,
+            "p95": 17.693,
+            "p99": 17.836
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 0,
+            "mean": 0.0,
+            "min": 0
+          },
+          "runs": 3,
+          "sourceCountsSample": {
+            "memory_bank": 0,
+            "qdrant": 0,
+            "topic_rollups": 0
+          },
+          "statusCodes": [
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 0.0,
+            "mean": 0.0
+          }
+        }
+      },
+      "description": "Rust-first lane request: usearch_ann + tantivy_lexical.",
+      "memoryBankBackend": {
+        "after": {
+          "attempts": 55,
+          "defaultEnabled": false,
+          "failures": 1,
+          "fallbacks": 13,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10014.994,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 54
+        },
+        "before": {
+          "attempts": 55,
+          "defaultEnabled": false,
+          "failures": 1,
+          "fallbacks": 13,
+          "lastError": "ReadTimeout",
+          "lastLatencyMs": 10014.994,
+          "mode": "native",
+          "spikeUrlConfigured": true,
+          "successes": 54
+        },
+        "delta": {
+          "attempts": 0,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 0
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "dense-vector+lexical",
+        "data_store": "qdrant+topic_rollups+memory_bank(native)",
+        "index_type": "usearch-ann+tantivy-lexical",
+        "search_type": "hybrid-semantic-lexical"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "tantivy_lexical",
+          "memory_bank_backend": "native",
+          "strict": true,
+          "vector_backend": "usearch_ann"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95DeltaVsBaselinePct": -80.482,
+        "avgP95Ms": 97.547,
+        "maxP95Ms": 146.258,
+        "policyMismatchTotal": 0
+      }
+    }
+  },
+  "runsPerCase": 3
+}

@@ -1,0 +1,30 @@
+services:
+  memorymcp-http:
+    image: node:20-alpine
+    environment:
+      # make npx non-interactive & stable
+      npm_config_yes: "true"
+      npm_config_update_notifier: "false"
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+      MEMORY_BANK_ROOT: /data
+      MONGODB_URI: mongodb://mongo:27017
+      MEMORYMCP_HTTP_PORT: ${MEMORYMCP_HTTP_PORT:-59081}
+    command:
+      - sh
+      - -lc
+      - >
+        npx -y supergateway
+        --stdio "npx -y @allpepper/memory-bank-mcp"
+        --outputTransport streamableHttp
+        --port ${MEMORYMCP_HTTP_PORT:-59081}
+        --streamableHttpPath /mcp
+    volumes:
+      - memory_bank_data:/data
+    ports:
+      - "${MEMORYMCP_HTTP_PORT:-59081}:${MEMORYMCP_HTTP_PORT:-59081}"
+    healthcheck:
+      # IMPORTANT: include text/event-stream in Accept to avoid 406
+      test: ["CMD-SHELL", "wget -qO- --header='accept: application/json, text/event-stream' --header='content-type: application/json' --post-data='{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}' http://127.0.0.1:${MEMORYMCP_HTTP_PORT:-59081}/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

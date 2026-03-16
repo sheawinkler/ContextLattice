@@ -18915,6 +18915,7 @@ async def _run_memory_recall_pipeline(
     retrieval_intent: str = RETRIEVAL_INTENT_DEFAULT,
     traffic_class: str = TRAFFIC_CLASS_USER,
     backend_policy: dict[str, Any] | None = None,
+    bypass_pathway_cache: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
     normalized_mode = _normalize_retrieval_mode(retrieval_mode)
     normalized_intent = _normalize_retrieval_intent(retrieval_intent)
@@ -19069,6 +19070,7 @@ async def _run_memory_recall_pipeline(
                 retrieval_mode=hop_mode,
                 retrieval_intent=normalized_intent,
                 call_budget_secs=call_budget_secs,
+                bypass_pathway_cache=bypass_pathway_cache,
                 traffic_class=normalized_traffic_class,
                 backend_policy=backend_policy,
             )
@@ -24509,6 +24511,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
     )
     traffic_class = _normalize_traffic_class(request_payload.get("traffic_class"))
+    bypass_pathway_cache = bool(request_payload.get("bypass_pathway_cache", False))
     pre_warnings: list[str] = []
     policy_debug: dict[str, Any] = {
         "projectDefaultsApplied": False,
@@ -24584,6 +24587,7 @@ async def engine_retrieval_query(payload: dict[str, Any]):
         retrieval_intent=retrieval_intent,
         record_pathway_usage=False,
         call_budget_secs=RECALL_E2E_BUDGET_SECS if RECALL_E2E_BUDGET_SECS > 0 else None,
+        bypass_pathway_cache=bypass_pathway_cache,
         traffic_class=traffic_class,
         backend_policy=backend_policy,
     )
@@ -24673,6 +24677,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         request_payload.get("retrieval_intent") or RETRIEVAL_INTENT_DEFAULT
     )
     traffic_class = _normalize_traffic_class(request_payload.get("traffic_class"))
+    bypass_pathway_cache = bool(request_payload.get("bypass_pathway_cache", False))
     agent_profile = (
         request_payload.get("agent_profile")
         if isinstance(request_payload.get("agent_profile"), dict)
@@ -24773,6 +24778,7 @@ async def engine_retrieval_query_with_grounding(payload: dict[str, Any]):
         query_expansion=query_expansion,
         traffic_class=traffic_class,
         backend_policy=backend_policy,
+        bypass_pathway_cache=bypass_pathway_cache,
     )
     topic_scope_debug = {
         "applied": bool(topic_scope_prefixes),

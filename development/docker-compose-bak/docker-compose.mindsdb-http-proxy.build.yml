@@ -1,0 +1,13 @@
+services:
+  mindsdb-http-proxy:
+    image: local/mindsdb-http-proxy:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8011:8004"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='accept: application/json' --header='content-type: application/json' --post-data='{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}' http://127.0.0.1:8004/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 12

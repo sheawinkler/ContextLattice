@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LABEL="com.sheawinkler.memmcp-qdrant-snapshot"
+LABEL="com.sheawinkler.contextlattice-qdrant-snapshot"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$REPO_ROOT/logs"
 INTERVAL_SECONDS="${QDRANT_SNAPSHOT_INTERVAL_SECONDS:-86400}"

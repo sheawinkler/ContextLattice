@@ -2,7 +2,7 @@
   "mcpProxy": {
     "baseURL": "http://127.0.0.1:53130",
     "addr": ":53130",
-    "name": "memMCP hub",
+    "name": "ContextLattice hub",
     "version": "1.0.0",
     "type": "streamable-http",
     "options": {

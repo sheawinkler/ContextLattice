@@ -1,0 +1,27 @@
+services:
+  memorybank-http:
+    image: node:20-alpine
+    container_name: memorybank-http
+    restart: unless-stopped
+    working_dir: /app
+    # mount scripts + configs so we can run the same local server logic
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./configs:/app/configs:ro
+    environment:
+      # EDIT if your stdio server command differs:
+      # The command here should start your memory bank MCP as a stdio process.
+      STDIO_CMD: "node /app/scripts/memorybank.mjs --config /app/configs/memorybank.config.json"
+      SG_PORT: "8010"
+      SG_PATH: "/mcp"
+    ports:
+      - "8010:8010"
+    command:
+      - sh
+      - -lc
+      - |
+        # npx will fetch supergateway at runtime (no local install needed)
+        npx -y supergateway \
+          --stdio "$STDIO_CMD" \
+          --port "$SG_PORT" \
+          --streamableHttpPath "$SG_PATH"

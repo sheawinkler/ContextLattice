@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "memory-bank": {
+      "type": "http",
+      "url": "http://host.docker.internal:59081/mcp",
+      "timeout": 30000
+    }
+  }
+}

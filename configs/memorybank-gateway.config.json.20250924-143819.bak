@@ -1,0 +1,6 @@
+{
+  "http": { "host": "0.0.0.0", "port": 9090 },
+  "clients": [
+    { "name": "memorymcp", "type": "http", "serverUrl": "http://memorymcp-http:59081/mcp" }
+  ]
+}

@@ -1,0 +1,39 @@
+name: memstack
+services:
+  memorymcp-http:
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      MEMORY_BANK_ROOT: "/data"
+      SUPERGW_PORT: "59081"
+    volumes:
+      - memory_bank_data:/data
+    command: >
+      sh -lc "
+        npx -y @lobehub/mcp-supergateway
+          --stdio 'npx -y @allpepper/memory-bank-mcp'
+          --outputTransport streamableHttp
+          --port 59081
+          --streamableHttpPath /mcp
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:59081/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  memorybank-gateway:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    command: ["/main","--config","/config/config.json"]
+    ports:
+      - "53126:9090"
+    volumes:
+      - ../../.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+    depends_on:
+      memorymcp-http:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  memory_bank_data: {}

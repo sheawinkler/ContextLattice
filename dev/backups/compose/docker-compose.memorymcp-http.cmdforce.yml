@@ -1,0 +1,12 @@
+services:
+  memorymcp-http:
+    command:
+      - supergateway
+      - --stdio
+      - memory-bank-mcp
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "59081"
+      - --streamableHttpPath
+      - /mcp

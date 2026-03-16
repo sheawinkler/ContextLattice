@@ -1,0 +1,41 @@
+services:
+  # Supergateway bridge: spawns stdio-only memory server internally and exposes it as Streamable-HTTP
+  memorymcp-http:
+    image: node:20-alpine
+    profiles: ["memory"]
+    environment:
+      MEMORY_BANK_ROOT: "${MEMORY_BANK_ROOT:-/data}"
+      SUPERGW_PORT: "${SUPERGW_PORT:-59081}"
+    volumes:
+      - memory_bank_data:/data
+    command: >
+      sh -lc "
+        npx -y @lobehub/mcp-supergateway
+          --stdio 'npx -y @allpepper/memory-bank-mcp'
+          --outputTransport streamableHttp
+          --port ${SUPERGW_PORT:-59081}
+          --streamableHttpPath /mcp
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${SUPERGW_PORT:-59081}/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  # TBXark proxy: one HTTP entrypoint on host ${MCP_PROXY_PORT} → container :9090
+  memorybank-gateway:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    profiles: ["memory"]
+    command: ["/main","--config","/config/config.json"]
+    ports:
+      - "${MCP_PROXY_PORT:-53126}:9090"
+    volumes:
+      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+    depends_on:
+      memorymcp-http:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  memory_bank_data: {}

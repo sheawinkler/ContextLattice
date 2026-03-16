@@ -1,0 +1,67 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "errorCount": 7,
+  "errors": [
+    "timed out",
+    "timed out",
+    "timed out",
+    "timed out",
+    "timed out",
+    "timed out",
+    "timed out"
+  ],
+  "generatedAt": "2026-03-04T18:31:37.330434+00:00",
+  "latencyMs": {
+    "mean": 17565.459,
+    "p50": 20005.502,
+    "p95": 20007.643,
+    "p99": 20007.691
+  },
+  "requests": 8,
+  "runtime": {
+    "enabled": true,
+    "flags": {
+      "canary_enabled": true,
+      "engine_mode": "service",
+      "shadow_dual_run": true,
+      "use_go_orchestrator": false,
+      "use_rust_codec": false,
+      "use_rust_memory": false,
+      "use_rust_retrieval": false
+    },
+    "implementations": {
+      "codec": "JsonCodec",
+      "memory_store": "PythonMemoryStore",
+      "retriever": "PythonRetriever",
+      "scheduler": "PythonScheduler",
+      "state_delta": "JsonMergeStateDelta"
+    },
+    "snapshot": {
+      "flags": {
+        "canary_enabled": true,
+        "engine_mode": "service",
+        "shadow_dual_run": true,
+        "use_go_orchestrator": false,
+        "use_rust_codec": false,
+        "use_rust_memory": false,
+        "use_rust_retrieval": false
+      },
+      "implementations": {
+        "codec": "JsonCodec",
+        "memory_store": "PythonMemoryStore",
+        "retriever": "PythonRetriever",
+        "scheduler": "PythonScheduler",
+        "state_delta": "JsonMergeStateDelta"
+      },
+      "retriever_health": {
+        "capabilities": [
+          "search",
+          "batch_search",
+          "search_with_grounding"
+        ],
+        "impl": "python",
+        "ok": true
+      }
+    }
+  }
+}

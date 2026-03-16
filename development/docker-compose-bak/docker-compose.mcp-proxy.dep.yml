@@ -1,0 +1,9 @@
+services:
+  mcp-proxy:
+    depends_on: {}
+    command: ["/main", "--config", "/config/config.json"]
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "nc -z 127.0.0.1 9090"]
+      interval: 10s
+      timeout: 4s
+      retries: 12

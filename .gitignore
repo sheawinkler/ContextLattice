@@ -28,11 +28,16 @@ logs/
 # Node / Next.js
 memmcp-dashboard/node_modules/
 memmcp-dashboard/.next/
+contextlattice-dashboard/node_modules/
+contextlattice-dashboard/.next/
 
 # local runs / artifacts
 .data/
 services/orchestrator/data/
+crates/target/
+services/memory_bank_spike_rs/target/
 memmcp-dashboard/prisma/dev.db
+contextlattice-dashboard/prisma/dev.db
 trae_runs/
 trajectories/
 tmp/
@@ -45,3 +50,15 @@ trae_config.yaml
 *.bak
 *.bak.*
 *.tmp
+
+# private planning docs (local-only)
+docs/solana_scaling_plan.md
+docs/roi_calculator.md
+docs/security_hardening.md
+private_docs/
+SKILLS.md
+WARP.md
+prompts/*.md
+qdrant_adv_examples.md
+launch_service/README.md
+registry/README.md

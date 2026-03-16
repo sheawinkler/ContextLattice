@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+# --- safe auth header for set -u ---
+AUTH_HEADER=()
+[[ -n "${LETTA_API_KEY:-}" ]] && AUTH_HEADER=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+set -euo pipefail
+
+# Safe auth header (empty array by default; filled if LETTA_API_KEY present)
+AUTH_HEADER=()
+[ -n "${LETTA_API_KEY:-}" ] && AUTH_HEADER=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+
+AUTH_HEADER=()
+[ -n "${LETTA_API_KEY:-}" ] && AUTH_HEADER=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+
+# ---- Config ----
+LETTA_BASE_URL="${LETTA_BASE_URL:-http://localhost:8283}"
+API="${LETTA_BASE_URL%/}/v1"
+
+# Optional auth for self-host; omit if your server has no password
+AUTH_HEADER=()
+if [[ -n "${LETTA_API_KEY:-}" ]]; then
+  AUTH_HEADER=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+fi
+
+echo "==> Pulling local models into Ollama (may take a while on first run)..."
+docker exec -it ollama ollama pull qwen2.5-coder:7b >/dev/null
+docker exec -it ollama ollama pull qwen2.5:7b-instruct >/dev/null
+docker exec -it ollama ollama pull nomic-embed-text >/dev/null
+
+echo "==> Verifying Letta sees Ollama models..."
+curl -fsS "${API}/llm-models" "${AUTH_HEADER[@]}" | jq -r '.data[].handle' | grep -E '(^|/)ollama/' | head || true
+
+echo "==> Creating agent: Sigma Coder (Qwen2.5-Coder-7B via Ollama)"
+CODER_JSON=$(cat <<'JSON'
+{
+  "name": "Sigma Coder (Local Qwen2.5-Coder-7B)",
+  "tags": ["local", "ollama", "coding", "default-coder"],
+  "llm": "ollama/qwen2.5-coder:7b",
+  "embedding": "ollama/nomic-embed-text",
+  "system": "You are a careful, detail-oriented code engineer. Prioritize readability, testability, and small PRs."
+}
+JSON
+)
+CODER_ID=$(curl -fsS -X POST "${API}/agents/" \
+  -H "Content-Type: application/json" "${AUTH_HEADER[@]}" \
+  -d "${CODER_JSON}" | jq -r '.data.id')
+
+echo "    -> agent_id=${CODER_ID}"
+
+echo "==> Creating agent: Sigma Planner (Qwen2.5-7B-Instruct via Ollama)"
+PLANNER_JSON=$(cat <<'JSON'
+{
+  "name": "Sigma Planner (Local Qwen2.5-7B-Instruct)",
+  "tags": ["local", "ollama", "planning", "default-planner"],
+  "llm": "ollama/qwen2.5:7b-instruct",
+  "embedding": "ollama/nomic-embed-text",
+  "system": "You are a project planning engineer. Produce precise, phased roadmaps; reconcile repo state vs. tickets."
+}
+JSON
+)
+PLANNER_ID=$(curl -fsS -X POST "${API}/agents/" \
+  -H "Content-Type: application/json" "${AUTH_HEADER[@]}" \
+  -d "${PLANNER_JSON}" | jq -r '.data.id')
+
+echo "    -> agent_id=${PLANNER_ID}"
+
+echo "==> Smoke test (non-stream) on the Planner"
+curl -fsS -X POST "${API}/agents/${PLANNER_ID}/messages/" \
+  -H "Content-Type: application/json" "${AUTH_HEADER[@]}" \
+  -d '{"sender":"user","text":"Give me a 5-bullet summary of what you can do."}' \
+  | jq -r '.data.response.text' | head -n 20
+
+echo "==> Optional: streaming test (shows SSE steps/tokens)"
+echo "curl -N -X POST '${API}/agents/${PLANNER_ID}/messages/stream' -H 'Content-Type: application/json' ${AUTH_HEADER:+-H \"Authorization: Bearer ${LETTA_API_KEY}\"} -d '{\"sender\":\"user\",\"text\":\"Briefly introduce yourself.\"}'"

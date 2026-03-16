@@ -1,0 +1,7 @@
+services:
+  mindsdb-http-proxy:
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='accept: application/json, text/event-stream' --header='content-type: application/json' --post-data='{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\",\"params\":{}}' http://127.0.0.1:8004/mcp >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

@@ -31,13 +31,13 @@ echo "== Qdrant Cloud HTTP check =="
 http_count="$(curl -fsS -H "api-key: $api_key" "$endpoint/collections" | jq '.result.collections | length')"
 echo "http_collections=$http_count"
 
-echo "== Qdrant Cloud gRPC check (via memmcp-orchestrator container) =="
+echo "== Qdrant Cloud gRPC check (via contextlattice-orchestrator container) =="
 unset DOCKER_API_VERSION || true
 docker compose exec -T \
   -e QDRANT_CLUSTER_ENDPOINT="$endpoint" \
   -e QDRANT_API_KEY="$api_key" \
   -e QDRANT_CLOUD_GRPC_PORT="$grpc_port" \
-  memmcp-orchestrator python - <<'PY'
+  contextlattice-orchestrator python - <<'PY'
 import json
 import os
 from qdrant_client import QdrantClient

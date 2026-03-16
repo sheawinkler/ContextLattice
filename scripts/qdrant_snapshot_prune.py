@@ -142,7 +142,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--snapshot-dir",
-        default=os.getenv("MEMMCP_COLD_ROOT", "./.data/cold/qdrant"),
+        default=os.getenv(
+            "CONTEXTLATTICE_COLD_ROOT",
+            os.getenv("MEMMCP_COLD_ROOT", "./.data/cold/qdrant"),
+        ),
         help="Directory to write downloaded snapshots",
     )
     parser.add_argument(

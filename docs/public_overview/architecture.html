@@ -17,11 +17,12 @@
         <a href="index.html">Home</a>
         <a class="active" href="architecture.html">Architecture</a>
         <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
         <a href="installation.html">Installation</a>
         <a href="integration.html">Integrations</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
-        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">v1</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
     </header>
 
@@ -52,6 +53,7 @@
       <nav class="page-nav-inline" aria-label="On this page">
         <a href="#arch-context">Context</a>
         <a href="#arch-container">Containers</a>
+        <a href="#arch-language">Language Map</a>
         <a href="#arch-runtime">Runtime</a>
         <a href="#arch-ops">Ops + Safety</a>
       </nav>
@@ -168,6 +170,49 @@
           <li><strong>HTTP-first ingress:</strong> orchestrator remains the single write/search entrypoint.</li>
           <li><strong>Messaging surfaces:</strong> can operate bidirectionally (human ingress + response egress).</li>
           <li><strong>Local-first default:</strong> local stores first, cloud BYO remains optional.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section" id="arch-language">
+      <div class="kicker">Runtime Ownership</div>
+      <h2>Which language runs what, and why</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Python: control and integration surface</h3>
+          <ul class="spec-list">
+            <li><strong>Runs:</strong> HTTP ingress, auth/policy enforcement, API contracts, telemetry endpoints, and fallback adapters.</li>
+            <li><strong>Why:</strong> fastest iteration for product behavior and broad ecosystem integration.</li>
+            <li><strong>Efficacy impact:</strong> consistent operator control plane and safe fallback when any specialized path degrades.</li>
+          </ul>
+        </article>
+
+        <article class="card component-card">
+          <h3>Rust: memory and retrieval hot path</h3>
+          <ul class="spec-list">
+            <li><strong>Runs:</strong> codec, memory engine, and retrieval engine paths (`context_codec`, `context_engine`, `context_retrieval`).</li>
+            <li><strong>Why:</strong> lower-latency execution, predictable memory behavior, and safer high-throughput concurrency.</li>
+            <li><strong>Efficacy impact:</strong> smaller p95/p99 tails and stronger deep-read reliability under load.</li>
+          </ul>
+        </article>
+
+        <article class="card component-card">
+          <h3>Go: orchestration services</h3>
+          <ul class="spec-list">
+            <li><strong>Runs:</strong> scheduler/gateway services for task coordination, batching, retries, and backpressure control.</li>
+            <li><strong>Why:</strong> efficient long-running service concurrency and operational simplicity for scheduling workloads.</li>
+            <li><strong>Efficacy impact:</strong> better task completion reliability and fewer queue-induced stalls.</li>
+          </ul>
+        </article>
+      </div>
+      <article class="card arch-note-card">
+        <div class="kicker">Current Runtime Default</div>
+        <h3>Rust+Go enabled, Python fallback retained</h3>
+        <ul class="spec-list arch-note-list">
+          <li><strong>Default posture:</strong> Rust+Go runtime path is enabled for performance-critical execution.</li>
+          <li><strong>Fallback posture:</strong> Python fallback remains available for rollback safety.</li>
+          <li><strong>Verification endpoint:</strong> query <code>GET /migration/runtime</code> to confirm active runtime mode.</li>
+          <li><strong>Efficacy focus:</strong> optimize for correct outcomes per request, not raw benchmark numbers alone.</li>
         </ul>
       </article>
     </section>

@@ -159,7 +159,7 @@ def request_json(url: str, timeout_secs: float) -> Any:
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "memmcp-service-version-audit/1.0",
+            "User-Agent": "contextlattice-service-version-audit/1.0",
         },
     )
     with urllib.request.urlopen(req, timeout=timeout_secs) as response:

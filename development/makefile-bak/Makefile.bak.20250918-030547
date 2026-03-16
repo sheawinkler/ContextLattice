@@ -1,0 +1,103 @@
+# === Unified launcher (GNU Make 4.4.1) ===============================
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+.ONESHELL:
+.RECIPEPREFIX := >
+.DEFAULT_GOAL := launch
+
+# OS detect (for future use)
+UNAME_S := $(shell uname -s)
+BASE_OS := $(if $(filter $(UNAME_S),Darwin),mac,linux)
+
+# Core compose invocation (env-driven)
+ENV_FILE ?= .env
+DC := docker compose --env-file $(ENV_FILE)
+
+.PHONY: help launch all up down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor
+
+help:
+> echo "Targets:"
+> echo "  launch (default): compose up + proxy + memory init"
+> echo "  up/down/status/logs/build/rebuild/pull/clean/prune/ps"
+> echo "  models-pull: pull local Ollama models (optional)"
+> echo "  kalliste: configure & start mcp-proxy on :9090"
+> echo "  init: qdrant-init + optional mindsdb/letta seeds"
+> echo "  doctor: quick endpoint probes"
+
+# ---- One-shot launcher ----
+launch: up kalliste init
+> echo ">> launch complete — point IDE/agents at http://127.0.0.1:9090/servers/<name>/mcp"
+
+# Back-compat alias
+all: launch
+
+# ---- Compose lifecycle ----
+up:
+> echo ">> compose up (build) with $(ENV_FILE)"
+> $(DC) up -d --build
+
+down:
+> $(DC) down
+
+status ps:
+> $(DC) ps
+
+logs:
+> $(DC) logs -f --tail=200
+
+build:
+> $(DC) build
+
+rebuild:
+> $(DC) build --no-cache
+
+pull:
+> $(DC) pull
+
+clean:
+> $(DC) down -v --remove-orphans
+
+prune:
+> docker system prune -f
+
+# ---- Proxy-only gateway (TBXark mcp-proxy) ----
+kalliste:
+> [ -x scripts/kalliste.sh ] || { echo "ERROR: scripts/kalliste.sh missing or not executable"; exit 1; }
+> bash scripts/kalliste.sh
+
+# ---- Memory init bundle (Qdrant tuning + optional seeds) ----
+init: qdrant-init mindsdb-seed letta-seed
+
+qdrant-init:
+> if [ -x scripts/qdrant_init.sh ]; then bash scripts/qdrant_init.sh; else echo ">> skip qdrant init (no script)"; fi
+
+mindsdb-seed:
+> if [ -x scripts/mindsdb_seed_kb.sh ]; then echo ">> seeding MindsDB KB"; bash scripts/mindsdb_seed_kb.sh || true; else echo ">> skip mindsdb seed"; fi
+
+letta-seed:
+> if [ -x scripts/letta_seed_ollama.sh ]; then
+>   echo ">> seeding Letta (ollama)"; bash scripts/letta_seed_ollama.sh || true
+> elif [ -x scripts/letta_seed.sh ]; then
+>   echo ">> seeding Letta (generic)"; bash scripts/letta_seed.sh || true
+> else
+>   echo ">> skip letta seed"
+> fi
+> if [ -x scripts/letta_autowire.sh ]; then echo ">> autowiring Letta"; bash scripts/letta_autowire.sh || true; fi
+
+# ---- Models (Ollama) ----
+models-pull:
+> docker exec ollama ollama pull qwen2.5-coder:7b || true
+> docker exec ollama ollama pull qwen2.5:7b-instruct || true
+> docker exec ollama ollama pull nomic-embed-text || true
+
+# ---- Diagnostics ----
+proxy-status:
+> curl -fsS http://127.0.0.1:9090/status || echo "WARN: proxy status endpoint unavailable"
+
+doctor:
+> echo "== compose ps ==" && $(DC) ps || true
+> echo "== probe mcp-proxy :9090 ==" && (curl -fsSI http://127.0.0.1:9090 | head -n1 || true)
+> echo "== probe qdrant :6333 ==" && (curl -fsSI http://127.0.0.1:6333 | head -n1 || true)
+> echo "== probe qdrant-adv :8022/mcp ==" && (curl -fsSI http://127.0.0.1:8022/mcp | head -n1 || true)
+> echo "== probe qdrant std :8000/mcp ==" && (curl -fsSI http://127.0.0.1:8000/mcp | head -n1 || true)
+> echo "== probe mindsdb-proxy :8011/mcp ==" && (curl -fsSI http://127.0.0.1:8011/mcp | head -n1 || true)

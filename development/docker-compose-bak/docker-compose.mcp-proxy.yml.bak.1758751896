@@ -1,0 +1,15 @@
+services:
+  mcp-proxy:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    container_name: mcp-proxy
+    command: ["--config", "/config/config.json"]
+    volumes:
+      - ./configs/mcp-proxy.config.json:/config/config.json:ro
+    depends_on:
+      memorybank-gateway:
+        condition: service_started
+      mcp-qdrant:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    restart: unless-stopped

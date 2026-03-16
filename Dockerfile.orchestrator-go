@@ -1,0 +1,11 @@
+FROM golang:1.22-alpine AS build
+WORKDIR /src
+COPY services/orchestrator-go/go.mod ./go.mod
+COPY services/orchestrator-go/main.go ./main.go
+RUN go mod download && go build -o /out/orchestrator-go ./main.go
+
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=build /out/orchestrator-go /usr/local/bin/orchestrator-go
+EXPOSE 8090
+CMD ["orchestrator-go"]

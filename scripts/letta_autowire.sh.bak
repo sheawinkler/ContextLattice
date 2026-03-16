@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+
+# --- safe auth opts for set -u ---
+AUTH_OPTS=()
+[[ -n "${LETTA_API_KEY:-}" ]] && AUTH_OPTS=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+set -euo pipefail
+
+# Safe auth opts (empty array by default; filled if LETTA_API_KEY present)
+AUTH_OPTS=()
+[ -n "${LETTA_API_KEY:-}" ] && AUTH_OPTS=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+
+AUTH_OPTS=()
+[ -n "${LETTA_API_KEY:-}" ] && AUTH_OPTS=(-H "Authorization: Bearer ${LETTA_API_KEY}")
+
+# -------- Defaults you asked to bake in (can still be overridden from env) --------
+export SELECT_BY="${SELECT_BY:-tags}"
+export TARGET_AGENT_TAGS="${TARGET_AGENT_TAGS:-default-planner,default-coder}"
+# If you ever want to match by names instead of tags, run:
+#   SELECT_BY=names TARGET_AGENTS="Agent A,Agent B" bash scripts/letta_autowire.sh
+export TARGET_AGENTS="${TARGET_AGENTS:-Sigma Planner (Local Qwen2.5-7B-Instruct),Sigma Coder (Local Qwen2.5-Coder-7B)}"
+
+# -------- Core config (change only if your network layout differs) --------
+LETTA_URL="${LETTA_URL:-http://localhost:8283}"
+LETTA_BASE="$LETTA_URL/v1"
+MCP_SERVER_NAME="${MCP_SERVER_NAME:-hub}"
+# IMPORTANT: this must resolve from INSIDE the Letta container; use the service name, not localhost
+MCP_SERVER_URL="${MCP_SERVER_URL:-http://mcp-hub:53000/mcp}"
+
+# Optional auth (set LETTA_TOKEN if your server requires it)
+AUTH_OPTS=()
+if [[ -n "${LETTA_TOKEN:-}" ]]; then
+  AUTH_OPTS=(-H "Authorization: Bearer ${LETTA_TOKEN}")
+fi
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1"; exit 1; }; }
+need jq
+need curl
+
+say() { printf "\n\033[1m%s\033[0m\n" "$*"; }
+
+# 0) Wait for Letta health
+say "Waiting for Letta at ${LETTA_BASE} ..."
+for i in {1..60}; do
+  if curl -sf "${AUTH_OPTS[@]}" "${LETTA_BASE}/health/" >/dev/null; then
+    echo "Letta is up."; break
+  fi
+  sleep 1
+  [[ $i -eq 60 ]] && { echo "Timed out waiting for Letta"; exit 1; }
+done
+
+# 1) Register MCP server (Streamable HTTP is the modern transport)
+say "Registering MCP server \"${MCP_SERVER_NAME}\" → ${MCP_SERVER_URL}"
+curl -sfS -X PUT "${LETTA_BASE}/tools/mcp/servers" \
+  -H "Content-Type: application/json" \
+  "${AUTH_OPTS[@]}" \
+  -d @- >/dev/null <<JSON
+{
+  "server_name": "${MCP_SERVER_NAME}",
+  "type": "streamable_http",
+  "server_url": "${MCP_SERVER_URL}"
+}
+JSON
+
+# 2) Discover tools from the MCP server
+say "Fetching tools from MCP server \"${MCP_SERVER_NAME}\" ..."
+TOOLS_JSON="$(curl -sfS "${LETTA_BASE}/tools/mcp/servers/${MCP_SERVER_NAME}/tools" "${AUTH_OPTS[@]}")"
+TOOL_NAMES="$(echo "${TOOLS_JSON}" | jq -r '.[].name')"
+if [[ -z "${TOOL_NAMES}" ]]; then
+  echo "No tools reported by ${MCP_SERVER_NAME}"; exit 1
+fi
+echo "${TOOL_NAMES}" | sed 's/^/ - /'
+
+# 3) Add each tool into Letta and collect IDs
+declare -a ADDED_TOOL_IDS=()
+while IFS= read -r tname; do
+  [[ -z "$tname" ]] && continue
+  say "Adding MCP tool: ${tname}"
+  TOOL_OBJ="$(curl -sfS -X POST "${LETTA_BASE}/tools/mcp/servers/${MCP_SERVER_NAME}/${tname}" \
+    -H "Content-Type: application/json" "${AUTH_OPTS[@]}" -d '{}' )"
+  tid="$(echo "$TOOL_OBJ" | jq -r '.id')"
+  [[ -n "$tid" && "$tid" != "null" ]] && ADDED_TOOL_IDS+=("$tid") || echo "WARN: failed add ${tname}"
+done <<< "${TOOL_NAMES}"
+
+((${#ADDED_TOOL_IDS[@]})) || { echo "No tools added; stopping."; exit 1; }
+
+# 4) Resolve target agents (by TAGS default; by NAMES if SELECT_BY=names)
+AGENTS_JSON="$(curl -sfS "${LETTA_BASE}/agents/" "${AUTH_OPTS[@]}")"
+declare -a TARGET_AGENT_IDS=()
+
+if [[ "${SELECT_BY}" == "tags" ]]; then
+  TAGS_LIST="$(printf '%s' "${TARGET_AGENT_TAGS}" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  while IFS= read -r tag; do
+    [[ -z "$tag" ]] && continue
+    ids="$(echo "$AGENTS_JSON" | jq -r --arg T "$tag" '.[] | select(.tags | index($T)) | .id')"
+    while IFS= read -r id; do [[ -n "$id" ]] && TARGET_AGENT_IDS+=("$id"); done <<< "$ids"
+  done <<< "$TAGS_LIST"
+else
+  NAMES_LIST="$(printf '%s' "${TARGET_AGENTS}" | tr ',' '\n')"
+  while IFS= read -r name; do
+    name="$(echo "$name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ -z "$name" ]] && continue
+    id="$(echo "$AGENTS_JSON" | jq -r --arg NAME "$name" '.[] | select(.name == $NAME) | .id' | head -n1)"
+    [[ -n "$id" && "$id" != "null" ]] && TARGET_AGENT_IDS+=("$id") || echo "WARN: agent \"$name\" not found"
+  done <<< "$NAMES_LIST"
+fi
+
+# de-dup IDs
+if ((${#TARGET_AGENT_IDS[@]})); then
+  deduped="$(printf '%s\n' "${TARGET_AGENT_IDS[@]}" | awk '!seen[$0]++')"
+  TARGET_AGENT_IDS=()
+  while IFS= read -r id; do [[ -n "$id" ]] && TARGET_AGENT_IDS+=("$id"); done <<< "$deduped"
+fi
+
+((${#TARGET_AGENT_IDS[@]})) || { echo "No target agents resolved; stopping."; exit 1; }
+
+# 5) Attach tools to each target agent
+for aid in "${TARGET_AGENT_IDS[@]}"; do
+  say "Attaching ${#ADDED_TOOL_IDS[@]} tools to agent ${aid}"
+  for tid in "${ADDED_TOOL_IDS[@]}"; do
+    curl -sfS -X PATCH "${LETTA_BASE}/agents/${aid}/tools/attach/${tid}" \
+      -H "Content-Type: application/json" "${AUTH_OPTS[@]}" -d '{}' >/dev/null \
+    || echo "WARN: failed attaching $tid to $aid"
+  done
+done
+
+say "Auto-wiring complete ✅"
+echo "Mode: ${SELECT_BY}"
+echo "Agents wired by tags: ${TARGET_AGENT_TAGS}"
+echo "MCP server: ${MCP_SERVER_NAME} @ ${MCP_SERVER_URL}"
+echo "Total tools attached per agent: ${#ADDED_TOOL_IDS[@]}"

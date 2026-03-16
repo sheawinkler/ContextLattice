@@ -1,0 +1,17 @@
+services:
+  memorybank-gateway:
+    image: ghcr.io/tbxark/mcp-proxy:latest
+    command: ["/main","--config","/config/config.json"]
+    ports:
+      - "${MCP_PROXY_PORT:-53126}:9090"
+    volumes:
+      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+
+  letta:
+    image: letta/letta:latest
+    ports:
+      - "${LETTA_PUBLISHED_PORT:-58283}:8283"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}

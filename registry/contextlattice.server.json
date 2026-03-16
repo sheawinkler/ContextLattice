@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sheawinkler/contextlattice",
+  "title": "ContextLattice",
+  "description": "Private-by-default local-first MCP orchestrator for long-horizon memory, context, and tasks.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/sheawinkler/ContextLattice",
+    "source": "github"
+  },
+  "websiteUrl": "https://contextlattice.io/",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.contextlattice.io/mcp",
+      "headers": [
+        {
+          "name": "x-api-key",
+          "description": "ContextLattice orchestrator API key",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

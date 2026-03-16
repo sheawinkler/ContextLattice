@@ -1,0 +1,45 @@
+SHELL := /bin/bash
+COMPOSE := docker compose
+
+# Unified compose file set for the memory app
+MEM_FILES := \
+  -f docker-compose.yml \
+  -f docker-compose.override.http.yml \
+  -f docker-compose.override.vols.yml \
+  -f docker-compose.override.stackfix.yml \
+  -f docker-compose.memory.yml \
+  -f docker-compose.mcp-qdrant.http.yml \
+  -f docker-compose.memorymcp-http.cmd.yml \
+  -f docker-compose.mcp-proxy.yml \
+  -f docker-compose.mindsdb.yml \
+  -f docker-compose.mindsdb-http-proxy.yml
+
+.PHONY: mem-up
+mem-up:
+\t$(COMPOSE) $(MEM_FILES) up -d --remove-orphans
+\t@echo "→ Memory stack is up. Checking endpoints…"
+\t@sleep 2
+\t@nc -z 127.0.0.1 59081 && echo "✓ memorymcp-http:59081 open" || (echo "✗ memorymcp-http closed"; exit 1)
+\t@curl -fsS http://127.0.0.1:59081/mcp -H 'accept: application/json' -H 'content-type: application/json' \
+\t  -d '{"jsonrpc":"2.0","id":"ping","method":"ping","params":{}}' >/dev/null && echo "✓ /mcp ping OK" || (echo "✗ /mcp ping FAILED"; exit 1)
+\t@$(COMPOSE) $(MEM_FILES) ps
+
+.PHONY: mem-down
+mem-down:
+\t$(COMPOSE) $(MEM_FILES) down
+
+.PHONY: mem-restart
+mem-restart:
+\t$(COMPOSE) $(MEM_FILES) up -d --force-recreate
+
+.PHONY: mem-logs
+mem-logs:
+\t$(COMPOSE) $(MEM_FILES) logs -f --tail=200
+
+.PHONY: mem-ps
+mem-ps:
+\t$(COMPOSE) $(MEM_FILES) ps
+
+.PHONY: mem-prune
+mem-prune:
+\t$(COMPOSE) $(MEM_FILES) down --remove-orphans

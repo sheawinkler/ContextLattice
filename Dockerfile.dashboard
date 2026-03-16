@@ -2,13 +2,13 @@ FROM node:20-bullseye-slim
 
 WORKDIR /app
 
-COPY memmcp-dashboard/package*.json ./
+COPY contextlattice-dashboard/package*.json ./
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && npm ci
 
-COPY memmcp-dashboard ./
+COPY contextlattice-dashboard ./
 
 ENV NODE_ENV=development
 ENV HOST=0.0.0.0

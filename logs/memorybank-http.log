@@ -1,0 +1,231 @@
+INFO:     Started server process [53888]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:59081 (Press CTRL+C to quit)
+INFO:     127.0.0.1:64668 - "POST /mcp HTTP/1.1" 500 Internal Server Error
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [53888]
+Traceback (most recent call last):
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/bin/uvicorn", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 423, in main
+    run(
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 593, in run
+    server.run()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/config.py", line 438, in load
+    self.loaded_app = import_from_string(self.app)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/scripts/memorybank_http_proxy.py", line 15, in <module>
+    if not _stderr_thread_started:
+           ^^^^^^^^^^^^^^^^^^^^^^
+NameError: name '_stderr_thread_started' is not defined
+Traceback (most recent call last):
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/bin/uvicorn", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 423, in main
+    run(
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 593, in run
+    server.run()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/config.py", line 438, in load
+    self.loaded_app = import_from_string(self.app)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/scripts/memorybank_http_proxy.py", line 15, in <module>
+    if not _stderr_thread_started:
+           ^^^^^^^^^^^^^^^^^^^^^^
+NameError: name '_stderr_thread_started' is not defined
+Traceback (most recent call last):
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/bin/uvicorn", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 423, in main
+    run(
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 593, in run
+    server.run()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/config.py", line 438, in load
+    self.loaded_app = import_from_string(self.app)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/scripts/memorybank_http_proxy.py", line 15, in <module>
+    if not _stderr_thread_started:
+           ^^^^^^^^^^^^^^^^^^^^^^
+NameError: name '_stderr_thread_started' is not defined
+Traceback (most recent call last):
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/bin/uvicorn", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 423, in main
+    run(
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/main.py", line 593, in run
+    server.run()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/config.py", line 438, in load
+    self.loaded_app = import_from_string(self.app)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-router/lib/python3.12/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sheawinkler/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap_external>", line 1133, in get_code
+  File "<frozen importlib._bootstrap_external>", line 1063, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/scripts/memorybank_http_proxy.py", line 32
+    \1
+     ^
+SyntaxError: unexpected character after line continuation character
