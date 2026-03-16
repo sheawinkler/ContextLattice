@@ -5,7 +5,7 @@ Project: `contextlattice`
 
 ## Run Artifacts (Latest)
 
-- End-to-end matrix (all profiles): `bench/results/backend_lane_matrix_20260316T102223Z.json`
+- End-to-end matrix (all profiles): `bench/results/backend_lane_matrix_20260316T103732Z.json`
 - Direct sidecar matrix (all spike backends): `bench/results/memory_bank_spike_direct_matrix_20260316T103252Z.json`
 - External candidate probe: `bench/results/high_priority_candidate_probe_20260316T102234Z.json`
 
@@ -13,26 +13,26 @@ Project: `contextlattice`
 
 | profile | avg p95 ms | delta vs baseline | note |
 |---|---:|---:|---|
-| baseline_qdrant_rollups | 139.565 | +0.000% | control lane |
-| rust_lane_usearch_tantivy | 144.630 | -3.629% | slight regression in this run |
-| memory_bank_helixdb_spike | 144.819 | -3.765% | fallback path (adapter unconfigured) |
-| memory_bank_trieve_spike | 180.554 | -29.369% | fallback path (adapter unconfigured) |
-| memory_bank_tantivy_spike | 1488.482 | -966.515% | heavy tail outliers |
-| memory_bank_quickwit_spike | 2398.805 | -1618.773% | heavy tail outliers |
-| memory_bank_lancedb_spike | 4149.369 | -2873.073% | heavy tail outliers |
-| memory_bank_meilisearch_spike | 10485.840 | -7413.230% | severe tail outliers |
+| baseline_qdrant_rollups | 109.093 | +0.000% | control lane |
+| memory_bank_helixdb_spike | 59.812 | +45.173% | fallback path (adapter unconfigured) |
+| memory_bank_trieve_spike | 73.757 | +32.391% | fallback path (adapter unconfigured) |
+| rust_lane_usearch_tantivy | 224.298 | -105.603% | regression in latest run |
+| memory_bank_lancedb_spike | 184.949 | -69.533% | improved vs prior run, still slower than baseline |
+| memory_bank_tantivy_spike | 813.030 | -645.263% | heavy tail outliers |
+| memory_bank_quickwit_spike | 1670.762 | -1431.502% | heavy tail outliers |
+| memory_bank_meilisearch_spike | 3109.448 | -2750.273% | severe tail outliers |
 
 Memory-bank backend delta for full run:
 
-- attempts: `54`
+- attempts: `36`
 - successes: `24`
-- failures: `30`
-- fallbacks: `30`
+- failures: `12`
+- fallbacks: `12`
 
 Interpretation:
 
-- Profile-level p95 is currently dominated by intermittent multi-second tail events on memory-bank spike lanes.
-- Baseline (`qdrant + topic_rollups`) remains the only stable low-tail production lane in this sample.
+- Profile-level p95 is still dominated by intermittent tail events on inline memory-bank spike lanes.
+- Baseline (`qdrant + topic_rollups`) remains the most stable production lane in this sample.
 - `trieve_spike` and `helixdb_spike` are not configured; observed behavior is fallback, not true backend performance.
 
 ## Direct Sidecar Matrix (Backend-Isolated, Latest)
