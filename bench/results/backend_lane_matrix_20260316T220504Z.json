@@ -6,150 +6,68 @@
     "deep_read",
     "ops_focus"
   ],
-  "generatedAt": "2026-03-16T22:05:49.150349+00:00",
+  "generatedAt": "2026-03-16T22:05:04.435026+00:00",
   "overallMemoryBankBackend": {
     "after": {
-      "attempts": 103,
+      "attempts": 48,
       "defaultEnabled": true,
       "failures": 0,
       "fallbacks": 0,
       "lastError": null,
-      "lastLatencyMs": 17.389,
+      "lastLatencyMs": 17.982,
       "mode": "surrealdb_spike",
       "spikeUrlConfigured": true,
-      "successes": 103
+      "successes": 48
     },
     "before": {
-      "attempts": 67,
+      "attempts": 0,
       "defaultEnabled": true,
       "failures": 0,
       "fallbacks": 0,
       "lastError": null,
-      "lastLatencyMs": 17.693,
+      "lastLatencyMs": null,
       "mode": "surrealdb_spike",
       "spikeUrlConfigured": true,
-      "successes": 67
+      "successes": 0
     },
     "delta": {
-      "attempts": 36,
+      "attempts": 48,
       "failures": 0,
       "fallbacks": 0,
-      "successes": 36
+      "successes": 48
     }
   },
   "overallSourceLatency": {
     "after": {
-      "letta": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 26.306,
-        "p95Ms": 30.379,
-        "p99Ms": 30.741,
-        "requests": 2,
-        "timeouts": 0
-      },
       "memory_bank": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 19.11,
-        "p95Ms": 24.37,
-        "p99Ms": 28.878,
-        "requests": 103,
+        "p50Ms": 19.232,
+        "p95Ms": 24.052,
+        "p99Ms": 26.791,
+        "requests": 48,
         "timeouts": 0
-      },
-      "mindsdb": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 0.009,
-        "p95Ms": 0.009,
-        "p99Ms": 0.009,
-        "requests": 3,
-        "timeouts": 0
-      },
-      "mongo_raw": {
-        "budgetExceeded": 0,
-        "errors": 3,
-        "p50Ms": 6000.612,
-        "p95Ms": 7351.778,
-        "p99Ms": 7471.882,
-        "requests": 3,
-        "timeouts": 3
       },
       "qdrant": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 1.455,
-        "p95Ms": 2.245,
-        "p99Ms": 9.2,
-        "requests": 105,
+        "p50Ms": 1.497,
+        "p95Ms": 2.012,
+        "p99Ms": 3.803,
+        "requests": 48,
         "timeouts": 0
       },
       "topic_rollups": {
         "budgetExceeded": 0,
         "errors": 0,
-        "p50Ms": 0.498,
-        "p95Ms": 1.965,
-        "p99Ms": 3.372,
-        "requests": 105,
+        "p50Ms": 0.559,
+        "p95Ms": 2.209,
+        "p99Ms": 3.842,
+        "requests": 48,
         "timeouts": 0
       }
     },
-    "before": {
-      "letta": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 26.306,
-        "p95Ms": 30.379,
-        "p99Ms": 30.741,
-        "requests": 2,
-        "timeouts": 0
-      },
-      "memory_bank": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 19.151,
-        "p95Ms": 24.339,
-        "p99Ms": 29.317,
-        "requests": 67,
-        "timeouts": 0
-      },
-      "mindsdb": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 0.009,
-        "p95Ms": 0.009,
-        "p99Ms": 0.009,
-        "requests": 3,
-        "timeouts": 0
-      },
-      "mongo_raw": {
-        "budgetExceeded": 0,
-        "errors": 3,
-        "p50Ms": 6000.612,
-        "p95Ms": 7351.778,
-        "p99Ms": 7471.882,
-        "requests": 3,
-        "timeouts": 3
-      },
-      "qdrant": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 1.48,
-        "p95Ms": 4.399,
-        "p99Ms": 12.527,
-        "requests": 69,
-        "timeouts": 0
-      },
-      "topic_rollups": {
-        "budgetExceeded": 0,
-        "errors": 0,
-        "p50Ms": 0.519,
-        "p95Ms": 2.192,
-        "p99Ms": 3.668,
-        "requests": 69,
-        "timeouts": 0
-      }
-    }
+    "before": {}
   },
   "profiles": [
     "memory_bank_icm_spike",
@@ -177,12 +95,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 33.992,
-            "mean": 33.814,
-            "min": 33.642,
-            "p50": 33.807,
-            "p95": 33.974,
-            "p99": 33.989
+            "max": 45.297,
+            "mean": 39.989,
+            "min": 35.688,
+            "p50": 39.485,
+            "p95": 44.744,
+            "p99": 45.187
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -191,7 +109,7 @@
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 3,
             "qdrant": 0,
@@ -200,11 +118,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 42.037,
-            "mean": 42.037
+            "max": 41.991,
+            "mean": 41.073
           }
         },
         "ops_focus": {
@@ -220,12 +139,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 45.731,
-            "mean": 37.012,
-            "min": 31.655,
-            "p50": 33.65,
-            "p95": 44.523,
-            "p99": 45.49
+            "max": 37.516,
+            "mean": 33.506,
+            "min": 31.132,
+            "p50": 32.688,
+            "p95": 36.91,
+            "p99": 37.395
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -234,7 +153,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -243,11 +162,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 48.912,
-            "mean": 48.911
+            "max": 48.866,
+            "mean": 48.86
           }
         },
         "short_context": {
@@ -263,12 +183,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 34.618,
-            "mean": 29.353,
-            "min": 26.129,
-            "p50": 27.313,
-            "p95": 33.887,
-            "p99": 34.472
+            "max": 51.536,
+            "mean": 40.847,
+            "min": 31.781,
+            "p50": 40.035,
+            "p95": 50.142,
+            "p99": 51.258
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -277,7 +197,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -286,43 +206,44 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 33.367,
-            "mean": 33.367
+            "max": 32.331,
+            "mean": 32.299
           }
         }
       },
       "description": "Memory-bank spike lane request: icm_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 76,
+          "attempts": 12,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 20.06,
+          "lastLatencyMs": 19.21,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 76
+          "successes": 12
         },
         "before": {
-          "attempts": 67,
+          "attempts": 0,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 17.693,
+          "lastLatencyMs": null,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 67
+          "successes": 0
         },
         "delta": {
-          "attempts": 9,
+          "attempts": 12,
           "failures": 0,
           "fallbacks": 0,
-          "successes": 9
+          "successes": 12
         }
       },
       "notes": [],
@@ -353,8 +274,8 @@
       "summary": {
         "avgErrorRate": 0.0,
         "avgP95DeltaVsBaselinePct": 0.0,
-        "avgP95Ms": 37.461,
-        "maxP95Ms": 44.523,
+        "avgP95Ms": 43.932,
+        "maxP95Ms": 50.142,
         "policyMismatchTotal": 0
       }
     },
@@ -373,12 +294,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 37.641,
-            "mean": 36.518,
-            "min": 35.291,
-            "p50": 36.622,
-            "p95": 37.539,
-            "p99": 37.621
+            "max": 38.394,
+            "mean": 35.46,
+            "min": 33.215,
+            "p50": 35.116,
+            "p95": 38.085,
+            "p99": 38.332
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -387,7 +308,7 @@
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 3,
             "qdrant": 0,
@@ -396,11 +317,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 42.042,
-            "mean": 42.042
+            "max": 42.019,
+            "mean": 42.017
           }
         },
         "ops_focus": {
@@ -416,12 +338,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 32.998,
-            "mean": 30.114,
-            "min": 28.571,
-            "p50": 28.773,
-            "p95": 32.575,
-            "p99": 32.913
+            "max": 42.415,
+            "mean": 33.4,
+            "min": 27.784,
+            "p50": 31.701,
+            "p95": 41.01,
+            "p99": 42.134
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -430,7 +352,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -439,11 +361,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 48.917,
-            "mean": 48.917
+            "max": 48.893,
+            "mean": 48.892
           }
         },
         "short_context": {
@@ -459,12 +382,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 27.754,
-            "mean": 26.878,
-            "min": 26.379,
-            "p50": 26.5,
-            "p95": 27.629,
-            "p99": 27.729
+            "max": 41.157,
+            "mean": 31.092,
+            "min": 25.556,
+            "p50": 28.827,
+            "p95": 39.439,
+            "p99": 40.814
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -473,7 +396,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -482,43 +405,44 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 33.373,
-            "mean": 33.373
+            "max": 33.344,
+            "mean": 33.343
           }
         }
       },
       "description": "Memory-bank spike lane request: memvid_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 94,
+          "attempts": 36,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 18.301,
+          "lastLatencyMs": 17.87,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 94
+          "successes": 36
         },
         "before": {
-          "attempts": 85,
+          "attempts": 24,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 17.579,
+          "lastLatencyMs": 19.059,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 85
+          "successes": 24
         },
         "delta": {
-          "attempts": 9,
+          "attempts": 12,
           "failures": 0,
           "fallbacks": 0,
-          "successes": 9
+          "successes": 12
         }
       },
       "notes": [],
@@ -549,8 +473,8 @@
       "summary": {
         "avgErrorRate": 0.0,
         "avgP95DeltaVsBaselinePct": 0.0,
-        "avgP95Ms": 32.581,
-        "maxP95Ms": 37.539,
+        "avgP95Ms": 39.511,
+        "maxP95Ms": 41.01,
         "policyMismatchTotal": 0
       }
     },
@@ -569,12 +493,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 49.626,
-            "mean": 41.763,
-            "min": 35.807,
-            "p50": 39.856,
-            "p95": 48.649,
-            "p99": 49.43
+            "max": 35.696,
+            "mean": 34.434,
+            "min": 33.199,
+            "p50": 34.421,
+            "p95": 35.527,
+            "p99": 35.662
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -583,7 +507,7 @@
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 3,
             "qdrant": 0,
@@ -592,11 +516,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 42.04,
-            "mean": 42.039
+            "max": 42.009,
+            "mean": 42.006
           }
         },
         "ops_focus": {
@@ -612,12 +537,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 32.08,
-            "mean": 30.509,
-            "min": 28.307,
-            "p50": 31.139,
-            "p95": 31.986,
-            "p99": 32.062
+            "max": 30.691,
+            "mean": 29.703,
+            "min": 28.685,
+            "p50": 29.719,
+            "p95": 30.643,
+            "p99": 30.681
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -626,7 +551,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -635,11 +560,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 48.915,
-            "mean": 48.914
+            "max": 48.883,
+            "mean": 48.881
           }
         },
         "short_context": {
@@ -655,12 +581,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 27.651,
-            "mean": 27.157,
-            "min": 26.829,
-            "p50": 26.992,
-            "p95": 27.585,
-            "p99": 27.638
+            "max": 38.285,
+            "mean": 30.451,
+            "min": 27.157,
+            "p50": 28.182,
+            "p95": 36.799,
+            "p99": 37.988
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -669,7 +595,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -678,43 +604,44 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 33.37,
-            "mean": 33.37
+            "max": 33.33,
+            "mean": 33.328
           }
         }
       },
       "description": "Memory-bank spike lane request: shodh_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 85,
+          "attempts": 24,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 17.579,
+          "lastLatencyMs": 19.059,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 85
+          "successes": 24
         },
         "before": {
-          "attempts": 76,
+          "attempts": 12,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 20.06,
+          "lastLatencyMs": 19.21,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 76
+          "successes": 12
         },
         "delta": {
-          "attempts": 9,
+          "attempts": 12,
           "failures": 0,
           "fallbacks": 0,
-          "successes": 9
+          "successes": 12
         }
       },
       "notes": [],
@@ -745,8 +672,8 @@
       "summary": {
         "avgErrorRate": 0.0,
         "avgP95DeltaVsBaselinePct": 0.0,
-        "avgP95Ms": 36.073,
-        "maxP95Ms": 48.649,
+        "avgP95Ms": 34.323,
+        "maxP95Ms": 36.799,
         "policyMismatchTotal": 0
       }
     },
@@ -765,12 +692,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 41.002,
-            "mean": 37.774,
-            "min": 35.462,
-            "p50": 36.857,
-            "p95": 40.587,
-            "p99": 40.919
+            "max": 38.667,
+            "mean": 34.858,
+            "min": 30.979,
+            "p50": 34.893,
+            "p95": 38.103,
+            "p99": 38.554
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -779,7 +706,7 @@
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 3,
             "qdrant": 0,
@@ -788,11 +715,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 42.045,
-            "mean": 42.044
+            "max": 42.026,
+            "mean": 42.025
           }
         },
         "ops_focus": {
@@ -808,12 +736,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 31.591,
-            "mean": 29.795,
-            "min": 28.768,
-            "p50": 29.027,
-            "p95": 31.334,
-            "p99": 31.539
+            "max": 30.726,
+            "mean": 29.588,
+            "min": 28.372,
+            "p50": 29.627,
+            "p95": 30.598,
+            "p99": 30.7
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -822,7 +750,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -831,11 +759,12 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 48.919,
-            "mean": 48.919
+            "max": 48.901,
+            "mean": 48.899
           }
         },
         "short_context": {
@@ -851,12 +780,12 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 26.886,
-            "mean": 26.628,
-            "min": 26.159,
-            "p50": 26.839,
-            "p95": 26.881,
-            "p99": 26.885
+            "max": 27.032,
+            "mean": 26.703,
+            "min": 26.394,
+            "p50": 26.693,
+            "p95": 26.986,
+            "p99": 27.023
           },
           "policyMismatchCount": 0,
           "policyMismatchesSample": [],
@@ -865,7 +794,7 @@
             "mean": 7.0,
             "min": 7
           },
-          "runs": 3,
+          "runs": 4,
           "sourceCountsSample": {
             "memory_bank": 2,
             "qdrant": 0,
@@ -874,43 +803,44 @@
           "statusCodes": [
             200,
             200,
+            200,
             200
           ],
           "topScore": {
-            "max": 33.375,
-            "mean": 33.375
+            "max": 33.353,
+            "mean": 33.352
           }
         }
       },
       "description": "Memory-bank spike lane request: surrealdb_spike adapter.",
       "memoryBankBackend": {
         "after": {
-          "attempts": 103,
+          "attempts": 48,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 17.389,
+          "lastLatencyMs": 17.982,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 103
+          "successes": 48
         },
         "before": {
-          "attempts": 94,
+          "attempts": 36,
           "defaultEnabled": true,
           "failures": 0,
           "fallbacks": 0,
           "lastError": null,
-          "lastLatencyMs": 18.301,
+          "lastLatencyMs": 17.87,
           "mode": "surrealdb_spike",
           "spikeUrlConfigured": true,
-          "successes": 94
+          "successes": 36
         },
         "delta": {
-          "attempts": 9,
+          "attempts": 12,
           "failures": 0,
           "fallbacks": 0,
-          "successes": 9
+          "successes": 12
         }
       },
       "notes": [],
@@ -941,13 +871,13 @@
       "summary": {
         "avgErrorRate": 0.0,
         "avgP95DeltaVsBaselinePct": 0.0,
-        "avgP95Ms": 32.934,
-        "maxP95Ms": 40.587,
+        "avgP95Ms": 31.896,
+        "maxP95Ms": 38.103,
         "policyMismatchTotal": 0
       }
     }
   },
-  "runsPerCase": 3,
+  "runsPerCase": 4,
   "seedCorpus": false,
   "seedState": {
     "attempted": 0,

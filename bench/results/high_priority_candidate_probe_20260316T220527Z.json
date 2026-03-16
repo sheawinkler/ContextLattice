@@ -1,0 +1,216 @@
+{
+  "candidates": {
+    "helixdb": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 115.504,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 118.71,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 403.337,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 16.299,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8099"
+    },
+    "icm": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 103.944,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 103.878,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 262.191,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 3.748,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8100"
+    },
+    "lancedb": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 15.198,
+          "ok": true,
+          "resultCount": 0,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 13.47,
+          "ok": true,
+          "resultCount": 1,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 237.659,
+          "ok": true,
+          "resultCount": 1,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 10.459,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8097"
+    },
+    "memvid": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 105.148,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 105.958,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 170.84,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 4.674,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8102"
+    },
+    "shodh": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 113.127,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 111.492,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 150.441,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 3.741,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8101"
+    },
+    "surrealdb": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 102.898,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 104.199,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 176.341,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 3.821,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8103"
+    },
+    "trieve": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 112.944,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 111.561,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 345.776,
+          "ok": true,
+          "resultCount": 3,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 7.315,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8098"
+    }
+  },
+  "generatedAt": "2026-03-16T22:05:24.709417+00:00",
+  "project": "perf_backend_lanes"
+}

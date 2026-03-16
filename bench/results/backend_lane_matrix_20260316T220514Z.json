@@ -1,0 +1,377 @@
+{
+  "baseUrl": "http://127.0.0.1:8075",
+  "cacheBustQueries": true,
+  "cases": [
+    "short_context",
+    "deep_read",
+    "ops_focus"
+  ],
+  "generatedAt": "2026-03-16T22:05:14.493796+00:00",
+  "overallMemoryBankBackend": {
+    "after": {
+      "attempts": 67,
+      "defaultEnabled": true,
+      "failures": 0,
+      "fallbacks": 0,
+      "lastError": null,
+      "lastLatencyMs": 17.693,
+      "mode": "surrealdb_spike",
+      "spikeUrlConfigured": true,
+      "successes": 67
+    },
+    "before": {
+      "attempts": 49,
+      "defaultEnabled": true,
+      "failures": 0,
+      "fallbacks": 0,
+      "lastError": null,
+      "lastLatencyMs": 13.867,
+      "mode": "surrealdb_spike",
+      "spikeUrlConfigured": true,
+      "successes": 49
+    },
+    "delta": {
+      "attempts": 18,
+      "failures": 0,
+      "fallbacks": 0,
+      "successes": 18
+    }
+  },
+  "overallSourceLatency": {
+    "after": {
+      "letta": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 26.306,
+        "p95Ms": 30.379,
+        "p99Ms": 30.741,
+        "requests": 2,
+        "timeouts": 0
+      },
+      "memory_bank": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 19.151,
+        "p95Ms": 24.339,
+        "p99Ms": 29.317,
+        "requests": 67,
+        "timeouts": 0
+      },
+      "mindsdb": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 0.009,
+        "p95Ms": 0.009,
+        "p99Ms": 0.009,
+        "requests": 3,
+        "timeouts": 0
+      },
+      "mongo_raw": {
+        "budgetExceeded": 0,
+        "errors": 3,
+        "p50Ms": 6000.612,
+        "p95Ms": 7351.778,
+        "p99Ms": 7471.882,
+        "requests": 3,
+        "timeouts": 3
+      },
+      "qdrant": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 1.48,
+        "p95Ms": 4.399,
+        "p99Ms": 12.527,
+        "requests": 69,
+        "timeouts": 0
+      },
+      "topic_rollups": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 0.519,
+        "p95Ms": 2.192,
+        "p99Ms": 3.668,
+        "requests": 69,
+        "timeouts": 0
+      }
+    },
+    "before": {
+      "letta": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 26.306,
+        "p95Ms": 30.379,
+        "p99Ms": 30.741,
+        "requests": 2,
+        "timeouts": 0
+      },
+      "memory_bank": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 19.214,
+        "p95Ms": 24.027,
+        "p99Ms": 26.746,
+        "requests": 49,
+        "timeouts": 0
+      },
+      "mindsdb": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 0.009,
+        "p95Ms": 0.009,
+        "p99Ms": 0.009,
+        "requests": 3,
+        "timeouts": 0
+      },
+      "mongo_raw": {
+        "budgetExceeded": 0,
+        "errors": 2,
+        "p50Ms": 4951.343,
+        "p95Ms": 5895.685,
+        "p99Ms": 5979.627,
+        "requests": 2,
+        "timeouts": 2
+      },
+      "qdrant": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 1.504,
+        "p95Ms": 6.049,
+        "p99Ms": 14.345,
+        "requests": 51,
+        "timeouts": 0
+      },
+      "topic_rollups": {
+        "budgetExceeded": 0,
+        "errors": 0,
+        "p50Ms": 0.55,
+        "p95Ms": 2.156,
+        "p99Ms": 3.817,
+        "requests": 51,
+        "timeouts": 0
+      }
+    }
+  },
+  "profiles": [
+    "memory_bank_icm_spike"
+  ],
+  "project": "perf_backend_lanes",
+  "recommendations": [
+    "Rust lane request was neutral vs baseline in this run."
+  ],
+  "results": {
+    "memory_bank_icm_spike": {
+      "cases": {
+        "deep_read": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "icm_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 43.682,
+            "mean": 37.02,
+            "min": 32.722,
+            "p50": 35.328,
+            "p95": 42.982,
+            "p99": 43.542
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 6,
+          "sourceCountsSample": {
+            "memory_bank": 3,
+            "qdrant": 0,
+            "topic_rollups": 5
+          },
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 42.034,
+            "mean": 42.032
+          }
+        },
+        "ops_focus": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "icm_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 33.186,
+            "mean": 30.075,
+            "min": 27.641,
+            "p50": 29.65,
+            "p95": 32.994,
+            "p99": 33.147
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 7,
+            "mean": 7.0,
+            "min": 7
+          },
+          "runs": 6,
+          "sourceCountsSample": {
+            "memory_bank": 2,
+            "qdrant": 0,
+            "topic_rollups": 5
+          },
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 48.908,
+            "mean": 48.907
+          }
+        },
+        "short_context": {
+          "cacheHitCount": 0,
+          "cacheHitRate": 0.0,
+          "effectivePolicySample": {
+            "lexical_backend": "auto",
+            "memory_bank_backend": "icm_spike",
+            "strict": false,
+            "vector_backend": "auto"
+          },
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 29.475,
+            "mean": 26.923,
+            "min": 25.0,
+            "p50": 27.113,
+            "p95": 28.917,
+            "p99": 29.363
+          },
+          "policyMismatchCount": 0,
+          "policyMismatchesSample": [],
+          "resultCount": {
+            "max": 7,
+            "mean": 7.0,
+            "min": 7
+          },
+          "runs": 6,
+          "sourceCountsSample": {
+            "memory_bank": 2,
+            "qdrant": 0,
+            "topic_rollups": 5
+          },
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 33.361,
+            "mean": 33.36
+          }
+        }
+      },
+      "description": "Memory-bank spike lane request: icm_spike adapter.",
+      "memoryBankBackend": {
+        "after": {
+          "attempts": 67,
+          "defaultEnabled": true,
+          "failures": 0,
+          "fallbacks": 0,
+          "lastError": null,
+          "lastLatencyMs": 17.693,
+          "mode": "surrealdb_spike",
+          "spikeUrlConfigured": true,
+          "successes": 67
+        },
+        "before": {
+          "attempts": 49,
+          "defaultEnabled": true,
+          "failures": 0,
+          "fallbacks": 0,
+          "lastError": null,
+          "lastLatencyMs": 13.867,
+          "mode": "surrealdb_spike",
+          "spikeUrlConfigured": true,
+          "successes": 49
+        },
+        "delta": {
+          "attempts": 18,
+          "failures": 0,
+          "fallbacks": 0,
+          "successes": 18
+        }
+      },
+      "notes": [],
+      "profileDescriptor": {
+        "data_model": "lexical+semantic",
+        "data_store": "memory_bank(icm_adapter)+qdrant+topic_rollups",
+        "index_type": "icm-adapter+hnsw",
+        "search_type": "hybrid-icm-semantic"
+      },
+      "request": {
+        "backend_policy": {
+          "lexical_backend": "auto",
+          "memory_bank_backend": "icm_spike",
+          "strict": false,
+          "vector_backend": "auto"
+        },
+        "source_weights": {
+          "memory_bank": 0.6,
+          "qdrant": 1.0,
+          "topic_rollups": 0.9
+        },
+        "sources": [
+          "qdrant",
+          "topic_rollups",
+          "memory_bank"
+        ]
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95DeltaVsBaselinePct": 0.0,
+        "avgP95Ms": 34.964,
+        "maxP95Ms": 42.982,
+        "policyMismatchTotal": 0
+      }
+    }
+  },
+  "runsPerCase": 6,
+  "seedCorpus": false,
+  "seedState": {
+    "attempted": 0,
+    "errors": [],
+    "succeeded": 0,
+    "verificationResults": 0,
+    "verified": false
+  }
+}

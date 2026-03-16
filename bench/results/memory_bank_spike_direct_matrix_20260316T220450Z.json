@@ -1,0 +1,502 @@
+{
+  "backends": [
+    "icm_spike",
+    "shodh_spike",
+    "memvid_spike",
+    "surrealdb_spike"
+  ],
+  "baseUrl": "http://127.0.0.1:8096",
+  "cacheBustQueries": true,
+  "cases": [
+    "short_context",
+    "deep_read",
+    "ops_focus"
+  ],
+  "generatedAt": "2026-03-16T22:04:50.996973+00:00",
+  "health": {
+    "backend_modes": [
+      "tantivy_spike",
+      "quickwit_spike",
+      "meilisearch_spike",
+      "lancedb_spike",
+      "trieve_spike",
+      "helixdb_spike",
+      "icm_spike",
+      "shodh_spike",
+      "memvid_spike",
+      "surrealdb_spike"
+    ],
+    "docs_loaded": 0,
+    "external_backends": {
+      "helixdb_spike": true,
+      "icm_spike": true,
+      "lancedb_spike": true,
+      "memvid_spike": true,
+      "shodh_spike": true,
+      "surrealdb_spike": true,
+      "trieve_spike": true
+    },
+    "external_timeout_secs": 3,
+    "external_timeout_secs_icm": 1,
+    "fingerprint": 0,
+    "meili_index_uid": "contextlattice_memory",
+    "meili_task_timeout_secs": 30,
+    "meili_url": "http://meilisearch:7700",
+    "ok": true,
+    "refreshed_at_unix_secs": 0,
+    "spike_data_root": "/data/memory-bank"
+  },
+  "project": "contextlattice",
+  "recommendations": [],
+  "results": {
+    "icm_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 9.844,
+            "mean": 8.735,
+            "min": 8.189,
+            "p50": 8.596,
+            "p95": 9.62,
+            "p99": 9.8
+          },
+          "resultCount": {
+            "max": 16,
+            "mean": 16.0,
+            "min": 16
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 67.586,
+            "mean": 67.586
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 11.436,
+            "mean": 9.224,
+            "min": 8.304,
+            "p50": 8.644,
+            "p95": 11.003,
+            "p99": 11.35
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 78.71,
+            "mean": 78.71
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 9.09,
+            "mean": 8.355,
+            "min": 7.289,
+            "p50": 8.553,
+            "p95": 9.047,
+            "p99": 9.081
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 53.569,
+            "mean": 53.569
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 9.89,
+        "avgResultCount": 10.667,
+        "maxP95Ms": 11.003
+      }
+    },
+    "memvid_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 10.47,
+            "mean": 8.716,
+            "min": 7.817,
+            "p50": 8.488,
+            "p95": 10.116,
+            "p99": 10.399
+          },
+          "resultCount": {
+            "max": 16,
+            "mean": 16.0,
+            "min": 16
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 67.586,
+            "mean": 67.586
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 15.698,
+            "mean": 10.966,
+            "min": 7.728,
+            "p50": 10.351,
+            "p95": 15.209,
+            "p99": 15.6
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 78.71,
+            "mean": 78.71
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 7.652,
+            "mean": 7.159,
+            "min": 6.236,
+            "p50": 7.363,
+            "p95": 7.632,
+            "p99": 7.648
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 53.569,
+            "mean": 53.569
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 10.986,
+        "avgResultCount": 10.667,
+        "maxP95Ms": 15.209
+      }
+    },
+    "shodh_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 12.257,
+            "mean": 8.899,
+            "min": 7.521,
+            "p50": 7.883,
+            "p95": 11.647,
+            "p99": 12.135
+          },
+          "resultCount": {
+            "max": 16,
+            "mean": 16.0,
+            "min": 16
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 67.586,
+            "mean": 67.586
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 7.68,
+            "mean": 7.068,
+            "min": 6.794,
+            "p50": 6.985,
+            "p95": 7.551,
+            "p99": 7.654
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 78.71,
+            "mean": 78.71
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 16.824,
+            "mean": 10.603,
+            "min": 6.918,
+            "p50": 7.975,
+            "p95": 16.225,
+            "p99": 16.704
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 53.569,
+            "mean": 53.569
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 11.808,
+        "avgResultCount": 10.667,
+        "maxP95Ms": 16.225
+      }
+    },
+    "surrealdb_spike": {
+      "cases": {
+        "deep_read": {
+          "case": "deep_read",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 12.198,
+            "mean": 8.918,
+            "min": 7.588,
+            "p50": 8.354,
+            "p95": 11.459,
+            "p99": 12.05
+          },
+          "resultCount": {
+            "max": 16,
+            "mean": 16.0,
+            "min": 16
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 67.586,
+            "mean": 67.586
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "ops_focus": {
+          "case": "ops_focus",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 9.342,
+            "mean": 8.157,
+            "min": 7.541,
+            "p50": 7.801,
+            "p95": 9.167,
+            "p99": 9.307
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 78.71,
+            "mean": 78.71
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        },
+        "short_context": {
+          "case": "short_context",
+          "errorCount": 0,
+          "errorRate": 0.0,
+          "errors": [],
+          "latencyMs": {
+            "max": 7.401,
+            "mean": 7.047,
+            "min": 6.671,
+            "p50": 7.111,
+            "p95": 7.392,
+            "p99": 7.399
+          },
+          "resultCount": {
+            "max": 8,
+            "mean": 8.0,
+            "min": 8
+          },
+          "runs": 5,
+          "statusCodes": [
+            200,
+            200,
+            200,
+            200,
+            200
+          ],
+          "topScore": {
+            "max": 53.569,
+            "mean": 53.569
+          },
+          "warmupErrorCount": 0,
+          "warmupErrors": [],
+          "warmups": 1
+        }
+      },
+      "summary": {
+        "avgErrorRate": 0.0,
+        "avgP95Ms": 9.339,
+        "avgResultCount": 10.667,
+        "maxP95Ms": 11.459
+      }
+    }
+  },
+  "runsPerCase": 5
+}

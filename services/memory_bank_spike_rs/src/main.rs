@@ -33,6 +33,7 @@ struct Config {
     max_docs: usize,
     max_content_chars: usize,
     external_timeout_secs: u64,
+    external_timeout_secs_icm: u64,
     meili_url: String,
     meili_api_key: String,
     meili_index_uid: String,
@@ -69,6 +70,7 @@ impl Config {
         let max_docs = env_usize("MB_SPIKE_MAX_DOCS", 50_000);
         let max_content_chars = env_usize("MB_SPIKE_MAX_CONTENT_CHARS", 4096);
         let external_timeout_secs = env_u64("MB_SPIKE_EXTERNAL_TIMEOUT_SECS", 12);
+        let external_timeout_secs_icm = env_u64("MB_SPIKE_EXTERNAL_TIMEOUT_SECS_ICM", 0);
         let meili_url = env_string("MB_SPIKE_MEILI_URL", "http://meilisearch:7700");
         let meili_api_key = env::var("MB_SPIKE_MEILI_API_KEY")
             .or_else(|_| env::var("MEILI_MASTER_KEY"))
@@ -106,6 +108,7 @@ impl Config {
             max_docs,
             max_content_chars,
             external_timeout_secs,
+            external_timeout_secs_icm,
             meili_url,
             meili_api_key,
             meili_index_uid,
@@ -132,6 +135,16 @@ impl Config {
             surrealdb_url,
             surrealdb_search_route,
             surrealdb_api_key,
+        }
+    }
+
+    fn external_timeout_for_backend(&self, backend: &str) -> u64 {
+        let default_timeout = self.external_timeout_secs.max(1);
+        match backend {
+            "icm_spike" if self.external_timeout_secs_icm > 0 => {
+                self.external_timeout_secs_icm.max(1)
+            }
+            _ => default_timeout,
         }
     }
 }
@@ -254,6 +267,7 @@ struct HealthResponse {
     meili_index_uid: String,
     meili_task_timeout_secs: u64,
     external_timeout_secs: u64,
+    external_timeout_secs_icm: u64,
     external_backends: HashMap<String, bool>,
 }
 
@@ -367,6 +381,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         meili_index_uid: state.cfg.meili_index_uid.clone(),
         meili_task_timeout_secs: state.cfg.meili_task_timeout_secs,
         external_timeout_secs: state.cfg.external_timeout_secs,
+        external_timeout_secs_icm: state.cfg.external_timeout_secs_icm,
         external_backends,
     };
     (StatusCode::OK, Json(payload))
@@ -877,7 +892,7 @@ async fn external_adapter_search(
         request = request.header("x-api-key", api_key);
         request = request.header("Authorization", format!("Bearer {api_key}"));
     }
-    let timeout_secs = state.cfg.external_timeout_secs.max(1);
+    let timeout_secs = state.cfg.external_timeout_for_backend(backend);
     let response = request
         .timeout(Duration::from_secs(timeout_secs))
         .send()
