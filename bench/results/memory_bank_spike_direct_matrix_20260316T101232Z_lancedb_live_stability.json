@@ -1,8 +1,8 @@
 {
   "backends": [
     "quickwit_spike",
-    "meilisearch_spike",
     "tantivy_spike",
+    "meilisearch_spike",
     "lancedb_spike",
     "trieve_spike",
     "helixdb_spike"
@@ -14,7 +14,7 @@
     "deep_read",
     "ops_focus"
   ],
-  "generatedAt": "2026-03-16T10:32:52.643060+00:00",
+  "generatedAt": "2026-03-16T10:13:27.115609+00:00",
   "health": {
     "backend_modes": [
       "tantivy_spike",
@@ -24,19 +24,19 @@
       "trieve_spike",
       "helixdb_spike"
     ],
-    "docs_loaded": 19087,
+    "docs_loaded": 19122,
     "external_backends": {
       "helixdb_spike": false,
       "lancedb_spike": true,
       "trieve_spike": false
     },
     "external_timeout_secs": 12,
-    "fingerprint": 262301050498982498,
+    "fingerprint": 2173248961658195415,
     "meili_index_uid": "contextlattice_memory",
     "meili_task_timeout_secs": 30,
     "meili_url": "http://meilisearch:7700",
     "ok": true,
-    "refreshed_at_unix_secs": 1773657006,
+    "refreshed_at_unix_secs": 1773655731,
     "spike_data_root": "/data/memory-bank"
   },
   "project": "contextlattice",
@@ -49,28 +49,32 @@
       "cases": {
         "deep_read": {
           "case": "deep_read",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 2.336,
-            "mean": 2.206,
-            "min": 2.032,
-            "p50": 2.251,
-            "p95": 2.328,
-            "p99": 2.335
+            "max": 11.077,
+            "mean": 6.55,
+            "min": 1.891,
+            "p50": 6.671,
+            "p95": 11.005,
+            "p99": 11.062
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -87,28 +91,32 @@
         },
         "ops_focus": {
           "case": "ops_focus",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 6.671,
-            "mean": 3.786,
-            "min": 1.784,
-            "p50": 2.902,
-            "p95": 6.294,
-            "p99": 6.596
+            "max": 3.635,
+            "mean": 2.572,
+            "min": 1.666,
+            "p50": 2.687,
+            "p95": 3.519,
+            "p99": 3.612
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -125,28 +133,32 @@
         },
         "short_context": {
           "case": "short_context",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 21.622,
-            "mean": 18.982,
-            "min": 16.488,
-            "p50": 18.837,
-            "p95": 21.344,
-            "p99": 21.567
+            "max": 7.038,
+            "mean": 3.291,
+            "min": 1.581,
+            "p50": 2.873,
+            "p95": 6.252,
+            "p99": 6.881
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -164,9 +176,9 @@
       },
       "summary": {
         "avgErrorRate": 1.0,
-        "avgP95Ms": 9.989,
+        "avgP95Ms": 6.925,
         "avgResultCount": 0.0,
-        "maxP95Ms": 21.344
+        "maxP95Ms": 11.005
       }
     },
     "lancedb_spike": {
@@ -177,27 +189,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 59.23,
-            "mean": 45.192,
-            "min": 38.047,
-            "p50": 38.298,
-            "p95": 57.137,
-            "p99": 58.811
+            "max": 67.899,
+            "mean": 44.964,
+            "min": 29.501,
+            "p50": 36.74,
+            "p95": 66.145,
+            "p99": 67.548
           },
           "resultCount": {
             "max": 16,
-            "mean": 16.0,
-            "min": 16
+            "mean": 6.0,
+            "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 73.51,
-            "mean": 71.791
+            "max": 71.506,
+            "mean": 27.54
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -209,27 +223,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 49.801,
-            "mean": 40.8,
-            "min": 25.417,
-            "p50": 47.183,
-            "p95": 49.539,
-            "p99": 49.749
+            "max": 59.393,
+            "mean": 37.748,
+            "min": 12.287,
+            "p50": 34.133,
+            "p95": 58.82,
+            "p99": 59.278
           },
           "resultCount": {
             "max": 9,
-            "mean": 4.333,
+            "mean": 3.4,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 89.625,
-            "mean": 59.455
+            "max": 89.698,
+            "mean": 53.605
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -237,42 +253,48 @@
         },
         "short_context": {
           "case": "short_context",
-          "errorCount": 0,
-          "errorRate": 0.0,
-          "errors": [],
+          "errorCount": 1,
+          "errorRate": 0.2,
+          "errors": [
+            "502:{\"error\":\"lancedb_spike request failed\"}"
+          ],
           "latencyMs": {
-            "max": 65.635,
-            "mean": 50.771,
-            "min": 32.82,
-            "p50": 53.857,
-            "p95": 64.457,
-            "p99": 65.399
+            "max": 12023.417,
+            "mean": 3930.983,
+            "min": 23.748,
+            "p50": 59.221,
+            "p95": 11123.311,
+            "p99": 11843.396
           },
           "resultCount": {
             "max": 8,
-            "mean": 8.0,
-            "min": 8
+            "mean": 3.2,
+            "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 56.335,
-            "mean": 52.804
+            "max": 56.654,
+            "mean": 22.261
           },
-          "warmupErrorCount": 0,
-          "warmupErrors": [],
+          "warmupErrorCount": 1,
+          "warmupErrors": [
+            "502:{\"error\":\"lancedb_spike request failed\"}"
+          ],
           "warmups": 1
         }
       },
       "summary": {
-        "avgErrorRate": 0.0,
-        "avgP95Ms": 57.044,
-        "avgResultCount": 9.444,
-        "maxP95Ms": 64.457
+        "avgErrorRate": 0.066667,
+        "avgP95Ms": 3749.425,
+        "avgResultCount": 4.2,
+        "maxP95Ms": 11123.311
       }
     },
     "meilisearch_spike": {
@@ -283,20 +305,22 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 68.908,
-            "mean": 35.49,
-            "min": 6.706,
-            "p50": 30.855,
-            "p95": 65.103,
-            "p99": 68.147
+            "max": 26.314,
+            "mean": 16.907,
+            "min": 7.083,
+            "p50": 16.911,
+            "p95": 25.035,
+            "p99": 26.059
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
@@ -315,20 +339,22 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 25.445,
-            "mean": 12.704,
-            "min": 4.366,
-            "p50": 8.302,
-            "p95": 23.731,
-            "p99": 25.102
+            "max": 49.118,
+            "mean": 24.95,
+            "min": 14.328,
+            "p50": 21.265,
+            "p95": 44.0,
+            "p99": 48.094
           },
           "resultCount": {
             "max": 1,
             "mean": 1.0,
             "min": 1
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
@@ -347,20 +373,22 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 64.794,
-            "mean": 39.309,
-            "min": 17.421,
-            "p50": 35.713,
-            "p95": 61.886,
-            "p99": 64.212
+            "max": 14.837,
+            "mean": 9.777,
+            "min": 4.586,
+            "p50": 9.042,
+            "p95": 14.816,
+            "p99": 14.833
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
@@ -376,9 +404,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 50.24,
+        "avgP95Ms": 27.95,
         "avgResultCount": 5.667,
-        "maxP95Ms": 65.103
+        "maxP95Ms": 44.0
       }
     },
     "quickwit_spike": {
@@ -389,27 +417,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 17.224,
-            "mean": 8.149,
-            "min": 2.304,
-            "p50": 4.92,
-            "p95": 15.994,
-            "p99": 16.978
+            "max": 9.646,
+            "mean": 5.962,
+            "min": 4.056,
+            "p50": 5.905,
+            "p95": 8.918,
+            "p99": 9.5
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 54.523,
-            "mean": 54.523
+            "max": 54.538,
+            "mean": 54.538
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -421,27 +451,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 10.626,
-            "mean": 5.939,
-            "min": 2.956,
-            "p50": 4.235,
-            "p95": 9.987,
-            "p99": 10.498
+            "max": 8.665,
+            "mean": 4.141,
+            "min": 1.499,
+            "p50": 2.549,
+            "p95": 8.067,
+            "p99": 8.546
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 54.778,
-            "mean": 54.778
+            "max": 54.792,
+            "mean": 54.792
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -453,27 +485,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 40.842,
-            "mean": 24.149,
-            "min": 2.98,
-            "p50": 28.625,
-            "p95": 39.621,
-            "p99": 40.598
+            "max": 14.997,
+            "mean": 6.761,
+            "min": 2.646,
+            "p50": 3.717,
+            "p95": 13.864,
+            "p99": 14.77
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 63.937,
-            "mean": 63.937
+            "max": 64.297,
+            "mean": 64.297
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -482,9 +516,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 21.867,
+        "avgP95Ms": 10.283,
         "avgResultCount": 10.667,
-        "maxP95Ms": 39.621
+        "maxP95Ms": 13.864
       }
     },
     "tantivy_spike": {
@@ -495,27 +529,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 30.41,
-            "mean": 27.453,
-            "min": 23.452,
-            "p50": 28.497,
-            "p95": 30.219,
-            "p99": 30.372
+            "max": 48.244,
+            "mean": 39.068,
+            "min": 24.585,
+            "p50": 40.038,
+            "p95": 47.389,
+            "p99": 48.073
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 67.26,
-            "mean": 67.26
+            "max": 67.296,
+            "mean": 67.296
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -527,27 +563,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 55.064,
-            "mean": 37.073,
-            "min": 23.96,
-            "p50": 32.193,
-            "p95": 52.777,
-            "p99": 54.607
+            "max": 56.608,
+            "mean": 32.878,
+            "min": 14.816,
+            "p50": 34.72,
+            "p95": 52.931,
+            "p99": 55.873
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 78.083,
-            "mean": 78.083
+            "max": 78.102,
+            "mean": 78.102
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -559,27 +597,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 36.447,
-            "mean": 22.211,
-            "min": 11.817,
-            "p50": 18.368,
-            "p95": 34.639,
-            "p99": 36.086
+            "max": 31.019,
+            "mean": 20.946,
+            "min": 12.664,
+            "p50": 15.725,
+            "p95": 30.956,
+            "p99": 31.007
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 53.996,
-            "mean": 53.996
+            "max": 54.263,
+            "mean": 54.263
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -588,37 +628,41 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 39.212,
+        "avgP95Ms": 43.759,
         "avgResultCount": 10.667,
-        "maxP95Ms": 52.777
+        "maxP95Ms": 52.931
       }
     },
     "trieve_spike": {
       "cases": {
         "deep_read": {
           "case": "deep_read",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 7.043,
-            "mean": 4.048,
-            "min": 1.781,
-            "p50": 3.319,
-            "p95": 6.67,
-            "p99": 6.968
+            "max": 12.415,
+            "mean": 6.662,
+            "min": 3.492,
+            "p50": 5.246,
+            "p95": 11.453,
+            "p99": 12.222
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -635,28 +679,32 @@
         },
         "ops_focus": {
           "case": "ops_focus",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 23.097,
-            "mean": 16.306,
-            "min": 10.752,
-            "p50": 15.071,
-            "p95": 22.294,
-            "p99": 22.936
+            "max": 4.075,
+            "mean": 2.599,
+            "min": 1.365,
+            "p50": 2.641,
+            "p95": 3.832,
+            "p99": 4.027
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -673,28 +721,32 @@
         },
         "short_context": {
           "case": "short_context",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 2.854,
-            "mean": 2.206,
-            "min": 1.658,
-            "p50": 2.107,
-            "p95": 2.779,
-            "p99": 2.839
+            "max": 4.289,
+            "mean": 3.083,
+            "min": 2.466,
+            "p50": 2.868,
+            "p95": 4.045,
+            "p99": 4.24
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -712,11 +764,11 @@
       },
       "summary": {
         "avgErrorRate": 1.0,
-        "avgP95Ms": 10.581,
+        "avgP95Ms": 6.443,
         "avgResultCount": 0.0,
-        "maxP95Ms": 22.294
+        "maxP95Ms": 11.453
       }
     }
   },
-  "runsPerCase": 3
+  "runsPerCase": 5
 }

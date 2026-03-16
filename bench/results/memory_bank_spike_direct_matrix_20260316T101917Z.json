@@ -14,7 +14,7 @@
     "deep_read",
     "ops_focus"
   ],
-  "generatedAt": "2026-03-16T10:32:52.643060+00:00",
+  "generatedAt": "2026-03-16T10:19:17.406939+00:00",
   "health": {
     "backend_modes": [
       "tantivy_spike",
@@ -24,19 +24,19 @@
       "trieve_spike",
       "helixdb_spike"
     ],
-    "docs_loaded": 19087,
+    "docs_loaded": 19029,
     "external_backends": {
       "helixdb_spike": false,
       "lancedb_spike": true,
       "trieve_spike": false
     },
     "external_timeout_secs": 12,
-    "fingerprint": 262301050498982498,
+    "fingerprint": 1431146779353398147,
     "meili_index_uid": "contextlattice_memory",
     "meili_task_timeout_secs": 30,
     "meili_url": "http://meilisearch:7700",
     "ok": true,
-    "refreshed_at_unix_secs": 1773657006,
+    "refreshed_at_unix_secs": 1773656259,
     "spike_data_root": "/data/memory-bank"
   },
   "project": "contextlattice",
@@ -49,28 +49,32 @@
       "cases": {
         "deep_read": {
           "case": "deep_read",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 2.336,
-            "mean": 2.206,
-            "min": 2.032,
-            "p50": 2.251,
-            "p95": 2.328,
-            "p99": 2.335
+            "max": 3.558,
+            "mean": 2.09,
+            "min": 1.365,
+            "p50": 1.856,
+            "p95": 3.229,
+            "p99": 3.492
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -87,28 +91,32 @@
         },
         "ops_focus": {
           "case": "ops_focus",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 6.671,
-            "mean": 3.786,
-            "min": 1.784,
-            "p50": 2.902,
-            "p95": 6.294,
-            "p99": 6.596
+            "max": 12.822,
+            "mean": 4.208,
+            "min": 1.624,
+            "p50": 2.115,
+            "p95": 10.734,
+            "p99": 12.404
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -125,28 +133,32 @@
         },
         "short_context": {
           "case": "short_context",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
+            "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}",
             "502:{\"error\":\"helixdb_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 21.622,
-            "mean": 18.982,
-            "min": 16.488,
-            "p50": 18.837,
-            "p95": 21.344,
-            "p99": 21.567
+            "max": 5.408,
+            "mean": 2.896,
+            "min": 1.529,
+            "p50": 2.357,
+            "p95": 4.923,
+            "p99": 5.311
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -164,9 +176,9 @@
       },
       "summary": {
         "avgErrorRate": 1.0,
-        "avgP95Ms": 9.989,
+        "avgP95Ms": 6.295,
         "avgResultCount": 0.0,
-        "maxP95Ms": 21.344
+        "maxP95Ms": 10.734
       }
     },
     "lancedb_spike": {
@@ -177,27 +189,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 59.23,
-            "mean": 45.192,
-            "min": 38.047,
-            "p50": 38.298,
-            "p95": 57.137,
-            "p99": 58.811
+            "max": 131.503,
+            "mean": 89.83,
+            "min": 41.728,
+            "p50": 81.334,
+            "p95": 131.056,
+            "p99": 131.414
           },
           "resultCount": {
             "max": 16,
-            "mean": 16.0,
-            "min": 16
+            "mean": 7.6,
+            "min": 2
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 73.51,
-            "mean": 71.791
+            "max": 73.295,
+            "mean": 62.832
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -209,27 +223,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 49.801,
-            "mean": 40.8,
-            "min": 25.417,
-            "p50": 47.183,
-            "p95": 49.539,
-            "p99": 49.749
+            "max": 68.329,
+            "mean": 40.483,
+            "min": 24.071,
+            "p50": 28.166,
+            "p95": 65.952,
+            "p99": 67.853
           },
           "resultCount": {
             "max": 9,
-            "mean": 4.333,
+            "mean": 4.4,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 89.625,
-            "mean": 59.455
+            "max": 89.618,
+            "mean": 53.559
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -241,27 +257,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 65.635,
-            "mean": 50.771,
-            "min": 32.82,
-            "p50": 53.857,
-            "p95": 64.457,
-            "p99": 65.399
+            "max": 146.744,
+            "mean": 74.051,
+            "min": 27.904,
+            "p50": 51.375,
+            "p95": 138.747,
+            "p99": 145.144
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 56.335,
-            "mean": 52.804
+            "max": 56.992,
+            "mean": 54.112
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -270,9 +288,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 57.044,
-        "avgResultCount": 9.444,
-        "maxP95Ms": 64.457
+        "avgP95Ms": 111.918,
+        "avgResultCount": 6.667,
+        "maxP95Ms": 138.747
       }
     },
     "meilisearch_spike": {
@@ -283,20 +301,22 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 68.908,
-            "mean": 35.49,
-            "min": 6.706,
-            "p50": 30.855,
-            "p95": 65.103,
-            "p99": 68.147
+            "max": 17.896,
+            "mean": 11.698,
+            "min": 8.304,
+            "p50": 10.866,
+            "p95": 16.705,
+            "p99": 17.658
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
@@ -315,20 +335,22 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 25.445,
-            "mean": 12.704,
-            "min": 4.366,
-            "p50": 8.302,
-            "p95": 23.731,
-            "p99": 25.102
+            "max": 14.128,
+            "mean": 9.393,
+            "min": 6.334,
+            "p50": 8.928,
+            "p95": 13.396,
+            "p99": 13.982
           },
           "resultCount": {
             "max": 1,
             "mean": 1.0,
             "min": 1
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
@@ -347,20 +369,22 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 64.794,
-            "mean": 39.309,
-            "min": 17.421,
-            "p50": 35.713,
-            "p95": 61.886,
-            "p99": 64.212
+            "max": 42.422,
+            "mean": 15.751,
+            "min": 6.425,
+            "p50": 9.409,
+            "p95": 36.458,
+            "p99": 41.23
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
@@ -376,9 +400,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 50.24,
+        "avgP95Ms": 22.186,
         "avgResultCount": 5.667,
-        "maxP95Ms": 65.103
+        "maxP95Ms": 36.458
       }
     },
     "quickwit_spike": {
@@ -389,27 +413,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 17.224,
-            "mean": 8.149,
-            "min": 2.304,
-            "p50": 4.92,
-            "p95": 15.994,
-            "p99": 16.978
+            "max": 9.959,
+            "mean": 4.665,
+            "min": 2.012,
+            "p50": 3.447,
+            "p95": 9.015,
+            "p99": 9.77
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 54.523,
-            "mean": 54.523
+            "max": 54.498,
+            "mean": 54.498
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -421,27 +447,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 10.626,
-            "mean": 5.939,
-            "min": 2.956,
-            "p50": 4.235,
-            "p95": 9.987,
-            "p99": 10.498
+            "max": 3.437,
+            "mean": 2.821,
+            "min": 1.865,
+            "p50": 2.877,
+            "p95": 3.382,
+            "p99": 3.426
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 54.778,
-            "mean": 54.778
+            "max": 54.757,
+            "mean": 54.757
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -453,27 +481,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 40.842,
-            "mean": 24.149,
-            "min": 2.98,
-            "p50": 28.625,
-            "p95": 39.621,
-            "p99": 40.598
+            "max": 9.709,
+            "mean": 4.914,
+            "min": 2.092,
+            "p50": 3.335,
+            "p95": 9.106,
+            "p99": 9.588
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 63.937,
-            "mean": 63.937
+            "max": 64.251,
+            "mean": 64.251
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -482,9 +512,9 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 21.867,
+        "avgP95Ms": 7.168,
         "avgResultCount": 10.667,
-        "maxP95Ms": 39.621
+        "maxP95Ms": 9.106
       }
     },
     "tantivy_spike": {
@@ -495,27 +525,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 30.41,
-            "mean": 27.453,
-            "min": 23.452,
-            "p50": 28.497,
-            "p95": 30.219,
-            "p99": 30.372
+            "max": 105.525,
+            "mean": 55.105,
+            "min": 30.746,
+            "p50": 41.276,
+            "p95": 96.339,
+            "p99": 103.688
           },
           "resultCount": {
             "max": 16,
             "mean": 16.0,
             "min": 16
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 67.26,
-            "mean": 67.26
+            "max": 67.25,
+            "mean": 67.25
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -527,27 +559,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 55.064,
-            "mean": 37.073,
-            "min": 23.96,
-            "p50": 32.193,
-            "p95": 52.777,
-            "p99": 54.607
+            "max": 179.114,
+            "mean": 60.09,
+            "min": 8.128,
+            "p50": 28.958,
+            "p95": 157.88,
+            "p99": 174.867
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 78.083,
-            "mean": 78.083
+            "max": 78.051,
+            "mean": 78.051
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -559,27 +593,29 @@
           "errorRate": 0.0,
           "errors": [],
           "latencyMs": {
-            "max": 36.447,
-            "mean": 22.211,
-            "min": 11.817,
-            "p50": 18.368,
-            "p95": 34.639,
-            "p99": 36.086
+            "max": 69.328,
+            "mean": 30.051,
+            "min": 9.854,
+            "p50": 23.706,
+            "p95": 61.048,
+            "p99": 67.672
           },
           "resultCount": {
             "max": 8,
             "mean": 8.0,
             "min": 8
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            200,
+            200,
             200,
             200,
             200
           ],
           "topScore": {
-            "max": 53.996,
-            "mean": 53.996
+            "max": 54.227,
+            "mean": 54.227
           },
           "warmupErrorCount": 0,
           "warmupErrors": [],
@@ -588,37 +624,41 @@
       },
       "summary": {
         "avgErrorRate": 0.0,
-        "avgP95Ms": 39.212,
+        "avgP95Ms": 105.089,
         "avgResultCount": 10.667,
-        "maxP95Ms": 52.777
+        "maxP95Ms": 157.88
       }
     },
     "trieve_spike": {
       "cases": {
         "deep_read": {
           "case": "deep_read",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 7.043,
-            "mean": 4.048,
-            "min": 1.781,
-            "p50": 3.319,
-            "p95": 6.67,
-            "p99": 6.968
+            "max": 9.129,
+            "mean": 4.401,
+            "min": 1.183,
+            "p50": 4.458,
+            "p95": 8.255,
+            "p99": 8.954
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -635,28 +675,32 @@
         },
         "ops_focus": {
           "case": "ops_focus",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 23.097,
-            "mean": 16.306,
-            "min": 10.752,
-            "p50": 15.071,
-            "p95": 22.294,
-            "p99": 22.936
+            "max": 3.13,
+            "mean": 2.148,
+            "min": 1.463,
+            "p50": 1.855,
+            "p95": 3.063,
+            "p99": 3.116
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -673,28 +717,32 @@
         },
         "short_context": {
           "case": "short_context",
-          "errorCount": 3,
+          "errorCount": 5,
           "errorRate": 1.0,
           "errors": [
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
+            "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}",
             "502:{\"error\":\"trieve_spike endpoint is not configured\"}"
           ],
           "latencyMs": {
-            "max": 2.854,
-            "mean": 2.206,
-            "min": 1.658,
-            "p50": 2.107,
-            "p95": 2.779,
-            "p99": 2.839
+            "max": 23.609,
+            "mean": 17.958,
+            "min": 12.055,
+            "p50": 19.198,
+            "p95": 22.843,
+            "p99": 23.456
           },
           "resultCount": {
             "max": 0,
             "mean": 0.0,
             "min": 0
           },
-          "runs": 3,
+          "runs": 5,
           "statusCodes": [
+            502,
+            502,
             502,
             502,
             502
@@ -712,11 +760,11 @@
       },
       "summary": {
         "avgErrorRate": 1.0,
-        "avgP95Ms": 10.581,
+        "avgP95Ms": 11.387,
         "avgResultCount": 0.0,
-        "maxP95Ms": 22.294
+        "maxP95Ms": 22.843
       }
     }
   },
-  "runsPerCase": 3
+  "runsPerCase": 5
 }
