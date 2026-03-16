@@ -1,0 +1,96 @@
+{
+  "candidates": {
+    "helixdb": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 114.051,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 108.909,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 118.772,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 3.641,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8099"
+    },
+    "lancedb": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 10.237,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 8.747,
+          "ok": true,
+          "resultCount": 4,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 8.74,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 4.19,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8097"
+    },
+    "trieve": {
+      "cases": {
+        "deep_read": {
+          "latencyMs": 115.685,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        },
+        "ops_focus": {
+          "latencyMs": 148.348,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        },
+        "short_context": {
+          "latencyMs": 108.678,
+          "ok": true,
+          "resultCount": 5,
+          "status": 200
+        }
+      },
+      "health": {
+        "latencyMs": 2.751,
+        "ok": true,
+        "path": "/health",
+        "status": 200
+      },
+      "status": "ok",
+      "url": "http://127.0.0.1:8098"
+    }
+  },
+  "generatedAt": "2026-03-16T18:10:26.026855+00:00",
+  "project": "contextlattice"
+}
