@@ -54,6 +54,7 @@ def run_case(
                     "include_retrieval_debug": True,
                     "include_grounding": True,
                     "retrieval_mode": mode,
+                    "traffic_class": "benchmark",
                 },
             )
             elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -76,6 +77,72 @@ def run_case(
             "mean": round(statistics.mean(latencies), 3) if latencies else 0.0,
             "min": round(min(latencies), 3) if latencies else 0.0,
             "max": round(max(latencies), 3) if latencies else 0.0,
+        },
+    }
+
+
+def _case_error_rate(case_payload: dict[str, Any]) -> float:
+    runs = max(1, int(case_payload.get("runs") or 0))
+    error_count = max(0, int(case_payload.get("errorCount") or 0))
+    return float(error_count) / float(runs)
+
+
+def evaluate_fastembed_gate(
+    current_matrix: dict[str, Any],
+    *,
+    baseline_matrix: dict[str, Any] | None,
+    min_improvement_pct: float,
+    max_error_regression: float,
+) -> dict[str, Any]:
+    current_case = current_matrix.get("embedding_stress") if isinstance(current_matrix, dict) else None
+    if not isinstance(current_case, dict):
+        return {
+            "passed": False,
+            "reason": "missing_embedding_stress_case",
+        }
+    baseline_case = (
+        baseline_matrix.get("embedding_stress")
+        if isinstance(baseline_matrix, dict)
+        else None
+    )
+    if not isinstance(baseline_case, dict):
+        return {
+            "passed": False,
+            "reason": "baseline_matrix_missing",
+        }
+    baseline_p95 = float(((baseline_case.get("latencyMs") or {}).get("p95") or 0.0))
+    current_p95 = float(((current_case.get("latencyMs") or {}).get("p95") or 0.0))
+    if baseline_p95 <= 0 or current_p95 <= 0:
+        return {
+            "passed": False,
+            "reason": "invalid_p95_values",
+            "metrics": {
+                "baselineP95Ms": baseline_p95,
+                "currentP95Ms": current_p95,
+            },
+        }
+    improvement_pct = ((baseline_p95 - current_p95) / baseline_p95) * 100.0
+    baseline_error_rate = _case_error_rate(baseline_case)
+    current_error_rate = _case_error_rate(current_case)
+    error_regression = current_error_rate - baseline_error_rate
+    passed = bool(
+        improvement_pct >= float(min_improvement_pct)
+        and error_regression <= float(max_error_regression)
+    )
+    return {
+        "passed": passed,
+        "reason": "ok" if passed else "threshold_not_met",
+        "thresholds": {
+            "minImprovementPct": float(min_improvement_pct),
+            "maxErrorRegression": float(max_error_regression),
+        },
+        "metrics": {
+            "baselineP95Ms": round(baseline_p95, 3),
+            "currentP95Ms": round(current_p95, 3),
+            "improvementPct": round(improvement_pct, 3),
+            "baselineErrorRate": round(baseline_error_rate, 6),
+            "currentErrorRate": round(current_error_rate, 6),
+            "errorRegression": round(error_regression, 6),
         },
     }
 
@@ -112,6 +179,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         },
     }
     matrix: dict[str, Any] = {}
+    baseline_payload: dict[str, Any] | None = None
+    baseline_matrix: dict[str, Any] | None = None
+    baseline_path = str(args.baseline or "").strip()
+    if baseline_path:
+        try:
+            baseline_payload = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+            matrix_payload = baseline_payload.get("matrix")
+            if isinstance(matrix_payload, dict):
+                baseline_matrix = matrix_payload
+        except Exception as exc:  # pragma: no cover - filesystem/runtime dependent
+            baseline_payload = {"error": str(exc)}
     with httpx.Client(timeout=args.timeout) as client:
         source_quality = None
         adapter_metrics_before = None
@@ -122,7 +200,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             embedding_cache_before = payload_before.get("embeddingCache") if isinstance(payload_before, dict) else None
             if isinstance(embedding_cache_before, dict):
                 adapter_metrics_before = embedding_cache_before.get("fastembedRs")
-        with client.stream("GET", f"{base_url}/telemetry/retrieval/source-quality", headers=headers) as resp:
+        with client.stream(
+            "GET",
+            f"{base_url}/telemetry/retrieval/source-quality?traffic_class=benchmark",
+            headers=headers,
+        ) as resp:
             if resp.status_code < 400:
                 source_quality = json.loads(resp.read().decode("utf-8"))
         for name, case in cases.items():
@@ -143,6 +225,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             embedding_cache_after = payload_after.get("embeddingCache") if isinstance(payload_after, dict) else None
             if isinstance(embedding_cache_after, dict):
                 adapter_metrics_after = embedding_cache_after.get("fastembedRs")
+    gate_evaluation = evaluate_fastembed_gate(
+        matrix,
+        baseline_matrix=baseline_matrix,
+        min_improvement_pct=float(args.gate_min_improvement_pct),
+        max_error_regression=float(args.gate_max_error_regression),
+    )
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "baseUrl": base_url,
@@ -161,6 +249,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "before": adapter_metrics_before,
             "after": adapter_metrics_after,
         },
+        "baseline": baseline_payload if baseline_payload is not None else None,
+        "gateEvaluation": gate_evaluation,
         "notes": [
             "Use this script before/after each adapter spike.",
             "Keep runtime defaults unchanged unless benchmark + recall gates pass.",
@@ -175,6 +265,10 @@ def main() -> None:
     parser.add_argument("--project", default="perf_shortlist")
     parser.add_argument("--runs", type=int, default=12)
     parser.add_argument("--timeout", type=float, default=45.0)
+    parser.add_argument("--baseline", default="")
+    parser.add_argument("--gate-min-improvement-pct", type=float, default=20.0)
+    parser.add_argument("--gate-max-error-regression", type=float, default=0.005)
+    parser.add_argument("--gate-output", default="")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
     payload = run(args)
@@ -184,6 +278,19 @@ def main() -> None:
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(rendered + "\n", encoding="utf-8")
+    gate_output = str(args.gate_output or "").strip()
+    if gate_output:
+        gate_payload = {
+            "generatedAt": payload.get("generatedAt"),
+            "passed": bool((payload.get("gateEvaluation") or {}).get("passed")),
+            "reason": (payload.get("gateEvaluation") or {}).get("reason"),
+            "thresholds": (payload.get("gateEvaluation") or {}).get("thresholds"),
+            "metrics": (payload.get("gateEvaluation") or {}).get("metrics"),
+            "sourceResult": str(path),
+        }
+        gate_path = Path(gate_output)
+        gate_path.parent.mkdir(parents=True, exist_ok=True)
+        gate_path.write_text(json.dumps(gate_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

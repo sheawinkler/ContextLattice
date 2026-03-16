@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-03-16T00:05:14.587895+00:00",
+  "metrics": {
+    "baselineErrorRate": 0.0,
+    "baselineP95Ms": 55.288,
+    "currentErrorRate": 0.0,
+    "currentP95Ms": 58.775,
+    "errorRegression": 0.0,
+    "improvementPct": -6.307
+  },
+  "passed": false,
+  "reason": "threshold_not_met",
+  "sourceResult": "bench/results/perf_shortlist_matrix_20260316T000514Z.json",
+  "thresholds": {
+    "maxErrorRegression": 0.005,
+    "minImprovementPct": 20.0
+  }
+}

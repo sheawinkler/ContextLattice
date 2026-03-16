@@ -210,6 +210,7 @@ class PythonRetriever(Retriever):
             rerank_with_learning=request.rerank_with_learning,
             retrieval_mode=request.retrieval_mode,
             retrieval_intent=request.retrieval_intent,
+            traffic_class=request.traffic_class,
         )
         return results
 
@@ -237,6 +238,7 @@ class PythonRetriever(Retriever):
             agent_profile=request.agent_profile,
             auto_escalate=request.auto_escalate,
             query_expansion=request.query_expansion,
+            traffic_class=request.traffic_class,
         )
         return RetrievalResponse(
             results=results,

@@ -33,6 +33,9 @@ Evaluate one profile change at a time:
 - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS`
 - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_BALANCED_SECS`
 - `ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS`
+- `ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ENABLED`
+- `ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_ON_STARTUP`
+- `ORCH_QDRANT_PAYLOAD_INDEX_HARDEN_WAIT`
 2. Index build profile:
 - `QDRANT_HNSW_M`
 - `QDRANT_HNSW_EF_CONSTRUCT`
@@ -66,9 +69,12 @@ Promoted profile (2026-03-14 canary target):
 1. Canary on non-critical workloads.
 2. Watch:
 - `/telemetry/retrieval`
-- `/telemetry/retrieval/source-quality`
+- `/telemetry/retrieval/source-quality?traffic_class=user`
 - `/ops/queue/status`
-3. Promote only after stable 24h window.
+3. Validate payload index hardening state:
+- `POST /maintenance/qdrant/payload-indexes/harden?force=true`
+- Inspect `qdrantTuning.payloadIndexHardening` in `/telemetry/retrieval`
+4. Promote only after stable 24h window.
 
 ## Rollback
 1. Restore previous env snapshot.

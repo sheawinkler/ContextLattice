@@ -119,9 +119,13 @@ ORCH_ADAPTER_FASTEMBED_RS_ENABLED=true
 ORCH_FASTEMBED_RS_BASE_URL=http://fastembed-rs:8080
 ORCH_FASTEMBED_RS_ROUTE=/embed
 ORCH_FASTEMBED_RS_TIMEOUT_SECS=2.5
+ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE=true
+ORCH_ADAPTER_FASTEMBED_RS_GATE_FILE=bench/results/fastembed_gate_latest.json
+ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS=172800
 ```
 
 When enabled, orchestrator Qdrant write fanout uses batched embeddings (`embed_text_batch`) to reduce per-item adapter overhead.
+If gate mode is enabled, fastembed activates only when the benchmark gate artifact reports `passed=true`.
 
 Optional lexical guard for staged retrieval (policy-aware slow-source deferral):
 
@@ -262,6 +266,7 @@ Runtime:
 Required behavior:
 1) Before planning, call POST /memory/search with compact query + project/topic filters.
 2) During long tasks, checkpoint major decisions/outcomes via POST /memory/write.
+2.1) Submit outcome feedback with POST /tools/feedback_submit (include idempotencyKey).
 3) Before final answer, run one more POST /memory/search for recency.
 4) Keep writes compact (summary, decisions, diffs), never full transcripts.
 5) If memory endpoints fail, continue task and report degraded-memory mode explicitly.
@@ -271,6 +276,7 @@ Required behavior:
    - deep (or explicit `letta`/`memory_bank` sources): 75s
    Fast/balanced modes keep slow sources async by default unless explicitly requested (`sources=[...]`).
    Deep mode now defaults to async completion: you get immediate partial results plus `job_id`/`poll_url`/`events_url`, then fetch final results from `GET /memory/search/jobs/{job_id}` (or `/memory/search/async/{job_id}`) or stream updates from `GET /memory/search/jobs/{job_id}/events`.
+   Read responses expose `retrieval_lifecycle` for explicit status (`queued|running|partial|succeeded|failed`) and source availability.
    If a deep read returns partials, show those immediately and poll once after 5-15s for warmed slow-source completion.
 ```
 
@@ -488,6 +494,7 @@ Ingress endpoints:
 
 - `POST /memory/write`
 - `POST /memory/search`
+- `POST /tools/feedback_submit`
 - `POST /integrations/messaging/command`
 - `POST /integrations/messaging/openclaw`
 - `POST /integrations/messaging/ironclaw`
