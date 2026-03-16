@@ -20897,7 +20897,31 @@ async def ingest_metrics(payload: TelemetryMetrics):
 
 @app.get("/telemetry/metrics")
 async def get_metrics():
-    return telemetry_state
+    payload = dict(telemetry_state)
+    payload["embeddingCache"] = {
+        "fastembedRs": {
+            "enabled": _fastembed_adapter_enabled(),
+            "enabledByFlag": _fastembed_adapter_enabled_by_flag(),
+            "configured": bool(FASTEMBED_RS_BASE_URL),
+            "timeoutSecs": FASTEMBED_RS_TIMEOUT_SECS,
+            "route": FASTEMBED_RS_ROUTE,
+            "gate": _fastembed_gate_status(),
+            "attempts": fastembed_adapter_attempts,
+            "successes": fastembed_adapter_successes,
+            "failures": fastembed_adapter_failures,
+            "fallbacks": fastembed_adapter_fallbacks,
+            "batchCalls": fastembed_adapter_batch_calls,
+            "batchItems": fastembed_adapter_batch_items,
+            "batchFailures": fastembed_adapter_batch_failures,
+            "lastError": fastembed_adapter_last_error,
+            "lastLatencyMs": (
+                round(float(fastembed_adapter_last_latency_ms), 3)
+                if fastembed_adapter_last_latency_ms is not None
+                else None
+            ),
+        },
+    }
+    return payload
 
 
 @app.get("/telemetry/memory")
