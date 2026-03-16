@@ -309,6 +309,13 @@ func defaultRustBackendPolicy() map[string]any {
 		"none":            {},
 		"tantivy_lexical": {},
 	}
+	memoryBankAllowed := map[string]struct{}{
+		"native":            {},
+		"disabled":          {},
+		"meilisearch_spike": {},
+		"quickwit_spike":    {},
+		"tantivy_spike":     {},
+	}
 	return map[string]any{
 		"vector_backend": normalizeRustBackendChoice(
 			os.Getenv("ORCH_RUST_RETRIEVAL_VECTOR_BACKEND"),
@@ -321,6 +328,11 @@ func defaultRustBackendPolicy() map[string]any {
 			"tantivy_lexical",
 		),
 		"strict": envBool("ORCH_RUST_RETRIEVAL_BACKEND_STRICT", false),
+		"memory_bank_backend": normalizeRustBackendChoice(
+			os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"),
+			memoryBankAllowed,
+			"native",
+		),
 	}
 }
 
@@ -354,6 +366,19 @@ func resolveRustBackendPolicy(raw any) map[string]any {
 	}
 	if value, ok := policy["strict"]; ok {
 		resolved["strict"] = anyToBool(value)
+	}
+	if value, ok := policy["memory_bank_backend"]; ok {
+		resolved["memory_bank_backend"] = normalizeRustBackendChoice(
+			anyToString(value),
+			map[string]struct{}{
+				"native":            {},
+				"disabled":          {},
+				"meilisearch_spike": {},
+				"quickwit_spike":    {},
+				"tantivy_spike":     {},
+			},
+			anyToString(resolved["memory_bank_backend"]),
+		)
 	}
 	return resolved
 }
@@ -1467,6 +1492,64 @@ func lexicalCoverageScore(query string, rows []map[string]any) float64 {
 	return float64(len(matched)) / float64(len(queryTokens))
 }
 
+func buildRetrievalLifecyclePayload(
+	resultState string,
+	returnedNow []string,
+	pending []string,
+	failed []string,
+	timedOut []string,
+	budgetExceeded []string,
+) map[string]any {
+	normalizedResultState := strings.TrimSpace(strings.ToLower(resultState))
+	status := "succeeded"
+	if normalizedResultState == "" {
+		if len(returnedNow) > 0 {
+			normalizedResultState = "ready"
+		} else if len(pending) > 0 {
+			normalizedResultState = "pending"
+		} else {
+			normalizedResultState = "empty"
+		}
+	}
+	switch normalizedResultState {
+	case "degraded":
+		status = "failed"
+	case "pending":
+		status = "partial"
+	default:
+		if len(returnedNow) == 0 && len(pending) > 0 {
+			status = "partial"
+		} else if len(failed) > 0 || len(timedOut) > 0 {
+			status = "failed"
+		}
+	}
+	if status != "failed" && (len(pending) > 0 || len(budgetExceeded) > 0) {
+		status = "partial"
+	}
+	partial := status == "partial" || len(pending) > 0 || len(budgetExceeded) > 0
+	nextActions := []string{}
+	if partial {
+		nextActions = append(nextActions, "retry_after_cache_warm")
+	}
+	if status == "failed" {
+		nextActions = append(nextActions, "retry_with_longer_timeout")
+	}
+	return map[string]any{
+		"statusLifecycle": []string{"queued", "running", "partial", "succeeded", "failed"},
+		"status":          status,
+		"result_state":    normalizedResultState,
+		"partial":         partial,
+		"sources": map[string]any{
+			"returned_now":    returnedNow,
+			"pending":         pending,
+			"failed":          failed,
+			"timed_out":       timedOut,
+			"budget_exceeded": budgetExceeded,
+		},
+		"next_actions": nextActions,
+	}
+}
+
 func (s *server) executeRetrieval(
 	ctx context.Context,
 	incomingHeaders http.Header,
@@ -1815,6 +1898,39 @@ func (s *server) executeRetrieval(
 		budgetExceededList = append(budgetExceededList, source)
 	}
 	sort.Strings(budgetExceededList)
+	failedSourcesSet := map[string]struct{}{}
+	for source, payload := range sourceErrors {
+		kind := strings.TrimSpace(strings.ToLower(anyToString(payload["kind"])))
+		if kind == "" {
+			kind = "error"
+		}
+		if kind == "error" || kind == "timeout" {
+			failedSourcesSet[source] = struct{}{}
+		}
+	}
+	failedSources := make([]string, 0, len(failedSourcesSet))
+	for source := range failedSourcesSet {
+		failedSources = append(failedSources, source)
+	}
+	sort.Strings(failedSources)
+	resultState := "empty"
+	if len(merged) > 0 {
+		resultState = "ready"
+	}
+	if len(deferredCandidates) > 0 && len(merged) == 0 {
+		resultState = "pending"
+	}
+	if hasMaterialSourceErrors {
+		resultState = "degraded"
+	}
+	lifecycle := buildRetrievalLifecyclePayload(
+		resultState,
+		returnedSources,
+		deferredCandidates,
+		failedSources,
+		timedOutList,
+		budgetExceededList,
+	)
 	debug := map[string]any{
 		"retrieval_mode":   retrievalMode,
 		"retrieval_intent": retrievalIntent,
@@ -1840,6 +1956,7 @@ func (s *server) executeRetrieval(
 			"lexical_guard_min_coverage":             s.retrieval.lexicalGuardMinCoverage,
 			"lexical_guard_min_results":              s.retrieval.lexicalGuardMinResults,
 			"runtime_backend_policy":                 rustBackendPolicy,
+			"memory_bank_backend_effective":          strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
 			"rust_quality_fallback_enabled":          s.retrieval.rustQualityFallbackEnabled,
 			"rust_quality_fallback_sources":          s.retrieval.rustQualityFallbackSources,
 			"rust_quality_fallback_mode":             s.retrieval.rustQualityFallbackMode,
@@ -1866,9 +1983,20 @@ func (s *server) executeRetrieval(
 	}
 
 	response := map[string]any{
-		"results":         merged,
-		"retrieval_debug": debug,
-		"warnings":        dedupeWarnings(warnings),
+		"results":             merged,
+		"retrieval_debug":     debug,
+		"warnings":            dedupeWarnings(warnings),
+		"result_state":        resultState,
+		"retrieval_lifecycle": lifecycle,
+		"source_summary": map[string]any{
+			"sources":                 resolvedSources,
+			"returned_now":            returnedSources,
+			"pending_sources":         deferredCandidates,
+			"timed_out_sources":       timedOutList,
+			"failed_sources":          failedSources,
+			"budget_exceeded_sources": budgetExceededList,
+			"skipped_sources":         skippedList,
+		},
 	}
 	if includeGrounding {
 		response["grounding"] = buildGrounding(merged)

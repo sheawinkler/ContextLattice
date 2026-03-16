@@ -5347,6 +5347,37 @@ async def test_search_memory_bank_lexical_backend_disabled_short_circuits(monkey
 
 
 @pytest.mark.asyncio
+async def test_search_memory_bank_lexical_backend_override_can_reenable_native(monkeypatch: pytest.MonkeyPatch):
+    async def _files(_project: str):
+        return ["runbooks/profitability/baseline_ladder.md"]
+
+    async def _read(_project: str, file_name: str, **_kwargs):
+        if file_name.endswith("baseline_ladder.md"):
+            return "Baseline ladder tuning notes with concrete profitability changes."
+        return ""
+
+    async def _summary(content: str, max_length: int = 500):
+        return content[:max_length]
+
+    monkeypatch.setattr(orchestrator, "MEMORY_BANK_SPIKE_BACKEND", "disabled")
+    monkeypatch.setattr(orchestrator, "list_files", _files)
+    monkeypatch.setattr(orchestrator, "read_project_file", _read)
+    monkeypatch.setattr(orchestrator, "summarize_content", _summary)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_FILES_PER_PROJECT", 8)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_SCAN_LIMIT", 12)
+
+    rows = await orchestrator.search_memory_bank_lexical(
+        "profitability baseline ladder",
+        project_filter="alpha",
+        limit=6,
+        time_budget_secs=5.0,
+        backend_mode_override="native",
+    )
+    assert rows
+    assert rows[0]["file"] == "runbooks/profitability/baseline_ladder.md"
+
+
+@pytest.mark.asyncio
 async def test_search_memory_bank_lexical_spike_fallbacks_to_native(monkeypatch: pytest.MonkeyPatch):
     async def _files(_project: str):
         return ["runbooks/profitability/baseline_ladder.md"]
@@ -6480,6 +6511,7 @@ async def test_retriever_runtime_request_includes_rust_backend_policy(monkeypatc
             "rust_backend_policy": {
                 "vector_backend": "usearch_ann",
                 "lexical_backend": "tantivy_lexical",
+                "memory_bank_backend": "quickwit_spike",
                 "strict": True,
             }
         },
@@ -6492,6 +6524,7 @@ async def test_retriever_runtime_request_includes_rust_backend_policy(monkeypatc
     )
     assert captured["backend_policy"]["vector_backend"] == "usearch_ann"
     assert captured["backend_policy"]["lexical_backend"] == "tantivy_lexical"
+    assert captured["backend_policy"]["memory_bank_backend"] == "quickwit_spike"
     assert captured["backend_policy"]["strict"] is True
     assert debug["runtime"]["rust_backend_policy"]["vector_backend"] == "usearch_ann"
 
@@ -6513,12 +6546,26 @@ async def test_engine_retrieval_query_with_grounding_routes_to_pipeline(monkeypa
 
     monkeypatch.setattr(orchestrator, "_run_memory_recall_pipeline", _pipeline)
     response = await orchestrator.engine_retrieval_query_with_grounding(
-        {"request": {"query": "alpha", "limit": 4, "project_filter": "proj-a"}}
+        {
+            "request": {
+                "query": "alpha",
+                "limit": 4,
+                "project_filter": "proj-a",
+                "backend_policy": {
+                    "vector_backend": "usearch_ann",
+                    "lexical_backend": "tantivy_lexical",
+                    "memory_bank_backend": "quickwit_spike",
+                    "strict": True,
+                },
+            }
+        }
     )
     assert response["results"]
     assert captured["query"] == "alpha"
     assert captured["project_filter"] == "proj-a"
     assert captured["limit"] == 4
+    assert captured["backend_policy"]["vector_backend"] == "usearch_ann"
+    assert captured["backend_policy"]["memory_bank_backend"] == "quickwit_spike"
 
 
 @pytest.mark.asyncio

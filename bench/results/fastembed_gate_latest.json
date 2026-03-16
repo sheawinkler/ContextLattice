@@ -1,16 +1,50 @@
 {
-  "generatedAt": "2026-03-16T00:05:14.587895+00:00",
+  "generatedAt": "2026-03-16T00:41:13.812967+00:00",
   "metrics": {
+    "aggregateStrategy": "median",
     "baselineErrorRate": 0.0,
-    "baselineP95Ms": 55.288,
+    "baselineP95Ms": 58.775,
     "currentErrorRate": 0.0,
-    "currentP95Ms": 58.775,
+    "currentP95Ms": 49.334,
     "errorRegression": 0.0,
-    "improvementPct": -6.307
+    "improvementPct": 16.063,
+    "sampleCount": 3,
+    "sampleErrorRates": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "sampleP95Ms": [
+      49.334,
+      30.753,
+      56.807
+    ]
   },
   "passed": false,
   "reason": "threshold_not_met",
-  "sourceResult": "bench/results/perf_shortlist_matrix_20260316T000514Z.json",
+  "sampling": {
+    "aggregateStrategy": "median",
+    "evaluatedRuns": 3,
+    "samples": [
+      {
+        "errorRate": 0.0,
+        "p95Ms": 49.334,
+        "run": 1
+      },
+      {
+        "errorRate": 0.0,
+        "p95Ms": 30.753,
+        "run": 2
+      },
+      {
+        "errorRate": 0.0,
+        "p95Ms": 56.807,
+        "run": 3
+      }
+    ],
+    "warmups": 1
+  },
+  "sourceResult": "bench/results/perf_shortlist_matrix_20260316T004108Z.json",
   "thresholds": {
     "maxErrorRegression": 0.005,
     "minImprovementPct": 20.0

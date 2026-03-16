@@ -126,6 +126,18 @@ ORCH_ADAPTER_FASTEMBED_RS_GATE_MAX_AGE_SECS=172800
 
 When enabled, orchestrator Qdrant write fanout uses batched embeddings (`embed_text_batch`) to reduce per-item adapter overhead.
 If gate mode is enabled, fastembed activates only when the benchmark gate artifact reports `passed=true`.
+Recommended gate refresh command (warmed multi-run to reduce noisy pass/fail flips):
+
+```bash
+python3 bench/perf_shortlist_matrix.py \
+  --api-key "$ORCH_KEY" \
+  --runs 12 \
+  --gate-warmups 1 \
+  --gate-repeats 3 \
+  --gate-aggregate median \
+  --baseline bench/results/perf_shortlist_matrix_baseline.json \
+  --gate-output bench/results/fastembed_gate_latest.json
+```
 
 Optional lexical guard for staged retrieval (policy-aware slow-source deferral):
 
@@ -282,6 +294,16 @@ Required behavior:
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`
 
+Lifecycle-aware local helper:
+
+```bash
+python3 scripts/agent_orchestration.py search-lifecycle \
+  "profitability tuning baseline ladder" \
+  contextlattice \
+  deep \
+  wait
+```
+
 ## External Agent Task Routing (Generic)
 
 Context Lattice can queue and route tasks to external runners (Codex, OpenCode, Claude Code) and still supports internal application workers.
@@ -395,6 +417,7 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `ORCH_RUST_RETRIEVAL_VECTOR_BACKEND` (`auto|qdrant_remote|usearch_ann`)
   - `ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND` (`auto|none|tantivy_lexical`)
   - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT`
+  - `ORCH_MEMORY_BANK_SEARCH_BACKEND` (`native|disabled|meilisearch_spike|quickwit_spike|tantivy_spike`)
   - `GO_RETRIEVAL_LEXICAL_GUARD_ENABLED`
   - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_COVERAGE`
   - `GO_RETRIEVAL_LEXICAL_GUARD_MIN_RESULTS`

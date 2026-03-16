@@ -735,6 +735,15 @@ func TestStagedRetrievalLexicalGuardDefersSyncSlowFallback(t *testing.T) {
 	if _, exists := errorsMap["mindsdb"]; exists {
 		t.Fatalf("expected mindsdb to be deferred from sync source errors, got %#v", errorsMap["mindsdb"])
 	}
+	lifecycle, _ := payload["retrieval_lifecycle"].(map[string]any)
+	if strings.TrimSpace(strings.ToLower(anyToString(lifecycle["status"]))) != "partial" {
+		t.Fatalf("expected retrieval_lifecycle.status=partial, got %#v", lifecycle["status"])
+	}
+	sourcesBlock, _ := lifecycle["sources"].(map[string]any)
+	pending := anyToStringSlice(sourcesBlock["pending"])
+	if len(pending) != 1 || pending[0] != "mindsdb" {
+		t.Fatalf("expected pending sources [mindsdb], got %v", pending)
+	}
 }
 
 func TestStagedRetrievalWithoutLexicalGuardRunsSyncSlowFallback(t *testing.T) {
@@ -816,6 +825,10 @@ func TestStagedRetrievalWithoutLexicalGuardRunsSyncSlowFallback(t *testing.T) {
 	if kind := strings.TrimSpace(anyToString(mindsdbErr["kind"])); kind != "budget_exceeded" {
 		t.Fatalf("expected mindsdb source error kind budget_exceeded, got %#v", mindsdbErr)
 	}
+	lifecycle, _ := payload["retrieval_lifecycle"].(map[string]any)
+	if lifecycle == nil {
+		t.Fatalf("expected retrieval_lifecycle payload")
+	}
 }
 
 func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
@@ -859,7 +872,7 @@ func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"balanced","backend_policy":{"vector_backend":"usearch_ann","lexical_backend":"tantivy_lexical","strict":true}}}`
+	reqBody := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"balanced","backend_policy":{"vector_backend":"usearch_ann","lexical_backend":"tantivy_lexical","memory_bank_backend":"quickwit_spike","strict":true}}}`
 	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -882,11 +895,17 @@ func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	if strings.TrimSpace(anyToString(runtimePolicy["lexical_backend"])) != "tantivy_lexical" {
 		t.Fatalf("expected lexical backend override propagated, got %#v", runtimePolicy)
 	}
+	if strings.TrimSpace(anyToString(runtimePolicy["memory_bank_backend"])) != "quickwit_spike" {
+		t.Fatalf("expected memory_bank_backend override propagated, got %#v", runtimePolicy)
+	}
 	if strict, ok := runtimePolicy["strict"].(bool); !ok || !strict {
 		t.Fatalf("expected strict=true propagated, got %#v", runtimePolicy)
 	}
 	if strings.TrimSpace(anyToString(capturedPolicy["vector_backend"])) != "usearch_ann" {
 		t.Fatalf("expected backend subcall payload to include policy, got %#v", capturedPolicy)
+	}
+	if strings.TrimSpace(anyToString(capturedPolicy["memory_bank_backend"])) != "quickwit_spike" {
+		t.Fatalf("expected backend subcall payload to include memory_bank_backend, got %#v", capturedPolicy)
 	}
 }
 
