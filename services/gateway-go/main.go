@@ -22,6 +22,7 @@ import (
 
 const (
 	sourceQdrant      = "qdrant"
+	sourcePgvector    = "postgres_pgvector"
 	sourceMongoRaw    = "mongo_raw"
 	sourceMindsdb     = "mindsdb"
 	sourceTopicRollup = "topic_rollups"
@@ -31,6 +32,7 @@ const (
 
 var defaultAllSources = []string{
 	sourceQdrant,
+	sourcePgvector,
 	sourceMongoRaw,
 	sourceMindsdb,
 	sourceTopicRollup,
@@ -497,7 +499,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if len(policy.defaultSources) == 0 {
 		policy.defaultSources = append([]string(nil), defaultAllSources...)
 	}
-	policy.fastSources = csvListEnv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant")
+	policy.fastSources = csvListEnv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant,postgres_pgvector")
 	policy.slowSources = csvListEnv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb,mongo_raw,letta,memory_bank")
 	policy.syncFallbackSources = csvListEnv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "mindsdb,mongo_raw")
 	policy.rustQualityFallbackEnabled = envBool("GO_RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", true)
@@ -569,10 +571,11 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.timeoutAdaptiveSkipEnabled = envBool("ORCH_RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED", true)
 	policy.timeoutAdaptiveSkipSources = toSourceSet(csvListEnv(
 		"ORCH_RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES",
-		"qdrant,mindsdb,mongo_raw",
+		"qdrant,postgres_pgvector,mindsdb,mongo_raw",
 	))
 	policy.sourceTimeouts = map[string]time.Duration{
 		sourceQdrant:      envDurationSeconds("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", 8),
+		sourcePgvector:    envDurationSeconds("ORCH_RETRIEVAL_PGVECTOR_TIMEOUT_SECS", 3),
 		sourceMongoRaw:    envDurationSeconds("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", 6),
 		sourceMindsdb:     envDurationSeconds("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", 8),
 		sourceTopicRollup: envDurationSeconds("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", 2),
