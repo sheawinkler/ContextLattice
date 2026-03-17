@@ -23,7 +23,7 @@ DEFAULT_ORCH_URL = os.getenv(
 )
 DEFAULT_AGENT = os.getenv("TASK_AGENT", "trae")
 DEFAULT_PROVIDER = os.getenv("TASK_MODEL_PROVIDER", "ollama")
-DEFAULT_MODEL = os.getenv("TASK_MODEL", "qwen2.5-coder:7b")
+DEFAULT_MODEL = os.getenv("TASK_MODEL", "qwen3.5:9b")
 
 
 def _base_url_for_provider(provider: str, override: Optional[str]) -> str:
