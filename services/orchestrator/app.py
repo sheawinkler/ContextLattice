@@ -61,6 +61,11 @@ except Exception:  # pragma: no cover - optional dependency
     qdrant_models = None  # type: ignore
 
 try:
+    import asyncpg  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    asyncpg = None  # type: ignore
+
+try:
     from redis import asyncio as redis_async  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     redis_async = None  # type: ignore
@@ -319,6 +324,35 @@ MONGO_RAW_SOCKET_TIMEOUT_MS = int(os.getenv("MONGO_RAW_SOCKET_TIMEOUT_MS", "1500
 MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS = int(os.getenv("MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS", "5000"))
 MONGO_RAW_MAX_POOL_SIZE = max(10, int(os.getenv("MONGO_RAW_MAX_POOL_SIZE", "200")))
 MONGO_RAW_MIN_POOL_SIZE = max(0, int(os.getenv("MONGO_RAW_MIN_POOL_SIZE", "0")))
+PGVECTOR_ENABLED = os.getenv("ORCH_PGVECTOR_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+PGVECTOR_DSN = os.getenv(
+    "ORCH_PGVECTOR_DSN",
+    os.getenv("PGVECTOR_DSN", "postgresql://postgres:postgres@pgvector-db:5432/contextlattice"),
+).strip()
+PGVECTOR_TABLE = (
+    re.sub(r"[^a-zA-Z0-9_]", "_", os.getenv("ORCH_PGVECTOR_TABLE", "memory_events")).strip("_").lower()
+    or "memory_events"
+)
+PGVECTOR_EMBED_DIM = max(8, int(os.getenv("ORCH_PGVECTOR_EMBED_DIM", os.getenv("ORCH_EMBED_DIM", "768"))))
+PGVECTOR_POOL_MIN_SIZE = max(1, int(os.getenv("ORCH_PGVECTOR_POOL_MIN_SIZE", "1")))
+PGVECTOR_POOL_MAX_SIZE = max(PGVECTOR_POOL_MIN_SIZE, int(os.getenv("ORCH_PGVECTOR_POOL_MAX_SIZE", "12")))
+PGVECTOR_CONNECT_TIMEOUT_SECS = max(1.0, float(os.getenv("ORCH_PGVECTOR_CONNECT_TIMEOUT_SECS", "8")))
+PGVECTOR_STATEMENT_TIMEOUT_SECS = max(1.0, float(os.getenv("ORCH_PGVECTOR_STATEMENT_TIMEOUT_SECS", "6")))
+PGVECTOR_QUERY_SCAN_LIMIT = max(16, int(os.getenv("ORCH_PGVECTOR_QUERY_SCAN_LIMIT", "320")))
+PGVECTOR_IVFFLAT_LISTS = max(8, int(os.getenv("ORCH_PGVECTOR_IVFFLAT_LISTS", "100")))
+PGVECTOR_PREFER_VECTORSCALE = os.getenv("ORCH_PGVECTOR_PREFER_VECTORSCALE", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+PGVECTOR_FANOUT_ENABLED = PGVECTOR_ENABLED and (
+    os.getenv("ORCH_PGVECTOR_FANOUT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+)
+PGVECTOR_TELEMETRY_GUARD_ENABLED = os.getenv(
+    "ORCH_PGVECTOR_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 PILOT_CONTACT_EMAIL = os.getenv("PILOT_CONTACT_EMAIL", "").strip()
 PILOT_CONTACT_URL = os.getenv("PILOT_CONTACT_URL", "").strip()
 LEARNING_LOOP_ENABLED = os.getenv("LEARNING_LOOP_ENABLED", "true").lower() in (
@@ -387,7 +421,7 @@ EMBEDDING_CACHE_ENABLED = os.getenv("EMBEDDING_CACHE_ENABLED", "true").lower() i
 EMBEDDING_CACHE_MAX_KEYS = int(os.getenv("EMBEDDING_CACHE_MAX_KEYS", "50000"))
 RETRIEVAL_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SOURCES",
-    "qdrant,mongo_raw,mindsdb,topic_rollups,letta,memory_bank",
+    "qdrant,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank",
 )
 RETRIEVAL_INTENT_DEFAULT = os.getenv(
     "ORCH_RETRIEVAL_INTENT_DEFAULT",
@@ -395,21 +429,22 @@ RETRIEVAL_INTENT_DEFAULT = os.getenv(
 ).strip().lower()
 RETRIEVAL_INTENT_DECISION_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_INTENT_DECISION_SOURCES",
-    "topic_rollups,qdrant,mindsdb,letta,memory_bank,mongo_raw",
+    "topic_rollups,qdrant,postgres_pgvector,memory_bank,mindsdb,mongo_raw,letta",
 )
 RETRIEVAL_INTENT_OPS_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_INTENT_OPS_SOURCES",
-    "topic_rollups,qdrant,mindsdb,letta,memory_bank,mongo_raw",
+    "topic_rollups,qdrant,postgres_pgvector,memory_bank,mindsdb,mongo_raw,letta",
 )
 RETRIEVAL_INTENT_RAW_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_INTENT_RAW_SOURCES",
-    "mongo_raw,memory_bank,qdrant,mindsdb,topic_rollups,letta",
+    "mongo_raw,memory_bank,qdrant,postgres_pgvector,mindsdb,topic_rollups,letta",
 )
 RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS = os.getenv(
     "ORCH_RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 RETRIEVAL_MONGO_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MONGO_SCAN_LIMIT", "400"))
+RETRIEVAL_PGVECTOR_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_PGVECTOR_SCAN_LIMIT", "320"))
 RETRIEVAL_MINDSDB_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MINDSDB_SCAN_LIMIT", "300"))
 RETRIEVAL_MEMORY_SCAN_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MEMORY_SCAN_LIMIT", "36"))
 RETRIEVAL_MEMORY_PROJECT_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MEMORY_PROJECT_LIMIT", "12"))
@@ -447,6 +482,7 @@ RETRIEVAL_LETTA_ASYNC_WARM_FAILURE_COOLDOWN_SECS = max(
 )
 QDRANT_EMBED_TIMEOUT_SECS = float(os.getenv("ORCH_QDRANT_EMBED_TIMEOUT_SECS", "2.0"))
 RETRIEVAL_QDRANT_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "8"))
+RETRIEVAL_PGVECTOR_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_PGVECTOR_TIMEOUT_SECS", "3"))
 RETRIEVAL_MONGO_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", "6"))
 RETRIEVAL_MINDSDB_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "8"))
 RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS = max(
@@ -693,7 +729,7 @@ RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES_ENV = os.getenv(
     "ORCH_RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES",
-    "qdrant,mindsdb,mongo_raw",
+    "qdrant,postgres_pgvector,mindsdb,mongo_raw",
 )
 RECALL_SCOPED_QUERY_VARIANT_CAP = max(
     1,
@@ -1150,7 +1186,7 @@ RECALL_EVAL_REFRESH_MIN_HITS = max(
 )
 RECALL_EVAL_REFRESH_SOURCES_ENV = os.getenv(
     "ORCH_RECALL_EVAL_REFRESH_SOURCES",
-    "qdrant,topic_rollups",
+    "qdrant,postgres_pgvector,topic_rollups",
 ).strip()
 RECALL_EVAL_DEFAULT_PROJECT = os.getenv(
     "ORCH_RECALL_EVAL_DEFAULT_PROJECT",
@@ -1313,10 +1349,12 @@ FANOUT_RUNNING_STALE_SECS = int(os.getenv("FANOUT_RUNNING_STALE_SECS", "120"))
 FANOUT_SUMMARY_TIMEOUT_SECS = float(os.getenv("FANOUT_SUMMARY_TIMEOUT_SECS", "20.0"))
 FANOUT_SUMMARY_CACHE_TTL_SECS = float(os.getenv("FANOUT_SUMMARY_CACHE_TTL_SECS", "6.0"))
 FANOUT_QDRANT_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_QDRANT_RATE_LIMIT_PER_SEC", "40"))
+FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC", "20"))
 FANOUT_MINDSDB_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_MINDSDB_RATE_LIMIT_PER_SEC", "15"))
 FANOUT_LETTA_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_LETTA_RATE_LIMIT_PER_SEC", "6"))
 FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC", "20"))
 FANOUT_QDRANT_BULK_SIZE = max(1, int(os.getenv("FANOUT_QDRANT_BULK_SIZE", "16")))
+FANOUT_PGVECTOR_BULK_SIZE = max(1, int(os.getenv("FANOUT_PGVECTOR_BULK_SIZE", "16")))
 FANOUT_MINDSDB_BULK_SIZE = max(1, int(os.getenv("FANOUT_MINDSDB_BULK_SIZE", "12")))
 FANOUT_MONGO_BULK_SIZE = max(1, int(os.getenv("FANOUT_MONGO_BULK_SIZE", "24")))
 FANOUT_LANGFUSE_BULK_SIZE = max(1, int(os.getenv("FANOUT_LANGFUSE_BULK_SIZE", "24")))
@@ -1331,7 +1369,7 @@ FANOUT_COALESCE_ENABLED = os.getenv("FANOUT_COALESCE_ENABLED", "true").lower() i
 FANOUT_COALESCE_WINDOW_SECS = float(os.getenv("FANOUT_COALESCE_WINDOW_SECS", "6"))
 FANOUT_COALESCE_TARGETS_ENV = os.getenv(
     "FANOUT_COALESCE_TARGETS",
-    "qdrant,mindsdb,letta,langfuse",
+    "qdrant,postgres_pgvector,mindsdb,letta,langfuse",
 )
 FANOUT_COALESCE_STALE_TARGETS_ENV = os.getenv("FANOUT_COALESCE_STALE_TARGETS", "letta")
 FANOUT_BACKPRESSURE_ENABLED = os.getenv("FANOUT_BACKPRESSURE_ENABLED", "true").lower() in (
@@ -1755,18 +1793,21 @@ QDRANT_CLOUD_CLIENT: AsyncQdrantClient | None = None
 MINDSDB_CLIENT: httpx.AsyncClient | None = None
 LETTA_CLIENT: httpx.AsyncClient | None = None
 LANGFUSE_CLIENT: httpx.AsyncClient | None = None
+PGVECTOR_POOL = None
 MCP_SESSION_HEADER = "mcp-session-id"
 MCP_CLIENT_NAME = os.getenv("MCP_CLIENT_NAME", "contextlattice-orchestrator").strip() or "contextlattice-orchestrator"
 MCP_CLIENT_VERSION = os.getenv("MCP_CLIENT_VERSION", "0.1.0").strip() or "0.1.0"
 
 FANOUT_TARGET_MONGO_RAW = "mongo_raw"
 FANOUT_TARGET_QDRANT = "qdrant"
+FANOUT_TARGET_POSTGRES_PGVECTOR = "postgres_pgvector"
 FANOUT_TARGET_LANGFUSE = "langfuse"
 FANOUT_TARGET_MINDSDB = "mindsdb"
 FANOUT_TARGET_LETTA = "letta"
 FANOUT_TARGETS = (
     FANOUT_TARGET_MONGO_RAW,
     FANOUT_TARGET_QDRANT,
+    FANOUT_TARGET_POSTGRES_PGVECTOR,
     FANOUT_TARGET_LANGFUSE,
     FANOUT_TARGET_MINDSDB,
     FANOUT_TARGET_LETTA,
@@ -1854,7 +1895,13 @@ TASK_ALLOWED_ACTIONS = _normalize_task_action_csv(TASK_ALLOWED_ACTIONS_ENV)
 TASK_CALLBACK_ALLOWED_HOSTS = _normalize_host_allowlist(TASK_CALLBACK_ALLOWED_HOSTS_ENV)
 
 if not FANOUT_COALESCE_TARGETS:
-    FANOUT_COALESCE_TARGETS = [FANOUT_TARGET_QDRANT, FANOUT_TARGET_MINDSDB, FANOUT_TARGET_LETTA, FANOUT_TARGET_LANGFUSE]
+    FANOUT_COALESCE_TARGETS = [
+        FANOUT_TARGET_QDRANT,
+        FANOUT_TARGET_POSTGRES_PGVECTOR,
+        FANOUT_TARGET_MINDSDB,
+        FANOUT_TARGET_LETTA,
+        FANOUT_TARGET_LANGFUSE,
+    ]
 LOW_VALUE_FILE_SUFFIXES = _normalize_lower_csv(LOW_VALUE_FILE_SUFFIXES_ENV)
 if not LOW_VALUE_FILE_SUFFIXES:
     LOW_VALUE_FILE_SUFFIXES = ["__latest.json", "__rollup.json"]
@@ -1929,6 +1976,7 @@ if not LETTA_AUTO_PRUNE_STATUSES:
     LETTA_AUTO_PRUNE_STATUSES = ["pending", "retrying"]
 
 RETRIEVAL_SOURCE_QDRANT = "qdrant"
+RETRIEVAL_SOURCE_POSTGRES_PGVECTOR = FANOUT_TARGET_POSTGRES_PGVECTOR
 RETRIEVAL_SOURCE_MEMORY_BANK = "memory_bank"
 RETRIEVAL_SOURCE_MONGO_RAW = FANOUT_TARGET_MONGO_RAW
 RETRIEVAL_SOURCE_MINDSDB = FANOUT_TARGET_MINDSDB
@@ -1936,6 +1984,7 @@ RETRIEVAL_SOURCE_LETTA = FANOUT_TARGET_LETTA
 RETRIEVAL_SOURCE_TOPIC_ROLLUPS = "topic_rollups"
 RETRIEVAL_SOURCES = (
     RETRIEVAL_SOURCE_QDRANT,
+    RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
     RETRIEVAL_SOURCE_MONGO_RAW,
     RETRIEVAL_SOURCE_MINDSDB,
     RETRIEVAL_SOURCE_LETTA,
@@ -1975,6 +2024,7 @@ if not DEFAULT_RETRIEVAL_FAST_SOURCES:
     DEFAULT_RETRIEVAL_FAST_SOURCES = [
         RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
         RETRIEVAL_SOURCE_QDRANT,
+        RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
     ]
 DEFAULT_RETRIEVAL_SLOW_SOURCES = _normalize_retrieval_source_csv(RETRIEVAL_SLOW_SOURCES_ENV)
 if not DEFAULT_RETRIEVAL_SLOW_SOURCES:
@@ -2008,6 +2058,7 @@ RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = _normalize_retrieval_source_csv(
 if not RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES:
     RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = [
         RETRIEVAL_SOURCE_QDRANT,
+        RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
         RETRIEVAL_SOURCE_MINDSDB,
         RETRIEVAL_SOURCE_MONGO_RAW,
     ]
@@ -2207,11 +2258,17 @@ async def _build_refreshed_recall_eval_case_set(
         explicit_source_override=False,
     )
     if not fast_eval_sources:
-        fast_eval_sources = [RETRIEVAL_SOURCE_QDRANT, RETRIEVAL_SOURCE_TOPIC_ROLLUPS]
+        fast_eval_sources = [
+            RETRIEVAL_SOURCE_QDRANT,
+            RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
+            RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+        ]
 
     def _default_source_weight(source: str) -> float:
         if source == RETRIEVAL_SOURCE_QDRANT:
             return 1.0
+        if source == RETRIEVAL_SOURCE_POSTGRES_PGVECTOR:
+            return 0.96
         if source == RETRIEVAL_SOURCE_TOPIC_ROLLUPS:
             return 0.88
         if source == RETRIEVAL_SOURCE_MINDSDB:
@@ -2441,6 +2498,7 @@ INDEX_FILE_LATEST_HINTS = {
 
 DEFAULT_RETRIEVAL_SOURCE_WEIGHTS: dict[str, float] = {
     RETRIEVAL_SOURCE_QDRANT: 1.0,
+    RETRIEVAL_SOURCE_POSTGRES_PGVECTOR: 0.96,
     RETRIEVAL_SOURCE_LETTA: 0.9,
     RETRIEVAL_SOURCE_TOPIC_ROLLUPS: 0.88,
     RETRIEVAL_SOURCE_MINDSDB: 0.8,
@@ -3828,6 +3886,35 @@ async def _memory_write_worker(
                     for job in qdrant_batch:
                         await _handle_fanout_job_error(job, worker_id, exc)
 
+            pgvector_jobs = jobs_by_target.pop(FANOUT_TARGET_POSTGRES_PGVECTOR, [])
+            for pgvector_batch in _chunk_rows(pgvector_jobs, FANOUT_PGVECTOR_BULK_SIZE):
+                try:
+                    await _apply_fanout_backpressure(
+                        FANOUT_TARGET_POSTGRES_PGVECTOR,
+                        worker_id,
+                        len(pgvector_batch),
+                    )
+                    payload_rows: list[dict[str, Any]] = []
+                    for job in pgvector_batch:
+                        payload = job.get("payload") or {}
+                        payload_rows.append(
+                            {
+                                "event_id": payload.get("event_id") or job.get("event_id"),
+                                "project": payload.get("project") or "",
+                                "file": payload.get("file") or "",
+                                "content": payload.get("summary") or "",
+                                "topic_path": payload.get("topic_path"),
+                                "topic_tags": payload.get("topic_tags") or [],
+                                "code_context": payload.get("code_context") or {},
+                            }
+                        )
+                    await push_batch_to_pgvector(payload_rows)
+                    for job in pgvector_batch:
+                        await _mark_fanout_job_success(job, FANOUT_TARGET_POSTGRES_PGVECTOR)
+                except Exception as exc:  # pragma: no cover
+                    for job in pgvector_batch:
+                        await _handle_fanout_job_error(job, worker_id, exc)
+
             mindsdb_jobs = jobs_by_target.pop(FANOUT_TARGET_MINDSDB, [])
             for mindsdb_batch in _chunk_rows(mindsdb_jobs, FANOUT_MINDSDB_BULK_SIZE):
                 try:
@@ -3953,18 +4040,22 @@ async def _memory_write_worker(
 
 async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
     global memory_write_queue_dropped
+    event_id = str(item.get("event_id") or uuid.uuid4().hex)
     letta_admit = bool(item.get("letta_admit", True))
     file_name = str(item.get("file") or "")
     topic_path = str(item.get("topic_path") or "")
     summary = str(item.get("summary") or "")
     telemetry_like = _is_telemetry_memory_record(file_name, topic_path, summary)
     qdrant_enabled = not (telemetry_like and QDRANT_TELEMETRY_GUARD_ENABLED)
+    pgvector_enabled = PGVECTOR_FANOUT_ENABLED and not (telemetry_like and PGVECTOR_TELEMETRY_GUARD_ENABLED)
     mindsdb_enabled = not (telemetry_like and MINDSDB_TELEMETRY_GUARD_ENABLED)
     letta_enabled = not (telemetry_like and LETTA_TELEMETRY_GUARD_ENABLED)
 
     fanout_targets: list[str] = []
     if qdrant_enabled:
         fanout_targets.append(FANOUT_TARGET_QDRANT)
+    if pgvector_enabled:
+        fanout_targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
     if mindsdb_enabled:
         fanout_targets.append(FANOUT_TARGET_MINDSDB)
     if not item.get("mongo_persisted"):
@@ -3990,7 +4081,7 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
     if LANGFUSE_API_KEY:
         fanout_targets.append(FANOUT_TARGET_LANGFUSE)
     payload = {
-        "event_id": item.get("event_id") or uuid.uuid4().hex,
+        "event_id": event_id,
         "project": item["project"],
         "file": item["file"],
         "summary": item.get("summary") or "",
@@ -4000,6 +4091,7 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
         "letta_session": item.get("letta_session"),
         "letta_context": item.get("letta_context") or {},
         "letta_admit": letta_admit,
+        "event_id": event_id,
         "code_context": item.get("code_context") or {},
         "qdrant_collection": item.get("qdrant_collection"),
         "raw_event": item.get("raw_event"),
@@ -4505,6 +4597,7 @@ MIGRATION_RUNTIME_LOCK = asyncio.Lock()
 if _runtime_import_error:
     logger.warning("Runtime migration modules unavailable; falling back to legacy paths: %s", _runtime_import_error)
 qdrant_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_QDRANT_RATE_LIMIT_PER_SEC)
+pgvector_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC)
 mindsdb_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_MINDSDB_RATE_LIMIT_PER_SEC)
 letta_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_LETTA_RATE_LIMIT_PER_SEC)
 langfuse_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC)
@@ -4512,6 +4605,7 @@ if AsyncLimiter is None and any(
     _normalize_rate_limit(rate) > 0
     for rate in (
         FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
+        FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC,
         FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
         FANOUT_LETTA_RATE_LIMIT_PER_SEC,
         FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC,
@@ -4522,6 +4616,7 @@ if AsyncLimiter is None and any(
 mindsdb_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MINDSDB_AUTOSYNC_QUEUE_MAX)
 mindsdb_queue_lock = asyncio.Lock()
 mongo_client_lock = asyncio.Lock()
+pgvector_pool_lock = asyncio.Lock()
 letta_agent_lock = asyncio.Lock()
 mcp_session_lock = asyncio.Lock()
 service_client_lock = asyncio.Lock()
@@ -4673,6 +4768,9 @@ topic_rollup_last_snapshot_for_delta: dict[str, Any] = {}
 MCP_SESSION_ID: str | None = None
 MONGO_CLIENT = None
 FANOUT_OUTBOX_MONGO_CLIENT = None
+pgvector_schema_ready = False
+pgvector_vectorscale_available = False
+pgvector_last_error: str | None = None
 fanout_outbox_mongo_lock = asyncio.Lock()
 fanout_outbox_backend_active = FANOUT_OUTBOX_BACKEND if FANOUT_OUTBOX_BACKEND in ("sqlite", "mongo") else "sqlite"
 LETTA_AGENT_CACHE: dict[str, str] = {}
@@ -6306,6 +6404,7 @@ def _retrieval_template_cache_key(mode: str, resolved_sources: list[str]) -> str
             ",".join(DEFAULT_RETRIEVAL_FAST_SOURCES),
             ",".join(DEFAULT_RETRIEVAL_SLOW_SOURCES),
             str(RETRIEVAL_QDRANT_TIMEOUT_SECS),
+            str(RETRIEVAL_PGVECTOR_TIMEOUT_SECS),
             str(RETRIEVAL_MONGO_TIMEOUT_SECS),
             str(RETRIEVAL_MINDSDB_TIMEOUT_SECS),
             str(RETRIEVAL_LETTA_TIMEOUT_SECS),
@@ -6381,6 +6480,7 @@ async def _get_retrieval_template(mode: str, resolved_sources: list[str]) -> tup
     )
     source_timeouts: dict[str, float] = {
         RETRIEVAL_SOURCE_QDRANT: max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale),
+        RETRIEVAL_SOURCE_POSTGRES_PGVECTOR: max(1.0, RETRIEVAL_PGVECTOR_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_MONGO_RAW: max(1.0, RETRIEVAL_MONGO_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_MINDSDB: max(1.0, RETRIEVAL_MINDSDB_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_LETTA: max(1.0, RETRIEVAL_LETTA_TIMEOUT_SECS * timeout_scale),
@@ -6703,6 +6803,8 @@ def _base_source_timeout_for_mode(source: str, retrieval_mode: str) -> float:
     source_name = str(source or "").strip().lower()
     if source_name == RETRIEVAL_SOURCE_QDRANT:
         return max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale)
+    if source_name == RETRIEVAL_SOURCE_POSTGRES_PGVECTOR:
+        return max(1.0, RETRIEVAL_PGVECTOR_TIMEOUT_SECS * timeout_scale)
     if source_name == RETRIEVAL_SOURCE_MONGO_RAW:
         return max(1.0, RETRIEVAL_MONGO_TIMEOUT_SECS * timeout_scale)
     if source_name == RETRIEVAL_SOURCE_MINDSDB:
@@ -8366,6 +8468,18 @@ async def init_mcp_client() -> None:
     if MCP_CLIENT is None:
         MCP_CLIENT = httpx.AsyncClient(timeout=MCP_CLIENT_TIMEOUT, limits=MCP_CLIENT_LIMITS)
     await _ensure_shared_service_clients()
+    if PGVECTOR_ENABLED:
+        if await ensure_pgvector_schema():
+            logger.info(
+                "Postgres pgvector lane ready (table=%s vectorscale=%s)",
+                PGVECTOR_TABLE,
+                pgvector_vectorscale_available,
+            )
+        else:
+            logger.warning(
+                "Postgres pgvector lane unavailable (%s)",
+                pgvector_last_error or "not configured",
+            )
     logger.info(
         "Qdrant backend=%s grpc_prefer=%s cloud_configured=%s fallback=%s",
         _qdrant_operation_targets()[0],
@@ -8383,6 +8497,7 @@ async def close_mcp_client() -> None:
     global letta_auto_prune_task
     global qdrant_warmup_task, qdrant_payload_index_task
     global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
+    global PGVECTOR_POOL, pgvector_schema_ready, pgvector_vectorscale_available, pgvector_last_error
     if task_scheduler_task is not None:
         task_scheduler_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -8470,6 +8585,13 @@ async def close_mcp_client() -> None:
     if LANGFUSE_CLIENT is not None:
         await LANGFUSE_CLIENT.aclose()
         LANGFUSE_CLIENT = None
+    if PGVECTOR_POOL is not None:
+        with contextlib.suppress(Exception):
+            await PGVECTOR_POOL.close()
+        PGVECTOR_POOL = None
+    pgvector_schema_ready = False
+    pgvector_vectorscale_available = False
+    pgvector_last_error = None
     qdrant_collection_dim_cache.clear()
     async with qdrant_payload_index_cache_lock:
         qdrant_payload_index_cache.clear()
@@ -16677,6 +16799,248 @@ def _qdrant_expected_dim(error_text: str) -> int | None:
     return None
 
 
+def _pgvector_vector_literal(vector: list[float]) -> str:
+    return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
+
+
+async def _ensure_pgvector_pool() -> bool:
+    global PGVECTOR_POOL, pgvector_last_error
+    if not PGVECTOR_ENABLED or not PGVECTOR_DSN:
+        return False
+    if asyncpg is None:
+        pgvector_last_error = "asyncpg dependency unavailable"
+        return False
+    if PGVECTOR_POOL is not None:
+        return True
+    async with pgvector_pool_lock:
+        if PGVECTOR_POOL is not None:
+            return True
+        try:
+            PGVECTOR_POOL = await asyncpg.create_pool(
+                dsn=PGVECTOR_DSN,
+                min_size=PGVECTOR_POOL_MIN_SIZE,
+                max_size=PGVECTOR_POOL_MAX_SIZE,
+                timeout=PGVECTOR_CONNECT_TIMEOUT_SECS,
+                command_timeout=PGVECTOR_STATEMENT_TIMEOUT_SECS,
+            )
+            pgvector_last_error = None
+            return True
+        except Exception as exc:
+            pgvector_last_error = str(exc).strip() or exc.__class__.__name__
+            logger.warning("Postgres pgvector pool initialization failed: %s", pgvector_last_error)
+            PGVECTOR_POOL = None
+            return False
+
+
+async def ensure_pgvector_schema() -> bool:
+    global pgvector_schema_ready, pgvector_vectorscale_available, pgvector_last_error
+    if not await _ensure_pgvector_pool():
+        return False
+    if pgvector_schema_ready:
+        return True
+    assert PGVECTOR_POOL is not None
+    async with pgvector_pool_lock:
+        if pgvector_schema_ready:
+            return True
+        vectorscale_available = False
+        table_name = PGVECTOR_TABLE
+        try:
+            async with PGVECTOR_POOL.acquire() as conn:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                if PGVECTOR_PREFER_VECTORSCALE:
+                    try:
+                        await conn.execute("CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;")
+                        vectorscale_available = True
+                    except Exception as exc:
+                        logger.info("vectorscale extension unavailable; using ivfflat fallback (%s)", exc)
+                await conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                      event_id TEXT PRIMARY KEY,
+                      project TEXT NOT NULL,
+                      file TEXT NOT NULL,
+                      summary TEXT NOT NULL,
+                      topic_path TEXT,
+                      topic_tags TEXT[],
+                      code_context JSONB,
+                      embedding VECTOR({PGVECTOR_EMBED_DIM}) NOT NULL,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    """
+                )
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {table_name}_project_idx ON {table_name} (project);"
+                )
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {table_name}_topic_idx ON {table_name} (topic_path);"
+                )
+                if vectorscale_available:
+                    try:
+                        await conn.execute(
+                            f"CREATE INDEX IF NOT EXISTS {table_name}_embedding_diskann_idx "
+                            f"ON {table_name} USING diskann (embedding);"
+                        )
+                    except Exception as exc:
+                        vectorscale_available = False
+                        logger.warning(
+                            "Postgres pgvector diskann index creation failed; using ivfflat fallback (%s)",
+                            exc,
+                        )
+                if not vectorscale_available:
+                    await conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS {table_name}_embedding_ivfflat_idx "
+                        f"ON {table_name} USING ivfflat (embedding vector_cosine_ops) "
+                        f"WITH (lists = {PGVECTOR_IVFFLAT_LISTS});"
+                    )
+                await conn.execute(f"ANALYZE {table_name};")
+            pgvector_schema_ready = True
+            pgvector_vectorscale_available = vectorscale_available
+            pgvector_last_error = None
+            return True
+        except Exception as exc:
+            pgvector_last_error = str(exc).strip() or exc.__class__.__name__
+            logger.warning("Postgres pgvector schema init failed: %s", pgvector_last_error)
+            return False
+
+
+async def push_batch_to_pgvector(items: list[dict[str, Any]]) -> None:
+    if not PGVECTOR_FANOUT_ENABLED or not items:
+        return
+    if not await ensure_pgvector_schema():
+        raise OrchestratorError(f"postgres pgvector unavailable: {pgvector_last_error or 'schema not ready'}")
+    assert PGVECTOR_POOL is not None
+
+    contents = [str(item.get("content") or "") for item in items]
+    vectors = await embed_text_batch(contents)
+    rows: list[tuple[Any, ...]] = []
+    for idx, item in enumerate(items):
+        project = str(item.get("project") or "").strip()
+        file_name = str(item.get("file") or "").strip()
+        summary = str(item.get("content") or "").strip()
+        if not project or not file_name or not summary:
+            continue
+        embedding = vectors[idx] if idx < len(vectors) else []
+        if len(embedding) != PGVECTOR_EMBED_DIM:
+            embedding = _cheap_embedding(summary, PGVECTOR_EMBED_DIM)
+        topic_path = normalize_topic_path(str(item.get("topic_path") or "")) or derive_topic_path(file_name, None)
+        topic_tags = [
+            str(token).strip()
+            for token in (item.get("topic_tags") if isinstance(item.get("topic_tags"), list) else [])
+            if str(token).strip()
+        ]
+        code_context = item.get("code_context") if isinstance(item.get("code_context"), dict) else {}
+        event_id = str(item.get("event_id") or build_event_id(project, file_name, summary)).strip()
+        rows.append(
+            (
+                event_id,
+                project,
+                file_name,
+                summary,
+                topic_path,
+                topic_tags,
+                json.dumps(code_context, default=str),
+                _pgvector_vector_literal(embedding),
+            )
+        )
+    if not rows:
+        return
+    table_name = PGVECTOR_TABLE
+    sql = (
+        f"INSERT INTO {table_name} "
+        "(event_id, project, file, summary, topic_path, topic_tags, code_context, embedding, created_at, updated_at) "
+        "VALUES ($1, $2, $3, $4, $5, $6::text[], $7::jsonb, $8::vector, NOW(), NOW()) "
+        "ON CONFLICT (event_id) DO UPDATE SET "
+        "project = EXCLUDED.project, "
+        "file = EXCLUDED.file, "
+        "summary = EXCLUDED.summary, "
+        "topic_path = EXCLUDED.topic_path, "
+        "topic_tags = EXCLUDED.topic_tags, "
+        "code_context = EXCLUDED.code_context, "
+        "embedding = EXCLUDED.embedding, "
+        "updated_at = NOW();"
+    )
+    async with _fanout_rate_limit(pgvector_fanout_rate_limiter):
+        async with PGVECTOR_POOL.acquire() as conn:
+            await conn.executemany(sql, rows)
+
+
+async def search_postgres_pgvector(
+    query: str,
+    limit: int = 10,
+    project_filter: str | None = None,
+    topic_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    if not PGVECTOR_ENABLED:
+        return []
+    terms = _query_terms(query)
+    if not terms:
+        return []
+    if not await ensure_pgvector_schema():
+        return []
+    assert PGVECTOR_POOL is not None
+    try:
+        query_vector = await asyncio.wait_for(
+            embed_text(query),
+            timeout=max(1.0, QDRANT_EMBED_TIMEOUT_SECS),
+        )
+    except Exception:
+        query_vector = _cheap_embedding(query, PGVECTOR_EMBED_DIM)
+    if len(query_vector) != PGVECTOR_EMBED_DIM:
+        query_vector = _cheap_embedding(query, PGVECTOR_EMBED_DIM)
+
+    table_name = PGVECTOR_TABLE
+    scan_limit = max(limit * 8, RETRIEVAL_PGVECTOR_SCAN_LIMIT)
+    sql = (
+        f"SELECT project, file, summary, topic_path, created_at, (1 - (embedding <=> $1::vector)) AS similarity "
+        f"FROM {table_name} "
+        "WHERE ($2::text IS NULL OR project = $2) "
+        "AND ($3::text IS NULL OR topic_path LIKE ($3 || '%')) "
+        "ORDER BY embedding <=> $1::vector "
+        "LIMIT $4;"
+    )
+    try:
+        async with PGVECTOR_POOL.acquire() as conn:
+            raw_rows = await conn.fetch(
+                sql,
+                _pgvector_vector_literal(query_vector),
+                project_filter,
+                topic_filter,
+                scan_limit,
+            )
+    except Exception as exc:
+        logger.warning("Postgres pgvector retrieval failed: %s", exc)
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for row in raw_rows:
+        project_name = str(row.get("project") or "")
+        file_name = str(row.get("file") or "")
+        summary = str(row.get("summary") or "")
+        if not project_name or not file_name or not summary:
+            continue
+        topic_path = normalize_topic_path(str(row.get("topic_path") or "")) or derive_topic_path(file_name, None)
+        lexical_score = _text_match_score(query, f"{project_name}\n{file_name}\n{summary}")
+        vector_score = float(row.get("similarity") or 0.0)
+        score = max(0.0, max(vector_score, lexical_score))
+        if score <= 0 and terms:
+            continue
+        rows.append(
+            {
+                "project": project_name,
+                "file": file_name,
+                "summary": summary,
+                "score": score,
+                "source": RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
+                "topic_path": topic_path,
+                "created_at": row.get("created_at"),
+                "backend": "vectorscale" if pgvector_vectorscale_available else "ivfflat",
+            }
+        )
+    rows.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    return rows[:limit]
+
+
 async def push_to_qdrant(
     project: str,
     file_name: str,
@@ -18116,6 +18480,13 @@ async def federated_search_memory(
                 project_filter=project_filter,
                 topic_filter=topic_filter,
                 retrieval_mode=source_mode,
+            )
+        if source == RETRIEVAL_SOURCE_POSTGRES_PGVECTOR:
+            return search_postgres_pgvector(
+                query,
+                limit=source_limit,
+                project_filter=project_filter,
+                topic_filter=topic_filter,
             )
         if source == RETRIEVAL_SOURCE_MONGO_RAW:
             return search_mongo_raw(
@@ -20406,6 +20777,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "memory_bank": "skipped",
             FANOUT_TARGET_MONGO_RAW: "pending",
             FANOUT_TARGET_QDRANT: "skipped",
+            FANOUT_TARGET_POSTGRES_PGVECTOR: "skipped",
             FANOUT_TARGET_MINDSDB: "skipped",
             FANOUT_TARGET_LANGFUSE: "skipped",
             FANOUT_TARGET_LETTA: "skipped",
@@ -20468,6 +20840,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "memory_bank": "skipped",
                 FANOUT_TARGET_MONGO_RAW: "skipped",
                 FANOUT_TARGET_QDRANT: "skipped",
+                FANOUT_TARGET_POSTGRES_PGVECTOR: "skipped",
                 FANOUT_TARGET_MINDSDB: "skipped",
                 FANOUT_TARGET_LANGFUSE: "skipped",
                 FANOUT_TARGET_LETTA: "skipped",
@@ -20499,6 +20872,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
         warnings.append(storage_policy_warning)
     telemetry_like_record = _is_telemetry_memory_record(file_name, topic_path, summary)
     qdrant_telemetry_skipped = telemetry_like_record and QDRANT_TELEMETRY_GUARD_ENABLED
+    pgvector_telemetry_skipped = telemetry_like_record and PGVECTOR_TELEMETRY_GUARD_ENABLED
     mindsdb_telemetry_skipped = telemetry_like_record and MINDSDB_TELEMETRY_GUARD_ENABLED
     letta_telemetry_skipped = telemetry_like_record and LETTA_TELEMETRY_GUARD_ENABLED
     memory_bank_low_value_excluded = bool(
@@ -20507,9 +20881,14 @@ async def write_memory(payload: MemoryWrite, request: Request):
     )
     if memory_bank_low_value_excluded:
         warnings.append("memory-bank persistence skipped for telemetry-like artifact")
-    if telemetry_like_record and (qdrant_telemetry_skipped or mindsdb_telemetry_skipped or letta_telemetry_skipped):
+    if telemetry_like_record and (
+        qdrant_telemetry_skipped
+        or pgvector_telemetry_skipped
+        or mindsdb_telemetry_skipped
+        or letta_telemetry_skipped
+    ):
         warnings.append(
-            "telemetry-like artifact routed to telemetry sink path; qdrant/mindsdb/letta fanout filtered"
+            "telemetry-like artifact routed to telemetry sink path; qdrant/postgres_pgvector/mindsdb/letta fanout filtered"
         )
     fanout_status: dict[str, str] = {
         "memory_bank": (
@@ -20518,6 +20897,15 @@ async def write_memory(payload: MemoryWrite, request: Request):
         FANOUT_TARGET_MONGO_RAW: "pending",
         FANOUT_TARGET_QDRANT: (
             "skipped_low_value" if qdrant_telemetry_skipped else ("deferred_rollup" if hot_rollup_mode else "pending")
+        ),
+        FANOUT_TARGET_POSTGRES_PGVECTOR: (
+            "disabled"
+            if not PGVECTOR_FANOUT_ENABLED
+            else (
+                "skipped_low_value"
+                if pgvector_telemetry_skipped
+                else ("deferred_rollup" if hot_rollup_mode else "pending")
+            )
         ),
         FANOUT_TARGET_MINDSDB: (
             "skipped_low_value" if mindsdb_telemetry_skipped else ("deferred_rollup" if hot_rollup_mode else "pending")
@@ -21094,18 +21482,21 @@ async def get_memory_metrics():
             },
             "rateLimitsPerSec": {
                 "qdrant": FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
+                "postgres_pgvector": FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC,
                 "mindsdb": FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
                 "letta": FANOUT_LETTA_RATE_LIMIT_PER_SEC,
                 "langfuse": FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC,
             },
             "rateLimiterActive": {
                 "qdrant": qdrant_fanout_rate_limiter is not None,
+                "postgres_pgvector": pgvector_fanout_rate_limiter is not None,
                 "mindsdb": mindsdb_fanout_rate_limiter is not None,
                 "letta": letta_fanout_rate_limiter is not None,
                 "langfuse": langfuse_fanout_rate_limiter is not None,
             },
             "batchSizes": {
                 "qdrant": FANOUT_QDRANT_BULK_SIZE,
+                "postgres_pgvector": FANOUT_PGVECTOR_BULK_SIZE,
                 "mindsdb": FANOUT_MINDSDB_BULK_SIZE,
                 "mongo_raw": FANOUT_MONGO_BULK_SIZE,
                 "langfuse": FANOUT_LANGFUSE_BULK_SIZE,
@@ -21660,18 +22051,21 @@ async def get_fanout_metrics():
         },
         "rateLimitsPerSec": {
             "qdrant": FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
+            "postgres_pgvector": FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC,
             "mindsdb": FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
             "letta": FANOUT_LETTA_RATE_LIMIT_PER_SEC,
             "langfuse": FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC,
         },
         "rateLimiterActive": {
             "qdrant": qdrant_fanout_rate_limiter is not None,
+            "postgres_pgvector": pgvector_fanout_rate_limiter is not None,
             "mindsdb": mindsdb_fanout_rate_limiter is not None,
             "letta": letta_fanout_rate_limiter is not None,
             "langfuse": langfuse_fanout_rate_limiter is not None,
         },
         "batchSizes": {
             "qdrant": FANOUT_QDRANT_BULK_SIZE,
+            "postgres_pgvector": FANOUT_PGVECTOR_BULK_SIZE,
             "mindsdb": FANOUT_MINDSDB_BULK_SIZE,
             "mongo_raw": FANOUT_MONGO_BULK_SIZE,
             "langfuse": FANOUT_LANGFUSE_BULK_SIZE,
@@ -22055,7 +22449,7 @@ class MemorySearch(BaseModel):
         None,
         description=(
             "Optional retrieval source override "
-            "(qdrant,mongo_raw,mindsdb,topic_rollups,letta,memory_bank)"
+            "(qdrant,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank)"
         ),
     )
     source_weights: dict[str, float] | None = Field(
@@ -26028,6 +26422,8 @@ async def rehydrate_fanout(payload: FanoutRehydrateRequest):
             FANOUT_TARGET_QDRANT,
             FANOUT_TARGET_MINDSDB,
         ]
+        if PGVECTOR_FANOUT_ENABLED:
+            targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
         if LANGFUSE_API_KEY:
             targets.append(FANOUT_TARGET_LANGFUSE)
         if _letta_target_enabled():
@@ -26147,6 +26543,8 @@ async def backfill_fanout_from_qdrant(payload: QdrantBackfillRequest):
         targets = [t for t in requested_targets if t in FANOUT_TARGETS]
     else:
         targets = [FANOUT_TARGET_MONGO_RAW, FANOUT_TARGET_MINDSDB]
+        if PGVECTOR_FANOUT_ENABLED:
+            targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
         if _letta_target_enabled():
             targets.append(FANOUT_TARGET_LETTA)
     if payload.include_qdrant_target and FANOUT_TARGET_QDRANT not in targets:
@@ -26351,6 +26749,8 @@ async def backfill_fanout_from_mongo_raw(payload: MongoRawBackfillRequest):
         targets = [t for t in requested_targets if t in FANOUT_TARGETS]
     else:
         targets = [FANOUT_TARGET_QDRANT, FANOUT_TARGET_MINDSDB]
+        if PGVECTOR_FANOUT_ENABLED:
+            targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
         if _letta_target_enabled():
             targets.append(FANOUT_TARGET_LETTA)
     if LANGFUSE_API_KEY and FANOUT_TARGET_LANGFUSE not in targets:
