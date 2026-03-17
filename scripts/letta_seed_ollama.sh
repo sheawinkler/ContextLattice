@@ -4,7 +4,7 @@ set -euo pipefail
 # --- Config ---
 LETTA_BASE="${LETTA_BASE:-http://127.0.0.1:8283/v1}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
-LETTA_CHAT_MODEL="${LETTA_CHAT_MODEL:-qwen2.5-coder:7b}"
+LETTA_CHAT_MODEL="${LETTA_CHAT_MODEL:-qwen3.5:9b}"
 LETTA_EMBED_MODEL="${LETTA_EMBED_MODEL:-nomic-embed-text:latest}"
 
 # --- Safe auth header for set -u ---

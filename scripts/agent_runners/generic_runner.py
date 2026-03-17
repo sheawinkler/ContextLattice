@@ -119,7 +119,7 @@ def main(agent_label: Optional[str] = None) -> int:
     task_payload = os.getenv("TASK_PAYLOAD", "{}")
     agent = (agent_label or os.getenv("TASK_AGENT", "trae")).lower()
     provider = os.getenv("TASK_MODEL_PROVIDER", "ollama")
-    model = os.getenv("TASK_MODEL", "qwen2.5-coder:7b")
+    model = os.getenv("TASK_MODEL", "qwen3.5:9b")
     base_url = _base_url_for_provider(provider, os.getenv("TASK_BASE_URL"))
     api_key = os.getenv("TASK_API_KEY")
 
