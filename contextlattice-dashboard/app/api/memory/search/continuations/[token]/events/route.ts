@@ -13,27 +13,39 @@ export async function GET(
   }
 
   const qs = req.nextUrl.searchParams.toString();
-  const path = `/memory/search/continuations/${encodeURIComponent(token)}/events${
-    qs ? `?${qs}` : ""
-  }`;
+  const candidates = [
+    `/memory/search/continuations/${encodeURIComponent(token)}/events${
+      qs ? `?${qs}` : ""
+    }`,
+    `/memory/search/jobs/${encodeURIComponent(token)}/events${
+      qs ? `?${qs}` : ""
+    }`,
+  ];
+  let upstream: Response | null = null;
+  let detail = "";
+  for (const path of candidates) {
+    const response = await fetchOrchestrator(path, {
+      method: "GET",
+      headers: {
+        accept: "text/event-stream",
+        "cache-control": "no-cache",
+      },
+    });
+    if (response.ok && response.body) {
+      upstream = response;
+      break;
+    }
+    detail = await response.text();
+  }
 
-  const upstream = await fetchOrchestrator(path, {
-    method: "GET",
-    headers: {
-      accept: "text/event-stream",
-      "cache-control": "no-cache",
-    },
-  });
-
-  if (!upstream.ok || !upstream.body) {
-    const detail = await upstream.text();
+  if (!upstream || !upstream.ok || !upstream.body) {
     return NextResponse.json(
       {
         error: "continuation stream unavailable",
-        status: upstream.status,
+        status: upstream?.status ?? 502,
         detail,
       },
-      { status: upstream.status || 502 },
+      { status: upstream?.status || 502 },
     );
   }
 
