@@ -1546,17 +1546,17 @@ def _memory_bank_timeout_override_secs(env_name: str) -> float | None:
 
 
 MEMORY_BANK_SPIKE_BACKEND = str(
-    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "surrealdb_spike")
+    os.getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "icm_spike")
 ).strip().lower()
 if MEMORY_BANK_SPIKE_BACKEND not in MEMORY_BANK_SPIKE_BACKEND_CHOICES:
-    MEMORY_BANK_SPIKE_BACKEND = "surrealdb_spike"
+    MEMORY_BANK_SPIKE_BACKEND = "icm_spike"
 MEMORY_BANK_SPIKE_FALLBACK_BACKEND = str(
-    os.getenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND", "memvid_spike")
+    os.getenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND", "surrealdb_spike")
 ).strip().lower()
 MEMORY_BANK_SPIKE_FALLBACK_BACKENDS = _parse_memory_bank_backend_csv(
     os.getenv(
         "ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS",
-        "memvid_spike,shodh_spike,quickwit_spike",
+        "surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike",
     )
 )
 if (
@@ -22640,7 +22640,7 @@ def _default_rust_retrieval_backend_policy() -> dict[str, Any]:
         "strict": bool(RUST_RETRIEVAL_BACKEND_STRICT),
         "memory_bank_backend": _normalize_memory_bank_backend_choice(
             MEMORY_BANK_SPIKE_BACKEND,
-            default="surrealdb_spike",
+            default="icm_spike",
         ),
     }
 
