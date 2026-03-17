@@ -2825,6 +2825,9 @@ async def test_memory_search_deep_async_returns_partial_plus_job(monkeypatch: py
     assert response["token"] == "tok-partial"
     assert response["job_id"] == "tok-partial"
     assert response["job_poll_url"] == "/memory/search/jobs/tok-partial"
+    assert response["continuation_async"]["token"] == "tok-partial"
+    assert response["continuation_async"]["events_url"] == "/memory/search/continuations/tok-partial/events"
+    assert response["continuation_async"]["legacy_events_url"] == "/memory/search/jobs/tok-partial/events"
     assert response["results"][0]["source"] == "topic_rollups"
     assert response["retrieval_lifecycle"]["status"] == "queued"
     assert response["retrieval_lifecycle"]["partial"] is True
@@ -2882,6 +2885,8 @@ async def test_get_memory_search_async_returns_completed_result(monkeypatch: pyt
     assert response["job_id"] == token
     assert response["job_poll_url"] == f"/memory/search/jobs/{token}"
     assert response["events_url"] == f"/memory/search/jobs/{token}/events"
+    assert response["continuation_async"]["poll_url"] == f"/memory/search/continuations/{token}"
+    assert response["continuation_async"]["events_url"] == f"/memory/search/continuations/{token}/events"
     assert response["result"]["results"][0]["project"] == "alpha"
 
 
@@ -2908,6 +2913,29 @@ async def test_get_memory_search_job_alias_returns_completed_result(monkeypatch:
 
 
 @pytest.mark.asyncio
+async def test_get_memory_search_continuation_alias_returns_completed_result(monkeypatch: pytest.MonkeyPatch):
+    token = "tok-status-continuation"
+    expires = time.monotonic() + 120.0
+    async with orchestrator.recall_deep_async_lock:
+        orchestrator.recall_deep_async_jobs.clear()
+        orchestrator.recall_deep_async_jobs[token] = {
+            "token": token,
+            "status": "completed",
+            "created_at": "2026-03-12T00:00:00Z",
+            "updated_at": "2026-03-12T00:00:01Z",
+            "completed_at": "2026-03-12T00:00:01Z",
+            "expires_monotonic": expires,
+            "expires_at": orchestrator._recall_deep_async_expires_at_iso(expires),
+            "result": {"results": [{"project": "alpha"}]},
+            "error": None,
+        }
+    response = await orchestrator.get_memory_search_continuation(token)
+    assert response["status"] == "completed"
+    assert response["job_id"] == token
+    assert response["continuation_async"]["events_url"] == f"/memory/search/continuations/{token}/events"
+
+
+@pytest.mark.asyncio
 async def test_stream_memory_search_job_events_returns_snapshot_for_completed_job():
     token = "tok-events"
     expires = time.monotonic() + 120.0
@@ -2925,6 +2953,36 @@ async def test_stream_memory_search_job_events_returns_snapshot_for_completed_jo
             "error": None,
         }
     response = await orchestrator.stream_memory_search_job_events(token)
+    assert response.media_type == "text/event-stream"
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, str):
+            chunks.append(chunk.encode("utf-8"))
+        else:
+            chunks.append(bytes(chunk))
+    payload = b"".join(chunks).decode("utf-8")
+    assert "event: snapshot" in payload
+    assert "\"status\":\"completed\"" in payload
+
+
+@pytest.mark.asyncio
+async def test_stream_memory_search_continuation_events_alias_returns_snapshot_for_completed_job():
+    token = "tok-events-continuation"
+    expires = time.monotonic() + 120.0
+    async with orchestrator.recall_deep_async_lock:
+        orchestrator.recall_deep_async_jobs.clear()
+        orchestrator.recall_deep_async_jobs[token] = {
+            "token": token,
+            "status": "completed",
+            "created_at": "2026-03-12T00:00:00Z",
+            "updated_at": "2026-03-12T00:00:01Z",
+            "completed_at": "2026-03-12T00:00:01Z",
+            "expires_monotonic": expires,
+            "expires_at": orchestrator._recall_deep_async_expires_at_iso(expires),
+            "result": {"results": [{"project": "alpha"}]},
+            "error": None,
+        }
+    response = await orchestrator.stream_memory_search_continuation_events(token)
     assert response.media_type == "text/event-stream"
     chunks: list[bytes] = []
     async for chunk in response.body_iterator:

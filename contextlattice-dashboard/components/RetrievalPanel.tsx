@@ -43,6 +43,9 @@ type SearchResponse = {
   source_summary?: SourceSummary;
   retrieval_lifecycle?: RetrievalLifecycle;
   continuation_async?: ContinuationInfo;
+  token?: string;
+  job_id?: string;
+  events_url?: string;
 };
 
 type ContinuationEvent = {
@@ -140,9 +143,13 @@ export function RetrievalPanel() {
     eventSourceRef.current = null;
   }
 
-  function openContinuationStream(token: string) {
+  function openContinuationStream(token: string, eventsPath?: string) {
     closeEventStream();
-    const stream = new EventSource(`/api/memory/search/continuations/${encodeURIComponent(token)}/events`);
+    const candidatePath = String(eventsPath || "").trim();
+    const streamPath = candidatePath.startsWith("/")
+      ? candidatePath
+      : `/memory/search/continuations/${encodeURIComponent(token)}/events`;
+    const stream = new EventSource(`/api${streamPath}`);
     eventSourceRef.current = stream;
 
     const eventNames = ["snapshot", "update", "ready", "heartbeat", "completed", "failed"];
@@ -197,9 +204,19 @@ export function RetrievalPanel() {
       }
       setResponse(data);
 
-      const token = String(data.continuation_async?.token || "").trim();
+      const token = String(
+        data.continuation_async?.token ||
+          data.token ||
+          data.job_id ||
+          "",
+      ).trim();
       if (token) {
-        openContinuationStream(token);
+        const eventsPath = String(
+          data.continuation_async?.events_url ||
+            data.events_url ||
+            "",
+        ).trim();
+        openContinuationStream(token, eventsPath);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Search failed";

@@ -22910,21 +22910,37 @@ def _build_recall_deep_async_job_payload(
     *,
     include_result: bool = True,
 ) -> dict[str, Any]:
+    status = str(entry.get("status") or "unknown")
+    poll_url = f"/memory/search/async/{token}"
+    job_poll_url = f"/memory/search/jobs/{token}"
+    events_url = f"/memory/search/jobs/{token}/events"
+    continuation_poll_url = f"/memory/search/continuations/{token}"
+    continuation_events_url = f"/memory/search/continuations/{token}/events"
     payload: dict[str, Any] = {
         "ok": True,
         "async": True,
         "job_id": token,
         "token": token,
-        "status": str(entry.get("status") or "unknown"),
-        "async_status": str(entry.get("status") or "unknown"),
+        "status": status,
+        "async_status": status,
         "created_at": entry.get("created_at"),
         "updated_at": entry.get("updated_at"),
         "started_at": entry.get("started_at"),
         "completed_at": entry.get("completed_at"),
         "expires_at": entry.get("expires_at"),
-        "poll_url": f"/memory/search/async/{token}",
-        "job_poll_url": f"/memory/search/jobs/{token}",
-        "events_url": f"/memory/search/jobs/{token}/events",
+        "poll_url": poll_url,
+        "job_poll_url": job_poll_url,
+        "events_url": events_url,
+        "continuation_poll_url": continuation_poll_url,
+        "continuation_events_url": continuation_events_url,
+        "continuation_async": {
+            "token": token,
+            "status": status,
+            "poll_url": continuation_poll_url,
+            "events_url": continuation_events_url,
+            "legacy_poll_url": job_poll_url,
+            "legacy_events_url": events_url,
+        },
     }
     callback_url = str(entry.get("callback_url") or "").strip()
     if callback_url:
@@ -23329,6 +23345,16 @@ async def _enqueue_recall_deep_async_job(
         "poll_url": f"/memory/search/async/{token}",
         "job_poll_url": f"/memory/search/jobs/{token}",
         "events_url": f"/memory/search/jobs/{token}/events",
+        "continuation_poll_url": f"/memory/search/continuations/{token}",
+        "continuation_events_url": f"/memory/search/continuations/{token}/events",
+        "continuation_async": {
+            "token": token,
+            "status": "queued",
+            "poll_url": f"/memory/search/continuations/{token}",
+            "events_url": f"/memory/search/continuations/{token}/events",
+            "legacy_poll_url": f"/memory/search/jobs/{token}",
+            "legacy_events_url": f"/memory/search/jobs/{token}/events",
+        },
         "expires_at": _recall_deep_async_expires_at_iso(expires_monotonic),
     }
 
@@ -23392,6 +23418,21 @@ def _attach_recall_deep_async_metadata(
     poll_url = str(async_meta.get("poll_url") or "").strip()
     job_poll_url = str(async_meta.get("job_poll_url") or "").strip()
     events_url = str(async_meta.get("events_url") or "").strip()
+    continuation_poll_url = str(async_meta.get("continuation_poll_url") or "").strip()
+    continuation_events_url = str(async_meta.get("continuation_events_url") or "").strip()
+    continuation_meta = (
+        async_meta.get("continuation_async")
+        if isinstance(async_meta.get("continuation_async"), dict)
+        else None
+    )
+    if not continuation_poll_url and token:
+        continuation_poll_url = f"/memory/search/continuations/{token}"
+    if not continuation_events_url and token:
+        continuation_events_url = f"/memory/search/continuations/{token}/events"
+    if not job_poll_url and token:
+        job_poll_url = f"/memory/search/jobs/{token}"
+    if not events_url and token:
+        events_url = f"/memory/search/jobs/{token}/events"
     expires_at = async_meta.get("expires_at")
 
     payload["ok"] = True
@@ -23407,9 +23448,24 @@ def _attach_recall_deep_async_metadata(
         payload["job_poll_url"] = job_poll_url
     if events_url:
         payload["events_url"] = events_url
+    if continuation_poll_url:
+        payload["continuation_poll_url"] = continuation_poll_url
+    if continuation_events_url:
+        payload["continuation_events_url"] = continuation_events_url
     if expires_at:
         payload["expires_at"] = expires_at
     payload["deep_async_auto"] = bool(deep_async_auto)
+    if token:
+        payload["continuation_async"] = {
+            "token": token,
+            "status": status,
+            "poll_url": continuation_poll_url or job_poll_url or poll_url,
+            "events_url": continuation_events_url or events_url,
+            "legacy_poll_url": job_poll_url or poll_url,
+            "legacy_events_url": events_url,
+        }
+        if continuation_meta and str(continuation_meta.get("heartbeat_secs") or "").strip():
+            payload["continuation_async"]["heartbeat_secs"] = continuation_meta.get("heartbeat_secs")
 
     if partial_mode:
         payload["partial"] = True
@@ -24460,6 +24516,11 @@ async def get_memory_search_job(job_id: str, include_result: bool = True):
     return await get_memory_search_async(job_id, include_result=include_result)
 
 
+@app.get("/memory/search/continuations/{token}")
+async def get_memory_search_continuation(token: str, include_result: bool = True):
+    return await get_memory_search_async(token, include_result=include_result)
+
+
 @app.get("/memory/search/jobs/{job_id}/events")
 async def stream_memory_search_job_events(job_id: str, include_result: bool = True):
     token = str(job_id or "").strip()
@@ -24518,6 +24579,11 @@ async def stream_memory_search_job_events(job_id: str, include_result: bool = Tr
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(_stream(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/memory/search/continuations/{token}/events")
+async def stream_memory_search_continuation_events(token: str, include_result: bool = True):
+    return await stream_memory_search_job_events(token, include_result=include_result)
 
 
 @app.post("/memory/context-pack")
