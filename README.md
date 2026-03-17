@@ -613,4 +613,6 @@ Public landing collateral publishes from `sheawinkler/ContextLattice` branch `gh
 ## License
 
 Business Source License 1.1 with change-date transition to Apache-2.0.
-See `LICENSE` and `docs/legal/README.md`.
+Additional Use Grant allows personal/non-production and internal production use
+up to 2M JSON-RPC requests/month/organization; usage outside grant requires a
+separate commercial license. See `LICENSE` and `docs/legal/README.md`.
