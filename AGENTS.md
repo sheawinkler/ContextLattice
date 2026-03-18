@@ -8,6 +8,13 @@ Migrate the Python implementation to a hybrid architecture:
 - Rust: memory + retrieval engine
 - Go: orchestration services
 
+## Agent Endpoint Pinning (Required)
+
+- External agents must call the orchestrator endpoint at `http://127.0.0.1:8075` by default.
+- If users run this on a different host/port, they must explicitly override:
+  - `MEMMCP_ORCHESTRATOR_URL`
+  - `CONTEXTLATTICE_ORCHESTRATOR_URL`
+
 ## Non-goals
 
 - Do not rewrite the entire system at once.

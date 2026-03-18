@@ -313,6 +313,9 @@ Required behavior:
    Deep mode now defaults to async completion: you get immediate partial results plus `job_id`/`poll_url`/`events_url`, then fetch final results from `GET /memory/search/jobs/{job_id}` (or `/memory/search/async/{job_id}`) or stream updates from `GET /memory/search/jobs/{job_id}/events`.
    Read responses expose `retrieval_lifecycle` for explicit status (`queued|running|partial|succeeded|failed`) and source availability.
    If a deep read returns partials, show those immediately and poll once after 5-15s for warmed slow-source completion.
+7) Set endpoint vars explicitly at session start:
+   - `export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075`
+   - `export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075`
 ```
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`
