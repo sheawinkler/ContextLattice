@@ -561,6 +561,7 @@ Ingress endpoints:
 
 - `POST /memory/write`
 - `POST /memory/search`
+- `POST /memory/context-pack`
 - `GET /memory/search/continuations/{token}/events`
 - `POST /tools/feedback_submit`
 - `POST /integrations/messaging/command`
@@ -580,6 +581,32 @@ Ingress endpoints:
 - `GET /telemetry/retention`
 - `POST /telemetry/retention/run`
 - `POST /maintenance/telemetry/purge`
+
+## Agent Context Expansion Runtime
+
+Task workers and generic agent runners now execute a context-expansion loop by default:
+
+1. Pre-inference `POST /memory/context-pack` preflight.
+2. Budgeted context layers:
+   - `L0` factual snippets
+   - `L1` topic rollups
+   - `L2` raw file refs for detail dives
+3. Adaptive expansion:
+   - one broadened scope pass (drop topic scope once)
+   - deep async escalation when coverage is still low
+4. Tool-aware context slices exported via `TASK_TOOL_CONTEXT_SLICES`.
+5. Post-run checkpoint writeback to stable topic path (`agent/checkpoints` fallback).
+6. Fail-open lifecycle reporting with pending-source visibility.
+
+Tune with:
+
+```bash
+CONTEXT_EXPANSION_ENABLED=true
+CONTEXT_EXPANSION_L0_BUDGET_TOKENS=1200
+CONTEXT_EXPANSION_L1_BUDGET_TOKENS=800
+CONTEXT_EXPANSION_L2_BUDGET_TOKENS=400
+CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
+```
 
 ## Docs Index
 
