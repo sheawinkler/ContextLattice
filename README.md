@@ -622,6 +622,8 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 
 ## Docs Index
 
+- Release notes:
+  - `docs/releases/v3.1.0.md` (post-`v3.0.0` public, non-V4 integration/runtime updates)
 - Phase 0 performance baseline: `docs/perf-baseline.md`
 - Migration plan: `docs/migration-plan.md`
 - Migration interfaces (Phase 1 proposal): `docs/migration-interfaces.md`
