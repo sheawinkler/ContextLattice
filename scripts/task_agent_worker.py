@@ -17,6 +17,11 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+try:
+    from scripts.context_expansion_runtime import ContextExpansionRuntime
+except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
+    from context_expansion_runtime import ContextExpansionRuntime
+
 DEFAULT_ORCH_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
     os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
@@ -83,6 +88,7 @@ def _run_llm_task(
     base_url: str,
     api_key: Optional[str],
     task: dict[str, Any],
+    context_prompt: str | None = None,
 ) -> str:
     prompt = task.get("title", "Task")
     payload = task.get("payload") or {}
@@ -90,10 +96,15 @@ def _run_llm_task(
     messages = [
         {
             "role": "system",
-            "content": "You are a task runner. Provide a concise plan and next actions.",
+            "content": (
+                "You are a task runner. Provide a concise plan and next actions. "
+                "Use the supplied factual context pack when present and copy numeric facts verbatim."
+            ),
         },
-        {"role": "user", "content": body},
     ]
+    if context_prompt:
+        messages.append({"role": "system", "content": context_prompt})
+    messages.append({"role": "user", "content": body})
     provider = provider.lower()
     if provider == "ollama":
         return _call_ollama(base_url, model, messages)
@@ -123,22 +134,46 @@ def _run_command(cmd: str, env: dict[str, str]) -> int:
     return subprocess.call(cmd, shell=True, env=env)
 
 
+def _orchestrator_headers() -> dict[str, str]:
+    headers: dict[str, str] = {}
+    api_key = (
+        str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
+        or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
+    )
+    if api_key:
+        headers["x-api-key"] = api_key
+    return headers
+
+
 def _post(orchestrator_url: str, path: str, payload: dict[str, Any], params: dict[str, str] | None = None) -> dict[str, Any]:
     url = f"{orchestrator_url.rstrip('/')}{path}"
-    resp = httpx.post(url, json=payload, params=params, timeout=30.0)
+    resp = httpx.post(url, json=payload, params=params, headers=_orchestrator_headers(), timeout=30.0)
     resp.raise_for_status()
     return resp.json()
 
 
 def _get(orchestrator_url: str, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
     url = f"{orchestrator_url.rstrip('/')}{path}"
-    resp = httpx.get(url, params=params, timeout=30.0)
+    resp = httpx.get(url, params=params, headers=_orchestrator_headers(), timeout=30.0)
     resp.raise_for_status()
     return resp.json()
 
 
-def _write_memory(orchestrator_url: str, project: str, file_name: str, content: str) -> None:
-    _post(orchestrator_url, "/memory/write", {"projectName": project, "fileName": file_name, "content": content})
+def _write_memory(
+    orchestrator_url: str,
+    project: str,
+    file_name: str,
+    content: str,
+    topic_path: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "projectName": project,
+        "fileName": file_name,
+        "content": content,
+    }
+    if topic_path:
+        payload["topicPath"] = topic_path
+    _post(orchestrator_url, "/memory/write", payload)
 
 
 def _post_feedback(orchestrator_url: str, payload: dict[str, Any]) -> None:
@@ -154,6 +189,13 @@ def _format_result(task: dict[str, Any], output: str) -> str:
     return f"""# Task Result\n\n## Task\n- id: {task.get('id')}\n- title: {task.get('title')}\n- project: {task.get('project')}\n- agent: {task.get('agent')}\n\n## Payload\n```\n{payload_block}\n```\n\n## Output\n{output}\n"""
 
 
+def _serialize_env_json(payload: dict[str, Any], max_chars: int = 65000) -> str:
+    rendered = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+    if len(rendered) <= max_chars:
+        return rendered
+    return rendered[: max_chars - 1] + "}"
+
+
 def _handle_task(
     orchestrator_url: str,
     task: dict[str, Any],
@@ -165,6 +207,30 @@ def _handle_task(
 ) -> None:
     task_payload = task.get("payload") or {}
     topic_path = task_payload.get("topic_path") or task_payload.get("topicPath")
+    context_runtime = ContextExpansionRuntime(orchestrator_url=orchestrator_url, agent_id=(task.get("agent") or agent))
+    context_bundle: dict[str, Any]
+    context_prompt: str
+    try:
+        context_bundle = context_runtime.prepare(task)
+        context_prompt = context_runtime.render_for_prompt(context_bundle)
+    except Exception as exc:
+        context_bundle = {
+            "enabled": False,
+            "query": str(task.get("title") or "task context"),
+            "project": str(task.get("project") or "_global"),
+            "topic_path": topic_path,
+            "warnings": [f"context expansion failed: {exc}"],
+            "lifecycle": {"status": "failed_open", "result_state": "failed_open", "degraded": True},
+            "layers": {"l0_facts": [], "l1_rollups": [], "l2_raw_refs": []},
+            "numeric_facts": [],
+            "tool_slices": {},
+            "expansion": {"broadened_scope": False, "deep_escalated": False, "steps": ["failed_open"]},
+        }
+        context_prompt = "Context expansion unavailable; continue with fail-open execution."
+
+    lifecycle = context_bundle.get("lifecycle") if isinstance(context_bundle.get("lifecycle"), dict) else {}
+    pending_sources = lifecycle.get("pending_sources") if isinstance(lifecycle.get("pending_sources"), list) else []
+
     if task.get("approval_required") and not task.get("approved"):
         _post(
             orchestrator_url,
@@ -188,6 +254,13 @@ def _handle_task(
             "TASK_API_KEY": api_key or "",
             "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
             "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
+            "TASK_CONTEXT_BUNDLE": _serialize_env_json(context_bundle),
+            "TASK_CONTEXT_PROMPT": context_prompt,
+            "TASK_TOOL_CONTEXT_SLICES": _serialize_env_json(
+                context_bundle.get("tool_slices")
+                if isinstance(context_bundle.get("tool_slices"), dict)
+                else {}
+            ),
         }
     )
 
@@ -195,7 +268,17 @@ def _handle_task(
         exit_code = _run_command(cmd, env)
         status = "succeeded" if exit_code == 0 else "failed"
         message = "Task completed by runner command" if exit_code == 0 else "Runner command failed"
+        if pending_sources:
+            message += f" (pending async sources: {', '.join(str(item) for item in pending_sources[:4])})"
         _post(orchestrator_url, f"/agents/tasks/{task['id']}/status", {"status": status, "message": message})
+        context_runtime.write_checkpoint(
+            task=task,
+            bundle=context_bundle,
+            output=message,
+            provider=provider,
+            model=model,
+            status=status,
+        )
         if exit_code == 0:
             _post_feedback(
                 orchestrator_url,
@@ -205,20 +288,44 @@ def _handle_task(
                 "source": "agent",
                 "content": message,
                 "topic_path": topic_path,
-                "metadata": {"agent": agent_choice, "provider": provider, "model": model},
+                "metadata": {
+                    "agent": agent_choice,
+                    "provider": provider,
+                    "model": model,
+                    "retrieval_lifecycle": lifecycle,
+                    "context_expansion": context_bundle.get("expansion"),
+                },
             },
         )
         return
 
     try:
-        output = _run_llm_task(provider, model, base_url, api_key, task)
+        output = _run_llm_task(
+            provider,
+            model,
+            base_url,
+            api_key,
+            task,
+            context_prompt=context_prompt,
+        )
         project = task.get("project") or "_global"
         file_name = f"task_runs/{task['id']}.md"
-        _write_memory(orchestrator_url, project, file_name, _format_result(task, output))
+        _write_memory(orchestrator_url, project, file_name, _format_result(task, output), topic_path=topic_path)
+        completion_message = f"Completed via {provider} ({model})"
+        if pending_sources:
+            completion_message += f" | pending async sources: {', '.join(str(item) for item in pending_sources[:4])}"
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
-            {"status": "succeeded", "message": f"Completed via {provider} ({model})"},
+            {"status": "succeeded", "message": completion_message},
+        )
+        context_runtime.write_checkpoint(
+            task=task,
+            bundle=context_bundle,
+            output=output,
+            provider=provider,
+            model=model,
+            status="succeeded",
         )
         _post_feedback(
             orchestrator_url,
@@ -228,10 +335,24 @@ def _handle_task(
                 "source": "agent",
                 "content": output[:1500],
                 "topic_path": topic_path,
-                "metadata": {"agent": agent_choice, "provider": provider, "model": model},
+                "metadata": {
+                    "agent": agent_choice,
+                    "provider": provider,
+                    "model": model,
+                    "retrieval_lifecycle": lifecycle,
+                    "context_expansion": context_bundle.get("expansion"),
+                },
             },
         )
     except Exception as exc:  # pragma: no cover
+        context_runtime.write_checkpoint(
+            task=task,
+            bundle=context_bundle,
+            output=f"Runner error: {exc}",
+            provider=provider,
+            model=model,
+            status="failed",
+        )
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",

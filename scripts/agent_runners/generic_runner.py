@@ -10,6 +10,11 @@ import time
 import urllib.request
 from typing import Any, Optional
 
+try:
+    from scripts.context_expansion_runtime import ContextExpansionRuntime
+except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
+    from context_expansion_runtime import ContextExpansionRuntime
+
 
 def _base_url_for_provider(provider: str, override: Optional[str]) -> str:
     if override:
@@ -72,6 +77,7 @@ def _run_llm_task(
     base_url: str,
     api_key: Optional[str],
     task: dict[str, Any],
+    context_prompt: str | None = None,
 ) -> str:
     prompt = task.get("title", "Task")
     payload = task.get("payload") or {}
@@ -79,10 +85,15 @@ def _run_llm_task(
     messages = [
         {
             "role": "system",
-            "content": "You are a task runner. Provide a concise plan and next actions.",
+            "content": (
+                "You are a task runner. Provide a concise plan and next actions. "
+                "Use supplied factual context and copy numeric facts verbatim."
+            ),
         },
-        {"role": "user", "content": body},
     ]
+    if context_prompt:
+        messages.append({"role": "system", "content": context_prompt})
+    messages.append({"role": "user", "content": body})
     provider = provider.lower()
     if provider == "ollama":
         return _call_ollama(base_url, model, messages)
@@ -92,7 +103,14 @@ def _run_llm_task(
 def _write_memory(orchestrator_url: str, project: str, file_name: str, content: str) -> None:
     url = f"{orchestrator_url.rstrip('/')}/memory/write"
     payload = {"projectName": project, "fileName": file_name, "content": content}
-    _post_json(url, payload, headers={"content-type": "application/json"})
+    headers = {"content-type": "application/json"}
+    api_key = (
+        str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
+        or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
+    )
+    if api_key:
+        headers["x-api-key"] = api_key
+    _post_json(url, payload, headers=headers)
 
 
 def _format_result(task: dict[str, Any], output: str, agent_label: str) -> str:
@@ -136,11 +154,68 @@ def main(agent_label: Optional[str] = None) -> int:
         "payload": payload_data,
     }
 
+    context_runtime = ContextExpansionRuntime(orchestrator_url=orchestrator_url, agent_id=agent)
+    context_bundle = None
+    context_prompt: str | None = None
+    context_bundle_env = str(os.getenv("TASK_CONTEXT_BUNDLE") or "").strip()
+    if context_bundle_env:
+        try:
+            parsed = json.loads(context_bundle_env)
+            if isinstance(parsed, dict):
+                context_bundle = parsed
+                context_prompt = context_runtime.render_for_prompt(parsed)
+        except json.JSONDecodeError:
+            context_bundle = None
+            context_prompt = None
+    if context_bundle is None:
+        try:
+            context_bundle = context_runtime.prepare(task)
+            context_prompt = context_runtime.render_for_prompt(context_bundle)
+        except Exception:
+            context_bundle = {
+                "enabled": False,
+                "query": task_title,
+                "project": task_project,
+                "topic_path": None,
+                "warnings": ["context expansion failed-open"],
+                "lifecycle": {"status": "failed_open", "result_state": "failed_open", "degraded": True},
+                "layers": {"l0_facts": [], "l1_rollups": [], "l2_raw_refs": []},
+                "numeric_facts": [],
+                "tool_slices": {},
+                "expansion": {"broadened_scope": False, "deep_escalated": False, "steps": ["failed_open"]},
+            }
+            context_prompt = "Context expansion unavailable; proceed fail-open."
+
     try:
-        output = _run_llm_task(provider, model, base_url, api_key, task)
+        output = _run_llm_task(
+            provider,
+            model,
+            base_url,
+            api_key,
+            task,
+            context_prompt=context_prompt,
+        )
         file_name = f"task_runs/{task['id']}.md"
         _write_memory(orchestrator_url, task_project or "_global", file_name, _format_result(task, output, agent))
+        if isinstance(context_bundle, dict):
+            context_runtime.write_checkpoint(
+                task=task,
+                bundle=context_bundle,
+                output=output,
+                provider=provider,
+                model=model,
+                status="succeeded",
+            )
     except Exception as exc:
+        if isinstance(context_bundle, dict):
+            context_runtime.write_checkpoint(
+                task=task,
+                bundle=context_bundle,
+                output=f"[agent-runner] failed: {exc}",
+                provider=provider,
+                model=model,
+                status="failed",
+            )
         print(f"[agent-runner] failed: {exc}", file=sys.stderr)
         return 1
 
