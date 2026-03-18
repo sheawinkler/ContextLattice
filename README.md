@@ -316,6 +316,9 @@ Required behavior:
 7) Set endpoint vars explicitly at session start:
    - `export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075`
    - `export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075`
+8) Set a stable agent identity for profile defaults:
+   - `export CONTEXTLATTICE_AGENT_ID=codex_gpt5`
+   - `export MEMMCP_AGENT_ID=codex_gpt5`
 ```
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`
@@ -328,6 +331,12 @@ python3 scripts/agent_orchestration.py search-lifecycle \
   contextlattice \
   deep \
   wait
+```
+
+Codex-first preflight helper:
+
+```bash
+python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration
 ```
 
 ## External Agent Task Routing (Generic)

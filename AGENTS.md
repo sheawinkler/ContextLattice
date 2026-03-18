@@ -15,6 +15,14 @@ Migrate the Python implementation to a hybrid architecture:
   - `MEMMCP_ORCHESTRATOR_URL`
   - `CONTEXTLATTICE_ORCHESTRATOR_URL`
 
+## Codex-First Integration Defaults
+
+- Use a stable agent identity for reads/writes so profile defaults apply:
+  - `CONTEXTLATTICE_AGENT_ID=codex_gpt5`
+  - `MEMMCP_AGENT_ID=codex_gpt5`
+- Before major work, run:
+  - `python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration`
+
 ## Non-goals
 
 - Do not rewrite the entire system at once.

@@ -18,13 +18,23 @@ DEFAULT_ORCHESTRATOR_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
     os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
 )
+DEFAULT_AGENT_ID = (
+    os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
+    or os.getenv("MEMMCP_AGENT_ID", "").strip()
+    or "codex_gpt5"
+)
 
 
 class ContextLatticeOrchestrator:
     """Helper for agent coordination via ContextLattice."""
 
-    def __init__(self, orchestrator_url: str = DEFAULT_ORCHESTRATOR_URL):
+    def __init__(
+        self,
+        orchestrator_url: str = DEFAULT_ORCHESTRATOR_URL,
+        agent_id: str = DEFAULT_AGENT_ID,
+    ):
         self.base_url = orchestrator_url.rstrip("/")
+        self.agent_id = str(agent_id or "").strip() or DEFAULT_AGENT_ID
         api_key = (
             os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
             or os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", "").strip()
@@ -40,15 +50,24 @@ class ContextLatticeOrchestrator:
         parts = [quote(part, safe="") for part in cleaned.split("/") if part]
         return f"{encoded_project}/{'/'.join(parts)}" if parts else encoded_project
 
-    def write(self, project: str, file_name: str, content: str) -> Dict[str, Any]:
+    def write(
+        self,
+        project: str,
+        file_name: str,
+        content: str,
+        topic_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Write a file to ContextLattice."""
+        payload: Dict[str, Any] = {
+            "projectName": project,
+            "fileName": file_name,
+            "content": content,
+        }
+        if topic_path:
+            payload["topicPath"] = topic_path
         resp = self.client.post(
             f"{self.base_url}/memory/write",
-            json={
-                "projectName": project,
-                "fileName": file_name,
-                "content": content,
-            },
+            json=payload,
         )
         resp.raise_for_status()
         return resp.json()
@@ -118,11 +137,13 @@ class ContextLatticeOrchestrator:
         self,
         query: str,
         project: Optional[str] = None,
+        topic_path: Optional[str] = None,
         limit: int = 10,
         fetch_content: bool = False,
         retrieval_mode: str = "balanced",
         include_grounding: bool = True,
         include_retrieval_debug: bool = False,
+        agent_id: Optional[str] = None,
         deep_async: Optional[bool] = None,
         wait_for_completion: bool = False,
         poll_interval_secs: float = 1.5,
@@ -141,11 +162,13 @@ class ContextLatticeOrchestrator:
         request_payload = {
             "query": query,
             "project": project,
+            "topic_path": topic_path,
             "limit": limit,
             "fetch_content": fetch_content,
             "retrieval_mode": mode,
             "include_grounding": include_grounding,
             "include_retrieval_debug": include_retrieval_debug,
+            "agent_id": str(agent_id or self.agent_id).strip() or DEFAULT_AGENT_ID,
             "deep_async": bool(deep_async_value) if deep_async_value is not None else None,
         }
         if request_payload["deep_async"] is None:
@@ -208,6 +231,96 @@ class ContextLatticeOrchestrator:
                 return output
             time.sleep(max(0.2, float(poll_interval_secs)))
         return output
+
+    def context_pack(
+        self,
+        query: str,
+        project: Optional[str] = None,
+        topic_path: Optional[str] = None,
+        retrieval_mode: str = "balanced",
+        limit: int = 10,
+        max_facts: int = 24,
+        include_retrieval_debug: bool = True,
+        agent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve factual context pack for pre-inference grounding."""
+        payload = {
+            "query": query,
+            "project": project,
+            "topic_path": topic_path,
+            "retrieval_mode": retrieval_mode,
+            "limit": int(limit),
+            "max_facts": int(max_facts),
+            "include_retrieval_debug": bool(include_retrieval_debug),
+            "agent_id": str(agent_id or self.agent_id).strip() or DEFAULT_AGENT_ID,
+            "traffic_class": "user",
+        }
+        resp = self.client.post(f"{self.base_url}/memory/context-pack", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+    def codex_preflight(
+        self,
+        project: str,
+        topic_path: str = "runbooks/codex-integration",
+        query: str = "codex preflight connectivity and retrieval",
+    ) -> Dict[str, Any]:
+        """
+        Codex-first preflight:
+        - health
+        - status
+        - scoped search (with broadened fallback)
+        - context-pack retrieval
+        """
+        health = self.client.get(f"{self.base_url}/health")
+        health.raise_for_status()
+        health_json = health.json()
+
+        status = self.client.get(f"{self.base_url}/status")
+        status.raise_for_status()
+        status_json = status.json()
+
+        scoped = self.search_with_lifecycle(
+            query=query,
+            project=project,
+            topic_path=topic_path,
+            retrieval_mode="balanced",
+            include_grounding=True,
+            include_retrieval_debug=True,
+            wait_for_completion=False,
+        )
+        broadened = None
+        scoped_results = scoped.get("results") if isinstance(scoped.get("results"), list) else []
+        scoped_lifecycle = scoped.get("lifecycle") if isinstance(scoped.get("lifecycle"), dict) else {}
+        if not scoped_results or str(scoped_lifecycle.get("status") or "").strip().lower() in {"partial", "failed"}:
+            broadened = self.search_with_lifecycle(
+                query=query,
+                project=project,
+                topic_path=None,
+                retrieval_mode="balanced",
+                include_grounding=True,
+                include_retrieval_debug=True,
+                wait_for_completion=False,
+            )
+
+        pack = self.context_pack(
+            query=query,
+            project=project,
+            topic_path=topic_path,
+            retrieval_mode="balanced",
+            include_retrieval_debug=True,
+        )
+
+        return {
+            "ok": True,
+            "agent_id": self.agent_id,
+            "orchestrator_url": self.base_url,
+            "health": health_json,
+            "status": status_json,
+            "scoped_search": scoped,
+            "broadened_search": broadened,
+            "context_pack": pack,
+        }
 
     def status(self) -> Dict[str, Any]:
         """Get orchestrator + service status."""
@@ -312,6 +425,8 @@ def main():
         print("  list <project>")
         print("  search <query> [project]")
         print("  search-lifecycle <query> [project] [mode] [wait]")
+        print("  context-pack <query> [project] [mode] [topic_path]")
+        print("  preflight [project] [topic_path] [query]")
         print("  status")
         print("  create-tasks <project> <task_id> <tasks_json>")
         sys.exit(1)
@@ -352,6 +467,27 @@ def main():
             retrieval_mode=mode,
             wait_for_completion=wait_for_completion,
         )
+        print(json.dumps(payload, indent=2))
+
+    elif cmd == "context-pack":
+        query = sys.argv[2]
+        project = sys.argv[3] if len(sys.argv) > 3 else None
+        mode = sys.argv[4] if len(sys.argv) > 4 else "balanced"
+        topic_path = sys.argv[5] if len(sys.argv) > 5 else None
+        payload = orch.context_pack(
+            query=query,
+            project=project,
+            topic_path=topic_path,
+            retrieval_mode=mode,
+            include_retrieval_debug=True,
+        )
+        print(json.dumps(payload, indent=2))
+
+    elif cmd == "preflight":
+        project = sys.argv[2] if len(sys.argv) > 2 else os.getenv("MEMMCP_PROJECT", "contextlattice")
+        topic_path = sys.argv[3] if len(sys.argv) > 3 else "runbooks/codex-integration"
+        query = sys.argv[4] if len(sys.argv) > 4 else "codex preflight connectivity and retrieval"
+        payload = orch.codex_preflight(project=project, topic_path=topic_path, query=query)
         print(json.dumps(payload, indent=2))
 
     elif cmd == "status":
