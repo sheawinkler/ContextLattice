@@ -118,3 +118,10 @@ def test_prepare_runs_broaden_and_deep_escalation(monkeypatch):
     prompt = runtime.render_for_prompt(bundle)
     assert "Context Expansion Pack" in prompt
     assert "L0 Facts" in prompt
+
+
+def test_context_runtime_uses_stable_agent_id_from_env(monkeypatch):
+    monkeypatch.setenv("CONTEXTLATTICE_AGENT_ID", "codex_gpt5_test")
+    monkeypatch.delenv("MEMMCP_AGENT_ID", raising=False)
+    runtime = ContextExpansionRuntime("http://example.local")
+    assert runtime.agent_id == "codex_gpt5_test"

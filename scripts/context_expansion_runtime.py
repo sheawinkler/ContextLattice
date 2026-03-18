@@ -274,7 +274,12 @@ class ContextExpansionRuntime:
             or str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
             or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
         )
-        self.agent_id = str(agent_id or "").strip() or None
+        default_agent_id = (
+            str(os.getenv("CONTEXTLATTICE_AGENT_ID") or "").strip()
+            or str(os.getenv("MEMMCP_AGENT_ID") or "").strip()
+            or "codex_gpt5"
+        )
+        self.agent_id = str(agent_id or "").strip() or default_agent_id
         self.enabled = _env_bool("CONTEXT_EXPANSION_ENABLED", True)
         self.min_results = _env_int("CONTEXT_EXPANSION_MIN_RESULTS", 3, 1)
         self.min_facts = _env_int("CONTEXT_EXPANSION_MIN_FACTS", 3, 1)
@@ -834,4 +839,3 @@ class ContextExpansionRuntime:
         except Exception:
             # Checkpointing must never block task completion.
             return
-
