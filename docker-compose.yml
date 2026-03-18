@@ -150,7 +150,7 @@ services:
 
   # Ollama (local, free LLMs)
   ollama:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.1}
     container_name: ollama
     ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:11434:11434"]  # expose to host for testing
     volumes: ["${HOME}/.ollama:/root/.ollama"]
