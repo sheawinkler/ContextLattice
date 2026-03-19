@@ -241,8 +241,8 @@ flowchart LR
         <h3>Orchestrator gets better at memory recall over time</h3>
         <p class="spotlight">
           The orchestrator uses a learning schema from feedback signals to rerank results and improve
-          retrieval precision over time. This is reinforced by RAG through Letta archival memory,
-          alongside Qdrant, Mongo raw, MindsDB, and memory-bank fallback.
+          retrieval precision over time. Fast staged reads prioritize topic rollups, Qdrant, and
+          postgres-pgvector, while deep continuation incorporates MindsDB, Mongo raw, Letta, and memory-bank.
         </p>
         <p class="muted-note">Read the detailed rollout notes on the <a href="updates.html">Updates page</a> and the execution plan on the <a href="roadmap.html">V3 Roadmap</a>.</p>
       </article>
@@ -307,11 +307,11 @@ flowchart LR
 
             <line class="flow-line bus-branch" x1="324" y1="361" x2="346" y2="361"></line>
             <rect class="flow-node sink-node" x="346" y="344" rx="8" ry="8" width="236" height="34"></rect>
-            <text x="364" y="366">Memory Bank MCP</text>
+            <text x="364" y="366">Memory Bank + topic_rollups</text>
 
             <line class="flow-line bus-branch" x1="324" y1="405" x2="346" y2="405"></line>
             <rect class="flow-node sink-node" x="346" y="388" rx="8" ry="8" width="236" height="34"></rect>
-            <text x="364" y="410">Qdrant</text>
+            <text x="364" y="410">Qdrant + postgres_pgvector</text>
 
             <line class="flow-line bus-branch" x1="324" y1="449" x2="346" y2="449"></line>
             <rect class="flow-node sink-node" x="346" y="432" rx="8" ry="8" width="236" height="34"></rect>
@@ -364,7 +364,7 @@ flowchart LR
             <line class="flow-line branch-line" x1="208" y1="206" x2="259" y2="206"></line>
 
             <rect class="flow-node sink-node" x="32" y="182" rx="8" ry="8" width="158" height="34"></rect>
-            <text x="46" y="204">Memory Bank MCP</text>
+            <text x="46" y="204">Topic rollups</text>
             <line class="flow-line bus-branch" x1="190" y1="199" x2="208" y2="199"></line>
 
             <rect class="flow-node sink-node" x="32" y="226" rx="8" ry="8" width="158" height="34"></rect>
@@ -372,15 +372,15 @@ flowchart LR
             <line class="flow-line bus-branch" x1="190" y1="243" x2="208" y2="243"></line>
 
             <rect class="flow-node sink-node" x="32" y="270" rx="8" ry="8" width="158" height="34"></rect>
-            <text x="46" y="292">Mongo raw</text>
+            <text x="46" y="292">Postgres pgvector</text>
             <line class="flow-line bus-branch" x1="190" y1="287" x2="208" y2="287"></line>
 
             <rect class="flow-node sink-node" x="32" y="314" rx="8" ry="8" width="158" height="34"></rect>
-            <text x="46" y="336">MindsDB</text>
+            <text x="46" y="336">Mongo raw</text>
             <line class="flow-line bus-branch" x1="190" y1="331" x2="208" y2="331"></line>
 
             <rect class="flow-node sink-node" x="32" y="358" rx="8" ry="8" width="158" height="34"></rect>
-            <text x="46" y="380">Letta</text>
+            <text x="46" y="380">Deep lane sources</text>
             <line class="flow-line bus-branch" x1="190" y1="375" x2="208" y2="375"></line>
 
             <line class="flow-line branch-line" x1="405" y1="334" x2="444" y2="334" marker-end="url(#r-arrow-end)"></line>
@@ -411,9 +411,9 @@ flowchart LR
           <p><strong>Why:</strong> central coordination is what allows multi-source ranking and learning to compound.</p>
         </article>
         <article class="card component-card">
-          <h3>Memory Bank MCP</h3>
-          <p><strong>Benefit:</strong> canonical project/file context store.</p>
-          <p><strong>Why:</strong> keeps user-facing memory deterministic and compatible with MCP-native clients.</p>
+          <h3>Topic Rollups</h3>
+          <p><strong>Benefit:</strong> compact, high-signal summaries for fast staged recall.</p>
+          <p><strong>Why:</strong> reduces deep-read pressure while preserving source grounding for follow-up dives.</p>
         </article>
         <article class="card component-card">
           <h3>Qdrant</h3>
@@ -421,19 +421,19 @@ flowchart LR
           <p><strong>Why:</strong> vector retrieval gives broad relevance quickly before deeper reranking.</p>
         </article>
         <article class="card component-card">
+          <h3>Postgres + pgvector</h3>
+          <p><strong>Benefit:</strong> low-latency vector + lexical retrieval in one lane.</p>
+          <p><strong>Why:</strong> improves fast-read hit rate and stabilizes p95 latency under mixed workloads.</p>
+        </article>
+        <article class="card component-card">
           <h3>Mongo Raw</h3>
           <p><strong>Benefit:</strong> durable source-of-truth write ledger.</p>
-          <p><strong>Why:</strong> protects recoverability and enables repair/rehydrate workflows.</p>
+          <p><strong>Why:</strong> protects recoverability and enables replay/rehydrate workflows.</p>
         </article>
         <article class="card component-card">
-          <h3>MindsDB</h3>
-          <p><strong>Benefit:</strong> SQL-friendly analytics and structured querying.</p>
-          <p><strong>Why:</strong> complements semantic search with tabular and operational insight paths.</p>
-        </article>
-        <article class="card component-card">
-          <h3>Letta (RAG memory)</h3>
-          <p><strong>Benefit:</strong> long-horizon archival context for agent reasoning.</p>
-          <p><strong>Why:</strong> deep memory context improves difficult recall beyond nearest-neighbor hits.</p>
+          <h3>Deep lane (MindsDB + Letta + memory-bank)</h3>
+          <p><strong>Benefit:</strong> richer long-horizon recall when fast lanes need deeper evidence.</p>
+          <p><strong>Why:</strong> async continuation improves completeness without blocking fast user responses.</p>
         </article>
         <article class="card component-card">
           <h3>Fanout Outbox</h3>
@@ -454,8 +454,8 @@ flowchart LR
         <h3>Learning is strongest when memory is both rich and reliable</h3>
         <p>
           The orchestrator's learning schema can only improve ranking if retrieval sources stay healthy, durable,
-          and synchronized. This architecture makes that possible: Qdrant provides fast candidates, Letta supplies
-          deeper RAG context, Mongo guarantees recovery, MindsDB adds structured recall, and guardrails keep the
+          and synchronized. This architecture makes that possible: topic rollups + Qdrant + postgres-pgvector provide
+          fast candidates, deep continuation adds MindsDB/Letta/memory-bank evidence, Mongo guarantees recovery, and guardrails keep the
           full loop from collapsing under pressure.
         </p>
       </article>

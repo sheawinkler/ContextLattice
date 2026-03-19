@@ -46,16 +46,20 @@
   <text x="850" y="558" text-anchor="middle" class="lane">Parallel Recall</text>
 
   <rect x="280" y="662" width="250" height="120" rx="20" class="node"/>
-  <text x="405" y="728" text-anchor="middle" class="label">Memory Bank</text>
+  <text x="405" y="716" text-anchor="middle" class="label">Topic</text>
+  <text x="405" y="748" text-anchor="middle" class="label">Rollups</text>
 
   <rect x="550" y="662" width="250" height="120" rx="20" class="node"/>
   <text x="675" y="728" text-anchor="middle" class="label">Qdrant</text>
 
   <rect x="820" y="662" width="250" height="120" rx="20" class="node"/>
-  <text x="945" y="728" text-anchor="middle" class="label">Mongo</text>
+  <text x="945" y="716" text-anchor="middle" class="label">Postgres</text>
+  <text x="945" y="748" text-anchor="middle" class="sub">pgvector</text>
 
   <rect x="1090" y="662" width="270" height="120" rx="20" class="node"/>
-  <text x="1225" y="728" text-anchor="middle" class="label">MindsDB + Letta</text>
+  <text x="1225" y="708" text-anchor="middle" class="label">Deep lane</text>
+  <text x="1225" y="736" text-anchor="middle" class="sub">mindsdb + mongo_raw</text>
+  <text x="1225" y="764" text-anchor="middle" class="sub">letta + memory_bank</text>
 
   <rect x="560" y="822" width="580" height="112" rx="20" class="node"/>
   <text x="850" y="888" text-anchor="middle" class="merge-label">Merge + Rerank + Compose Context</text>
