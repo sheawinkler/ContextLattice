@@ -4,7 +4,7 @@ services:
     container_name: mcp-proxy
     command: ["--config", "/config/config.json"]
     volumes:
-      - ./configs/mcp-proxy.config.json:/config/config.json:ro
+      - ./config/mcp/mcp-proxy.config.json:/config/config.json:ro
     depends_on:
       memorybank-gateway:
         condition: service_started

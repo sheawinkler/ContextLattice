@@ -45,7 +45,7 @@ services:
     command: ["/main","--config","/config/config.json"]
     volumes:
       - type: bind
-        source: ./configs/mcp-proxy.config.json
+        source: ./config/mcp/mcp-proxy.config.json
         target: /config/config.json
         read_only: true
     ports: [ "9090:9090" ]

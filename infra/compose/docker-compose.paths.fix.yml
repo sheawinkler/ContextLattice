@@ -2,7 +2,7 @@ services:
   mcp-proxy:
     volumes:
       - type: bind
-        source: ${PROJECT_ROOT}/configs/mcp-proxy.config.json
+        source: ${PROJECT_ROOT}/config/mcp/mcp-proxy.config.json
         target: /config/config.json
         read_only: true
 

@@ -3,8 +3,8 @@ set -euo pipefail
 
 MCP_PROXY_PORT="${MCP_PROXY_PORT:-9092}"
 
-echo ">> writing configs/mcp-proxy.config.json"
-cat > configs/mcp-proxy.config.json <<JSON
+echo ">> writing config/mcp/mcp-proxy.config.json"
+cat > config/mcp/mcp-proxy.config.json <<JSON
 {
   "mcpProxy": {
     "type": "http",
@@ -37,7 +37,7 @@ services:
     ports:
       - "${MCP_PROXY_PORT}:${MCP_PROXY_PORT}"
     volumes:
-      - ./configs/mcp-proxy.config.json:/config/config.json:ro
+      - ./config/mcp/mcp-proxy.config.json:/config/config.json:ro
     command: ["--config", "/config/config.json"]
 YML
 

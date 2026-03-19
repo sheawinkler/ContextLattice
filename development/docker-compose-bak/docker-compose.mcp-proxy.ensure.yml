@@ -9,5 +9,5 @@ services:
       - "9090:9090"
     restart: unless-stopped
     volumes:
-      - ./configs/mcp-proxy.config.json:/config/config.json:ro
+      - ./config/mcp/mcp-proxy.config.json:/config/config.json:ro
     command: ["--config", "/config/config.json"]
