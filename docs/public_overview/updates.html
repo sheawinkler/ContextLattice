@@ -53,6 +53,22 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-03-19 · v3.2.1 · Config Canonicalization + Fallback Audit</span>
+        <h3>Unified configuration paths under <code>config/</code> and verified Python fallback utility</h3>
+        <p class="spotlight">
+          We standardized configuration layout to one canonical root and completed a Python fallback audit to confirm
+          runtime-critical Python remains justified while Go/Rust stay primary.
+        </p>
+        <ul>
+          <li>Moved former <code>configs/</code> content to <code>config/mcp/</code> and rewired compose/script paths.</li>
+          <li>Kept runtime lock authority at <code>config/env/strict_runtime.env</code>.</li>
+          <li>Added compatibility file <code>config/mcp/memorybank-gateway.config.json</code> for override workflows.</li>
+          <li>Published audit: <code>docs/audits/python_fallback_audit_v3.2.1.md</code>.</li>
+          <li>Fallback lane health verified on <code>:18075</code> for <code>/health</code>, <code>/migration/runtime</code>, and <code>/memory/search</code>.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.0 · Public V3 Runtime Cutover</span>
         <h3>Go-first read runtime is now default on public V3 (Python moved to fallback lane)</h3>
         <p class="spotlight">

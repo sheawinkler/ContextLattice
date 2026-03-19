@@ -93,6 +93,11 @@ gmake env-lock-check
 `config/env/strict_runtime.env` is the single source of truth for critical runtime/tuning keys.
 `gmake up`, `gmake mem-up`, and release/lite launch targets auto-apply this lock before compose starts.
 
+Canonical config layout:
+
+- `config/env/` -> runtime/tuning lockfiles
+- `config/mcp/` -> MCP hub/proxy/client config files
+
 Optional Letta backlog auto-prune tuning in `.env`:
 
 ```bash
@@ -638,8 +643,11 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 ## Docs Index
 
 - Release notes:
+  - `docs/releases/v3.2.1.md` (config canonicalization + Python fallback audit)
   - `docs/releases/v3.2.0.md` (public V3 Go-first cutover; Python removed from primary read path; includes A/B benchmark)
   - `docs/releases/v3.1.0.md` (post-`v3.0.0` public, non-V4 integration/runtime updates)
+- Audits:
+  - `docs/audits/python_fallback_audit_v3.2.1.md` (fallback-critical vs utility Python validation)
 - Phase 0 performance baseline: `docs/perf-baseline.md`
 - Migration plan: `docs/migration-plan.md`
 - Migration interfaces (Phase 1 proposal): `docs/migration-interfaces.md`
