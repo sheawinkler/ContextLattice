@@ -68,6 +68,39 @@ func TestProxyForwardsRetrievalRequest(t *testing.T) {
 	}
 }
 
+func TestProxyMapsBearerAuthorizationToAPIKey(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	var capturedHeader string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeader = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(http.MethodGet, gateway.URL+"/status", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer abc123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if capturedHeader != "abc123" {
+		t.Fatalf("expected bearer token mirrored to x-api-key, got %q", capturedHeader)
+	}
+}
+
 func TestProxyForwardsQueryParams(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedRawQuery string
@@ -97,6 +130,7 @@ func TestProxyForwardsQueryParams(t *testing.T) {
 }
 
 func TestProxyForwardsMemorySearchRequest(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedBody string
 	var capturedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +169,67 @@ func TestProxyForwardsMemorySearchRequest(t *testing.T) {
 	}
 	if !strings.Contains(capturedBody, `"retrieval_intent":"decision"`) {
 		t.Fatalf("expected retrieval_intent payload to be proxied, got %s", capturedBody)
+	}
+}
+
+func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+
+	var calledPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"alpha summary","score":0.93}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"query":"alpha","limit":5,"include_grounding":true,"agent_id":"codex_gpt5"}`
+	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows, ok := payload["results"].([]any)
+	if !ok || len(rows) == 0 {
+		t.Fatalf("expected staged retrieval rows, got %#v", payload["results"])
+	}
+	if strings.TrimSpace(anyToString(payload["retrieval_mode"])) != "balanced" {
+		t.Fatalf("expected retrieval_mode=balanced default, got %#v", payload["retrieval_mode"])
+	}
+	if !anyToBool(payload["learning_enabled"]) {
+		t.Fatalf("expected learning_enabled=true")
+	}
+	grounding, ok := payload["grounding"].(map[string]any)
+	if !ok || !anyToBool(grounding["strict_numeric_copy"]) {
+		t.Fatalf("expected grounding.strict_numeric_copy=true, got %#v", payload["grounding"])
+	}
+	if calledPath != "/v1/retrieval/query" {
+		t.Fatalf("expected go staged path via /v1/retrieval/query, got %s", calledPath)
 	}
 }
 
@@ -329,6 +424,149 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	}
 	if capturedPath != "/memory/recall/eval-cases/refresh" {
 		t.Fatalf("expected /memory/recall/eval-cases/refresh to be proxied, got %s", capturedPath)
+	}
+}
+
+func TestProxyForwardsMemoryWriteAndStatusPaths(t *testing.T) {
+	var capturedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqWrite, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/memory/write",
+		strings.NewReader(`{"projectName":"alpha","fileName":"notes/a.md","content":"hello"}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	reqWrite.Header.Set("Content-Type", "application/json")
+	respWrite, err := http.DefaultClient.Do(reqWrite)
+	if err != nil {
+		t.Fatalf("memory/write request failed: %v", err)
+	}
+	defer respWrite.Body.Close()
+	if respWrite.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /memory/write, got %d", respWrite.StatusCode)
+	}
+	if capturedPath != "/memory/write" {
+		t.Fatalf("expected /memory/write proxied, got %s", capturedPath)
+	}
+
+	respStatus, err := http.Get(gateway.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer respStatus.Body.Close()
+	if respStatus.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /status, got %d", respStatus.StatusCode)
+	}
+	if capturedPath != "/status" {
+		t.Fatalf("expected /status proxied, got %s", capturedPath)
+	}
+}
+
+func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
+	searchCalls := 0
+	contextPackCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case "/status":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"service":{"ok":true}}`))
+			return
+		case "/memory/search":
+			searchCalls += 1
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(anyToString(payload["agent_id"])) != "codex_gpt5_test" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"missing agent_id"}`))
+				return
+			}
+			topic := strings.TrimSpace(anyToString(payload["topic_path"]))
+			if topic != "" {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"degraded":true,"results":[]}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"degraded":false,"results":[{"project":"contextlattice","file":"notes/a.md"}]}`))
+			return
+		case "/memory/context-pack":
+			contextPackCalls += 1
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(anyToString(payload["agent_id"])) != "codex_gpt5_test" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"missing agent_id"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"context_pack":{"facts":[{"text":"f1"}],"results":[{"file":"_rollups/topics/a.json"}]}}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","topic_path":"runbooks/codex-integration","query":"codex preflight","agent_id":"codex_gpt5_test"}`
+	resp, err := http.Post(gateway.URL+"/v1/codex/preflight", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("preflight request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode preflight response: %v", err)
+	}
+	if !anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+	if strings.TrimSpace(anyToString(payload["agent_id"])) != "codex_gpt5_test" {
+		t.Fatalf("unexpected agent_id in response: %#v", payload["agent_id"])
+	}
+	if searchCalls != 2 {
+		t.Fatalf("expected two search calls (scoped+broad), got %d", searchCalls)
+	}
+	if contextPackCalls != 1 {
+		t.Fatalf("expected one context-pack call, got %d", contextPackCalls)
+	}
+	if payload["broadened_search"] == nil {
+		t.Fatalf("expected broadened_search payload, got nil")
+	}
+	if payload["context_pack"] == nil {
+		t.Fatalf("expected context_pack payload, got nil")
 	}
 }
 
