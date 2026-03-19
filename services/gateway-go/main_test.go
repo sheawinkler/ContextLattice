@@ -130,6 +130,7 @@ func TestProxyForwardsQueryParams(t *testing.T) {
 }
 
 func TestProxyForwardsMemorySearchRequest(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedBody string
 	var capturedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +169,67 @@ func TestProxyForwardsMemorySearchRequest(t *testing.T) {
 	}
 	if !strings.Contains(capturedBody, `"retrieval_intent":"decision"`) {
 		t.Fatalf("expected retrieval_intent payload to be proxied, got %s", capturedBody)
+	}
+}
+
+func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+
+	var calledPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledPath = r.URL.Path
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"alpha summary","score":0.93}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"query":"alpha","limit":5,"include_grounding":true,"agent_id":"codex_gpt5"}`
+	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows, ok := payload["results"].([]any)
+	if !ok || len(rows) == 0 {
+		t.Fatalf("expected staged retrieval rows, got %#v", payload["results"])
+	}
+	if strings.TrimSpace(anyToString(payload["retrieval_mode"])) != "balanced" {
+		t.Fatalf("expected retrieval_mode=balanced default, got %#v", payload["retrieval_mode"])
+	}
+	if !anyToBool(payload["learning_enabled"]) {
+		t.Fatalf("expected learning_enabled=true")
+	}
+	grounding, ok := payload["grounding"].(map[string]any)
+	if !ok || !anyToBool(grounding["strict_numeric_copy"]) {
+		t.Fatalf("expected grounding.strict_numeric_copy=true, got %#v", payload["grounding"])
+	}
+	if calledPath != "/v1/retrieval/query" {
+		t.Fatalf("expected go staged path via /v1/retrieval/query, got %s", calledPath)
 	}
 }
 

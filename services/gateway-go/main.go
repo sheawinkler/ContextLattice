@@ -3247,6 +3247,52 @@ func (s *server) retrievalQueryWithGrounding(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, status, response)
 }
 
+func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
+	if !s.retrieval.enabled {
+		s.proxy(w, r)
+		return
+	}
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+		return
+	}
+	payload, err := parseJSONMap(bodyBytes)
+	if err != nil {
+		s.proxyWithBody(w, r, bodyBytes)
+		return
+	}
+	includeGrounding := anyToBool(payload["include_grounding"])
+	response, status, execErr := s.executeRetrieval(r.Context(), r.Header, payload, includeGrounding)
+	if execErr != nil {
+		log.Printf("staged memory/search failed; falling back to backend proxy: %s", execErr)
+		s.proxyWithBody(w, r, bodyBytes)
+		return
+	}
+	retrievalMode := strings.TrimSpace(strings.ToLower(anyToString(payload["retrieval_mode"])))
+	if retrievalMode == "" {
+		retrievalMode = "balanced"
+	}
+	retrievalIntent := strings.TrimSpace(strings.ToLower(anyToString(payload["retrieval_intent"])))
+	if retrievalIntent == "" {
+		retrievalIntent = "decision"
+	}
+	trafficClass := strings.TrimSpace(strings.ToLower(anyToString(payload["traffic_class"])))
+	if trafficClass == "" {
+		trafficClass = "user"
+	}
+	response["learning_enabled"] = true
+	response["retrieval_mode"] = retrievalMode
+	response["retrieval_intent"] = retrievalIntent
+	response["traffic_class"] = trafficClass
+	if agentID := strings.TrimSpace(anyToString(payload["agent_id"])); agentID != "" {
+		response["agent_id"] = agentID
+	}
+	resultState := strings.TrimSpace(strings.ToLower(anyToString(response["result_state"])))
+	response["degraded"] = resultState == "degraded"
+	writeJSON(w, status, response)
+}
+
 func (s *server) retrievalBatchQuery(w http.ResponseWriter, r *http.Request) {
 	if !s.retrieval.enabled {
 		s.proxy(w, r)
@@ -3323,7 +3369,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)
 	mux.HandleFunc("/v1/retrieval/health", s.retrievalHealth)
 	mux.HandleFunc("/memory/search/continuations/", s.continuationEvents)
-	mux.HandleFunc("/memory/search", s.proxy)
+	mux.HandleFunc("/memory/search", s.memorySearch)
 	mux.HandleFunc("/memory/search/async/", s.proxy)
 	mux.HandleFunc("/memory/search/jobs/", s.proxy)
 	mux.HandleFunc("/memory/write", s.proxy)
