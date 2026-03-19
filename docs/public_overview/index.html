@@ -469,7 +469,8 @@ flowchart LR
           <h3>Lite mode</h3>
           <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
           <ul class="spec-list">
-            <li><strong>Includes:</strong> Orchestrator, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
+            <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
+            <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + qdrant + postgres_pgvector</code></li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
             <li><strong>Memory:</strong> 4-8 GB RAM baseline</li>
             <li><strong>Storage:</strong> 25-60 GB SSD depending on write volume</li>
@@ -480,6 +481,7 @@ flowchart LR
           <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
           <ul class="spec-list">
             <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
+            <li><strong>Deep continuation lane:</strong> async enrichment from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Compute:</strong> 6-8 vCPU recommended</li>
             <li><strong>Memory:</strong> 16-24 GB RAM baseline</li>
             <li><strong>Storage:</strong> 120-200 GB SSD depending on retention policy</li>
