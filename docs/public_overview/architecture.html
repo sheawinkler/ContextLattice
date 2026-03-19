@@ -54,6 +54,7 @@
         <a href="#arch-context">Context</a>
         <a href="#arch-container">Containers</a>
         <a href="#arch-language">Language Map</a>
+        <a href="#arch-lanes">Version Lanes</a>
         <a href="#arch-runtime">Runtime</a>
         <a href="#arch-ops">Ops + Safety</a>
       </nav>
@@ -217,6 +218,48 @@
       </article>
     </section>
 
+    <section class="section" id="arch-lanes">
+      <div class="kicker">Release Boundaries</div>
+      <h2>Public v3.2 lane vs private v4 lane</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Public v3.2 (operator default)</h3>
+          <ul class="spec-list">
+            <li><strong>Ingress:</strong> <code>gateway-go</code> on <code>:8075</code></li>
+            <li><strong>Fallback:</strong> Python rollback lane on <code>:18075</code></li>
+            <li><strong>Memory-bank default:</strong> <code>icm_spike</code></li>
+            <li><strong>Slow-source handling:</strong> async continuation by default for tail-latency control</li>
+            <li><strong>Objective:</strong> stable performance with clear operational behavior</li>
+          </ul>
+        </article>
+        <article class="card component-card">
+          <h3>Private v4 (experimentation lane)</h3>
+          <ul class="spec-list">
+            <li><strong>Ingress contract:</strong> unchanged from public v3.2</li>
+            <li><strong>Policy:</strong> stricter tuning loops and candidate backend promotions</li>
+            <li><strong>Promotion gate:</strong> benchmark delta + recall parity + runtime soak</li>
+            <li><strong>Rollback:</strong> keep v3.2-compatible path available</li>
+            <li><strong>Objective:</strong> find next proven step-change before public release</li>
+          </ul>
+        </article>
+      </div>
+      <article class="card mermaid-card">
+        <h3>Runtime lane flow</h3>
+        <div class="mermaid">
+flowchart TD
+  A["Caller"] --> B["gateway-go :8075"]
+  B --> C["Rust retrieval + staged policy"]
+  C --> D["Fast now: topic_rollups, qdrant, postgres_pgvector"]
+  C --> E["Slow async: mindsdb, mongo_raw, letta, memory_bank"]
+  E --> F["Continuation events + cache warm"]
+  B --> G["Python fallback :18075 (rollback)"]
+  H["Private v4 tuning lane"] --> I["Same external API contract"]
+  I --> J["Adaptive backend experiments"]
+  J --> K["Promote only with hard gate evidence"]
+        </div>
+      </article>
+    </section>
+
     <section class="section" id="arch-runtime">
       <div class="grid arch-grid">
         <article class="card">
@@ -265,5 +308,14 @@
       <span>Use this map for production troubleshooting and onboarding.</span>
     </footer>
   </main>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "dark",
+      securityLevel: "loose",
+      flowchart: { curve: "basis" }
+    });
+  </script>
 </body>
 </html>

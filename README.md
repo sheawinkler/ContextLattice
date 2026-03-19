@@ -187,8 +187,9 @@ ORCH_TELEMETRY_DB=memmcp_raw
 ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
 ORCH_TELEMETRY_PERSIST_ENABLED=true
 ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true
-ORCH_MEMORY_BANK_SEARCH_BACKEND=quickwit_spike
-ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND=meilisearch_spike
+ORCH_MEMORY_BANK_SEARCH_BACKEND=icm_spike
+ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND=surrealdb_spike
+ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS=surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike
 ORCH_MEMORY_BANK_SPIKE_HTTP_URL=http://memory-bank-spike-rs:8096
 ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE=/search
 MEMORY_BANK_SPIKE_RS_MEILI_URL=http://meilisearch:7700
@@ -385,7 +386,21 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - Storage pressure controls: retention runner, low-value TTL pruning, optional snapshot pruning, and external NVMe cold path support.
 - Retrieval path: parallel source reads with orchestrator merge/rank loop and preference-learning feedback.
 - Telemetry routing guards (default-on): telemetry-like writes are filtered out of `qdrant`/`mindsdb`/`letta` fanout.
-- Memory-bank policy: promoted fast-lane source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true`) with default `quickwit_spike` and `meilisearch_spike` fallback.
+- Memory-bank policy: promoted source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true`) with default `icm_spike` and fallback chain `surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike`.
+
+## Version Lanes (Launch Clarity)
+
+`v3.2` (public) and `v4` (private) are intentionally different lanes:
+
+| Area | Public `v3.2` | Private `v4` |
+|---|---|---|
+| Runtime frontdoor | `gateway-go` on `:8075` | `gateway-go` on `:8075` |
+| Fallback lane | Python orchestrator on `:18075` | Python orchestrator on `:18075` |
+| Rust/Go posture | Enabled by default | Enabled by default |
+| Retrieval policy | staged fast-return + async slow continuation | staged + aggressive adaptive experiments |
+| Memory-bank default | `icm_spike` | `icm_spike` with active candidate promotions |
+| Release intent | stable public baseline | experimental/tuning lane behind hard gates |
+| Promotion rule | benchmark + parity proof in release notes | benchmark + parity + operational soak before public sync |
 
 Telemetry routing/cleanup toggles:
 
