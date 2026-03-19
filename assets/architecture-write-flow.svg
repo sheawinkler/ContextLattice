@@ -54,16 +54,18 @@
   <text x="850" y="853" text-anchor="middle" class="lane-sm">Fanout Workers</text>
 
   <rect x="260" y="928" width="250" height="120" rx="20" class="node"/>
-  <text x="385" y="994" text-anchor="middle" class="label">Memory Bank</text>
+  <text x="385" y="986" text-anchor="middle" class="label">Memory Bank</text>
+  <text x="385" y="1018" text-anchor="middle" class="sub">+ topic_rollups</text>
 
   <rect x="530" y="928" width="250" height="120" rx="20" class="node"/>
-  <text x="655" y="994" text-anchor="middle" class="label">Qdrant</text>
+  <text x="655" y="986" text-anchor="middle" class="label">Qdrant</text>
+  <text x="655" y="1018" text-anchor="middle" class="sub">+ postgres_pgvector</text>
 
   <rect x="800" y="928" width="250" height="120" rx="20" class="node"/>
-  <text x="925" y="994" text-anchor="middle" class="label">Mongo</text>
+  <text x="925" y="994" text-anchor="middle" class="label">MindsDB</text>
 
   <rect x="1070" y="928" width="270" height="120" rx="20" class="node"/>
-  <text x="1205" y="994" text-anchor="middle" class="label">MindsDB + Letta</text>
+  <text x="1205" y="994" text-anchor="middle" class="label">Letta</text>
 
   <path class="sync" d="M850 192 V232" marker-end="url(#arrow)"/>
   <path class="sync" d="M850 338 V378" marker-end="url(#arrow)"/>

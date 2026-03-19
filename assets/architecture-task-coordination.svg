@@ -72,8 +72,8 @@
 
   <rect x="320" y="724" width="480" height="102" rx="16" class="node"/>
   <text x="560" y="770" text-anchor="middle" class="label-sm">Context + Memory Services</text>
-  <text x="560" y="796" text-anchor="middle" class="sub-sm">memory-bank, qdrant, mongo</text>
-  <text x="560" y="818" text-anchor="middle" class="sub-sm">mindsdb + letta</text>
+  <text x="560" y="796" text-anchor="middle" class="sub-sm">topic_rollups, qdrant, postgres_pgvector</text>
+  <text x="560" y="818" text-anchor="middle" class="sub-sm">mindsdb, mongo_raw, letta, memory_bank</text>
 
   <rect x="900" y="724" width="480" height="102" rx="16" class="node"/>
   <text x="1140" y="770" text-anchor="middle" class="label-sm">Tool + Model Runtimes</text>

@@ -142,19 +142,19 @@
       <article class="card architecture-board">
         <div class="arch-diagram-grid">
           <figure class="arch-diagram-panel">
-            <img class="arch-diagram-image" src="assets/architecture-service-map.svg?v=20260222e" alt="Service map showing orchestrator, memory plane, and external dependencies" loading="lazy" decoding="async" />
+            <img class="arch-diagram-image" src="assets/architecture-service-map.svg?v=20260319a" alt="Service map showing orchestrator, memory plane, and external dependencies" loading="lazy" decoding="async" />
             <figcaption class="arch-diagram-caption"><strong>Service Map:</strong> the single control plane and every core system it coordinates.</figcaption>
           </figure>
           <figure class="arch-diagram-panel">
-            <img class="arch-diagram-image" src="assets/architecture-write-flow.svg?v=20260222a" alt="Write flow showing ingest, validation, persistence, outbox, and async fanout" loading="lazy" decoding="async" />
+            <img class="arch-diagram-image" src="assets/architecture-write-flow.svg?v=20260319a" alt="Write flow showing ingest, validation, persistence, outbox, and async fanout" loading="lazy" decoding="async" />
             <figcaption class="arch-diagram-caption"><strong>Write Flow:</strong> reliable writes under burst load via durable outbox and worker fanout.</figcaption>
           </figure>
           <figure class="arch-diagram-panel">
-            <img class="arch-diagram-image" src="assets/architecture-retrieval-flow.svg?v=20260222a" alt="Retrieval flow showing parallel recall, rerank, response, and learning loop" loading="lazy" decoding="async" />
+            <img class="arch-diagram-image" src="assets/architecture-retrieval-flow.svg?v=20260319a" alt="Retrieval flow showing parallel recall, rerank, response, and learning loop" loading="lazy" decoding="async" />
             <figcaption class="arch-diagram-caption"><strong>Retrieval + Learning Loop:</strong> faster context recall that improves quality over time.</figcaption>
           </figure>
           <figure class="arch-diagram-panel">
-            <img class="arch-diagram-image" src="assets/architecture-task-coordination.svg?v=20260222i" alt="Task coordination workflow showing orchestrator planning, agent worker fanout, and messaging communication surfaces" loading="lazy" decoding="async" />
+            <img class="arch-diagram-image" src="assets/architecture-task-coordination.svg?v=20260319a" alt="Task coordination workflow showing orchestrator planning, agent worker fanout, and messaging communication surfaces" loading="lazy" decoding="async" />
             <figcaption class="arch-diagram-caption"><strong>Task Coordination + Communication:</strong> orchestrator-managed task routing, agent execution, and bidirectional human messaging.</figcaption>
           </figure>
         </div>
@@ -180,29 +180,29 @@
       <h2>Which language runs what, and why</h2>
       <div class="grid component-grid">
         <article class="card component-card">
-          <h3>Python: control and integration surface</h3>
+          <h3>Python: fallback and compatibility lane</h3>
           <ul class="spec-list">
-            <li><strong>Runs:</strong> HTTP ingress, auth/policy enforcement, API contracts, telemetry endpoints, and fallback adapters.</li>
-            <li><strong>Why:</strong> fastest iteration for product behavior and broad ecosystem integration.</li>
-            <li><strong>Efficacy impact:</strong> consistent operator control plane and safe fallback when any specialized path degrades.</li>
+            <li><strong>Runs:</strong> rollback ingress on <code>:18075</code>, compatibility adapters, and selected operator tooling paths.</li>
+            <li><strong>Why:</strong> preserves rollback safety and broad integration coverage while Go/Rust remain default.</li>
+            <li><strong>Efficacy impact:</strong> fail-safe continuity when primary runtime components are unavailable.</li>
           </ul>
         </article>
 
         <article class="card component-card">
           <h3>Rust: memory and retrieval hot path</h3>
           <ul class="spec-list">
-            <li><strong>Runs:</strong> codec, memory engine, and retrieval engine paths (`context_codec`, `context_engine`, `context_retrieval`).</li>
+            <li><strong>Runs:</strong> codec, memory engine, retrieval engine, and staged retrieval proxy paths.</li>
             <li><strong>Why:</strong> lower-latency execution, predictable memory behavior, and safer high-throughput concurrency.</li>
-            <li><strong>Efficacy impact:</strong> smaller p95/p99 tails and stronger deep-read reliability under load.</li>
+            <li><strong>Efficacy impact:</strong> smaller p95/p99 tails and better retrieval throughput under sustained load.</li>
           </ul>
         </article>
 
         <article class="card component-card">
-          <h3>Go: orchestration services</h3>
+          <h3>Go: ingress and orchestration services</h3>
           <ul class="spec-list">
-            <li><strong>Runs:</strong> scheduler/gateway services for task coordination, batching, retries, and backpressure control.</li>
+            <li><strong>Runs:</strong> primary external ingress on <code>:8075</code>, staged retrieval policy, scheduler/gateway services, batching, retries, and backpressure control.</li>
             <li><strong>Why:</strong> efficient long-running service concurrency and operational simplicity for scheduling workloads.</li>
-            <li><strong>Efficacy impact:</strong> better task completion reliability and fewer queue-induced stalls.</li>
+            <li><strong>Efficacy impact:</strong> lower user-visible latency with more predictable tail behavior.</li>
           </ul>
         </article>
       </div>
