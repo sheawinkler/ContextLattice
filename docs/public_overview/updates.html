@@ -53,6 +53,20 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-03-19 · v3.2.2 · Graphics + Architecture Alignment</span>
+        <h3>Synced README + website diagrams to current staged retrieval/runtime ownership</h3>
+        <p class="spotlight">
+          Reviewed architecture graphics and corrected source-lane/runtime ownership drift so GitHub README visuals and website architecture pages now match live v3.2 behavior.
+        </p>
+        <ul>
+          <li>Updated shared SVG architecture panels used by both README and website.</li>
+          <li>Reflected current staged retrieval lanes: fast <code>topic_rollups + qdrant + postgres_pgvector</code>, deep async <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li>Updated runtime ownership copy to show Go ingress on <code>:8075</code>, Rust hot path, and Python fallback on <code>:18075</code>.</li>
+          <li>Bumped architecture asset cache keys so updated diagrams render immediately.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.1 · Config Canonicalization + Fallback Audit</span>
         <h3>Unified configuration paths under <code>config/</code> and verified Python fallback utility</h3>
         <p class="spotlight">

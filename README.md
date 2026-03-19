@@ -32,7 +32,7 @@
 Context Lattice is built for teams running high-volume memory writes where durability and retrieval quality matter more than prompt bloat.
 
 - One ingress contract (`/memory/write`) with validated + normalized payloads.
-- Durable outbox fanout to specialized sinks (Qdrant, Mongo raw, MindsDB, Letta, memory-bank).
+- Durable outbox fanout to specialized sinks (Qdrant, Mongo raw, MindsDB, Letta, memory-bank), plus fast retrieval indexes (`topic_rollups`, `postgres_pgvector`) in the staged read lane.
 - Retrieval orchestration that merges multi-source recall and improves ranking through a learning loop.
 - Code-context enrichment + reranking (symbol overlap, file-path proximity, recency) behind env-gated controls.
 - Local-first operation with optional cloud BYO for specific sinks.
@@ -643,6 +643,7 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 ## Docs Index
 
 - Release notes:
+  - `docs/releases/v3.2.2.md` (README/website graphics + runtime ownership alignment)
   - `docs/releases/v3.2.1.md` (config canonicalization + Python fallback audit)
   - `docs/releases/v3.2.0.md` (public V3 Go-first cutover; Python removed from primary read path; includes A/B benchmark)
   - `docs/releases/v3.1.0.md` (post-`v3.0.0` public, non-V4 integration/runtime updates)
