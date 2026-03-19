@@ -1115,6 +1115,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gateway-go
+    ports:
+      - ${HOST_BIND_ADDRESS:-127.0.0.1}:${GO_GATEWAY_HOST_PORT:-8091}:${GO_GATEWAY_PORT_INTERNAL:-8091}
     environment:
       PORT: ${GO_GATEWAY_PORT_INTERNAL:-8091}
       ORCH_RETRIEVAL_SOURCES: ${ORCH_RETRIEVAL_SOURCES:-qdrant,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank}

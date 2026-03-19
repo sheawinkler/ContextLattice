@@ -684,18 +684,43 @@ func isProxyPath(path string) bool {
 	if strings.HasPrefix(path, "/memory/search/jobs/") {
 		return true
 	}
+	if strings.HasPrefix(path, "/memory/files/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/memory/profiles/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/agents/tasks/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/telemetry/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/maintenance/") {
+		return true
+	}
 	switch path {
 	case "/v1/retrieval/query",
 		"/v1/retrieval/query-with-grounding",
 		"/v1/retrieval/batch-query",
 		"/v1/retrieval/health",
+		"/health",
+		"/status",
 		"/memory/search",
+		"/memory/write",
 		"/memory/recall/eval-cases",
 		"/memory/recall/eval-cases/refresh",
 		"/memory/recall/evaluate/saved",
 		"/memory/write/batch",
 		"/memory/browser-context",
 		"/memory/context-pack",
+		"/memory/recent",
+		"/memory/profiles",
+		"/memory/topics",
+		"/memory/topics/list",
+		"/memory/topic-rollups",
+		"/feedback",
+		"/agents/tasks",
 		"/ops/queue/status",
 		"/ops/capabilities",
 		"/tools/capability_map",
@@ -741,6 +766,21 @@ func (s *server) copyHeaders(dst http.Header, src http.Header) {
 		for _, value := range values {
 			dst.Add(key, value)
 		}
+	}
+	if strings.TrimSpace(dst.Get("X-Api-Key")) != "" {
+		return
+	}
+	authHeader := strings.TrimSpace(src.Get("Authorization"))
+	if authHeader == "" {
+		return
+	}
+	const bearerPrefix = "Bearer "
+	if !strings.HasPrefix(strings.ToLower(authHeader), strings.ToLower(bearerPrefix)) {
+		return
+	}
+	token := strings.TrimSpace(authHeader[len(bearerPrefix):])
+	if token != "" {
+		dst.Set("X-Api-Key", token)
 	}
 }
 
@@ -816,6 +856,215 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
+}
+
+type codexPreflightRequest struct {
+	Project       string `json:"project"`
+	TopicPath     string `json:"topic_path"`
+	Query         string `json:"query"`
+	RetrievalMode string `json:"retrieval_mode"`
+	AgentID       string `json:"agent_id"`
+}
+
+func (s *server) backendJSONRequest(
+	ctx context.Context,
+	method string,
+	path string,
+	headers http.Header,
+	payload any,
+) (map[string]any, int, error) {
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, s.backendURL+path, body)
+	if err != nil {
+		return nil, 0, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	s.copyHeaders(req.Header, headers)
+	req.Header.Set("X-ContextLattice-Gateway", "gateway-go")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	out := map[string]any{}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return out, resp.StatusCode, nil
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		out["raw"] = string(raw)
+	}
+	return out, resp.StatusCode, nil
+}
+
+func resultCount(payload map[string]any) int {
+	results, ok := payload["results"].([]any)
+	if ok {
+		return len(results)
+	}
+	items, ok := payload["items"].([]any)
+	if ok {
+		return len(items)
+	}
+	if total, ok := payload["total"].(float64); ok {
+		return int(total)
+	}
+	return 0
+}
+
+func (s *server) codexPreflight(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	reqBody := codexPreflightRequest{}
+	rawBody, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+		return
+	}
+	if len(bytes.TrimSpace(rawBody)) > 0 {
+		if err := json.Unmarshal(rawBody, &reqBody); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+			return
+		}
+	}
+	if strings.TrimSpace(reqBody.Project) == "" {
+		reqBody.Project = "contextlattice"
+	}
+	if strings.TrimSpace(reqBody.TopicPath) == "" {
+		reqBody.TopicPath = "runbooks/codex-integration"
+	}
+	if strings.TrimSpace(reqBody.Query) == "" {
+		reqBody.Query = "codex preflight connectivity and retrieval"
+	}
+	if strings.TrimSpace(reqBody.RetrievalMode) == "" {
+		reqBody.RetrievalMode = "balanced"
+	}
+	if strings.TrimSpace(reqBody.AgentID) == "" {
+		reqBody.AgentID = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_AGENT_ID"))
+	}
+	if strings.TrimSpace(reqBody.AgentID) == "" {
+		reqBody.AgentID = strings.TrimSpace(os.Getenv("MEMMCP_AGENT_ID"))
+	}
+	if strings.TrimSpace(reqBody.AgentID) == "" {
+		reqBody.AgentID = "codex_gpt5"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	healthPayload, healthStatus, healthErr := s.backendJSONRequest(ctx, http.MethodGet, "/health", r.Header, nil)
+	statusPayload, statusStatus, statusErr := s.backendJSONRequest(ctx, http.MethodGet, "/status", r.Header, nil)
+
+	scopedSearchReq := map[string]any{
+		"project":                 reqBody.Project,
+		"query":                   reqBody.Query,
+		"topic_path":              reqBody.TopicPath,
+		"retrieval_mode":          reqBody.RetrievalMode,
+		"include_grounding":       true,
+		"include_retrieval_debug": true,
+		"agent_id":                reqBody.AgentID,
+	}
+	scopedPayload, scopedStatus, scopedErr := s.backendJSONRequest(
+		ctx,
+		http.MethodPost,
+		"/memory/search",
+		r.Header,
+		scopedSearchReq,
+	)
+
+	var broadenedPayload map[string]any
+	var broadenedStatus int
+	var broadenedErr error
+	needsBroaden := false
+	if scopedErr == nil && scopedPayload != nil {
+		degraded := anyToBool(scopedPayload["degraded"])
+		if degraded || resultCount(scopedPayload) == 0 {
+			needsBroaden = true
+		}
+	}
+	if scopedErr != nil {
+		needsBroaden = true
+	}
+	if needsBroaden {
+		broadReq := map[string]any{
+			"project":                 reqBody.Project,
+			"query":                   reqBody.Query,
+			"retrieval_mode":          reqBody.RetrievalMode,
+			"include_grounding":       true,
+			"include_retrieval_debug": true,
+			"agent_id":                reqBody.AgentID,
+		}
+		broadenedPayload, broadenedStatus, broadenedErr = s.backendJSONRequest(
+			ctx,
+			http.MethodPost,
+			"/memory/search",
+			r.Header,
+			broadReq,
+		)
+	}
+
+	contextPackReq := map[string]any{
+		"project":                 reqBody.Project,
+		"query":                   reqBody.Query,
+		"topic_path":              reqBody.TopicPath,
+		"retrieval_mode":          reqBody.RetrievalMode,
+		"include_retrieval_debug": true,
+		"agent_id":                reqBody.AgentID,
+	}
+	contextPackPayload, contextPackStatus, contextPackErr := s.backendJSONRequest(
+		ctx,
+		http.MethodPost,
+		"/memory/context-pack",
+		r.Header,
+		contextPackReq,
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":               true,
+		"service":          "gateway-go",
+		"agent_id":         reqBody.AgentID,
+		"project":          reqBody.Project,
+		"query":            reqBody.Query,
+		"topic_path":       reqBody.TopicPath,
+		"retrieval_mode":   reqBody.RetrievalMode,
+		"backend_url":      s.backendURL,
+		"health":           healthPayload,
+		"health_status":    healthStatus,
+		"health_error":     errString(healthErr),
+		"status":           statusPayload,
+		"status_status":    statusStatus,
+		"status_error":     errString(statusErr),
+		"scoped_search":    scopedPayload,
+		"scoped_status":    scopedStatus,
+		"scoped_error":     errString(scopedErr),
+		"broadened_search": broadenedPayload,
+		"broadened_status": broadenedStatus,
+		"broadened_error":  errString(broadenedErr),
+		"context_pack":     contextPackPayload,
+		"context_status":   contextPackStatus,
+		"context_error":    errString(contextPackErr),
+	})
+}
+
+func errString(err error) any {
+	if err == nil {
+		return nil
+	}
+	return err.Error()
 }
 
 func (s *server) proxyStream(w http.ResponseWriter, req *http.Request) {
@@ -3064,7 +3313,10 @@ func (s *server) retrievalHealth(w http.ResponseWriter, r *http.Request) {
 func buildMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/health", s.proxy)
+	mux.HandleFunc("/status", s.proxy)
 	mux.HandleFunc("/v1/info", s.info)
+	mux.HandleFunc("/v1/codex/preflight", s.codexPreflight)
 	// Retrieval + memory engine API (go-first ingress, python fallback backend).
 	mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)
@@ -3074,12 +3326,25 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/search", s.proxy)
 	mux.HandleFunc("/memory/search/async/", s.proxy)
 	mux.HandleFunc("/memory/search/jobs/", s.proxy)
+	mux.HandleFunc("/memory/write", s.proxy)
 	mux.HandleFunc("/memory/recall/eval-cases", s.proxy)
 	mux.HandleFunc("/memory/recall/eval-cases/refresh", s.proxy)
 	mux.HandleFunc("/memory/recall/evaluate/saved", s.proxy)
 	mux.HandleFunc("/memory/write/batch", s.proxy)
+	mux.HandleFunc("/memory/recent", s.proxy)
+	mux.HandleFunc("/memory/files/", s.proxy)
+	mux.HandleFunc("/memory/profiles", s.proxy)
+	mux.HandleFunc("/memory/profiles/", s.proxy)
+	mux.HandleFunc("/memory/topics", s.proxy)
+	mux.HandleFunc("/memory/topics/list", s.proxy)
+	mux.HandleFunc("/memory/topic-rollups", s.proxy)
 	mux.HandleFunc("/memory/browser-context", s.proxy)
 	mux.HandleFunc("/memory/context-pack", s.proxy)
+	mux.HandleFunc("/feedback", s.proxy)
+	mux.HandleFunc("/agents/tasks", s.proxy)
+	mux.HandleFunc("/agents/tasks/", s.proxy)
+	mux.HandleFunc("/telemetry/", s.proxy)
+	mux.HandleFunc("/maintenance/", s.proxy)
 	mux.HandleFunc("/ops/queue/status", s.proxy)
 	mux.HandleFunc("/ops/capabilities", s.proxy)
 	mux.HandleFunc("/tools/capability_map", s.proxy)

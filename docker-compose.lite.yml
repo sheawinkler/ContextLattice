@@ -516,6 +516,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gateway-go
+    ports:
+      - ${HOST_BIND_ADDRESS:-127.0.0.1}:${GO_GATEWAY_HOST_PORT:-8091}:${GO_GATEWAY_PORT_INTERNAL:-8091}
     environment:
       PORT: ${GO_GATEWAY_PORT_INTERNAL:-8091}
       GO_RETRIEVAL_CONTINUATION_EVENT_HISTORY: ${GO_RETRIEVAL_CONTINUATION_EVENT_HISTORY:-32}
