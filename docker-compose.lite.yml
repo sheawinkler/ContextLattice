@@ -66,7 +66,7 @@ services:
       memorymcp-http:
         condition: service_healthy
     volumes:
-      - ./configs/mcp-hub.lite.json:/config/config.json:ro
+      - ./config/mcp/mcp-hub.lite.json:/config/config.json:ro
     command: ["--config", "/config/config.json"]
     ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${MCP_HUB_PORT:-53130}:${MCP_HUB_PORT:-53130}"]
     ulimits:

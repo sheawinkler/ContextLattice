@@ -50,7 +50,7 @@ services:
     ports:
       - "${MEMORYBANK_HTTP_PORT:-53126}:9090"
     volumes:
-      - ./configs/memorybank-gateway.config.json:/config/config.json:ro
+      - ./config/mcp/memorybank-gateway.config.json:/config/config.json:ro
     depends_on:
       memorymcp-http:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
     ports:
       - "${MCP_HUB_PORT:-53000}:9090"
     volumes:
-      - ./configs/mcp-hub.config.json:/config/config.json:ro
+      - ./config/mcp/mcp-hub.config.json:/config/config.json:ro
     depends_on:
       memorybank-gateway: { condition: service_started }
       mindsdb-http-proxy: { condition: service_started }

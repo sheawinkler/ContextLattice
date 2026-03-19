@@ -1,6 +1,6 @@
 .github/
 config/
-configs/
+config/mcp/
 docker/
 docs/
 infra/

@@ -119,7 +119,7 @@ services:
       memorymcp-http:
         condition: service_healthy
     volumes:
-      - ${MCP_HUB_CONFIG:-./configs/mcp-hub.config.json}:/config/config.json:ro
+      - ${MCP_HUB_CONFIG:-./config/mcp/mcp-hub.config.json}:/config/config.json:ro
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - |
