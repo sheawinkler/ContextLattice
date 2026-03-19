@@ -39,7 +39,50 @@
       </div>
     </section>
 
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Current launch boundary</div>
+        <h3>v3.2 is public baseline. v4 remains private tuning lane.</h3>
+        <ul class="spec-list">
+          <li><strong>Public v3.2:</strong> Go-first <code>:8075</code>, Python fallback <code>:18075</code>, <code>icm_spike</code> memory-bank default.</li>
+          <li><strong>Private v4:</strong> same external API contract, but with stronger adaptive tuning and candidate backend experimentation.</li>
+          <li><strong>Promotion policy:</strong> features move from v4 to public only after benchmark + recall + soak evidence.</li>
+        </ul>
+      </article>
+    </section>
+
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-03-19 · v3.2.0 · Public V3 Runtime Cutover</span>
+        <h3>Go-first read runtime is now default on public V3 (Python moved to fallback lane)</h3>
+        <p class="spotlight">
+          Public V3 now serves through <code>gateway-go</code> on <code>:8075</code> by default, with Python retained as a rollback-only fallback lane.
+          We also promoted full <code>icm_spike</code> memory-bank policy wiring into gateway runtime and moved memory-bank to async slow-source continuation.
+        </p>
+        <ul>
+          <li>Primary path switch: <code>/memory/search</code> executes in Go staged retrieval by default; Python fallback is exposed on <code>:18075</code>.</li>
+          <li>Memory-bank reliability fix: gateway now consumes <code>ORCH_MEMORY_BANK_SEARCH_BACKEND=icm_spike</code> and configured fallback chain.</li>
+          <li>A/B artifact: <code>bench/results/live_runtime_comparison_v3.2.0_cutover.json</code> (20 interleaved runs per lane).</li>
+          <li>Measured delta: p50 <code>0.202s → 0.139s</code> (<code>31.1%</code> faster), p95 <code>0.429s → 0.268s</code> (<code>37.5%</code> faster), mean <code>0.255s → 0.157s</code> (<code>38.5%</code> faster).</li>
+          <li>Result parity in benchmark: median result count <code>4</code> on both lanes with identical returned-now source mode.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-03-13 · Runtime Tuning</span>
+        <h3>Qdrant staged-fetch caps tuned by retrieval mode + compose passthrough hardening</h3>
+        <p class="spotlight">
+          Added mode-specific Qdrant sync timeout caps in <code>gateway-go</code> and exposed tuning envs in
+          compose so operators can tune fast/balanced/deep behavior without code edits.
+        </p>
+        <ul>
+          <li>New knobs: <code>ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_FAST_SECS</code>, <code>..._BALANCED_...</code>, <code>..._DEEP_...</code>.</li>
+          <li>A/B artifact pair: <code>bench/results/qdrant_tuning_20260313T004405Z.json</code> vs <code>bench/results/qdrant_tuning_20260313T213430Z.json</code>.</li>
+          <li>Observed p95 delta (same harness): baseline <code>593.575ms → 84.843ms</code> (~<code>7.00x</code>), deep-tail <code>995.125ms → 162.870ms</code> (~<code>6.11x</code>), fast-path <code>686.621ms → 603.521ms</code> (~<code>1.14x</code>).</li>
+          <li>Companion matrix artifact: <code>bench/results/perf_shortlist_matrix_20260313T213440Z.json</code>.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-03-05 · V3 Planning</span>
         <h3>Published V3 roadmap for issues #68-#72</h3>
