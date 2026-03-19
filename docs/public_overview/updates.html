@@ -53,6 +53,20 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-03-19 · v3.2.3 · Launch Readiness Docs Alignment</span>
+        <h3>Finalized install/deployment mode copy to match staged retrieval runtime lanes</h3>
+        <p class="spotlight">
+          Completed a final launch-readiness docs pass so installation and deployment-mode guidance clearly reflects current v3.2 runtime behavior.
+        </p>
+        <ul>
+          <li>Installation mode summaries now call out Gateway-Go frontdoor ownership.</li>
+          <li>Lite mode now explicitly lists the fast staged lane: <code>topic_rollups + qdrant + postgres_pgvector</code>.</li>
+          <li>Full mode now explicitly lists deep async continuation lane sources: <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li>No runtime/API changes; docs-only launch consistency release.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.2 · Graphics + Architecture Alignment</span>
         <h3>Synced README + website diagrams to current staged retrieval/runtime ownership</h3>
         <p class="spotlight">

@@ -144,7 +144,8 @@
           <h3>Lite installation</h3>
           <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
           <ul class="spec-list">
-            <li><strong>Services:</strong> Orchestrator, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
+            <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
+            <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + qdrant + postgres_pgvector</code></li>
             <li><strong>Resource target:</strong> 2-4 vCPU, 4-8 GB RAM, 25-60 GB SSD</li>
             <li><strong>Startup command:</strong> <code>gmake mem-up-lite</code></li>
           </ul>
@@ -154,6 +155,7 @@
           <p>Enables full retrieval fabric and operations stack including analytics, observability, and deeper RAG support.</p>
           <ul class="spec-list">
             <li><strong>Services:</strong> Lite stack plus MindsDB, Letta, and observability profile</li>
+            <li><strong>Deep continuation lane:</strong> async coverage from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Resource target:</strong> 6-8 vCPU, 16-24 GB RAM, 120-200 GB SSD</li>
             <li><strong>Startup command:</strong> <code>gmake mem-up-full</code> (or <code>gmake mem-mode-full</code> then <code>gmake mem-up</code>)</li>
           </ul>

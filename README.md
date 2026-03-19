@@ -643,6 +643,7 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 ## Docs Index
 
 - Release notes:
+  - `docs/releases/v3.2.3.md` (final install/deployment docs alignment for staged runtime lanes)
   - `docs/releases/v3.2.2.md` (README/website graphics + runtime ownership alignment)
   - `docs/releases/v3.2.1.md` (config canonicalization + Python fallback audit)
   - `docs/releases/v3.2.0.md` (public V3 Go-first cutover; Python removed from primary read path; includes A/B benchmark)
