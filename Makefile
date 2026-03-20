@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -37,12 +37,13 @@ help:
 > echo "  up-core: helper for PROFILES=core docker compose up"
 > echo "  mem-mode-show|mem-mode-core|mem-mode-full: toggle persistent COMPOSE_PROFILES in .env"
 > echo "  models-pull: pull local Ollama models (optional)"
-> echo "  kalliste: configure & start mcp-proxy on :9090"
+> echo "  mcp-proxy-up: configure & start mcp-proxy on :9090"
 > echo "  init: qdrant-init + optional mindsdb/letta seeds"
 > echo "  doctor: quick endpoint probes"
 > echo "  mem-ping: MCP hub tools/list against memorymcp"
 > echo "  monitor-open|monitor-check: less-technical monitoring helpers (dashboard + health/status)"
 > echo "  dmg-build: build ContextLattice macOS bootstrap DMG in ./dist"
+> echo "  msi-build: build ContextLattice Windows MSI bootstrap installer in ./dist"
 > echo "  fanout-status|fanout-deadletters|fanout-rehydrate: durability + replay ops"
 > echo "  qdrant-cutover: set QDRANT_COLLECTION and rehydrate vectors"
 > echo "  service-version-audit|service-version-apply: check/apply stable image tag bumps"
@@ -121,9 +122,9 @@ prune:
 > docker system prune -f
 
 # ---- Proxy-only gateway (TBXark mcp-proxy) ----
-kalliste:
-> [ -x scripts/kalliste.sh ] || { echo "ERROR: scripts/kalliste.sh missing or not executable"; exit 1; }
-> bash scripts/kalliste.sh
+mcp-proxy-up:
+> [ -x scripts/mcp_proxy_bootstrap.sh ] || { echo "ERROR: scripts/mcp_proxy_bootstrap.sh missing or not executable"; exit 1; }
+> bash scripts/mcp_proxy_bootstrap.sh
 
 # ---- Memory init bundle (Qdrant tuning + optional seeds) ----
 init: qdrant-init mindsdb-seed letta-seed
@@ -181,6 +182,9 @@ monitor-check:
 
 dmg-build:
 > bash scripts/build_macos_dmg.sh
+
+msi-build:
+> bash scripts/build_windows_msi.sh
 
 # ---- Storage / retention helpers ----
 
@@ -399,7 +403,7 @@ launch:
 > $(MAKE) ollama-up
 > $(MAKE) ollama-wait
 > $(MAKE) up
-> $(MAKE) kalliste
+> $(MAKE) mcp-proxy-up
 > $(MAKE) router-up
 > $(MAKE) router-wait
 > $(MAKE) sidecars-up       # (mlx only)
