@@ -15,13 +15,26 @@ Migrate the Python implementation to a hybrid architecture:
   - `MEMMCP_ORCHESTRATOR_URL`
   - `CONTEXTLATTICE_ORCHESTRATOR_URL`
 
-## Codex-First Integration Defaults
+## Agent Integration Defaults
 
-- Use a stable agent identity for reads/writes so profile defaults apply:
-  - `CONTEXTLATTICE_AGENT_ID=codex_gpt5`
-  - `MEMMCP_AGENT_ID=codex_gpt5`
-- Before major work, run:
+- External agents should use named preflight profiles:
+  - `codex`
+  - `claude-code`
+  - `opencode`
+  - `hermes-agent`
+  - `chatgpt-web`, `chatgpt-desktop`
+  - `claude-web`, `claude-desktop`
+- Use stable agent identity for reads/writes so profile defaults apply:
+  - `CONTEXTLATTICE_AGENT_ID` (defaults to `codex_gpt5`)
+  - `MEMMCP_AGENT_ID`
+- Before major work, run one of:
   - `python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration`
+  - `python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice`
+  - `python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice`
+  - `python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice`
+- Gateway preflight routes:
+  - `POST /v1/codex/preflight` (compatibility alias)
+  - `POST /v1/agents/preflight` (generic profile-aware preflight)
 
 ## Non-goals
 

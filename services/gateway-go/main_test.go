@@ -570,6 +570,114 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	}
 }
 
+func TestAgentsPreflightUsesNamedProfileDefaults(t *testing.T) {
+	searchCalls := 0
+	contextPackCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case "/status":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"service":{"ok":true}}`))
+			return
+		case "/memory/search":
+			searchCalls += 1
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(anyToString(payload["agent_id"])) != "claude_code_agent" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"missing claude agent_id"}`))
+				return
+			}
+			topic := strings.TrimSpace(anyToString(payload["topic_path"]))
+			if topic != "" {
+				if topic != "runbooks/claude-code-integration" {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"unexpected topic path"}`))
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"degraded":true,"results":[]}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"degraded":false,"results":[{"project":"contextlattice","file":"notes/a.md"}]}`))
+			return
+		case "/memory/context-pack":
+			contextPackCalls += 1
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(anyToString(payload["agent_id"])) != "claude_code_agent" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"missing claude agent_id"}`))
+				return
+			}
+			if strings.TrimSpace(anyToString(payload["topic_path"])) != "runbooks/claude-code-integration" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"unexpected context-pack topic path"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"context_pack":{"facts":[{"text":"f1"}],"results":[{"file":"_rollups/topics/a.json"}]}}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"agent":"claude-code","project":"contextlattice"}`
+	resp, err := http.Post(gateway.URL+"/v1/agents/preflight", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("preflight request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode preflight response: %v", err)
+	}
+	if !anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+	if strings.TrimSpace(anyToString(payload["agent"])) != "claude-code" {
+		t.Fatalf("unexpected agent in response: %#v", payload["agent"])
+	}
+	if strings.TrimSpace(anyToString(payload["agent_id"])) != "claude_code_agent" {
+		t.Fatalf("unexpected agent_id in response: %#v", payload["agent_id"])
+	}
+	if searchCalls != 2 {
+		t.Fatalf("expected two search calls (scoped+broad), got %d", searchCalls)
+	}
+	if contextPackCalls != 1 {
+		t.Fatalf("expected one context-pack call, got %d", contextPackCalls)
+	}
+	if payload["broadened_search"] == nil {
+		t.Fatalf("expected broadened_search payload, got nil")
+	}
+	if payload["context_pack"] == nil {
+		t.Fatalf("expected context_pack payload, got nil")
+	}
+}
+
 func TestStagedRetrievalMergesSourcesAndGrounding(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups,qdrant")

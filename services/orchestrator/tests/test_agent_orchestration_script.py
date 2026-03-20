@@ -86,3 +86,22 @@ def test_context_pack_uses_stable_agent_id(monkeypatch):
     payload = post_calls[-1][2] or {}
     assert payload.get("agent_id") == "codex_gpt5_test"
     assert payload.get("topic_path") == "runbooks/codex-integration"
+
+
+def test_agent_preflight_uses_profile_defaults(monkeypatch):
+    dummy = _DummyClient()
+    monkeypatch.setattr(ao.httpx, "Client", lambda *args, **kwargs: dummy)
+    orch = ao.ContextLatticeOrchestrator("http://127.0.0.1:8075", agent_id="codex_gpt5_test")
+    payload = orch.agent_preflight(agent="claude-code", project="contextlattice")
+
+    assert payload.get("agent") == "claude-code"
+    assert payload.get("agent_id") == "claude_code_agent"
+    search_calls = [c for c in dummy.calls if c[0] == "post" and c[1].endswith("/memory/search")]
+    assert search_calls, "expected /memory/search calls"
+    scoped_payload = search_calls[0][2] or {}
+    assert scoped_payload.get("topic_path") == "runbooks/claude-code-integration"
+    assert scoped_payload.get("agent_id") == "claude_code_agent"
+    pack_calls = [c for c in dummy.calls if c[0] == "post" and c[1].endswith("/memory/context-pack")]
+    assert pack_calls, "expected /memory/context-pack call"
+    context_payload = pack_calls[0][2] or {}
+    assert context_payload.get("agent_id") == "claude_code_agent"
