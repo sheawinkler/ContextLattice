@@ -48,6 +48,8 @@
           <li>Set agent read-call timeout to match retrieval mode (fast: 25s, balanced: 60s, deep: 75s).</li>
           <li>Paste the human operator instruction block into your agent session.</li>
           <li>Map your client/tooling surface to <code>/memory/write</code>, <code>/memory/search</code>, and <code>/tools/feedback_submit</code>.</li>
+          <li>Add HTTP/messaging app interfacing (claw-ready) via <code>/integrations/messaging/*</code> endpoints.</li>
+          <li>For easy monitoring during integration, run <code>gmake monitor-open</code> (or <code>gmake monitor-check</code>).</li>
         </ol>
       </article>
     </section>
@@ -69,6 +71,7 @@
         <a href="#integration-prereq">Prereq</a>
         <a href="#integration-smoke">Smoke Test</a>
         <a href="#integration-human-guide">Human Guide</a>
+        <a href="#integration-profiles">Agent Profiles</a>
         <a href="#integration-clients">Clients</a>
         <a href="#integration-claw">Claw Mapping</a>
         <a href="#integration-web3">Advanced</a>
@@ -150,10 +153,38 @@ Required behavior:
       </article>
     </section>
 
+    <section class="section" id="integration-profiles">
+      <article class="card">
+        <div class="kicker">Profile-aware preflight</div>
+        <h3>Deep integration for Codex, Claude Code, OpenCode, Hermes, ChatGPT, Claude</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
+        <p>Use profile-aware preflight so each agent gets a stable <code>agent_id</code>, topic scope, and query defaults before work begins.</p>
+<pre><code># generic profile-aware preflight
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"agent":"claude-code","project":"contextlattice"}' \
+  http://127.0.0.1:8075/v1/agents/preflight | jq
+
+# compatibility alias (codex)
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"project":"contextlattice"}' \
+  http://127.0.0.1:8075/v1/codex/preflight | jq
+
+# local helper script
+python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice
+python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
+python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice</code></pre>
+        <ul class="spec-list">
+          <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
+          <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>
+          <li><strong>Endpoint remains pinned:</strong> <code>http://127.0.0.1:8075</code>.</li>
+        </ul>
+      </article>
+    </section>
+
     <section class="section" id="integration-messaging">
       <article class="card">
         <div class="kicker">Messaging Surface</div>
-        <h3>OpenClaw/ZeroClaw/IronClaw + Telegram + Slack command bridge</h3>
+        <h3>HTTP/messaging app interfacing (claw-ready)</h3>
         <div class="priority-row"><span class="priority-chip recommended">Recommended</span></div>
         <p>Context Lattice now supports channel command intake via orchestrator-native endpoints. The default handle is <code>@ContextLattice</code>.</p>
 <pre><code>POST /integrations/messaging/command
