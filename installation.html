@@ -54,9 +54,11 @@
 
     <section class="section section-tight">
       <nav class="page-nav-inline" aria-label="On this page">
+        <a href="#install-download">Downloads</a>
         <a href="#install-quickstart">Quickstart</a>
         <a href="#install-modes">Modes</a>
         <a href="#install-storage">Storage</a>
+        <a href="#install-monitoring">Monitoring</a>
         <a href="#install-verify">Verify</a>
         <a href="#install-advanced">Advanced</a>
       </nav>
@@ -83,6 +85,29 @@
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p>This command creates missing env wiring, runs secure bootstrap, starts services, and validates health/auth so you do not get stuck on early 401 errors.</p>
 <pre><code>gmake quickstart</code></pre>
+      </article>
+    </section>
+
+    <section class="section" id="install-download">
+      <article class="card">
+        <div class="kicker">Downloads</div>
+        <h3>macOS DMG for easy install, ZIP stays default for developers</h3>
+        <div class="priority-row"><span class="priority-chip recommended">Recommended</span></div>
+        <ul class="spec-list">
+          <li><strong>Less technical macOS users:</strong> <a href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a></li>
+          <li><strong>Technical/dev users (default):</strong> clone repo or download <a href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">main ZIP</a></li>
+          <li><strong>Roadmap:</strong> Windows MSI packaging follows after DMG lane stabilization.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section" id="install-monitoring">
+      <article class="card">
+        <div class="kicker">Easy monitoring</div>
+        <h3>Open dashboard and run health checks with one command</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
+<pre><code>gmake monitor-open
+gmake monitor-check</code></pre>
       </article>
     </section>
 
