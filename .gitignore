@@ -62,3 +62,7 @@ prompts/*.md
 qdrant_adv_examples.md
 launch_service/README.md
 registry/README.md
+
+development/docker-compose-bak/
+development/makefile-bak/
+*.orig

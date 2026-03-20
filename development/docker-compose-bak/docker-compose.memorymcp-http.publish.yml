@@ -1,4 +1,0 @@
-services:
-  memorymcp-http:
-    ports:
-      - "59081:59081"

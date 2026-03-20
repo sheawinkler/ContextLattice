@@ -1,4 +1,0 @@
-services:
-  mcp-proxy:
-    ports:
-      - "19091:9090"   # host:container

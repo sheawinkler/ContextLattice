@@ -1,7 +1,0 @@
-SHELL := /bin/bash
-.SHELLFLAGS := -eu -o pipefail -c
-.ONESHELL:
-
-.PHONY: kalliste
-kalliste:
-	@bash scripts/kalliste.sh

@@ -1,8 +1,0 @@
-services:
-  mindsdb-http-proxy:
-    command: >
-      sh -lc '
-        pip install -U pip &&
-        pip install -U fastmcp fastapi uvicorn httpx anyio &&
-        python -m uvicorn scripts.mindsdb_http_proxy:app --host 0.0.0.0 --port 8004
-      '

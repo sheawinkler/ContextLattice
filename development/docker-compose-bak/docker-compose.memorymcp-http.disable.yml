@@ -1,3 +1,0 @@
-services:
-  memorymcp-http:
-    profiles: ["disabled"]
