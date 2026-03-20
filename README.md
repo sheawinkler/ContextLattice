@@ -80,15 +80,18 @@ Context Lattice is built for teams running high-volume memory writes where durab
 
 - Less technical macOS users: DMG bootstrap launcher  
   `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg`
+- Less technical Windows users: MSI bootstrap installer  
+  `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi`
 - Technical/dev users (default): repo clone or main ZIP
 - CLI fallback already exists and remains first-class: `gmake quickstart`
-- MSI packaging is next after DMG lane stabilization
 
 Release operator note:
 
 ```bash
 gmake dmg-build
 # output: dist/ContextLattice-macOS-universal.dmg
+gmake msi-build
+# output: dist/ContextLattice-windows-x64.msi
 # attach this file to the latest GitHub release
 ```
 

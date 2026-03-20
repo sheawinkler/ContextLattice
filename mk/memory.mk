@@ -1430,7 +1430,7 @@ override MCP_ACCEPT := application/json, text/event-stream
 override MCP_URL_8011 := http://127.0.0.1:53130/memorymcp/mcp
 override MCP_VER      := 2025-11-25
 override MCP_ACCEPT   := application/json, text/event-stream
-override MCP_CLIENT_NAME := kalliste-alpha
+override MCP_CLIENT_NAME := contextlattice-alpha
 override MCP_CLIENT_VER  := dev
 
 .PHONY: mem-ping

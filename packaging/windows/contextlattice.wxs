@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="ContextLattice"
+    Language="1033"
+    Version="$(var.Version)"
+    Manufacturer="Private Memory Corp"
+    UpgradeCode="1D8CE5E8-8F52-4E9F-8D40-8DDF1906A9A1">
+    <Package
+      InstallerVersion="200"
+      Compressed="yes"
+      InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Feature Id="MainFeature" Title="ContextLattice" Level="1">
+      <ComponentRef Id="cmpInstallCmd" />
+      <ComponentRef Id="cmpMonitorCmd" />
+      <ComponentRef Id="cmpInstallPs1" />
+      <ComponentRef Id="cmpMonitorPs1" />
+      <ComponentRef Id="cmpReadme" />
+    </Feature>
+  </Product>
+
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLDIR" Name="ContextLattice" />
+      </Directory>
+    </Directory>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="cmpInstallCmd" Guid="*">
+        <File Id="filInstallCmd" Source="ContextLattice-Install.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="cmpMonitorCmd" Guid="*">
+        <File Id="filMonitorCmd" Source="ContextLattice-Monitor.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="cmpInstallPs1" Guid="*">
+        <File Id="filInstallPs1" Source="Install-ContextLattice.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="cmpMonitorPs1" Guid="*">
+        <File Id="filMonitorPs1" Source="Monitor-ContextLattice.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="cmpReadme" Guid="*">
+        <File Id="filReadme" Source="README.txt" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
