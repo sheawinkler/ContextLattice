@@ -24,6 +24,12 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `balanced`: `60s`
   - `deep` (or explicit `letta` / `memory_bank`): `75s`
 - Note: first deep reads may be slower; repeated calls often return faster after staged fetch and async cache warming.
+- Optional profile-aware preflight endpoint:
+  - `POST /v1/agents/preflight`
+  - `POST /v1/codex/preflight` (compatibility alias)
+- Common profile keys:
+  - `codex`, `claude-code`, `opencode`, `hermes-agent`
+  - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 
 ## 3) Checkpoints and Final Recency Pass
 - During long tasks, write concise checkpoints via `POST /memory/write`.

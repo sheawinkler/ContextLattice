@@ -383,6 +383,30 @@ Codex-first preflight helper:
 python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration
 ```
 
+Profile-aware preflight helpers:
+
+```bash
+python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice
+python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
+python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
+
+ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"agent":"chatgpt-web","project":"contextlattice"}' \
+  http://127.0.0.1:8075/v1/agents/preflight | jq
+```
+
+Agent-specific template blocks:
+- `docs/public_overview/templates/agents/codex.md`
+- `docs/public_overview/templates/agents/claude-code.md`
+- `docs/public_overview/templates/agents/opencode.md`
+- `docs/public_overview/templates/agents/hermes-agent.md`
+- `docs/public_overview/templates/agents/chatgpt-web-desktop.md`
+- `docs/public_overview/templates/agents/claude-web-desktop.md`
+
+Agent profile defaults source:
+- `config/agents/agent_profiles.json`
+
 ## External Agent Task Routing (Generic)
 
 Context Lattice can queue and route tasks to external runners (Codex, OpenCode, Claude Code) and still supports internal application workers.

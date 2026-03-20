@@ -858,12 +858,107 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	_, _ = w.Write(respBody)
 }
 
-type codexPreflightRequest struct {
+type agentPreflightRequest struct {
 	Project       string `json:"project"`
 	TopicPath     string `json:"topic_path"`
 	Query         string `json:"query"`
 	RetrievalMode string `json:"retrieval_mode"`
 	AgentID       string `json:"agent_id"`
+	Agent         string `json:"agent"`
+}
+
+type agentPreflightProfile struct {
+	AgentID       string `json:"agent_id"`
+	TopicPath     string `json:"topic_path"`
+	Query         string `json:"query"`
+	RetrievalMode string `json:"retrieval_mode"`
+}
+
+var defaultAgentPreflightProfiles = map[string]agentPreflightProfile{
+	"codex": {
+		AgentID:       "codex_gpt5",
+		TopicPath:     "runbooks/codex-integration",
+		Query:         "codex preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"claude-code": {
+		AgentID:       "claude_code_agent",
+		TopicPath:     "runbooks/claude-code-integration",
+		Query:         "claude code preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"opencode": {
+		AgentID:       "opencode_agent",
+		TopicPath:     "runbooks/opencode-integration",
+		Query:         "opencode preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"hermes-agent": {
+		AgentID:       "hermes_agent",
+		TopicPath:     "runbooks/hermes-agent-integration",
+		Query:         "hermes agent preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"chatgpt-web": {
+		AgentID:       "chatgpt_web_agent",
+		TopicPath:     "runbooks/chatgpt-web-integration",
+		Query:         "chatgpt web session preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"chatgpt-desktop": {
+		AgentID:       "chatgpt_desktop_agent",
+		TopicPath:     "runbooks/chatgpt-desktop-integration",
+		Query:         "chatgpt desktop session preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"claude-web": {
+		AgentID:       "claude_web_agent",
+		TopicPath:     "runbooks/claude-web-integration",
+		Query:         "claude web session preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+	"claude-desktop": {
+		AgentID:       "claude_desktop_agent",
+		TopicPath:     "runbooks/claude-desktop-integration",
+		Query:         "claude desktop session preflight connectivity and retrieval",
+		RetrievalMode: "balanced",
+	},
+}
+
+var agentPreflightAliases = map[string]string{
+	"codex_gpt5":      "codex",
+	"claude-code":     "claude-code",
+	"claude_code":     "claude-code",
+	"opencode":        "opencode",
+	"hermes":          "hermes-agent",
+	"hermes-agent":    "hermes-agent",
+	"chatgpt":         "chatgpt-web",
+	"chatgpt-web":     "chatgpt-web",
+	"chatgpt-desktop": "chatgpt-desktop",
+	"claude":          "claude-web",
+	"claude-web":      "claude-web",
+	"claude-desktop":  "claude-desktop",
+}
+
+func normalizeAgentPreflightKey(agent string) string {
+	candidate := strings.TrimSpace(strings.ToLower(agent))
+	if candidate == "" {
+		return "codex"
+	}
+	if mapped, ok := agentPreflightAliases[candidate]; ok {
+		return mapped
+	}
+	return candidate
+}
+
+func resolveAgentPreflightProfile(agent string) (string, agentPreflightProfile) {
+	key := normalizeAgentPreflightKey(agent)
+	profile, ok := defaultAgentPreflightProfiles[key]
+	if !ok {
+		key = "codex"
+		profile = defaultAgentPreflightProfiles[key]
+	}
+	return key, profile
 }
 
 func (s *server) backendJSONRequest(
@@ -925,11 +1020,19 @@ func resultCount(payload map[string]any) int {
 }
 
 func (s *server) codexPreflight(w http.ResponseWriter, r *http.Request) {
+	s.agentPreflight(w, r, "codex")
+}
+
+func (s *server) agentsPreflight(w http.ResponseWriter, r *http.Request) {
+	s.agentPreflight(w, r, "")
+}
+
+func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAgent string) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	reqBody := codexPreflightRequest{}
+	reqBody := agentPreflightRequest{}
 	rawBody, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -941,17 +1044,24 @@ func (s *server) codexPreflight(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if strings.TrimSpace(forcedAgent) != "" {
+		reqBody.Agent = strings.TrimSpace(forcedAgent)
+	}
+	profileKey, profile := resolveAgentPreflightProfile(reqBody.Agent)
 	if strings.TrimSpace(reqBody.Project) == "" {
 		reqBody.Project = "contextlattice"
 	}
 	if strings.TrimSpace(reqBody.TopicPath) == "" {
-		reqBody.TopicPath = "runbooks/codex-integration"
+		reqBody.TopicPath = profile.TopicPath
 	}
 	if strings.TrimSpace(reqBody.Query) == "" {
-		reqBody.Query = "codex preflight connectivity and retrieval"
+		reqBody.Query = profile.Query
 	}
 	if strings.TrimSpace(reqBody.RetrievalMode) == "" {
-		reqBody.RetrievalMode = "balanced"
+		reqBody.RetrievalMode = profile.RetrievalMode
+	}
+	if strings.TrimSpace(reqBody.AgentID) == "" {
+		reqBody.AgentID = strings.TrimSpace(profile.AgentID)
 	}
 	if strings.TrimSpace(reqBody.AgentID) == "" {
 		reqBody.AgentID = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_AGENT_ID"))
@@ -1036,6 +1146,8 @@ func (s *server) codexPreflight(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":               true,
 		"service":          "gateway-go",
+		"agent":            profileKey,
+		"agent_profile":    profile,
 		"agent_id":         reqBody.AgentID,
 		"project":          reqBody.Project,
 		"query":            reqBody.Query,
@@ -3363,6 +3475,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/status", s.proxy)
 	mux.HandleFunc("/v1/info", s.info)
 	mux.HandleFunc("/v1/codex/preflight", s.codexPreflight)
+	mux.HandleFunc("/v1/agents/preflight", s.agentsPreflight)
 	// Retrieval + memory engine API (go-first ingress, python fallback backend).
 	mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)

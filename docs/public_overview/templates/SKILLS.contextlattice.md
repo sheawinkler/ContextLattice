@@ -17,6 +17,7 @@ Use this as a reusable skill block for agent frameworks that support skills or t
    - `POST /memory/context-pack`
 3. Use profile defaults:
    - `GET /memory/profiles/{agent_id}`
+   - Optional bootstrap: `POST /v1/agents/preflight`
 4. During execution, checkpoint durable decisions:
    - `POST /memory/write`
 5. Submit explicit retrieval feedback for learning/rerank:
@@ -33,6 +34,9 @@ Use this as a reusable skill block for agent frameworks that support skills or t
 - Use staged fetch to control latency; allow escalation to slower sources when confidence is low.
 - Keep factual numbers as exact copies from retrieved records.
 - Expect first deep reads to be slower; repeated equivalent reads should speed up as caches warm.
+- Profile keys for common agents:
+  - `codex`, `claude-code`, `opencode`, `hermes-agent`
+  - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 
 ### Quality Policy
 - Evaluate recall quality for release-sensitive flows:

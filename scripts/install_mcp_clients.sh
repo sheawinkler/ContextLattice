@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEMPLATE_DIR="$ROOT_DIR/configs"
+TEMPLATE_DIR="${TEMPLATE_DIR:-$ROOT_DIR/config/mcp}"
+if [[ ! -d "$TEMPLATE_DIR" && -d "$ROOT_DIR/configs" ]]; then
+  TEMPLATE_DIR="$ROOT_DIR/configs"
+fi
 
 backup_and_copy() {
   local src="$1" dest="$2"
@@ -30,4 +33,4 @@ backup_and_copy "$TEMPLATE_DIR/cline_mcp_settings.json" "$CLINE_CONF"
 backup_and_copy "$TEMPLATE_DIR/cursor_mcp_servers.json" "$CURSOR_CONF"
 backup_and_copy "$TEMPLATE_DIR/claude_mcp_servers.json" "$CLAUDE_CONF"
 
-echo "All MCP client configs now point at http://127.0.0.1:53130/memorymcp/mcp. Restart each IDE to pick up the change."
+echo "All MCP client configs now point at http://127.0.0.1:53130/memorymcp/mcp. Restart each IDE/client to pick up the change."

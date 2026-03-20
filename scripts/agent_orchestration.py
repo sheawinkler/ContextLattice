@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urljoin
 
@@ -23,6 +24,120 @@ DEFAULT_AGENT_ID = (
     or os.getenv("MEMMCP_AGENT_ID", "").strip()
     or "codex_gpt5"
 )
+DEFAULT_AGENT_PREFLIGHT_PROFILES: Dict[str, Dict[str, str]] = {
+    "codex": {
+        "agent_id": "codex_gpt5",
+        "topic_path": "runbooks/codex-integration",
+        "query": "codex preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "claude-code": {
+        "agent_id": "claude_code_agent",
+        "topic_path": "runbooks/claude-code-integration",
+        "query": "claude code preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "opencode": {
+        "agent_id": "opencode_agent",
+        "topic_path": "runbooks/opencode-integration",
+        "query": "opencode preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "hermes-agent": {
+        "agent_id": "hermes_agent",
+        "topic_path": "runbooks/hermes-agent-integration",
+        "query": "hermes agent preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "chatgpt-web": {
+        "agent_id": "chatgpt_web_agent",
+        "topic_path": "runbooks/chatgpt-web-integration",
+        "query": "chatgpt web session preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "chatgpt-desktop": {
+        "agent_id": "chatgpt_desktop_agent",
+        "topic_path": "runbooks/chatgpt-desktop-integration",
+        "query": "chatgpt desktop session preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "claude-web": {
+        "agent_id": "claude_web_agent",
+        "topic_path": "runbooks/claude-web-integration",
+        "query": "claude web session preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+    "claude-desktop": {
+        "agent_id": "claude_desktop_agent",
+        "topic_path": "runbooks/claude-desktop-integration",
+        "query": "claude desktop session preflight connectivity and retrieval",
+        "retrieval_mode": "balanced",
+    },
+}
+AGENT_PREFLIGHT_ALIASES = {
+    "codex_gpt5": "codex",
+    "claude-code": "claude-code",
+    "claude_code": "claude-code",
+    "opencode": "opencode",
+    "hermes": "hermes-agent",
+    "hermes-agent": "hermes-agent",
+    "chatgpt": "chatgpt-web",
+    "chatgpt-web": "chatgpt-web",
+    "chatgpt-desktop": "chatgpt-desktop",
+    "claude": "claude-web",
+    "claude-web": "claude-web",
+    "claude-desktop": "claude-desktop",
+}
+
+
+def _load_agent_preflight_profiles() -> Dict[str, Dict[str, str]]:
+    profiles: Dict[str, Dict[str, str]] = {
+        key: dict(value) for key, value in DEFAULT_AGENT_PREFLIGHT_PROFILES.items()
+    }
+    profile_path = Path(__file__).resolve().parents[1] / "config" / "agents" / "agent_profiles.json"
+    if not profile_path.exists():
+        return profiles
+    try:
+        payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    except Exception:
+        return profiles
+    raw_profiles = payload.get("profiles") if isinstance(payload, dict) else None
+    if not isinstance(raw_profiles, dict):
+        return profiles
+    for raw_key, raw_profile in raw_profiles.items():
+        key = str(raw_key or "").strip().lower()
+        if not key:
+            key = "codex"
+        key = AGENT_PREFLIGHT_ALIASES.get(key, key)
+        if not isinstance(raw_profile, dict):
+            continue
+        current = dict(profiles.get(key) or {})
+        for field in ("agent_id", "topic_path", "query", "retrieval_mode"):
+            value = str(raw_profile.get(field, "")).strip()
+            if value:
+                current[field] = value
+        if current:
+            profiles[key] = current
+    return profiles
+
+
+AGENT_PREFLIGHT_PROFILES = _load_agent_preflight_profiles()
+
+
+def _normalize_agent_profile_key(agent: Optional[str]) -> str:
+    candidate = str(agent or "").strip().lower()
+    if not candidate:
+        return "codex"
+    return AGENT_PREFLIGHT_ALIASES.get(candidate, candidate)
+
+
+def _resolve_agent_preflight_profile(agent: Optional[str]) -> tuple[str, Dict[str, str]]:
+    key = _normalize_agent_profile_key(agent)
+    profile = AGENT_PREFLIGHT_PROFILES.get(key)
+    if not profile:
+        key = "codex"
+        profile = AGENT_PREFLIGHT_PROFILES.get(key) or DEFAULT_AGENT_PREFLIGHT_PROFILES[key]
+    return key, dict(profile)
 
 
 class ContextLatticeOrchestrator:
@@ -272,6 +387,29 @@ class ContextLatticeOrchestrator:
         - scoped search (with broadened fallback)
         - context-pack retrieval
         """
+        return self.agent_preflight(
+            agent="codex",
+            project=project,
+            topic_path=topic_path,
+            query=query,
+            retrieval_mode="balanced",
+        )
+
+    def agent_preflight(
+        self,
+        agent: str,
+        project: str,
+        topic_path: Optional[str] = None,
+        query: Optional[str] = None,
+        retrieval_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Preflight for a named agent profile with scoped search + context pack."""
+        profile_key, profile = _resolve_agent_preflight_profile(agent)
+        effective_topic_path = str(topic_path or profile.get("topic_path") or "").strip()
+        effective_query = str(query or profile.get("query") or "").strip()
+        effective_mode = str(retrieval_mode or profile.get("retrieval_mode") or "balanced").strip().lower() or "balanced"
+        effective_agent_id = str(profile.get("agent_id") or self.agent_id).strip() or DEFAULT_AGENT_ID
+
         health = self.client.get(f"{self.base_url}/health")
         health.raise_for_status()
         health_json = health.json()
@@ -281,39 +419,44 @@ class ContextLatticeOrchestrator:
         status_json = status.json()
 
         scoped = self.search_with_lifecycle(
-            query=query,
+            query=effective_query,
             project=project,
-            topic_path=topic_path,
-            retrieval_mode="balanced",
+            topic_path=effective_topic_path,
+            retrieval_mode=effective_mode,
             include_grounding=True,
             include_retrieval_debug=True,
             wait_for_completion=False,
+            agent_id=effective_agent_id,
         )
         broadened = None
         scoped_results = scoped.get("results") if isinstance(scoped.get("results"), list) else []
         scoped_lifecycle = scoped.get("lifecycle") if isinstance(scoped.get("lifecycle"), dict) else {}
         if not scoped_results or str(scoped_lifecycle.get("status") or "").strip().lower() in {"partial", "failed"}:
             broadened = self.search_with_lifecycle(
-                query=query,
+                query=effective_query,
                 project=project,
                 topic_path=None,
-                retrieval_mode="balanced",
+                retrieval_mode=effective_mode,
                 include_grounding=True,
                 include_retrieval_debug=True,
                 wait_for_completion=False,
+                agent_id=effective_agent_id,
             )
 
         pack = self.context_pack(
-            query=query,
+            query=effective_query,
             project=project,
-            topic_path=topic_path,
-            retrieval_mode="balanced",
+            topic_path=effective_topic_path,
+            retrieval_mode=effective_mode,
             include_retrieval_debug=True,
+            agent_id=effective_agent_id,
         )
 
         return {
             "ok": True,
-            "agent_id": self.agent_id,
+            "agent": profile_key,
+            "agent_profile": profile,
+            "agent_id": effective_agent_id,
             "orchestrator_url": self.base_url,
             "health": health_json,
             "status": status_json,
@@ -427,6 +570,7 @@ def main():
         print("  search-lifecycle <query> [project] [mode] [wait]")
         print("  context-pack <query> [project] [mode] [topic_path]")
         print("  preflight [project] [topic_path] [query]")
+        print("  preflight-agent <agent> [project] [topic_path] [query] [mode]")
         print("  status")
         print("  create-tasks <project> <task_id> <tasks_json>")
         sys.exit(1)
@@ -488,6 +632,21 @@ def main():
         topic_path = sys.argv[3] if len(sys.argv) > 3 else "runbooks/codex-integration"
         query = sys.argv[4] if len(sys.argv) > 4 else "codex preflight connectivity and retrieval"
         payload = orch.codex_preflight(project=project, topic_path=topic_path, query=query)
+        print(json.dumps(payload, indent=2))
+
+    elif cmd == "preflight-agent":
+        agent = sys.argv[2] if len(sys.argv) > 2 else "codex"
+        project = sys.argv[3] if len(sys.argv) > 3 else os.getenv("MEMMCP_PROJECT", "contextlattice")
+        topic_path = sys.argv[4] if len(sys.argv) > 4 else None
+        query = sys.argv[5] if len(sys.argv) > 5 else None
+        retrieval_mode = sys.argv[6] if len(sys.argv) > 6 else None
+        payload = orch.agent_preflight(
+            agent=agent,
+            project=project,
+            topic_path=topic_path,
+            query=query,
+            retrieval_mode=retrieval_mode,
+        )
         print(json.dumps(payload, indent=2))
 
     elif cmd == "status":

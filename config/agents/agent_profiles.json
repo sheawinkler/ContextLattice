@@ -1,0 +1,77 @@
+{
+  "profiles": {
+    "codex": {
+      "agent_id": "codex_gpt5",
+      "topic_path": "runbooks/codex-integration",
+      "query": "codex preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "codex-cli",
+        "chatgpt-codex"
+      ]
+    },
+    "claude-code": {
+      "agent_id": "claude_code_agent",
+      "topic_path": "runbooks/claude-code-integration",
+      "query": "claude code preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "claude-code-cli"
+      ]
+    },
+    "opencode": {
+      "agent_id": "opencode_agent",
+      "topic_path": "runbooks/opencode-integration",
+      "query": "opencode preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "opencode-cli"
+      ]
+    },
+    "hermes-agent": {
+      "agent_id": "hermes_agent",
+      "topic_path": "runbooks/hermes-agent-integration",
+      "query": "hermes agent preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "hermes-agent-runtime"
+      ]
+    },
+    "chatgpt-web": {
+      "agent_id": "chatgpt_web_agent",
+      "topic_path": "runbooks/chatgpt-web-integration",
+      "query": "chatgpt web session preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "chatgpt-web"
+      ]
+    },
+    "chatgpt-desktop": {
+      "agent_id": "chatgpt_desktop_agent",
+      "topic_path": "runbooks/chatgpt-desktop-integration",
+      "query": "chatgpt desktop session preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "chatgpt-desktop"
+      ]
+    },
+    "claude-web": {
+      "agent_id": "claude_web_agent",
+      "topic_path": "runbooks/claude-web-integration",
+      "query": "claude web session preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "claude-web"
+      ]
+    },
+    "claude-desktop": {
+      "agent_id": "claude_desktop_agent",
+      "topic_path": "runbooks/claude-desktop-integration",
+      "query": "claude desktop session preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "claude-desktop"
+      ]
+    }
+  }
+}

@@ -15,6 +15,7 @@ This folder is the source for the public ContextLattice overview web pages.
 - `styles-gray.css` - grayscale/brutalist theme
 - `assets/` - listing/social graphics (`contextlattice-og-1200x630.png`, `contextlattice-icon-512.png`)
 - `templates/` - copy-ready agent instruction templates (`AGENTS.contextlattice.md`, `SKILLS.contextlattice.md`)
+- `templates/agents/` - agent-profile templates (`codex`, `claude-code`, `opencode`, `hermes-agent`, `chatgpt`, `claude`)
 - `.well-known/glama.json` - Glama server-claim metadata
 - `.nojekyll` - enables serving dot-directories such as `.well-known` on GitHub Pages
 
@@ -24,6 +25,9 @@ Copy these into your own repo and adjust project/topic defaults:
 ```bash
 cp docs/public_overview/templates/AGENTS.contextlattice.md ./AGENTS.md
 cp docs/public_overview/templates/SKILLS.contextlattice.md ./SKILLS.md
+# optional: agent-specific blocks
+cp docs/public_overview/templates/agents/codex.md ./docs/agent_templates/codex.md
+cp docs/public_overview/templates/agents/claude-code.md ./docs/agent_templates/claude-code.md
 ```
 
 ## Update workflow
