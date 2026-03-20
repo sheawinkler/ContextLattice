@@ -2681,6 +2681,46 @@ def test_extract_api_key_prefers_header_over_query():
     assert orchestrator._extract_api_key(request) == "header-secret"
 
 
+@pytest.mark.asyncio
+async def test_ingest_trading_defaults_to_local_only(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS", {"mindsdb"})
+    monkeypatch.setattr(orchestrator, "MINDSDB_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_TRADING_AUTOSYNC", True)
+    mindsdb_calls = {"count": 0}
+
+    async def _persist(_snapshot: dict[str, Any]) -> None:
+        return None
+
+    async def _push(_snapshot: dict[str, Any]) -> None:
+        mindsdb_calls["count"] += 1
+
+    monkeypatch.setattr(orchestrator, "_persist_trading_snapshot", _persist)
+    monkeypatch.setattr(orchestrator, "push_trading_snapshot_to_mindsdb", _push)
+    payload = orchestrator.TradingMetrics(
+        timestamp=datetime.now(timezone.utc),
+        open_positions=1,
+        total_value_usd=1000.0,
+        unrealized_pnl=10.0,
+        realized_pnl=5.0,
+        daily_pnl=2.0,
+        positions=[],
+        price_cache_entries=1,
+        price_cache_max_age=1.0,
+        price_cache_ttl=10.0,
+        price_cache_freshness=0.9,
+        price_cache_penalty=1.0,
+    )
+
+    result = await orchestrator.ingest_trading(payload)
+    assert result["ok"] is True
+    assert result["mindsdb_synced"] is False
+    assert result["warning"] is None
+    assert mindsdb_calls["count"] == 0
+    assert result["external_sync"]["enabled"] is False
+    assert result["external_sync"]["mindsdb"] == "disabled"
+
+
 def test_prepare_content_for_storage_redacts_in_redact_mode(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(orchestrator, "SECRETS_STORAGE_MODE", "redact")
     content = "api_key=sk-1234567890abcdefghijklmno"

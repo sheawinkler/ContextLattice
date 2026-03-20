@@ -283,6 +283,19 @@ MINDSDB_TRADING_AUTOSYNC = os.getenv("MINDSDB_TRADING_AUTOSYNC", "true").lower()
 )
 MINDSDB_TRADING_DB = os.getenv("MINDSDB_TRADING_DB", MINDSDB_AUTOSYNC_DB)
 MINDSDB_TRADING_TABLE = os.getenv("MINDSDB_TRADING_TABLE", "trading_metrics")
+TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED = os.getenv(
+    "ORCH_TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+_TRADING_TELEMETRY_EXTERNAL_TARGETS_RAW = os.getenv(
+    "ORCH_TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS",
+    "mindsdb",
+)
+TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS = {
+    target.strip().lower()
+    for target in _TRADING_TELEMETRY_EXTERNAL_TARGETS_RAW.split(",")
+    if target.strip()
+}
 ORCH_API_KEY = _env_alias("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "MEMMCP_ORCHESTRATOR_API_KEY", "").strip()
 LETTA_URL = os.getenv("LETTA_URL", "http://letta:8283")
 LETTA_API_KEY = os.getenv("LETTA_API_KEY", "")
@@ -3186,7 +3199,11 @@ async def _mindsdb_bootstrap() -> None:
     for attempt in range(1, retries + 1):
         try:
             await ensure_mindsdb_table()
-            if MINDSDB_TRADING_AUTOSYNC:
+            if (
+                TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED
+                and "mindsdb" in TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS
+                and MINDSDB_TRADING_AUTOSYNC
+            ):
                 await ensure_mindsdb_trading_table()
             return
         except Exception as exc:  # pragma: no cover
@@ -20172,8 +20189,13 @@ async def compute_trading_analytics_mindsdb() -> dict[str, Any]:
             "warning": reason,
         }
 
-    if not MINDSDB_ENABLED or not MINDSDB_TRADING_AUTOSYNC:
-        return await _local_fallback("MindsDB trading analytics disabled")
+    if (
+        not MINDSDB_ENABLED
+        or not MINDSDB_TRADING_AUTOSYNC
+        or not TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED
+        or "mindsdb" not in TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS
+    ):
+        return await _local_fallback("External trading telemetry sync disabled")
 
     try:
         await ensure_mindsdb_trading_table()
@@ -22326,7 +22348,12 @@ async def ingest_trading(payload: TradingMetrics):
     await _persist_trading_snapshot(snapshot)
     mindsdb_synced = False
     mindsdb_error = None
-    if MINDSDB_ENABLED and MINDSDB_TRADING_AUTOSYNC:
+    if (
+        TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED
+        and "mindsdb" in TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS
+        and MINDSDB_ENABLED
+        and MINDSDB_TRADING_AUTOSYNC
+    ):
         try:
             await push_trading_snapshot_to_mindsdb(snapshot)
             mindsdb_synced = True
@@ -22338,6 +22365,11 @@ async def ingest_trading(payload: TradingMetrics):
         "historySize": history_size,
         "mindsdb_synced": mindsdb_synced,
         "warning": mindsdb_error,
+        "external_sync": {
+            "enabled": TRADING_TELEMETRY_EXTERNAL_SYNC_ENABLED,
+            "targets": sorted(TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS),
+            "mindsdb": "synced" if mindsdb_synced else ("error" if mindsdb_error else "disabled"),
+        },
     }
 
 
