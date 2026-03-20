@@ -76,6 +76,25 @@ Context Lattice is built for teams running high-volume memory writes where durab
 - `gmake`, `jq`, `rg`, `python3`, `curl`
 - Tested baseline: macOS 13+ with Docker Desktop
 
+### Distribution Options (Less technical + dev users)
+
+- Less technical macOS users: DMG bootstrap launcher  
+  `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg`
+- Technical/dev users (default): repo clone or main ZIP
+- CLI fallback already exists and remains first-class: `gmake quickstart`
+- MSI packaging is next after DMG lane stabilization
+
+### Personal computer requirements + app versions
+
+| App lane | Recommended profile | CPU | RAM | Storage |
+| --- | --- | --- | --- | --- |
+| Public `v3.2.x` (current public release `v3.2.3`) | Lite | `2-4` vCPU | `4-8 GB` | `25-60 GB` SSD |
+| Public `v3.2.x` (current public release `v3.2.3`) | Full | `6-8` vCPU | `16-24 GB` | `120-200 GB` SSD |
+| Private `v4` tuning lane | Full baseline + tuning headroom | Start from Full baseline | Start from Full baseline | Start from Full baseline; external NVMe strongly recommended |
+
+Notes:
+- Public operators should use `v3.2.3` sizing targets above.
+- Private `v4` work adds benchmark-heavy tuning and should be treated as heavier than public Full mode.
 ### 1) Configure environment
 
 ```bash
@@ -217,6 +236,14 @@ This command:
 - applies strict runtime tuning lock
 - boots the stack
 - runs smoke + auth-safe health checks
+
+Easy monitoring after launch:
+
+```bash
+gmake monitor-open
+# CLI-only checks:
+gmake monitor-check
+```
 
 ### 3) 60-second verify (recommended)
 

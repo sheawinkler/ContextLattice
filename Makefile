@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             kalliste init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -41,6 +41,8 @@ help:
 > echo "  init: qdrant-init + optional mindsdb/letta seeds"
 > echo "  doctor: quick endpoint probes"
 > echo "  mem-ping: MCP hub tools/list against memorymcp"
+> echo "  monitor-open|monitor-check: less-technical monitoring helpers (dashboard + health/status)"
+> echo "  dmg-build: build ContextLattice macOS bootstrap DMG in ./dist"
 > echo "  fanout-status|fanout-deadletters|fanout-rehydrate: durability + replay ops"
 > echo "  qdrant-cutover: set QDRANT_COLLECTION and rehydrate vectors"
 > echo "  service-version-audit|service-version-apply: check/apply stable image tag bumps"
@@ -161,6 +163,24 @@ doctor:
 
 mem-ping:
 > bash scripts/mem_ping.sh
+
+monitor-open:
+> bash scripts/open_monitoring.sh
+
+monitor-check:
+> if [ -f .env ]; then source .env >/dev/null 2>&1 || true; fi
+> ORCH_URL="$${CONTEXTLATTICE_ORCHESTRATOR_URL:-$${MEMMCP_ORCHESTRATOR_URL:-http://127.0.0.1:8075}}"
+> ORCH_KEY="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${MEMMCP_ORCHESTRATOR_API_KEY:-}}"
+> echo "== /health ==" && curl -fsS "$${ORCH_URL%/}/health" | jq .
+> if [ -n "$$ORCH_KEY" ]; then \
+>   echo "== /status ==" && curl -fsS -H "x-api-key: $$ORCH_KEY" "$${ORCH_URL%/}/status" | jq .; \
+>   echo "== /telemetry/fanout ==" && curl -fsS -H "x-api-key: $$ORCH_KEY" "$${ORCH_URL%/}/telemetry/fanout" | jq '{updatedAt,summary,health}'; \
+> else \
+>   echo "INFO: no orchestrator API key found in env; skipped authenticated checks."; \
+> fi
+
+dmg-build:
+> bash scripts/build_macos_dmg.sh
 
 # ---- Storage / retention helpers ----
 
