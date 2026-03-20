@@ -43,6 +43,7 @@
         <div class="kicker">Quick Path</div>
         <h3>Fastest clean install route</h3>
         <ol class="step-list">
+          <li>Less technical macOS users: download and run the DMG bootstrap launcher.</li>
           <li>Run <code>gmake quickstart</code>.</li>
           <li>Choose launch mode: <code>gmake mem-up-lite</code> or <code>gmake mem-up-full</code>.</li>
           <li>Validate <code>/health</code> and authenticated <code>/status</code>.</li>
@@ -55,6 +56,8 @@
     <section class="section section-tight">
       <nav class="page-nav-inline" aria-label="On this page">
         <a href="#install-quickstart">Quickstart</a>
+        <a href="#install-download">Downloads</a>
+        <a href="#install-monitoring">Monitoring</a>
         <a href="#install-modes">Modes</a>
         <a href="#install-storage">Storage</a>
         <a href="#install-verify">Verify</a>
@@ -83,6 +86,35 @@
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p>This command creates missing env wiring, runs secure bootstrap, starts services, and validates health/auth so you do not get stuck on early 401 errors.</p>
 <pre><code>gmake quickstart</code></pre>
+      </article>
+    </section>
+
+    <section class="section" id="install-download">
+      <article class="card">
+        <div class="kicker">Distribution</div>
+        <h3>Download options by user type</h3>
+        <div class="priority-row"><span class="priority-chip recommended">Recommended</span></div>
+        <ul class="spec-list">
+          <li><strong>Less technical macOS users:</strong> <a href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a></li>
+          <li><strong>Technical/dev users (default):</strong> clone repo or download <a href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">main ZIP</a></li>
+          <li><strong>Roadmap:</strong> Windows MSI packaging follows after DMG lane stabilization.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section" id="install-monitoring">
+      <article class="card">
+        <div class="kicker">Easy monitoring</div>
+        <h3>Use built-in open/check commands</h3>
+        <div class="priority-row"><span class="priority-chip recommended">Recommended</span></div>
+<pre><code>gmake monitor-open
+# health + status + fanout checks only:
+gmake monitor-check</code></pre>
+        <ul class="spec-list">
+          <li><strong>Dashboard URL:</strong> <code>http://127.0.0.1:3000</code> (default local)</li>
+          <li><strong>Health URL:</strong> <code>http://127.0.0.1:8075/health</code></li>
+          <li><strong>Status URL:</strong> <code>http://127.0.0.1:8075/status</code> (requires <code>x-api-key</code>)</li>
+        </ul>
       </article>
     </section>
 
