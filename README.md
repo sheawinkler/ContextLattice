@@ -84,6 +84,14 @@ Context Lattice is built for teams running high-volume memory writes where durab
 - CLI fallback already exists and remains first-class: `gmake quickstart`
 - MSI packaging is next after DMG lane stabilization
 
+Release operator note:
+
+```bash
+gmake dmg-build
+# output: dist/ContextLattice-macOS-universal.dmg
+# attach this file to the latest GitHub release
+```
+
 ### Personal computer requirements + app versions
 
 | App lane | Recommended profile | CPU | RAM | Storage |
