@@ -115,6 +115,71 @@ except Exception as exc:  # pragma: no cover - optional adapter path
     load_adapter_flags = None  # type: ignore
     _runtime_adapter_registry_error = str(exc)
 
+
+_APP_ENV_PREFIXES = (
+    "CONTEXTLATTICE_",
+    "MEMMCP_",
+    "ORCH_",
+    "MONGO_",
+    "MONGODB_",
+    "QDRANT_",
+    "LETTA_",
+    "MINDSDB_",
+    "PGVECTOR_",
+    "EMBEDDING_",
+    "FASTEMBED_",
+    "LANGFUSE_",
+    "RETRIEVAL_",
+    "TOPIC_ROLLUP_",
+    "MEMORY_",
+    "HOT_MEMORY_",
+    "FANOUT_",
+    "TASK_",
+    "TRADING_",
+    "OLLAMA_",
+    "OPENAI_",
+    "PILOT_",
+)
+_APP_ENV_EXACT_KEYS = {
+    "API_KEY",
+    "MCP_TIMEOUT",
+    "ORCH_LOG_LEVEL",
+    "ORCH_LOG_FILE",
+    "QDRANT_URL",
+    "QDRANT-CLUSTER-ENDPOINT",
+    "QDRANT-API-KEY",
+    "REDIS_URL",
+    "REDIS_AUTH",
+}
+
+
+def _is_app_scoped_env_key(name: str) -> bool:
+    key = str(name or "").strip()
+    if not key:
+        return False
+    if key in _APP_ENV_EXACT_KEYS:
+        return True
+    return any(key.startswith(prefix) for prefix in _APP_ENV_PREFIXES)
+
+
+def _sanitize_blank_app_env_values() -> list[str]:
+    sanitized: list[str] = []
+    for key, value in list(os.environ.items()):
+        if not _is_app_scoped_env_key(key):
+            continue
+        if not isinstance(value, str):
+            continue
+        if value.strip():
+            continue
+        os.environ.pop(key, None)
+        sanitized.append(key)
+    sanitized.sort()
+    return sanitized
+
+
+SANITIZED_BLANK_APP_ENV_KEYS = _sanitize_blank_app_env_values()
+
+
 def _env_alias(primary: str, legacy: str, default: str = "") -> str:
     """Return primary env value when present, else legacy env value, else default."""
     if primary in os.environ:
@@ -4615,6 +4680,16 @@ app = FastAPI(
     default_response_class=DEFAULT_RESPONSE_CLASS,
 )
 logger = logging.getLogger("contextlattice.orchestrator")
+if SANITIZED_BLANK_APP_ENV_KEYS:
+    preview = ", ".join(SANITIZED_BLANK_APP_ENV_KEYS[:16])
+    remainder = max(0, len(SANITIZED_BLANK_APP_ENV_KEYS) - 16)
+    suffix = f" (+{remainder} more)" if remainder else ""
+    logger.warning(
+        "Sanitized %d blank app env vars at startup; defaults now apply: %s%s",
+        len(SANITIZED_BLANK_APP_ENV_KEYS),
+        preview,
+        suffix,
+    )
 MIGRATION_FLAGS = load_migration_flags() if load_migration_flags is not None else None
 MIGRATION_RUNTIME = None
 MIGRATION_RUNTIME_LOCK = asyncio.Lock()
