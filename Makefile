@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -44,6 +44,7 @@ help:
 > echo "  monitor-open|monitor-check: less-technical monitoring helpers (dashboard + health/status)"
 > echo "  dmg-build: build ContextLattice macOS bootstrap DMG in ./dist"
 > echo "  msi-build: build ContextLattice Windows MSI bootstrap installer in ./dist"
+> echo "  linux-bundle-build: build ContextLattice Linux bootstrap tarball in ./dist"
 > echo "  fanout-status|fanout-deadletters|fanout-rehydrate: durability + replay ops"
 > echo "  qdrant-cutover: set QDRANT_COLLECTION and rehydrate vectors"
 > echo "  service-version-audit|service-version-apply: check/apply stable image tag bumps"
@@ -185,6 +186,9 @@ dmg-build:
 
 msi-build:
 > bash scripts/build_windows_msi.sh
+
+linux-bundle-build:
+> bash scripts/build_linux_bundle.sh
 
 # ---- Storage / retention helpers ----
 
