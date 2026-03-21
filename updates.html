@@ -58,11 +58,16 @@
         <p class="spotlight">
           Completed a final launch-readiness docs pass so installation and deployment-mode guidance clearly reflects current v3.2 runtime behavior.
         </p>
+        <div class="cta-row">
+          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a>
+          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi" target="_blank" rel="noreferrer">Download Windows MSI</a>
+          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz" target="_blank" rel="noreferrer">Download Linux Bundle</a>
+        </div>
         <ul>
           <li>Installation mode summaries now call out Gateway-Go frontdoor ownership.</li>
           <li>Lite mode now explicitly lists the fast staged lane: <code>topic_rollups + qdrant + postgres_pgvector</code>.</li>
           <li>Full mode now explicitly lists deep async continuation lane sources: <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
-          <li>No runtime/API changes; docs-only launch consistency release.</li>
+          <li>Release assets include DMG (macOS), MSI (Windows), and Linux bootstrap tarball.</li>
         </ul>
       </article>
 
