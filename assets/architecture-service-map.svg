@@ -71,8 +71,7 @@
 
   <rect x="992" y="736" width="206" height="96" rx="18" class="node"/>
   <text x="1095" y="786" text-anchor="middle" class="label-small">Deep lane</text>
-  <text x="1095" y="810" text-anchor="middle" class="sub-small">mindsdb + mongo_raw</text>
-  <text x="1095" y="828" text-anchor="middle" class="sub-small">letta + memory_bank</text>
+  <text x="1095" y="814" text-anchor="middle" class="sub-small">mindsdb + mongo_raw + letta + memory_bank</text>
 
   <rect x="52" y="150" width="250" height="178" rx="34" class="node"/>
   <text x="177" y="220" text-anchor="middle" class="label">Providers</text>

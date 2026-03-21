@@ -4,21 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Context Lattice | Private memory fabric for AI agents</title>
-  <meta name="description" content="Context Lattice is a private-by-default memory & context layer for agents with durable fanout and retrieval learning loops across multiple data backends." />
+  <meta name="description" content="Context Lattice is a private-by-default, local-first memory orchestration service for apps and agents with durable fanout and retrieval learning loops." />
   <link rel="canonical" href="https://contextlattice.io/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Context Lattice" />
   <meta property="og:title" content="Context Lattice | Private memory fabric for AI agents" />
-  <meta property="og:description" content="Private-by-default memory & context layer for agents with HTTP-preferred MCP, durable fanout, and multi-backend learning retrieval." />
+  <meta property="og:description" content="Private-by-default memory orchestration for apps and agents with HTTP-preferred MCP, durable fanout, and learning retrieval." />
   <meta property="og:url" content="https://contextlattice.io/" />
-  <meta property="og:image" content="https://contextlattice.io/assets/contextlattice-og-1200x630.png?v=20260319d" />
+  <meta property="og:image" content="https://contextlattice.io/assets/contextlattice-og-1200x630.png?v=20260319a" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Context Lattice: private-by-default memory & context layer for agents" />
+  <meta property="og:image:alt" content="Context Lattice: private-by-default memory layer for apps and agents" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Context Lattice | Private memory fabric for AI agents" />
   <meta name="twitter:description" content="Local-first memory orchestration with durable fanout and learning retrieval." />
-  <meta name="twitter:image" content="https://contextlattice.io/assets/contextlattice-og-1200x630.png?v=20260319d" />
+  <meta name="twitter:image" content="https://contextlattice.io/assets/contextlattice-og-1200x630.png?v=20260319a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
   <link rel="stylesheet" href="styles-gray.css?v=20260219k" />
   <script type="application/ld+json">
@@ -29,7 +29,7 @@
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux",
       "url": "https://contextlattice.io/",
-      "description": "Private-by-default memory & context layer for agents with HTTP-preferred MCP, durable fanout, and multi-backend learning retrieval.",
+      "description": "Private-by-default memory orchestration for apps and agents with HTTP-preferred MCP, durable fanout, and learning retrieval.",
       "author": {
         "@type": "Organization",
         "name": "Private Memory Corp"
@@ -54,8 +54,7 @@
         ContextLattice gives agents reusable memory with HTTP MCP, federated retrieval,
         durable fanout, and storage guardrails so quality and costs remain stable under load.
       </p>
-      <p class="hero-local">Private-by-default memory & context layer for agents.</p>
-      <p class="muted-note">Different data backends are fused in one retrieval pipeline to improve recall coverage, precision, and resilience.</p>
+      <p class="hero-local">One intelligent memory layer for apps and agents.</p>
       <div class="cta-row">
         <a class="cta primary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">View on GitHub</a>
         <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a>
@@ -155,7 +154,6 @@
             <span class="feature-tile tile-mid">Federated retrieval</span>
             <span class="feature-tile tile-mid">100 msgs/sec writes</span>
             <span class="feature-tile tile-wide">Durable outbox fanout</span>
-            <span class="feature-tile tile-wide">HTTP/messaging app interfacing (claw-ready)</span>
             <span class="feature-tile tile-mid">Learning rerank</span>
             <span class="feature-tile tile-mid">Letta RAG support</span>
             <span class="feature-tile tile-mid">Qwen default model</span>
@@ -215,12 +213,10 @@ gmake monitor-check</code></pre>
         <article class="card component-card">
           <h3>Public v3.2 (current launch lane)</h3>
           <ul class="spec-list">
-            <li><strong>Current public release:</strong> <code>v3.2.3</code></li>
             <li><strong>Frontdoor:</strong> <code>gateway-go</code> on <code>:8075</code></li>
             <li><strong>Fallback:</strong> Python orchestrator on <code>:18075</code></li>
             <li><strong>Memory-bank default:</strong> <code>icm_spike</code></li>
             <li><strong>Retrieval behavior:</strong> staged fast-return + async slow continuation</li>
-            <li><strong>Personal computer target:</strong> Lite <code>2-4</code> vCPU / <code>4-8 GB</code> RAM / <code>25-60 GB</code> SSD, Full <code>6-8</code> vCPU / <code>16-24 GB</code> RAM / <code>120-200 GB</code> SSD</li>
             <li><strong>Release posture:</strong> stable baseline for public operators</li>
           </ul>
         </article>
@@ -231,7 +227,6 @@ gmake monitor-check</code></pre>
             <li><strong>Policy:</strong> aggressive adaptive tuning and candidate promotions</li>
             <li><strong>Memory-bank:</strong> <code>icm_spike</code> with expanded fallback exploration</li>
             <li><strong>Validation:</strong> benchmark + recall parity + soak gate before promotion</li>
-            <li><strong>Personal computer target:</strong> start from Full baseline and add headroom, especially SSD (external NVMe recommended)</li>
             <li><strong>Release posture:</strong> private experimentation before any public cutover</li>
           </ul>
         </article>
@@ -486,7 +481,6 @@ flowchart LR
           <h3>Lite mode</h3>
           <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.2.x</code> (including <code>v3.2.3</code>)</li>
             <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
             <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + qdrant + postgres_pgvector</code></li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
@@ -498,7 +492,6 @@ flowchart LR
           <h3>Full mode</h3>
           <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.2.x</code> Full, and baseline for private <code>v4</code> tuning</li>
             <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
             <li><strong>Deep continuation lane:</strong> async enrichment from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Compute:</strong> 6-8 vCPU recommended</li>
