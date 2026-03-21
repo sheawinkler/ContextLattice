@@ -337,6 +337,13 @@ MONGO_RAW_SOCKET_TIMEOUT_MS = int(os.getenv("MONGO_RAW_SOCKET_TIMEOUT_MS", "1500
 MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS = int(os.getenv("MONGO_RAW_WAIT_QUEUE_TIMEOUT_MS", "5000"))
 MONGO_RAW_MAX_POOL_SIZE = max(10, int(os.getenv("MONGO_RAW_MAX_POOL_SIZE", "200")))
 MONGO_RAW_MIN_POOL_SIZE = max(0, int(os.getenv("MONGO_RAW_MIN_POOL_SIZE", "0")))
+MONGO_RAW_RETRY_COOLDOWN_SECS = max(0.0, float(os.getenv("MONGO_RAW_RETRY_COOLDOWN_SECS", "10")))
+MONGO_RAW_SYNC_ON_WRITE_ENABLED = os.getenv("MONGO_RAW_SYNC_ON_WRITE_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 PGVECTOR_ENABLED = os.getenv("ORCH_PGVECTOR_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 PGVECTOR_DSN = os.getenv(
     "ORCH_PGVECTOR_DSN",
@@ -1308,7 +1315,7 @@ TOPIC_ROLLUP_PATH = Path(
         str(Path(__file__).resolve().parent / "data" / "topic_rollups.json"),
     )
 )
-MEMORY_WRITE_ASYNC = os.getenv("MEMORY_WRITE_ASYNC", "true").lower() in ("1", "true", "yes", "on")
+MEMORY_WRITE_ASYNC = (os.getenv("MEMORY_WRITE_ASYNC") or "true").lower() in ("1", "true", "yes", "on")
 MEMORY_BANK_QUEUE_MAX = int(os.getenv("MEMORY_BANK_QUEUE_MAX", "2000"))
 MEMORY_BANK_WORKERS = int(os.getenv("MEMORY_BANK_WORKERS", "4"))
 MEMORY_WRITE_QUEUE_MAX = int(os.getenv("MEMORY_WRITE_QUEUE_MAX", "2000"))
@@ -4784,6 +4791,7 @@ qdrant_payload_index_cache: dict[str, dict[str, Any]] = {}
 topic_rollup_last_snapshot_for_delta: dict[str, Any] = {}
 MCP_SESSION_ID: str | None = None
 MONGO_CLIENT = None
+mongo_client_retry_after_monotonic = 0.0
 FANOUT_OUTBOX_MONGO_CLIENT = None
 pgvector_schema_ready = False
 pgvector_vectorscale_available = False
@@ -8509,6 +8517,7 @@ async def init_mcp_client() -> None:
 @app.on_event("shutdown")
 async def close_mcp_client() -> None:
     global MCP_CLIENT, MCP_SESSION_ID, MONGO_CLIENT, FANOUT_OUTBOX_MONGO_CLIENT, outbox_gc_task, hot_memory_rollup_task
+    global mongo_client_retry_after_monotonic
     global topic_rollup_task
     global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, task_scheduler_task, agent_task_worker_tasks
     global letta_auto_prune_task
@@ -8625,6 +8634,7 @@ async def close_mcp_client() -> None:
         except Exception:  # pragma: no cover
             pass
         MONGO_CLIENT = None
+    mongo_client_retry_after_monotonic = 0.0
     FANOUT_OUTBOX_MONGO_CLIENT = None
 override_seen_files: set[str] = set()
 memory_write_history = deque(maxlen=MEMORY_WRITE_HISTORY_LIMIT)
@@ -10715,7 +10725,7 @@ def build_raw_memory_event(
 
 
 async def init_mongo_client() -> bool:
-    global MONGO_CLIENT
+    global MONGO_CLIENT, mongo_client_retry_after_monotonic
     if not MONGO_RAW_ENABLED:
         return False
     if MongoClient is None:
@@ -10723,9 +10733,15 @@ async def init_mongo_client() -> bool:
         return False
     if MONGO_CLIENT is not None:
         return True
+    now_monotonic = time.monotonic()
+    if now_monotonic < max(0.0, float(mongo_client_retry_after_monotonic)):
+        return False
     async with mongo_client_lock:
         if MONGO_CLIENT is not None:
             return True
+        now_monotonic = time.monotonic()
+        if now_monotonic < max(0.0, float(mongo_client_retry_after_monotonic)):
+            return False
 
         def _connect():
             client = MongoClient(
@@ -10755,10 +10771,15 @@ async def init_mongo_client() -> bool:
 
         try:
             MONGO_CLIENT = await asyncio.to_thread(_connect)
+            mongo_client_retry_after_monotonic = 0.0
             return True
         except Exception as exc:  # pragma: no cover - network/runtime specific
             logger.warning("Mongo raw store init failed: %s", exc)
             MONGO_CLIENT = None
+            mongo_client_retry_after_monotonic = time.monotonic() + max(
+                0.0,
+                float(MONGO_RAW_RETRY_COOLDOWN_SECS),
+            )
             return False
 
 
@@ -20780,6 +20801,25 @@ async def write_memory(payload: MemoryWrite, request: Request):
         else:
             await memory_write_queue.put(event_id)
 
+    async def _persist_raw_event_sync_if_enabled(raw_event: dict[str, Any]) -> tuple[bool, str | None]:
+        if not MONGO_RAW_SYNC_ON_WRITE_ENABLED:
+            return False, "sync-on-write disabled"
+        return await persist_raw_event_to_mongo(raw_event)
+
+    def _fanout_status_counts_for_write_response() -> tuple[int, int]:
+        # Keep write acknowledgements fast by using cached summary state and
+        # scheduling refresh in background when stale.
+        summary = _get_fanout_summary_cache()
+        if not _fanout_cache_fresh(summary):
+            _schedule_fanout_summary_refresh()
+        retrying = int(summary.get("by_status", {}).get("retrying", 0))
+        failed = int(summary.get("by_status", {}).get("failed", 0))
+        if not _letta_target_enabled():
+            letta_stats = summary.get("by_target", {}).get(FANOUT_TARGET_LETTA, {})
+            retrying = max(0, retrying - int(letta_stats.get("retrying", 0)))
+            failed = max(0, failed - int(letta_stats.get("failed", 0)))
+        return retrying, failed
+
     if hot_file and await should_skip_unchanged_latest_hash(payload.projectName, file_name, content_hash):
         event_id = uuid.uuid4().hex
         raw_event = build_raw_memory_event(
@@ -20804,7 +20844,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             FANOUT_TARGET_LANGFUSE: "skipped",
             FANOUT_TARGET_LETTA: "skipped",
         }
-        mongo_ok, mongo_error = await persist_raw_event_to_mongo(raw_event)
+        mongo_ok, mongo_error = await _persist_raw_event_sync_if_enabled(raw_event)
         if mongo_ok:
             fanout_status[FANOUT_TARGET_MONGO_RAW] = "succeeded"
         else:
@@ -20936,7 +20976,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
         FANOUT_TARGET_LETTA: "skipped_low_value" if letta_telemetry_skipped else "disabled",
     }
     mongo_persisted = False
-    mongo_ok, mongo_error = await persist_raw_event_to_mongo(raw_event)
+    mongo_ok, mongo_error = await _persist_raw_event_sync_if_enabled(raw_event)
     if mongo_ok:
         fanout_status[FANOUT_TARGET_MONGO_RAW] = "succeeded"
         mongo_persisted = True
@@ -21022,13 +21062,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
         )
         if not mongo_persisted:
             await _seed_mongo_retry(event_id, raw_event, letta_context)
-        fanout_summary = await get_fanout_summary()
-        retrying = int(fanout_summary.get("by_status", {}).get("retrying", 0))
-        failed = int(fanout_summary.get("by_status", {}).get("failed", 0))
-        if not _letta_target_enabled():
-            letta_stats = fanout_summary.get("by_target", {}).get(FANOUT_TARGET_LETTA, {})
-            retrying = max(0, retrying - int(letta_stats.get("retrying", 0)))
-            failed = max(0, failed - int(letta_stats.get("failed", 0)))
+        retrying, failed = _fanout_status_counts_for_write_response()
         if failed > 0:
             warnings.append(
                 f"fanout currently degraded: {failed} failed and {retrying} retrying jobs; durability outside memory-bank is lagging"
@@ -21081,13 +21115,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "latency_ms": round(latency_ms, 2),
             },
         )
-        fanout_summary = await get_fanout_summary()
-        retrying = int(fanout_summary.get("by_status", {}).get("retrying", 0))
-        failed = int(fanout_summary.get("by_status", {}).get("failed", 0))
-        if not _letta_target_enabled():
-            letta_stats = fanout_summary.get("by_target", {}).get(FANOUT_TARGET_LETTA, {})
-            retrying = max(0, retrying - int(letta_stats.get("retrying", 0)))
-            failed = max(0, failed - int(letta_stats.get("failed", 0)))
+        retrying, failed = _fanout_status_counts_for_write_response()
         if failed > 0:
             warnings.append(
                 f"fanout currently degraded: {failed} failed and {retrying} retrying jobs; durability outside memory-bank is lagging"
@@ -21150,13 +21178,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "latency_ms": round(latency_ms, 2),
         },
     )
-    fanout_summary = await get_fanout_summary()
-    retrying = int(fanout_summary.get("by_status", {}).get("retrying", 0))
-    failed = int(fanout_summary.get("by_status", {}).get("failed", 0))
-    if not _letta_target_enabled():
-        letta_stats = fanout_summary.get("by_target", {}).get(FANOUT_TARGET_LETTA, {})
-        retrying = max(0, retrying - int(letta_stats.get("retrying", 0)))
-        failed = max(0, failed - int(letta_stats.get("failed", 0)))
+    retrying, failed = _fanout_status_counts_for_write_response()
     if failed > 0:
         warnings.append(
             f"fanout currently degraded: {failed} failed and {retrying} retrying jobs; durability outside memory-bank is lagging"
