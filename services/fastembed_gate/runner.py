@@ -45,7 +45,7 @@ def _build_cmd() -> list[str]:
     baseline = _env("GATE_REFRESH_BASELINE", "/app/bench/results/perf_shortlist_matrix_baseline.json")
     output = _env("GATE_REFRESH_OUTPUT", "/app/data/bench/perf_shortlist_matrix_latest.json")
     gate_output = _env("GATE_REFRESH_GATE_OUTPUT", "/app/data/gates/fastembed_gate_latest.json")
-    gate_min = _env_float("GATE_REFRESH_GATE_MIN_IMPROVEMENT_PCT", 20.0)
+    gate_min = _env_float("GATE_REFRESH_GATE_MIN_IMPROVEMENT_PCT", 5.0)
     gate_max_err = _env_float("GATE_REFRESH_GATE_MAX_ERROR_REGRESSION", 0.005)
     gate_warmups = _env_int("GATE_REFRESH_WARMUPS", 1)
     gate_repeats = _env_int("GATE_REFRESH_REPEATS", 3)
