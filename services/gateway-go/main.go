@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -784,6 +785,49 @@ func (s *server) copyHeaders(dst http.Header, src http.Header) {
 	}
 }
 
+func requestAPIKey(r *http.Request) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-Api-Key")); token != "" {
+		return token, true
+	}
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(authHeader) > 7 && strings.EqualFold(authHeader[:7], "Bearer ") {
+		if token := strings.TrimSpace(authHeader[7:]); token != "" {
+			return token, true
+		}
+	}
+	query := r.URL.Query()
+	for _, key := range []string{"api_key", "x_api_key", "token"} {
+		if token := strings.TrimSpace(query.Get(key)); token != "" {
+			return token, true
+		}
+	}
+	return "", false
+}
+
+func (s *server) prepareAuthorizedHeaders(w http.ResponseWriter, r *http.Request) (http.Header, bool) {
+	headers := r.Header.Clone()
+	expected := strings.TrimSpace(s.orchestratorAPIKey)
+	provided, explicit := requestAPIKey(r)
+	if expected != "" {
+		if explicit {
+			if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+				return nil, false
+			}
+		}
+		// Normalize all backend calls to the configured orchestrator key to prevent subcall auth drift.
+		headers.Set("X-Api-Key", expected)
+		return headers, true
+	}
+	if explicit && strings.TrimSpace(headers.Get("X-Api-Key")) == "" {
+		headers.Set("X-Api-Key", provided)
+	}
+	return headers, true
+}
+
 func (s *server) proxy(w http.ResponseWriter, r *http.Request) {
 	if !isProxyPath(r.URL.Path) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
@@ -806,6 +850,10 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 }
 
 func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes []byte) {
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
+		return
+	}
 	targetURL := s.backendURL + r.URL.Path
 	if query := r.URL.RawQuery; query != "" {
 		targetURL += "?" + query
@@ -816,7 +864,7 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to build proxy request"})
 		return
 	}
-	s.copyHeaders(req.Header, r.Header)
+	s.copyHeaders(req.Header, incomingHeaders)
 	if req.Header.Get("X-Forwarded-For") == "" {
 		req.Header.Set("X-Forwarded-For", r.RemoteAddr)
 	}
@@ -1251,6 +1299,9 @@ func (s *server) continuationEvents(w http.ResponseWriter, r *http.Request) {
 	if !strings.EqualFold(r.Method, http.MethodGet) {
 		w.Header().Set("Allow", "GET")
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
 	token := continuationEventsToken(r.URL.Path)
@@ -3316,6 +3367,10 @@ func (s *server) retrievalQuery(w http.ResponseWriter, r *http.Request) {
 		s.proxy(w, r)
 		return
 	}
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
+		return
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -3326,7 +3381,7 @@ func (s *server) retrievalQuery(w http.ResponseWriter, r *http.Request) {
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
-	response, status, execErr := s.executeRetrieval(r.Context(), r.Header, payload, false)
+	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, false)
 	if execErr != nil {
 		log.Printf("staged retrieval query failed; falling back to backend proxy: %s", execErr)
 		s.proxyWithBody(w, r, bodyBytes)
@@ -3340,6 +3395,10 @@ func (s *server) retrievalQueryWithGrounding(w http.ResponseWriter, r *http.Requ
 		s.proxy(w, r)
 		return
 	}
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
+		return
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -3350,7 +3409,7 @@ func (s *server) retrievalQueryWithGrounding(w http.ResponseWriter, r *http.Requ
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
-	response, status, execErr := s.executeRetrieval(r.Context(), r.Header, payload, true)
+	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, true)
 	if execErr != nil {
 		log.Printf("staged retrieval query-with-grounding failed; falling back to backend proxy: %s", execErr)
 		s.proxyWithBody(w, r, bodyBytes)
@@ -3364,6 +3423,10 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 		s.proxy(w, r)
 		return
 	}
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
+		return
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -3375,7 +3438,7 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeGrounding := anyToBool(payload["include_grounding"])
-	response, status, execErr := s.executeRetrieval(r.Context(), r.Header, payload, includeGrounding)
+	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, includeGrounding)
 	if execErr != nil {
 		log.Printf("staged memory/search failed; falling back to backend proxy: %s", execErr)
 		s.proxyWithBody(w, r, bodyBytes)
@@ -3410,6 +3473,10 @@ func (s *server) retrievalBatchQuery(w http.ResponseWriter, r *http.Request) {
 		s.proxy(w, r)
 		return
 	}
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
+		return
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -3437,7 +3504,7 @@ func (s *server) retrievalBatchQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		response, _, execErr := s.executeRetrieval(
 			r.Context(),
-			r.Header,
+			incomingHeaders,
 			map[string]any{"request": requestPayload},
 			false,
 		)

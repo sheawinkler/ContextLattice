@@ -233,6 +233,124 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	}
 }
 
+func TestMemorySearchRejectsExplicitInvalidAPIKey(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"ok","score":0.9}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/memory/search", strings.NewReader(`{"query":"alpha","project":"alpha"}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "bad-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 401, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected no backend calls on invalid key, got %d", backendCalls)
+	}
+}
+
+func TestMemorySearchInjectsConfiguredAPIKeyWhenMissing(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
+
+	var capturedAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/retrieval/query" {
+			capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"ok","score":0.9}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(`{"query":"alpha","project":"alpha"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if capturedAPIKey != "good-key" {
+		t.Fatalf("expected gateway to inject configured key, got %q", capturedAPIKey)
+	}
+}
+
+func TestMemorySearchAcceptsQueryParamAPIKey(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
+
+	var capturedAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/retrieval/query" {
+			capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"ok","score":0.9}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/memory/search?api_key=good-key",
+		strings.NewReader(`{"query":"alpha","project":"alpha"}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if capturedAPIKey != "good-key" {
+		t.Fatalf("expected query param key to authorize staged retrieval, got %q", capturedAPIKey)
+	}
+}
+
 func TestProxyForwardsAsyncMemorySearchPath(t *testing.T) {
 	var capturedPath string
 	var capturedQuery string
