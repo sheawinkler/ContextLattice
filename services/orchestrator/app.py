@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import difflib
+import gzip
 import heapq
 import hashlib
 import hmac
@@ -13,6 +14,7 @@ import time
 import os
 import re
 import random
+import shutil
 import sqlite3
 import sys
 import uuid
@@ -69,6 +71,11 @@ try:
     from redis import asyncio as redis_async  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     redis_async = None  # type: ignore
+
+try:
+    import zstandard as zstd  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    zstd = None  # type: ignore
 
 # Support loading local runtime modules when app.py is imported directly by file path.
 _orchestrator_module_dir = str(Path(__file__).resolve().parent)
@@ -323,6 +330,12 @@ MINDSDB_USER = os.getenv("MINDSDB_USER", "mindsdb")
 MINDSDB_PASSWORD = os.getenv("MINDSDB_PASSWORD", "")
 MINDSDB_SQL_URL = f"{MINDSDB_URL.rstrip('/')}/api/sql/query"
 MINDSDB_ENABLED = os.getenv("MINDSDB_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MINDSDB_FANOUT_ENABLED = os.getenv("ORCH_MINDSDB_FANOUT_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 MINDSDB_AUTOSYNC = os.getenv("MINDSDB_AUTOSYNC", "true").lower() in ("1", "true", "yes", "on")
 MINDSDB_AUTOSYNC_DB = os.getenv("MINDSDB_AUTOSYNC_DB", "files")
 MINDSDB_AUTOSYNC_TABLE = os.getenv("MINDSDB_AUTOSYNC_TABLE", "memory_events")
@@ -1483,7 +1496,7 @@ FANOUT_BACKPRESSURE_QUEUE_HIGH_WATERMARK = float(os.getenv("FANOUT_BACKPRESSURE_
 FANOUT_BACKPRESSURE_MAX_SLEEP_SECS = float(os.getenv("FANOUT_BACKPRESSURE_MAX_SLEEP_SECS", "1.25"))
 FANOUT_BACKPRESSURE_TARGETS_ENV = os.getenv("FANOUT_BACKPRESSURE_TARGETS", "letta,langfuse")
 FANOUT_BACKPRESSURE_LOG_COOLDOWN_SECS = float(os.getenv("FANOUT_BACKPRESSURE_LOG_COOLDOWN_SECS", "30"))
-FANOUT_OUTBOX_BACKEND = os.getenv("FANOUT_OUTBOX_BACKEND", "sqlite").strip().lower()
+FANOUT_OUTBOX_BACKEND = os.getenv("FANOUT_OUTBOX_BACKEND", "mongo").strip().lower()
 FANOUT_OUTBOX_MONGO_URI = os.getenv("FANOUT_OUTBOX_MONGO_URI", MONGO_RAW_URI).strip()
 FANOUT_OUTBOX_MONGO_DB = os.getenv("FANOUT_OUTBOX_MONGO_DB", MONGO_RAW_DB).strip()
 FANOUT_OUTBOX_MONGO_COLLECTION = os.getenv(
@@ -1510,6 +1523,164 @@ FANOUT_OUTBOX_GC_VACUUM_MIN_INTERVAL_SECS = float(
     os.getenv("FANOUT_OUTBOX_GC_VACUUM_MIN_INTERVAL_SECS", "3600")
 )
 FANOUT_OUTBOX_GC_TIMEOUT_SECS = float(os.getenv("FANOUT_OUTBOX_GC_TIMEOUT_SECS", "45"))
+FANOUT_OUTBOX_PAYLOAD_BLOB_ENABLED = os.getenv(
+    "FANOUT_OUTBOX_PAYLOAD_BLOB_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+FANOUT_OUTBOX_PAYLOAD_BLOB_MIN_BYTES = max(
+    1024,
+    int(os.getenv("FANOUT_OUTBOX_PAYLOAD_BLOB_MIN_BYTES", str(16 * 1024))),
+)
+FANOUT_OUTBOX_PAYLOAD_BLOB_CODEC = os.getenv(
+    "FANOUT_OUTBOX_PAYLOAD_BLOB_CODEC",
+    "zlib",
+).strip().lower() or "zlib"
+if FANOUT_OUTBOX_PAYLOAD_BLOB_CODEC not in {"zlib", "zstd"}:
+    FANOUT_OUTBOX_PAYLOAD_BLOB_CODEC = "zlib"
+FANOUT_OUTBOX_PAYLOAD_BLOB_ZSTD_LEVEL = max(
+    1,
+    int(os.getenv("FANOUT_OUTBOX_PAYLOAD_BLOB_ZSTD_LEVEL", "3")),
+)
+FANOUT_OUTBOX_PAYLOAD_BLOB_GC_ENABLED = os.getenv(
+    "FANOUT_OUTBOX_PAYLOAD_BLOB_GC_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MAX_SCAN = max(
+    100,
+    int(os.getenv("FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MAX_SCAN", "100000")),
+)
+FANOUT_OUTBOX_PAYLOAD_BLOB_GC_GRACE_SECS = max(
+    300.0,
+    float(os.getenv("FANOUT_OUTBOX_PAYLOAD_BLOB_GC_GRACE_SECS", "3600")),
+)
+FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MIN_INTERVAL_SECS = max(
+    60.0,
+    float(os.getenv("FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MIN_INTERVAL_SECS", "1800")),
+)
+MONGO_RAW_CONTENT_BLOB_ENABLED = os.getenv(
+    "ORCH_MONGO_RAW_CONTENT_BLOB_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MONGO_RAW_CONTENT_BLOB_MIN_BYTES = max(
+    1024,
+    int(os.getenv("ORCH_MONGO_RAW_CONTENT_BLOB_MIN_BYTES", str(16 * 1024))),
+)
+MONGO_RAW_CONTENT_BLOB_CODEC = os.getenv(
+    "ORCH_MONGO_RAW_CONTENT_BLOB_CODEC",
+    "zstd",
+).strip().lower() or "zstd"
+if MONGO_RAW_CONTENT_BLOB_CODEC not in {"zstd", "zlib"}:
+    MONGO_RAW_CONTENT_BLOB_CODEC = "zstd"
+MONGO_RAW_CONTENT_BLOB_ZSTD_LEVEL = max(
+    1,
+    int(os.getenv("ORCH_MONGO_RAW_CONTENT_BLOB_ZSTD_LEVEL", "3")),
+)
+MONGO_RAW_CONTENT_BLOB_GC_ENABLED = os.getenv(
+    "ORCH_MONGO_RAW_CONTENT_BLOB_GC_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+MONGO_RAW_CONTENT_BLOB_GC_MAX_SCAN = max(
+    100,
+    int(os.getenv("ORCH_MONGO_RAW_CONTENT_BLOB_GC_MAX_SCAN", "50000")),
+)
+MONGO_RAW_CONTENT_BLOB_GC_GRACE_SECS = max(
+    300.0,
+    float(os.getenv("ORCH_MONGO_RAW_CONTENT_BLOB_GC_GRACE_SECS", "3600")),
+)
+MONGO_RAW_CONTENT_BLOB_GC_MIN_INTERVAL_SECS = max(
+    60.0,
+    float(os.getenv("ORCH_MONGO_RAW_CONTENT_BLOB_GC_MIN_INTERVAL_SECS", "1800")),
+)
+STORAGE_GOVERNANCE_ENABLED = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+STORAGE_GOVERNANCE_INTERVAL_SECS = max(
+    120.0,
+    float(os.getenv("ORCH_STORAGE_GOVERNANCE_INTERVAL_SECS", "900")),
+)
+STORAGE_GOVERNANCE_WARN_USED_RATIO = min(
+    0.99,
+    max(
+        0.5,
+        float(os.getenv("ORCH_STORAGE_GOVERNANCE_WARN_USED_RATIO", "0.85")),
+    ),
+)
+STORAGE_GOVERNANCE_HIGH_USED_RATIO = min(
+    0.995,
+    max(
+        STORAGE_GOVERNANCE_WARN_USED_RATIO + 0.01,
+        float(os.getenv("ORCH_STORAGE_GOVERNANCE_HIGH_USED_RATIO", "0.92")),
+    ),
+)
+STORAGE_GOVERNANCE_MIN_FREE_GB = max(
+    1.0,
+    float(os.getenv("ORCH_STORAGE_GOVERNANCE_MIN_FREE_GB", "40")),
+)
+STORAGE_GOVERNANCE_MIN_FREE_BYTES = int(STORAGE_GOVERNANCE_MIN_FREE_GB * 1024 * 1024 * 1024)
+STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_WARN = max(
+    1.0,
+    float(os.getenv("ORCH_STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_WARN", "1.5")),
+)
+STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_HIGH = max(
+    STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_WARN,
+    float(os.getenv("ORCH_STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_HIGH", "2.5")),
+)
+STORAGE_GOVERNANCE_RUN_ON_STARTUP = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_RUN_ON_STARTUP",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+STORAGE_GOVERNANCE_DISK_ROOT_ENV = os.getenv("ORCH_STORAGE_GOVERNANCE_DISK_ROOT", "").strip()
+STORAGE_GOVERNANCE_SQLITE_LEGACY_PRUNE_ENABLED = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_SQLITE_LEGACY_PRUNE_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_ROWS = max(
+    100,
+    int(os.getenv("ORCH_STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_ROWS", "5000")),
+)
+STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_BYTES = max(
+    128 * 1024 * 1024,
+    int(os.getenv("ORCH_STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_BYTES", str(512 * 1024 * 1024))),
+)
+STORAGE_GOVERNANCE_HISTORY_COMPRESS_ENABLED = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_HISTORY_COMPRESS_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+STORAGE_GOVERNANCE_HISTORY_COMPRESS_MIN_BYTES = max(
+    1024 * 1024,
+    int(os.getenv("ORCH_STORAGE_GOVERNANCE_HISTORY_COMPRESS_MIN_BYTES", str(32 * 1024 * 1024))),
+)
+STORAGE_GOVERNANCE_HISTORY_COMPRESS_KEEP = max(
+    1,
+    int(os.getenv("ORCH_STORAGE_GOVERNANCE_HISTORY_COMPRESS_KEEP", "4")),
+)
+STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC",
+    "zstd",
+).strip().lower() or "zstd"
+if STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC not in {"zstd", "gzip"}:
+    STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC = "zstd"
+STORAGE_GOVERNANCE_HISTORY_COMPRESS_ZSTD_LEVEL = max(
+    1,
+    int(os.getenv("ORCH_STORAGE_GOVERNANCE_HISTORY_COMPRESS_ZSTD_LEVEL", "3")),
+)
+STORAGE_GOVERNANCE_HISTORY_TARGETS_ENV = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_HISTORY_TARGETS",
+    "memory_write_history,trading_history,strategy_history,signal_history,override_history,recall_monitor",
+).strip()
+STORAGE_GOVERNANCE_TASK_DB_COMPACT_ENABLED = os.getenv(
+    "ORCH_STORAGE_GOVERNANCE_TASK_DB_COMPACT_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_RECLAIM_BYTES = max(
+    4 * 1024 * 1024,
+    int(os.getenv("ORCH_STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_RECLAIM_BYTES", str(64 * 1024 * 1024))),
+)
+STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_INTERVAL_SECS = max(
+    60.0,
+    float(os.getenv("ORCH_STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_INTERVAL_SECS", "3600")),
+)
 LOW_VALUE_FILE_SUFFIXES_ENV = os.getenv("LOW_VALUE_FILE_SUFFIXES", "__latest.json,__rollup.json")
 LOW_VALUE_FILE_PATTERNS_ENV = os.getenv(
     "LOW_VALUE_FILE_PATTERNS",
@@ -1591,10 +1762,38 @@ SINK_RETENTION_TIMEOUT_SECS = float(os.getenv("SINK_RETENTION_TIMEOUT_SECS", "24
 SINK_RETENTION_SCAN_LIMIT = max(100, int(os.getenv("SINK_RETENTION_SCAN_LIMIT", "5000")))
 SINK_RETENTION_DELETE_BATCH = max(1, int(os.getenv("SINK_RETENTION_DELETE_BATCH", "128")))
 SINK_RETENTION_MAX_DELETES_PER_RUN = max(1, int(os.getenv("SINK_RETENTION_MAX_DELETES_PER_RUN", "5000")))
-QDRANT_LOW_VALUE_RETENTION_HOURS = float(os.getenv("QDRANT_LOW_VALUE_RETENTION_HOURS", "72"))
-LETTA_LOW_VALUE_RETENTION_HOURS = float(os.getenv("LETTA_LOW_VALUE_RETENTION_HOURS", "48"))
+QDRANT_LOW_VALUE_RETENTION_HOURS = float(os.getenv("QDRANT_LOW_VALUE_RETENTION_HOURS", "1800"))
+LETTA_LOW_VALUE_RETENTION_HOURS = float(os.getenv("LETTA_LOW_VALUE_RETENTION_HOURS", "1800"))
 MONGO_RAW_LOW_VALUE_RETENTION_HOURS = float(os.getenv("MONGO_RAW_LOW_VALUE_RETENTION_HOURS", "0"))
-MINDSDB_LOW_VALUE_RETENTION_HOURS = float(os.getenv("MINDSDB_LOW_VALUE_RETENTION_HOURS", "48"))
+MINDSDB_LOW_VALUE_RETENTION_HOURS = float(os.getenv("MINDSDB_LOW_VALUE_RETENTION_HOURS", "1800"))
+RETENTION_TELEMETRY_ONLY = os.getenv(
+    "ORCH_RETENTION_TELEMETRY_ONLY",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+RETENTION_APPLICATION_STATE_HOURS = max(
+    24.0,
+    float(os.getenv("ORCH_RETENTION_APPLICATION_STATE_HOURS", str(75 * 24))),
+)
+RETENTION_PROTECTED_TOPIC_PREFIXES_ENV = os.getenv(
+    "ORCH_RETENTION_PROTECTED_TOPIC_PREFIXES",
+    "learning,knowledge,projects,runbooks,decisions,architecture",
+)
+RETENTION_PROTECTED_FILE_PATTERNS_ENV = os.getenv(
+    "ORCH_RETENTION_PROTECTED_FILE_PATTERNS",
+    "*.md,*.markdown,*.rst,*.adoc,*.txt",
+)
+RETENTION_APPLICATION_STATE_FILE_PATTERNS_ENV = os.getenv(
+    "ORCH_RETENTION_APPLICATION_STATE_FILE_PATTERNS",
+    "*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json",
+)
+RETENTION_APPLICATION_STATE_TOPIC_PREFIXES_ENV = os.getenv(
+    "ORCH_RETENTION_APPLICATION_STATE_TOPIC_PREFIXES",
+    "state,states,snapshots,health,stats,allocations,system_state",
+)
+RETENTION_APPLICATION_STATE_MARKERS_ENV = os.getenv(
+    "ORCH_RETENTION_APPLICATION_STATE_MARKERS",
+    "__state__,__stats__,__snapshots__,__health__,__allocations__,snapshot,state,stats",
+)
 MEMORY_BANK_TELEMETRY_GUARD_ENABLED = os.getenv(
     "ORCH_MEMORY_BANK_TELEMETRY_GUARD_ENABLED",
     "true",
@@ -1609,6 +1808,10 @@ MINDSDB_TELEMETRY_GUARD_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 LETTA_TELEMETRY_GUARD_ENABLED = os.getenv(
     "ORCH_LETTA_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+TELEMETRY_STRICT_SINK_ISOLATION = os.getenv(
+    "ORCH_TELEMETRY_STRICT_SINK_ISOLATION",
     "true",
 ).lower() in ("1", "true", "yes", "on")
 MEMORY_BANK_TELEMETRY_FILE_PATTERNS_ENV = os.getenv(
@@ -1745,6 +1948,7 @@ MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH = Path(
 LETTA_RETENTION_PAGE_LIMIT = max(10, int(os.getenv("LETTA_RETENTION_PAGE_LIMIT", "100")))
 LETTA_RETENTION_MAX_DELETES_PER_RUN = max(1, int(os.getenv("LETTA_RETENTION_MAX_DELETES_PER_RUN", "1200")))
 MINDSDB_AUTOSYNC_TABLE_FALLBACK_SUFFIX = os.getenv("MINDSDB_AUTOSYNC_TABLE_FALLBACK_SUFFIX", "_v2")
+MINDSDB_AUTOSYNC_DB_FALLBACK_SUFFIX = os.getenv("MINDSDB_AUTOSYNC_DB_FALLBACK_SUFFIX", "_v2")
 TOPIC_INDEX_PATH = Path(
     os.getenv(
         "TOPIC_INDEX_PATH",
@@ -1756,6 +1960,32 @@ TASK_DB_PATH = Path(
         "TASK_DB_PATH",
         str(Path(__file__).resolve().parent / "data" / "agent_tasks.db"),
     )
+)
+FANOUT_OUTBOX_PAYLOAD_BLOB_DIR = Path(
+    os.getenv(
+        "FANOUT_OUTBOX_PAYLOAD_BLOB_DIR",
+        str(Path(__file__).resolve().parent / "data" / "fanout_payload_blobs"),
+    )
+)
+MONGO_RAW_CONTENT_BLOB_DIR = Path(
+    os.getenv(
+        "ORCH_MONGO_RAW_CONTENT_BLOB_DIR",
+        str(Path(__file__).resolve().parent / "data" / "mongo_raw_content_blobs"),
+    )
+)
+CONTINUITY_SNAPSHOT_DIR = Path(
+    os.getenv(
+        "ORCH_CONTINUITY_SNAPSHOT_DIR",
+        str(Path(__file__).resolve().parent / "data" / "continuity_snapshots"),
+    )
+)
+CONTINUITY_SNAPSHOT_DEFAULT_LIMIT = max(
+    1,
+    min(100, int(os.getenv("ORCH_CONTINUITY_SNAPSHOT_DEFAULT_LIMIT", "12"))),
+)
+CONTINUITY_SNAPSHOT_DEFAULT_MAX_FACTS = max(
+    1,
+    min(200, int(os.getenv("ORCH_CONTINUITY_SNAPSHOT_DEFAULT_MAX_FACTS", "40"))),
 )
 AGENT_MEMORY_PROFILE_PATH = Path(
     os.getenv(
@@ -1927,6 +2157,26 @@ def _normalize_fanout_target_csv(raw: str | None) -> list[str]:
     return normalized
 
 
+def _normalize_fanout_targets(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        return _normalize_fanout_target_csv(raw)
+    if isinstance(raw, (list, tuple, set)):
+        requested = [
+            str(item).strip().lower()
+            for item in raw
+            if str(item).strip()
+        ]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for target in requested:
+            if target not in FANOUT_TARGETS or target in seen:
+                continue
+            seen.add(target)
+            normalized.append(target)
+        return normalized
+    return []
+
+
 def _normalize_lower_csv(raw: str | None) -> list[str]:
     return [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
 
@@ -2023,6 +2273,46 @@ if not LOW_VALUE_FILE_PATTERNS:
 LOW_VALUE_TOPIC_PREFIXES = _normalize_lower_csv(LOW_VALUE_TOPIC_PREFIXES_ENV)
 if not LOW_VALUE_TOPIC_PREFIXES:
     LOW_VALUE_TOPIC_PREFIXES = ["telemetry", "metrics", "signals", "overrides", "perf", "tmp"]
+RETENTION_PROTECTED_TOPIC_PREFIXES = _normalize_lower_csv(RETENTION_PROTECTED_TOPIC_PREFIXES_ENV)
+if not RETENTION_PROTECTED_TOPIC_PREFIXES:
+    RETENTION_PROTECTED_TOPIC_PREFIXES = ["learning", "knowledge", "projects", "runbooks", "decisions", "architecture"]
+RETENTION_PROTECTED_FILE_PATTERNS = _normalize_lower_csv(RETENTION_PROTECTED_FILE_PATTERNS_ENV)
+if not RETENTION_PROTECTED_FILE_PATTERNS:
+    RETENTION_PROTECTED_FILE_PATTERNS = ["*.md", "*.markdown", "*.rst", "*.adoc", "*.txt"]
+RETENTION_APPLICATION_STATE_FILE_PATTERNS = _normalize_lower_csv(RETENTION_APPLICATION_STATE_FILE_PATTERNS_ENV)
+if not RETENTION_APPLICATION_STATE_FILE_PATTERNS:
+    RETENTION_APPLICATION_STATE_FILE_PATTERNS = [
+        "*__state__*.json",
+        "*__stats__*.json",
+        "*__snapshots__*.json",
+        "*__health__*.json",
+        "*__allocations__*.json",
+    ]
+RETENTION_APPLICATION_STATE_TOPIC_PREFIXES = _normalize_lower_csv(
+    RETENTION_APPLICATION_STATE_TOPIC_PREFIXES_ENV
+)
+if not RETENTION_APPLICATION_STATE_TOPIC_PREFIXES:
+    RETENTION_APPLICATION_STATE_TOPIC_PREFIXES = [
+        "state",
+        "states",
+        "snapshots",
+        "health",
+        "stats",
+        "allocations",
+        "system_state",
+    ]
+RETENTION_APPLICATION_STATE_MARKERS = _normalize_lower_csv(RETENTION_APPLICATION_STATE_MARKERS_ENV)
+if not RETENTION_APPLICATION_STATE_MARKERS:
+    RETENTION_APPLICATION_STATE_MARKERS = [
+        "__state__",
+        "__stats__",
+        "__snapshots__",
+        "__health__",
+        "__allocations__",
+        "snapshot",
+        "state",
+        "stats",
+    ]
 MEMORY_BANK_TELEMETRY_FILE_PATTERNS = _normalize_lower_csv(MEMORY_BANK_TELEMETRY_FILE_PATTERNS_ENV)
 if not MEMORY_BANK_TELEMETRY_FILE_PATTERNS:
     MEMORY_BANK_TELEMETRY_FILE_PATTERNS = [
@@ -2984,9 +3274,10 @@ def _mindsdb_insert_query(
     summary: str,
     created_at: str,
     table_name: str,
+    database_name: str,
 ) -> str:
     return (
-        f"INSERT INTO {MINDSDB_AUTOSYNC_DB}.{table_name} "
+        f"INSERT INTO {database_name}.{table_name} "
         "(project, file, summary, created_at) VALUES "
         f"({_sql_literal(project)}, {_sql_literal(file_name)}, {_sql_literal(summary)}, {_sql_literal(created_at)});"
     )
@@ -2995,6 +3286,7 @@ def _mindsdb_insert_query(
 def _mindsdb_insert_many_query(
     rows: list[dict[str, Any]],
     table_name: str,
+    database_name: str,
 ) -> str:
     values = ", ".join(
         (
@@ -3006,7 +3298,7 @@ def _mindsdb_insert_many_query(
         for row in rows
     )
     return (
-        f"INSERT INTO {MINDSDB_AUTOSYNC_DB}.{table_name} "
+        f"INSERT INTO {database_name}.{table_name} "
         "(project, file, summary, created_at) VALUES "
         f"{values};"
     )
@@ -3018,6 +3310,13 @@ def _looks_like_mindsdb_table_corruption(message: str) -> bool:
         "file is smaller than indicated metadata size",
         "can't create table",
         "[file/files]",
+        "verification of flatbuffer-encoded footer failed",
+        "file is too small to be a well-formed file",
+        "lz4 compressed input contains more than one frame",
+        "decompress",
+        "decompressionfailed",
+        "unable to read",
+        "metadata bytes but got",
     )
     return any(signature in text for signature in signatures)
 
@@ -3062,8 +3361,29 @@ def _mindsdb_next_fallback_table(current_table: str | None = None) -> str:
     return f"{first}_r{int(time.time())}"
 
 
+def _mindsdb_fallback_db_name(base_db: str | None = None) -> str:
+    db_name = str(base_db or MINDSDB_AUTOSYNC_DB).strip() or MINDSDB_AUTOSYNC_DB
+    if db_name.endswith(MINDSDB_AUTOSYNC_DB_FALLBACK_SUFFIX):
+        return db_name
+    return f"{db_name}{MINDSDB_AUTOSYNC_DB_FALLBACK_SUFFIX}"
+
+
+def _mindsdb_next_fallback_db(current_db: str | None = None) -> str:
+    first = _mindsdb_fallback_db_name()
+    if not current_db or current_db == MINDSDB_AUTOSYNC_DB:
+        return first
+    if current_db == first:
+        return f"{first}_r1"
+    match = re.match(rf"^{re.escape(first)}_r(\d+)$", str(current_db or ""))
+    if match:
+        revision = int(match.group(1))
+        return f"{first}_r{revision + 1}"
+    return f"{first}_r{int(time.time())}"
+
+
 mindsdb_table_lock = asyncio.Lock()
 mindsdb_table_ready = False
+mindsdb_target_db = MINDSDB_AUTOSYNC_DB
 mindsdb_target_table = MINDSDB_AUTOSYNC_TABLE
 mindsdb_queue_task: asyncio.Task | None = None
 mindsdb_trading_table_lock = asyncio.Lock()
@@ -3108,13 +3428,14 @@ async def _ensure_mindsdb_database_exists(database_name: str) -> None:
         raise last_error
 
 
-async def _ensure_mindsdb_table_exists(table_name: str) -> None:
-    await _ensure_mindsdb_database_exists(MINDSDB_AUTOSYNC_DB)
+async def _ensure_mindsdb_table_exists(table_name: str, database_name: str | None = None) -> None:
+    db_name = str(database_name or MINDSDB_AUTOSYNC_DB).strip() or MINDSDB_AUTOSYNC_DB
+    await _ensure_mindsdb_database_exists(db_name)
     create_query = (
-        f"CREATE TABLE IF NOT EXISTS {MINDSDB_AUTOSYNC_DB}.{table_name} "
+        f"CREATE TABLE IF NOT EXISTS {db_name}.{table_name} "
         "(project TEXT, file TEXT, summary TEXT, created_at TEXT);"
     )
-    check_query = f"SELECT COUNT(*) AS c FROM {MINDSDB_AUTOSYNC_DB}.{table_name};"
+    check_query = f"SELECT COUNT(*) AS c FROM {db_name}.{table_name};"
     try:
         await _mindsdb_execute(create_query)
     except Exception as exc:
@@ -3337,6 +3658,7 @@ async def _finalize_memory_write_item(
             "qdrant_collection": item.get("qdrant_collection"),
             "raw_event": item.get("raw_event"),
             "code_context": item.get("code_context"),
+            "fanout_exclude_targets": item.get("fanout_exclude_targets"),
         }
     )
     start_time = item.get("start_time")
@@ -3609,6 +3931,105 @@ def _fanout_target_outstanding_count(summary: dict[str, Any], target_name: str) 
     retrying = int(target_counts.get("retrying", 0) or 0)
     running = int(target_counts.get("running", 0) or 0)
     return pending + retrying + running
+
+
+def _looks_retention_protected_topic_path(topic_path: str | None) -> bool:
+    normalized = str(topic_path or "").strip().lower().strip("/")
+    if not normalized:
+        return False
+    for prefix in RETENTION_PROTECTED_TOPIC_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return False
+
+
+def _looks_retention_protected_file(file_name: str | None) -> bool:
+    lowered = str(file_name or "").strip().lower()
+    if not lowered:
+        return False
+    return _matches_any_glob(lowered, RETENTION_PROTECTED_FILE_PATTERNS)
+
+
+def _is_retention_protected_memory_record(
+    file_name: str | None,
+    topic_path: str | None,
+    summary: str | None = None,
+) -> bool:
+    if _looks_retention_protected_file(file_name):
+        return True
+    if _looks_retention_protected_topic_path(topic_path):
+        return True
+    # Summary-only protection is intentionally not used to avoid broad false positives.
+    _ = summary
+    return False
+
+
+def _looks_application_state_topic_path(topic_path: str | None) -> bool:
+    normalized = str(topic_path or "").strip().lower().strip("/")
+    if not normalized:
+        return False
+    for prefix in RETENTION_APPLICATION_STATE_TOPIC_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return False
+
+
+def _looks_application_state_file(file_name: str | None) -> bool:
+    lowered = str(file_name or "").strip().lower()
+    if not lowered:
+        return False
+    if _matches_any_glob(lowered, RETENTION_APPLICATION_STATE_FILE_PATTERNS):
+        return True
+    base_name = lowered.rsplit("/", 1)[-1]
+    for marker in RETENTION_APPLICATION_STATE_MARKERS:
+        token = str(marker or "").strip().lower()
+        if token and token in base_name:
+            return True
+    return False
+
+
+def _is_application_state_memory_record(
+    file_name: str | None,
+    topic_path: str | None = None,
+    summary: str | None = None,
+) -> bool:
+    if _looks_application_state_file(file_name):
+        return True
+    normalized_topic = normalize_topic_path(str(topic_path or "")) or derive_topic_path(str(file_name or ""), None)
+    if _looks_application_state_topic_path(normalized_topic):
+        return True
+    lowered_summary = str(summary or "").strip().lower()
+    if not lowered_summary:
+        return False
+    for marker in RETENTION_APPLICATION_STATE_MARKERS:
+        token = str(marker or "").strip().lower()
+        if token and token in lowered_summary:
+            return True
+    return False
+
+
+def _retention_application_state_cutoff_datetime(source_hours: float) -> datetime:
+    return _retention_cutoff_datetime(max(float(source_hours), RETENTION_APPLICATION_STATE_HOURS))
+
+
+def _retention_allows_delete_for_age(
+    *,
+    created_at_value: Any,
+    source_hours: float,
+    is_application_state: bool,
+) -> bool:
+    created_dt = _parse_timestamp_to_datetime(created_at_value)
+    if created_dt is None:
+        # For state-like records, fail closed on parse ambiguity.
+        return not is_application_state
+    if created_dt.tzinfo is None:
+        created_dt = created_dt.replace(tzinfo=timezone.utc)
+    cutoff_dt = (
+        _retention_application_state_cutoff_datetime(source_hours)
+        if is_application_state
+        else _retention_cutoff_datetime(source_hours)
+    )
+    return created_dt <= cutoff_dt
 
 
 def _looks_low_value_topic_path(topic_path: str | None) -> bool:
@@ -4151,10 +4572,32 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
     topic_path = str(item.get("topic_path") or "")
     summary = str(item.get("summary") or "")
     telemetry_like = _is_telemetry_memory_record(file_name, topic_path, summary)
-    qdrant_enabled = not (telemetry_like and QDRANT_TELEMETRY_GUARD_ENABLED)
-    pgvector_enabled = PGVECTOR_FANOUT_ENABLED and not (telemetry_like and PGVECTOR_TELEMETRY_GUARD_ENABLED)
-    mindsdb_enabled = not (telemetry_like and MINDSDB_TELEMETRY_GUARD_ENABLED)
-    letta_enabled = not (telemetry_like and LETTA_TELEMETRY_GUARD_ENABLED)
+    fanout_exclude_targets = set(_normalize_fanout_targets(item.get("fanout_exclude_targets")))
+    strict_telemetry_isolation = TELEMETRY_STRICT_SINK_ISOLATION and telemetry_like
+    qdrant_enabled = FANOUT_TARGET_QDRANT not in fanout_exclude_targets and not (
+        strict_telemetry_isolation
+        or (telemetry_like and QDRANT_TELEMETRY_GUARD_ENABLED)
+    )
+    pgvector_enabled = (
+        PGVECTOR_FANOUT_ENABLED
+        and FANOUT_TARGET_POSTGRES_PGVECTOR not in fanout_exclude_targets
+        and not (
+            strict_telemetry_isolation
+            or (telemetry_like and PGVECTOR_TELEMETRY_GUARD_ENABLED)
+        )
+    )
+    mindsdb_enabled = (
+        MINDSDB_FANOUT_ENABLED
+        and FANOUT_TARGET_MINDSDB not in fanout_exclude_targets
+        and not (
+            strict_telemetry_isolation
+            or (telemetry_like and MINDSDB_TELEMETRY_GUARD_ENABLED)
+        )
+    )
+    letta_enabled = FANOUT_TARGET_LETTA not in fanout_exclude_targets and not (
+        strict_telemetry_isolation
+        or (telemetry_like and LETTA_TELEMETRY_GUARD_ENABLED)
+    )
 
     fanout_targets: list[str] = []
     if qdrant_enabled:
@@ -4183,7 +4626,7 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
                 "file": item.get("file"),
             },
         )
-    if LANGFUSE_API_KEY:
+    if LANGFUSE_API_KEY and FANOUT_TARGET_LANGFUSE not in fanout_exclude_targets:
         fanout_targets.append(FANOUT_TARGET_LANGFUSE)
     payload = {
         "event_id": event_id,
@@ -4200,6 +4643,7 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
         "code_context": item.get("code_context") or {},
         "qdrant_collection": item.get("qdrant_collection"),
         "raw_event": item.get("raw_event"),
+        "fanout_exclude_targets": sorted(fanout_exclude_targets),
     }
     outbox_result = await enqueue_fanout_outbox(payload, fanout_targets)
     if memory_write_queue.full():
@@ -4913,6 +5357,17 @@ fanout_summary_cache: dict[str, Any] = {
 fanout_summary_refresh_task: asyncio.Task[Any] | None = None
 outbox_gc_task: asyncio.Task[Any] | None = None
 outbox_gc_last_vacuum_monotonic = 0.0
+fanout_payload_blob_gc_last_monotonic = 0.0
+mongo_raw_content_blob_gc_last_monotonic = 0.0
+task_db_compaction_last_monotonic = 0.0
+task_db_compaction_state: dict[str, Any] = {
+    "lastRunAt": None,
+    "lastDurationMs": None,
+    "lastSkipped": None,
+    "lastError": None,
+    "lastResult": {},
+    "runs": 0,
+}
 fanout_coalesce_total = 0
 fanout_coalesce_by_target: dict[str, int] = {}
 fanout_backpressure_last_logged_at: dict[str, float] = {}
@@ -4948,6 +5403,20 @@ sink_retention_state: dict[str, Any] = {
     "lastError": None,
     "runs": 0,
     "lastResult": {},
+}
+storage_governance_task: asyncio.Task[Any] | None = None
+storage_governance_lock = asyncio.Lock()
+storage_governance_state: dict[str, Any] = {
+    "enabled": STORAGE_GOVERNANCE_ENABLED,
+    "intervalSecs": STORAGE_GOVERNANCE_INTERVAL_SECS,
+    "lastRunAt": None,
+    "lastDurationMs": None,
+    "runs": 0,
+    "lastError": None,
+    "lastResult": {},
+    "lastSnapshot": {},
+    "lastPolicy": {},
+    "lastPressureBand": None,
 }
 retrieval_pathway_warmer_task: asyncio.Task[Any] | None = None
 retrieval_pathway_warmer_state: dict[str, Any] = {
@@ -5075,6 +5544,11 @@ def _is_mindsdb_permanent_error(message: str) -> bool:
         or "lz4 compressed input contains more than one frame" in text
         or ("expected to read" in text and "metadata bytes but got" in text)
         or ("unable to read" in text and "from end of file" in text)
+        or "all connection attempts failed" in text
+        or "connection refused" in text
+        or "temporary failure in name resolution" in text
+        or "name or service not known" in text
+        or "nodename nor servname provided" in text
     )
 
 
@@ -5476,7 +5950,8 @@ def _is_mindsdb_lz4_decompress_error(exc: Exception) -> bool:
     if "lz4" in text and ("decompress" in text or "decompressionfailed" in text):
         return True
     return (
-        "verification of flatbuffer-encoded footer failed" in text
+        "lz4 compressed input contains more than one frame" in text
+        or "verification of flatbuffer-encoded footer failed" in text
         or "file is too small to be a well-formed file" in text
     )
 
@@ -8748,7 +9223,8 @@ async def start_background_tasks() -> None:
     global mindsdb_queue_task, memory_write_queue_tasks, mindsdb_write_queue_tasks
     global memory_bank_queue_tasks, letta_write_queue_tasks, outbox_gc_task, hot_memory_rollup_task
     global topic_rollup_task
-    global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, letta_auto_prune_task
+    global sink_retention_task, storage_governance_task, retrieval_pathway_warmer_task, recall_monitor_task
+    global letta_auto_prune_task
     global qdrant_warmup_task, qdrant_payload_index_task
     if MONGO_RAW_ENABLED:
         await init_mongo_client()
@@ -8767,6 +9243,20 @@ async def start_background_tasks() -> None:
     recovered = await recover_stale_running_jobs()
     if recovered:
         logger.warning("Recovered %d stale fanout jobs that were left in running state", recovered)
+    if not MINDSDB_FANOUT_ENABLED:
+        settled = await settle_disabled_fanout_target_backlog(
+            FANOUT_TARGET_MINDSDB,
+            "mindsdb fanout disabled by ORCH_MINDSDB_FANOUT_ENABLED",
+        )
+        if settled > 0:
+            _json_log(
+                "memory.write.fanout_target_settled",
+                {
+                    "target": FANOUT_TARGET_MINDSDB,
+                    "count": settled,
+                    "reason": "mindsdb fanout disabled",
+                },
+            )
     if MINDSDB_AUTOSYNC and mindsdb_queue_task is None:
         mindsdb_queue_task = asyncio.create_task(_mindsdb_queue_worker())
     if MINDSDB_AUTOSYNC and MINDSDB_AUTOSYNC_BOOTSTRAP:
@@ -8809,6 +9299,10 @@ async def start_background_tasks() -> None:
         letta_auto_prune_task = asyncio.create_task(_letta_auto_prune_worker())
     if SINK_RETENTION_ENABLED and sink_retention_task is None:
         sink_retention_task = asyncio.create_task(_sink_retention_worker())
+    if STORAGE_GOVERNANCE_ENABLED and storage_governance_task is None:
+        storage_governance_task = asyncio.create_task(_storage_governance_worker())
+        if STORAGE_GOVERNANCE_RUN_ON_STARTUP:
+            asyncio.create_task(run_storage_governance_once(force=True))
     if RETRIEVAL_PATHWAY_WARMER_ENABLED and retrieval_pathway_warmer_task is None:
         retrieval_pathway_warmer_task = asyncio.create_task(_retrieval_pathway_warmer_worker())
     if RECALL_MONITOR_ENABLED and recall_monitor_task is None:
@@ -8860,7 +9354,8 @@ async def close_mcp_client() -> None:
     global MCP_CLIENT, MCP_SESSION_ID, MONGO_CLIENT, FANOUT_OUTBOX_MONGO_CLIENT, outbox_gc_task, hot_memory_rollup_task
     global mongo_client_retry_after_monotonic
     global topic_rollup_task
-    global sink_retention_task, retrieval_pathway_warmer_task, recall_monitor_task, task_scheduler_task, agent_task_worker_tasks
+    global sink_retention_task, storage_governance_task, retrieval_pathway_warmer_task, recall_monitor_task
+    global task_scheduler_task, agent_task_worker_tasks
     global letta_auto_prune_task
     global qdrant_warmup_task, qdrant_payload_index_task
     global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
@@ -8908,6 +9403,11 @@ async def close_mcp_client() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await sink_retention_task
         sink_retention_task = None
+    if storage_governance_task is not None:
+        storage_governance_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await storage_governance_task
+        storage_governance_task = None
     if retrieval_pathway_warmer_task is not None:
         retrieval_pathway_warmer_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -10682,6 +11182,30 @@ def _init_task_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_fanout_outbox_target_status ON fanout_outbox(target, status)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS continuity_snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                project TEXT NOT NULL,
+                topic_path TEXT,
+                query TEXT NOT NULL,
+                label TEXT,
+                content_hash TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                retrieval_mode TEXT,
+                retrieval_intent TEXT,
+                agent_id TEXT,
+                metadata TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_continuity_snapshots_project_created ON continuity_snapshots(project, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_continuity_snapshots_project_topic_created ON continuity_snapshots(project, topic_path, created_at DESC)"
+        )
 
 
 async def ensure_task_db() -> None:
@@ -11167,6 +11691,7 @@ async def persist_raw_event_to_mongo(event: dict[str, Any]) -> tuple[bool, str |
         payload.pop("updated_at", None)
         if "created_at" not in payload:
             payload["created_at"] = now
+        payload = _encode_mongo_raw_content_into_doc(payload)
         coll.update_one(
             {"event_id": event["event_id"]},
             {"$setOnInsert": payload, "$set": {"updated_at": now}},
@@ -11206,6 +11731,7 @@ async def persist_raw_events_to_mongo(events: list[dict[str, Any]]) -> tuple[boo
             payload.pop("updated_at", None)
             if "created_at" not in payload:
                 payload["created_at"] = now
+            payload = _encode_mongo_raw_content_into_doc(payload)
             operations.append(
                 UpdateOne(
                     {"event_id": event_id},
@@ -11367,13 +11893,197 @@ async def init_fanout_outbox_mongo_client() -> bool:
             return False
 
 
+def _fanout_payload_blob_path(blob_ref: str, codec: str) -> Path:
+    safe_ref = re.sub(r"[^a-f0-9]", "", str(blob_ref).lower())[:64]
+    if not safe_ref:
+        safe_ref = "invalid"
+    safe_codec = re.sub(r"[^a-z0-9]", "", str(codec).lower()) or "zlib"
+    return FANOUT_OUTBOX_PAYLOAD_BLOB_DIR / f"{safe_ref}.{safe_codec}"
+
+
+def _compress_fanout_payload_bytes(raw_bytes: bytes) -> tuple[bytes, str]:
+    codec = FANOUT_OUTBOX_PAYLOAD_BLOB_CODEC
+    if codec == "zstd" and zstd is not None:
+        compressor = zstd.ZstdCompressor(level=FANOUT_OUTBOX_PAYLOAD_BLOB_ZSTD_LEVEL)
+        return compressor.compress(raw_bytes), "zstd"
+    compressed = zlib.compress(raw_bytes, level=1)
+    return compressed, "zlib"
+
+
+def _decompress_fanout_payload_bytes(blob_bytes: bytes, codec: str) -> bytes:
+    normalized_codec = str(codec or "").strip().lower()
+    if normalized_codec == "zlib":
+        return zlib.decompress(blob_bytes)
+    if normalized_codec == "zstd":
+        if zstd is None:
+            raise ValueError("zstd codec requested but zstandard runtime unavailable")
+        return zstd.ZstdDecompressor().decompress(blob_bytes)
+    raise ValueError(f"unsupported fanout payload blob codec: {normalized_codec}")
+
+
+def _encode_fanout_payload_for_storage(payload_json: str) -> str:
+    payload_json = str(payload_json or "")
+    if not FANOUT_OUTBOX_PAYLOAD_BLOB_ENABLED:
+        return payload_json
+    raw_bytes = payload_json.encode("utf-8")
+    if len(raw_bytes) < FANOUT_OUTBOX_PAYLOAD_BLOB_MIN_BYTES:
+        return payload_json
+    blob_ref = hashlib.sha256(raw_bytes).hexdigest()
+    compressed, codec = _compress_fanout_payload_bytes(raw_bytes)
+    blob_path = _fanout_payload_blob_path(blob_ref, codec)
+    try:
+        blob_path.parent.mkdir(parents=True, exist_ok=True)
+        if not blob_path.exists():
+            temp_path = blob_path.with_suffix(blob_path.suffix + ".tmp")
+            temp_path.write_bytes(compressed)
+            temp_path.replace(blob_path)
+    except Exception:
+        return payload_json
+    envelope = {
+        "_blob_ref": blob_ref,
+        "_blob_codec": codec,
+        "_blob_bytes": len(compressed),
+        "_raw_bytes": len(raw_bytes),
+    }
+    return json.dumps(envelope, separators=(",", ":"), sort_keys=True)
+
+
+def _decode_fanout_payload_from_storage(payload_raw: str | None) -> dict[str, Any]:
+    if not payload_raw:
+        return {}
+    try:
+        parsed = json.loads(payload_raw)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    blob_ref = str(parsed.get("_blob_ref") or "").strip().lower()
+    codec = str(parsed.get("_blob_codec") or "").strip().lower()
+    if not blob_ref or not codec:
+        return parsed
+    blob_path = _fanout_payload_blob_path(blob_ref, codec)
+    try:
+        blob_bytes = blob_path.read_bytes()
+        raw_bytes = _decompress_fanout_payload_bytes(blob_bytes, codec)
+        payload_obj = json.loads(raw_bytes.decode("utf-8"))
+        if isinstance(payload_obj, dict):
+            return payload_obj
+    except Exception:
+        return {
+            "_blob_ref": blob_ref,
+            "_blob_codec": codec,
+            "_decode_error": True,
+        }
+    return {}
+
+
+def _extract_fanout_payload_blob_ref(payload_raw: str | None) -> tuple[str, str] | None:
+    if not payload_raw:
+        return None
+    try:
+        parsed = json.loads(payload_raw)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    blob_ref = str(parsed.get("_blob_ref") or "").strip().lower()
+    codec = str(parsed.get("_blob_codec") or "").strip().lower()
+    if not blob_ref or not codec:
+        return None
+    return blob_ref, codec
+
+
+def _mongo_raw_content_blob_path(blob_ref: str, codec: str) -> Path:
+    safe_ref = re.sub(r"[^a-f0-9]", "", str(blob_ref).lower())[:64]
+    if not safe_ref:
+        safe_ref = "invalid"
+    safe_codec = re.sub(r"[^a-z0-9]", "", str(codec).lower()) or "zlib"
+    return MONGO_RAW_CONTENT_BLOB_DIR / f"{safe_ref}.{safe_codec}"
+
+
+def _compress_mongo_raw_content_bytes(raw_bytes: bytes) -> tuple[bytes, str]:
+    codec = MONGO_RAW_CONTENT_BLOB_CODEC
+    if codec == "zstd" and zstd is not None:
+        compressor = zstd.ZstdCompressor(level=MONGO_RAW_CONTENT_BLOB_ZSTD_LEVEL)
+        return compressor.compress(raw_bytes), "zstd"
+    return zlib.compress(raw_bytes, level=1), "zlib"
+
+
+def _decompress_mongo_raw_content_bytes(blob_bytes: bytes, codec: str) -> bytes:
+    normalized_codec = str(codec or "").strip().lower()
+    if normalized_codec == "zlib":
+        return zlib.decompress(blob_bytes)
+    if normalized_codec == "zstd":
+        if zstd is None:
+            raise ValueError("zstd codec requested but zstandard runtime unavailable")
+        return zstd.ZstdDecompressor().decompress(blob_bytes)
+    raise ValueError(f"unsupported mongo raw content blob codec: {normalized_codec}")
+
+
+def _content_blob_ref_from_doc(doc: dict[str, Any]) -> tuple[str, str] | None:
+    blob_ref = str(doc.get("content_raw_blob_ref") or "").strip().lower()
+    codec = str(doc.get("content_raw_blob_codec") or "").strip().lower()
+    if blob_ref and codec:
+        return blob_ref, codec
+    envelope = doc.get("content_raw_blob")
+    if isinstance(envelope, dict):
+        nested_ref = str(envelope.get("ref") or "").strip().lower()
+        nested_codec = str(envelope.get("codec") or "").strip().lower()
+        if nested_ref and nested_codec:
+            return nested_ref, nested_codec
+    return None
+
+
+def _encode_mongo_raw_content_into_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    if not MONGO_RAW_CONTENT_BLOB_ENABLED:
+        return doc
+    content = doc.get("content_raw")
+    if not isinstance(content, str):
+        return doc
+    raw_bytes = content.encode("utf-8")
+    if len(raw_bytes) < MONGO_RAW_CONTENT_BLOB_MIN_BYTES:
+        return doc
+    blob_ref = hashlib.sha256(raw_bytes).hexdigest()
+    compressed, codec = _compress_mongo_raw_content_bytes(raw_bytes)
+    blob_path = _mongo_raw_content_blob_path(blob_ref, codec)
+    try:
+        blob_path.parent.mkdir(parents=True, exist_ok=True)
+        if not blob_path.exists():
+            tmp_path = blob_path.with_suffix(blob_path.suffix + ".tmp")
+            tmp_path.write_bytes(compressed)
+            tmp_path.replace(blob_path)
+    except Exception:
+        return doc
+    content_sha = hashlib.sha256(raw_bytes).hexdigest()
+    doc.pop("content_raw", None)
+    doc["content_raw_sha256"] = content_sha
+    doc["content_raw_blob_ref"] = blob_ref
+    doc["content_raw_blob_codec"] = codec
+    doc["content_raw_blob_bytes"] = len(compressed)
+    doc["content_raw_raw_bytes"] = len(raw_bytes)
+    return doc
+
+
+def _decode_mongo_raw_content_from_doc(doc: dict[str, Any]) -> str:
+    content = doc.get("content_raw")
+    if isinstance(content, str):
+        return content
+    ref_info = _content_blob_ref_from_doc(doc)
+    if ref_info is None:
+        return ""
+    blob_ref, codec = ref_info
+    blob_path = _mongo_raw_content_blob_path(blob_ref, codec)
+    try:
+        blob_bytes = blob_path.read_bytes()
+        return _decompress_mongo_raw_content_bytes(blob_bytes, codec).decode("utf-8")
+    except Exception:
+        return ""
+
+
 def _fanout_doc_to_dict(doc: dict[str, Any]) -> dict[str, Any]:
     payload = doc.get("payload")
     if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except json.JSONDecodeError:
-            payload = {}
+        payload = _decode_fanout_payload_from_storage(payload)
     if not isinstance(payload, dict):
         payload = {}
     topic_tags = doc.get("topic_tags")
@@ -11765,7 +12475,7 @@ def _fanout_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "project": row["project"],
         "file": row["file"],
         "summary": row["summary"],
-        "payload": json.loads(row["payload"]) if row["payload"] else {},
+        "payload": _decode_fanout_payload_from_storage(row["payload"] if "payload" in row.keys() else None),
         "topic_path": row["topic_path"],
         "topic_tags": json.loads(row["topic_tags"]) if row["topic_tags"] else [],
         "status": row["status"],
@@ -11789,6 +12499,7 @@ async def enqueue_fanout_outbox(
     created_at = _utc_now()
     coalesce_cutoff = _utc_iso_from_unix(time.time() - max(0.0, FANOUT_COALESCE_WINDOW_SECS))
     payload_json = json.dumps(event_payload)
+    payload_storage_json = _encode_fanout_payload_for_storage(payload_json)
     topic_tags_json = json.dumps(event_payload.get("topic_tags") or [])
     summary = str(event_payload.get("summary") or "")
     project = str(event_payload.get("project") or "")
@@ -11841,7 +12552,7 @@ async def enqueue_fanout_outbox(
                         WHERE id = ? AND status IN ('pending', 'retrying')
                         """,
                         (
-                            payload_json,
+                            payload_storage_json,
                             summary,
                             topic_path,
                             topic_tags_json,
@@ -11874,7 +12585,7 @@ async def enqueue_fanout_outbox(
                             "pending",
                             created_at,
                             created_at,
-                            payload_json,
+                            payload_storage_json,
                             summary,
                             topic_path,
                             topic_tags_json,
@@ -11897,7 +12608,7 @@ async def enqueue_fanout_outbox(
                     project,
                     file_name,
                     summary,
-                    payload_json,
+                    payload_storage_json,
                     topic_path,
                     topic_tags_json,
                     "pending",
@@ -12096,6 +12807,55 @@ async def fail_letta_backlog(error: str) -> int:
     return await _task_db_exec(_mark)
 
 
+async def settle_disabled_fanout_target_backlog(target: str, reason: str) -> int:
+    target_name = str(target or "").strip().lower()
+    if target_name not in FANOUT_TARGETS:
+        return 0
+    now = _utc_now()
+    reason_text = str(reason or "target disabled")[:2000]
+    if _use_mongo_outbox():
+        if not await init_fanout_outbox_mongo_client():
+            return 0
+        assert FANOUT_OUTBOX_MONGO_CLIENT is not None
+        coll = FANOUT_OUTBOX_MONGO_CLIENT[FANOUT_OUTBOX_MONGO_DB][FANOUT_OUTBOX_MONGO_COLLECTION]
+
+        def _settle() -> int:
+            result = coll.update_many(
+                {
+                    "target": target_name,
+                    "status": {"$in": ["pending", "retrying", "running"]},
+                },
+                {
+                    "$set": {
+                        "status": "succeeded",
+                        "next_attempt_at": now,
+                        "completed_at": now,
+                        "updated_at": now,
+                        "last_error": reason_text,
+                    }
+                },
+            )
+            return int(result.modified_count or 0)
+
+        return await asyncio.to_thread(_settle)
+
+    def _settle_sqlite(conn: sqlite3.Connection) -> int:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            """
+            UPDATE fanout_outbox
+            SET status = ?, next_attempt_at = ?, completed_at = ?, updated_at = ?, last_error = ?
+            WHERE target = ? AND status IN ('pending', 'retrying', 'running')
+            """,
+            ("succeeded", now, now, now, reason_text, target_name),
+        )
+        changed = int(cursor.rowcount or 0)
+        conn.commit()
+        return changed
+
+    return await _task_db_exec(_settle_sqlite)
+
+
 async def mark_fanout_retry(job: dict[str, Any], error: str) -> str:
     if _use_mongo_outbox():
         return await _mark_fanout_retry_mongo(job, error)
@@ -12255,12 +13015,7 @@ def _prune_letta_low_value_outbox_sqlite(
         file_name = str(row["file"] or "")
         topic_path = str(row["topic_path"] or "")
         summary = str(row["summary"] or "")
-        payload_obj: Any = {}
-        try:
-            if row["payload"]:
-                payload_obj = json.loads(row["payload"])
-        except Exception:
-            payload_obj = {}
+        payload_obj: Any = _decode_fanout_payload_from_storage(row["payload"] if "payload" in row.keys() else None)
         source_kind = _extract_source_kind_from_outbox_payload(payload_obj)
         excluded, _ = _is_letta_excluded_memory_record(file_name, topic_path)
         low_value = _is_low_value_memory_record(
@@ -12356,6 +13111,250 @@ async def prune_letta_low_value_outbox(
 
     result = await _task_db_exec(_prune)
     _schedule_fanout_summary_refresh()
+    return result
+
+
+async def _run_fanout_payload_blob_gc_once(force: bool = False) -> dict[str, Any]:
+    global fanout_payload_blob_gc_last_monotonic
+    if not FANOUT_OUTBOX_PAYLOAD_BLOB_ENABLED:
+        return {"ok": True, "skipped": "payload_blob_disabled"}
+    if not FANOUT_OUTBOX_PAYLOAD_BLOB_GC_ENABLED:
+        return {"ok": True, "skipped": "blob_gc_disabled"}
+    if not FANOUT_OUTBOX_PAYLOAD_BLOB_DIR.exists():
+        return {"ok": True, "skipped": "blob_dir_missing", "blobDir": str(FANOUT_OUTBOX_PAYLOAD_BLOB_DIR)}
+    interval = max(60.0, FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MIN_INTERVAL_SECS)
+    if not force:
+        elapsed = max(0.0, time.monotonic() - float(fanout_payload_blob_gc_last_monotonic))
+        if elapsed < interval:
+            return {
+                "ok": True,
+                "skipped": "interval_not_elapsed",
+                "intervalSecs": interval,
+                "elapsedSecs": round(elapsed, 3),
+            }
+
+    max_scan = max(100, int(FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MAX_SCAN))
+    grace_secs = max(300.0, float(FANOUT_OUTBOX_PAYLOAD_BLOB_GC_GRACE_SECS))
+    cutoff_mtime = time.time() - grace_secs
+
+    def _collect_refs(conn: sqlite3.Connection) -> set[str]:
+        refs: set[str] = set()
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fanout_outbox' LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return refs
+        rows = conn.execute(
+            """
+            SELECT payload
+            FROM fanout_outbox
+            WHERE payload LIKE '%\"_blob_ref\"%'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max_scan,),
+        ).fetchall()
+        for row in rows:
+            ref_info = _extract_fanout_payload_blob_ref(row["payload"] if "payload" in row.keys() else None)
+            if ref_info is None:
+                continue
+            refs.add(f"{ref_info[0]}.{ref_info[1]}")
+        return refs
+
+    referenced = await _task_db_exec(_collect_refs)
+    scanned = 0
+    deleted = 0
+    errors = 0
+    for pattern in ("*.zlib", "*.zstd"):
+        for blob_path in FANOUT_OUTBOX_PAYLOAD_BLOB_DIR.glob(pattern):
+            scanned += 1
+            key = blob_path.name
+            if key in referenced:
+                continue
+            try:
+                if blob_path.stat().st_mtime >= cutoff_mtime:
+                    continue
+                blob_path.unlink()
+                deleted += 1
+            except Exception:
+                errors += 1
+    fanout_payload_blob_gc_last_monotonic = time.monotonic()
+    return {
+        "ok": errors == 0,
+        "blobDir": str(FANOUT_OUTBOX_PAYLOAD_BLOB_DIR),
+        "scanned": scanned,
+        "deleted": deleted,
+        "errors": errors,
+        "referenced": len(referenced),
+        "maxScan": max_scan,
+        "graceSecs": grace_secs,
+    }
+
+
+async def _run_mongo_raw_content_blob_gc_once(force: bool = False) -> dict[str, Any]:
+    global mongo_raw_content_blob_gc_last_monotonic
+    if not MONGO_RAW_CONTENT_BLOB_ENABLED:
+        return {"ok": True, "skipped": "mongo_raw_blob_disabled"}
+    if not MONGO_RAW_CONTENT_BLOB_GC_ENABLED:
+        return {"ok": True, "skipped": "mongo_raw_blob_gc_disabled"}
+    if not MONGO_RAW_CONTENT_BLOB_DIR.exists():
+        return {"ok": True, "skipped": "blob_dir_missing", "blobDir": str(MONGO_RAW_CONTENT_BLOB_DIR)}
+    interval = max(60.0, MONGO_RAW_CONTENT_BLOB_GC_MIN_INTERVAL_SECS)
+    if not force:
+        elapsed = max(0.0, time.monotonic() - float(mongo_raw_content_blob_gc_last_monotonic))
+        if elapsed < interval:
+            return {
+                "ok": True,
+                "skipped": "interval_not_elapsed",
+                "intervalSecs": interval,
+                "elapsedSecs": round(elapsed, 3),
+            }
+    if not await init_mongo_client():
+        return {"ok": True, "skipped": "mongo_unavailable", "blobDir": str(MONGO_RAW_CONTENT_BLOB_DIR)}
+    assert MONGO_CLIENT is not None
+
+    max_scan = max(100, int(MONGO_RAW_CONTENT_BLOB_GC_MAX_SCAN))
+    grace_secs = max(300.0, float(MONGO_RAW_CONTENT_BLOB_GC_GRACE_SECS))
+    cutoff_mtime = time.time() - grace_secs
+
+    def _collect_refs() -> set[str]:
+        coll = MONGO_CLIENT[MONGO_RAW_DB][MONGO_RAW_COLLECTION]
+        projection = {
+            "_id": 0,
+            "content_raw_blob_ref": 1,
+            "content_raw_blob_codec": 1,
+            "content_raw_blob": 1,
+        }
+        docs = list(
+            coll.find(
+                {
+                    "$or": [
+                        {"content_raw_blob_ref": {"$exists": True}},
+                        {"content_raw_blob": {"$exists": True}},
+                    ]
+                },
+                projection=projection,
+            )
+            .sort("updated_at", -1)
+            .limit(max_scan)
+        )
+        refs: set[str] = set()
+        for doc in docs:
+            ref_info = _content_blob_ref_from_doc(doc)
+            if ref_info is None:
+                continue
+            refs.add(f"{ref_info[0]}.{ref_info[1]}")
+        return refs
+
+    referenced = await asyncio.to_thread(_collect_refs)
+    scanned = 0
+    deleted = 0
+    errors = 0
+    for pattern in ("*.zlib", "*.zstd"):
+        for blob_path in MONGO_RAW_CONTENT_BLOB_DIR.glob(pattern):
+            scanned += 1
+            key = blob_path.name
+            if key in referenced:
+                continue
+            try:
+                if blob_path.stat().st_mtime >= cutoff_mtime:
+                    continue
+                blob_path.unlink()
+                deleted += 1
+            except Exception:
+                errors += 1
+    mongo_raw_content_blob_gc_last_monotonic = time.monotonic()
+    return {
+        "ok": errors == 0,
+        "blobDir": str(MONGO_RAW_CONTENT_BLOB_DIR),
+        "scanned": scanned,
+        "deleted": deleted,
+        "errors": errors,
+        "referenced": len(referenced),
+        "maxScan": max_scan,
+        "graceSecs": grace_secs,
+    }
+
+
+async def _run_task_db_compaction_once(force: bool = False) -> dict[str, Any]:
+    global task_db_compaction_last_monotonic
+    if not STORAGE_GOVERNANCE_TASK_DB_COMPACT_ENABLED:
+        return {"ok": True, "skipped": "disabled"}
+    if not TASK_DB_PATH.exists():
+        return {"ok": True, "skipped": "task_db_missing", "taskDbPath": str(TASK_DB_PATH)}
+    interval = max(60.0, STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_INTERVAL_SECS)
+    if not force:
+        elapsed = max(0.0, time.monotonic() - float(task_db_compaction_last_monotonic))
+        if elapsed < interval:
+            return {
+                "ok": True,
+                "skipped": "interval_not_elapsed",
+                "intervalSecs": interval,
+                "elapsedSecs": round(elapsed, 3),
+            }
+
+    min_reclaim = max(4 * 1024 * 1024, int(STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_RECLAIM_BYTES))
+
+    def _compact(conn: sqlite3.Connection) -> dict[str, Any]:
+        before_bytes = int(TASK_DB_PATH.stat().st_size) if TASK_DB_PATH.exists() else 0
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
+        freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+        reclaimable_bytes = max(0, freelist_count * page_size)
+        if not force and reclaimable_bytes < min_reclaim:
+            return {
+                "ok": True,
+                "skipped": "reclaimable_below_threshold",
+                "beforeBytes": before_bytes,
+                "pageSize": page_size,
+                "pageCount": page_count,
+                "freelistCount": freelist_count,
+                "reclaimableBytes": reclaimable_bytes,
+                "minReclaimBytes": min_reclaim,
+            }
+        checkpoint_error = None
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as exc:
+            checkpoint_error = str(exc)
+        vacuum_error = None
+        vacuum_ran = False
+        try:
+            conn.execute("VACUUM")
+            vacuum_ran = True
+        except Exception as exc:
+            vacuum_error = str(exc)
+        after_bytes = int(TASK_DB_PATH.stat().st_size) if TASK_DB_PATH.exists() else before_bytes
+        after_page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
+        after_freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+        after_reclaimable = max(0, after_freelist_count * page_size)
+        return {
+            "ok": vacuum_error is None,
+            "beforeBytes": before_bytes,
+            "afterBytes": after_bytes,
+            "bytesReclaimed": max(0, before_bytes - after_bytes),
+            "pageSize": page_size,
+            "pageCountBefore": page_count,
+            "pageCountAfter": after_page_count,
+            "freelistBefore": freelist_count,
+            "freelistAfter": after_freelist_count,
+            "reclaimableBeforeBytes": reclaimable_bytes,
+            "reclaimableAfterBytes": after_reclaimable,
+            "vacuumRan": vacuum_ran,
+            "vacuumError": vacuum_error,
+            "checkpointError": checkpoint_error,
+            "minReclaimBytes": min_reclaim,
+        }
+
+    started = time.monotonic()
+    result = await _task_db_exec(_compact)
+    task_db_compaction_last_monotonic = time.monotonic()
+    task_db_compaction_state["lastRunAt"] = _utc_now()
+    task_db_compaction_state["lastDurationMs"] = round((time.monotonic() - started) * 1000, 2)
+    task_db_compaction_state["lastSkipped"] = result.get("skipped")
+    task_db_compaction_state["lastError"] = result.get("vacuumError") or None
+    task_db_compaction_state["lastResult"] = result
+    task_db_compaction_state["runs"] = int(task_db_compaction_state.get("runs") or 0) + 1
     return result
 
 
@@ -12552,9 +13551,46 @@ def _record_outbox_gc_result(
         gc_state["vacuumedAt"] = gc_state["lastRunAt"]
 
 
-async def run_fanout_outbox_gc_once() -> dict[str, Any]:
+async def run_fanout_outbox_gc_once(
+    *,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     global outbox_gc_last_vacuum_monotonic
-    stale_targets = list(FANOUT_OUTBOX_STALE_TARGETS)
+    policy_payload = policy if isinstance(policy, dict) else {}
+    stale_targets_raw = policy_payload.get("staleTargets")
+    stale_targets = (
+        [str(item).strip() for item in stale_targets_raw if str(item).strip()]
+        if isinstance(stale_targets_raw, list)
+        else list(FANOUT_OUTBOX_STALE_TARGETS)
+    )
+    succeeded_retention_hours = max(
+        1,
+        _safe_int(
+            policy_payload.get("succeededRetentionHours", FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS),
+            FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS,
+        ),
+    )
+    failed_retention_hours = max(
+        1,
+        _safe_int(
+            policy_payload.get("failedRetentionHours", FANOUT_OUTBOX_FAILED_RETENTION_HOURS),
+            FANOUT_OUTBOX_FAILED_RETENTION_HOURS,
+        ),
+    )
+    stale_pending_hours = max(
+        1,
+        _safe_int(
+            policy_payload.get("stalePendingHours", FANOUT_OUTBOX_STALE_PENDING_HOURS),
+            FANOUT_OUTBOX_STALE_PENDING_HOURS,
+        ),
+    )
+    vacuum_min_deleted = max(
+        1,
+        _safe_int(
+            policy_payload.get("vacuumMinDeleted", FANOUT_OUTBOX_GC_VACUUM_MIN_DELETED),
+            FANOUT_OUTBOX_GC_VACUUM_MIN_DELETED,
+        ),
+    )
     run_started = time.monotonic()
     run_vacuum = _should_run_outbox_gc_vacuum()
     try:
@@ -12562,13 +13598,14 @@ async def run_fanout_outbox_gc_once() -> dict[str, Any]:
             try:
                 result = await asyncio.wait_for(
                     _fanout_outbox_gc_mongo(
-                        succeeded_retention_hours=FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS,
-                        failed_retention_hours=FANOUT_OUTBOX_FAILED_RETENTION_HOURS,
-                        stale_pending_hours=FANOUT_OUTBOX_STALE_PENDING_HOURS,
+                        succeeded_retention_hours=succeeded_retention_hours,
+                        failed_retention_hours=failed_retention_hours,
+                        stale_pending_hours=stale_pending_hours,
                         stale_targets=stale_targets,
                     ),
                     timeout=max(1.0, FANOUT_OUTBOX_GC_TIMEOUT_SECS),
                 )
+                result["policy"] = policy_payload
                 _record_outbox_gc_result(
                     result=result,
                     error=None,
@@ -12583,18 +13620,19 @@ async def run_fanout_outbox_gc_once() -> dict[str, Any]:
         def _gc(conn: sqlite3.Connection) -> dict[str, Any]:
             return _fanout_outbox_gc_sqlite(
                 conn,
-                succeeded_retention_hours=FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS,
-                failed_retention_hours=FANOUT_OUTBOX_FAILED_RETENTION_HOURS,
-                stale_pending_hours=FANOUT_OUTBOX_STALE_PENDING_HOURS,
+                succeeded_retention_hours=succeeded_retention_hours,
+                failed_retention_hours=failed_retention_hours,
+                stale_pending_hours=stale_pending_hours,
                 stale_targets=stale_targets,
                 run_vacuum=run_vacuum,
-                vacuum_min_deleted=FANOUT_OUTBOX_GC_VACUUM_MIN_DELETED,
+                vacuum_min_deleted=vacuum_min_deleted,
             )
 
         result = await asyncio.wait_for(
             _task_db_exec(_gc),
             timeout=max(1.0, FANOUT_OUTBOX_GC_TIMEOUT_SECS),
         )
+        result["policy"] = policy_payload
         vacuum_info = result.get("vacuum")
         if isinstance(vacuum_info, dict) and vacuum_info.get("ran"):
             outbox_gc_last_vacuum_monotonic = time.monotonic()
@@ -12809,14 +13847,33 @@ def _retention_cutoff_iso(hours: float) -> str:
     return _retention_cutoff_datetime(hours).isoformat().replace("+00:00", "Z")
 
 
-async def _run_qdrant_low_value_retention_once() -> dict[str, Any]:
-    hours = max(0.0, QDRANT_LOW_VALUE_RETENTION_HOURS)
+async def _run_qdrant_low_value_retention_once(
+    *,
+    hours_override: float | None = None,
+    scan_limit_override: int | None = None,
+    max_deletes_override: int | None = None,
+    delete_batch_override: int | None = None,
+) -> dict[str, Any]:
+    hours = max(
+        0.0,
+        float(hours_override if hours_override is not None else QDRANT_LOW_VALUE_RETENTION_HOURS),
+    )
     if hours <= 0:
         return {"enabled": False, "reason": "QDRANT_LOW_VALUE_RETENTION_HOURS<=0", "scanned": 0, "deleted": 0}
     cutoff_epoch = int(time.time() - (hours * 3600.0))
-    max_scan = max(100, SINK_RETENTION_SCAN_LIMIT)
-    max_deletes = max(1, SINK_RETENTION_MAX_DELETES_PER_RUN)
-    delete_batch = max(1, SINK_RETENTION_DELETE_BATCH)
+    state_cutoff_epoch = int(time.time() - (max(hours, RETENTION_APPLICATION_STATE_HOURS) * 3600.0))
+    max_scan = max(
+        100,
+        int(scan_limit_override if scan_limit_override is not None else SINK_RETENTION_SCAN_LIMIT),
+    )
+    max_deletes = max(
+        1,
+        int(max_deletes_override if max_deletes_override is not None else SINK_RETENTION_MAX_DELETES_PER_RUN),
+    )
+    delete_batch = max(
+        1,
+        int(delete_batch_override if delete_batch_override is not None else SINK_RETENTION_DELETE_BATCH),
+    )
     scanned = 0
     candidates: list[Any] = []
     offset: Any = None
@@ -12840,6 +13897,11 @@ async def _run_qdrant_low_value_retention_once() -> dict[str, Any]:
         for point in points:
             scanned += 1
             payload_row = getattr(point, "payload", None) or {}
+            file_name = str(payload_row.get("file") or "")
+            topic_path = str(payload_row.get("topic_path") or "")
+            summary = str(payload_row.get("summary") or "")
+            if _is_retention_protected_memory_record(file_name, topic_path, summary):
+                continue
             ts_raw = payload_row.get("ts")
             try:
                 ts_value = int(ts_raw)
@@ -12847,12 +13909,20 @@ async def _run_qdrant_low_value_retention_once() -> dict[str, Any]:
                 continue
             if ts_value > cutoff_epoch:
                 continue
-            if not _is_low_value_memory_record(
-                str(payload_row.get("file") or ""),
-                str(payload_row.get("topic_path") or ""),
-                str(payload_row.get("summary") or ""),
+            is_low_value = _is_low_value_memory_record(
+                file_name,
+                topic_path,
+                summary,
                 include_short_summary=False,
-            ):
+            )
+            is_telemetry = _is_telemetry_memory_record(file_name, topic_path, summary)
+            if RETENTION_TELEMETRY_ONLY:
+                if not is_telemetry:
+                    continue
+            elif not (is_low_value or is_telemetry):
+                continue
+            is_state = _is_application_state_memory_record(file_name, topic_path, summary)
+            if is_state and ts_value > state_cutoff_epoch:
                 continue
             point_id = getattr(point, "id", None)
             if point_id is None:
@@ -12882,22 +13952,38 @@ async def _run_qdrant_low_value_retention_once() -> dict[str, Any]:
     return {
         "enabled": True,
         "cutoffEpoch": cutoff_epoch,
+        "stateCutoffEpoch": state_cutoff_epoch,
         "scanned": scanned,
         "deleteCandidates": len(candidates),
         "deleted": deleted,
     }
 
 
-async def _run_mongo_low_value_retention_once() -> dict[str, Any]:
-    hours = max(0.0, MONGO_RAW_LOW_VALUE_RETENTION_HOURS)
+async def _run_mongo_low_value_retention_once(
+    *,
+    hours_override: float | None = None,
+    scan_limit_override: int | None = None,
+    max_deletes_override: int | None = None,
+) -> dict[str, Any]:
+    hours = max(
+        0.0,
+        float(hours_override if hours_override is not None else MONGO_RAW_LOW_VALUE_RETENTION_HOURS),
+    )
     if hours <= 0:
         return {"enabled": False, "reason": "MONGO_RAW_LOW_VALUE_RETENTION_HOURS<=0", "scanned": 0, "deleted": 0}
     if not await init_mongo_client():
         raise OrchestratorError("mongo raw store unavailable")
     assert MONGO_CLIENT is not None
     cutoff_iso = _retention_cutoff_iso(hours)
-    max_scan = max(100, SINK_RETENTION_SCAN_LIMIT)
-    max_deletes = max(1, SINK_RETENTION_MAX_DELETES_PER_RUN)
+    state_cutoff_iso = _retention_cutoff_iso(max(hours, RETENTION_APPLICATION_STATE_HOURS))
+    max_scan = max(
+        100,
+        int(scan_limit_override if scan_limit_override is not None else SINK_RETENTION_SCAN_LIMIT),
+    )
+    max_deletes = max(
+        1,
+        int(max_deletes_override if max_deletes_override is not None else SINK_RETENTION_MAX_DELETES_PER_RUN),
+    )
 
     def _cleanup() -> dict[str, Any]:
         assert MONGO_CLIENT is not None
@@ -12920,12 +14006,29 @@ async def _run_mongo_low_value_retention_once() -> dict[str, Any]:
         for doc in docs:
             if len(delete_ids) >= max_deletes:
                 break
-            if not _is_low_value_memory_record(
-                str(doc.get("file") or ""),
-                str(doc.get("topic_path") or ""),
-                str(doc.get("summary") or ""),
+            file_name = str(doc.get("file") or "")
+            topic_path = str(doc.get("topic_path") or "")
+            summary = str(doc.get("summary") or "")
+            if _is_retention_protected_memory_record(file_name, topic_path, summary):
+                continue
+            is_low_value = _is_low_value_memory_record(
+                file_name,
+                topic_path,
+                summary,
                 source_kind=str(doc.get("source") or ""),
                 include_short_summary=False,
+            )
+            is_telemetry = _is_telemetry_memory_record(file_name, topic_path, summary)
+            if RETENTION_TELEMETRY_ONLY:
+                if not is_telemetry:
+                    continue
+            elif not (is_low_value or is_telemetry):
+                continue
+            is_state = _is_application_state_memory_record(file_name, topic_path, summary)
+            if not _retention_allows_delete_for_age(
+                created_at_value=doc.get("updated_at"),
+                source_hours=hours,
+                is_application_state=is_state,
             ):
                 continue
             delete_ids.append(doc.get("_id"))
@@ -12936,6 +14039,7 @@ async def _run_mongo_low_value_retention_once() -> dict[str, Any]:
         return {
             "enabled": True,
             "cutoffIso": cutoff_iso,
+            "stateCutoffIso": state_cutoff_iso,
             "scanned": len(docs),
             "deleteCandidates": len(delete_ids),
             "deleted": deleted,
@@ -12944,57 +14048,112 @@ async def _run_mongo_low_value_retention_once() -> dict[str, Any]:
     return await asyncio.to_thread(_cleanup)
 
 
-async def _run_mindsdb_low_value_retention_once() -> dict[str, Any]:
-    hours = max(0.0, MINDSDB_LOW_VALUE_RETENTION_HOURS)
+async def _run_mindsdb_low_value_retention_once(
+    *,
+    hours_override: float | None = None,
+    scan_limit_override: int | None = None,
+    max_deletes_override: int | None = None,
+) -> dict[str, Any]:
+    hours = max(
+        0.0,
+        float(hours_override if hours_override is not None else MINDSDB_LOW_VALUE_RETENTION_HOURS),
+    )
     if hours <= 0:
         return {"enabled": False, "reason": "MINDSDB_LOW_VALUE_RETENTION_HOURS<=0", "scanned": 0, "deleted": 0}
     if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
         return {"enabled": False, "reason": "mindsdb autosync disabled", "scanned": 0, "deleted": 0}
     await ensure_mindsdb_table()
-    table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     cutoff_iso = _retention_cutoff_iso(hours)
-    max_scan = max(100, SINK_RETENTION_SCAN_LIMIT)
-    max_deletes = max(1, SINK_RETENTION_MAX_DELETES_PER_RUN)
-    select_query = (
-        f"SELECT project, file, summary, created_at "
-        f"FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
-        f"WHERE created_at < '{_escape_sql_literal(cutoff_iso)}' "
-        f"ORDER BY created_at ASC LIMIT {max_scan};"
+    state_cutoff_iso = _retention_cutoff_iso(max(hours, RETENTION_APPLICATION_STATE_HOURS))
+    max_scan = max(
+        100,
+        int(scan_limit_override if scan_limit_override is not None else SINK_RETENTION_SCAN_LIMIT),
     )
-    rows = _mindsdb_rows(await _mindsdb_execute(select_query))
-    selected: list[dict[str, Any]] = []
-    for row in rows:
-        if len(selected) >= max_deletes:
-            break
-        file_name = str(row.get("file") or "")
-        topic_path = normalize_topic_path(derive_topic_path(file_name, None))
-        summary = str(row.get("summary") or "")
-        if not _is_telemetry_memory_record(file_name, topic_path, summary):
-            continue
-        selected.append(row)
+    max_deletes = max(
+        1,
+        int(max_deletes_override if max_deletes_override is not None else SINK_RETENTION_MAX_DELETES_PER_RUN),
+    )
+    selected_rows: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     deleted = 0
-    for row in selected:
-        delete_query = (
-            f"DELETE FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
-            f"WHERE project = '{_escape_sql_literal(str(row.get('project') or ''))}' "
-            f"AND file = '{_escape_sql_literal(str(row.get('file') or ''))}' "
-            f"AND summary = '{_escape_sql_literal(str(row.get('summary') or ''))}' "
-            f"AND created_at = '{_escape_sql_literal(str(row.get('created_at') or ''))}';"
+    db_name = mindsdb_target_db or MINDSDB_AUTOSYNC_DB
+    table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
+    repaired = False
+
+    for attempt in range(2):
+        db_name = mindsdb_target_db or db_name or MINDSDB_AUTOSYNC_DB
+        table_name = mindsdb_target_table or table_name or MINDSDB_AUTOSYNC_TABLE
+        select_query = (
+            f"SELECT project, file, summary, created_at "
+            f"FROM {db_name}.{table_name} "
+            f"WHERE created_at < '{_escape_sql_literal(cutoff_iso)}' "
+            f"ORDER BY created_at ASC LIMIT {max_scan};"
         )
-        await _mindsdb_execute(delete_query)
-        deleted += 1
+        try:
+            rows = _mindsdb_rows(await _mindsdb_execute(select_query))
+            selected_rows = []
+            for row in rows:
+                if len(selected_rows) >= max_deletes:
+                    break
+                file_name = str(row.get("file") or "")
+                topic_path = normalize_topic_path(derive_topic_path(file_name, None))
+                summary = str(row.get("summary") or "")
+                if _is_retention_protected_memory_record(file_name, topic_path, summary):
+                    continue
+                if not _is_telemetry_memory_record(file_name, topic_path, summary):
+                    continue
+                is_state = _is_application_state_memory_record(file_name, topic_path, summary)
+                if not _retention_allows_delete_for_age(
+                    created_at_value=row.get("created_at"),
+                    source_hours=hours,
+                    is_application_state=is_state,
+                ):
+                    continue
+                selected_rows.append(row)
+            deleted = 0
+            for row in selected_rows:
+                delete_query = (
+                    f"DELETE FROM {db_name}.{table_name} "
+                    f"WHERE project = '{_escape_sql_literal(str(row.get('project') or ''))}' "
+                    f"AND file = '{_escape_sql_literal(str(row.get('file') or ''))}' "
+                    f"AND summary = '{_escape_sql_literal(str(row.get('summary') or ''))}' "
+                    f"AND created_at = '{_escape_sql_literal(str(row.get('created_at') or ''))}';"
+                )
+                await _mindsdb_execute(delete_query)
+                deleted += 1
+            break
+        except Exception as exc:
+            if (
+                attempt == 0
+                and _looks_like_mindsdb_table_corruption(str(exc))
+                and await _switch_mindsdb_to_fallback(str(exc), current_table=table_name, current_db=db_name)
+            ):
+                repaired = True
+                continue
+            raise
+
     return {
         "enabled": True,
         "cutoffIso": cutoff_iso,
-        "table": f"{MINDSDB_AUTOSYNC_DB}.{table_name}",
+        "stateCutoffIso": state_cutoff_iso,
+        "table": f"{db_name}.{table_name}",
+        "repairedFallback": repaired,
         "scanned": len(rows),
-        "deleteCandidates": len(selected),
+        "deleteCandidates": len(selected_rows),
         "deleted": deleted,
     }
 
 
-async def _run_letta_low_value_retention_once() -> dict[str, Any]:
-    hours = max(0.0, LETTA_LOW_VALUE_RETENTION_HOURS)
+async def _run_letta_low_value_retention_once(
+    *,
+    hours_override: float | None = None,
+    scan_limit_override: int | None = None,
+    max_deletes_override: int | None = None,
+) -> dict[str, Any]:
+    hours = max(
+        0.0,
+        float(hours_override if hours_override is not None else LETTA_LOW_VALUE_RETENTION_HOURS),
+    )
     if hours <= 0:
         return {"enabled": False, "reason": "LETTA_LOW_VALUE_RETENTION_HOURS<=0", "scanned": 0, "deleted": 0}
     if not _letta_config_enabled():
@@ -13003,11 +14162,22 @@ async def _run_letta_low_value_retention_once() -> dict[str, Any]:
     if LETTA_API_KEY:
         headers["Authorization"] = f"Bearer {LETTA_API_KEY}"
     cutoff_dt = _retention_cutoff_datetime(hours)
-    scan_limit = max(100, SINK_RETENTION_SCAN_LIMIT)
+    state_cutoff_dt = _retention_application_state_cutoff_datetime(hours)
+    scan_limit = max(
+        100,
+        int(scan_limit_override if scan_limit_override is not None else SINK_RETENTION_SCAN_LIMIT),
+    )
     page_limit = max(10, min(LETTA_RETENTION_PAGE_LIMIT, 200))
-    delete_cap = max(1, min(LETTA_RETENTION_MAX_DELETES_PER_RUN, SINK_RETENTION_MAX_DELETES_PER_RUN))
+    delete_cap = max(
+        1,
+        min(
+            LETTA_RETENTION_MAX_DELETES_PER_RUN,
+            int(max_deletes_override if max_deletes_override is not None else SINK_RETENTION_MAX_DELETES_PER_RUN),
+        ),
+    )
     agent_id = await _resolve_letta_agent_id(LETTA_AUTO_SESSION_ID, headers)
     client = await _get_letta_client()
+    state_cutoff_dt = _retention_cutoff_datetime(RETENTION_APPLICATION_STATE_HOURS)
     scanned = 0
     deleted = 0
     delete_candidates = 0
@@ -13041,13 +14211,35 @@ async def _run_letta_low_value_retention_once() -> dict[str, Any]:
                 break
             text = str(row.get("text") or "")
             parsed = _parse_letta_archival_content(text)
-            if not _is_low_value_memory_record(
+            if _is_retention_protected_memory_record(
+                parsed.get("file"),
+                parsed.get("topic_path"),
+                parsed.get("summary"),
+            ):
+                continue
+            is_low_value = _is_low_value_memory_record(
                 parsed.get("file"),
                 parsed.get("topic_path"),
                 parsed.get("summary"),
                 include_short_summary=False,
-            ):
+            )
+            is_telemetry = _is_telemetry_memory_record(
+                parsed.get("file"),
+                parsed.get("topic_path"),
+                parsed.get("summary"),
+            )
+            if RETENTION_TELEMETRY_ONLY:
+                if not is_telemetry:
+                    continue
+            elif not (is_low_value or is_telemetry):
                 continue
+            if _is_application_state_memory_record(
+                parsed.get("file"),
+                parsed.get("topic_path"),
+                parsed.get("summary"),
+            ):
+                if row_created is None or row_created > state_cutoff_dt:
+                    continue
             memory_id = str(row.get("id") or "").strip()
             if not memory_id:
                 continue
@@ -13070,6 +14262,7 @@ async def _run_letta_low_value_retention_once() -> dict[str, Any]:
     return {
         "enabled": True,
         "cutoffIso": cutoff_dt.isoformat().replace("+00:00", "Z"),
+        "stateCutoffIso": state_cutoff_dt.isoformat().replace("+00:00", "Z"),
         "scanned": scanned,
         "deleteCandidates": delete_candidates,
         "deleted": deleted,
@@ -13086,6 +14279,7 @@ async def _run_qdrant_telemetry_purge_once(
         raise OrchestratorError("qdrant-client dependency is required for telemetry purge")
     scan_limit = max(100, scan_limit)
     max_deletes = max(1, max_deletes)
+    state_cutoff_epoch = int(time.time() - (RETENTION_APPLICATION_STATE_HOURS * 3600.0))
     scanned = 0
     candidates: list[Any] = []
     offset: Any = None
@@ -13109,8 +14303,18 @@ async def _run_qdrant_telemetry_purge_once(
             file_name = str(payload_row.get("file") or "")
             topic_path = str(payload_row.get("topic_path") or "")
             summary = str(payload_row.get("summary") or "")
+            if _is_retention_protected_memory_record(file_name, topic_path, summary):
+                continue
             if not _is_telemetry_memory_record(file_name, topic_path, summary):
                 continue
+            if _is_application_state_memory_record(file_name, topic_path, summary):
+                ts_raw = payload_row.get("ts")
+                try:
+                    ts_value = int(ts_raw)
+                except (TypeError, ValueError):
+                    continue
+                if ts_value > state_cutoff_epoch:
+                    continue
             point_id = getattr(point, "id", None)
             if point_id is None:
                 continue
@@ -13135,6 +14339,7 @@ async def _run_qdrant_telemetry_purge_once(
     return {
         "enabled": True,
         "dryRun": bool(dry_run),
+        "stateCutoffEpoch": state_cutoff_epoch,
         "scanned": scanned,
         "deleteCandidates": len(candidates),
         "deleted": deleted,
@@ -13150,43 +14355,75 @@ async def _run_mindsdb_telemetry_purge_once(
     if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
         return {"enabled": False, "reason": "mindsdb autosync disabled", "scanned": 0, "deleted": 0}
     await ensure_mindsdb_table()
-    table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     scan_limit = max(100, scan_limit)
     max_deletes = max(1, max_deletes)
-    select_query = (
-        f"SELECT project, file, summary, created_at "
-        f"FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
-        f"ORDER BY created_at ASC LIMIT {scan_limit};"
-    )
-    rows = _mindsdb_rows(await _mindsdb_execute(select_query))
-    selected: list[dict[str, Any]] = []
-    for row in rows:
-        if len(selected) >= max_deletes:
-            break
-        file_name = str(row.get("file") or "")
-        topic_path = normalize_topic_path(derive_topic_path(file_name, None))
-        summary = str(row.get("summary") or "")
-        if not _is_telemetry_memory_record(file_name, topic_path, summary):
-            continue
-        selected.append(row)
+    state_cutoff_iso = _retention_cutoff_iso(RETENTION_APPLICATION_STATE_HOURS)
+    rows: list[dict[str, Any]] = []
+    selected_rows: list[dict[str, Any]] = []
     deleted = 0
-    if not dry_run:
-        for row in selected:
-            delete_query = (
-                f"DELETE FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
-                f"WHERE project = '{_escape_sql_literal(str(row.get('project') or ''))}' "
-                f"AND file = '{_escape_sql_literal(str(row.get('file') or ''))}' "
-                f"AND summary = '{_escape_sql_literal(str(row.get('summary') or ''))}' "
-                f"AND created_at = '{_escape_sql_literal(str(row.get('created_at') or ''))}';"
-            )
-            await _mindsdb_execute(delete_query)
-            deleted += 1
+    db_name = mindsdb_target_db or MINDSDB_AUTOSYNC_DB
+    table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
+    repaired = False
+
+    for attempt in range(2):
+        db_name = mindsdb_target_db or db_name or MINDSDB_AUTOSYNC_DB
+        table_name = mindsdb_target_table or table_name or MINDSDB_AUTOSYNC_TABLE
+        select_query = (
+            f"SELECT project, file, summary, created_at "
+            f"FROM {db_name}.{table_name} "
+            f"ORDER BY created_at ASC LIMIT {scan_limit};"
+        )
+        try:
+            rows = _mindsdb_rows(await _mindsdb_execute(select_query))
+            selected_rows = []
+            for row in rows:
+                if len(selected_rows) >= max_deletes:
+                    break
+                file_name = str(row.get("file") or "")
+                topic_path = normalize_topic_path(derive_topic_path(file_name, None))
+                summary = str(row.get("summary") or "")
+                if _is_retention_protected_memory_record(file_name, topic_path, summary):
+                    continue
+                if not _is_telemetry_memory_record(file_name, topic_path, summary):
+                    continue
+                is_state = _is_application_state_memory_record(file_name, topic_path, summary)
+                if is_state and not _retention_allows_delete_for_age(
+                    created_at_value=row.get("created_at"),
+                    source_hours=0.0,
+                    is_application_state=True,
+                ):
+                    continue
+                selected_rows.append(row)
+            deleted = 0
+            if not dry_run:
+                for row in selected_rows:
+                    delete_query = (
+                        f"DELETE FROM {db_name}.{table_name} "
+                        f"WHERE project = '{_escape_sql_literal(str(row.get('project') or ''))}' "
+                        f"AND file = '{_escape_sql_literal(str(row.get('file') or ''))}' "
+                        f"AND summary = '{_escape_sql_literal(str(row.get('summary') or ''))}' "
+                        f"AND created_at = '{_escape_sql_literal(str(row.get('created_at') or ''))}';"
+                    )
+                    await _mindsdb_execute(delete_query)
+                    deleted += 1
+            break
+        except Exception as exc:
+            if (
+                attempt == 0
+                and _looks_like_mindsdb_table_corruption(str(exc))
+                and await _switch_mindsdb_to_fallback(str(exc), current_table=table_name, current_db=db_name)
+            ):
+                repaired = True
+                continue
+            raise
     return {
         "enabled": True,
         "dryRun": bool(dry_run),
-        "table": f"{MINDSDB_AUTOSYNC_DB}.{table_name}",
+        "table": f"{db_name}.{table_name}",
+        "stateCutoffIso": state_cutoff_iso,
+        "repairedFallback": repaired,
         "scanned": len(rows),
-        "deleteCandidates": len(selected),
+        "deleteCandidates": len(selected_rows),
         "deleted": deleted,
     }
 
@@ -13234,12 +14471,26 @@ async def _run_letta_telemetry_purge_once(
             scanned += 1
             after = str(row.get("id") or "") or after
             parsed = _parse_letta_archival_content(str(row.get("text") or ""))
+            if _is_retention_protected_memory_record(
+                parsed.get("file"),
+                parsed.get("topic_path"),
+                parsed.get("summary"),
+            ):
+                continue
             if not _is_telemetry_memory_record(
                 parsed.get("file"),
                 parsed.get("topic_path"),
                 parsed.get("summary"),
             ):
                 continue
+            if _is_application_state_memory_record(
+                parsed.get("file"),
+                parsed.get("topic_path"),
+                parsed.get("summary"),
+            ):
+                row_created = _parse_timestamp_to_datetime(row.get("created_at") or row.get("updated_at"))
+                if row_created is None or row_created > state_cutoff_dt:
+                    continue
             memory_id = str(row.get("id") or "").strip()
             if not memory_id:
                 continue
@@ -13264,6 +14515,7 @@ async def _run_letta_telemetry_purge_once(
     return {
         "enabled": True,
         "dryRun": bool(dry_run),
+        "stateCutoffIso": state_cutoff_dt.isoformat().replace("+00:00", "Z"),
         "scanned": scanned,
         "deleteCandidates": delete_candidates,
         "deleted": deleted,
@@ -13539,35 +14791,84 @@ def _record_sink_retention_run(
     sink_retention_state["lastError"] = (error or "")[:400] if error else None
 
 
-async def run_sink_retention_once() -> dict[str, Any]:
+async def run_sink_retention_once(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     started = time.monotonic()
     sinks: dict[str, Any] = {}
     errors: dict[str, str] = {}
+    policy_payload = policy if isinstance(policy, dict) else {}
+    retention_hours = (
+        policy_payload.get("retentionHours")
+        if isinstance(policy_payload.get("retentionHours"), dict)
+        else {}
+    )
+    scan_limit_override_raw = policy_payload.get("scanLimit")
+    max_deletes_override_raw = policy_payload.get("maxDeletesPerRun")
+    delete_batch_override_raw = policy_payload.get("deleteBatch")
+    scan_limit_override = int(scan_limit_override_raw) if isinstance(scan_limit_override_raw, (int, float)) else None
+    max_deletes_override = (
+        int(max_deletes_override_raw) if isinstance(max_deletes_override_raw, (int, float)) else None
+    )
+    delete_batch_override = (
+        int(delete_batch_override_raw) if isinstance(delete_batch_override_raw, (int, float)) else None
+    )
     try:
         try:
             sinks["qdrant"] = await asyncio.wait_for(
-                _run_qdrant_low_value_retention_once(),
+                _run_qdrant_low_value_retention_once(
+                    hours_override=(
+                        float(retention_hours.get("qdrant"))
+                        if isinstance(retention_hours.get("qdrant"), (int, float))
+                        else None
+                    ),
+                    scan_limit_override=scan_limit_override,
+                    max_deletes_override=max_deletes_override,
+                    delete_batch_override=delete_batch_override,
+                ),
                 timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
             )
         except Exception as exc:
             errors["qdrant"] = str(exc)
         try:
             sinks["mongo_raw"] = await asyncio.wait_for(
-                _run_mongo_low_value_retention_once(),
+                _run_mongo_low_value_retention_once(
+                    hours_override=(
+                        float(retention_hours.get("mongo_raw"))
+                        if isinstance(retention_hours.get("mongo_raw"), (int, float))
+                        else None
+                    ),
+                    scan_limit_override=scan_limit_override,
+                    max_deletes_override=max_deletes_override,
+                ),
                 timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
             )
         except Exception as exc:
             errors["mongo_raw"] = str(exc)
         try:
             sinks["mindsdb"] = await asyncio.wait_for(
-                _run_mindsdb_low_value_retention_once(),
+                _run_mindsdb_low_value_retention_once(
+                    hours_override=(
+                        float(retention_hours.get("mindsdb"))
+                        if isinstance(retention_hours.get("mindsdb"), (int, float))
+                        else None
+                    ),
+                    scan_limit_override=scan_limit_override,
+                    max_deletes_override=max_deletes_override,
+                ),
                 timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
             )
         except Exception as exc:
             errors["mindsdb"] = str(exc)
         try:
             sinks["letta"] = await asyncio.wait_for(
-                _run_letta_low_value_retention_once(),
+                _run_letta_low_value_retention_once(
+                    hours_override=(
+                        float(retention_hours.get("letta"))
+                        if isinstance(retention_hours.get("letta"), (int, float))
+                        else None
+                    ),
+                    scan_limit_override=scan_limit_override,
+                    max_deletes_override=max_deletes_override,
+                ),
                 timeout=max(5.0, SINK_RETENTION_TIMEOUT_SECS),
             )
         except Exception as exc:
@@ -13576,6 +14877,7 @@ async def run_sink_retention_once() -> dict[str, Any]:
             "sinks": sinks,
             "errors": errors,
             "ok": not bool(errors),
+            "policy": policy_payload,
         }
         _record_sink_retention_run(
             result=result,
@@ -13591,6 +14893,563 @@ async def run_sink_retention_once() -> dict[str, Any]:
             duration_ms=(time.monotonic() - started) * 1000,
         )
         raise
+
+
+def _storage_governance_history_paths() -> dict[str, Path]:
+    return {
+        "memory_write_history": MEMORY_WRITE_HISTORY_PATH,
+        "trading_history": TRADING_HISTORY_PATH,
+        "strategy_history": STRATEGY_HISTORY_PATH,
+        "signal_history": SIGNAL_HISTORY_PATH,
+        "override_history": OVERRIDE_HISTORY_PATH,
+        "recall_monitor": RECALL_MONITOR_PATH,
+    }
+
+
+def _resolve_storage_governance_disk_root() -> Path:
+    if STORAGE_GOVERNANCE_DISK_ROOT_ENV:
+        candidate = Path(STORAGE_GOVERNANCE_DISK_ROOT_ENV).expanduser()
+    else:
+        candidate = TASK_DB_PATH.parent
+    if candidate.is_file():
+        candidate = candidate.parent
+    if candidate.exists():
+        return candidate
+    for parent in [candidate.parent, TASK_DB_PATH.parent, Path(__file__).resolve().parent]:
+        if parent.exists():
+            return parent
+    return candidate
+
+
+def _safe_path_total_bytes(path: Path) -> int:
+    try:
+        if not path.exists():
+            return 0
+        if path.is_file():
+            return int(path.stat().st_size)
+    except Exception:
+        return 0
+    total = 0
+    try:
+        for root, _, files in os.walk(path):
+            for file_name in files:
+                file_path = Path(root) / file_name
+                with contextlib.suppress(Exception):
+                    total += int(file_path.stat().st_size)
+    except Exception:
+        return total
+    return total
+
+
+def _safe_mongo_db_storage_bytes(db_name: str) -> int:
+    if MongoClient is None:
+        return 0
+    if MONGO_CLIENT is None:
+        return 0
+    db_name = str(db_name or "").strip()
+    if not db_name:
+        return 0
+    try:
+        stats = MONGO_CLIENT[db_name].command("dbstats")
+    except Exception:
+        return 0
+    storage_size = int(stats.get("storageSize") or 0)
+    data_size = int(stats.get("dataSize") or 0)
+    return max(storage_size, data_size, 0)
+
+
+def _storage_pressure_band(*, used_ratio: float, free_bytes: int) -> str:
+    if used_ratio >= STORAGE_GOVERNANCE_HIGH_USED_RATIO or free_bytes <= STORAGE_GOVERNANCE_MIN_FREE_BYTES:
+        return "high"
+    free_warn = int(STORAGE_GOVERNANCE_MIN_FREE_BYTES * 1.5)
+    if used_ratio >= STORAGE_GOVERNANCE_WARN_USED_RATIO or free_bytes <= free_warn:
+        return "warn"
+    return "healthy"
+
+
+def _collect_storage_governance_snapshot() -> dict[str, Any]:
+    tracked_paths: dict[str, Path] = {
+        "task_db": TASK_DB_PATH,
+        "memory_write_history": MEMORY_WRITE_HISTORY_PATH,
+        "trading_history": TRADING_HISTORY_PATH,
+        "strategy_history": STRATEGY_HISTORY_PATH,
+        "signal_history": SIGNAL_HISTORY_PATH,
+        "override_history": OVERRIDE_HISTORY_PATH,
+        "recall_monitor": RECALL_MONITOR_PATH,
+        "topic_index": TOPIC_INDEX_PATH,
+        "memory_bank_cleanup_state": MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH,
+        "fanout_payload_blobs": FANOUT_OUTBOX_PAYLOAD_BLOB_DIR,
+        "mongo_raw_content_blobs": MONGO_RAW_CONTENT_BLOB_DIR,
+        "continuity_snapshots": CONTINUITY_SNAPSHOT_DIR,
+    }
+    tracked_sizes = {name: _safe_path_total_bytes(path) for name, path in tracked_paths.items()}
+    tracked_total_bytes = int(sum(int(size or 0) for size in tracked_sizes.values()))
+    history_total_bytes = int(
+        tracked_sizes.get("memory_write_history", 0)
+        + tracked_sizes.get("trading_history", 0)
+        + tracked_sizes.get("strategy_history", 0)
+        + tracked_sizes.get("signal_history", 0)
+        + tracked_sizes.get("override_history", 0)
+        + tracked_sizes.get("recall_monitor", 0)
+    )
+    logical_mongo_dbs = {
+        "raw": str(MONGO_RAW_DB or "").strip(),
+        "telemetry": str(TELEMETRY_DB or "").strip(),
+        "outbox": str(FANOUT_OUTBOX_MONGO_DB or "").strip(),
+    }
+    mongo_bytes: dict[str, int] = {}
+    mongo_physical_by_db: dict[str, int] = {}
+    mongo_aliases: dict[str, list[str]] = {}
+    for lane, db_name in logical_mongo_dbs.items():
+        if not db_name:
+            mongo_bytes[lane] = 0
+            continue
+        if db_name not in mongo_physical_by_db:
+            mongo_physical_by_db[db_name] = int(_safe_mongo_db_storage_bytes(db_name))
+        size = int(mongo_physical_by_db.get(db_name) or 0)
+        mongo_bytes[lane] = size
+        mongo_aliases.setdefault(db_name, []).append(lane)
+    mongo_total_bytes = int(sum(int(value or 0) for value in mongo_physical_by_db.values()))
+    mongo_logical_total_bytes = int(sum(int(value or 0) for value in mongo_bytes.values()))
+    mongo_shared_aliases = {
+        db_name: lanes
+        for db_name, lanes in mongo_aliases.items()
+        if len(lanes) > 1
+    }
+    disk_root = _resolve_storage_governance_disk_root()
+    usage_total = 0
+    usage_used = 0
+    usage_free = 0
+    usage_error = None
+    try:
+        usage = shutil.disk_usage(disk_root)
+        usage_total = int(usage.total)
+        usage_used = int(usage.used)
+        usage_free = int(usage.free)
+    except Exception as exc:
+        usage_error = str(exc)
+    used_ratio = (float(usage_used) / float(usage_total)) if usage_total > 0 else 0.0
+    pressure = _storage_pressure_band(used_ratio=used_ratio, free_bytes=usage_free)
+    allocations: dict[str, dict[str, Any]] = {}
+    denominator = max(1, tracked_total_bytes)
+    for name, size in tracked_sizes.items():
+        allocations[name] = {
+            "bytes": int(size),
+            "share": round(float(size) / float(denominator), 6),
+        }
+    return {
+        "capturedAt": _utc_now(),
+        "diskRoot": str(disk_root),
+        "diskUsage": {
+            "totalBytes": usage_total,
+            "usedBytes": usage_used,
+            "freeBytes": usage_free,
+            "usedRatio": round(used_ratio, 6),
+            "error": usage_error,
+        },
+        "trackedBytesTotal": tracked_total_bytes,
+        "historyBytesTotal": history_total_bytes,
+        "mongoBytesTotal": mongo_total_bytes,
+        "mongoBytesLogicalTotal": mongo_logical_total_bytes,
+        "tracked": {
+            name: {"path": str(tracked_paths[name]), "bytes": int(tracked_sizes[name])}
+            for name in sorted(tracked_paths.keys())
+        },
+        "remoteStores": {
+            "mongo": {
+                **mongo_bytes,
+                "logicalTotalBytes": mongo_logical_total_bytes,
+                "uniqueTotalBytes": mongo_total_bytes,
+                "physicalByDb": mongo_physical_by_db,
+                "sharedDbAliases": mongo_shared_aliases,
+            },
+        },
+        "allotments": allocations,
+        "pressureBand": pressure,
+    }
+
+
+def _storage_governance_retention_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
+    pressure = str(snapshot.get("pressureBand") or "healthy")
+    multiplier = 1.0
+    if pressure == "high":
+        multiplier = STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_HIGH
+    elif pressure == "warn":
+        multiplier = STORAGE_GOVERNANCE_RETENTION_MULTIPLIER_WARN
+    scan_limit = max(100, int(round(float(SINK_RETENTION_SCAN_LIMIT) * multiplier)))
+    max_deletes = max(1, int(round(float(SINK_RETENTION_MAX_DELETES_PER_RUN) * multiplier)))
+    delete_batch = max(
+        1,
+        int(round(float(SINK_RETENTION_DELETE_BATCH) * min(multiplier, 2.0))),
+    )
+    qdrant_hours = (
+        max(6.0, float(QDRANT_LOW_VALUE_RETENTION_HOURS) / multiplier)
+        if QDRANT_LOW_VALUE_RETENTION_HOURS > 0
+        else 0.0
+    )
+    mindsdb_hours = (
+        max(6.0, float(MINDSDB_LOW_VALUE_RETENTION_HOURS) / multiplier)
+        if MINDSDB_LOW_VALUE_RETENTION_HOURS > 0
+        else 0.0
+    )
+    letta_hours = (
+        max(6.0, float(LETTA_LOW_VALUE_RETENTION_HOURS) / multiplier)
+        if LETTA_LOW_VALUE_RETENTION_HOURS > 0
+        else 0.0
+    )
+    mongo_hours = (
+        max(1.0, float(MONGO_RAW_LOW_VALUE_RETENTION_HOURS) / multiplier)
+        if MONGO_RAW_LOW_VALUE_RETENTION_HOURS > 0
+        else 0.0
+    )
+    outbox_policy = {
+        "succeededRetentionHours": max(
+            1,
+            int(math.ceil(float(FANOUT_OUTBOX_SUCCEEDED_RETENTION_HOURS) / multiplier)),
+        ),
+        "failedRetentionHours": max(
+            1,
+            int(math.ceil(float(FANOUT_OUTBOX_FAILED_RETENTION_HOURS) / multiplier)),
+        ),
+        "stalePendingHours": max(
+            1,
+            int(math.ceil(float(FANOUT_OUTBOX_STALE_PENDING_HOURS) / multiplier)),
+        ),
+        "staleTargets": list(FANOUT_OUTBOX_STALE_TARGETS),
+        "vacuumMinDeleted": max(
+            1,
+            int(math.ceil(float(FANOUT_OUTBOX_GC_VACUUM_MIN_DELETED) / max(1.0, multiplier))),
+        ),
+    }
+    return {
+        "pressureBand": pressure,
+        "multiplier": round(multiplier, 3),
+        "sinkRetention": {
+            "scanLimit": scan_limit,
+            "maxDeletesPerRun": max_deletes,
+            "deleteBatch": delete_batch,
+            "retentionHours": {
+                "qdrant": round(qdrant_hours, 3),
+                "mongo_raw": round(mongo_hours, 3),
+                "mindsdb": round(mindsdb_hours, 3),
+                "letta": round(letta_hours, 3),
+            },
+        },
+        "outboxGc": outbox_policy,
+        "taskDbCompaction": {
+            "enabled": STORAGE_GOVERNANCE_TASK_DB_COMPACT_ENABLED,
+            "minReclaimBytes": STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_RECLAIM_BYTES,
+            "minIntervalSecs": STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_INTERVAL_SECS,
+        },
+        "fanoutPayloadBlobGc": {
+            "enabled": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_ENABLED and FANOUT_OUTBOX_PAYLOAD_BLOB_ENABLED,
+            "minIntervalSecs": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MIN_INTERVAL_SECS,
+            "graceSecs": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_GRACE_SECS,
+            "maxScan": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MAX_SCAN,
+        },
+        "mongoRawContentBlobGc": {
+            "enabled": MONGO_RAW_CONTENT_BLOB_GC_ENABLED and MONGO_RAW_CONTENT_BLOB_ENABLED,
+            "minIntervalSecs": MONGO_RAW_CONTENT_BLOB_GC_MIN_INTERVAL_SECS,
+            "graceSecs": MONGO_RAW_CONTENT_BLOB_GC_GRACE_SECS,
+            "maxScan": MONGO_RAW_CONTENT_BLOB_GC_MAX_SCAN,
+        },
+    }
+
+
+def _sqlite_fanout_table_exists(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fanout_outbox' LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
+async def _prune_legacy_sqlite_outbox_once(*, max_rows: int, max_bytes: int) -> dict[str, Any]:
+    max_rows = max(100, int(max_rows))
+    max_bytes = max(128 * 1024 * 1024, int(max_bytes))
+    if not STORAGE_GOVERNANCE_SQLITE_LEGACY_PRUNE_ENABLED:
+        return {"ok": True, "skipped": "disabled"}
+    if fanout_outbox_backend_active != "mongo":
+        return {"ok": True, "skipped": "active_backend_not_mongo", "activeBackend": fanout_outbox_backend_active}
+
+    def _prune(conn: sqlite3.Connection) -> dict[str, Any]:
+        before_bytes = int(TASK_DB_PATH.stat().st_size) if TASK_DB_PATH.exists() else 0
+        if not _sqlite_fanout_table_exists(conn):
+            return {
+                "ok": True,
+                "skipped": "table_missing",
+                "beforeBytes": before_bytes,
+                "afterBytes": before_bytes,
+            }
+        before_rows = int(conn.execute("SELECT COUNT(*) FROM fanout_outbox").fetchone()[0])
+        delete_budget = max(0, before_rows - max_rows)
+        if delete_budget <= 0 and before_bytes > max_bytes and before_rows > 0:
+            avg_bytes_per_row = max(1, int(before_bytes / max(1, before_rows)))
+            delete_budget = max(1, int(math.ceil(float(before_bytes - max_bytes) / float(avg_bytes_per_row))))
+        if delete_budget <= 0:
+            return {
+                "ok": True,
+                "skipped": "within_limits",
+                "beforeRows": before_rows,
+                "afterRows": before_rows,
+                "beforeBytes": before_bytes,
+                "afterBytes": before_bytes,
+                "deleted": 0,
+                "maxRows": max_rows,
+                "maxBytes": max_bytes,
+            }
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            """
+            DELETE FROM fanout_outbox
+            WHERE id IN (
+                SELECT id
+                FROM fanout_outbox
+                WHERE status IN ('succeeded', 'failed')
+                ORDER BY COALESCE(completed_at, updated_at, created_at) ASC, id ASC
+                LIMIT ?
+            )
+            """,
+            (delete_budget,),
+        )
+        deleted = int(cursor.rowcount or 0)
+        remaining_budget = max(0, delete_budget - deleted)
+        if remaining_budget > 0:
+            # Mongo is active backend; trim additional oldest legacy rows if needed.
+            fallback_cursor = conn.execute(
+                """
+                DELETE FROM fanout_outbox
+                WHERE id IN (
+                    SELECT id
+                    FROM fanout_outbox
+                    ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
+                    LIMIT ?
+                )
+                """,
+                (remaining_budget,),
+            )
+            deleted += int(fallback_cursor.rowcount or 0)
+        conn.commit()
+        checkpoint_error = None
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as exc:
+            checkpoint_error = str(exc)
+        run_vacuum = bool(deleted > 0 and before_bytes > max_bytes)
+        if run_vacuum:
+            with contextlib.suppress(Exception):
+                conn.execute("VACUUM")
+        after_rows = int(conn.execute("SELECT COUNT(*) FROM fanout_outbox").fetchone()[0])
+        after_bytes = int(TASK_DB_PATH.stat().st_size) if TASK_DB_PATH.exists() else 0
+        return {
+            "ok": True,
+            "beforeRows": before_rows,
+            "afterRows": after_rows,
+            "beforeBytes": before_bytes,
+            "afterBytes": after_bytes,
+            "deleted": deleted,
+            "maxRows": max_rows,
+            "maxBytes": max_bytes,
+            "vacuumRan": run_vacuum,
+            "checkpointError": checkpoint_error,
+        }
+
+    try:
+        return await _task_db_exec(_prune)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _compress_history_file_once(path: Path, *, min_bytes: int, keep_archives: int) -> dict[str, Any]:
+    min_bytes = max(1024 * 1024, int(min_bytes))
+    keep_archives = max(1, int(keep_archives))
+    if not path.exists() or not path.is_file():
+        return {"path": str(path), "compressed": False, "reason": "missing"}
+    before_bytes = int(path.stat().st_size)
+    if before_bytes < min_bytes:
+        return {
+            "path": str(path),
+            "compressed": False,
+            "reason": "below_threshold",
+            "beforeBytes": before_bytes,
+            "thresholdBytes": min_bytes,
+        }
+    requested_codec = STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC
+    codec = requested_codec
+    fallback_reason = None
+    if codec == "zstd" and zstd is None:
+        codec = "gzip"
+        fallback_reason = "zstd_unavailable_fallback_to_gzip"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ext = "zst" if codec == "zstd" else "gz"
+    archive_path = path.with_name(f"{path.name}.{stamp}.{ext}")
+    with path.open("rb") as source:
+        if codec == "zstd" and zstd is not None:
+            compressor = zstd.ZstdCompressor(level=STORAGE_GOVERNANCE_HISTORY_COMPRESS_ZSTD_LEVEL)
+            with archive_path.open("wb") as target:
+                with compressor.stream_writer(target) as writer:
+                    shutil.copyfileobj(source, writer, length=1024 * 1024)
+        else:
+            with gzip.open(archive_path, "wb", compresslevel=6) as target:
+                shutil.copyfileobj(source, target, length=1024 * 1024)
+    # Truncate active file after successful archive.
+    path.write_text("", encoding="utf-8")
+    removed: list[str] = []
+    archives = sorted(
+        list(path.parent.glob(f"{path.name}.*.gz")) + list(path.parent.glob(f"{path.name}.*.zst")),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in archives[keep_archives:]:
+        with contextlib.suppress(Exception):
+            stale.unlink()
+            removed.append(str(stale))
+    result = {
+        "path": str(path),
+        "compressed": True,
+        "codecRequested": requested_codec,
+        "codecUsed": codec,
+        "archivePath": str(archive_path),
+        "beforeBytes": before_bytes,
+        "archiveBytes": int(archive_path.stat().st_size) if archive_path.exists() else 0,
+        "afterBytes": int(path.stat().st_size) if path.exists() else 0,
+        "removedArchives": removed,
+    }
+    if fallback_reason:
+        result["warning"] = fallback_reason
+    return result
+
+
+async def _run_history_compression_once() -> dict[str, Any]:
+    if not STORAGE_GOVERNANCE_HISTORY_COMPRESS_ENABLED:
+        return {"enabled": False, "results": {}, "compressed": 0}
+    requested = {
+        token.strip().lower()
+        for token in STORAGE_GOVERNANCE_HISTORY_TARGETS_ENV.split(",")
+        if token.strip()
+    }
+    all_paths = _storage_governance_history_paths()
+    targets = {
+        name: path
+        for name, path in all_paths.items()
+        if not requested or name in requested
+    }
+    results: dict[str, Any] = {}
+    compressed = 0
+    for name, path in targets.items():
+        try:
+            item = await asyncio.to_thread(
+                _compress_history_file_once,
+                path,
+                min_bytes=STORAGE_GOVERNANCE_HISTORY_COMPRESS_MIN_BYTES,
+                keep_archives=STORAGE_GOVERNANCE_HISTORY_COMPRESS_KEEP,
+            )
+            results[name] = item
+            if bool(item.get("compressed")):
+                compressed += 1
+        except Exception as exc:
+            results[name] = {"path": str(path), "compressed": False, "error": str(exc)}
+    return {
+        "enabled": True,
+        "compressed": compressed,
+        "codecRequested": STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC,
+        "zstdAvailable": bool(zstd is not None),
+        "zstdLevel": STORAGE_GOVERNANCE_HISTORY_COMPRESS_ZSTD_LEVEL,
+        "targets": sorted(targets.keys()),
+        "results": results,
+    }
+
+
+async def run_storage_governance_once(*, force: bool = False) -> dict[str, Any]:
+    async with storage_governance_lock:
+        started = time.monotonic()
+        snapshot = _collect_storage_governance_snapshot()
+        policy = _storage_governance_retention_policy(snapshot)
+        pressure = str(snapshot.get("pressureBand") or "healthy")
+        actions: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        should_enforce = bool(force or pressure in {"warn", "high"})
+
+        if should_enforce:
+            try:
+                actions["sinkRetention"] = await run_sink_retention_once(policy=policy.get("sinkRetention"))
+            except Exception as exc:
+                errors["sinkRetention"] = str(exc)
+            try:
+                actions["fanoutOutboxGc"] = await run_fanout_outbox_gc_once(policy=policy.get("outboxGc"))
+            except Exception as exc:
+                errors["fanoutOutboxGc"] = str(exc)
+            try:
+                actions["sqliteLegacyOutboxPrune"] = await _prune_legacy_sqlite_outbox_once(
+                    max_rows=STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_ROWS,
+                    max_bytes=STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_BYTES,
+                )
+            except Exception as exc:
+                errors["sqliteLegacyOutboxPrune"] = str(exc)
+        else:
+            actions["sinkRetention"] = {"ok": True, "skipped": "pressure_healthy"}
+            actions["fanoutOutboxGc"] = {"ok": True, "skipped": "pressure_healthy"}
+            actions["sqliteLegacyOutboxPrune"] = {"ok": True, "skipped": "pressure_healthy"}
+
+        try:
+            actions["taskDbCompaction"] = await _run_task_db_compaction_once(force=bool(force))
+        except Exception as exc:
+            errors["taskDbCompaction"] = str(exc)
+        try:
+            actions["fanoutPayloadBlobGc"] = await _run_fanout_payload_blob_gc_once(force=bool(force))
+        except Exception as exc:
+            errors["fanoutPayloadBlobGc"] = str(exc)
+        try:
+            actions["mongoRawContentBlobGc"] = await _run_mongo_raw_content_blob_gc_once(force=bool(force))
+        except Exception as exc:
+            errors["mongoRawContentBlobGc"] = str(exc)
+
+        try:
+            actions["historyCompression"] = await _run_history_compression_once()
+        except Exception as exc:
+            errors["historyCompression"] = str(exc)
+
+        duration_ms = (time.monotonic() - started) * 1000
+        result = {
+            "ok": not bool(errors),
+            "forced": bool(force),
+            "pressureBand": pressure,
+            "snapshot": snapshot,
+            "policy": policy,
+            "actions": actions,
+            "errors": errors,
+            "durationMs": round(duration_ms, 2),
+            "capturedAt": _utc_now(),
+        }
+        storage_governance_state["enabled"] = STORAGE_GOVERNANCE_ENABLED
+        storage_governance_state["intervalSecs"] = STORAGE_GOVERNANCE_INTERVAL_SECS
+        storage_governance_state["lastRunAt"] = result["capturedAt"]
+        storage_governance_state["lastDurationMs"] = result["durationMs"]
+        storage_governance_state["runs"] = int(storage_governance_state.get("runs") or 0) + 1
+        storage_governance_state["lastError"] = json.dumps(errors)[:400] if errors else None
+        storage_governance_state["lastResult"] = result
+        storage_governance_state["lastSnapshot"] = snapshot
+        storage_governance_state["lastPolicy"] = policy
+        storage_governance_state["lastPressureBand"] = pressure
+        return result
+
+
+async def _storage_governance_worker() -> None:
+    interval = max(120.0, STORAGE_GOVERNANCE_INTERVAL_SECS)
+    while True:
+        try:
+            result = await run_storage_governance_once(force=False)
+            logger.info(
+                "storage governance: pressure=%s tracked=%s compressed=%s errors=%s",
+                result.get("pressureBand"),
+                ((result.get("snapshot") or {}).get("trackedBytesTotal")),
+                (((result.get("actions") or {}).get("historyCompression") or {}).get("compressed")),
+                result.get("errors"),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - runtime resilience
+            logger.warning("Storage governance run failed: %s", exc)
+        await asyncio.sleep(interval)
 
 
 async def _sink_retention_worker() -> None:
@@ -15108,6 +16967,10 @@ class MemoryWrite(BaseModel):
     fileName: str = Field(..., description="File name inside the project")
     content: str = Field(..., description="Payload to store")
     topicPath: str | None = Field(None, description="Optional topic path override")
+    fanoutExcludeTargets: list[str] | None = Field(
+        None,
+        description="Optional fanout targets to skip for this write",
+    )
 
 
 class MemoryWriteBatchItem(BaseModel):
@@ -15115,6 +16978,10 @@ class MemoryWriteBatchItem(BaseModel):
     fileName: str = Field(..., description="File name inside the project")
     content: str = Field(..., description="Payload to store")
     topicPath: str | None = Field(None, description="Optional topic path override")
+    fanoutExcludeTargets: list[str] | None = Field(
+        None,
+        description="Optional fanout targets to skip for this write item",
+    )
     itemId: str | None = Field(None, description="Optional caller-provided item identifier")
     idempotencyKey: str | None = Field(None, description="Optional per-item idempotency key")
 
@@ -16173,6 +18040,157 @@ def _build_context_pack_payload(
         "retrievalIntent": search_response.get("retrieval_intent"),
         "agentId": search_response.get("agent_id"),
     }
+
+
+def _continuity_snapshot_storage_path(project: str, snapshot_id: str) -> Path:
+    project_token = _slug_token(project, fallback="project", max_len=64)
+    safe_snapshot = re.sub(r"[^a-f0-9]", "", str(snapshot_id).lower())[:64] or "snapshot"
+    return CONTINUITY_SNAPSHOT_DIR / project_token / f"{safe_snapshot}.json"
+
+
+def _continuity_snapshot_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    raw_metadata = row["metadata"] if "metadata" in row.keys() else None
+    if isinstance(raw_metadata, str) and raw_metadata.strip():
+        try:
+            parsed = json.loads(raw_metadata)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except Exception:
+            metadata = {}
+    return {
+        "snapshot_id": row["snapshot_id"],
+        "created_at": row["created_at"],
+        "project": row["project"],
+        "topic_path": row["topic_path"],
+        "query": row["query"],
+        "label": row["label"],
+        "content_hash": row["content_hash"],
+        "file_path": row["file_path"],
+        "retrieval_mode": row["retrieval_mode"],
+        "retrieval_intent": row["retrieval_intent"],
+        "agent_id": row["agent_id"],
+        "metadata": metadata,
+    }
+
+
+async def _continuity_snapshot_index_get(snapshot_id: str) -> dict[str, Any] | None:
+    snapshot_id = re.sub(r"[^a-f0-9]", "", str(snapshot_id or "").lower())[:64]
+    if not snapshot_id:
+        return None
+
+    def _get(conn: sqlite3.Connection) -> dict[str, Any] | None:
+        row = conn.execute(
+            """
+            SELECT snapshot_id, created_at, project, topic_path, query, label,
+                   content_hash, file_path, retrieval_mode, retrieval_intent, agent_id, metadata
+            FROM continuity_snapshots
+            WHERE snapshot_id = ?
+            LIMIT 1
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _continuity_snapshot_row_to_dict(row)
+
+    return await _task_db_exec(_get)
+
+
+async def _continuity_snapshot_index_insert(entry: dict[str, Any]) -> dict[str, Any]:
+    def _insert(conn: sqlite3.Connection) -> dict[str, Any]:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO continuity_snapshots(
+                snapshot_id, created_at, project, topic_path, query, label, content_hash, file_path,
+                retrieval_mode, retrieval_intent, agent_id, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry["snapshot_id"],
+                entry["created_at"],
+                entry["project"],
+                entry.get("topic_path"),
+                entry["query"],
+                entry.get("label"),
+                entry["content_hash"],
+                entry["file_path"],
+                entry.get("retrieval_mode"),
+                entry.get("retrieval_intent"),
+                entry.get("agent_id"),
+                json.dumps(entry.get("metadata") or {}, separators=(",", ":"), sort_keys=True),
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT snapshot_id, created_at, project, topic_path, query, label,
+                   content_hash, file_path, retrieval_mode, retrieval_intent, agent_id, metadata
+            FROM continuity_snapshots
+            WHERE snapshot_id = ?
+            LIMIT 1
+            """,
+            (entry["snapshot_id"],),
+        ).fetchone()
+        if row is None:
+            raise OrchestratorError("continuity snapshot index insert failed")
+        return _continuity_snapshot_row_to_dict(row)
+
+    return await _task_db_exec(_insert)
+
+
+async def _continuity_snapshot_index_list(
+    *,
+    project: str | None,
+    topic_prefix: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit or 20), 200))
+
+    def _list(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if topic_prefix:
+            clauses.append("topic_path LIKE ?")
+            params.append(f"{topic_prefix}%")
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = conn.execute(
+            f"""
+            SELECT snapshot_id, created_at, project, topic_path, query, label,
+                   content_hash, file_path, retrieval_mode, retrieval_intent, agent_id, metadata
+            FROM continuity_snapshots
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+        return [_continuity_snapshot_row_to_dict(row) for row in rows]
+
+    return await _task_db_exec(_list)
+
+
+def _write_continuity_snapshot_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    rendered = json.dumps(payload, indent=2, ensure_ascii=False)
+    temp_path.write_text(rendered, encoding="utf-8")
+    temp_path.replace(path)
+
+
+def _read_continuity_snapshot_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _top_result_score(results: list[dict[str, Any]]) -> float:
@@ -18215,6 +20233,10 @@ async def search_mongo_raw(
             "file": 1,
             "summary": 1,
             "content_raw": 1,
+            "content_raw_blob_ref": 1,
+            "content_raw_blob_codec": 1,
+            "content_raw_blob_bytes": 1,
+            "content_raw_raw_bytes": 1,
             "topic_path": 1,
             "topic_tags": 1,
             "code_context": 1,
@@ -18235,7 +20257,7 @@ async def search_mongo_raw(
         return []
     rows: list[dict[str, Any]] = []
     for doc in docs:
-        content = str(doc.get("content_raw") or "")
+        content = _decode_mongo_raw_content_from_doc(doc)
         summary = str(doc.get("summary") or "")
         snippet = summary or (content[:500] if content else "")
         haystack = "\n".join(
@@ -18291,6 +20313,7 @@ async def search_mindsdb_memory(
     safe_query = _sanitize_mindsdb_query_text(query)
     if not safe_query:
         return []
+    db_name = mindsdb_target_db or MINDSDB_AUTOSYNC_DB
     table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     clauses: list[str] = []
     if project_filter:
@@ -18313,15 +20336,33 @@ async def search_mindsdb_memory(
         clauses.append("(" + " OR ".join(term_predicates) + ")")
     where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     scan_limit = max(limit * 12, RETRIEVAL_MINDSDB_SCAN_LIMIT)
-    sql = (
-        f"SELECT project, file, summary, created_at "
-        f"FROM {MINDSDB_AUTOSYNC_DB}.{table_name} "
-        f"{where_clause} ORDER BY created_at DESC LIMIT {scan_limit};"
-    )
-    try:
-        raw = await _mindsdb_execute(sql)
-    except Exception as exc:
-        if _is_mindsdb_lz4_decompress_error(exc):
+    raw: dict[str, Any] | None = None
+    query_error: Exception | None = None
+    for attempt in range(2):
+        db_name = mindsdb_target_db or db_name or MINDSDB_AUTOSYNC_DB
+        table_name = mindsdb_target_table or table_name or MINDSDB_AUTOSYNC_TABLE
+        sql = (
+            f"SELECT project, file, summary, created_at "
+            f"FROM {db_name}.{table_name} "
+            f"{where_clause} ORDER BY created_at DESC LIMIT {scan_limit};"
+        )
+        try:
+            raw = await _mindsdb_execute(sql)
+            query_error = None
+            break
+        except Exception as exc:
+            query_error = exc
+            if (
+                attempt == 0
+                and _looks_like_mindsdb_table_corruption(str(exc))
+                and not _is_mindsdb_lz4_decompress_error(exc)
+                and await _switch_mindsdb_to_fallback(str(exc), current_table=table_name, current_db=db_name)
+            ):
+                continue
+            break
+    if raw is None:
+        assert query_error is not None
+        if _is_mindsdb_lz4_decompress_error(query_error):
             mindsdb_retrieval_lz4_hits += 1
             mindsdb_retrieval_lz4_cooldown_until_monotonic = (
                 time.monotonic() + MINDSDB_RETRIEVAL_LZ4_COOLDOWN_SECS
@@ -18336,7 +20377,7 @@ async def search_mindsdb_memory(
         else:
             _log_mindsdb_retrieval_warning(
                 "query",
-                f"MindsDB retrieval query failed: {exc}",
+                f"MindsDB retrieval query failed: {query_error}",
             )
         return []
     rows: list[dict[str, Any]] = []
@@ -20393,7 +22434,7 @@ async def push_to_letta(
 
 
 async def ensure_mindsdb_table() -> None:
-    global mindsdb_table_ready, mindsdb_target_table
+    global mindsdb_table_ready, mindsdb_target_db, mindsdb_target_table
     if not MINDSDB_ENABLED or not MINDSDB_AUTOSYNC:
         return
     if mindsdb_table_ready:
@@ -20401,9 +22442,11 @@ async def ensure_mindsdb_table() -> None:
     async with mindsdb_table_lock:
         if mindsdb_table_ready:
             return
+        primary_db = mindsdb_target_db or MINDSDB_AUTOSYNC_DB
         primary_table = MINDSDB_AUTOSYNC_TABLE
         try:
-            await _ensure_mindsdb_table_exists(primary_table)
+            await _ensure_mindsdb_table_exists(primary_table, primary_db)
+            mindsdb_target_db = primary_db
             mindsdb_target_table = primary_table
             mindsdb_table_ready = True
             return
@@ -20412,21 +22455,32 @@ async def ensure_mindsdb_table() -> None:
                 logger.warning("MindsDB table init error: %s", exc)
                 return
     # Fallback activation requires a second lock pass.
-    await _switch_mindsdb_to_fallback("primary table appears corrupted", current_table=MINDSDB_AUTOSYNC_TABLE)
+    await _switch_mindsdb_to_fallback(
+        "primary table appears corrupted",
+        current_table=MINDSDB_AUTOSYNC_TABLE,
+        current_db=(mindsdb_target_db or MINDSDB_AUTOSYNC_DB),
+    )
 
 
-async def _switch_mindsdb_to_fallback(reason: str, current_table: str | None = None) -> bool:
-    global mindsdb_table_ready, mindsdb_target_table
+async def _switch_mindsdb_to_fallback(
+    reason: str,
+    current_table: str | None = None,
+    current_db: str | None = None,
+) -> bool:
+    global mindsdb_table_ready, mindsdb_target_db, mindsdb_target_table
     async with mindsdb_table_lock:
+        seed_db = str(current_db or mindsdb_target_db or MINDSDB_AUTOSYNC_DB).strip() or MINDSDB_AUTOSYNC_DB
         seed_table = current_table or mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
         candidate = _mindsdb_next_fallback_table(seed_table)
-        for _ in range(12):
+        for _ in range(256):
             try:
-                await _ensure_mindsdb_table_exists(candidate)
+                await _ensure_mindsdb_table_exists(candidate, seed_db)
+                mindsdb_target_db = seed_db
                 mindsdb_target_table = candidate
                 mindsdb_table_ready = True
                 logger.warning(
-                    "MindsDB autosync switched to fallback table '%s' after error: %s",
+                    "MindsDB autosync switched to fallback table '%s.%s' after error: %s",
+                    seed_db,
                     candidate,
                     reason[:240],
                 )
@@ -20436,14 +22490,36 @@ async def _switch_mindsdb_to_fallback(reason: str, current_table: str | None = N
                     candidate = _mindsdb_next_fallback_table(candidate)
                     continue
                 logger.warning("MindsDB fallback table activation failed: %s", exc)
+                break
+
+        candidate_db = _mindsdb_next_fallback_db(seed_db)
+        for _ in range(64):
+            try:
+                await _ensure_mindsdb_table_exists(MINDSDB_AUTOSYNC_TABLE, candidate_db)
+                mindsdb_target_db = candidate_db
+                mindsdb_target_table = MINDSDB_AUTOSYNC_TABLE
+                mindsdb_table_ready = True
+                logger.warning(
+                    "MindsDB autosync switched to fallback database '%s.%s' after error: %s",
+                    candidate_db,
+                    MINDSDB_AUTOSYNC_TABLE,
+                    reason[:240],
+                )
+                return True
+            except Exception as exc:
+                if _looks_like_mindsdb_table_corruption(str(exc)):
+                    candidate_db = _mindsdb_next_fallback_db(candidate_db)
+                    continue
+                logger.warning("MindsDB fallback database activation failed: %s", exc)
                 return False
-    logger.warning("MindsDB fallback table activation exhausted candidate tables")
+    logger.warning("MindsDB fallback table/database activation exhausted candidate paths")
     return False
 
 
 async def _insert_into_mindsdb(item: dict[str, Any]) -> None:
     await ensure_mindsdb_table()
     created_at = item.get("created_at") or _utc_now()
+    db_name = mindsdb_target_db or MINDSDB_AUTOSYNC_DB
     table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
     query = _mindsdb_insert_query(
         item["project"],
@@ -20451,14 +22527,16 @@ async def _insert_into_mindsdb(item: dict[str, Any]) -> None:
         item.get("summary") or "",
         created_at,
         table_name,
+        db_name,
     )
     try:
         await _mindsdb_execute(query)
     except Exception as exc:
         if not _looks_like_mindsdb_table_corruption(str(exc)):
             raise
-        if not await _switch_mindsdb_to_fallback(str(exc), current_table=table_name):
+        if not await _switch_mindsdb_to_fallback(str(exc), current_table=table_name, current_db=db_name):
             raise
+        db_name = mindsdb_target_db or _mindsdb_next_fallback_db(db_name)
         fallback_table = mindsdb_target_table or _mindsdb_next_fallback_table(table_name)
         fallback_query = _mindsdb_insert_query(
             item["project"],
@@ -20466,6 +22544,7 @@ async def _insert_into_mindsdb(item: dict[str, Any]) -> None:
             item.get("summary") or "",
             created_at,
             fallback_table,
+            db_name,
         )
         await _mindsdb_execute(fallback_query)
 
@@ -20474,17 +22553,19 @@ async def _insert_many_into_mindsdb(items: list[dict[str, Any]]) -> None:
     if not items:
         return
     await ensure_mindsdb_table()
+    db_name = mindsdb_target_db or MINDSDB_AUTOSYNC_DB
     table_name = mindsdb_target_table or MINDSDB_AUTOSYNC_TABLE
-    query = _mindsdb_insert_many_query(items, table_name)
+    query = _mindsdb_insert_many_query(items, table_name, db_name)
     try:
         await _mindsdb_execute(query)
     except Exception as exc:
         if not _looks_like_mindsdb_table_corruption(str(exc)):
             raise
-        if not await _switch_mindsdb_to_fallback(str(exc), current_table=table_name):
+        if not await _switch_mindsdb_to_fallback(str(exc), current_table=table_name, current_db=db_name):
             raise
+        db_name = mindsdb_target_db or _mindsdb_next_fallback_db(db_name)
         fallback_table = mindsdb_target_table or _mindsdb_next_fallback_table(table_name)
-        fallback_query = _mindsdb_insert_many_query(items, fallback_table)
+        fallback_query = _mindsdb_insert_many_query(items, fallback_table, db_name)
         await _mindsdb_execute(fallback_query)
 
 
@@ -20890,6 +22971,7 @@ async def _execute_memory_write_batch(
                     fileName=item.fileName,
                     content=item.content,
                     topicPath=item.topicPath,
+                    fanoutExcludeTargets=item.fanoutExcludeTargets,
                 ),
                 request,
             )
@@ -21035,6 +23117,22 @@ async def _build_ops_queue_status_payload(
     running = int(by_status.get("running", 0) or 0)
     failed = int(by_status.get("failed", 0) or 0)
     succeeded = int(by_status.get("succeeded", 0) or 0)
+    effective_pending = pending
+    effective_retrying = retrying
+    effective_running = running
+    effective_failed = failed
+    effective_succeeded = succeeded
+    if not MINDSDB_FANOUT_ENABLED:
+        mindsdb_state = (
+            by_target.get(FANOUT_TARGET_MINDSDB)
+            if isinstance(by_target.get(FANOUT_TARGET_MINDSDB), dict)
+            else {}
+        )
+        effective_pending = max(0, effective_pending - int(mindsdb_state.get("pending", 0) or 0))
+        effective_retrying = max(0, effective_retrying - int(mindsdb_state.get("retrying", 0) or 0))
+        effective_running = max(0, effective_running - int(mindsdb_state.get("running", 0) or 0))
+        effective_failed = max(0, effective_failed - int(mindsdb_state.get("failed", 0) or 0))
+        effective_succeeded = max(0, effective_succeeded - int(mindsdb_state.get("succeeded", 0) or 0))
     queue_depth = memory_write_queue.qsize()
     queue_max = max(1, MEMORY_WRITE_QUEUE_MAX)
     queue_ratio = queue_depth / queue_max
@@ -21061,9 +23159,9 @@ async def _build_ops_queue_status_payload(
             target = str(row.get("target") or "unknown").strip().lower() or "unknown"
             deadletters_by_target[target] = deadletters_by_target.get(target, 0) + 1
     next_actions = _ops_queue_status_next_actions(
-        pending=pending,
-        retrying=retrying,
-        failed=failed,
+        pending=effective_pending,
+        retrying=effective_retrying,
+        failed=effective_failed,
         queue_ratio=queue_ratio,
         queue_high_watermark=high_watermark,
         retrying_high_threshold=retry_threshold,
@@ -21075,12 +23173,17 @@ async def _build_ops_queue_status_payload(
     return {
         "updatedAt": _utc_now(),
         "queue": {
-            "pending": pending,
-            "retrying": retrying,
-            "running": running,
-            "succeeded": succeeded,
-            "failed": failed,
-            "totalOutstanding": max(0, pending + retrying + running),
+            "pending": effective_pending,
+            "retrying": effective_retrying,
+            "running": effective_running,
+            "succeeded": effective_succeeded,
+            "failed": effective_failed,
+            "totalOutstanding": max(0, effective_pending + effective_retrying + effective_running),
+            "pendingRaw": pending,
+            "retryingRaw": retrying,
+            "runningRaw": running,
+            "succeededRaw": succeeded,
+            "failedRaw": failed,
             "memoryWriteQueueDepth": queue_depth,
             "memoryWriteQueueMax": queue_max,
             "memoryWriteQueueRatio": round(queue_ratio, 6),
@@ -21098,7 +23201,7 @@ async def _build_ops_queue_status_payload(
         "trend": {
             "snapshotAt": _utc_now(),
             "queueDepth": queue_depth,
-            "outstanding": max(0, pending + retrying + running),
+            "outstanding": max(0, effective_pending + effective_retrying + effective_running),
             "processed": memory_write_queue_processed,
             "dropped": memory_write_queue_dropped,
             "lastProcessedAt": outbox_health.get("lastProcessedAt"),
@@ -21200,6 +23303,10 @@ async def write_memory(payload: MemoryWrite, request: Request):
             letta_stats = summary.get("by_target", {}).get(FANOUT_TARGET_LETTA, {})
             retrying = max(0, retrying - int(letta_stats.get("retrying", 0)))
             failed = max(0, failed - int(letta_stats.get("failed", 0)))
+        if not MINDSDB_FANOUT_ENABLED:
+            mindsdb_stats = summary.get("by_target", {}).get(FANOUT_TARGET_MINDSDB, {})
+            retrying = max(0, retrying - int(mindsdb_stats.get("retrying", 0)))
+            failed = max(0, failed - int(mindsdb_stats.get("failed", 0)))
         return retrying, failed
 
     if hot_file and await should_skip_unchanged_latest_hash(payload.projectName, file_name, content_hash):
@@ -21314,14 +23421,31 @@ async def write_memory(payload: MemoryWrite, request: Request):
     warnings: list[str] = []
     if storage_policy_warning:
         warnings.append(storage_policy_warning)
+    fanout_exclude_targets = _normalize_fanout_targets(payload.fanoutExcludeTargets)
+    mindsdb_fanout_disabled = (
+        not MINDSDB_FANOUT_ENABLED
+        or FANOUT_TARGET_MINDSDB in fanout_exclude_targets
+    )
     telemetry_like_record = _is_telemetry_memory_record(file_name, topic_path, summary)
-    qdrant_telemetry_skipped = telemetry_like_record and QDRANT_TELEMETRY_GUARD_ENABLED
-    pgvector_telemetry_skipped = telemetry_like_record and PGVECTOR_TELEMETRY_GUARD_ENABLED
-    mindsdb_telemetry_skipped = telemetry_like_record and MINDSDB_TELEMETRY_GUARD_ENABLED
-    letta_telemetry_skipped = telemetry_like_record and LETTA_TELEMETRY_GUARD_ENABLED
+    strict_telemetry_isolation = TELEMETRY_STRICT_SINK_ISOLATION and telemetry_like_record
+    qdrant_telemetry_skipped = strict_telemetry_isolation or (
+        telemetry_like_record and QDRANT_TELEMETRY_GUARD_ENABLED
+    )
+    pgvector_telemetry_skipped = strict_telemetry_isolation or (
+        telemetry_like_record and PGVECTOR_TELEMETRY_GUARD_ENABLED
+    )
+    mindsdb_telemetry_skipped = strict_telemetry_isolation or (
+        telemetry_like_record and MINDSDB_TELEMETRY_GUARD_ENABLED
+    )
+    letta_telemetry_skipped = strict_telemetry_isolation or (
+        telemetry_like_record and LETTA_TELEMETRY_GUARD_ENABLED
+    )
     memory_bank_low_value_excluded = bool(
-        MEMORY_BANK_TELEMETRY_GUARD_ENABLED
-        and _looks_memory_bank_telemetry_file(file_name, topic_path)
+        strict_telemetry_isolation
+        or (
+            MEMORY_BANK_TELEMETRY_GUARD_ENABLED
+            and _looks_memory_bank_telemetry_file(file_name, topic_path)
+        )
     )
     if memory_bank_low_value_excluded:
         warnings.append("memory-bank persistence skipped for telemetry-like artifact")
@@ -21331,9 +23455,14 @@ async def write_memory(payload: MemoryWrite, request: Request):
         or mindsdb_telemetry_skipped
         or letta_telemetry_skipped
     ):
-        warnings.append(
-            "telemetry-like artifact routed to telemetry sink path; qdrant/postgres_pgvector/mindsdb/letta fanout filtered"
-        )
+        if strict_telemetry_isolation:
+            warnings.append(
+                "strict telemetry sink isolation routed artifact to mongo_raw-only lane; qdrant/postgres_pgvector/mindsdb/letta/memory_bank fanout filtered"
+            )
+        else:
+            warnings.append(
+                "telemetry-like artifact routed to telemetry sink path; qdrant/postgres_pgvector/mindsdb/letta fanout filtered"
+            )
     fanout_status: dict[str, str] = {
         "memory_bank": (
             "skipped_low_value" if memory_bank_low_value_excluded else ("queued_rollup" if hot_rollup_mode else "queued")
@@ -21352,7 +23481,13 @@ async def write_memory(payload: MemoryWrite, request: Request):
             )
         ),
         FANOUT_TARGET_MINDSDB: (
-            "skipped_low_value" if mindsdb_telemetry_skipped else ("deferred_rollup" if hot_rollup_mode else "pending")
+            "disabled"
+            if mindsdb_fanout_disabled
+            else (
+                "skipped_low_value"
+                if mindsdb_telemetry_skipped
+                else ("deferred_rollup" if hot_rollup_mode else "pending")
+            )
         ),
         FANOUT_TARGET_LANGFUSE: "disabled" if not LANGFUSE_API_KEY else ("deferred_rollup" if hot_rollup_mode else "pending"),
         FANOUT_TARGET_LETTA: "skipped_low_value" if letta_telemetry_skipped else "disabled",
@@ -21438,6 +23573,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "mongo_persisted": mongo_persisted,
                 "qdrant_collection": QDRANT_COLLECTION,
                 "code_context": dict(code_context),
+                "fanout_exclude_targets": list(fanout_exclude_targets),
             },
             worker_id=None,
             persisted_to_memory_bank=False,
@@ -21538,6 +23674,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "mongo_persisted": mongo_persisted,
             "qdrant_collection": QDRANT_COLLECTION,
             "code_context": dict(code_context),
+            "fanout_exclude_targets": list(fanout_exclude_targets),
         }
     )
     if not mongo_persisted:
@@ -22562,6 +24699,12 @@ async def get_fanout_metrics():
             "lastReason": letta_admission_last_reason or None,
             "lastBacklog": letta_admission_last_backlog,
         },
+        "mindsdb": {
+            "enabled": MINDSDB_ENABLED,
+            "fanoutEnabled": MINDSDB_FANOUT_ENABLED,
+            "autosyncEnabled": MINDSDB_AUTOSYNC,
+            "failOpenOnPermanentError": MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR,
+        },
     }
 
 
@@ -22621,6 +24764,105 @@ async def get_retention_metrics():
 @app.post("/telemetry/retention/run")
 async def trigger_retention_run():
     result = await run_sink_retention_once()
+    return {"ok": not bool(result.get("errors")), "result": result}
+
+
+@app.get("/telemetry/storage")
+async def get_storage_governance_metrics():
+    snapshot = _collect_storage_governance_snapshot()
+    policy = _storage_governance_retention_policy(snapshot)
+    disk_usage = snapshot.get("diskUsage") if isinstance(snapshot.get("diskUsage"), dict) else {}
+    tracked = snapshot.get("tracked") if isinstance(snapshot.get("tracked"), dict) else {}
+    remote_stores = snapshot.get("remoteStores") if isinstance(snapshot.get("remoteStores"), dict) else {}
+    mongo_remote = remote_stores.get("mongo") if isinstance(remote_stores.get("mongo"), dict) else {}
+    compat = {
+        "trackedBytes": int(snapshot.get("trackedBytesTotal") or 0),
+        "usedRatio": float(disk_usage.get("usedRatio") or 0.0),
+        "freeBytes": int(disk_usage.get("freeBytes") or 0),
+        "sqliteLegacyBytes": int((tracked.get("task_db") or {}).get("bytes") or 0),
+        "historyBytes": int(snapshot.get("historyBytesTotal") or 0),
+        "mongoBytes": int(snapshot.get("mongoBytesTotal") or 0),
+        "mongoBytesLogical": int(snapshot.get("mongoBytesLogicalTotal") or 0),
+    }
+    return {
+        "enabled": STORAGE_GOVERNANCE_ENABLED,
+        "intervalSecs": STORAGE_GOVERNANCE_INTERVAL_SECS,
+        "warnUsedRatio": STORAGE_GOVERNANCE_WARN_USED_RATIO,
+        "highUsedRatio": STORAGE_GOVERNANCE_HIGH_USED_RATIO,
+        "minFreeBytes": STORAGE_GOVERNANCE_MIN_FREE_BYTES,
+        "sqliteLegacyPrune": {
+            "enabled": STORAGE_GOVERNANCE_SQLITE_LEGACY_PRUNE_ENABLED,
+            "maxRows": STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_ROWS,
+            "maxBytes": STORAGE_GOVERNANCE_SQLITE_LEGACY_MAX_BYTES,
+        },
+        "historyCompression": {
+            "enabled": STORAGE_GOVERNANCE_HISTORY_COMPRESS_ENABLED,
+            "minBytes": STORAGE_GOVERNANCE_HISTORY_COMPRESS_MIN_BYTES,
+            "keepArchives": STORAGE_GOVERNANCE_HISTORY_COMPRESS_KEEP,
+            "codec": STORAGE_GOVERNANCE_HISTORY_COMPRESS_CODEC,
+            "zstdLevel": STORAGE_GOVERNANCE_HISTORY_COMPRESS_ZSTD_LEVEL,
+            "zstdAvailable": bool(zstd is not None),
+            "targets": sorted(
+                {
+                    token.strip().lower()
+                    for token in STORAGE_GOVERNANCE_HISTORY_TARGETS_ENV.split(",")
+                    if token.strip()
+                }
+            ),
+        },
+        "taskDbCompaction": {
+            "enabled": STORAGE_GOVERNANCE_TASK_DB_COMPACT_ENABLED,
+            "minReclaimBytes": STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_RECLAIM_BYTES,
+            "minIntervalSecs": STORAGE_GOVERNANCE_TASK_DB_COMPACT_MIN_INTERVAL_SECS,
+            "state": dict(task_db_compaction_state),
+        },
+        "fanoutPayloadBlobs": {
+            "enabled": FANOUT_OUTBOX_PAYLOAD_BLOB_ENABLED,
+            "codec": FANOUT_OUTBOX_PAYLOAD_BLOB_CODEC,
+            "zstdLevel": FANOUT_OUTBOX_PAYLOAD_BLOB_ZSTD_LEVEL,
+            "zstdAvailable": bool(zstd is not None),
+            "minBytes": FANOUT_OUTBOX_PAYLOAD_BLOB_MIN_BYTES,
+            "dir": str(FANOUT_OUTBOX_PAYLOAD_BLOB_DIR),
+            "gcEnabled": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_ENABLED,
+            "gcMaxScan": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MAX_SCAN,
+            "gcGraceSecs": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_GRACE_SECS,
+            "gcMinIntervalSecs": FANOUT_OUTBOX_PAYLOAD_BLOB_GC_MIN_INTERVAL_SECS,
+        },
+        "mongoRawContentBlobs": {
+            "enabled": MONGO_RAW_CONTENT_BLOB_ENABLED,
+            "codec": MONGO_RAW_CONTENT_BLOB_CODEC,
+            "zstdLevel": MONGO_RAW_CONTENT_BLOB_ZSTD_LEVEL,
+            "zstdAvailable": bool(zstd is not None),
+            "minBytes": MONGO_RAW_CONTENT_BLOB_MIN_BYTES,
+            "dir": str(MONGO_RAW_CONTENT_BLOB_DIR),
+            "gcEnabled": MONGO_RAW_CONTENT_BLOB_GC_ENABLED,
+            "gcMaxScan": MONGO_RAW_CONTENT_BLOB_GC_MAX_SCAN,
+            "gcGraceSecs": MONGO_RAW_CONTENT_BLOB_GC_GRACE_SECS,
+            "gcMinIntervalSecs": MONGO_RAW_CONTENT_BLOB_GC_MIN_INTERVAL_SECS,
+        },
+        "compat": compat,
+        "snapshot": snapshot,
+        "snapshotSummary": {
+            **compat,
+            "mongoRawBytes": int(mongo_remote.get("raw") or 0),
+            "mongoTelemetryBytes": int(mongo_remote.get("telemetry") or 0),
+            "mongoOutboxBytes": int(mongo_remote.get("outbox") or 0),
+            "mongoUniqueBytes": int(mongo_remote.get("uniqueTotalBytes") or 0),
+            "mongoLogicalBytes": int(mongo_remote.get("logicalTotalBytes") or 0),
+            "mongoSharedDbAliases": (
+                mongo_remote.get("sharedDbAliases")
+                if isinstance(mongo_remote.get("sharedDbAliases"), dict)
+                else {}
+            ),
+        },
+        "policy": policy,
+        "state": storage_governance_state,
+    }
+
+
+@app.post("/maintenance/storage/run")
+async def trigger_storage_governance_run(force: bool = True):
+    result = await run_storage_governance_once(force=force)
     return {"ok": not bool(result.get("errors")), "result": result}
 
 
@@ -22987,6 +25229,25 @@ class ContextPackRequest(BaseModel):
     agent_id: str | None = Field(None, description="Agent profile id")
     auto_escalate: bool | None = Field(None, description="Override agent auto-escalation policy")
     query_expansion: bool | None = Field(None, description="Override query expansion policy")
+    traffic_class: str | None = Field(None, description="Telemetry partition class (user|synthetic|benchmark)")
+
+
+class ContinuitySnapshotRequest(BaseModel):
+    project: str = Field(..., description="Project identifier")
+    query: str = Field(..., description="Handoff retrieval query")
+    topic_path: str | None = Field(None, description="Optional topic path scope")
+    label: str | None = Field(None, description="Optional short label for handoff lookup")
+    limit: int = Field(CONTINUITY_SNAPSHOT_DEFAULT_LIMIT, ge=1, le=100)
+    max_facts: int = Field(CONTINUITY_SNAPSHOT_DEFAULT_MAX_FACTS, ge=1, le=200)
+    retrieval_mode: str | None = Field(None, description="Optional retrieval mode override")
+    retrieval_intent: str | None = Field(None, description="Optional retrieval intent override")
+    sources: list[str] | None = Field(None, description="Optional source override")
+    source_weights: dict[str, float] | None = Field(None, description="Optional source weighting override")
+    agent_id: str | None = Field(None, description="Agent profile id")
+    auto_escalate: bool | None = Field(None, description="Override auto escalation policy")
+    query_expansion: bool | None = Field(None, description="Override query expansion policy")
+    include_retrieval_debug: bool = Field(False, description="Include retrieval diagnostics in the stored snapshot")
+    metadata: dict[str, Any] | None = Field(None, description="Optional immutable snapshot metadata")
     traffic_class: str | None = Field(None, description="Telemetry partition class (user|synthetic|benchmark)")
 
 
@@ -25501,6 +27762,147 @@ async def get_memory_context_pack(payload: ContextPackRequest):
     return response
 
 
+@app.post("/memory/continuity/snapshot")
+async def create_memory_continuity_snapshot(payload: ContinuitySnapshotRequest):
+    project = str(payload.project or "").strip()
+    query = str(payload.query or "").strip()
+    if not project:
+        raise HTTPException(422, "project is required")
+    if not query:
+        raise HTTPException(422, "query is required")
+    topic_path = normalize_topic_path(payload.topic_path) if payload.topic_path else None
+    search_response = await search_memory(
+        MemorySearch(
+            query=query,
+            limit=payload.limit,
+            project=project,
+            fetch_content=False,
+            topic_path=topic_path,
+            retrieval_mode=payload.retrieval_mode,
+            retrieval_intent=payload.retrieval_intent,
+            sources=payload.sources,
+            source_weights=payload.source_weights,
+            rerank_with_learning=True,
+            include_retrieval_debug=payload.include_retrieval_debug,
+            include_grounding=True,
+            include_preferences=True,
+            agent_id=payload.agent_id,
+            auto_escalate=payload.auto_escalate,
+            query_expansion=payload.query_expansion,
+            deep_async=False,
+            callback_url=None,
+            traffic_class=payload.traffic_class,
+        )
+    )
+    context_pack = _build_context_pack_payload(
+        query=query,
+        search_response=search_response,
+        max_facts=payload.max_facts,
+        max_results=payload.limit,
+    )
+    context_pack_for_hash = json.loads(json.dumps(context_pack))
+    if isinstance(context_pack_for_hash, dict):
+        context_pack_for_hash.pop("generatedAt", None)
+        context_pack_for_hash.pop("warnings", None)
+    created_at = _utc_now()
+    snapshot_core = {
+        "project": project,
+        "query": query,
+        "topicPath": topic_path,
+        "label": str(payload.label or "").strip() or None,
+        "contextPack": context_pack,
+        "warnings": search_response.get("warnings") if isinstance(search_response.get("warnings"), list) else [],
+        "retrievalMode": search_response.get("retrieval_mode"),
+        "retrievalIntent": search_response.get("retrieval_intent"),
+        "agentId": payload.agent_id or search_response.get("agent_id"),
+        "metadata": dict(payload.metadata or {}),
+    }
+    snapshot_hash_core = {
+        **snapshot_core,
+        "warnings": [],
+        "contextPack": context_pack_for_hash,
+    }
+    canonical_payload = json.dumps(snapshot_hash_core, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    content_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+    snapshot_id = content_hash[:24]
+    snapshot_payload = {
+        "snapshotIdVersion": 1,
+        "snapshotId": snapshot_id,
+        "contentHash": content_hash,
+        "createdAt": created_at,
+        **snapshot_core,
+    }
+    path = _continuity_snapshot_storage_path(project, snapshot_id)
+    existing = await _continuity_snapshot_index_get(snapshot_id)
+    file_created = False
+    if existing is None:
+        if not path.exists():
+            await asyncio.to_thread(_write_continuity_snapshot_file, path, snapshot_payload)
+            file_created = True
+        existing = await _continuity_snapshot_index_insert(
+            {
+                "snapshot_id": snapshot_id,
+                "created_at": created_at,
+                "project": project,
+                "topic_path": topic_path,
+                "query": query,
+                "label": str(payload.label or "").strip() or None,
+                "content_hash": content_hash,
+                "file_path": str(path),
+                "retrieval_mode": search_response.get("retrieval_mode"),
+                "retrieval_intent": search_response.get("retrieval_intent"),
+                "agent_id": payload.agent_id or search_response.get("agent_id"),
+                "metadata": dict(payload.metadata or {}),
+            }
+        )
+    elif not path.exists():
+        await asyncio.to_thread(_write_continuity_snapshot_file, path, snapshot_payload)
+        file_created = True
+    return {
+        "ok": True,
+        "snapshot_id": snapshot_id,
+        "content_hash": content_hash,
+        "created": bool(file_created),
+        "index": existing,
+        "path": str(path),
+        "warnings": snapshot_payload["warnings"],
+    }
+
+
+@app.get("/memory/continuity/snapshots")
+async def list_memory_continuity_snapshots(
+    project: str | None = None,
+    topic_prefix: str | None = None,
+    limit: int = 20,
+):
+    normalized_topic = normalize_topic_path(topic_prefix) if topic_prefix else None
+    items = await _continuity_snapshot_index_list(
+        project=str(project or "").strip() or None,
+        topic_prefix=normalized_topic,
+        limit=limit,
+    )
+    return {
+        "count": len(items),
+        "items": items,
+    }
+
+
+@app.get("/memory/continuity/snapshots/{snapshot_id}")
+async def get_memory_continuity_snapshot(snapshot_id: str):
+    index_entry = await _continuity_snapshot_index_get(snapshot_id)
+    if index_entry is None:
+        raise HTTPException(404, "continuity snapshot not found")
+    path = Path(str(index_entry.get("file_path") or "")).expanduser()
+    snapshot = _read_continuity_snapshot_file(path)
+    if snapshot is None:
+        raise HTTPException(404, "continuity snapshot payload missing")
+    return {
+        "ok": True,
+        "index": index_entry,
+        "snapshot": snapshot,
+    }
+
+
 @app.post("/v1/retrieval/query")
 async def engine_retrieval_query(payload: dict[str, Any]):
     request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else payload
@@ -25898,6 +28300,7 @@ async def engine_memory_put(payload: dict[str, Any]):
     file_name = str(item.get("file_name") or item.get("file") or "").strip()
     content = str(item.get("content") or "")
     topic_path = str(item.get("topic_path") or "").strip() or None
+    fanout_excludes = _normalize_fanout_targets(item.get("fanout_exclude_targets"))
     if not project or not file_name:
         raise HTTPException(422, "project and file_name are required")
     result = await write_memory(
@@ -25906,6 +28309,7 @@ async def engine_memory_put(payload: dict[str, Any]):
             fileName=file_name,
             content=content,
             topicPath=topic_path,
+            fanoutExcludeTargets=fanout_excludes,
         ),
         _synthetic_request("/v1/memory/put"),
     )
@@ -27243,6 +29647,10 @@ async def backfill_fanout_from_mongo_raw(payload: MongoRawBackfillRequest):
         "project": 1,
         "file": 1,
         "content_raw": 1,
+        "content_raw_blob_ref": 1,
+        "content_raw_blob_codec": 1,
+        "content_raw_blob_bytes": 1,
+        "content_raw_raw_bytes": 1,
         "summary": 1,
         "topic_path": 1,
         "topic_tags": 1,
@@ -27290,7 +29698,7 @@ async def backfill_fanout_from_mongo_raw(payload: MongoRawBackfillRequest):
 
         project = str(doc.get("project") or "").strip()
         file_name = str(doc.get("file") or "").strip()
-        content = str(doc.get("content_raw") or "")
+        content = _decode_mongo_raw_content_from_doc(doc)
         summary = str(doc.get("summary") or "").strip()
         if not summary:
             summary = (content[:600] if content else f"{project}/{file_name}").strip()
