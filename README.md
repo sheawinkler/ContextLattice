@@ -608,7 +608,11 @@ Dashboard retrieval observability:
 
 ## Model Runtime
 
-- Ships with a sane local default (`qwen` via Ollama).
+- Ships with a sane local default (`qwen3.5:9b` via Ollama).
+- Default task inference provider is `auto`:
+  - on Apple Silicon (M-series macOS), auto selects `ollama/coreml`
+  - on other hosts, auto selects standard `ollama`
+- Public v3 keeps ANE sidecar disabled by default.
 - Any OpenAI-compatible endpoint can be used when preferred.
 - BYO model runtimes supported through:
   - Ollama
