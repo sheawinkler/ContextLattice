@@ -63,3 +63,10 @@ Prior best observed gate sample (`20260316T004108Z`):
 ## Close Recommendation
 Issue #69 is complete for its decision objective (shortlist evaluation + keep/drop/defer outcomes).
 Follow-on implementation exploration should continue under the broader V4/V72 performance track.
+
+## 2026-03-22 Addendum (Promotion Alignment)
+- Gate defaults were lowered from `20%` to `5%` to match the approved promotion policy for the shortlist lane.
+- Runtime defaults now promote `fastembed-rs` as enabled-by-default, while keeping fail-open fallback behavior in place.
+- Updated defaults:
+  - `GATE_REFRESH_GATE_MIN_IMPROVEMENT_PCT=5`
+  - `ORCH_ADAPTER_FASTEMBED_RS_ENABLED=true`

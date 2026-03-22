@@ -330,7 +330,7 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=12)
     parser.add_argument("--timeout", type=float, default=45.0)
     parser.add_argument("--baseline", default="")
-    parser.add_argument("--gate-min-improvement-pct", type=float, default=20.0)
+    parser.add_argument("--gate-min-improvement-pct", type=float, default=5.0)
     parser.add_argument("--gate-max-error-regression", type=float, default=0.005)
     parser.add_argument("--gate-repeats", type=int, default=1)
     parser.add_argument("--gate-warmups", type=int, default=0)
