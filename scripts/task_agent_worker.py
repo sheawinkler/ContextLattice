@@ -83,6 +83,8 @@ def _runner_cmd_for_agent(agent: str) -> Optional[str]:
         return os.getenv("LANGGRAPH_CMD")
     if agent == "openhands":
         return os.getenv("OPENHANDS_CMD")
+    if agent in {"hermes", "hermes-agent"}:
+        return os.getenv("HERMES_AGENT_CMD") or os.getenv("HERMES_CMD")
     if agent == "opencode":
         return os.getenv("OPENCODE_CMD")
     if agent == "goose":
@@ -349,7 +351,7 @@ def main() -> None:
     parser.add_argument(
         "--task-agent",
         default=DEFAULT_AGENT,
-        help="trae|letta|autogen|crewai|langgraph|openhands|opencode|goose|eliza",
+        help="trae|letta|autogen|crewai|langgraph|openhands|hermes-agent|hermes|opencode|goose|eliza",
     )
     parser.add_argument("--orchestrator-url", default=DEFAULT_ORCH_URL)
     parser.add_argument("--model-provider", default=DEFAULT_PROVIDER)
