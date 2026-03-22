@@ -16,6 +16,11 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	t.Helper()
 	t.Setenv("BACKEND_URL", backendURL)
 	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
+		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+		t.Setenv("MEMMCP_ORCHESTRATOR_API_KEY", "")
+	}
 	return newServer()
 }
 
@@ -238,6 +243,7 @@ func TestMemorySearchRejectsExplicitInvalidAPIKey(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
 
 	backendCalls := 0
@@ -277,6 +283,7 @@ func TestMemorySearchInjectsConfiguredAPIKeyWhenMissing(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
 
 	var capturedAPIKey string
@@ -312,6 +319,7 @@ func TestMemorySearchAcceptsQueryParamAPIKey(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
 
 	var capturedAPIKey string

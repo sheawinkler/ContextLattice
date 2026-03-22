@@ -41,18 +41,32 @@ DEFAULT_ORCH_URL = os.getenv(
 DEFAULT_AGENT = os.getenv("TASK_AGENT", "trae")
 DEFAULT_PROVIDER = os.getenv("TASK_MODEL_PROVIDER", os.getenv("ORCH_INFER_PROVIDER", "auto"))
 DEFAULT_MODEL = os.getenv("TASK_MODEL", "qwen3.5:9b")
+DEFAULT_INFERENCE_CONTROL_PLANE_URL = os.getenv(
+    "TASK_INFERENCE_CONTROL_PLANE_URL",
+    DEFAULT_ORCH_URL,
+)
 
 
-def _run_llm_task(
-    route: InferenceRoute,
-    model: str,
-    task: dict[str, Any],
-    context_prompt: str | None = None,
-) -> str:
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _gateway_inference_enabled() -> bool:
+    return _env_bool("TASK_INFERENCE_GATEWAY_ENABLED", True)
+
+
+def _gateway_inference_required() -> bool:
+    return _env_bool("TASK_INFERENCE_GATEWAY_REQUIRED", False)
+
+
+def _build_task_messages(task: dict[str, Any], context_prompt: str | None = None) -> list[dict[str, str]]:
     prompt = task.get("title", "Task")
     payload = task.get("payload") or {}
     body = f"{prompt}\n\nPayload:\n{json.dumps(payload, indent=2)}"
-    messages = [
+    messages: list[dict[str, str]] = [
         {
             "role": "system",
             "content": (
@@ -64,7 +78,61 @@ def _run_llm_task(
     if context_prompt:
         messages.append({"role": "system", "content": context_prompt})
     messages.append({"role": "user", "content": body})
+    return messages
+
+
+def _run_llm_task(
+    route: InferenceRoute,
+    model: str,
+    task: dict[str, Any],
+    context_prompt: str | None = None,
+) -> str:
+    messages = _build_task_messages(task, context_prompt=context_prompt)
     return call_chat_completion(route, model, messages)
+
+
+def _run_llm_task_via_gateway(
+    control_plane_url: str,
+    provider: str,
+    model: str,
+    task: dict[str, Any],
+    context_prompt: str | None,
+    *,
+    base_url_override: str | None = None,
+    api_key: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    payload: dict[str, Any] = {
+        "provider": provider,
+        "model": model,
+        "messages": _build_task_messages(task, context_prompt=context_prompt),
+    }
+    if base_url_override:
+        payload["base_url"] = base_url_override
+    if api_key:
+        payload["api_key"] = api_key
+    response = _post(control_plane_url, "/v1/inference/chat", payload, timeout=95.0)
+    content = str(response.get("content") or "")
+    if not content.strip():
+        raise RuntimeError("gateway-go returned empty inference content")
+    route_payload = response.get("route") if isinstance(response.get("route"), dict) else {}
+    return content, route_payload
+
+
+def _format_route_label_from_payload(
+    route_payload: dict[str, Any],
+    fallback: InferenceRoute | None = None,
+) -> str:
+    fallback_provider = fallback.provider if fallback is not None else ""
+    provider = str(route_payload.get("provider") or fallback_provider).strip().lower()
+    if provider == "ollama_coreml":
+        return "ollama/coreml"
+    if provider == "ane_sidecar":
+        return "ane_sidecar"
+    if provider:
+        return provider
+    if fallback is not None:
+        return format_route_label(fallback)
+    return "unknown"
 
 
 def _runner_cmd_for_agent(agent: str) -> Optional[str]:
@@ -109,16 +177,29 @@ def _orchestrator_headers() -> dict[str, str]:
     return headers
 
 
-def _post(orchestrator_url: str, path: str, payload: dict[str, Any], params: dict[str, str] | None = None) -> dict[str, Any]:
+def _post(
+    orchestrator_url: str,
+    path: str,
+    payload: dict[str, Any],
+    params: dict[str, str] | None = None,
+    *,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
     url = f"{orchestrator_url.rstrip('/')}{path}"
-    resp = httpx.post(url, json=payload, params=params, headers=_orchestrator_headers(), timeout=30.0)
+    resp = httpx.post(url, json=payload, params=params, headers=_orchestrator_headers(), timeout=timeout)
     resp.raise_for_status()
     return resp.json()
 
 
-def _get(orchestrator_url: str, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+def _get(
+    orchestrator_url: str,
+    path: str,
+    params: dict[str, str] | None = None,
+    *,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
     url = f"{orchestrator_url.rstrip('/')}{path}"
-    resp = httpx.get(url, params=params, headers=_orchestrator_headers(), timeout=30.0)
+    resp = httpx.get(url, params=params, headers=_orchestrator_headers(), timeout=timeout)
     resp.raise_for_status()
     return resp.json()
 
@@ -169,19 +250,59 @@ def _handle_task(
     base_url_override: str | None,
     api_key: Optional[str],
 ) -> None:
-    try:
-        route = resolve_inference_route(
-            provider,
-            base_url_override=base_url_override,
-            api_key=api_key,
-        )
-    except Exception as exc:
-        _post(
-            orchestrator_url,
-            f"/agents/tasks/{task['id']}/status",
-            {"status": "failed", "message": f"Inference route error: {exc}"},
-        )
-        return
+    control_plane_url = str(
+        os.getenv("TASK_INFERENCE_CONTROL_PLANE_URL", DEFAULT_INFERENCE_CONTROL_PLANE_URL)
+    ).strip() or orchestrator_url
+    fallback_route: InferenceRoute | None = None
+    route_payload: dict[str, Any] = {}
+
+    if _gateway_inference_enabled():
+        try:
+            route_response = _post(
+                control_plane_url,
+                "/v1/inference/route",
+                {
+                    "provider": provider,
+                    "base_url": base_url_override,
+                    "api_key": api_key or "",
+                },
+                timeout=20.0,
+            )
+            route_candidate = route_response.get("route")
+            if isinstance(route_candidate, dict):
+                route_payload = dict(route_candidate)
+        except Exception as exc:
+            if _gateway_inference_required():
+                _post(
+                    orchestrator_url,
+                    f"/agents/tasks/{task['id']}/status",
+                    {"status": "failed", "message": f"Go inference route error: {exc}"},
+                )
+                return
+
+    if not route_payload:
+        try:
+            fallback_route = resolve_inference_route(
+                provider,
+                base_url_override=base_url_override,
+                api_key=api_key,
+            )
+        except Exception as exc:
+            _post(
+                orchestrator_url,
+                f"/agents/tasks/{task['id']}/status",
+                {"status": "failed", "message": f"Inference route error: {exc}"},
+            )
+            return
+        route_payload = {
+            "requested_provider": fallback_route.requested_provider,
+            "provider": fallback_route.provider,
+            "transport": fallback_route.transport,
+            "base_url": fallback_route.base_url,
+            "reason": fallback_route.reason,
+            "coreml_enabled": fallback_route.coreml_enabled,
+            "sidecar_enabled": fallback_route.sidecar_enabled,
+        }
 
     task_payload = task.get("payload") or {}
     topic_path = task_payload.get("topic_path") or task_payload.get("topicPath")
@@ -218,6 +339,13 @@ def _handle_task(
         return
     agent_choice = (task.get("agent") or agent).lower()
     cmd = _runner_cmd_for_agent(agent_choice)
+    route_provider = str(route_payload.get("provider") or (fallback_route.provider if fallback_route else provider))
+    route_base_url = str(
+        route_payload.get("base_url")
+        or (fallback_route.base_url if fallback_route else (base_url_override or ""))
+    )
+    route_reason = str(route_payload.get("reason") or (fallback_route.reason if fallback_route else ""))
+    route_label = _format_route_label_from_payload(route_payload, fallback_route)
     env = os.environ.copy()
     env.update(
         {
@@ -226,10 +354,10 @@ def _handle_task(
             "TASK_PROJECT": task.get("project") or "",
             "TASK_AGENT": agent_choice,
             "TASK_PAYLOAD": json.dumps(task.get("payload") or {}),
-            "TASK_MODEL_PROVIDER": route.provider,
+            "TASK_MODEL_PROVIDER": route_provider,
             "TASK_MODEL": model,
-            "TASK_BASE_URL": route.base_url,
-            "TASK_API_KEY": route.api_key or "",
+            "TASK_BASE_URL": route_base_url,
+            "TASK_API_KEY": str(api_key or ""),
             "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
             "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
             "TASK_CONTEXT_BUNDLE": _serialize_env_json(context_bundle),
@@ -253,7 +381,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=message,
-            provider=format_route_label(route),
+            provider=route_label,
             model=model,
             status=status,
         )
@@ -268,12 +396,12 @@ def _handle_task(
                 "topic_path": topic_path,
                 "metadata": {
                     "agent": agent_choice,
-                    "provider": route.provider,
+                    "provider": route_provider,
                     "model": model,
                     "inference_route": {
-                        "provider": route.provider,
-                        "base_url": route.base_url,
-                        "reason": route.reason,
+                        "provider": route_provider,
+                        "base_url": route_base_url,
+                        "reason": route_reason,
                     },
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
@@ -283,16 +411,63 @@ def _handle_task(
         return
 
     try:
-        output = _run_llm_task(
-            route,
-            model,
-            task,
-            context_prompt=context_prompt,
+        output: str | None = None
+        active_route_payload = dict(route_payload)
+        gateway_error: Exception | None = None
+        if _gateway_inference_enabled():
+            try:
+                output, gateway_route_payload = _run_llm_task_via_gateway(
+                    control_plane_url,
+                    provider,
+                    model,
+                    task,
+                    context_prompt=context_prompt,
+                    base_url_override=base_url_override,
+                    api_key=api_key,
+                )
+                if gateway_route_payload:
+                    active_route_payload = dict(gateway_route_payload)
+            except Exception as exc:
+                gateway_error = exc
+                if _gateway_inference_required():
+                    raise RuntimeError(f"go inference control plane required but unavailable: {exc}") from exc
+        if output is None:
+            if fallback_route is None:
+                fallback_route = resolve_inference_route(
+                    provider,
+                    base_url_override=base_url_override,
+                    api_key=api_key,
+                )
+            output = _run_llm_task(
+                fallback_route,
+                model,
+                task,
+                context_prompt=context_prompt,
+            )
+            if gateway_error is not None:
+                prior_reason = str(active_route_payload.get("reason") or "").strip()
+                active_route_payload["reason"] = (
+                    f"{prior_reason}; gateway fallback: {gateway_error}"
+                    if prior_reason
+                    else f"gateway fallback: {gateway_error}"
+                )
+        run_provider = str(
+            active_route_payload.get("provider")
+            or (fallback_route.provider if fallback_route else route_provider)
         )
+        run_base_url = str(
+            active_route_payload.get("base_url")
+            or (fallback_route.base_url if fallback_route else route_base_url)
+        )
+        run_reason = str(
+            active_route_payload.get("reason")
+            or (fallback_route.reason if fallback_route else route_reason)
+        )
+        run_route_label = _format_route_label_from_payload(active_route_payload, fallback_route)
         project = task.get("project") or "_global"
         file_name = f"task_runs/{task['id']}.md"
         _write_memory(orchestrator_url, project, file_name, _format_result(task, output), topic_path=topic_path)
-        completion_message = f"Completed via {format_route_label(route)} ({model})"
+        completion_message = f"Completed via {run_route_label} ({model})"
         if pending_sources:
             completion_message += f" | pending async sources: {', '.join(str(item) for item in pending_sources[:4])}"
         _post(
@@ -304,7 +479,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=output,
-            provider=format_route_label(route),
+            provider=run_route_label,
             model=model,
             status="succeeded",
         )
@@ -318,12 +493,12 @@ def _handle_task(
                 "topic_path": topic_path,
                 "metadata": {
                     "agent": agent_choice,
-                    "provider": route.provider,
+                    "provider": run_provider,
                     "model": model,
                     "inference_route": {
-                        "provider": route.provider,
-                        "base_url": route.base_url,
-                        "reason": route.reason,
+                        "provider": run_provider,
+                        "base_url": run_base_url,
+                        "reason": run_reason,
                     },
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
@@ -335,7 +510,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=f"Runner error: {exc}",
-            provider=format_route_label(route),
+            provider=_format_route_label_from_payload(route_payload, fallback_route),
             model=model,
             status="failed",
         )

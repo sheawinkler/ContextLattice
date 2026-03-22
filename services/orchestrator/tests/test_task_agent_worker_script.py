@@ -26,3 +26,47 @@ def test_runner_cmd_for_hermes_falls_back_to_hermes_cmd(monkeypatch):
     monkeypatch.setenv("HERMES_CMD", "hermes run")
 
     assert taw._runner_cmd_for_agent("hermes-agent") == "hermes run"
+
+
+def test_gateway_inference_enabled_default_and_override(monkeypatch):
+    monkeypatch.delenv("TASK_INFERENCE_GATEWAY_ENABLED", raising=False)
+    assert taw._gateway_inference_enabled() is True
+    monkeypatch.setenv("TASK_INFERENCE_GATEWAY_ENABLED", "false")
+    assert taw._gateway_inference_enabled() is False
+
+
+def test_run_llm_task_via_gateway_posts_inference_chat(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_post(orchestrator_url, path, payload, params=None, *, timeout=30.0):
+        captured["orchestrator_url"] = orchestrator_url
+        captured["path"] = path
+        captured["payload"] = payload
+        captured["timeout"] = timeout
+        return {
+            "ok": True,
+            "content": "gateway reply",
+            "route": {
+                "provider": "ollama",
+                "base_url": "http://127.0.0.1:11434",
+                "reason": "explicit ollama provider",
+            },
+        }
+
+    monkeypatch.setattr(taw, "_post", fake_post)
+    output, route = taw._run_llm_task_via_gateway(
+        "http://127.0.0.1:8075",
+        "auto",
+        "qwen3.5:9b",
+        {"title": "Run task", "payload": {"alpha": 1}},
+        context_prompt="facts only",
+    )
+    assert output == "gateway reply"
+    assert route.get("provider") == "ollama"
+    assert captured["orchestrator_url"] == "http://127.0.0.1:8075"
+    assert captured["path"] == "/v1/inference/chat"
+    assert captured["timeout"] == 95.0
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload.get("provider") == "auto"
+    assert payload.get("model") == "qwen3.5:9b"
