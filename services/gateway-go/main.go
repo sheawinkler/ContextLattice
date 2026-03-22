@@ -220,6 +220,8 @@ type server struct {
 	client                  *http.Client
 	retrieval               retrievalPolicy
 	telemetry               *retrievalTelemetry
+	writePolicy             writeIngressPolicy
+	telemetrySink           *telemetrySink
 	continuationSem         chan struct{}
 	adaptiveMu              sync.Mutex
 	adaptiveBySource        map[string]*adaptiveSourceStats
@@ -666,6 +668,12 @@ func newServer() *server {
 	}
 	timeout := envDurationSeconds("GATEWAY_PROXY_TIMEOUT_SECS", 95)
 	policy := loadRetrievalPolicy()
+	writePolicy := loadWriteIngressPolicy()
+	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
+	if sinkErr != nil {
+		log.Printf("gateway-go telemetry sink disabled: %v", sinkErr)
+		telemetrySinkInstance = &telemetrySink{enabled: false}
+	}
 	t := newRetrievalTelemetry(policy)
 	s := &server{
 		backendURL:              backendURL,
@@ -673,6 +681,8 @@ func newServer() *server {
 		client:                  &http.Client{Timeout: timeout},
 		retrieval:               policy,
 		telemetry:               t,
+		writePolicy:             writePolicy,
+		telemetrySink:           telemetrySinkInstance,
 		continuationSem:         make(chan struct{}, policy.continuationMaxInflight),
 		adaptiveBySource:        make(map[string]*adaptiveSourceStats),
 		continuationInFlight:    make(map[string]int),
@@ -695,6 +705,9 @@ func isProxyPath(path string) bool {
 		return true
 	}
 	if strings.HasPrefix(path, "/memory/profiles/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/memory/continuity/snapshots/") {
 		return true
 	}
 	if strings.HasPrefix(path, "/agents/tasks/") {
@@ -721,6 +734,8 @@ func isProxyPath(path string) bool {
 		"/memory/write/batch",
 		"/memory/browser-context",
 		"/memory/context-pack",
+		"/memory/continuity/snapshot",
+		"/memory/continuity/snapshots",
 		"/memory/recent",
 		"/memory/profiles",
 		"/memory/topics",
@@ -1438,6 +1453,13 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"subcallDisableAutoEscalate":      s.retrieval.subcallDisableAutoEscalate,
 			"telemetryBatchEnabled":           s.retrieval.telemetryBatchEnabled,
 			"telemetryBatchFlushIntervalSecs": s.retrieval.telemetryBatchFlushInterval.Seconds(),
+		},
+		"writeIngress": map[string]any{
+			"enabled":                   s.writePolicy.enabled,
+			"strictRequiredFields":      s.writePolicy.strictRequiredFields,
+			"telemetryIsolationEnabled": s.writePolicy.telemetryIsolationEnabled,
+			"batchConcurrency":          s.writePolicy.batchConcurrency,
+			"fanoutExcludeTargets":      s.writePolicy.fanoutExcludeTargets,
 		},
 	})
 }
@@ -3561,15 +3583,18 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/search", s.memorySearch)
 	mux.HandleFunc("/memory/search/async/", s.proxy)
 	mux.HandleFunc("/memory/search/jobs/", s.proxy)
-	mux.HandleFunc("/memory/write", s.proxy)
+	mux.HandleFunc("/memory/write", s.memoryWrite)
 	mux.HandleFunc("/memory/recall/eval-cases", s.proxy)
 	mux.HandleFunc("/memory/recall/eval-cases/refresh", s.proxy)
 	mux.HandleFunc("/memory/recall/evaluate/saved", s.proxy)
-	mux.HandleFunc("/memory/write/batch", s.proxy)
+	mux.HandleFunc("/memory/write/batch", s.memoryWriteBatch)
 	mux.HandleFunc("/memory/recent", s.proxy)
 	mux.HandleFunc("/memory/files/", s.proxy)
 	mux.HandleFunc("/memory/profiles", s.proxy)
 	mux.HandleFunc("/memory/profiles/", s.proxy)
+	mux.HandleFunc("/memory/continuity/snapshot", s.proxy)
+	mux.HandleFunc("/memory/continuity/snapshots", s.proxy)
+	mux.HandleFunc("/memory/continuity/snapshots/", s.proxy)
 	mux.HandleFunc("/memory/topics", s.proxy)
 	mux.HandleFunc("/memory/topics/list", s.proxy)
 	mux.HandleFunc("/memory/topic-rollups", s.proxy)
@@ -3578,7 +3603,10 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/feedback", s.proxy)
 	mux.HandleFunc("/agents/tasks", s.proxy)
 	mux.HandleFunc("/agents/tasks/", s.proxy)
+	mux.HandleFunc("/telemetry/storage", s.storageTelemetry)
 	mux.HandleFunc("/telemetry/", s.proxy)
+	mux.HandleFunc("/maintenance/storage/run", s.storageMaintenanceRun)
+	mux.HandleFunc("/maintenance/telemetry/blob-gc", s.telemetryBlobGC)
 	mux.HandleFunc("/maintenance/", s.proxy)
 	mux.HandleFunc("/ops/queue/status", s.proxy)
 	mux.HandleFunc("/ops/capabilities", s.proxy)
@@ -3586,11 +3614,11 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/ops_queue_status", s.proxy)
 	mux.HandleFunc("/tools/memory_write_batch", s.proxy)
 	mux.HandleFunc("/tools/feedback_submit", s.proxy)
-	mux.HandleFunc("/v1/memory/put", s.proxy)
+	mux.HandleFunc("/v1/memory/put", s.memoryPut)
 	mux.HandleFunc("/v1/memory/update", s.proxy)
 	mux.HandleFunc("/v1/memory/get", s.proxy)
 	mux.HandleFunc("/v1/memory/neighbors", s.proxy)
-	mux.HandleFunc("/v1/memory/batch-put", s.proxy)
+	mux.HandleFunc("/v1/memory/batch-put", s.memoryBatchPut)
 	mux.HandleFunc("/migration/runtime", s.proxy)
 	return mux
 }
