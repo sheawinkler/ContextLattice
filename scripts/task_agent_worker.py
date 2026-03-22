@@ -19,74 +19,33 @@ import httpx
 
 try:
     from scripts.context_expansion_runtime import ContextExpansionRuntime
+    from scripts.inference_router import (
+        InferenceRoute,
+        call_chat_completion,
+        format_route_label,
+        resolve_inference_route,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from context_expansion_runtime import ContextExpansionRuntime
+    from inference_router import (  # type: ignore[no-redef]
+        InferenceRoute,
+        call_chat_completion,
+        format_route_label,
+        resolve_inference_route,
+    )
 
 DEFAULT_ORCH_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
     os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
 )
 DEFAULT_AGENT = os.getenv("TASK_AGENT", "trae")
-DEFAULT_PROVIDER = os.getenv("TASK_MODEL_PROVIDER", "ollama")
+DEFAULT_PROVIDER = os.getenv("TASK_MODEL_PROVIDER", os.getenv("ORCH_INFER_PROVIDER", "auto"))
 DEFAULT_MODEL = os.getenv("TASK_MODEL", "qwen3.5:9b")
 
 
-def _base_url_for_provider(provider: str, override: Optional[str]) -> str:
-    if override:
-        return override.rstrip("/")
-    provider = provider.lower()
-    if provider == "ollama":
-        return "http://127.0.0.1:11434"
-    if provider == "lmstudio":
-        return "http://127.0.0.1:1234"
-    if provider in {"openai-compatible", "vllm"}:
-        return "http://127.0.0.1:8000"
-    if provider == "llama-cpp":
-        return "http://127.0.0.1:8080"
-    return "http://127.0.0.1:8000"
-
-
-def _call_openai_compatible(
-    base_url: str,
-    model: str,
-    messages: list[dict[str, str]],
-    api_key: Optional[str] = None,
-) -> str:
-    url = f"{base_url}/v1/chat/completions"
-    headers = {"content-type": "application/json"}
-    if api_key:
-        headers["authorization"] = f"Bearer {api_key}"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "stream": False,
-    }
-    resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
-
-
-def _call_ollama(
-    base_url: str,
-    model: str,
-    messages: list[dict[str, str]],
-) -> str:
-    url = f"{base_url}/api/chat"
-    payload = {"model": model, "messages": messages, "stream": False}
-    resp = httpx.post(url, json=payload, timeout=60.0)
-    resp.raise_for_status()
-    data = resp.json()
-    message = data.get("message") or {}
-    return message.get("content", "")
-
-
 def _run_llm_task(
-    provider: str,
+    route: InferenceRoute,
     model: str,
-    base_url: str,
-    api_key: Optional[str],
     task: dict[str, Any],
     context_prompt: str | None = None,
 ) -> str:
@@ -105,10 +64,7 @@ def _run_llm_task(
     if context_prompt:
         messages.append({"role": "system", "content": context_prompt})
     messages.append({"role": "user", "content": body})
-    provider = provider.lower()
-    if provider == "ollama":
-        return _call_ollama(base_url, model, messages)
-    return _call_openai_compatible(base_url, model, messages, api_key)
+    return call_chat_completion(route, model, messages)
 
 
 def _runner_cmd_for_agent(agent: str) -> Optional[str]:
@@ -127,6 +83,12 @@ def _runner_cmd_for_agent(agent: str) -> Optional[str]:
         return os.getenv("LANGGRAPH_CMD")
     if agent == "openhands":
         return os.getenv("OPENHANDS_CMD")
+    if agent == "opencode":
+        return os.getenv("OPENCODE_CMD")
+    if agent == "goose":
+        return os.getenv("GOOSE_CMD")
+    if agent == "eliza":
+        return os.getenv("ELIZA_CMD")
     return None
 
 
@@ -202,9 +164,23 @@ def _handle_task(
     agent: str,
     provider: str,
     model: str,
-    base_url: str,
+    base_url_override: str | None,
     api_key: Optional[str],
 ) -> None:
+    try:
+        route = resolve_inference_route(
+            provider,
+            base_url_override=base_url_override,
+            api_key=api_key,
+        )
+    except Exception as exc:
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {"status": "failed", "message": f"Inference route error: {exc}"},
+        )
+        return
+
     task_payload = task.get("payload") or {}
     topic_path = task_payload.get("topic_path") or task_payload.get("topicPath")
     context_runtime = ContextExpansionRuntime(orchestrator_url=orchestrator_url, agent_id=(task.get("agent") or agent))
@@ -248,10 +224,10 @@ def _handle_task(
             "TASK_PROJECT": task.get("project") or "",
             "TASK_AGENT": agent_choice,
             "TASK_PAYLOAD": json.dumps(task.get("payload") or {}),
-            "TASK_MODEL_PROVIDER": provider,
+            "TASK_MODEL_PROVIDER": route.provider,
             "TASK_MODEL": model,
-            "TASK_BASE_URL": base_url,
-            "TASK_API_KEY": api_key or "",
+            "TASK_BASE_URL": route.base_url,
+            "TASK_API_KEY": route.api_key or "",
             "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
             "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
             "TASK_CONTEXT_BUNDLE": _serialize_env_json(context_bundle),
@@ -275,7 +251,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=message,
-            provider=provider,
+            provider=format_route_label(route),
             model=model,
             status=status,
         )
@@ -290,8 +266,13 @@ def _handle_task(
                 "topic_path": topic_path,
                 "metadata": {
                     "agent": agent_choice,
-                    "provider": provider,
+                    "provider": route.provider,
                     "model": model,
+                    "inference_route": {
+                        "provider": route.provider,
+                        "base_url": route.base_url,
+                        "reason": route.reason,
+                    },
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
                 },
@@ -301,17 +282,15 @@ def _handle_task(
 
     try:
         output = _run_llm_task(
-            provider,
+            route,
             model,
-            base_url,
-            api_key,
             task,
             context_prompt=context_prompt,
         )
         project = task.get("project") or "_global"
         file_name = f"task_runs/{task['id']}.md"
         _write_memory(orchestrator_url, project, file_name, _format_result(task, output), topic_path=topic_path)
-        completion_message = f"Completed via {provider} ({model})"
+        completion_message = f"Completed via {format_route_label(route)} ({model})"
         if pending_sources:
             completion_message += f" | pending async sources: {', '.join(str(item) for item in pending_sources[:4])}"
         _post(
@@ -323,7 +302,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=output,
-            provider=provider,
+            provider=format_route_label(route),
             model=model,
             status="succeeded",
         )
@@ -337,8 +316,13 @@ def _handle_task(
                 "topic_path": topic_path,
                 "metadata": {
                     "agent": agent_choice,
-                    "provider": provider,
+                    "provider": route.provider,
                     "model": model,
+                    "inference_route": {
+                        "provider": route.provider,
+                        "base_url": route.base_url,
+                        "reason": route.reason,
+                    },
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
                 },
@@ -349,7 +333,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=f"Runner error: {exc}",
-            provider=provider,
+            provider=format_route_label(route),
             model=model,
             status="failed",
         )
@@ -362,7 +346,11 @@ def _handle_task(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ContextLattice task agent worker")
-    parser.add_argument("--task-agent", default=DEFAULT_AGENT, help="trae|letta|autogen|crewai|langgraph|openhands")
+    parser.add_argument(
+        "--task-agent",
+        default=DEFAULT_AGENT,
+        help="trae|letta|autogen|crewai|langgraph|openhands|opencode|goose|eliza",
+    )
     parser.add_argument("--orchestrator-url", default=DEFAULT_ORCH_URL)
     parser.add_argument("--model-provider", default=DEFAULT_PROVIDER)
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -375,7 +363,7 @@ def main() -> None:
 
     provider = args.model_provider
     model = args.model
-    base_url = _base_url_for_provider(provider, args.base_url)
+    base_url_override = args.base_url
     agent = args.task_agent
     worker = args.worker_name
 
@@ -398,7 +386,7 @@ def main() -> None:
                     agent,
                     provider,
                     model,
-                    base_url,
+                    base_url_override,
                     args.api_key,
                 )
             else:

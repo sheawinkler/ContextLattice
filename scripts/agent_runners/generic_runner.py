@@ -12,23 +12,20 @@ from typing import Any, Optional
 
 try:
     from scripts.context_expansion_runtime import ContextExpansionRuntime
+    from scripts.inference_router import (
+        InferenceRoute,
+        call_chat_completion,
+        format_route_label,
+        resolve_inference_route,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from context_expansion_runtime import ContextExpansionRuntime
-
-
-def _base_url_for_provider(provider: str, override: Optional[str]) -> str:
-    if override:
-        return override.rstrip("/")
-    provider = provider.lower()
-    if provider == "ollama":
-        return "http://127.0.0.1:11434"
-    if provider == "lmstudio":
-        return "http://127.0.0.1:1234"
-    if provider in {"openai-compatible", "vllm"}:
-        return "http://127.0.0.1:8000"
-    if provider == "llama-cpp":
-        return "http://127.0.0.1:8080"
-    return "http://127.0.0.1:8000"
+    from inference_router import (  # type: ignore[no-redef]
+        InferenceRoute,
+        call_chat_completion,
+        format_route_label,
+        resolve_inference_route,
+    )
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None) -> dict[str, Any]:
@@ -39,43 +36,9 @@ def _post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, st
     return json.loads(body)
 
 
-def _call_openai_compatible(
-    base_url: str,
-    model: str,
-    messages: list[dict[str, str]],
-    api_key: Optional[str] = None,
-) -> str:
-    url = f"{base_url}/v1/chat/completions"
-    headers = {"content-type": "application/json"}
-    if api_key:
-        headers["authorization"] = f"Bearer {api_key}"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "stream": False,
-    }
-    data = _post_json(url, payload, headers=headers)
-    return data["choices"][0]["message"]["content"]
-
-
-def _call_ollama(
-    base_url: str,
-    model: str,
-    messages: list[dict[str, str]],
-) -> str:
-    url = f"{base_url}/api/chat"
-    payload = {"model": model, "messages": messages, "stream": False}
-    data = _post_json(url, payload)
-    message = data.get("message") or {}
-    return message.get("content", "")
-
-
 def _run_llm_task(
-    provider: str,
+    route: InferenceRoute,
     model: str,
-    base_url: str,
-    api_key: Optional[str],
     task: dict[str, Any],
     context_prompt: str | None = None,
 ) -> str:
@@ -94,10 +57,7 @@ def _run_llm_task(
     if context_prompt:
         messages.append({"role": "system", "content": context_prompt})
     messages.append({"role": "user", "content": body})
-    provider = provider.lower()
-    if provider == "ollama":
-        return _call_ollama(base_url, model, messages)
-    return _call_openai_compatible(base_url, model, messages, api_key)
+    return call_chat_completion(route, model, messages)
 
 
 def _write_memory(orchestrator_url: str, project: str, file_name: str, content: str) -> None:
@@ -136,9 +96,9 @@ def main(agent_label: Optional[str] = None) -> int:
     task_project = os.getenv("TASK_PROJECT", "_global")
     task_payload = os.getenv("TASK_PAYLOAD", "{}")
     agent = (agent_label or os.getenv("TASK_AGENT", "trae")).lower()
-    provider = os.getenv("TASK_MODEL_PROVIDER", "ollama")
+    provider = os.getenv("TASK_MODEL_PROVIDER", os.getenv("ORCH_INFER_PROVIDER", "auto"))
     model = os.getenv("TASK_MODEL", "qwen3.5:9b")
-    base_url = _base_url_for_provider(provider, os.getenv("TASK_BASE_URL"))
+    base_url_override = os.getenv("TASK_BASE_URL")
     api_key = os.getenv("TASK_API_KEY")
 
     try:
@@ -187,11 +147,19 @@ def main(agent_label: Optional[str] = None) -> int:
             context_prompt = "Context expansion unavailable; proceed fail-open."
 
     try:
-        output = _run_llm_task(
+        route = resolve_inference_route(
             provider,
+            base_url_override=base_url_override,
+            api_key=api_key,
+        )
+    except Exception as exc:
+        print(f"[agent-runner] inference route failed: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        output = _run_llm_task(
+            route,
             model,
-            base_url,
-            api_key,
             task,
             context_prompt=context_prompt,
         )
@@ -202,7 +170,7 @@ def main(agent_label: Optional[str] = None) -> int:
                 task=task,
                 bundle=context_bundle,
                 output=output,
-                provider=provider,
+                provider=format_route_label(route),
                 model=model,
                 status="succeeded",
             )
@@ -212,7 +180,7 @@ def main(agent_label: Optional[str] = None) -> int:
                 task=task,
                 bundle=context_bundle,
                 output=f"[agent-runner] failed: {exc}",
-                provider=provider,
+                provider=format_route_label(route),
                 model=model,
                 status="failed",
             )
