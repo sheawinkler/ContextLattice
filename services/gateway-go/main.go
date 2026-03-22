@@ -216,6 +216,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 type server struct {
 	backendURL              string
+	orchestratorAPIKey      string
 	client                  *http.Client
 	retrieval               retrievalPolicy
 	telemetry               *retrievalTelemetry
@@ -659,11 +660,16 @@ func newServer() *server {
 	if backendURL == "" {
 		backendURL = "http://contextlattice-orchestrator:8075"
 	}
+	orchestratorAPIKey := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY"))
+	if orchestratorAPIKey == "" {
+		orchestratorAPIKey = strings.TrimSpace(os.Getenv("MEMMCP_ORCHESTRATOR_API_KEY"))
+	}
 	timeout := envDurationSeconds("GATEWAY_PROXY_TIMEOUT_SECS", 95)
 	policy := loadRetrievalPolicy()
 	t := newRetrievalTelemetry(policy)
 	s := &server{
 		backendURL:              backendURL,
+		orchestratorAPIKey:      orchestratorAPIKey,
 		client:                  &http.Client{Timeout: timeout},
 		retrieval:               policy,
 		telemetry:               t,
