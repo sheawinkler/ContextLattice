@@ -460,6 +460,22 @@ HIGH_RISK_ACTIONS = [
     ).split(",")
     if item.strip()
 ]
+TOOL_INVOCATION_AUDIT_ENABLED = os.getenv("TOOL_INVOCATION_AUDIT_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+TOOL_INVOCATION_AUDIT_RETENTION_DAYS = max(1, int(os.getenv("TOOL_INVOCATION_AUDIT_RETENTION_DAYS", "75")))
+TOOL_INVOCATION_AUDIT_PRUNE_INTERVAL_SECS = max(
+    60.0,
+    float(os.getenv("TOOL_INVOCATION_AUDIT_PRUNE_INTERVAL_SECS", "3600")),
+)
+TOOL_INVOCATION_AUDIT_MAX_QUERY_ITEMS = max(1, int(os.getenv("TOOL_INVOCATION_AUDIT_MAX_QUERY_ITEMS", "32")))
+TOOL_INVOCATION_AUDIT_MAX_METADATA_CHARS = max(
+    256,
+    int(os.getenv("TOOL_INVOCATION_AUDIT_MAX_METADATA_CHARS", "2000")),
+)
 PREFERENCE_MAX_ENTRIES = int(os.getenv("PREFERENCE_MAX_ENTRIES", "25"))
 FEEDBACK_MAX_CONTENT = int(os.getenv("FEEDBACK_MAX_CONTENT", "2000"))
 FEEDBACK_TAG_MAX_COUNT = max(1, int(os.getenv("FEEDBACK_TAG_MAX_COUNT", "16")))
@@ -8368,6 +8384,213 @@ def _extract_api_key(request: Request) -> str:
     return query_key
 
 
+def _is_tool_request_path(path: str | None) -> bool:
+    normalized = (path or "").strip()
+    return bool(normalized.startswith("/tools/") and len(normalized) > len("/tools/"))
+
+
+def _tool_name_from_path(path: str | None) -> str:
+    if not _is_tool_request_path(path):
+        return ""
+    normalized = (path or "").strip().removeprefix("/tools/")
+    return normalized.split("/", 1)[0].strip().lower()
+
+
+def _tool_audit_agent_id(request: Request) -> str | None:
+    value = (
+        request.headers.get("x-agent-id")
+        or request.headers.get("x-codex-agent")
+        or request.headers.get("x-client-agent")
+        or request.query_params.get("agent_id")
+        or ""
+    ).strip()
+    return value[:120] if value else None
+
+
+def _tool_audit_source(request: Request) -> str | None:
+    value = (
+        request.headers.get("x-source")
+        or request.headers.get("x-client-source")
+        or request.query_params.get("source")
+        or ""
+    ).strip()
+    return value[:120] if value else None
+
+
+def _tool_audit_project(request: Request) -> str | None:
+    value = (
+        request.query_params.get("project")
+        or request.query_params.get("projectName")
+        or request.headers.get("x-project")
+        or request.headers.get("x-project-name")
+        or ""
+    ).strip()
+    return value[:200] if value else None
+
+
+def _tool_audit_query_payload(request: Request) -> str | None:
+    if not request.query_params:
+        return None
+    query_payload: dict[str, Any] = {}
+    for key in sorted(request.query_params.keys())[:TOOL_INVOCATION_AUDIT_MAX_QUERY_ITEMS]:
+        value = (request.query_params.get(key) or "").strip()
+        if not value:
+            continue
+        query_payload[key] = value[:256]
+    if not query_payload:
+        return None
+    payload = json.dumps(query_payload, sort_keys=True)
+    if len(payload) > TOOL_INVOCATION_AUDIT_MAX_METADATA_CHARS:
+        return payload[:TOOL_INVOCATION_AUDIT_MAX_METADATA_CHARS]
+    return payload
+
+
+def _tool_audit_metadata_payload(request: Request) -> str | None:
+    metadata = {
+        "client": request.client.host if request.client else None,
+        "user_agent": (request.headers.get("user-agent") or "").strip()[:240] or None,
+    }
+    compact = {key: value for key, value in metadata.items() if value is not None}
+    if not compact:
+        return None
+    payload = json.dumps(compact, sort_keys=True)
+    if len(payload) > TOOL_INVOCATION_AUDIT_MAX_METADATA_CHARS:
+        return payload[:TOOL_INVOCATION_AUDIT_MAX_METADATA_CHARS]
+    return payload
+
+
+async def _write_tool_invocation_audit(
+    *,
+    request: Request,
+    request_id: str,
+    status_code: int,
+    duration_ms: float,
+    error: str | None = None,
+) -> None:
+    global tool_invocation_audit_last_prune_monotonic
+    if not TOOL_INVOCATION_AUDIT_ENABLED:
+        return
+    path = (request.url.path or "").strip()
+    if not _is_tool_request_path(path):
+        return
+
+    timestamp = _utc_now()
+    invocation_id = uuid.uuid4().hex
+    tool_name = _tool_name_from_path(path) or "unknown"
+    method = (request.method or "").upper().strip() or "UNKNOWN"
+    project = _tool_audit_project(request)
+    agent_id = _tool_audit_agent_id(request)
+    source = _tool_audit_source(request)
+    query_payload = _tool_audit_query_payload(request)
+    metadata_payload = _tool_audit_metadata_payload(request)
+    payload_sha256 = hashlib.sha256(
+        f"{request_id}:{method}:{path}:{status_code}:{duration_ms:.3f}".encode("utf-8")
+    ).hexdigest()
+    error_payload = (error or "").strip()[:500] or None
+
+    def _insert(conn: sqlite3.Connection):
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT INTO tool_invocations (
+                invocation_id, request_id, timestamp, method, path, tool, status_code, duration_ms,
+                project, agent_id, source, query, payload_sha256, error, metadata
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                invocation_id,
+                request_id,
+                timestamp,
+                method,
+                path,
+                tool_name,
+                int(status_code),
+                round(float(duration_ms), 3),
+                project,
+                agent_id,
+                source,
+                query_payload,
+                payload_sha256,
+                error_payload,
+                metadata_payload,
+            ),
+        )
+
+    try:
+        await _task_db_exec(_insert)
+        tool_invocation_audit_state["writes"] = int(tool_invocation_audit_state.get("writes", 0)) + 1
+        tool_invocation_audit_state["lastWriteAt"] = timestamp
+        tool_invocation_audit_state["lastStatusCode"] = int(status_code)
+        if int(status_code) >= 400:
+            tool_invocation_audit_state["errorWrites"] = int(tool_invocation_audit_state.get("errorWrites", 0)) + 1
+    except Exception as exc:
+        tool_invocation_audit_state["writeFailed"] = int(tool_invocation_audit_state.get("writeFailed", 0)) + 1
+        tool_invocation_audit_state["lastError"] = str(exc)[:300]
+        logger.warning("Tool invocation audit write failed: %s", exc)
+        return
+
+    now = time.monotonic()
+    should_prune = (now - tool_invocation_audit_last_prune_monotonic) >= TOOL_INVOCATION_AUDIT_PRUNE_INTERVAL_SECS
+    if not should_prune:
+        return
+    async with tool_invocation_audit_lock:
+        now_locked = time.monotonic()
+        if (now_locked - tool_invocation_audit_last_prune_monotonic) < TOOL_INVOCATION_AUDIT_PRUNE_INTERVAL_SECS:
+            return
+        cutoff = (datetime.utcnow() - timedelta(days=TOOL_INVOCATION_AUDIT_RETENTION_DAYS)).isoformat() + "Z"
+
+        def _prune(conn: sqlite3.Connection):
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute("DELETE FROM tool_invocations WHERE timestamp < ?", (cutoff,))
+            return int(cur.rowcount)
+
+        try:
+            pruned = int(await _task_db_exec(_prune))
+            tool_invocation_audit_state["prunedRows"] = int(tool_invocation_audit_state.get("prunedRows", 0)) + pruned
+            tool_invocation_audit_state["lastPruneAt"] = _utc_now()
+            tool_invocation_audit_state["lastPruneRows"] = pruned
+            tool_invocation_audit_last_prune_monotonic = now_locked
+        except Exception as exc:
+            tool_invocation_audit_state["lastError"] = str(exc)[:300]
+            logger.warning("Tool invocation audit prune failed: %s", exc)
+
+
+async def _list_tool_invocations(
+    *,
+    limit: int = 100,
+    tool: str | None = None,
+    status_min: int | None = None,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 500))
+    safe_tool = (tool or "").strip().lower() or None
+    safe_status_min = int(status_min) if status_min is not None else None
+
+    def _list(conn: sqlite3.Connection):
+        clauses: list[str] = []
+        params: list[Any] = []
+        if safe_tool:
+            clauses.append("tool = ?")
+            params.append(safe_tool)
+        if safe_status_min is not None:
+            clauses.append("status_code >= ?")
+            params.append(safe_status_min)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM tool_invocations
+            {where}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (*params, safe_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    return await _task_db_exec(_list)
+
+
 def _configure_prometheus_metrics(app_instance: FastAPI) -> None:
     if not ORCH_PROMETHEUS_ENABLED:
         return
@@ -8391,6 +8614,7 @@ _configure_prometheus_metrics(app)
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = request_id
+    is_tool_request = _is_tool_request_path(request.url.path)
     public_prefixes = ["/health", "/pilot"]
     if MESSAGING_INTEGRATIONS_ENABLED and MESSAGING_WEBHOOK_PUBLIC:
         public_prefixes.extend(
@@ -8408,15 +8632,44 @@ async def request_context_middleware(request: Request, call_next):
     public_prefixes_tuple = tuple(public_prefixes)
     if ORCH_API_KEY and not request.url.path.startswith(public_prefixes_tuple):
         if _extract_api_key(request) != ORCH_API_KEY:
+            if is_tool_request:
+                await _write_tool_invocation_audit(
+                    request=request,
+                    request_id=request_id,
+                    status_code=401,
+                    duration_ms=0.0,
+                    error="unauthorized",
+                )
             return JSONResponse(
                 status_code=401,
                 content={"ok": False, "error": "Invalid API key"},
                 headers={"x-request-id": request_id},
             )
     start = time.monotonic()
-    response = await call_next(request)
+    response = None
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = (time.monotonic() - start) * 1000
+        if is_tool_request:
+            await _write_tool_invocation_audit(
+                request=request,
+                request_id=request_id,
+                status_code=500,
+                duration_ms=duration_ms,
+                error=str(exc),
+            )
+        raise
+    assert response is not None
     response.headers["x-request-id"] = request_id
     duration_ms = (time.monotonic() - start) * 1000
+    if is_tool_request:
+        await _write_tool_invocation_audit(
+            request=request,
+            request_id=request_id,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
     if _should_log_http_request(response.status_code, duration_ms):
         _json_log(
             "http.request",
@@ -8442,6 +8695,19 @@ telemetry_state: Dict[str, Any] = {
         "batches": 0,
         "flushedEvents": 0,
     },
+}
+tool_invocation_audit_lock = asyncio.Lock()
+tool_invocation_audit_last_prune_monotonic = 0.0
+tool_invocation_audit_state: dict[str, Any] = {
+    "writes": 0,
+    "errorWrites": 0,
+    "writeFailed": 0,
+    "lastWriteAt": None,
+    "lastStatusCode": None,
+    "prunedRows": 0,
+    "lastPruneAt": None,
+    "lastPruneRows": 0,
+    "lastError": None,
 }
 telemetry_persist_lock = asyncio.Lock()
 telemetry_persist_last_monotonic = 0.0
@@ -10350,6 +10616,37 @@ def _init_task_db() -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_feedback_user_created ON feedback(user_id, created_at)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tool_invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id TEXT NOT NULL,
+                request_id TEXT,
+                timestamp TEXT NOT NULL,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                status_code INTEGER NOT NULL,
+                duration_ms REAL NOT NULL,
+                project TEXT,
+                agent_id TEXT,
+                source TEXT,
+                query TEXT,
+                payload_sha256 TEXT,
+                error TEXT,
+                metadata TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tool_invocations_timestamp ON tool_invocations(timestamp DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tool_invocations_tool_timestamp ON tool_invocations(tool, timestamp DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tool_invocations_status_timestamp ON tool_invocations(status_code, timestamp DESC)"
         )
         conn.execute(
             """
@@ -21687,6 +21984,45 @@ async def get_memory_metrics():
             "enabled": SINK_RETENTION_ENABLED,
             "intervalSecs": max(60.0, SINK_RETENTION_INTERVAL_SECS),
             "state": sink_retention_state,
+        },
+        "storageGovernance": {
+            "enabled": STORAGE_GOVERNANCE_ENABLED,
+            "intervalSecs": STORAGE_GOVERNANCE_INTERVAL_SECS,
+            "warnUsedRatio": STORAGE_GOVERNANCE_WARN_USED_RATIO,
+            "highUsedRatio": STORAGE_GOVERNANCE_HIGH_USED_RATIO,
+            "minFreeBytes": STORAGE_GOVERNANCE_MIN_FREE_BYTES,
+            "state": storage_governance_state,
+        },
+        "toolInvocationAudit": {
+            "enabled": TOOL_INVOCATION_AUDIT_ENABLED,
+            "retentionDays": TOOL_INVOCATION_AUDIT_RETENTION_DAYS,
+            "pruneIntervalSecs": TOOL_INVOCATION_AUDIT_PRUNE_INTERVAL_SECS,
+            "maxQueryItems": TOOL_INVOCATION_AUDIT_MAX_QUERY_ITEMS,
+            "state": dict(tool_invocation_audit_state),
+        },
+    }
+
+
+@app.get("/telemetry/tools/invocations")
+async def get_tool_invocation_metrics(
+    limit: int = 100,
+    tool: str | None = None,
+    status_min: int | None = None,
+):
+    records = await _list_tool_invocations(limit=limit, tool=tool, status_min=status_min)
+    return {
+        "items": records,
+        "count": len(records),
+        "limit": max(1, min(int(limit), 500)),
+        "filters": {
+            "tool": (tool or "").strip().lower() or None,
+            "statusMin": int(status_min) if status_min is not None else None,
+        },
+        "audit": {
+            "enabled": TOOL_INVOCATION_AUDIT_ENABLED,
+            "retentionDays": TOOL_INVOCATION_AUDIT_RETENTION_DAYS,
+            "pruneIntervalSecs": TOOL_INVOCATION_AUDIT_PRUNE_INTERVAL_SECS,
+            "state": dict(tool_invocation_audit_state),
         },
     }
 
