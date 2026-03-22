@@ -6253,7 +6253,7 @@ async def test_enqueue_memory_write_fanout_keeps_knowledge_targets(monkeypatch: 
         }
     )
 
-    assert captured_targets == ["mongo_raw", "qdrant", "mindsdb", "letta"]
+    assert captured_targets == ["mongo_raw", "qdrant", "postgres_pgvector", "mindsdb", "letta"]
 
 
 @pytest.mark.asyncio
