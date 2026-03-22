@@ -19402,10 +19402,20 @@ async def federated_search_memory(
                 min(limit, RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS),
             )
             needs_sync_fallback = len(fast_merged) < min_fast_results
+            fast_error_sources_for_quality_fallback = {
+                source_name
+                for source_name, error_payload in fast_errors.items()
+                if _normalize_source_error_detail(error_payload).get("kind")
+                in {"timeout", "error", "budget_exceeded"}
+            }
             rust_quality_candidates = [
                 source
                 for source in RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES
-                if source in staged_fast_sources
+                if (
+                    source in staged_fast_sources
+                    and source not in fast_error_sources_for_quality_fallback
+                    and len(fast_rows.get(source, [])) == 0
+                )
             ]
             if (
                 needs_sync_fallback
