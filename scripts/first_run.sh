@@ -257,6 +257,39 @@ PROMPT
   echo ">> tool-call policy: ${selected}"
 }
 
+configure_tool_role_split() {
+  local orchestrator_key worker_key
+  orchestrator_key="$(echo "$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)" | xargs)"
+  if [[ -z "$orchestrator_key" ]]; then
+    orchestrator_key="$(echo "$(get_env_key MEMMCP_ORCHESTRATOR_API_KEY)" | xargs)"
+  fi
+  worker_key="$(echo "$(get_env_key CONTEXTLATTICE_WORKER_API_KEY)" | xargs)"
+  if [[ -z "$worker_key" ]]; then
+    worker_key="$(echo "$(get_env_key MEMMCP_WORKER_API_KEY)" | xargs)"
+  fi
+
+  set_env_key "GO_TOOL_CALLS_ROLE_SPLIT_AUTO" "true"
+  set_env_key "GO_TOOL_CALLS_ROLE_SPLIT_ENABLED" "false"
+  set_env_key "GO_TOOL_CALLS_ORCHESTRATOR_ALLOW_ALL" "true"
+  set_env_key "GO_TOOL_CALLS_ORCHESTRATOR_ALLOWLIST" ""
+  set_env_key "GO_TOOL_CALLS_ORCHESTRATOR_DENYLIST" ""
+  set_env_key "GO_TOOL_CALLS_WORKER_ALLOW_ALL" "false"
+  set_env_key "GO_TOOL_CALLS_WORKER_ALLOWLIST" "capability_map,ops_queue_status"
+  set_env_key "GO_TOOL_CALLS_WORKER_DENYLIST" "memory_write_batch,feedback_submit"
+
+  if [[ -z "$worker_key" ]]; then
+    echo ">> tool role split: disabled (no worker API key configured)"
+    return 0
+  fi
+  if [[ -n "$orchestrator_key" && "$worker_key" == "$orchestrator_key" ]]; then
+    echo ">> tool role split: disabled (worker key equals orchestrator key)"
+    return 0
+  fi
+
+  set_env_key "GO_TOOL_CALLS_ROLE_SPLIT_ENABLED" "true"
+  echo ">> tool role split: enabled (distinct worker key detected)"
+}
+
 configure_security_posture() {
   local api_key secrets_mode
   secrets_mode="${SECRETS_STORAGE_MODE_OVERRIDE:-redact}"
@@ -312,6 +345,7 @@ fi
 
 configure_security_posture
 configure_tool_call_policy
+configure_tool_role_split
 
 configure_mindsdb_smoke_requirement
 

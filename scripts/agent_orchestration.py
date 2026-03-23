@@ -13,12 +13,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urljoin
 
-import httpx
-
-DEFAULT_ORCHESTRATOR_URL = os.getenv(
-    "CONTEXTLATTICE_ORCHESTRATOR_URL",
-    os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
-)
+try:
+    from scripts.contextlattice_client import (
+        DEFAULT_ORCHESTRATOR_URL,
+        ContextLatticeClient,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
+    from contextlattice_client import (  # type: ignore[no-redef]
+        DEFAULT_ORCHESTRATOR_URL,
+        ContextLatticeClient,
+    )
 DEFAULT_AGENT_ID = (
     os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
     or os.getenv("MEMMCP_AGENT_ID", "").strip()
@@ -150,12 +154,12 @@ class ContextLatticeOrchestrator:
     ):
         self.base_url = orchestrator_url.rstrip("/")
         self.agent_id = str(agent_id or "").strip() or DEFAULT_AGENT_ID
-        api_key = (
-            os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
-            or os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", "").strip()
+        self.http = ContextLatticeClient(
+            base_url=self.base_url,
+            timeout=30.0,
+            role="orchestrator",
         )
-        headers = {"x-api-key": api_key} if api_key else None
-        self.client = httpx.Client(timeout=30.0, headers=headers)
+        self.client = self.http.client
 
     def _encode_project_path(self, project: str, file_name: str | None = None) -> str:
         encoded_project = quote(project, safe="")

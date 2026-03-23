@@ -15,9 +15,12 @@ import sys
 import time
 from typing import Any, Dict, Optional
 
-import httpx
-
 try:
+    from scripts.contextlattice_client import (
+        ContextLatticeClient,
+        build_orchestrator_headers,
+        resolve_orchestrator_api_key,
+    )
     from scripts.context_expansion_runtime import ContextExpansionRuntime
     from scripts.inference_router import (
         InferenceRoute,
@@ -26,6 +29,11 @@ try:
         resolve_inference_route,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
+    from contextlattice_client import (  # type: ignore[no-redef]
+        ContextLatticeClient,
+        build_orchestrator_headers,
+        resolve_orchestrator_api_key,
+    )
     from context_expansion_runtime import ContextExpansionRuntime
     from inference_router import (  # type: ignore[no-redef]
         InferenceRoute,
@@ -167,14 +175,7 @@ def _run_command(cmd: str, env: dict[str, str]) -> int:
 
 
 def _orchestrator_headers() -> dict[str, str]:
-    headers: dict[str, str] = {}
-    api_key = (
-        str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
-        or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
-    )
-    if api_key:
-        headers["x-api-key"] = api_key
-    return headers
+    return build_orchestrator_headers(resolve_orchestrator_api_key(role="worker"))
 
 
 def _post(
@@ -185,10 +186,20 @@ def _post(
     *,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    url = f"{orchestrator_url.rstrip('/')}{path}"
-    resp = httpx.post(url, json=payload, params=params, headers=_orchestrator_headers(), timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+    client = ContextLatticeClient(
+        base_url=orchestrator_url,
+        timeout=timeout,
+        role="worker",
+    )
+    try:
+        return client.post_json(
+            path,
+            payload,
+            params=params,
+            timeout=max(1.0, float(timeout)),
+        )
+    finally:
+        client.close()
 
 
 def _get(
@@ -198,10 +209,19 @@ def _get(
     *,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    url = f"{orchestrator_url.rstrip('/')}{path}"
-    resp = httpx.get(url, params=params, headers=_orchestrator_headers(), timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+    client = ContextLatticeClient(
+        base_url=orchestrator_url,
+        timeout=timeout,
+        role="worker",
+    )
+    try:
+        return client.get_json(
+            path,
+            params=params,
+            timeout=max(1.0, float(timeout)),
+        )
+    finally:
+        client.close()
 
 
 def _write_memory(
