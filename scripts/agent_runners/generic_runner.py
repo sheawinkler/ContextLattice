@@ -11,6 +11,10 @@ import urllib.request
 from typing import Any, Optional
 
 try:
+    from scripts.contextlattice_client import (
+        build_orchestrator_headers,
+        resolve_orchestrator_api_key,
+    )
     from scripts.context_expansion_runtime import ContextExpansionRuntime
     from scripts.inference_router import (
         InferenceRoute,
@@ -19,6 +23,10 @@ try:
         resolve_inference_route,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
+    from contextlattice_client import (  # type: ignore[no-redef]
+        build_orchestrator_headers,
+        resolve_orchestrator_api_key,
+    )
     from context_expansion_runtime import ContextExpansionRuntime
     from inference_router import (  # type: ignore[no-redef]
         InferenceRoute,
@@ -63,13 +71,8 @@ def _run_llm_task(
 def _write_memory(orchestrator_url: str, project: str, file_name: str, content: str) -> None:
     url = f"{orchestrator_url.rstrip('/')}/memory/write"
     payload = {"projectName": project, "fileName": file_name, "content": content}
-    headers = {"content-type": "application/json"}
-    api_key = (
-        str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
-        or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
-    )
-    if api_key:
-        headers["x-api-key"] = api_key
+    api_key = resolve_orchestrator_api_key(role="worker")
+    headers = {"content-type": "application/json", **build_orchestrator_headers(api_key)}
     _post_json(url, payload, headers=headers)
 
 
@@ -114,7 +117,11 @@ def main(agent_label: Optional[str] = None) -> int:
         "payload": payload_data,
     }
 
-    context_runtime = ContextExpansionRuntime(orchestrator_url=orchestrator_url, agent_id=agent)
+    context_runtime = ContextExpansionRuntime(
+        orchestrator_url=orchestrator_url,
+        agent_id=agent,
+        caller_role="worker",
+    )
     context_bundle = None
     context_prompt: str | None = None
     context_bundle_env = str(os.getenv("TASK_CONTEXT_BUNDLE") or "").strip()

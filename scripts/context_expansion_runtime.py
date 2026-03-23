@@ -14,6 +14,11 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+try:
+    from scripts.contextlattice_client import resolve_orchestrator_api_key
+except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
+    from contextlattice_client import resolve_orchestrator_api_key  # type: ignore[no-redef]
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = str(os.getenv(name, "")).strip().lower()
@@ -267,13 +272,11 @@ class ContextExpansionRuntime:
         orchestrator_url: str,
         api_key: Optional[str] = None,
         agent_id: Optional[str] = None,
+        caller_role: str = "worker",
     ):
         self.base_url = orchestrator_url.rstrip("/")
-        self.api_key = (
-            str(api_key or "").strip()
-            or str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
-            or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
-        )
+        role = str(caller_role or "").strip().lower() or "worker"
+        self.api_key = str(api_key or "").strip() or resolve_orchestrator_api_key(role=role)
         default_agent_id = (
             str(os.getenv("CONTEXTLATTICE_AGENT_ID") or "").strip()
             or str(os.getenv("MEMMCP_AGENT_ID") or "").strip()

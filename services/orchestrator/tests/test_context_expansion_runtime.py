@@ -125,3 +125,13 @@ def test_context_runtime_uses_stable_agent_id_from_env(monkeypatch):
     monkeypatch.delenv("MEMMCP_AGENT_ID", raising=False)
     runtime = ContextExpansionRuntime("http://example.local")
     assert runtime.agent_id == "codex_gpt5_test"
+
+
+def test_context_runtime_prefers_worker_key_when_present(monkeypatch):
+    monkeypatch.setenv("CONTEXTLATTICE_WORKER_API_KEY", "worker-key")
+    monkeypatch.setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "orch-key")
+    runtime = ContextExpansionRuntime("http://example.local", caller_role="worker")
+    assert runtime.api_key == "worker-key"
+
+    runtime_orch = ContextExpansionRuntime("http://example.local", caller_role="orchestrator")
+    assert runtime_orch.api_key == "orch-key"
