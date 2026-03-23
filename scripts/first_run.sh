@@ -16,6 +16,8 @@ LETTA_URL_OVERRIDE=""
 INSECURE_LOCAL=0
 SECRETS_STORAGE_MODE_OVERRIDE=""
 COMPOSE_PROFILES_EFFECTIVE=""
+TOOL_POLICY_OVERRIDE=""
+TOOL_POLICY_PROMPT="${TOOL_POLICY_PROMPT:-1}"
 
 usage() {
   cat <<'USAGE'
@@ -29,12 +31,15 @@ Options:
   --allow-secrets-storage Store write payloads as-is (no redaction)
   --block-secrets-storage Reject writes that include secret-like values
   --redact-secrets-storage Force redaction mode (default)
+  --tool-policy <mode>    Tool-call policy: liberal|require-key|restricted
+  --no-tool-policy-prompt Disable interactive tool policy prompt
   --insecure-local        Opt out of secure production defaults for local-only experimentation
   -h, --help              Show this help
 
 Env toggles:
   BOOTSTRAP=1             Run gmake mem-up before smoke test
   MINDSDB_REQUIRED=auto/0/1  Whether smoke requires MindsDB readiness
+  TOOL_POLICY_PROMPT=1    Prompt for tool-call policy in interactive shells (default)
 USAGE
 }
 
@@ -70,6 +75,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --redact-secrets-storage)
       SECRETS_STORAGE_MODE_OVERRIDE="redact"
+      shift
+      ;;
+    --tool-policy)
+      [[ $# -ge 2 ]] || { echo "Missing value for --tool-policy" >&2; exit 2; }
+      TOOL_POLICY_OVERRIDE="$2"
+      shift 2
+      ;;
+    --no-tool-policy-prompt)
+      TOOL_POLICY_PROMPT="0"
       shift
       ;;
     --insecure-local)
@@ -180,6 +194,69 @@ print(f"cl_{secrets.token_hex(24)}")
 PY
 }
 
+is_interactive_setup() {
+  [[ -t 0 && -t 1 && "${CI:-}" != "true" && "${CI:-}" != "1" ]]
+}
+
+configure_tool_call_policy() {
+  local selected mode_choice allowlist denylist
+  selected="$(echo "${TOOL_POLICY_OVERRIDE:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+
+  if [[ -z "$selected" && "$TOOL_POLICY_PROMPT" != "0" ]] && is_interactive_setup; then
+    cat <<'PROMPT'
+>> Tool-call policy setup (gateway-go /tools/*)
+   1) liberal      (recommended): allow all tool calls, API key optional
+   2) require-key  (tighter): allow all tool calls, API key required
+   3) restricted   (strict): key required + read-only allowlist
+      allowlist defaults to: capability_map,ops_queue_status
+Press Enter for [1].
+PROMPT
+    read -r -p "Select policy [1-3]: " mode_choice
+    case "${mode_choice}" in
+      ""|"1") selected="liberal" ;;
+      "2") selected="require-key" ;;
+      "3") selected="restricted" ;;
+      *) selected="liberal" ;;
+    esac
+  fi
+
+  if [[ -z "$selected" ]]; then
+    selected="liberal"
+  fi
+
+  allowlist=""
+  denylist=""
+
+  case "$selected" in
+    liberal|allow-all|allow_all)
+      set_env_key "GO_TOOL_CALLS_ALLOW_ALL" "true"
+      set_env_key "GO_TOOL_CALLS_REQUIRE_API_KEY" "false"
+      set_env_key "GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY" "false"
+      ;;
+    require-key|require_key|keyed|auth)
+      set_env_key "GO_TOOL_CALLS_ALLOW_ALL" "true"
+      set_env_key "GO_TOOL_CALLS_REQUIRE_API_KEY" "true"
+      set_env_key "GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY" "true"
+      ;;
+    restricted|strict|allowlist)
+      allowlist="capability_map,ops_queue_status"
+      denylist="memory_write_batch,feedback_submit"
+      set_env_key "GO_TOOL_CALLS_ALLOW_ALL" "false"
+      set_env_key "GO_TOOL_CALLS_REQUIRE_API_KEY" "true"
+      set_env_key "GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY" "true"
+      ;;
+    *)
+      echo "Invalid --tool-policy value: ${selected}" >&2
+      echo "Expected one of: liberal, require-key, restricted" >&2
+      exit 2
+      ;;
+  esac
+
+  set_env_key "GO_TOOL_CALLS_ALLOWLIST" "$allowlist"
+  set_env_key "GO_TOOL_CALLS_DENYLIST" "$denylist"
+  echo ">> tool-call policy: ${selected}"
+}
+
 configure_security_posture() {
   local api_key secrets_mode
   secrets_mode="${SECRETS_STORAGE_MODE_OVERRIDE:-redact}"
@@ -234,6 +311,7 @@ else
 fi
 
 configure_security_posture
+configure_tool_call_policy
 
 configure_mindsdb_smoke_requirement
 
