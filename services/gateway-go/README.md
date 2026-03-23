@@ -6,6 +6,10 @@ Responsibilities:
 - Provide a stable Go front-door for retrieval + memory engine APIs.
 - Proxy `/v1/retrieval/*` and `/v1/memory/*` calls to the backend engine URL.
 - Keep Python as backend fallback while preserving a Go-first network path.
+- Serve Go-native storage governance ops endpoints:
+  - `GET /telemetry/storage`
+  - `POST /maintenance/storage/run`
+  - `POST /maintenance/telemetry/blob-gc`
 
 Env:
 - `PORT` (default `8091`)
