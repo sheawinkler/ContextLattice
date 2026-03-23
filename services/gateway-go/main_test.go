@@ -731,6 +731,126 @@ func TestToolAllowlistCanLimitCalls(t *testing.T) {
 	}
 }
 
+func TestToolRoleSplitWorkerLaneAllowsReadOnlyTools(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "orch-key")
+	t.Setenv("CONTEXTLATTICE_WORKER_API_KEY", "worker-key")
+	t.Setenv("GO_TOOL_CALLS_ROLE_SPLIT_ENABLED", "true")
+	t.Setenv("GO_TOOL_CALLS_WORKER_ALLOW_ALL", "false")
+	t.Setenv("GO_TOOL_CALLS_WORKER_ALLOWLIST", "capability_map,ops_queue_status")
+	t.Setenv("GO_TOOL_CALLS_WORKER_DENYLIST", "feedback_submit,memory_write_batch")
+
+	backendCalls := 0
+	var capturedPath string
+	var capturedRole string
+	var capturedAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		capturedPath = r.URL.Path
+		capturedRole = strings.TrimSpace(r.Header.Get("X-ContextLattice-Caller-Role"))
+		capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqAllowed, err := http.NewRequest(http.MethodPost, gateway.URL+"/tools/capability_map", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("allowed request build failed: %v", err)
+	}
+	reqAllowed.Header.Set("Content-Type", "application/json")
+	reqAllowed.Header.Set("X-Api-Key", "worker-key")
+	respAllowed, err := http.DefaultClient.Do(reqAllowed)
+	if err != nil {
+		t.Fatalf("allowed request failed: %v", err)
+	}
+	defer respAllowed.Body.Close()
+	if respAllowed.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respAllowed.Body)
+		t.Fatalf("expected 200 for worker capability_map, got %d body=%s", respAllowed.StatusCode, string(body))
+	}
+	if capturedPath != "/tools/capability_map" {
+		t.Fatalf("expected /tools/capability_map backend path, got %s", capturedPath)
+	}
+	if capturedRole != "worker" {
+		t.Fatalf("expected worker role header, got %q", capturedRole)
+	}
+	if capturedAPIKey != "orch-key" {
+		t.Fatalf("expected orchestrator key injected upstream, got %q", capturedAPIKey)
+	}
+
+	reqBlocked, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/tools/feedback_submit",
+		strings.NewReader(`{"project":"x","content":"y"}`),
+	)
+	if err != nil {
+		t.Fatalf("blocked request build failed: %v", err)
+	}
+	reqBlocked.Header.Set("Content-Type", "application/json")
+	reqBlocked.Header.Set("X-Api-Key", "worker-key")
+	respBlocked, err := http.DefaultClient.Do(reqBlocked)
+	if err != nil {
+		t.Fatalf("blocked request failed: %v", err)
+	}
+	defer respBlocked.Body.Close()
+	if respBlocked.StatusCode != http.StatusForbidden {
+		body, _ := io.ReadAll(respBlocked.Body)
+		t.Fatalf("expected 403 for worker feedback_submit, got %d body=%s", respBlocked.StatusCode, string(body))
+	}
+	if backendCalls != 1 {
+		t.Fatalf("expected only the allowlisted worker call to reach backend, got %d backend calls", backendCalls)
+	}
+}
+
+func TestToolRoleSplitRejectsMissingAPIKey(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "orch-key")
+	t.Setenv("CONTEXTLATTICE_WORKER_API_KEY", "worker-key")
+	t.Setenv("GO_TOOL_CALLS_ROLE_SPLIT_ENABLED", "true")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/tools/capability_map")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 401 without key in role-split mode, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected no backend calls on missing key, got %d", backendCalls)
+	}
+}
+
+func TestToolRoleSplitAutoSkipsWhenWorkerKeyMatchesOrchestrator(t *testing.T) {
+	t.Setenv("GO_TOOL_CALLS_ROLE_SPLIT_AUTO", "true")
+	t.Setenv("GO_TOOL_CALLS_ROLE_SPLIT_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_WORKER_API_KEY", "same-key")
+	policy := loadToolCallPolicy("same-key")
+	if policy.roleSplitEnabled {
+		t.Fatalf("expected role split disabled when worker key equals orchestrator key")
+	}
+}
+
 func TestProxyForwardsMemoryWriteAndStatusPaths(t *testing.T) {
 	var capturedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

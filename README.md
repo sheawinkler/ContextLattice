@@ -400,6 +400,18 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
   http://127.0.0.1:8075/v1/agents/preflight | jq
 ```
 
+### Unified Orchestrator Client + Tool Role Keys
+
+- Service traffic remains Go-first on `http://127.0.0.1:8075`; Python helpers are compatibility shims for operator scripts only.
+- Shared script client helper: `scripts/contextlattice_client.py` (legacy shim: `scripts/orchestrator_helper.py`).
+- Default tool policy is liberal/default-open (`GO_TOOL_CALLS_ALLOW_ALL=true`) to prevent startup friction.
+- Optional role split for tool lanes:
+  - `CONTEXTLATTICE_ORCHESTRATOR_API_KEY`: orchestrator/admin lane.
+  - `CONTEXTLATTICE_WORKER_API_KEY`: worker lane.
+  - `GO_TOOL_CALLS_ROLE_SPLIT_AUTO=true` enables role split automatically only when both keys are present and distinct.
+  - Worker defaults: allow `capability_map,ops_queue_status`; deny `memory_write_batch,feedback_submit`.
+  - Orchestrator defaults: allow all unless explicitly restricted.
+
 Agent-specific template blocks:
 - `docs/public_overview/templates/agents/codex.md`
 - `docs/public_overview/templates/agents/claude-code.md`

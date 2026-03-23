@@ -115,6 +115,17 @@ type toolCallPolicy struct {
 	enforceProvidedKey bool
 	allowlist          map[string]struct{}
 	denylist           map[string]struct{}
+	roleSplitEnabled   bool
+	roleSplitAuto      bool
+	workerKey          string
+	workerRole         toolRolePolicy
+	orchestratorRole   toolRolePolicy
+}
+
+type toolRolePolicy struct {
+	allowAll  bool
+	allowlist map[string]struct{}
+	denylist  map[string]struct{}
 }
 
 type adaptiveSourceStats struct {
@@ -336,13 +347,61 @@ func parseToolPathSet(raw string) map[string]struct{} {
 	return res
 }
 
-func loadToolCallPolicy() toolCallPolicy {
+func parseToolPathSetWithDefault(raw string, fallback string) map[string]struct{} {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(fallback)
+	}
+	return parseToolPathSet(trimmed)
+}
+
+func loadToolCallPolicy(orchestratorAPIKey string) toolCallPolicy {
+	workerKey := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_WORKER_API_KEY"))
+	if workerKey == "" {
+		workerKey = strings.TrimSpace(os.Getenv("MEMMCP_WORKER_API_KEY"))
+	}
+	orchestratorKey := strings.TrimSpace(orchestratorAPIKey)
+	roleSplitAuto := envBool("GO_TOOL_CALLS_ROLE_SPLIT_AUTO", true)
+	roleSplitEnabled := envBool("GO_TOOL_CALLS_ROLE_SPLIT_ENABLED", false)
+	if roleSplitAuto && orchestratorKey != "" && workerKey != "" && !secureTokenEqual(workerKey, orchestratorKey) {
+		roleSplitEnabled = true
+	}
+	if roleSplitAuto && orchestratorKey != "" && workerKey != "" && secureTokenEqual(workerKey, orchestratorKey) {
+		log.Printf("gateway-go: GO tool role split auto skipped (worker key equals orchestrator key)")
+	}
+	if roleSplitEnabled && workerKey == "" {
+		log.Printf("gateway-go: GO tool role split disabled (worker key missing)")
+		roleSplitEnabled = false
+	}
+	if roleSplitEnabled && secureTokenEqual(workerKey, orchestratorKey) {
+		log.Printf("gateway-go: GO tool role split disabled (worker key equals orchestrator key)")
+		roleSplitEnabled = false
+	}
 	return toolCallPolicy{
 		allowAll:           envBool("GO_TOOL_CALLS_ALLOW_ALL", true),
 		requireAPIKey:      envBool("GO_TOOL_CALLS_REQUIRE_API_KEY", false),
 		enforceProvidedKey: envBool("GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY", false),
 		allowlist:          parseToolPathSet(os.Getenv("GO_TOOL_CALLS_ALLOWLIST")),
 		denylist:           parseToolPathSet(os.Getenv("GO_TOOL_CALLS_DENYLIST")),
+		roleSplitEnabled:   roleSplitEnabled,
+		roleSplitAuto:      roleSplitAuto,
+		workerKey:          workerKey,
+		orchestratorRole: toolRolePolicy{
+			allowAll:  envBool("GO_TOOL_CALLS_ORCHESTRATOR_ALLOW_ALL", true),
+			allowlist: parseToolPathSet(os.Getenv("GO_TOOL_CALLS_ORCHESTRATOR_ALLOWLIST")),
+			denylist:  parseToolPathSet(os.Getenv("GO_TOOL_CALLS_ORCHESTRATOR_DENYLIST")),
+		},
+		workerRole: toolRolePolicy{
+			allowAll: envBool("GO_TOOL_CALLS_WORKER_ALLOW_ALL", false),
+			allowlist: parseToolPathSetWithDefault(
+				os.Getenv("GO_TOOL_CALLS_WORKER_ALLOWLIST"),
+				"capability_map,ops_queue_status",
+			),
+			denylist: parseToolPathSetWithDefault(
+				os.Getenv("GO_TOOL_CALLS_WORKER_DENYLIST"),
+				"memory_write_batch,feedback_submit",
+			),
+		},
 	}
 }
 
@@ -714,7 +773,7 @@ func newServer() *server {
 	}
 	timeout := envDurationSeconds("GATEWAY_PROXY_TIMEOUT_SECS", 95)
 	policy := loadRetrievalPolicy()
-	toolPolicy := loadToolCallPolicy()
+	toolPolicy := loadToolCallPolicy(orchestratorAPIKey)
 	writePolicy := loadWriteIngressPolicy()
 	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
 	if sinkErr != nil {
@@ -1002,32 +1061,109 @@ func parseBoolLoose(raw string) (bool, bool) {
 	}
 }
 
-func (s *server) toolCallAllowed(path string) bool {
+func secureTokenEqual(left string, right string) bool {
+	a := strings.TrimSpace(left)
+	b := strings.TrimSpace(right)
+	if a == "" || b == "" || len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func toolPathAllowed(path string, allowAll bool, allowlist map[string]struct{}, denylist map[string]struct{}) bool {
 	normalized := normalizeToolPath(path)
 	if normalized == "" {
 		return false
 	}
-	if _, blocked := s.toolCalls.denylist[normalized]; blocked {
+	if _, blocked := denylist[normalized]; blocked {
 		return false
 	}
-	if s.toolCalls.allowAll {
+	if allowAll {
 		return true
 	}
-	if len(s.toolCalls.allowlist) == 0 {
+	if len(allowlist) == 0 {
 		return false
 	}
-	_, allowed := s.toolCalls.allowlist[normalized]
+	_, allowed := allowlist[normalized]
 	return allowed
 }
 
+func (s *server) toolCallerRole(apiKey string) (string, bool) {
+	if secureTokenEqual(apiKey, s.orchestratorAPIKey) {
+		return "orchestrator", true
+	}
+	if secureTokenEqual(apiKey, s.toolCalls.workerKey) {
+		return "worker", true
+	}
+	return "", false
+}
+
+func (s *server) toolCallAllowedForRole(path string, role string) bool {
+	if role == "worker" {
+		return toolPathAllowed(
+			path,
+			s.toolCalls.workerRole.allowAll,
+			s.toolCalls.workerRole.allowlist,
+			s.toolCalls.workerRole.denylist,
+		)
+	}
+	return toolPathAllowed(
+		path,
+		s.toolCalls.orchestratorRole.allowAll,
+		s.toolCalls.orchestratorRole.allowlist,
+		s.toolCalls.orchestratorRole.denylist,
+	)
+}
+
+func (s *server) toolCallAllowed(path string) bool {
+	return toolPathAllowed(
+		path,
+		s.toolCalls.allowAll,
+		s.toolCalls.allowlist,
+		s.toolCalls.denylist,
+	)
+}
+
 func (s *server) prepareToolHeaders(w http.ResponseWriter, r *http.Request, toolPath string) (http.Header, bool) {
+	headers := r.Header.Clone()
+	expected := strings.TrimSpace(s.orchestratorAPIKey)
+	provided, explicit := requestAPIKey(r)
+
+	if s.toolCalls.roleSplitEnabled {
+		if !explicit {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"ok":    false,
+				"error": "API key required for role-scoped tool access",
+			})
+			return nil, false
+		}
+		role, recognized := s.toolCallerRole(provided)
+		if !recognized {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+			return nil, false
+		}
+		if !s.toolCallAllowedForRole(toolPath, role) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"ok":    false,
+				"error": "Tool call blocked by role policy",
+				"role":  role,
+				"tool":  normalizeToolPath(toolPath),
+			})
+			return nil, false
+		}
+		if expected != "" {
+			headers.Set("X-Api-Key", expected)
+		} else {
+			headers.Set("X-Api-Key", provided)
+		}
+		headers.Set("X-ContextLattice-Caller-Role", role)
+		return headers, true
+	}
+
 	if !s.toolCallAllowed(toolPath) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "Tool call blocked by policy", "tool": normalizeToolPath(toolPath)})
 		return nil, false
 	}
-	headers := r.Header.Clone()
-	expected := strings.TrimSpace(s.orchestratorAPIKey)
-	provided, explicit := requestAPIKey(r)
 
 	if s.toolCalls.requireAPIKey {
 		if !explicit {
@@ -1035,7 +1171,7 @@ func (s *server) prepareToolHeaders(w http.ResponseWriter, r *http.Request, tool
 			return nil, false
 		}
 		if expected != "" {
-			if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			if !secureTokenEqual(provided, expected) {
 				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
 				return nil, false
 			}
@@ -1048,7 +1184,7 @@ func (s *server) prepareToolHeaders(w http.ResponseWriter, r *http.Request, tool
 
 	if expected != "" {
 		if explicit && s.toolCalls.enforceProvidedKey {
-			if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			if !secureTokenEqual(provided, expected) {
 				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
 				return nil, false
 			}
@@ -1692,11 +1828,24 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"fanoutExcludeTargets":      s.writePolicy.fanoutExcludeTargets,
 		},
 		"toolCalls": map[string]any{
-			"allowAll":           s.toolCalls.allowAll,
-			"requireAPIKey":      s.toolCalls.requireAPIKey,
-			"enforceProvidedKey": s.toolCalls.enforceProvidedKey,
-			"allowlist":          mapKeysSorted(s.toolCalls.allowlist),
-			"denylist":           mapKeysSorted(s.toolCalls.denylist),
+			"allowAll":            s.toolCalls.allowAll,
+			"requireAPIKey":       s.toolCalls.requireAPIKey,
+			"enforceProvidedKey":  s.toolCalls.enforceProvidedKey,
+			"allowlist":           mapKeysSorted(s.toolCalls.allowlist),
+			"denylist":            mapKeysSorted(s.toolCalls.denylist),
+			"roleSplitEnabled":    s.toolCalls.roleSplitEnabled,
+			"roleSplitAuto":       s.toolCalls.roleSplitAuto,
+			"workerKeyConfigured": strings.TrimSpace(s.toolCalls.workerKey) != "",
+			"workerRole": map[string]any{
+				"allowAll":  s.toolCalls.workerRole.allowAll,
+				"allowlist": mapKeysSorted(s.toolCalls.workerRole.allowlist),
+				"denylist":  mapKeysSorted(s.toolCalls.workerRole.denylist),
+			},
+			"orchestratorRole": map[string]any{
+				"allowAll":  s.toolCalls.orchestratorRole.allowAll,
+				"allowlist": mapKeysSorted(s.toolCalls.orchestratorRole.allowlist),
+				"denylist":  mapKeysSorted(s.toolCalls.orchestratorRole.denylist),
+			},
 		},
 	})
 }

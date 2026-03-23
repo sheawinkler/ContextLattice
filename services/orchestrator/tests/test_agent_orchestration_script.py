@@ -53,10 +53,21 @@ class _DummyClient:
             return _DummyResponse({"service": {"ok": True}})
         return _DummyResponse({})
 
+    def close(self) -> None:
+        return
+
+
+class _DummyContextLatticeClient:
+    def __init__(self, dummy_client: _DummyClient):
+        self.client = dummy_client
+
+    def close(self) -> None:
+        return
+
 
 def test_search_with_lifecycle_sends_agent_id_and_topic(monkeypatch):
     dummy = _DummyClient()
-    monkeypatch.setattr(ao.httpx, "Client", lambda *args, **kwargs: dummy)
+    monkeypatch.setattr(ao, "ContextLatticeClient", lambda *args, **kwargs: _DummyContextLatticeClient(dummy))
     orch = ao.ContextLatticeOrchestrator("http://127.0.0.1:8075", agent_id="codex_gpt5_test")
     orch.search_with_lifecycle(
         query="latency baseline",
@@ -74,7 +85,7 @@ def test_search_with_lifecycle_sends_agent_id_and_topic(monkeypatch):
 
 def test_context_pack_uses_stable_agent_id(monkeypatch):
     dummy = _DummyClient()
-    monkeypatch.setattr(ao.httpx, "Client", lambda *args, **kwargs: dummy)
+    monkeypatch.setattr(ao, "ContextLatticeClient", lambda *args, **kwargs: _DummyContextLatticeClient(dummy))
     orch = ao.ContextLatticeOrchestrator("http://127.0.0.1:8075", agent_id="codex_gpt5_test")
     orch.context_pack(
         query="codex preflight connectivity and retrieval",
@@ -90,7 +101,7 @@ def test_context_pack_uses_stable_agent_id(monkeypatch):
 
 def test_agent_preflight_uses_profile_defaults(monkeypatch):
     dummy = _DummyClient()
-    monkeypatch.setattr(ao.httpx, "Client", lambda *args, **kwargs: dummy)
+    monkeypatch.setattr(ao, "ContextLatticeClient", lambda *args, **kwargs: _DummyContextLatticeClient(dummy))
     orch = ao.ContextLatticeOrchestrator("http://127.0.0.1:8075", agent_id="codex_gpt5_test")
     payload = orch.agent_preflight(agent="claude-code", project="contextlattice")
 

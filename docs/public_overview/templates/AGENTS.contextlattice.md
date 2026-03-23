@@ -36,6 +36,9 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 - When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
 - Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
 - If memory endpoints degrade, continue task execution but report degraded-memory mode.
+- Optional tool-call key split:
+  - `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` for orchestrator/admin tasks.
+  - `CONTEXTLATTICE_WORKER_API_KEY` for worker tasks when role-split is enabled.
 
 ## 4) Recall Quality Gates
 - For release-sensitive work, run saved recall evaluation:
