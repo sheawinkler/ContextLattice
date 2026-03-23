@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestStorageTelemetryRequiresAPIKey(t *testing.T) {
+func TestStorageTelemetryAllowsMissingAPIKeyWhenGatewayHasConfiguredKey(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
 	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
@@ -28,8 +28,8 @@ func TestStorageTelemetryRequiresAPIKey(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }
 

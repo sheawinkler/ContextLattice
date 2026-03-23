@@ -239,8 +239,7 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	if !s.writeAuthorized(r.Header) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
 	policy := loadStorageGovernancePolicy()
@@ -295,7 +294,7 @@ func (s *server) storageMaintenanceRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	if !s.writeAuthorized(r.Header) {
+	if !s.writeAuthorizedRequest(r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
 		return
 	}

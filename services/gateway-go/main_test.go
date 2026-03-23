@@ -553,6 +553,184 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	}
 }
 
+func TestToolsCapabilityMapGETIsServedViaPOSTBackend(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
+
+	var capturedPath string
+	var capturedMethod string
+	var capturedAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedMethod = r.Method
+		capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"enabled":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/tools/capability_map")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if capturedPath != "/tools/capability_map" {
+		t.Fatalf("expected /tools/capability_map backend path, got %s", capturedPath)
+	}
+	if capturedMethod != http.MethodPost {
+		t.Fatalf("expected backend POST, got %s", capturedMethod)
+	}
+	if capturedAPIKey != "good-key" {
+		t.Fatalf("expected configured key injected, got %q", capturedAPIKey)
+	}
+}
+
+func TestToolsOpsQueueStatusDefaultsToExcludeDeadletters(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	var capturedPath string
+	var capturedMethod string
+	var capturedQuery string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedMethod = r.Method
+		capturedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/tools/ops_queue_status", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if capturedPath != "/ops/queue/status" {
+		t.Fatalf("expected /ops/queue/status backend path, got %s", capturedPath)
+	}
+	if capturedMethod != http.MethodGet {
+		t.Fatalf("expected backend GET, got %s", capturedMethod)
+	}
+	if !strings.Contains(capturedQuery, "include_deadletters=false") {
+		t.Fatalf("expected include_deadletters=false query, got %q", capturedQuery)
+	}
+}
+
+func TestToolsDefaultOpenIgnoresExplicitInvalidKeyUnlessEnforced(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
+
+	backendCalls := 0
+	var capturedAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"enabled":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/tools/capability_map", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request build failed: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "stale-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 1 {
+		t.Fatalf("expected backend call, got %d", backendCalls)
+	}
+	if capturedAPIKey != "good-key" {
+		t.Fatalf("expected configured key to be used, got %q", capturedAPIKey)
+	}
+
+	t.Setenv("GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY", "true")
+	sStrict := newTestServer(t, backend.URL)
+	gatewayStrict := httptest.NewServer(buildMux(sStrict))
+	defer gatewayStrict.Close()
+
+	reqStrict, err := http.NewRequest(http.MethodPost, gatewayStrict.URL+"/tools/capability_map", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request build failed: %v", err)
+	}
+	reqStrict.Header.Set("Content-Type", "application/json")
+	reqStrict.Header.Set("X-Api-Key", "stale-key")
+	respStrict, err := http.DefaultClient.Do(reqStrict)
+	if err != nil {
+		t.Fatalf("strict request failed: %v", err)
+	}
+	defer respStrict.Body.Close()
+	if respStrict.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(respStrict.Body)
+		t.Fatalf("expected 401 in strict mode, got %d body=%s", respStrict.StatusCode, string(body))
+	}
+}
+
+func TestToolAllowlistCanLimitCalls(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_TOOL_CALLS_ALLOW_ALL", "false")
+	t.Setenv("GO_TOOL_CALLS_ALLOWLIST", "capability_map")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	respAllowed, err := http.Get(gateway.URL + "/tools/capability_map")
+	if err != nil {
+		t.Fatalf("allowed request failed: %v", err)
+	}
+	defer respAllowed.Body.Close()
+	if respAllowed.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respAllowed.Body)
+		t.Fatalf("expected 200 for allowlisted tool, got %d body=%s", respAllowed.StatusCode, string(body))
+	}
+
+	respBlocked, err := http.Post(gateway.URL+"/tools/feedback_submit", "application/json", strings.NewReader(`{"project":"x","content":"y"}`))
+	if err != nil {
+		t.Fatalf("blocked request failed: %v", err)
+	}
+	defer respBlocked.Body.Close()
+	if respBlocked.StatusCode != http.StatusForbidden {
+		body, _ := io.ReadAll(respBlocked.Body)
+		t.Fatalf("expected 403 for blocked tool, got %d body=%s", respBlocked.StatusCode, string(body))
+	}
+}
+
 func TestProxyForwardsMemoryWriteAndStatusPaths(t *testing.T) {
 	var capturedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
