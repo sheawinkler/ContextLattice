@@ -27,8 +27,8 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	if !s.writeAuthorized(r.Header) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
 		return
 	}
 	bodyBytes, err := readRequestBody(r)
@@ -65,7 +65,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 	}
 
 	forwardPayload := mergeForwardPayload(path, payload, item, s.writePolicy.fanoutExcludeTargets)
-	response, status, backendErr := s.callBackendJSON(r.Context(), r.Header, http.MethodPost, path, forwardPayload)
+	response, status, backendErr := s.callBackendJSON(r.Context(), incomingHeaders, http.MethodPost, path, forwardPayload)
 	if backendErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error":      "backend unavailable",
@@ -95,8 +95,8 @@ func (s *server) handleWriteBatchIngress(
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	if !s.writeAuthorized(r.Header) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
 		return
 	}
 	bodyBytes, err := readRequestBody(r)
@@ -181,7 +181,7 @@ func (s *server) handleWriteBatchIngress(
 					forwardPayload := buildForwardPayload(singlePath, item, s.writePolicy.fanoutExcludeTargets)
 					response, status, backendErr := s.callBackendJSON(
 						r.Context(),
-						r.Header,
+						incomingHeaders,
 						http.MethodPost,
 						singlePath,
 						forwardPayload,
@@ -390,7 +390,7 @@ func (s *server) telemetryBlobGC(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	if !s.writeAuthorized(r.Header) {
+	if !s.writeAuthorizedRequest(r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
 		return
 	}
@@ -408,19 +408,13 @@ func (s *server) telemetryBlobGC(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result})
 }
 
-func (s *server) writeAuthorized(headers http.Header) bool {
+func (s *server) writeAuthorizedRequest(r *http.Request) bool {
 	expected := strings.TrimSpace(s.orchestratorAPIKey)
 	if expected == "" {
 		return true
 	}
-	provided := strings.TrimSpace(headers.Get("X-Api-Key"))
-	if provided == "" {
-		auth := strings.TrimSpace(headers.Get("Authorization"))
-		if len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
-			provided = strings.TrimSpace(auth[7:])
-		}
-	}
-	if provided == "" {
+	provided, explicit := requestAPIKey(r)
+	if !explicit {
 		return false
 	}
 	if len(provided) != len(expected) {

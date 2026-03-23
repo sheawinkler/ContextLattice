@@ -109,6 +109,14 @@ type retrievalTelemetry struct {
 	stopped       chan struct{}
 }
 
+type toolCallPolicy struct {
+	allowAll           bool
+	requireAPIKey      bool
+	enforceProvidedKey bool
+	allowlist          map[string]struct{}
+	denylist           map[string]struct{}
+}
+
 type adaptiveSourceStats struct {
 	latencyMs []float64
 	requests  int
@@ -219,6 +227,7 @@ type server struct {
 	orchestratorAPIKey      string
 	client                  *http.Client
 	retrieval               retrievalPolicy
+	toolCalls               toolCallPolicy
 	telemetry               *retrievalTelemetry
 	writePolicy             writeIngressPolicy
 	telemetrySink           *telemetrySink
@@ -298,6 +307,43 @@ func csvListEnv(name string, fallback string) []string {
 		rows = append(rows, candidate)
 	}
 	return normalizeSourceList(rows)
+}
+
+func normalizeToolPath(raw string) string {
+	token := strings.TrimSpace(strings.ToLower(raw))
+	if token == "" {
+		return ""
+	}
+	token = strings.TrimPrefix(token, "/")
+	if strings.HasPrefix(token, "tools/") {
+		return "/" + token
+	}
+	if strings.Contains(token, "/") {
+		return "/" + token
+	}
+	return "/tools/" + token
+}
+
+func parseToolPathSet(raw string) map[string]struct{} {
+	res := map[string]struct{}{}
+	for _, part := range strings.Split(strings.TrimSpace(raw), ",") {
+		normalized := normalizeToolPath(part)
+		if normalized == "" {
+			continue
+		}
+		res[normalized] = struct{}{}
+	}
+	return res
+}
+
+func loadToolCallPolicy() toolCallPolicy {
+	return toolCallPolicy{
+		allowAll:           envBool("GO_TOOL_CALLS_ALLOW_ALL", true),
+		requireAPIKey:      envBool("GO_TOOL_CALLS_REQUIRE_API_KEY", false),
+		enforceProvidedKey: envBool("GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY", false),
+		allowlist:          parseToolPathSet(os.Getenv("GO_TOOL_CALLS_ALLOWLIST")),
+		denylist:           parseToolPathSet(os.Getenv("GO_TOOL_CALLS_DENYLIST")),
+	}
 }
 
 func intMapEnv(name string, fallback map[string]int) map[string]int {
@@ -668,6 +714,7 @@ func newServer() *server {
 	}
 	timeout := envDurationSeconds("GATEWAY_PROXY_TIMEOUT_SECS", 95)
 	policy := loadRetrievalPolicy()
+	toolPolicy := loadToolCallPolicy()
 	writePolicy := loadWriteIngressPolicy()
 	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
 	if sinkErr != nil {
@@ -680,6 +727,7 @@ func newServer() *server {
 		orchestratorAPIKey:      orchestratorAPIKey,
 		client:                  &http.Client{Timeout: timeout},
 		retrieval:               policy,
+		toolCalls:               toolPolicy,
 		telemetry:               t,
 		writePolicy:             writePolicy,
 		telemetrySink:           telemetrySinkInstance,
@@ -875,12 +923,24 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	if !ok {
 		return
 	}
-	targetURL := s.backendURL + r.URL.Path
-	if query := r.URL.RawQuery; query != "" {
+	s.proxyWithBodyToTarget(w, r, incomingHeaders, r.Method, r.URL.Path, r.URL.RawQuery, bodyBytes)
+}
+
+func (s *server) proxyWithBodyToTarget(
+	w http.ResponseWriter,
+	r *http.Request,
+	incomingHeaders http.Header,
+	method string,
+	targetPath string,
+	targetQuery string,
+	bodyBytes []byte,
+) {
+	targetURL := s.backendURL + targetPath
+	if query := strings.TrimSpace(targetQuery); query != "" {
 		targetURL += "?" + query
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(r.Context(), method, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to build proxy request"})
 		return
@@ -891,7 +951,7 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	}
 	req.Header.Set("X-ContextLattice-Gateway", "gateway-go")
 
-	if isStreamingProxyPath(r.URL.Path) && strings.EqualFold(r.Method, http.MethodGet) {
+	if isStreamingProxyPath(targetPath) && strings.EqualFold(method, http.MethodGet) {
 		s.proxyStream(w, req)
 		return
 	}
@@ -925,6 +985,176 @@ func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
+}
+
+func parseBoolLoose(raw string) (bool, bool) {
+	token := strings.TrimSpace(strings.ToLower(raw))
+	if token == "" {
+		return false, false
+	}
+	switch token {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func (s *server) toolCallAllowed(path string) bool {
+	normalized := normalizeToolPath(path)
+	if normalized == "" {
+		return false
+	}
+	if _, blocked := s.toolCalls.denylist[normalized]; blocked {
+		return false
+	}
+	if s.toolCalls.allowAll {
+		return true
+	}
+	if len(s.toolCalls.allowlist) == 0 {
+		return false
+	}
+	_, allowed := s.toolCalls.allowlist[normalized]
+	return allowed
+}
+
+func (s *server) prepareToolHeaders(w http.ResponseWriter, r *http.Request, toolPath string) (http.Header, bool) {
+	if !s.toolCallAllowed(toolPath) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "Tool call blocked by policy", "tool": normalizeToolPath(toolPath)})
+		return nil, false
+	}
+	headers := r.Header.Clone()
+	expected := strings.TrimSpace(s.orchestratorAPIKey)
+	provided, explicit := requestAPIKey(r)
+
+	if s.toolCalls.requireAPIKey {
+		if !explicit {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "API key required"})
+			return nil, false
+		}
+		if expected != "" {
+			if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+				return nil, false
+			}
+			headers.Set("X-Api-Key", expected)
+			return headers, true
+		}
+		headers.Set("X-Api-Key", provided)
+		return headers, true
+	}
+
+	if expected != "" {
+		if explicit && s.toolCalls.enforceProvidedKey {
+			if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+				return nil, false
+			}
+		}
+		headers.Set("X-Api-Key", expected)
+		return headers, true
+	}
+
+	if explicit && strings.TrimSpace(headers.Get("X-Api-Key")) == "" {
+		headers.Set("X-Api-Key", provided)
+	}
+	return headers, true
+}
+
+func (s *server) toolsFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+		return
+	}
+	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/feedback_submit")
+	if !ok {
+		return
+	}
+	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodPost, "/tools/feedback_submit", r.URL.RawQuery, bodyBytes)
+}
+
+func (s *server) toolsMemoryWriteBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+		return
+	}
+	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/memory_write_batch")
+	if !ok {
+		return
+	}
+	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodPost, "/tools/memory_write_batch", r.URL.RawQuery, bodyBytes)
+}
+
+func (s *server) toolsCapabilityMap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/capability_map")
+	if !ok {
+		return
+	}
+	bodyBytes := []byte("{}")
+	if r.Method == http.MethodPost {
+		raw, err := readRequestBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+			return
+		}
+		if strings.TrimSpace(string(raw)) != "" {
+			bodyBytes = raw
+		}
+	}
+	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodPost, "/tools/capability_map", "", bodyBytes)
+}
+
+func (s *server) toolsOpsQueueStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/ops_queue_status")
+	if !ok {
+		return
+	}
+	query := r.URL.Query()
+	includeDeadletters, hasInclude := parseBoolLoose(query.Get("include_deadletters"))
+	if !hasInclude && r.Method == http.MethodPost {
+		raw, err := readRequestBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+			return
+		}
+		if strings.TrimSpace(string(raw)) != "" {
+			payload := map[string]any{}
+			if err := json.Unmarshal(raw, &payload); err == nil {
+				if value, present := payload["include_deadletters"]; present {
+					includeDeadletters = anyToBool(value)
+					hasInclude = true
+				}
+			}
+		}
+	}
+	if !hasInclude {
+		query.Set("include_deadletters", "false")
+	} else if includeDeadletters {
+		query.Set("include_deadletters", "true")
+	} else {
+		query.Set("include_deadletters", "false")
+	}
+	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodGet, "/ops/queue/status", query.Encode(), nil)
 }
 
 type agentPreflightRequest struct {
@@ -1461,7 +1691,23 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"batchConcurrency":          s.writePolicy.batchConcurrency,
 			"fanoutExcludeTargets":      s.writePolicy.fanoutExcludeTargets,
 		},
+		"toolCalls": map[string]any{
+			"allowAll":           s.toolCalls.allowAll,
+			"requireAPIKey":      s.toolCalls.requireAPIKey,
+			"enforceProvidedKey": s.toolCalls.enforceProvidedKey,
+			"allowlist":          mapKeysSorted(s.toolCalls.allowlist),
+			"denylist":           mapKeysSorted(s.toolCalls.denylist),
+		},
 	})
+}
+
+func mapKeysSorted(rows map[string]struct{}) []string {
+	out := make([]string, 0, len(rows))
+	for key := range rows {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func parseJSONMap(body []byte) (map[string]any, error) {
@@ -3610,10 +3856,10 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/maintenance/", s.proxy)
 	mux.HandleFunc("/ops/queue/status", s.proxy)
 	mux.HandleFunc("/ops/capabilities", s.proxy)
-	mux.HandleFunc("/tools/capability_map", s.proxy)
-	mux.HandleFunc("/tools/ops_queue_status", s.proxy)
-	mux.HandleFunc("/tools/memory_write_batch", s.proxy)
-	mux.HandleFunc("/tools/feedback_submit", s.proxy)
+	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
+	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
+	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)
+	mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)
 	mux.HandleFunc("/v1/memory/put", s.memoryPut)
 	mux.HandleFunc("/v1/memory/update", s.proxy)
 	mux.HandleFunc("/v1/memory/get", s.proxy)
