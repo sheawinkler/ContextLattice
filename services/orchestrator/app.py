@@ -9868,7 +9868,13 @@ async def _fetch_signals_from_memmcp(limit: int) -> list[Dict[str, Any]]:
     entries: list[Dict[str, Any]] = []
     for file_name in files:
         try:
-            content = await read_project_file(SIGNAL_PROJECT, file_name)
+            content = await read_project_file(
+                SIGNAL_PROJECT,
+                file_name,
+                allow_missing=True,
+                bootstrap_missing=False,
+                log_missing=False,
+            )
             if not content:
                 continue
             data = json.loads(content)
@@ -18964,6 +18970,7 @@ async def read_project_file(
     *,
     allow_missing: bool = False,
     bootstrap_missing: bool = False,
+    log_missing: bool = True,
 ) -> str:
     global memory_read_cache_stale_fallbacks
     try:
@@ -19008,7 +19015,8 @@ async def read_project_file(
                     await _memory_read_cache_set(project, file_name, fallback)
                     return fallback
             if allow_missing:
-                logger.warning("Missing memory file %s/%s", project, file_name)
+                if log_missing:
+                    logger.warning("Missing memory file %s/%s", project, file_name)
                 return ""
         raise
     if content:
