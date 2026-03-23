@@ -14,7 +14,7 @@
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-HTTP%20Gateway-6b7280?style=for-the-badge" alt="MCP HTTP Gateway"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/Deploy-Docker%20Compose-4b5563?style=for-the-badge" alt="Docker Compose"></a>
   <a href="#performance-profile"><img src="https://img.shields.io/badge/Write%20Rate-100%2B%20msg%2Fs-374151?style=for-the-badge" alt="Write rate"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSL%201.1-1f2937?style=for-the-badge" alt="BSL 1.1"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-1f2937?style=for-the-badge" alt="Apache 2.0"></a>
 </p>
 
 <p align="center">
@@ -761,7 +761,7 @@ Public landing collateral publishes from `sheawinkler/ContextLattice` branch `gh
 
 ## License
 
-Business Source License 1.1 with change-date transition to Apache-2.0.
-Additional Use Grant allows personal/non-production and internal production use
-up to 2M JSON-RPC requests/month/organization; usage outside grant requires a
-separate commercial license. See `LICENSE` and `docs/legal/README.md`.
+Apache License 2.0. See `LICENSE`.
+
+Commercial terms for hosted offerings and private enterprise agreements are
+documented in `docs/legal/README.md`.

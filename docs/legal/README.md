@@ -8,7 +8,7 @@ before broad commercial rollout.
 
 ## Included documents
 
-- `COMMERCIAL_LICENSE.md` - commercial use terms and BSL interaction.
+- `COMMERCIAL_LICENSE.md` - commercial terms for hosted/private offerings.
 - `TERMS_OF_SERVICE.md` - hosted service terms.
 - `PRIVACY_POLICY.md` - data handling and user rights.
 - `DPA.md` - data processing addendum baseline.
@@ -17,9 +17,9 @@ before broad commercial rollout.
 
 ## License model summary
 
-- Source license: Business Source License 1.1 (`LICENSE` in repo root).
-- Additional use grant: local/internal usage as defined in `LICENSE`.
-- Commercial license required for usage outside grant terms.
+- Source license: Apache License 2.0 (`LICENSE` in repo root).
+- Hosted/private paid offerings may be provided under separate commercial
+  agreements documented in `COMMERCIAL_LICENSE.md`.
 
 ## Review cadence
 

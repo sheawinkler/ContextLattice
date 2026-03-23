@@ -6,11 +6,10 @@ Contact: sheawinkler@gmail.com
 
 ## 1) Relationship to repository license
 
-The repository is distributed under Business Source License 1.1 with an
-additional use grant in `LICENSE`.
+The public repository is distributed under Apache License 2.0 (`LICENSE`).
 
-Any use outside that grant requires a separate commercial license agreement.
-This document defines the baseline terms for that agreement.
+This document defines optional commercial terms for hosted/private offerings,
+support commitments, and enterprise agreements.
 
 ## 2) Commercial grant
 
