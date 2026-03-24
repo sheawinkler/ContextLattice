@@ -11,6 +11,8 @@ Use these in the Glama Dockerfile admin form:
 - Command: use Dockerfile default command
 - Port: `8075`
 - Health endpoint: `/health`
+- Build steps: `[]` (leave empty when Dockerfile path is set)
+- CMD arguments: `[]` (use Dockerfile default command)
 
 These are deploy settings, not environment variables.
 
@@ -18,18 +20,23 @@ These are deploy settings, not environment variables.
 
 Use the schema box for runtime variables only.
 
-Recommended required variable:
+Use `CONTEXTLATTICE_*` names in Glama.
 
-- `MEMMCP_ORCHESTRATOR_API_KEY` (or `CONTEXTLATTICE_ORCHESTRATOR_API_KEY`)
+- `CONTEXTLATTICE_ENV`: `development` (default) or `production`
+- `CONTEXTLATTICE_ORCHESTRATOR_API_KEY`: required only when `CONTEXTLATTICE_ENV=production`
+- `SECRETS_STORAGE_MODE`: `redact` (default), `block`, or `allow`
+- `MESSAGING_OPENCLAW_STRICT_SECURITY`: optional boolean string
+- `IRONCLAW_INTEGRATION_ENABLED`: optional boolean string
+- `IRONCLAW_DEFAULT_PROJECT`: optional string
 
-Optional variables:
+Legacy `MEMMCP_*` names are no longer the canonical public configuration.
 
-- `MEMMCP_ENV` (`development` or `production`)
-- `HOST_BIND_ADDRESS`
-- `SECRETS_STORAGE_MODE`
+## Python Version Compatibility
 
-If the server runs in development mode, an API key placeholder can be optional.
-If production mode is used, API key should be required.
+Release `v3.2.9` updates orchestrator dependency pins for CPython 3.14 build images:
+
+- `pydantic==2.12.5`
+- `orjson==3.11.7`
 
 ## Timing for score updates
 
