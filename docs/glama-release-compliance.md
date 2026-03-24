@@ -39,6 +39,8 @@ so `mcp-proxy` can complete initialize/tools/list/tool-call checks.
 - uses sqlite fanout outbox
 - disables signal/override polling loops that rely on external memory services
 - keeps retrieval on `topic_rollups` as the default fast lane
+- enables sqlite topic-rollup acceleration with WAL + FTS5 BM25 scoring
+- auto-detects optional `sqlite-vec` module and keeps retrieval fail-open when unavailable
 
 ## Arguments JSON schema
 
@@ -52,6 +54,9 @@ Use `CONTEXTLATTICE_*` names in Glama.
 - `MESSAGING_OPENCLAW_STRICT_SECURITY`: optional boolean string
 - `IRONCLAW_INTEGRATION_ENABLED`: optional boolean string
 - `IRONCLAW_DEFAULT_PROJECT`: optional string
+- `TOPIC_ROLLUP_SQLITE_ENABLED`: defaults `true` for Glama-lite
+- `TOPIC_ROLLUP_SQLITE_FTS_ENABLED`: defaults `true` (FTS5/BM25 lane)
+- `TOPIC_ROLLUP_SQLITE_VEC_ENABLED`: defaults `true` (auto capability-detect only)
 
 Legacy `MEMMCP_*` names are no longer the canonical public configuration.
 
