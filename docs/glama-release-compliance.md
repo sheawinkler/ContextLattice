@@ -16,6 +16,21 @@ Use these in the Glama Dockerfile admin form:
 
 These are deploy settings, not environment variables.
 
+## Generated Dockerfile Mode (UI fallback)
+
+If Glama forces generated Dockerfile mode with a fixed `mcp-proxy --` prefix, use:
+
+- Build steps:
+  - `python -m venv /opt/venv`
+  - `/opt/venv/bin/pip install --upgrade pip setuptools wheel`
+  - `/opt/venv/bin/pip install --no-cache-dir -r services/orchestrator/requirements.txt`
+- CMD arguments:
+  - `/opt/venv/bin/python`
+  - `services/orchestrator/mcp_stdio_server.py`
+
+`mcp_stdio_server.py` starts the local orchestrator HTTP runtime and exposes MCP over stdio
+so `mcp-proxy` can complete initialize/tools/list/tool-call checks.
+
 ## Standalone Service Profile
 
 `Dockerfile.orchestrator` now defaults to a standalone-safe profile for Glama:
