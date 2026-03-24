@@ -358,7 +358,7 @@ func parseToolPathSetWithDefault(raw string, fallback string) map[string]struct{
 func loadToolCallPolicy(orchestratorAPIKey string) toolCallPolicy {
 	workerKey := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_WORKER_API_KEY"))
 	if workerKey == "" {
-		workerKey = strings.TrimSpace(os.Getenv("MEMMCP_WORKER_API_KEY"))
+		workerKey = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_WORKER_API_KEY"))
 	}
 	orchestratorKey := strings.TrimSpace(orchestratorAPIKey)
 	roleSplitAuto := envBool("GO_TOOL_CALLS_ROLE_SPLIT_AUTO", true)
@@ -769,7 +769,7 @@ func newServer() *server {
 	}
 	orchestratorAPIKey := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY"))
 	if orchestratorAPIKey == "" {
-		orchestratorAPIKey = strings.TrimSpace(os.Getenv("MEMMCP_ORCHESTRATOR_API_KEY"))
+		orchestratorAPIKey = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY"))
 	}
 	timeout := envDurationSeconds("GATEWAY_PROXY_TIMEOUT_SECS", 95)
 	policy := loadRetrievalPolicy()
@@ -1502,7 +1502,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		reqBody.AgentID = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_AGENT_ID"))
 	}
 	if strings.TrimSpace(reqBody.AgentID) == "" {
-		reqBody.AgentID = strings.TrimSpace(os.Getenv("MEMMCP_AGENT_ID"))
+		reqBody.AgentID = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_AGENT_ID"))
 	}
 	if strings.TrimSpace(reqBody.AgentID) == "" {
 		reqBody.AgentID = "codex_gpt5"

@@ -220,9 +220,9 @@ Deep async durability + telemetry store routing:
 ```bash
 ORCH_RECALL_DEEP_ASYNC_PERSIST_ENABLED=true
 ORCH_RECALL_DEEP_ASYNC_STORE_BACKEND=mongo
-ORCH_RECALL_DEEP_ASYNC_MONGO_DB=memmcp_raw
+ORCH_RECALL_DEEP_ASYNC_MONGO_DB=contextlattice_raw
 ORCH_RECALL_DEEP_ASYNC_MONGO_COLLECTION=recall_deep_async_jobs
-ORCH_TELEMETRY_DB=memmcp_raw
+ORCH_TELEMETRY_DB=contextlattice_raw
 ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
 ORCH_TELEMETRY_PERSIST_ENABLED=true
 ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true
@@ -362,11 +362,11 @@ Required behavior:
    Read responses expose `retrieval_lifecycle` for explicit status (`queued|running|partial|succeeded|failed`) and source availability.
    If a deep read returns partials, show those immediately and poll once after 5-15s for warmed slow-source completion.
 7) Set endpoint vars explicitly at session start:
-   - `export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075`
+   - `export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075`
    - `export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075`
 8) Set a stable agent identity for profile defaults:
    - `export CONTEXTLATTICE_AGENT_ID=codex_gpt5`
-   - `export MEMMCP_AGENT_ID=codex_gpt5`
+   - `export CONTEXTLATTICE_AGENT_ID=codex_gpt5`
 ```
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`

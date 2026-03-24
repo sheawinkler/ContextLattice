@@ -145,7 +145,7 @@ def main() -> None:
         "--cold-dir",
         default=os.getenv(
             "CONTEXTLATTICE_COLD_ROOT",
-            os.getenv("MEMMCP_COLD_ROOT", "./.data/cold/telemetry"),
+            os.getenv("CONTEXTLATTICE_COLD_ROOT", "./.data/cold/telemetry"),
         ),
     )
     parser.add_argument(

@@ -44,7 +44,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
 
 DEFAULT_ORCH_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
-    os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+    os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
 )
 DEFAULT_AGENT = os.getenv("TASK_AGENT", "trae")
 DEFAULT_PROVIDER = os.getenv("TASK_MODEL_PROVIDER", os.getenv("ORCH_INFER_PROVIDER", "auto"))
@@ -379,7 +379,7 @@ def _handle_task(
             "TASK_BASE_URL": route_base_url,
             "TASK_API_KEY": str(api_key or ""),
             "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
-            "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
+            "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
             "TASK_CONTEXT_BUNDLE": _serialize_env_json(context_bundle),
             "TASK_CONTEXT_PROMPT": context_prompt,
             "TASK_TOOL_CONTEXT_SLICES": _serialize_env_json(

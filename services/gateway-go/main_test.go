@@ -19,7 +19,7 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
-		t.Setenv("MEMMCP_ORCHESTRATOR_API_KEY", "")
+		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 	}
 	return newServer()
 }

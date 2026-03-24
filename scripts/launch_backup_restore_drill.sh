@@ -12,10 +12,10 @@ fi
 STAMP="$(date +%Y%m%d%H%M%S)"
 DRILL_DIR="${DRILL_DIR:-$ROOT_DIR/tmp/launch_drill/$STAMP}"
 MONGO_SERVICE="${MONGO_SERVICE:-mongo}"
-MONGO_DB="${MONGO_DB:-${MONGO_RAW_DB:-memmcp_raw}}"
+MONGO_DB="${MONGO_DB:-${MONGO_RAW_DB:-contextlattice_raw}}"
 MONGO_RESTORE_DB="${MONGO_RESTORE_DB:-${MONGO_DB}_restore_drill_${STAMP}}"
 QDRANT_URL="${QDRANT_URL_HOST:-http://127.0.0.1:6333}"
-QDRANT_COLLECTION="${QDRANT_COLLECTION:-memmcp_notes}"
+QDRANT_COLLECTION="${QDRANT_COLLECTION:-contextlattice_notes}"
 
 mkdir -p "$DRILL_DIR"
 

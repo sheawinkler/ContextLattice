@@ -6,7 +6,7 @@ from fastembed import TextEmbedding
 
 # Config
 QDRANT_URL   = os.getenv("QDRANT_URL", "http://qdrant:6333")
-COLLECTION   = os.getenv("COLLECTION_NAME", "memmcp_notes")
+COLLECTION   = os.getenv("COLLECTION_NAME", "contextlattice_notes")
 ADV_PORT     = int(os.getenv("QDRANT_ADV_PORT", "8022"))
 EMB_MODEL    = os.getenv("EMBEDDING_MODEL_QDRANT", "sentence-transformers/all-MiniLM-L6-v2")
 EF_DEFAULT   = int(os.getenv("QDRANT_RUNTIME_EF_DEFAULT", "128"))

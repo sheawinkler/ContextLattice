@@ -125,7 +125,7 @@ except Exception as exc:  # pragma: no cover - optional adapter path
 
 _APP_ENV_PREFIXES = (
     "CONTEXTLATTICE_",
-    "MEMMCP_",
+    "CONTEXTLATTICE_",
     "ORCH_",
     "MONGO_",
     "MONGODB_",
@@ -196,45 +196,45 @@ def _env_alias(primary: str, legacy: str, default: str = "") -> str:
     return default
 
 
-MEMMCP_HTTP_URL = _env_alias(
+CONTEXTLATTICE_HTTP_URL = _env_alias(
     "CONTEXTLATTICE_HTTP_URL",
-    "MEMMCP_HTTP_URL",
+    "CONTEXTLATTICE_HTTP_URL",
     "http://memorymcp-http:59081/mcp",
 )
-MEMMCP_HTTP_TIMEOUT_SECS = float(
-    _env_alias("CONTEXTLATTICE_HTTP_TIMEOUT_SECS", "MEMMCP_HTTP_TIMEOUT_SECS", "90")
+CONTEXTLATTICE_HTTP_TIMEOUT_SECS = float(
+    _env_alias("CONTEXTLATTICE_HTTP_TIMEOUT_SECS", "CONTEXTLATTICE_HTTP_TIMEOUT_SECS", "90")
 )
-MEMMCP_HTTP_RETRIES = int(_env_alias("CONTEXTLATTICE_HTTP_RETRIES", "MEMMCP_HTTP_RETRIES", "1"))
-MEMMCP_HTTP_RETRY_DELAY_SECS = float(
-    _env_alias("CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS", "MEMMCP_HTTP_RETRY_DELAY_SECS", "0.5")
+CONTEXTLATTICE_HTTP_RETRIES = int(_env_alias("CONTEXTLATTICE_HTTP_RETRIES", "CONTEXTLATTICE_HTTP_RETRIES", "1"))
+CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS = float(
+    _env_alias("CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS", "CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS", "0.5")
 )
-MEMMCP_LIST_TIMEOUT_SECS = float(
-    _env_alias("CONTEXTLATTICE_LIST_TIMEOUT_SECS", "MEMMCP_LIST_TIMEOUT_SECS", "4")
+CONTEXTLATTICE_LIST_TIMEOUT_SECS = float(
+    _env_alias("CONTEXTLATTICE_LIST_TIMEOUT_SECS", "CONTEXTLATTICE_LIST_TIMEOUT_SECS", "4")
 )
-MEMMCP_READ_TIMEOUT_SECS = float(
-    _env_alias("CONTEXTLATTICE_READ_TIMEOUT_SECS", "MEMMCP_READ_TIMEOUT_SECS", "75")
+CONTEXTLATTICE_READ_TIMEOUT_SECS = float(
+    _env_alias("CONTEXTLATTICE_READ_TIMEOUT_SECS", "CONTEXTLATTICE_READ_TIMEOUT_SECS", "75")
 )
-MEMMCP_READ_FAIL_OPEN_ENABLED = os.getenv(
+CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED = os.getenv(
     "CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED",
     "true",
 ).lower() in ("1", "true", "yes", "on")
-MEMMCP_READ_CACHE_MAX_KEYS = max(
+CONTEXTLATTICE_READ_CACHE_MAX_KEYS = max(
     100,
     int(os.getenv("CONTEXTLATTICE_READ_CACHE_MAX_KEYS", "20000")),
 )
-MEMMCP_READ_CACHE_FRESH_TTL_SECS = max(
+CONTEXTLATTICE_READ_CACHE_FRESH_TTL_SECS = max(
     0.0,
     float(os.getenv("CONTEXTLATTICE_READ_CACHE_FRESH_TTL_SECS", "900")),
 )
-MEMMCP_READ_CACHE_STALE_MAX_SECS = max(
-    MEMMCP_READ_CACHE_FRESH_TTL_SECS,
+CONTEXTLATTICE_READ_CACHE_STALE_MAX_SECS = max(
+    CONTEXTLATTICE_READ_CACHE_FRESH_TTL_SECS,
     float(os.getenv("CONTEXTLATTICE_READ_CACHE_STALE_MAX_SECS", "86400")),
 )
-MEMMCP_READ_CACHE_REFRESH_TIMEOUT_SECS = max(
+CONTEXTLATTICE_READ_CACHE_REFRESH_TIMEOUT_SECS = max(
     1.0,
-    float(os.getenv("CONTEXTLATTICE_READ_CACHE_REFRESH_TIMEOUT_SECS", str(MEMMCP_READ_TIMEOUT_SECS))),
+    float(os.getenv("CONTEXTLATTICE_READ_CACHE_REFRESH_TIMEOUT_SECS", str(CONTEXTLATTICE_READ_TIMEOUT_SECS))),
 )
-MEMMCP_READ_CACHE_REFRESH_MAX_INFLIGHT = max(
+CONTEXTLATTICE_READ_CACHE_REFRESH_MAX_INFLIGHT = max(
     1,
     int(os.getenv("CONTEXTLATTICE_READ_CACHE_REFRESH_MAX_INFLIGHT", "8")),
 )
@@ -324,7 +324,7 @@ RUST_RETRIEVAL_BACKEND_STRICT = os.getenv(
     "false",
 ).lower() in ("1", "true", "yes", "on")
 QDRANT_URL = QDRANT_CLUSTER_ENDPOINT if QDRANT_USE_CLOUD and QDRANT_CLUSTER_ENDPOINT else QDRANT_LOCAL_URL
-QDRANT_COLLECTION = os.getenv("ORCH_QDRANT_COLLECTION", "memmcp_notes")
+QDRANT_COLLECTION = os.getenv("ORCH_QDRANT_COLLECTION", "contextlattice_notes")
 MINDSDB_URL = os.getenv("MINDSDB_URL", "http://mindsdb:47334")
 MINDSDB_USER = os.getenv("MINDSDB_USER", "mindsdb")
 MINDSDB_PASSWORD = os.getenv("MINDSDB_PASSWORD", "")
@@ -374,7 +374,7 @@ TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS = {
     for target in _TRADING_TELEMETRY_EXTERNAL_TARGETS_RAW.split(",")
     if target.strip()
 }
-ORCH_API_KEY = _env_alias("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "MEMMCP_ORCHESTRATOR_API_KEY", "").strip()
+ORCH_API_KEY = _env_alias("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
 LETTA_URL = os.getenv("LETTA_URL", "http://letta:8283")
 LETTA_API_KEY = os.getenv("LETTA_API_KEY", "")
 LETTA_REQUIRE_API_KEY = os.getenv("LETTA_REQUIRE_API_KEY", "false").lower() in ("1", "true", "yes", "on")
@@ -396,7 +396,7 @@ LETTA_ARCHIVAL_INCLUDE_CONTENT = os.getenv("LETTA_ARCHIVAL_INCLUDE_CONTENT", "fa
     "on",
 )
 MONGO_RAW_URI = os.getenv("MONGODB_URI", "mongodb://mongo:27017")
-MONGO_RAW_DB = os.getenv("MONGO_RAW_DB", "memmcp_raw")
+MONGO_RAW_DB = os.getenv("MONGO_RAW_DB", "contextlattice_raw")
 MONGO_RAW_COLLECTION = os.getenv("MONGO_RAW_COLLECTION", "memory_write_events")
 TELEMETRY_DB = os.getenv("ORCH_TELEMETRY_DB", MONGO_RAW_DB).strip()
 TELEMETRY_COLLECTION = os.getenv("ORCH_TELEMETRY_COLLECTION", "retrieval_telemetry").strip()
@@ -1304,7 +1304,7 @@ RECALL_EVAL_REFRESH_SOURCES_ENV = os.getenv(
 ).strip()
 RECALL_EVAL_DEFAULT_PROJECT = os.getenv(
     "ORCH_RECALL_EVAL_DEFAULT_PROJECT",
-    os.getenv("MEMMCP_PROJECT", ""),
+    os.getenv("CONTEXTLATTICE_PROJECT", ""),
 ).strip()
 RECALL_EVAL_TRANSIENT_RETRY_ENABLED = os.getenv(
     "ORCH_RECALL_EVAL_TRANSIENT_RETRY_ENABLED",
@@ -2031,15 +2031,15 @@ TASK_ALLOWED_ACTIONS_ENV = os.getenv(
     "memory_write,memory_search,messaging_command,http_callback,provider_chat",
 )
 SIDECAR_HEALTH_HISTORY_LIMIT = int(os.getenv("SIDECAR_HEALTH_HISTORY_LIMIT", "200"))
-MEMMCP_ENV = _env_alias("CONTEXTLATTICE_ENV", "MEMMCP_ENV", "development").strip().lower()
+CONTEXTLATTICE_ENV = _env_alias("CONTEXTLATTICE_ENV", "CONTEXTLATTICE_ENV", "development").strip().lower()
 ORCH_SECURITY_STRICT = os.getenv("ORCH_SECURITY_STRICT", "true").lower() in ("1", "true", "yes", "on")
 ORCH_PUBLIC_STATUS = os.getenv(
     "ORCH_PUBLIC_STATUS",
-    "false" if MEMMCP_ENV in ("production", "prod") else "true",
+    "false" if CONTEXTLATTICE_ENV in ("production", "prod") else "true",
 ).lower() in ("1", "true", "yes", "on")
 ORCH_PUBLIC_DOCS = os.getenv(
     "ORCH_PUBLIC_DOCS",
-    "false" if MEMMCP_ENV in ("production", "prod") else "true",
+    "false" if CONTEXTLATTICE_ENV in ("production", "prod") else "true",
 ).lower() in ("1", "true", "yes", "on")
 ORCH_HTTP_REQUEST_LOG_SUCCESS_SAMPLE_RATE = float(
     os.getenv("ORCH_HTTP_REQUEST_LOG_SUCCESS_SAMPLE_RATE", "0.1")
@@ -2105,7 +2105,7 @@ MCP_HEADERS = {
     "MCP-Transport": "streamable-http",
 }
 MCP_CLIENT_LIMITS = httpx.Limits(max_connections=50, max_keepalive_connections=20)
-MCP_CLIENT_TIMEOUT = httpx.Timeout(MEMMCP_HTTP_TIMEOUT_SECS)
+MCP_CLIENT_TIMEOUT = httpx.Timeout(CONTEXTLATTICE_HTTP_TIMEOUT_SECS)
 MCP_CLIENT: httpx.AsyncClient | None = None
 ORCH_SHARED_HTTP_MAX_CONNECTIONS = max(10, int(os.getenv("ORCH_SHARED_HTTP_MAX_CONNECTIONS", "120")))
 ORCH_SHARED_HTTP_MAX_KEEPALIVE_CONNECTIONS = max(
@@ -8103,15 +8103,15 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             },
         },
         "memoryReadCache": {
-            "failOpenEnabled": MEMMCP_READ_FAIL_OPEN_ENABLED,
-            "readTimeoutSecs": MEMMCP_READ_TIMEOUT_SECS,
-            "httpTimeoutSecs": MEMMCP_HTTP_TIMEOUT_SECS,
-            "freshTtlSecs": MEMMCP_READ_CACHE_FRESH_TTL_SECS,
-            "staleMaxSecs": MEMMCP_READ_CACHE_STALE_MAX_SECS,
-            "refreshTimeoutSecs": MEMMCP_READ_CACHE_REFRESH_TIMEOUT_SECS,
-            "maxInflightRefresh": MEMMCP_READ_CACHE_REFRESH_MAX_INFLIGHT,
+            "failOpenEnabled": CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED,
+            "readTimeoutSecs": CONTEXTLATTICE_READ_TIMEOUT_SECS,
+            "httpTimeoutSecs": CONTEXTLATTICE_HTTP_TIMEOUT_SECS,
+            "freshTtlSecs": CONTEXTLATTICE_READ_CACHE_FRESH_TTL_SECS,
+            "staleMaxSecs": CONTEXTLATTICE_READ_CACHE_STALE_MAX_SECS,
+            "refreshTimeoutSecs": CONTEXTLATTICE_READ_CACHE_REFRESH_TIMEOUT_SECS,
+            "maxInflightRefresh": CONTEXTLATTICE_READ_CACHE_REFRESH_MAX_INFLIGHT,
             "inflightRefresh": memory_read_refresh_inflight,
-            "maxKeys": MEMMCP_READ_CACHE_MAX_KEYS,
+            "maxKeys": CONTEXTLATTICE_READ_CACHE_MAX_KEYS,
             "currentKeys": memory_read_cache_size,
             "hits": memory_read_cache_hits,
             "misses": memory_read_cache_misses,
@@ -8817,7 +8817,7 @@ async def _get_langfuse_client() -> httpx.AsyncClient:
 
 
 def validate_orchestrator_security_posture() -> None:
-    is_production = MEMMCP_ENV in ("production", "prod")
+    is_production = CONTEXTLATTICE_ENV in ("production", "prod")
     if not is_production:
         return
     issues: list[str] = []
@@ -8825,7 +8825,7 @@ def validate_orchestrator_security_posture() -> None:
     if not ORCH_API_KEY:
         issues.append(
             "CONTEXTLATTICE_ORCHESTRATOR_API_KEY is required in production"
-            " (legacy MEMMCP_ORCHESTRATOR_API_KEY still supported)"
+            " (legacy CONTEXTLATTICE_ORCHESTRATOR_API_KEY still supported)"
         )
     if ORCH_PUBLIC_STATUS:
         warnings.append("ORCH_PUBLIC_STATUS=true exposes status endpoints without auth in production")
@@ -17236,28 +17236,28 @@ async def _post_mcp_request(
     session_id: str | None = None,
 ) -> httpx.Response:
     last_error: Exception | None = None
-    for attempt in range(1, max(MEMMCP_HTTP_RETRIES, 1) + 1):
+    for attempt in range(1, max(CONTEXTLATTICE_HTTP_RETRIES, 1) + 1):
         try:
             headers = _build_mcp_headers(session_id=session_id)
             client = MCP_CLIENT
             if client is None:
                 async with httpx.AsyncClient(timeout=MCP_CLIENT_TIMEOUT) as temp_client:
                     resp = await temp_client.post(
-                        MEMMCP_HTTP_URL, json=payload, headers=headers
+                        CONTEXTLATTICE_HTTP_URL, json=payload, headers=headers
                     )
             else:
-                resp = await client.post(MEMMCP_HTTP_URL, json=payload, headers=headers)
+                resp = await client.post(CONTEXTLATTICE_HTTP_URL, json=payload, headers=headers)
             return resp
         except httpx.ReadTimeout as err:
             last_error = err
-            if attempt >= MEMMCP_HTTP_RETRIES:
+            if attempt >= CONTEXTLATTICE_HTTP_RETRIES:
                 raise HTTPException(504, "Memory MCP timeout") from err
-            await asyncio.sleep(MEMMCP_HTTP_RETRY_DELAY_SECS * attempt)
+            await asyncio.sleep(CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS * attempt)
         except httpx.HTTPError as err:
             last_error = err
-            if attempt >= MEMMCP_HTTP_RETRIES:
+            if attempt >= CONTEXTLATTICE_HTTP_RETRIES:
                 raise HTTPException(502, f"Memory MCP error: {err}") from err
-            await asyncio.sleep(MEMMCP_HTTP_RETRY_DELAY_SECS * attempt)
+            await asyncio.sleep(CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS * attempt)
     raise HTTPException(502, f"Memory MCP error: {last_error}")
 
 
@@ -18629,7 +18629,7 @@ async def list_projects() -> list[str]:
     try:
         result = await asyncio.wait_for(
             call_memory_tool("list_projects", {}),
-            timeout=MEMMCP_LIST_TIMEOUT_SECS,
+            timeout=CONTEXTLATTICE_LIST_TIMEOUT_SECS,
         )
         projects = _parse_mcp_name_list(result)
         if projects:
@@ -18649,7 +18649,7 @@ async def list_files(project: str) -> list[str]:
     try:
         result = await asyncio.wait_for(
             call_memory_tool("list_project_files", {"projectName": project}),
-            timeout=MEMMCP_LIST_TIMEOUT_SECS,
+            timeout=CONTEXTLATTICE_LIST_TIMEOUT_SECS,
         )
     except asyncio.TimeoutError:
         logger.warning("list_project_files timed out for %s; falling back to qdrant", project)
@@ -18763,7 +18763,7 @@ async def _memory_read_cache_get(
     allow_stale: bool = False,
 ) -> tuple[str, bool] | None:
     global memory_read_cache_hits, memory_read_cache_misses
-    if MEMMCP_READ_CACHE_MAX_KEYS <= 0:
+    if CONTEXTLATTICE_READ_CACHE_MAX_KEYS <= 0:
         return None
     key = _memory_read_cache_key(project, file_name)
     now = time.monotonic()
@@ -18775,10 +18775,10 @@ async def _memory_read_cache_get(
             fetched_monotonic = float(payload.get("fetched_monotonic") or 0.0)
             if isinstance(content, str) and fetched_monotonic > 0:
                 age_secs = max(0.0, now - fetched_monotonic)
-                is_fresh = age_secs <= MEMMCP_READ_CACHE_FRESH_TTL_SECS
+                is_fresh = age_secs <= CONTEXTLATTICE_READ_CACHE_FRESH_TTL_SECS
                 is_acceptable_stale = (
                     allow_stale
-                    and age_secs <= MEMMCP_READ_CACHE_STALE_MAX_SECS
+                    and age_secs <= CONTEXTLATTICE_READ_CACHE_STALE_MAX_SECS
                 )
                 if is_fresh or is_acceptable_stale:
                     memory_read_cache.move_to_end(key)
@@ -18793,7 +18793,7 @@ async def _memory_read_cache_get(
 
 async def _memory_read_cache_set(project: str, file_name: str, content: str) -> None:
     global memory_read_cache_evictions, memory_read_cache_writes
-    if MEMMCP_READ_CACHE_MAX_KEYS <= 0:
+    if CONTEXTLATTICE_READ_CACHE_MAX_KEYS <= 0:
         return
     body = str(content or "")
     if not body:
@@ -18808,7 +18808,7 @@ async def _memory_read_cache_set(project: str, file_name: str, content: str) -> 
         memory_read_cache[key] = payload
         memory_read_cache.move_to_end(key)
         memory_read_cache_writes += 1
-        while len(memory_read_cache) > MEMMCP_READ_CACHE_MAX_KEYS:
+        while len(memory_read_cache) > CONTEXTLATTICE_READ_CACHE_MAX_KEYS:
             memory_read_cache.popitem(last=False)
             memory_read_cache_evictions += 1
 
@@ -18847,13 +18847,13 @@ async def _read_project_file_remote(
 
 async def _schedule_memory_read_cache_refresh(project: str, file_name: str) -> None:
     global memory_read_cache_refresh_started, memory_read_cache_refresh_completed, memory_read_cache_refresh_failed
-    if not MEMMCP_READ_FAIL_OPEN_ENABLED:
+    if not CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED:
         return
     key = _memory_read_cache_key(project, file_name)
     async with memory_read_cache_refresh_lock:
         if key in memory_read_cache_refresh_inflight:
             return
-        if len(memory_read_cache_refresh_inflight) >= MEMMCP_READ_CACHE_REFRESH_MAX_INFLIGHT:
+        if len(memory_read_cache_refresh_inflight) >= CONTEXTLATTICE_READ_CACHE_REFRESH_MAX_INFLIGHT:
             return
         memory_read_cache_refresh_inflight[key] = time.monotonic()
         memory_read_cache_refresh_started += 1
@@ -18864,7 +18864,7 @@ async def _schedule_memory_read_cache_refresh(project: str, file_name: str) -> N
             content = await _read_project_file_remote(
                 project,
                 file_name,
-                timeout_secs=MEMMCP_READ_CACHE_REFRESH_TIMEOUT_SECS,
+                timeout_secs=CONTEXTLATTICE_READ_CACHE_REFRESH_TIMEOUT_SECS,
             )
             if content:
                 await _memory_read_cache_set(project, file_name, content)
@@ -18977,12 +18977,12 @@ async def read_project_file(
         content = await _read_project_file_remote(
             project,
             file_name,
-            timeout_secs=MEMMCP_READ_TIMEOUT_SECS,
+            timeout_secs=CONTEXTLATTICE_READ_TIMEOUT_SECS,
         )
     except asyncio.TimeoutError as exc:
         cached = (
             await _memory_read_cache_get(project, file_name, allow_stale=True)
-            if MEMMCP_READ_FAIL_OPEN_ENABLED
+            if CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED
             else None
         )
         if cached is not None:
@@ -18996,7 +18996,7 @@ async def read_project_file(
             return cached[0]
         raise HTTPException(504, f"memory_bank_read timeout for {project}/{file_name}") from exc
     except HTTPException as exc:
-        if MEMMCP_READ_FAIL_OPEN_ENABLED and _is_transient_memory_read_http_error(exc):
+        if CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED and _is_transient_memory_read_http_error(exc):
             cached = await _memory_read_cache_get(project, file_name, allow_stale=True)
             if cached is not None:
                 memory_read_cache_stale_fallbacks += 1
@@ -20074,7 +20074,7 @@ async def search_memory_bank_lexical(
             try:
                 content = await asyncio.wait_for(
                     read_project_file(project, file_name),
-                    timeout=max(0.5, min(MEMMCP_READ_TIMEOUT_SECS, remaining)),
+                    timeout=max(0.5, min(CONTEXTLATTICE_READ_TIMEOUT_SECS, remaining)),
                 )
             except Exception:
                 return

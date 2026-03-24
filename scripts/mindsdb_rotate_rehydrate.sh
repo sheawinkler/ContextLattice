@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 ENV_FILE="${ENV_FILE:-.env}"
-ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-${MEMMCP_ORCHESTRATOR_URL:-${ORCH_BASE:-http://127.0.0.1:8075}}}"
-ORCH_API_KEY="${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${MEMMCP_ORCHESTRATOR_API_KEY:-}}"
+ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-${CONTEXTLATTICE_ORCHESTRATOR_URL:-${ORCH_BASE:-http://127.0.0.1:8075}}}"
+ORCH_API_KEY="${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}}"
 MINDSDB_SQL_URL="${MINDSDB_SQL_URL:-http://127.0.0.1:47334/api/sql/query}"
 
 DB_NAME="${DB_NAME:-files_repair_$(date -u +%Y%m%d%H%M%S)}"
@@ -61,7 +61,7 @@ db_supports_create_table() {
   local probe_table
   local create_resp
   local error_msg
-  probe_table="__memmcp_probe_$(date +%s)"
+  probe_table="__contextlattice_probe_$(date +%s)"
   mindsdb_sql "CREATE DATABASE IF NOT EXISTS ${db};" >/dev/null || true
   create_resp="$(mindsdb_sql "CREATE TABLE IF NOT EXISTS ${db}.${probe_table} (id INT);")"
   error_msg="$(printf '%s' "$create_resp" | jq -r '.error_message // empty' 2>/dev/null || true)"

@@ -7,10 +7,10 @@ Runtime:
 
 Session bootstrap:
 ```bash
-export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075
+export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
 export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
 export CONTEXTLATTICE_AGENT_ID=hermes_agent
-export MEMMCP_AGENT_ID=hermes_agent
+export CONTEXTLATTICE_AGENT_ID=hermes_agent
 ```
 
 Preflight:

@@ -2648,7 +2648,7 @@ async def test_warm_retrieval_pathways_uses_top_observed_queries(monkeypatch: py
 
 
 def test_validate_security_posture_requires_api_key_in_production(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(orchestrator, "MEMMCP_ENV", "production")
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_ENV", "production")
     monkeypatch.setattr(orchestrator, "ORCH_SECURITY_STRICT", True)
     monkeypatch.setattr(orchestrator, "ORCH_API_KEY", "")
     monkeypatch.setattr(orchestrator, "ORCH_PUBLIC_STATUS", False)
@@ -5917,10 +5917,10 @@ async def test_read_project_file_timeout_serves_stale_cache(monkeypatch: pytest.
     async def _schedule_refresh(project: str, file_name: str):
         refreshed.append((project, file_name))
 
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_FAIL_OPEN_ENABLED", True)
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_CACHE_MAX_KEYS", 64)
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_CACHE_FRESH_TTL_SECS", 0.0)
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_CACHE_STALE_MAX_SECS", 3600.0)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_CACHE_MAX_KEYS", 64)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_CACHE_FRESH_TTL_SECS", 0.0)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_CACHE_STALE_MAX_SECS", 3600.0)
     monkeypatch.setattr(orchestrator, "_read_project_file_remote", _timeout_remote)
     monkeypatch.setattr(orchestrator, "_schedule_memory_read_cache_refresh", _schedule_refresh)
     monkeypatch.setattr(orchestrator, "memory_read_cache_stale_fallbacks", 0)
@@ -5939,7 +5939,7 @@ async def test_read_project_file_timeout_without_cache_raises_504(monkeypatch: p
     async def _timeout_remote(*args, **kwargs):
         raise asyncio.TimeoutError()
 
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_FAIL_OPEN_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED", True)
     monkeypatch.setattr(orchestrator, "_read_project_file_remote", _timeout_remote)
     async with orchestrator.memory_read_cache_lock:
         orchestrator.memory_read_cache.clear()
@@ -5954,8 +5954,8 @@ async def test_read_project_file_success_updates_cache(monkeypatch: pytest.Monke
     async def _remote(*args, **kwargs):
         return "live-content"
 
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_FAIL_OPEN_ENABLED", True)
-    monkeypatch.setattr(orchestrator, "MEMMCP_READ_CACHE_MAX_KEYS", 64)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "CONTEXTLATTICE_READ_CACHE_MAX_KEYS", 64)
     monkeypatch.setattr(orchestrator, "_read_project_file_remote", _remote)
     async with orchestrator.memory_read_cache_lock:
         orchestrator.memory_read_cache.clear()
@@ -6067,7 +6067,7 @@ async def test_flush_hot_memory_rollups_emits_compact_snapshot(monkeypatch: pyte
             "content_length": 5120,
             "letta_session": None,
             "letta_context": {},
-            "qdrant_collection": "memmcp_notes",
+            "qdrant_collection": "contextlattice_notes",
         }
     )
 

@@ -92,9 +92,9 @@ if ([string]::IsNullOrWhiteSpace($key)) {
 }
 
 Set-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ORCHESTRATOR_API_KEY" -Value $key
-Set-EnvValue -Path $envPath -Key "MEMMCP_ORCHESTRATOR_API_KEY" -Value $key
+Set-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ORCHESTRATOR_API_KEY" -Value $key
 Set-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ORCHESTRATOR_URL" -Value "http://127.0.0.1:8075"
-Set-EnvValue -Path $envPath -Key "MEMMCP_ORCHESTRATOR_URL" -Value "http://127.0.0.1:8075"
+Set-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ORCHESTRATOR_URL" -Value "http://127.0.0.1:8075"
 Set-EnvValue -Path $envPath -Key "HOST_BIND_ADDRESS" -Value "127.0.0.1"
 Set-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ENV" -Value "production"
 Set-EnvValue -Path $envPath -Key "ORCH_SECURITY_STRICT" -Value "true"

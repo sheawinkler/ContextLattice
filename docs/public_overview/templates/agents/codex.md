@@ -7,10 +7,10 @@ Runtime:
 
 Session bootstrap:
 ```bash
-export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075
+export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
 export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
 export CONTEXTLATTICE_AGENT_ID=codex_gpt5
-export MEMMCP_AGENT_ID=codex_gpt5
+export CONTEXTLATTICE_AGENT_ID=codex_gpt5
 ```
 
 Preflight:

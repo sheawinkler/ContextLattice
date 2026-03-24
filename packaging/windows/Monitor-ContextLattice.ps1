@@ -28,7 +28,7 @@ if ([string]::IsNullOrWhiteSpace($ApiKey)) {
     $ApiKey = Get-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
 }
 if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    $ApiKey = Get-EnvValue -Path $envPath -Key "MEMMCP_ORCHESTRATOR_API_KEY"
+    $ApiKey = Get-EnvValue -Path $envPath -Key "CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
 }
 
 $health = Invoke-RestMethod -Uri "$BaseUrl/health" -Method Get -TimeoutSec 20

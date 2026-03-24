@@ -16,7 +16,7 @@ import httpx
 
 DEFAULT_ORCHESTRATOR_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
-    os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+    os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
 )
 
 
@@ -24,21 +24,21 @@ def resolve_orchestrator_api_key(role: str = "orchestrator") -> str:
     """
     Resolve API key for caller role.
 
-    - orchestrator role: CONTEXTLATTICE_ORCHESTRATOR_API_KEY | MEMMCP_ORCHESTRATOR_API_KEY
-    - worker role: CONTEXTLATTICE_WORKER_API_KEY | MEMMCP_WORKER_API_KEY, then falls
+    - orchestrator role: CONTEXTLATTICE_ORCHESTRATOR_API_KEY | CONTEXTLATTICE_ORCHESTRATOR_API_KEY
+    - worker role: CONTEXTLATTICE_WORKER_API_KEY | CONTEXTLATTICE_WORKER_API_KEY, then falls
       back to orchestrator key for compatibility when dedicated worker key is unset.
     """
     role_token = str(role or "").strip().lower()
     if role_token == "worker":
         worker_key = (
             str(os.getenv("CONTEXTLATTICE_WORKER_API_KEY") or "").strip()
-            or str(os.getenv("MEMMCP_WORKER_API_KEY") or "").strip()
+            or str(os.getenv("CONTEXTLATTICE_WORKER_API_KEY") or "").strip()
         )
         if worker_key:
             return worker_key
     return (
         str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
-        or str(os.getenv("MEMMCP_ORCHESTRATOR_API_KEY") or "").strip()
+        or str(os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY") or "").strip()
     )
 
 

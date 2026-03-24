@@ -29,13 +29,13 @@ def main() -> int:
         "--url",
         default=os.getenv(
             "CONTEXTLATTICE_ORCHESTRATOR_URL",
-            os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+            os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
         ),
     )
     parser.add_argument("--interval", type=float, default=float(os.getenv("STACK_WATCH_INTERVAL", "10")))
     parser.add_argument("--out", default=os.getenv("STACK_WATCH_OUT", "./tmp/stack_watch.ndjson"))
     parser.add_argument("--alert-out", default=os.getenv("STACK_ALERT_OUT", "./tmp/stack_alerts.ndjson"))
-    parser.add_argument("--api-key", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", "")))
+    parser.add_argument("--api-key", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")))
     parser.add_argument("--alert-queue-depth", type=int, default=int(os.getenv("ALERT_QUEUE_DEPTH", "500")))
     parser.add_argument("--alert-service-down", type=int, default=int(os.getenv("ALERT_SERVICE_DOWN", "1")))
     args = parser.parse_args()

@@ -23,7 +23,7 @@ interface Props {
 export function StrategyPanel({ strategies }: Props) {
   const orchestratorBase =
     process.env.NEXT_PUBLIC_CONTEXTLATTICE_ORCHESTRATOR_URL ??
-    process.env.NEXT_PUBLIC_MEMMCP_ORCHESTRATOR_URL ??
+    process.env.NEXT_PUBLIC_CONTEXTLATTICE_ORCHESTRATOR_URL ??
     "http://127.0.0.1:8075";
 
   const buildMemoryHref = (ref?: string | null): string | null => {

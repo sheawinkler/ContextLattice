@@ -101,9 +101,9 @@ if [[ -z "${key}" ]]; then
 fi
 
 set_env_value .env CONTEXTLATTICE_ORCHESTRATOR_API_KEY "${key}"
-set_env_value .env MEMMCP_ORCHESTRATOR_API_KEY "${key}"
+set_env_value .env CONTEXTLATTICE_ORCHESTRATOR_API_KEY "${key}"
 set_env_value .env CONTEXTLATTICE_ORCHESTRATOR_URL "http://127.0.0.1:8075"
-set_env_value .env MEMMCP_ORCHESTRATOR_URL "http://127.0.0.1:8075"
+set_env_value .env CONTEXTLATTICE_ORCHESTRATOR_URL "http://127.0.0.1:8075"
 set_env_value .env HOST_BIND_ADDRESS "127.0.0.1"
 set_env_value .env CONTEXTLATTICE_ENV "production"
 set_env_value .env ORCH_SECURITY_STRICT "true"

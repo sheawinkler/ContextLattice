@@ -22,7 +22,7 @@ def _iso_now() -> str:
 def _load_api_key(explicit: str | None) -> str:
     if explicit:
         return explicit.strip()
-    for name in ("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "MEMMCP_ORCHESTRATOR_API_KEY"):
+    for name in ("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "CONTEXTLATTICE_ORCHESTRATOR_API_KEY"):
         value = os.getenv(name, "").strip()
         if value:
             return value
@@ -249,7 +249,7 @@ def main() -> int:
     args = _build_args()
     api_key = _load_api_key(args.api_key)
     if not api_key:
-        print("ERROR: missing API key (set CONTEXTLATTICE_ORCHESTRATOR_API_KEY or MEMMCP_ORCHESTRATOR_API_KEY).")
+        print("ERROR: missing API key (set CONTEXTLATTICE_ORCHESTRATOR_API_KEY or CONTEXTLATTICE_ORCHESTRATOR_API_KEY).")
         return 2
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 QURL="${QDRANT_URL:-http://localhost:6333}"
-COLL="${COLLECTION_NAME:-memmcp_notes}"
+COLL="${COLLECTION_NAME:-contextlattice_notes}"
 DIM="${QDRANT_DIM:-384}"
 DIST="${QDRANT_DISTANCE:-Cosine}"
 

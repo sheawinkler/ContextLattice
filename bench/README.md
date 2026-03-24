@@ -14,7 +14,7 @@
 ## Usage
 
 ```bash
-API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
+API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|CONTEXTLATTICE_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
 python3 bench/phase0_baseline.py --api-key "$API_KEY"
 ```
 
@@ -36,7 +36,7 @@ All benchmark harnesses set `traffic_class=benchmark` on retrieval calls so benc
 `bench/phase1_runtime_comparison.py` records runtime adapter status plus retrieval latency for quick parity checks.
 
 ```bash
-API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
+API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|CONTEXTLATTICE_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
 python3 bench/phase1_runtime_comparison.py --api-key "$API_KEY" --requests 20
 ```
 
@@ -51,7 +51,7 @@ Optional knobs:
 `bench/perf_shortlist_matrix.py` captures fast/balanced/deep retrieval metrics for the performance shortlist workstream.
 
 ```bash
-API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
+API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|CONTEXTLATTICE_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
 python3 bench/perf_shortlist_matrix.py --api-key "$API_KEY" --runs 12
 ```
 
@@ -87,7 +87,7 @@ Optional knobs:
 `bench/qdrant_tuning_matrix.py` records baseline/fast/deep profiles focused on Qdrant + rollups.
 
 ```bash
-API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
+API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|CONTEXTLATTICE_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
 python3 bench/qdrant_tuning_matrix.py --api-key "$API_KEY" --runs 20
 ```
 
@@ -106,7 +106,7 @@ Optional knobs:
 - optional external adapter lanes (`lancedb_spike`, `trieve_spike`, `helixdb_spike`)
 
 ```bash
-API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|MEMMCP_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
+API_KEY=$(awk -F= '/^(CONTEXTLATTICE_ORCHESTRATOR_API_KEY|CONTEXTLATTICE_ORCHESTRATOR_API_KEY)=/{print $2}' .env | tail -n1)
 python3 bench/backend_lane_matrix.py --api-key "$API_KEY" --runs 3
 ```
 
