@@ -12,7 +12,7 @@ Migrate the Python implementation to a hybrid architecture:
 
 - External agents must call the orchestrator endpoint at `http://127.0.0.1:8075` by default.
 - If users run this on a different host/port, they must explicitly override:
-  - `MEMMCP_ORCHESTRATOR_URL`
+  - `CONTEXTLATTICE_ORCHESTRATOR_URL`
   - `CONTEXTLATTICE_ORCHESTRATOR_URL`
 
 ## Agent Integration Defaults
@@ -26,7 +26,7 @@ Migrate the Python implementation to a hybrid architecture:
   - `claude-web`, `claude-desktop`
 - Use stable agent identity for reads/writes so profile defaults apply:
   - `CONTEXTLATTICE_AGENT_ID` (defaults to `codex_gpt5`)
-  - `MEMMCP_AGENT_ID`
+  - `CONTEXTLATTICE_AGENT_ID`
 - Before major work, run one of:
   - `python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration`
   - `python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice`

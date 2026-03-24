@@ -4,14 +4,14 @@
 Typical usage:
   python scripts/qdrant_snapshot_prune.py \
     --qdrant-url http://localhost:6333 \
-    --collection memmcp_notes \
+    --collection contextlattice_notes \
     --retention-days 14 \
     --snapshot-dir ./.data/cold/qdrant
 
 Hour-level retention is also supported:
   python scripts/qdrant_snapshot_prune.py \
     --qdrant-url http://localhost:6333 \
-    --collection memmcp_notes \
+    --collection contextlattice_notes \
     --retention-hours 1 \
     --snapshot-dir ./.data/cold/qdrant
 
@@ -125,7 +125,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--collection",
-        default=os.getenv("QDRANT_COLLECTION", os.getenv("ORCH_QDRANT_COLLECTION", "memmcp_notes")),
+        default=os.getenv("QDRANT_COLLECTION", os.getenv("ORCH_QDRANT_COLLECTION", "contextlattice_notes")),
         help="Collection name to snapshot/prune",
     )
     parser.add_argument(
@@ -144,7 +144,7 @@ def main() -> None:
         "--snapshot-dir",
         default=os.getenv(
             "CONTEXTLATTICE_COLD_ROOT",
-            os.getenv("MEMMCP_COLD_ROOT", "./.data/cold/qdrant"),
+            os.getenv("CONTEXTLATTICE_COLD_ROOT", "./.data/cold/qdrant"),
         ),
         help="Directory to write downloaded snapshots",
     )

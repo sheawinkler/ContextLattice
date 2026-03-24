@@ -118,13 +118,13 @@ done
 
 # Keep legacy API key alias aligned to prevent caller drift.
 orchestrator_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
-legacy_key="$(get_env_key MEMMCP_ORCHESTRATOR_API_KEY)"
+legacy_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
 if [[ -n "$orchestrator_key" && "$legacy_key" != "$orchestrator_key" ]]; then
   if [[ "$MODE" == "--apply" ]]; then
-    set_env_key MEMMCP_ORCHESTRATOR_API_KEY "$orchestrator_key"
-    echo ">> synced MEMMCP_ORCHESTRATOR_API_KEY to CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
+    set_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY "$orchestrator_key"
+    echo ">> synced CONTEXTLATTICE_ORCHESTRATOR_API_KEY to CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
   else
-    echo "drift: MEMMCP_ORCHESTRATOR_API_KEY does not match CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
+    echo "drift: CONTEXTLATTICE_ORCHESTRATOR_API_KEY does not match CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
     drift_count=$((drift_count + 1))
   fi
 fi

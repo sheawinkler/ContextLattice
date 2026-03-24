@@ -9,7 +9,7 @@ services:
       FASTMCP_SERVER_PORT: 8002
       # your existing envs (keep these the same as before)
       QDRANT_URL: http://qdrant:6333
-      QDRANT_COLLECTION: memmcp_notes
+      QDRANT_COLLECTION: contextlattice_notes
       EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
     ports:
       - "53124:8002"

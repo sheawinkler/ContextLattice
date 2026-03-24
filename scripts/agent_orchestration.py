@@ -25,7 +25,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
     )
 DEFAULT_AGENT_ID = (
     os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
-    or os.getenv("MEMMCP_AGENT_ID", "").strip()
+    or os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
     or "codex_gpt5"
 )
 DEFAULT_AGENT_PREFLIGHT_PROFILES: Dict[str, Dict[str, str]] = {
@@ -632,7 +632,7 @@ def main():
         print(json.dumps(payload, indent=2))
 
     elif cmd == "preflight":
-        project = sys.argv[2] if len(sys.argv) > 2 else os.getenv("MEMMCP_PROJECT", "contextlattice")
+        project = sys.argv[2] if len(sys.argv) > 2 else os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice")
         topic_path = sys.argv[3] if len(sys.argv) > 3 else "runbooks/codex-integration"
         query = sys.argv[4] if len(sys.argv) > 4 else "codex preflight connectivity and retrieval"
         payload = orch.codex_preflight(project=project, topic_path=topic_path, query=query)
@@ -640,7 +640,7 @@ def main():
 
     elif cmd == "preflight-agent":
         agent = sys.argv[2] if len(sys.argv) > 2 else "codex"
-        project = sys.argv[3] if len(sys.argv) > 3 else os.getenv("MEMMCP_PROJECT", "contextlattice")
+        project = sys.argv[3] if len(sys.argv) > 3 else os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice")
         topic_path = sys.argv[4] if len(sys.argv) > 4 else None
         query = sys.argv[5] if len(sys.argv) > 5 else None
         retrieval_mode = sys.argv[6] if len(sys.argv) > 6 else None

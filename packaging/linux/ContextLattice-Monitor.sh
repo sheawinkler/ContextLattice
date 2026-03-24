@@ -41,7 +41,7 @@ if [[ -z "${API_KEY}" && -f "${INSTALL_DIR}/.env" ]]; then
   API_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' "${INSTALL_DIR}/.env" | tail -n 1)"
 fi
 if [[ -z "${API_KEY}" && -f "${INSTALL_DIR}/.env" ]]; then
-  API_KEY="$(awk -F= '/^MEMMCP_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' "${INSTALL_DIR}/.env" | tail -n 1)"
+  API_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' "${INSTALL_DIR}/.env" | tail -n 1)"
 fi
 
 echo "== ContextLattice Monitor =="

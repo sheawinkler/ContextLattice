@@ -70,7 +70,7 @@ func newTelemetrySinkFromEnv() (*telemetrySink, error) {
 		dbName = strings.TrimSpace(os.Getenv("ORCH_TELEMETRY_DB"))
 	}
 	if dbName == "" {
-		dbName = "memmcp_raw"
+		dbName = "contextlattice_raw"
 	}
 	eventsCollection := strings.TrimSpace(os.Getenv("GO_TELEMETRY_EVENTS_COLLECTION"))
 	if eventsCollection == "" {

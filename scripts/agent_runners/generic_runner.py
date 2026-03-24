@@ -92,7 +92,7 @@ def _format_result(task: dict[str, Any], output: str, agent_label: str) -> str:
 def main(agent_label: Optional[str] = None) -> int:
     orchestrator_url = os.getenv(
         "CONTEXTLATTICE_ORCHESTRATOR_URL",
-        os.getenv("MEMMCP_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
+        os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"),
     )
     task_id = os.getenv("TASK_ID")
     task_title = os.getenv("TASK_TITLE", "Task")

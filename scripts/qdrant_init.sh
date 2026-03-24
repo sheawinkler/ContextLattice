@@ -4,7 +4,7 @@ set -euo pipefail
 Q_HOST="${QDRANT_HOST:-http://127.0.0.1}"
 Q_PORT="${QDRANT_PORT:-6333}"
 BASE="${Q_HOST}:${Q_PORT}"
-COLL="${QDRANT_COLLECTION:-memmcp_notes}"
+COLL="${QDRANT_COLLECTION:-contextlattice_notes}"
 
 DIM="${EMBED_DIM:-384}"
 HNSW_M="${HNSW_M:-16}"

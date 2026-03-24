@@ -32,7 +32,7 @@ def _engine_auth_headers() -> dict[str, str]:
     api_key = (
         os.getenv("CONTEXTLATTICE_ENGINE_API_KEY", "").strip()
         or os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
-        or os.getenv("MEMMCP_ORCHESTRATOR_API_KEY", "").strip()
+        or os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
     )
     if api_key:
         headers["x-api-key"] = api_key

@@ -261,11 +261,11 @@ configure_tool_role_split() {
   local orchestrator_key worker_key
   orchestrator_key="$(echo "$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)" | xargs)"
   if [[ -z "$orchestrator_key" ]]; then
-    orchestrator_key="$(echo "$(get_env_key MEMMCP_ORCHESTRATOR_API_KEY)" | xargs)"
+    orchestrator_key="$(echo "$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)" | xargs)"
   fi
   worker_key="$(echo "$(get_env_key CONTEXTLATTICE_WORKER_API_KEY)" | xargs)"
   if [[ -z "$worker_key" ]]; then
-    worker_key="$(echo "$(get_env_key MEMMCP_WORKER_API_KEY)" | xargs)"
+    worker_key="$(echo "$(get_env_key CONTEXTLATTICE_WORKER_API_KEY)" | xargs)"
   fi
 
   set_env_key "GO_TOOL_CALLS_ROLE_SPLIT_AUTO" "true"
@@ -316,7 +316,7 @@ configure_security_posture() {
   api_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
   if [[ -z "${api_key}" ]]; then
     # Legacy env key migration path.
-    api_key="$(get_env_key MEMMCP_ORCHESTRATOR_API_KEY)"
+    api_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
   fi
   if [[ -z "${api_key}" ]]; then
     api_key="$(generate_api_key)"
