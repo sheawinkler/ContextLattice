@@ -17,7 +17,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-1f2937?style=for-the-badge" alt="Apache 2.0"></a>
 </p>
 
-[![context-lattice MCP server](https://glama.ai/mcp/servers/sheawinkler/context-lattice/badges/score.svg)](https://glama.ai/mcp/servers/sheawinkler/context-lattice)
+[![context-lattice MCP server](https://glama.ai/mcp/servers/sheawinkler/context-lattice/badges/card.svg)](https://glama.ai/mcp/servers/sheawinkler/context-lattice)
 
 <p align="center">
   <a href="https://contextlattice.io/">Overview</a> |
