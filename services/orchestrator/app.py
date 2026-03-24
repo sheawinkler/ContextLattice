@@ -202,17 +202,17 @@ CONTEXTLATTICE_HTTP_URL = _env_alias(
     "http://memorymcp-http:59081/mcp",
 )
 CONTEXTLATTICE_HTTP_TIMEOUT_SECS = float(
-    _env_alias("CONTEXTLATTICE_HTTP_TIMEOUT_SECS", "CONTEXTLATTICE_HTTP_TIMEOUT_SECS", "90")
+    os.getenv("CONTEXTLATTICE_HTTP_TIMEOUT_SECS", "90")
 )
-CONTEXTLATTICE_HTTP_RETRIES = int(_env_alias("CONTEXTLATTICE_HTTP_RETRIES", "CONTEXTLATTICE_HTTP_RETRIES", "1"))
+CONTEXTLATTICE_HTTP_RETRIES = int(os.getenv("CONTEXTLATTICE_HTTP_RETRIES", "1"))
 CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS = float(
-    _env_alias("CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS", "CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS", "0.5")
+    os.getenv("CONTEXTLATTICE_HTTP_RETRY_DELAY_SECS", "0.5")
 )
 CONTEXTLATTICE_LIST_TIMEOUT_SECS = float(
-    _env_alias("CONTEXTLATTICE_LIST_TIMEOUT_SECS", "CONTEXTLATTICE_LIST_TIMEOUT_SECS", "4")
+    os.getenv("CONTEXTLATTICE_LIST_TIMEOUT_SECS", "4")
 )
 CONTEXTLATTICE_READ_TIMEOUT_SECS = float(
-    _env_alias("CONTEXTLATTICE_READ_TIMEOUT_SECS", "CONTEXTLATTICE_READ_TIMEOUT_SECS", "75")
+    os.getenv("CONTEXTLATTICE_READ_TIMEOUT_SECS", "75")
 )
 CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED = os.getenv(
     "CONTEXTLATTICE_READ_FAIL_OPEN_ENABLED",
@@ -374,7 +374,7 @@ TRADING_TELEMETRY_EXTERNAL_SYNC_TARGETS = {
     for target in _TRADING_TELEMETRY_EXTERNAL_TARGETS_RAW.split(",")
     if target.strip()
 }
-ORCH_API_KEY = _env_alias("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
+ORCH_API_KEY = os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
 LETTA_URL = os.getenv("LETTA_URL", "http://letta:8283")
 LETTA_API_KEY = os.getenv("LETTA_API_KEY", "")
 LETTA_REQUIRE_API_KEY = os.getenv("LETTA_REQUIRE_API_KEY", "false").lower() in ("1", "true", "yes", "on")
@@ -2031,7 +2031,7 @@ TASK_ALLOWED_ACTIONS_ENV = os.getenv(
     "memory_write,memory_search,messaging_command,http_callback,provider_chat",
 )
 SIDECAR_HEALTH_HISTORY_LIMIT = int(os.getenv("SIDECAR_HEALTH_HISTORY_LIMIT", "200"))
-CONTEXTLATTICE_ENV = _env_alias("CONTEXTLATTICE_ENV", "CONTEXTLATTICE_ENV", "development").strip().lower()
+CONTEXTLATTICE_ENV = os.getenv("CONTEXTLATTICE_ENV", "development").strip().lower()
 ORCH_SECURITY_STRICT = os.getenv("ORCH_SECURITY_STRICT", "true").lower() in ("1", "true", "yes", "on")
 ORCH_PUBLIC_STATUS = os.getenv(
     "ORCH_PUBLIC_STATUS",
@@ -8825,7 +8825,7 @@ def validate_orchestrator_security_posture() -> None:
     if not ORCH_API_KEY:
         issues.append(
             "CONTEXTLATTICE_ORCHESTRATOR_API_KEY is required in production"
-            " (legacy CONTEXTLATTICE_ORCHESTRATOR_API_KEY still supported)"
+
         )
     if ORCH_PUBLIC_STATUS:
         warnings.append("ORCH_PUBLIC_STATUS=true exposes status endpoints without auth in production")

@@ -73,15 +73,15 @@ test-py:
 > fi
 
 bench-shortlist:
-> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}}"; \
+> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"; \
 > python3 bench/perf_shortlist_matrix.py --api-key "$$api_key"
 
 bench-qdrant-tuning:
-> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}}"; \
+> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"; \
 > python3 bench/qdrant_tuning_matrix.py --api-key "$$api_key"
 
 bench-backend-lanes:
-> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}}"; \
+> api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"; \
 > python3 bench/backend_lane_matrix.py --api-key "$$api_key"
 
 # ---- One-shot launcher ----
@@ -171,8 +171,8 @@ monitor-open:
 
 monitor-check:
 > if [ -f .env ]; then source .env >/dev/null 2>&1 || true; fi
-> ORCH_URL="$${CONTEXTLATTICE_ORCHESTRATOR_URL:-$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}}"
-> ORCH_KEY="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}}"
+> ORCH_URL="$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}"
+> ORCH_KEY="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"
 > echo "== /health ==" && curl -fsS "$${ORCH_URL%/}/health" | jq .
 > if [ -n "$$ORCH_KEY" ]; then \
 >   echo "== /status ==" && curl -fsS -H "x-api-key: $$ORCH_KEY" "$${ORCH_URL%/}/status" | jq .; \
