@@ -16,6 +16,15 @@ Use these in the Glama Dockerfile admin form:
 
 These are deploy settings, not environment variables.
 
+## Standalone Service Profile
+
+`Dockerfile.orchestrator` now defaults to a standalone-safe profile for Glama:
+
+- disables external service dependencies that are not present in a single container (`mongo`, `mindsdb`, `pgvector`)
+- uses sqlite fanout outbox
+- disables signal/override polling loops that rely on external memory services
+- keeps retrieval on `topic_rollups` as the default fast lane
+
 ## Arguments JSON schema
 
 Use the schema box for runtime variables only.

@@ -1247,6 +1247,7 @@ SIGNAL_PROJECT = os.getenv("SIGNAL_PROJECT", "sol_scaler_signals")
 SIGNAL_HISTORY_LIMIT = int(os.getenv("SIGNAL_HISTORY_LIMIT", "256"))
 SIGNAL_FETCH_LIMIT = int(os.getenv("SIGNAL_FETCH_LIMIT", "64"))
 SIGNAL_REFRESH_SECONDS = int(os.getenv("SIGNAL_REFRESH_SECONDS", "120"))
+SIGNAL_REFRESH_ENABLED = os.getenv("SIGNAL_REFRESH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 SIGNAL_HISTORY_PATH = Path(
     os.getenv(
         "SIGNAL_HISTORY_PATH",
@@ -1257,6 +1258,7 @@ OVERRIDE_PROJECT = os.getenv("OVERRIDE_PROJECT", "sol_scaler_overrides")
 OVERRIDE_HISTORY_LIMIT = int(os.getenv("OVERRIDE_HISTORY_LIMIT", "256"))
 OVERRIDE_FETCH_LIMIT = int(os.getenv("OVERRIDE_FETCH_LIMIT", "64"))
 OVERRIDE_REFRESH_SECONDS = int(os.getenv("OVERRIDE_REFRESH_SECONDS", "120"))
+OVERRIDE_REFRESH_ENABLED = os.getenv("OVERRIDE_REFRESH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OVERRIDE_HISTORY_PATH = Path(
     os.getenv(
         "OVERRIDE_HISTORY_PATH",
@@ -16956,8 +16958,10 @@ _ensure_recall_eval_cases_file()
 async def orchestrator_startup() -> None:
     global task_scheduler_task, agent_task_worker_tasks
     validate_orchestrator_security_posture()
-    asyncio.create_task(_signal_refresh_loop())
-    asyncio.create_task(_override_refresh_loop())
+    if SIGNAL_REFRESH_ENABLED:
+        asyncio.create_task(_signal_refresh_loop())
+    if OVERRIDE_REFRESH_ENABLED:
+        asyncio.create_task(_override_refresh_loop())
     await ensure_task_db()
     if TASK_SCHEDULER_ENABLED and task_scheduler_task is None:
         task_scheduler_task = asyncio.create_task(_task_scheduler_worker(), name="task-scheduler")
