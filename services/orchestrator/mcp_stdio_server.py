@@ -26,6 +26,7 @@ JSONRPC_VERSION = "2.0"
 DEFAULT_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "contextlattice-stdio-bridge"
 SERVER_VERSION = "1.0.0"
+WIRE_MODE = "content-length"
 
 
 @dataclass
@@ -101,6 +102,7 @@ def _stderr(msg: str) -> None:
 
 
 def _read_message() -> dict[str, Any] | None:
+    global WIRE_MODE
     headers: dict[str, str] = {}
     while True:
         line = sys.stdin.buffer.readline()
@@ -109,6 +111,15 @@ def _read_message() -> dict[str, Any] | None:
         if line in (b"\r\n", b"\n"):
             break
         text = line.decode("utf-8", errors="replace").strip()
+        if text.startswith("{"):
+            # Some managed MCP proxies send newline-delimited JSON-RPC rather than
+            # Content-Length framed messages. Accept that variant fail-open.
+            try:
+                WIRE_MODE = "jsonl"
+                return json.loads(text)
+            except json.JSONDecodeError as exc:
+                _stderr(f"invalid jsonl request: {exc}")
+                continue
         if ":" not in text:
             continue
         key, value = text.split(":", 1)
@@ -124,6 +135,10 @@ def _read_message() -> dict[str, Any] | None:
 
 def _write_message(payload: dict[str, Any]) -> None:
     data = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    if WIRE_MODE == "jsonl":
+        sys.stdout.buffer.write(data + b"\n")
+        sys.stdout.buffer.flush()
+        return
     sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
     sys.stdout.buffer.write(data)
     sys.stdout.buffer.flush()
@@ -301,4 +316,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
