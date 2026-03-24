@@ -1243,7 +1243,7 @@ STRATEGY_HISTORY_PATH = Path(
         str(Path(__file__).resolve().parent / "data" / "strategy_metrics.ndjson"),
     )
 )
-SIGNAL_PROJECT = os.getenv("SIGNAL_PROJECT", "sol_scaler_signals")
+SIGNAL_PROJECT = os.getenv("SIGNAL_PROJECT", "contextlattice_signals")
 SIGNAL_HISTORY_LIMIT = int(os.getenv("SIGNAL_HISTORY_LIMIT", "256"))
 SIGNAL_FETCH_LIMIT = int(os.getenv("SIGNAL_FETCH_LIMIT", "64"))
 SIGNAL_REFRESH_SECONDS = int(os.getenv("SIGNAL_REFRESH_SECONDS", "120"))
@@ -1254,7 +1254,7 @@ SIGNAL_HISTORY_PATH = Path(
         str(Path(__file__).resolve().parent / "data" / "solana_signals.ndjson"),
     )
 )
-OVERRIDE_PROJECT = os.getenv("OVERRIDE_PROJECT", "sol_scaler_overrides")
+OVERRIDE_PROJECT = os.getenv("OVERRIDE_PROJECT", "contextlattice_overrides")
 OVERRIDE_HISTORY_LIMIT = int(os.getenv("OVERRIDE_HISTORY_LIMIT", "256"))
 OVERRIDE_FETCH_LIMIT = int(os.getenv("OVERRIDE_FETCH_LIMIT", "64"))
 OVERRIDE_REFRESH_SECONDS = int(os.getenv("OVERRIDE_REFRESH_SECONDS", "120"))
