@@ -738,6 +738,7 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 - Benchmark harness docs: `bench/README.md`
 - Public overview site source: `docs/public_overview/README.md`
 - Legal and licensing: `docs/legal/README.md`
+- Glama release compliance: `docs/glama-release-compliance.md`
 
 Pre-submit verifier:
 
