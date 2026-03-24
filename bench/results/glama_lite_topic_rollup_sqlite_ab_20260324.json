@@ -1,0 +1,28 @@
+{
+  "capturedAt": "2026-03-24T18:30:00Z",
+  "scenario": "topic_rollups search in Glama-lite single-container profile",
+  "dataset": {
+    "projects": 1,
+    "topics": 2500,
+    "query": "topic 1244 retrieval",
+    "iterationsPerLane": 80,
+    "limit": 8,
+    "topicFilter": "runbooks"
+  },
+  "lanes": {
+    "sqlite_fts_lane": {
+      "avgMs": 50.225
+    },
+    "in_memory_fallback_lane": {
+      "avgMs": 85.065
+    }
+  },
+  "delta": {
+    "speedupX": 1.694,
+    "latencyReductionPct": 40.96
+  },
+  "notes": [
+    "sqlite lane only used when sqlite rollup generation marker matches active in-memory snapshot",
+    "fallback lane remains active for correctness and fail-open behavior"
+  ]
+}

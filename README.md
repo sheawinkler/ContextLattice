@@ -103,12 +103,12 @@ gmake linux-bundle-build
 
 | App lane | Recommended profile | CPU | RAM | Storage |
 | --- | --- | --- | --- | --- |
-| Public `v3.2.x` (current public release `v3.2.3`) | Lite | `2-4` vCPU | `4-8 GB` | `25-60 GB` SSD |
-| Public `v3.2.x` (current public release `v3.2.3`) | Full | `6-8` vCPU | `16-24 GB` | `120-200 GB` SSD |
+| Public `v3.2.x` (current public release `v3.2.13`) | Glama-lite (single container) | `2-4` vCPU | `4-8 GB` | `20-50 GB` SSD |
+| Public `v3.2.x` (current public release `v3.2.13`) | Full | `6-8` vCPU | `16-24 GB` | `120-200 GB` SSD |
 | Private `v4` tuning lane | Full baseline + tuning headroom | Start from Full baseline | Start from Full baseline | Start from Full baseline; external NVMe strongly recommended |
 
 Notes:
-- Public operators should use `v3.2.3` sizing targets above.
+- Public operators should use `v3.2.13` sizing targets above.
 - Private `v4` work adds benchmark-heavy tuning and should be treated as heavier than public Full mode.
 ### 1) Configure environment
 
@@ -725,6 +725,7 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 ## Docs Index
 
 - Release notes:
+  - `docs/releases/v3.2.13.md` (Glama-lite sqlite acceleration lane + capability detection)
   - `docs/releases/v3.2.3.md` (final install/deployment docs alignment for staged runtime lanes)
   - `docs/releases/v3.2.2.md` (README/website graphics + runtime ownership alignment)
   - `docs/releases/v3.2.1.md` (config canonicalization + Python fallback audit)

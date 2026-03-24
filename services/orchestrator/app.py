@@ -1411,6 +1411,33 @@ TOPIC_ROLLUP_PATH = Path(
         str(Path(__file__).resolve().parent / "data" / "topic_rollups.json"),
     )
 )
+TOPIC_ROLLUP_SQLITE_ENABLED = os.getenv(
+    "TOPIC_ROLLUP_SQLITE_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+TOPIC_ROLLUP_SQLITE_FTS_ENABLED = os.getenv(
+    "TOPIC_ROLLUP_SQLITE_FTS_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+TOPIC_ROLLUP_SQLITE_VEC_ENABLED = os.getenv(
+    "TOPIC_ROLLUP_SQLITE_VEC_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
+TOPIC_ROLLUP_SQLITE_BM25_WEIGHTS = (
+    1.0,
+    1.3,
+    0.9,
+    0.7,
+    0.7,
+    0.6,
+    0.45,
+)
+TOPIC_ROLLUP_SQLITE_PATH = Path(
+    os.getenv(
+        "TOPIC_ROLLUP_SQLITE_PATH",
+        str(Path(__file__).resolve().parent / "data" / "topic_rollups.sqlite3"),
+    )
+)
 MEMORY_WRITE_ASYNC = (os.getenv("MEMORY_WRITE_ASYNC") or "true").lower() in ("1", "true", "yes", "on")
 MEMORY_BANK_QUEUE_MAX = int(os.getenv("MEMORY_BANK_QUEUE_MAX", "2000"))
 MEMORY_BANK_WORKERS = int(os.getenv("MEMORY_BANK_WORKERS", "4"))
@@ -9563,6 +9590,26 @@ topic_rollup_health: dict[str, Any] = {
     "backfillHoldRemainingSecs": 0.0,
     "skippedDueToBackfillHold": 0,
 }
+topic_rollup_sqlite_lock = asyncio.Lock()
+topic_rollup_sqlite_health: dict[str, Any] = {
+    "enabled": TOPIC_ROLLUP_SQLITE_ENABLED,
+    "path": str(TOPIC_ROLLUP_SQLITE_PATH),
+    "ftsEnabled": TOPIC_ROLLUP_SQLITE_FTS_ENABLED,
+    "vecEnabled": TOPIC_ROLLUP_SQLITE_VEC_ENABLED,
+    "ftsAvailable": None,
+    "ftsActive": False,
+    "vecAvailable": None,
+    "vecActive": False,
+    "rowsIndexed": 0,
+    "lastGeneratedAt": None,
+    "lastSyncAt": None,
+    "lastSyncDurationMs": None,
+    "lastSearchAt": None,
+    "lastSearchDurationMs": None,
+    "lastSearchRows": 0,
+    "lastSearchMode": None,
+    "lastError": None,
+}
 topic_tree: Dict[str, Any] = {}
 topic_tree_lock = asyncio.Lock()
 task_db_lock = asyncio.Lock()
@@ -10426,6 +10473,449 @@ def _finalize_topic_rollup_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _topic_rollup_search_row_from_topic(
+    *,
+    project_name: str,
+    topic: dict[str, Any],
+) -> dict[str, Any] | None:
+    path = normalize_topic_path(str(topic.get("path") or ""))
+    if not path:
+        return None
+    summary_snippets = topic.get("summarySnippets") if isinstance(topic.get("summarySnippets"), list) else []
+    numeric_facts = topic.get("numericFacts") if isinstance(topic.get("numericFacts"), list) else []
+    file_partitions = topic.get("filePartitions") if isinstance(topic.get("filePartitions"), list) else []
+    numeric_values = [
+        str(fact.get("value") or "")
+        for fact in numeric_facts
+        if isinstance(fact, dict) and str(fact.get("value") or "")
+    ]
+    partition_terms: list[str] = []
+    partition_payload: list[dict[str, Any]] = []
+    for partition in file_partitions:
+        if not isinstance(partition, dict):
+            continue
+        partition_path = str(partition.get("topic_path") or "").strip()
+        if partition_path:
+            partition_terms.append(partition_path)
+        sample_files = [
+            str(item)
+            for item in (
+                partition.get("sample_files")
+                if isinstance(partition.get("sample_files"), list)
+                else []
+            )
+            if str(item).strip()
+        ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+        partition_terms.extend(sample_files)
+        partition_payload.append(
+            {
+                "topic_path": partition_path or DEFAULT_TOPIC_ROOT,
+                "file_count": int(partition.get("file_count") or 0),
+                "sample_files": sample_files,
+            }
+        )
+    summary = ""
+    if summary_snippets:
+        summary = str(summary_snippets[0])
+    elif numeric_values:
+        summary = f"Numeric facts: {', '.join(numeric_values[:6])}"
+    else:
+        summary = f"Topic rollup available for {path}"
+    topic_rollup_payload = {
+        "event_count": int(topic.get("eventCount") or 0),
+        "recent_event_count": int(topic.get("recentEventCount") or 0),
+        "unique_file_count": int(topic.get("uniqueFileCount") or 0),
+        "raw_refs": (
+            [
+                str(file_name)
+                for file_name in (
+                    topic.get("uniqueFiles") if isinstance(topic.get("uniqueFiles"), list) else []
+                )
+                if str(file_name).strip()
+            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+            or [
+                file_name
+                for partition in partition_payload
+                for file_name in partition.get("sample_files", [])
+            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
+        ),
+        "file_partitions": partition_payload[:TOPIC_ROLLUP_FILE_PARTITIONS_MAX],
+        "latest_timestamp": topic.get("latestTimestamp"),
+    }
+    haystack = "\n".join(
+        [
+            project_name,
+            path,
+            *[str(item) for item in summary_snippets],
+            *numeric_values,
+            *partition_terms,
+        ]
+    )
+    return {
+        "project": project_name,
+        "file": f"_rollups/topics/{path}.json",
+        "summary": _topic_rollup_sanitize_text(summary, max_chars=320),
+        "source": RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+        "topic_path": path,
+        "topic_rollup": topic_rollup_payload,
+        "_index_text": haystack,
+        "_summary_blob": "\n".join(str(item) for item in summary_snippets if str(item).strip()),
+        "_numeric_values": " ".join(value for value in numeric_values if value),
+        "_partition_terms": " ".join(value for value in partition_terms if value),
+    }
+
+
+def _topic_rollup_rows_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    project_filter: str | None = None,
+    topic_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    projects = snapshot.get("projects") if isinstance(snapshot, dict) else {}
+    if not isinstance(projects, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for project_name, project_payload in projects.items():
+        if not isinstance(project_name, str) or not isinstance(project_payload, dict):
+            continue
+        if project_filter and project_name != project_filter:
+            continue
+        topics = project_payload.get("topics")
+        if not isinstance(topics, list):
+            continue
+        for topic in topics:
+            if not isinstance(topic, dict):
+                continue
+            row = _topic_rollup_search_row_from_topic(project_name=project_name, topic=topic)
+            if not row:
+                continue
+            path = str(row.get("topic_path") or "")
+            if topic_filter and not path.startswith(topic_filter):
+                continue
+            rows.append(row)
+    return rows
+
+
+def _topic_rollup_sqlite_connect() -> sqlite3.Connection:
+    TOPIC_ROLLUP_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(TOPIC_ROLLUP_SQLITE_PATH, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA busy_timeout = 5000")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA journal_mode = WAL")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA synchronous = NORMAL")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA temp_store = MEMORY")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA mmap_size = 268435456")
+    return conn
+
+
+def _topic_rollup_sqlite_detect_capabilities(conn: sqlite3.Connection) -> dict[str, bool]:
+    fts5_available = False
+    vec_available = False
+    with contextlib.suppress(Exception):
+        row = conn.execute("SELECT sqlite_compileoption_used('ENABLE_FTS5')").fetchone()
+        fts5_available = bool(row[0]) if row else False
+    module_names: set[str] = set()
+    with contextlib.suppress(Exception):
+        for row in conn.execute("SELECT name FROM pragma_module_list"):
+            name = str(row[0] if isinstance(row, tuple) else row["name"]).strip().lower()
+            if name:
+                module_names.add(name)
+    if "fts5" in module_names:
+        fts5_available = True
+    if any(name in module_names for name in ("vec0", "vss0", "vec_each", "sqlite_vec")):
+        vec_available = True
+    return {
+        "fts5": fts5_available,
+        "vec": vec_available,
+    }
+
+
+def _topic_rollup_sqlite_prepare_tables(
+    conn: sqlite3.Connection,
+    *,
+    capabilities: dict[str, bool],
+) -> dict[str, bool]:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS topic_rollups (
+            project TEXT NOT NULL,
+            path TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            summary_blob TEXT NOT NULL DEFAULT '',
+            numeric_values TEXT NOT NULL DEFAULT '',
+            partition_terms TEXT NOT NULL DEFAULT '',
+            index_text TEXT NOT NULL DEFAULT '',
+            event_count INTEGER NOT NULL DEFAULT 0,
+            recent_event_count INTEGER NOT NULL DEFAULT 0,
+            unique_file_count INTEGER NOT NULL DEFAULT 0,
+            latest_timestamp TEXT,
+            topic_rollup_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY(project, path)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_topic_rollups_event_count ON topic_rollups(event_count DESC, recent_event_count DESC)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_topic_rollups_path ON topic_rollups(path)")
+    fts_active = bool(TOPIC_ROLLUP_SQLITE_FTS_ENABLED and capabilities.get("fts5"))
+    if fts_active:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS topic_rollups_fts USING fts5(
+                project,
+                path,
+                summary,
+                summary_blob,
+                numeric_values,
+                partition_terms,
+                index_text,
+                tokenize = 'unicode61 remove_diacritics 2'
+            )
+            """
+        )
+    return {
+        "fts_active": fts_active,
+        "vec_active": bool(TOPIC_ROLLUP_SQLITE_VEC_ENABLED and capabilities.get("vec")),
+    }
+
+
+def _topic_rollup_sqlite_sync_sync(snapshot: dict[str, Any], *, source: str) -> None:
+    if not TOPIC_ROLLUP_SQLITE_ENABLED:
+        return
+    started = time.monotonic()
+    rows = _topic_rollup_rows_from_snapshot(snapshot)
+    with _topic_rollup_sqlite_connect() as conn:
+        capabilities = _topic_rollup_sqlite_detect_capabilities(conn)
+        mode = _topic_rollup_sqlite_prepare_tables(conn, capabilities=capabilities)
+        payload_rows = [
+            (
+                str(row.get("project") or ""),
+                str(row.get("topic_path") or ""),
+                str(row.get("summary") or ""),
+                str(row.get("_summary_blob") or ""),
+                str(row.get("_numeric_values") or ""),
+                str(row.get("_partition_terms") or ""),
+                str(row.get("_index_text") or ""),
+                int((row.get("topic_rollup") or {}).get("event_count") or 0),
+                int((row.get("topic_rollup") or {}).get("recent_event_count") or 0),
+                int((row.get("topic_rollup") or {}).get("unique_file_count") or 0),
+                str((row.get("topic_rollup") or {}).get("latest_timestamp") or ""),
+                json.dumps(row.get("topic_rollup") or {}, ensure_ascii=True, separators=(",", ":")),
+            )
+            for row in rows
+        ]
+        conn.execute("BEGIN")
+        try:
+            conn.execute("DELETE FROM topic_rollups")
+            if payload_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO topic_rollups (
+                        project,
+                        path,
+                        summary,
+                        summary_blob,
+                        numeric_values,
+                        partition_terms,
+                        index_text,
+                        event_count,
+                        recent_event_count,
+                        unique_file_count,
+                        latest_timestamp,
+                        topic_rollup_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    payload_rows,
+                )
+            if mode.get("fts_active"):
+                conn.execute("DELETE FROM topic_rollups_fts")
+                conn.execute(
+                    """
+                    INSERT INTO topic_rollups_fts (
+                        rowid,
+                        project,
+                        path,
+                        summary,
+                        summary_blob,
+                        numeric_values,
+                        partition_terms,
+                        index_text
+                    )
+                    SELECT
+                        rowid,
+                        project,
+                        path,
+                        summary,
+                        summary_blob,
+                        numeric_values,
+                        partition_terms,
+                        index_text
+                    FROM topic_rollups
+                    """
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            with contextlib.suppress(Exception):
+                conn.execute("ROLLBACK")
+            raise
+    topic_rollup_sqlite_health["ftsAvailable"] = bool(capabilities.get("fts5"))
+    topic_rollup_sqlite_health["vecAvailable"] = bool(capabilities.get("vec"))
+    topic_rollup_sqlite_health["ftsActive"] = bool(mode.get("fts_active"))
+    topic_rollup_sqlite_health["vecActive"] = bool(mode.get("vec_active"))
+    topic_rollup_sqlite_health["rowsIndexed"] = len(rows)
+    topic_rollup_sqlite_health["lastGeneratedAt"] = snapshot.get("generatedAt")
+    topic_rollup_sqlite_health["lastSyncAt"] = _utc_now()
+    topic_rollup_sqlite_health["lastSyncDurationMs"] = round((time.monotonic() - started) * 1000, 3)
+    topic_rollup_sqlite_health["lastError"] = None
+    topic_rollup_sqlite_health["lastSyncSource"] = source
+
+
+async def _topic_rollup_sqlite_sync(snapshot: dict[str, Any], *, source: str) -> None:
+    if not TOPIC_ROLLUP_SQLITE_ENABLED:
+        return
+    try:
+        async with topic_rollup_sqlite_lock:
+            await asyncio.to_thread(_topic_rollup_sqlite_sync_sync, snapshot, source=source)
+    except Exception as exc:
+        topic_rollup_sqlite_health["lastError"] = str(exc)[:320]
+        logger.warning("Topic rollup sqlite sync failed: %s", exc)
+
+
+def _topic_rollup_fts_match_expression(query: str) -> str:
+    terms = _query_terms(query, max_terms=12)
+    tokens: list[str] = []
+    for term in terms:
+        safe = re.sub(r'[^A-Za-z0-9_:/.-]', "", str(term))
+        if not safe:
+            continue
+        tokens.append(f'"{safe}"*')
+    if not tokens:
+        normalized = re.sub(r"\s+", " ", str(query or "").strip())
+        if not normalized:
+            return ""
+        fallback = re.sub(r'[^A-Za-z0-9_:/.\- ]', " ", normalized)
+        fallback = re.sub(r"\s+", " ", fallback).strip()
+        if not fallback:
+            return ""
+        tokens.append(f'"{fallback}"')
+    return " OR ".join(tokens)
+
+
+def _topic_rollup_sqlite_search_sync(
+    query: str,
+    *,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+) -> list[dict[str, Any]]:
+    if not TOPIC_ROLLUP_SQLITE_ENABLED:
+        return []
+    if not str(query or "").strip():
+        return []
+    with _topic_rollup_sqlite_connect() as conn:
+        capabilities = _topic_rollup_sqlite_detect_capabilities(conn)
+        mode = _topic_rollup_sqlite_prepare_tables(conn, capabilities=capabilities)
+        topic_rollup_sqlite_health["ftsAvailable"] = bool(capabilities.get("fts5"))
+        topic_rollup_sqlite_health["vecAvailable"] = bool(capabilities.get("vec"))
+        topic_rollup_sqlite_health["ftsActive"] = bool(mode.get("fts_active"))
+        topic_rollup_sqlite_health["vecActive"] = bool(mode.get("vec_active"))
+        match_expr = _topic_rollup_fts_match_expression(query)
+        if not match_expr:
+            return []
+        if not mode.get("fts_active"):
+            return []
+        clauses: list[str] = ["topic_rollups_fts MATCH ?"]
+        params: list[Any] = [match_expr]
+        if project_filter:
+            clauses.append("tr.project = ?")
+            params.append(project_filter)
+        if topic_filter:
+            clauses.append("(tr.path = ? OR tr.path LIKE ?)")
+            params.extend([topic_filter, f"{topic_filter}/%"])
+        sql = (
+            """
+            SELECT
+                tr.project,
+                tr.path,
+                tr.summary,
+                tr.index_text,
+                tr.topic_rollup_json,
+                bm25(topic_rollups_fts, ?, ?, ?, ?, ?, ?, ?) AS bm25_rank
+            FROM topic_rollups_fts
+            JOIN topic_rollups tr ON tr.rowid = topic_rollups_fts.rowid
+            WHERE
+            """
+            + " AND ".join(clauses)
+            + " ORDER BY bm25_rank ASC LIMIT ?"
+        )
+        params = [*TOPIC_ROLLUP_SQLITE_BM25_WEIGHTS, *params, max(1, int(limit))]
+        fetched = conn.execute(sql, params).fetchall()
+    rows: list[dict[str, Any]] = []
+    for fetched_row in fetched:
+        rank_value = float(fetched_row["bm25_rank"] or 0.0)
+        topic_rollup_payload: dict[str, Any]
+        try:
+            topic_rollup_payload = json.loads(str(fetched_row["topic_rollup_json"] or "{}"))
+            if not isinstance(topic_rollup_payload, dict):
+                topic_rollup_payload = {}
+        except Exception:
+            topic_rollup_payload = {}
+        index_text = str(fetched_row["index_text"] or "")
+        score = _text_match_score(query, index_text)
+        if score <= 0:
+            score = max(0.0, min(1.0, 1.0 / (1.0 + abs(rank_value))))
+        rows.append(
+            {
+                "project": str(fetched_row["project"] or ""),
+                "file": f"_rollups/topics/{str(fetched_row['path'] or '')}.json",
+                "summary": str(fetched_row["summary"] or ""),
+                "score": score,
+                "source": RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+                "topic_path": str(fetched_row["path"] or ""),
+                "topic_rollup": topic_rollup_payload,
+            }
+        )
+    rows.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    return rows[: max(1, int(limit))]
+
+
+async def _topic_rollup_sqlite_search(
+    query: str,
+    *,
+    limit: int,
+    project_filter: str | None,
+    topic_filter: str | None,
+) -> list[dict[str, Any]]:
+    if not TOPIC_ROLLUP_SQLITE_ENABLED:
+        return []
+    started = time.monotonic()
+    try:
+        rows = await asyncio.to_thread(
+            _topic_rollup_sqlite_search_sync,
+            query,
+            limit=max(1, int(limit)),
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+        )
+        topic_rollup_sqlite_health["lastSearchMode"] = "fts5" if topic_rollup_sqlite_health.get("ftsActive") else "none"
+        topic_rollup_sqlite_health["lastSearchRows"] = len(rows)
+        topic_rollup_sqlite_health["lastError"] = None
+        return rows
+    except Exception as exc:
+        topic_rollup_sqlite_health["lastError"] = str(exc)[:320]
+        logger.warning("Topic rollup sqlite search failed: %s", exc)
+        return []
+    finally:
+        topic_rollup_sqlite_health["lastSearchAt"] = _utc_now()
+        topic_rollup_sqlite_health["lastSearchDurationMs"] = round((time.monotonic() - started) * 1000, 3)
+
+
 def _load_topic_rollup_index() -> None:
     if not TOPIC_ROLLUP_PATH.exists():
         return
@@ -10510,7 +11000,9 @@ def _set_topic_rollup_backfill_hold() -> None:
 
 def _topic_rollup_health_snapshot() -> dict[str, Any]:
     _refresh_topic_rollup_hold_health()
-    return dict(topic_rollup_health)
+    payload = dict(topic_rollup_health)
+    payload["sqlite"] = dict(topic_rollup_sqlite_health)
+    return payload
 
 
 def _build_topic_rollup_snapshot_from_entries(
@@ -10630,6 +11122,7 @@ async def _set_topic_rollup_snapshot(
         topic_rollup_index.update(snapshot)
 
     await _persist_topic_rollup_index(snapshot)
+    await _topic_rollup_sqlite_sync(snapshot, source=source)
 
     topic_rollup_health["runs"] = int(topic_rollup_health.get("runs") or 0) + 1
     topic_rollup_health["lastRunAt"] = _utc_now()
@@ -16949,6 +17442,9 @@ _load_override_history()
 _load_memory_write_history()
 _load_topic_tree()
 _load_topic_rollup_index()
+if TOPIC_ROLLUP_SQLITE_ENABLED:
+    with contextlib.suppress(Exception):
+        _topic_rollup_sqlite_sync_sync(topic_rollup_index, source="startup")
 _load_agent_memory_profiles()
 _load_recall_monitor_history()
 _ensure_recall_eval_cases_file()
@@ -20112,111 +20608,43 @@ async def search_topic_rollups(
 ) -> list[dict[str, Any]]:
     async with topic_rollup_lock:
         snapshot = json.loads(json.dumps(topic_rollup_index))
-    projects = snapshot.get("projects") if isinstance(snapshot, dict) else {}
-    if not isinstance(projects, dict):
-        return []
+    sqlite_snapshot_aligned = (
+        bool(TOPIC_ROLLUP_SQLITE_ENABLED)
+        and str(topic_rollup_sqlite_health.get("lastGeneratedAt") or "") == str(snapshot.get("generatedAt") or "")
+        and bool(snapshot.get("generatedAt"))
+    )
+    if sqlite_snapshot_aligned:
+        sqlite_rows = await _topic_rollup_sqlite_search(
+            query,
+            limit=max(1, int(limit)),
+            project_filter=project_filter,
+            topic_filter=topic_filter,
+        )
+        if sqlite_rows:
+            return sqlite_rows[: max(1, int(limit))]
+    raw_rows = _topic_rollup_rows_from_snapshot(
+        snapshot,
+        project_filter=project_filter,
+        topic_filter=topic_filter,
+    )
     rows: list[dict[str, Any]] = []
-    for project_name, project_payload in projects.items():
-        if not isinstance(project_name, str) or not isinstance(project_payload, dict):
+    for row in raw_rows:
+        score = _text_match_score(query, str(row.get("_index_text") or ""))
+        if score <= 0:
             continue
-        if project_filter and project_name != project_filter:
-            continue
-        topics = project_payload.get("topics")
-        if not isinstance(topics, list):
-            continue
-        for topic in topics:
-            if not isinstance(topic, dict):
-                continue
-            path = normalize_topic_path(str(topic.get("path") or ""))
-            if not path:
-                continue
-            if topic_filter and not path.startswith(topic_filter):
-                continue
-            summary_snippets = topic.get("summarySnippets") if isinstance(topic.get("summarySnippets"), list) else []
-            numeric_facts = topic.get("numericFacts") if isinstance(topic.get("numericFacts"), list) else []
-            file_partitions = topic.get("filePartitions") if isinstance(topic.get("filePartitions"), list) else []
-            numeric_values = [
-                str(fact.get("value") or "")
-                for fact in numeric_facts
-                if isinstance(fact, dict) and str(fact.get("value") or "")
-            ]
-            partition_terms: list[str] = []
-            partition_payload: list[dict[str, Any]] = []
-            for partition in file_partitions:
-                if not isinstance(partition, dict):
-                    continue
-                partition_path = str(partition.get("topic_path") or "").strip()
-                if partition_path:
-                    partition_terms.append(partition_path)
-                sample_files = [
-                    str(item)
-                    for item in (
-                        partition.get("sample_files")
-                        if isinstance(partition.get("sample_files"), list)
-                        else []
-                    )
-                    if str(item).strip()
-                ][:TOPIC_ROLLUP_RAW_REFS_MAX]
-                partition_terms.extend(sample_files)
-                partition_payload.append(
-                    {
-                        "topic_path": partition_path or DEFAULT_TOPIC_ROOT,
-                        "file_count": int(partition.get("file_count") or 0),
-                        "sample_files": sample_files,
-                    }
-                )
-            haystack = "\n".join(
-                [
-                    project_name,
-                    path,
-                    *[str(item) for item in summary_snippets],
-                    *numeric_values,
-                    *partition_terms,
-                ]
-            )
-            score = _text_match_score(query, haystack)
-            if score <= 0:
-                continue
-            summary = ""
-            if summary_snippets:
-                summary = str(summary_snippets[0])
-            elif numeric_values:
-                summary = f"Numeric facts: {', '.join(numeric_values[:6])}"
-            else:
-                summary = f"Topic rollup available for {path}"
-            rows.append(
-                {
-                    "project": project_name,
-                    "file": f"_rollups/topics/{path}.json",
-                    "summary": _topic_rollup_sanitize_text(summary, max_chars=320),
-                    "score": score,
-                    "source": RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
-                    "topic_path": path,
-                    "topic_rollup": {
-                        "event_count": int(topic.get("eventCount") or 0),
-                        "recent_event_count": int(topic.get("recentEventCount") or 0),
-                        "unique_file_count": int(topic.get("uniqueFileCount") or 0),
-                        "raw_refs": (
-                            [
-                                str(file_name)
-                                for file_name in (
-                                    topic.get("uniqueFiles") if isinstance(topic.get("uniqueFiles"), list) else []
-                                )
-                                if str(file_name).strip()
-                            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
-                            or [
-                                file_name
-                                for partition in partition_payload
-                                for file_name in partition.get("sample_files", [])
-                            ][:TOPIC_ROLLUP_RAW_REFS_MAX]
-                        ),
-                        "file_partitions": partition_payload[:TOPIC_ROLLUP_FILE_PARTITIONS_MAX],
-                        "latest_timestamp": topic.get("latestTimestamp"),
-                    },
-                }
-            )
-    rows.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
-    return rows[:limit]
+        rows.append(
+            {
+                "project": row.get("project"),
+                "file": row.get("file"),
+                "summary": row.get("summary"),
+                "score": score,
+                "source": row.get("source"),
+                "topic_path": row.get("topic_path"),
+                "topic_rollup": row.get("topic_rollup"),
+            }
+        )
+    rows.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    return rows[: max(1, int(limit))]
 
 
 async def search_mongo_raw(
@@ -24633,6 +25061,12 @@ async def get_topic_rollup_metrics():
             "maxRawRefs": TOPIC_ROLLUP_RAW_REFS_MAX,
             "backfillHoldSecs": TOPIC_ROLLUP_BACKFILL_HOLD_SECS,
             "path": str(TOPIC_ROLLUP_PATH),
+            "sqlite": {
+                "enabled": TOPIC_ROLLUP_SQLITE_ENABLED,
+                "path": str(TOPIC_ROLLUP_SQLITE_PATH),
+                "ftsEnabled": TOPIC_ROLLUP_SQLITE_FTS_ENABLED,
+                "vecEnabled": TOPIC_ROLLUP_SQLITE_VEC_ENABLED,
+            },
         },
         "health": _topic_rollup_health_snapshot(),
         "snapshot": snapshot,

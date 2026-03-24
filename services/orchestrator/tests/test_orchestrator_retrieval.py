@@ -6497,6 +6497,123 @@ async def test_search_topic_rollups_returns_rollup_source_rows():
 
 
 @pytest.mark.asyncio
+async def test_search_topic_rollups_uses_sqlite_lane_when_generation_is_aligned(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async with orchestrator.topic_rollup_lock:
+        orchestrator.topic_rollup_index.clear()
+        orchestrator.topic_rollup_index.update(
+            {
+                "generatedAt": "2026-03-02T19:00:00Z",
+                "historyEntriesScanned": 2,
+                "historyEntriesDeduped": 2,
+                "projects": {
+                    "alpha": {
+                        "topicCount": 1,
+                        "topics": [
+                            {
+                                "path": "decisions/knobs",
+                                "depth": 2,
+                                "eventCount": 8,
+                                "recentEventCount": 3,
+                                "uniqueFileCount": 2,
+                                "uniqueFiles": ["decisions/a.md"],
+                                "latestTimestamp": "2026-03-02T18:59:00Z",
+                                "summarySnippets": ["rollup fallback"],
+                                "numericFacts": [],
+                                "inference": [],
+                                "children": [],
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+    orchestrator.topic_rollup_sqlite_health["lastGeneratedAt"] = "2026-03-02T19:00:00Z"
+
+    async def _sqlite(*args, **kwargs):
+        return [
+            {
+                "project": "alpha",
+                "file": "_rollups/topics/decisions/knobs.json",
+                "summary": "sqlite lane hit",
+                "score": 0.95,
+                "source": orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+                "topic_path": "decisions/knobs",
+                "topic_rollup": {"event_count": 8, "raw_refs": ["decisions/a.md"]},
+            }
+        ]
+
+    monkeypatch.setattr(orchestrator, "_topic_rollup_sqlite_search", _sqlite)
+    rows = await orchestrator.search_topic_rollups("sqlite lane hit", limit=5, project_filter="alpha", topic_filter="decisions")
+    assert rows
+    assert rows[0]["summary"] == "sqlite lane hit"
+
+
+@pytest.mark.asyncio
+async def test_search_topic_rollups_skips_stale_sqlite_lane(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async with orchestrator.topic_rollup_lock:
+        orchestrator.topic_rollup_index.clear()
+        orchestrator.topic_rollup_index.update(
+            {
+                "generatedAt": "2026-03-02T20:00:00Z",
+                "historyEntriesScanned": 2,
+                "historyEntriesDeduped": 2,
+                "projects": {
+                    "alpha": {
+                        "topicCount": 1,
+                        "topics": [
+                            {
+                                "path": "decisions/knobs",
+                                "depth": 2,
+                                "eventCount": 9,
+                                "recentEventCount": 4,
+                                "uniqueFileCount": 2,
+                                "uniqueFiles": ["decisions/a.md"],
+                                "latestTimestamp": "2026-03-02T19:59:00Z",
+                                "summarySnippets": ["fallback rollup path"],
+                                "numericFacts": [
+                                    {
+                                        "value": "88.1%",
+                                        "sourceFile": "decisions/a.md",
+                                        "topicPath": "decisions/knobs",
+                                        "timestamp": "2026-03-02T19:59:00Z",
+                                        "snippet": "win rate reached 88.1% after update",
+                                    }
+                                ],
+                                "inference": [],
+                                "children": [],
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+    orchestrator.topic_rollup_sqlite_health["lastGeneratedAt"] = "2026-03-01T00:00:00Z"
+
+    async def _sqlite(*args, **kwargs):
+        return [
+            {
+                "project": "wrong",
+                "file": "_rollups/topics/wrong.json",
+                "summary": "should not be used",
+                "score": 1.0,
+                "source": orchestrator.RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
+                "topic_path": "wrong",
+                "topic_rollup": {"event_count": 1, "raw_refs": []},
+            }
+        ]
+
+    monkeypatch.setattr(orchestrator, "_topic_rollup_sqlite_search", _sqlite)
+    rows = await orchestrator.search_topic_rollups("win rate 88.1%", limit=5, project_filter="alpha", topic_filter="decisions")
+    assert rows
+    assert rows[0]["project"] == "alpha"
+    assert rows[0]["summary"] == "fallback rollup path"
+
+
+@pytest.mark.asyncio
 async def test_backfill_topic_rollups_sets_hold_window(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

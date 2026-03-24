@@ -53,6 +53,22 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-03-24 · v3.2.13 · Glama-lite SQLite Acceleration</span>
+        <h3>Lite mode now ships sqlite WAL + FTS5 BM25 acceleration with optional sqlite-vec detection</h3>
+        <p class="spotlight">
+          The public lite lane was upgraded for single-container deployments: topic rollup search now uses a local sqlite
+          acceleration index with fail-open fallback, while full multi-backend mode remains unchanged.
+        </p>
+        <ul>
+          <li><strong>Lite architecture:</strong> <code>topic_rollups</code> + sqlite outbox + sqlite rollup index (WAL + FTS5 BM25).</li>
+          <li><strong>Full architecture:</strong> staged fast lane <code>topic_rollups + qdrant + postgres_pgvector</code> plus deep async continuation <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li><strong>Optional vector lane:</strong> <code>sqlite-vec</code> capability is auto-detected and remains fail-open when unavailable.</li>
+          <li><strong>Correctness guardrail:</strong> sqlite rollup search is only used when sqlite generation marker matches the active in-memory rollup snapshot.</li>
+          <li><strong>A/B snapshot:</strong> topic rollup lookup average <code>85.065ms → 50.225ms</code> (<code>1.694x</code> faster) in single-container benchmark artifact <code>bench/results/glama_lite_topic_rollup_sqlite_ab_20260324.json</code>.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-03-19 · v3.2.3 · Launch Readiness Docs Alignment</span>
         <h3>Finalized install/deployment mode copy to match staged retrieval runtime lanes</h3>
         <p class="spotlight">
