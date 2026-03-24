@@ -1,0 +1,99 @@
+name: Release Installers
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach assets to (for manual reruns)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-installers-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos-dmg:
+    name: Build macOS DMG
+    if: github.repository == 'sheawinkler/ContextLattice'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Build DMG
+        run: bash scripts/build_macos_dmg.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dmg
+          path: dist/ContextLattice-macOS-universal.dmg
+          if-no-files-found: error
+
+  build-linux-and-msi:
+    name: Build Linux Bundle + Windows MSI
+    if: github.repository == 'sheawinkler/ContextLattice'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Build Linux bundle
+        run: bash scripts/build_linux_bundle.sh
+
+      - name: Build Windows MSI
+        env:
+          MSI_VERSION: ${{ github.event.release.tag_name || inputs.tag }}
+        run: bash scripts/build_windows_msi.sh
+
+      - name: Upload Linux bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/ContextLattice-linux-bootstrap.tar.gz
+          if-no-files-found: error
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-msi
+          path: dist/ContextLattice-windows-x64.msi
+          if-no-files-found: error
+
+  attach-release-assets:
+    name: Attach assets to release
+    if: github.repository == 'sheawinkler/ContextLattice'
+    runs-on: ubuntu-latest
+    needs:
+      - build-macos-dmg
+      - build-linux-and-msi
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish/overwrite release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          files: |
+            dist/ContextLattice-macOS-universal.dmg
+            dist/ContextLattice-windows-x64.msi
+            dist/ContextLattice-linux-bootstrap.tar.gz
