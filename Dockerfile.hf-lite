@@ -1,0 +1,40 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=7860 \
+    CONTEXTLATTICE_ENV=development \
+    ORCH_SECURITY_STRICT=false \
+    ORCH_PRODUCTION_REQUIRE_API_KEY=false \
+    SECRETS_STORAGE_MODE=redact \
+    FANOUT_OUTBOX_BACKEND=sqlite \
+    MONGO_RAW_ENABLED=false \
+    MINDSDB_ENABLED=false \
+    ORCH_PGVECTOR_ENABLED=false \
+    ORCH_RETRIEVAL_DEFAULT_SOURCES=topic_rollups \
+    ORCH_RETRIEVAL_FAST_SOURCES=topic_rollups \
+    TOPIC_ROLLUP_SQLITE_ENABLED=true \
+    TOPIC_ROLLUP_SQLITE_FTS_ENABLED=true \
+    TOPIC_ROLLUP_SQLITE_VEC_ENABLED=true \
+    TOPIC_ROLLUP_SQLITE_PATH=/data/topic_rollups.sqlite3 \
+    TASK_DB_PATH=/data/agent_tasks.db \
+    FANOUT_OUTBOX_PAYLOAD_BLOB_DIR=/data/fanout_payload_blobs \
+    ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data \
+    ORCH_STORAGE_GOVERNANCE_RUN_ON_STARTUP=true \
+    ORCH_STORAGE_GOVERNANCE_ENABLED=true \
+    ORCH_STORAGE_GOVERNANCE_INTERVAL_SECS=900 \
+    SIGNAL_REFRESH_ENABLED=false \
+    OVERRIDE_REFRESH_ENABLED=false \
+    SINK_RETENTION_ENABLED=false
+
+WORKDIR /app
+
+COPY services/orchestrator/requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/orchestrator/app.py app.py
+COPY services/orchestrator/runtime ./runtime
+
+EXPOSE 7860
+
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-7860}"]

@@ -16,6 +16,12 @@ Use these in the Glama Dockerfile admin form:
 
 These are deploy settings, not environment variables.
 
+## Python version note (3.14 vs 3.12)
+
+- Glama generated builds can succeed on Python `3.14` when compatible wheels are available.
+- For deterministic container reproducibility across platforms, the repo Dockerfile lanes are pinned to Python `3.12`.
+- If you use generated mode, prefer Python `3.12` unless you explicitly need `3.14` and have validated dependencies in your target runtime.
+
 ## Generated Dockerfile Mode (UI fallback)
 
 If Glama forces generated Dockerfile mode with a fixed `mcp-proxy --` prefix, use:

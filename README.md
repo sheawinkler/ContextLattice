@@ -89,6 +89,12 @@ Context Lattice is built for teams running high-volume memory writes where durab
 - Technical/dev users (default): repo clone or main ZIP
 - CLI fallback already exists and remains first-class: `gmake quickstart`
 
+### Hugging Face Space (Docker, free/lite)
+
+- Use `Dockerfile.hf-lite` for a single-container deployment on port `7860`.
+- Deployment guide: `docs/huggingface-space-lite.md`
+- This lane intentionally defaults to `topic_rollups` retrieval and disables `mongo/mindsdb/pgvector` for predictable startup in a single container.
+
 Release operator note:
 
 ```bash

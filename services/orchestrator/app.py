@@ -24237,6 +24237,17 @@ async def ingest_trajectory(body: TrajectoryIngest):
     return response
 
 
+@app.get("/")
+async def root():
+    """Minimal root endpoint for single-container deployment probes."""
+
+    return {
+        "ok": True,
+        "service": "contextlattice-orchestrator",
+        "mode": "single-container" if not any([MONGO_RAW_ENABLED, MINDSDB_ENABLED, PGVECTOR_ENABLED]) else "full",
+    }
+
+
 @app.get("/health")
 async def health():
     """Coarse readiness endpoint used by smoke tests and compose checks."""
