@@ -91,7 +91,7 @@ Context Lattice is built for teams running high-volume memory writes where durab
 
 ### Hugging Face Space (Docker, free/lite)
 
-- Use `Dockerfile.hf-lite` for a single-container deployment on port `7860`.
+- Use `Dockerfile.hf-lite` for a single-container deployment on port `7860` (copy it to root `Dockerfile` in the Space repo before build).
 - Deployment guide: `docs/huggingface-space-lite.md`
 - This lane intentionally defaults to `topic_rollups` retrieval and disables `mongo/mindsdb/pgvector` for predictable startup in a single container.
 
