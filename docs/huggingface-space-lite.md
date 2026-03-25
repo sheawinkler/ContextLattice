@@ -18,11 +18,21 @@ Glama generated builds can run on Python 3.14 when upstream wheels are available
 1. Create a new Hugging Face Space.
 2. Choose SDK: `Docker`.
 3. Push this repository branch to the Space repo.
-4. Ensure Dockerfile path is `Dockerfile.hf-lite`.
+4. Hugging Face expects a root `Dockerfile`:
+   - copy `Dockerfile.hf-lite` to `Dockerfile` in the Space repo before build.
 5. In Space variables, set:
    - `PORT=7860`
 6. Optional secret for strict mode:
    - `CONTEXTLATTICE_ORCHESTRATOR_API_KEY=<your-key>`
+
+Example (inside the Space repo):
+
+```bash
+cp Dockerfile.hf-lite Dockerfile
+git add Dockerfile
+git commit -m "chore: use hf-lite dockerfile"
+git push
+```
 
 ## Recommended runtime variables
 
