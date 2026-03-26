@@ -243,6 +243,7 @@ type server struct {
 	writePolicy             writeIngressPolicy
 	telemetrySink           *telemetrySink
 	telemetrySpool          *telemetrySpool
+	telemetryRing           *telemetryRing
 	continuationSem         chan struct{}
 	adaptiveMu              sync.Mutex
 	adaptiveBySource        map[string]*adaptiveSourceStats
@@ -782,6 +783,7 @@ func newServer() *server {
 		telemetrySinkInstance = &telemetrySink{enabled: false}
 	}
 	telemetrySpoolInstance := newTelemetrySpoolFromEnv()
+	telemetryRingInstance := newTelemetryRingFromEnv()
 	t := newRetrievalTelemetry(policy)
 	s := &server{
 		backendURL:              backendURL,
@@ -793,6 +795,7 @@ func newServer() *server {
 		writePolicy:             writePolicy,
 		telemetrySink:           telemetrySinkInstance,
 		telemetrySpool:          telemetrySpoolInstance,
+		telemetryRing:           telemetryRingInstance,
 		continuationSem:         make(chan struct{}, policy.continuationMaxInflight),
 		adaptiveBySource:        make(map[string]*adaptiveSourceStats),
 		continuationInFlight:    make(map[string]int),
@@ -1830,6 +1833,7 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"batchConcurrency":          s.writePolicy.batchConcurrency,
 			"fanoutExcludeTargets":      s.writePolicy.fanoutExcludeTargets,
 			"telemetrySpool":            s.telemetrySpool.snapshot(),
+			"telemetryRing":             s.telemetryRing.snapshot(),
 		},
 		"toolCalls": map[string]any{
 			"allowAll":            s.toolCalls.allowAll,

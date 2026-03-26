@@ -956,6 +956,8 @@ func TestTelemetryWriteFailsWhenSinkAndSpoolUnavailable(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
 	t.Setenv("GO_TELEMETRY_SPOOL_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_RING_ENABLED", "true")
+	t.Setenv("GO_TELEMETRY_RING_CAPACITY", "32")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -973,9 +975,75 @@ func TestTelemetryWriteFailsWhenSinkAndSpoolUnavailable(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadGateway {
+	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 502 when sink+spool unavailable, got %d body=%s", resp.StatusCode, string(body))
+		t.Fatalf("expected 202 accepted_degraded when sink+spool unavailable, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !anyToBool(payload["accepted_degraded"]) {
+		t.Fatalf("expected accepted_degraded=true, got %#v", payload["accepted_degraded"])
+	}
+	if strings.TrimSpace(anyToString(payload["lane"])) != "telemetry_ring_fallback" {
+		t.Fatalf("expected telemetry_ring_fallback lane, got %#v", payload["lane"])
+	}
+	if !anyToBool(payload["telemetry_buffered"]) {
+		t.Fatalf("expected telemetry_buffered=true, got %#v", payload["telemetry_buffered"])
+	}
+}
+
+func TestTelemetryRingEvictsOldestLowValueFirst(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SPOOL_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_RING_ENABLED", "true")
+	t.Setenv("GO_TELEMETRY_RING_CAPACITY", "2")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	requests := []string{
+		`{"projectName":"alpha","fileName":"telemetry__heartbeat.json","content":"{\"cpu\":0.8}","topicPath":"telemetry/runtime/heartbeat"}`,
+		`{"projectName":"alpha","fileName":"telemetry__incident.json","content":"{\"error\":\"timeout\"}","topicPath":"telemetry/runtime/alerts"}`,
+		`{"projectName":"alpha","fileName":"telemetry__incident2.json","content":"{\"error\":\"critical\"}","topicPath":"telemetry/runtime/alerts"}`,
+	}
+	for idx, reqBody := range requests {
+		resp, err := http.Post(gateway.URL+"/memory/write", "application/json", strings.NewReader(reqBody))
+		if err != nil {
+			t.Fatalf("request %d failed: %v", idx, err)
+		}
+		if resp.StatusCode != http.StatusAccepted {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("request %d expected 202, got %d body=%s", idx, resp.StatusCode, string(body))
+		}
+		resp.Body.Close()
+	}
+
+	entries := s.telemetryRing.debugEntries()
+	if len(entries) != 2 {
+		t.Fatalf("expected ring depth=2, got %d", len(entries))
+	}
+	for _, row := range entries {
+		if row.fileName == "telemetry__heartbeat.json" {
+			t.Fatalf("expected low-value heartbeat entry to be evicted first")
+		}
+	}
+	stats := s.telemetryRing.snapshot()
+	if anyToInt(stats["dropped"], 0) != 1 {
+		t.Fatalf("expected dropped=1, got %#v", stats["dropped"])
+	}
+	if anyToInt(stats["droppedLowValue"], 0) != 1 {
+		t.Fatalf("expected droppedLowValue=1, got %#v", stats["droppedLowValue"])
 	}
 }
 
