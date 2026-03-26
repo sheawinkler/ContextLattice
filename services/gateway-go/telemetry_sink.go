@@ -218,25 +218,19 @@ func (s *telemetrySink) ingestWrite(
 		compressedBytes = len(compressed)
 		contentRef = contentHash
 		storedInline = false
-		blobDoc := bson.M{
-			"_id":              contentRef,
-			"schema_version":   telemetryBlobSchemaVersion,
-			"codec":            codec,
-			"content_hash":     contentHash,
-			"content_bytes":    rawBytes,
-			"compressed_bytes": compressedBytes,
-			"payload":          primitive.Binary{Subtype: 0x00, Data: compressed},
-			"created_at":       now,
-			"updated_at":       now,
-		}
+		blobUpdate := buildTelemetryBlobUpsertUpdate(
+			contentRef,
+			contentHash,
+			codec,
+			rawBytes,
+			compressedBytes,
+			compressed,
+			now,
+		)
 		_, err = s.blobs.UpdateOne(
 			ctx,
 			bson.M{"_id": contentRef},
-			bson.M{
-				"$setOnInsert": blobDoc,
-				"$set":         bson.M{"updated_at": now},
-				"$inc":         bson.M{"ref_count": 1},
-			},
+			blobUpdate,
 			options.Update().SetUpsert(true),
 		)
 		if err != nil {
@@ -290,6 +284,37 @@ func (s *telemetrySink) ingestWrite(
 		RawBytes:        rawBytes,
 		Codec:           codecUsed,
 	}, nil
+}
+
+func buildTelemetryBlobUpsertUpdate(
+	contentRef string,
+	contentHash string,
+	codec string,
+	rawBytes int,
+	compressedBytes int,
+	compressed []byte,
+	now time.Time,
+) bson.M {
+	// Keep immutable blob fields in $setOnInsert and mutable freshness in $set
+	// so a single path never appears in multiple update operators.
+	return bson.M{
+		"$setOnInsert": bson.M{
+			"_id":              contentRef,
+			"schema_version":   telemetryBlobSchemaVersion,
+			"codec":            codec,
+			"content_hash":     contentHash,
+			"content_bytes":    rawBytes,
+			"compressed_bytes": compressedBytes,
+			"payload":          primitive.Binary{Subtype: 0x00, Data: compressed},
+			"created_at":       now,
+		},
+		"$set": bson.M{
+			"updated_at": now,
+		},
+		"$inc": bson.M{
+			"ref_count": 1,
+		},
+	}
 }
 
 func (s *telemetrySink) runBlobGCOnce(ctx context.Context) (map[string]any, error) {
