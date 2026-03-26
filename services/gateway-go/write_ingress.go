@@ -294,7 +294,7 @@ func (s *server) routeTelemetryWrite(
 	sourcePath string,
 ) (map[string]any, int, error) {
 	if s.telemetrySink == nil || !s.telemetrySink.enabled {
-		return nil, 0, fmt.Errorf("telemetry sink unavailable")
+		return s.routeTelemetryToSpool(item, sourcePath, fmt.Errorf("telemetry sink unavailable"))
 	}
 	timeout := envDurationSeconds("GO_TELEMETRY_INGEST_TIMEOUT_SECS", 8)
 	if timeout < time.Second {
@@ -310,7 +310,7 @@ func (s *server) routeTelemetryWrite(
 	}
 	result, err := s.telemetrySink.ingestWrite(ingestCtx, item, meta)
 	if err != nil {
-		return nil, 0, err
+		return s.routeTelemetryToSpool(item, sourcePath, err)
 	}
 	compressionCodec := strings.TrimSpace(result.Codec)
 	if compressionCodec == "" {
@@ -345,6 +345,53 @@ func (s *server) routeTelemetryWrite(
 		},
 	}
 	return response, http.StatusOK, nil
+}
+
+func (s *server) routeTelemetryToSpool(
+	item normalizedWrite,
+	sourcePath string,
+	ingestErr error,
+) (map[string]any, int, error) {
+	if s.telemetrySpool == nil || !s.telemetrySpool.enabled {
+		return nil, 0, fmt.Errorf("telemetry ingest failed: %w", ingestErr)
+	}
+	spooled, err := s.telemetrySpool.spoolWrite(item, sourcePath, ingestErr)
+	if err != nil {
+		return nil, 0, fmt.Errorf("telemetry ingest failed and spool fallback failed: %w", err)
+	}
+	response := map[string]any{
+		"ok":                    true,
+		"accepted":              true,
+		"event_id":              spooled["event_id"],
+		"telemetry_routed":      true,
+		"telemetry_spooled":     true,
+		"lane":                  "telemetry_spool_fallback",
+		"spool_ref":             spooled["spool_ref"],
+		"retention_window_days": envInt("GO_TELEMETRY_RETENTION_DAYS", 75),
+		"storage_schema": map[string]any{
+			"event_schema_version": telemetryEventSchemaV2,
+			"spool_schema_version": telemetrySpoolSchemaVersion,
+			"compression":          "ndjson",
+			"reference_mode":       "local_spool_ref",
+		},
+		"warnings": []string{
+			"Telemetry sink unavailable; write accepted into local spool fallback for deferred durability.",
+		},
+		"fanout": map[string]any{
+			"memory_bank":       "skipped_low_value",
+			"mongo_raw":         "deferred_spooled",
+			"qdrant":            "skipped_low_value",
+			"postgres_pgvector": "skipped_low_value",
+			"mindsdb":           "skipped_low_value",
+			"letta":             "skipped_low_value",
+			"langfuse":          "optional",
+		},
+	}
+	if ingestErr != nil {
+		response["degraded"] = true
+		response["degraded_reason"] = ingestErr.Error()
+	}
+	return response, http.StatusAccepted, nil
 }
 
 func (s *server) callBackendJSON(
