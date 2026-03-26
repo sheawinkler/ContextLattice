@@ -242,6 +242,7 @@ type server struct {
 	telemetry               *retrievalTelemetry
 	writePolicy             writeIngressPolicy
 	telemetrySink           *telemetrySink
+	telemetrySpool          *telemetrySpool
 	continuationSem         chan struct{}
 	adaptiveMu              sync.Mutex
 	adaptiveBySource        map[string]*adaptiveSourceStats
@@ -780,6 +781,7 @@ func newServer() *server {
 		log.Printf("gateway-go telemetry sink disabled: %v", sinkErr)
 		telemetrySinkInstance = &telemetrySink{enabled: false}
 	}
+	telemetrySpoolInstance := newTelemetrySpoolFromEnv()
 	t := newRetrievalTelemetry(policy)
 	s := &server{
 		backendURL:              backendURL,
@@ -790,6 +792,7 @@ func newServer() *server {
 		telemetry:               t,
 		writePolicy:             writePolicy,
 		telemetrySink:           telemetrySinkInstance,
+		telemetrySpool:          telemetrySpoolInstance,
 		continuationSem:         make(chan struct{}, policy.continuationMaxInflight),
 		adaptiveBySource:        make(map[string]*adaptiveSourceStats),
 		continuationInFlight:    make(map[string]int),
@@ -1826,6 +1829,7 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"telemetryIsolationEnabled": s.writePolicy.telemetryIsolationEnabled,
 			"batchConcurrency":          s.writePolicy.batchConcurrency,
 			"fanoutExcludeTargets":      s.writePolicy.fanoutExcludeTargets,
+			"telemetrySpool":            s.telemetrySpool.snapshot(),
 		},
 		"toolCalls": map[string]any{
 			"allowAll":            s.toolCalls.allowAll,

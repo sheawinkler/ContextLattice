@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -896,6 +898,84 @@ func TestProxyForwardsMemoryWriteAndStatusPaths(t *testing.T) {
 	}
 	if capturedPath != "/status" {
 		t.Fatalf("expected /status proxied, got %s", capturedPath)
+	}
+}
+
+func TestTelemetryWriteFallsBackToSpoolWhenSinkUnavailable(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SPOOL_ENABLED", "true")
+	spoolPath := filepath.Join(t.TempDir(), "telemetry_spool.ndjson")
+	t.Setenv("GO_TELEMETRY_SPOOL_PATH", spoolPath)
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"projectName":"alpha","fileName":"telemetry__agg-latest.json","content":"{\"cpu\":0.8}","topicPath":"telemetry/runtime"}`
+	resp, err := http.Post(gateway.URL+"/memory/write", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 202 from spool fallback, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !anyToBool(payload["telemetry_spooled"]) {
+		t.Fatalf("expected telemetry_spooled=true, got %#v", payload["telemetry_spooled"])
+	}
+	if strings.TrimSpace(anyToString(payload["lane"])) != "telemetry_spool_fallback" {
+		t.Fatalf("unexpected lane=%#v", payload["lane"])
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected no backend fanout on telemetry write, got %d", backendCalls)
+	}
+	raw, err := os.ReadFile(spoolPath)
+	if err != nil {
+		t.Fatalf("expected spool file to exist: %v", err)
+	}
+	if !strings.Contains(string(raw), `"project":"alpha"`) {
+		t.Fatalf("spool file missing project payload: %s", string(raw))
+	}
+}
+
+func TestTelemetryWriteFailsWhenSinkAndSpoolUnavailable(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SPOOL_ENABLED", "false")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"projectName":"alpha","fileName":"telemetry__agg-latest.json","content":"{\"cpu\":0.8}","topicPath":"telemetry/runtime"}`
+	resp, err := http.Post(gateway.URL+"/memory/write", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 502 when sink+spool unavailable, got %d body=%s", resp.StatusCode, string(body))
 	}
 }
 
