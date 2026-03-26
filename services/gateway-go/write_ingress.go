@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -167,10 +168,15 @@ func (s *server) handleWriteBatchIngress(
 							"itemId":                item.itemID,
 							"ok":                    true,
 							"event_id":              response["event_id"],
+							"lane":                  response["lane"],
+							"accepted_degraded":     response["accepted_degraded"],
 							"warnings":              response["warnings"],
 							"fanout":                response["fanout"],
 							"telemetry_routed":      true,
+							"telemetry_spooled":     response["telemetry_spooled"],
+							"telemetry_buffered":    response["telemetry_buffered"],
 							"blob_ref":              response["blob_ref"],
+							"ring_ref":              response["ring_ref"],
 							"content_hash":          response["content_hash"],
 							"storage_schema":        response["storage_schema"],
 							"retention_window_days": response["retention_window_days"],
@@ -352,44 +358,164 @@ func (s *server) routeTelemetryToSpool(
 	sourcePath string,
 	ingestErr error,
 ) (map[string]any, int, error) {
+	if ingestErr == nil {
+		ingestErr = fmt.Errorf("telemetry sink unavailable")
+	}
+
+	var spoolErr error
 	if s.telemetrySpool == nil || !s.telemetrySpool.enabled {
-		return nil, 0, fmt.Errorf("telemetry ingest failed: %w", ingestErr)
+		spoolErr = fmt.Errorf("telemetry spool disabled")
+	} else {
+		spooled, err := s.telemetrySpool.spoolWrite(item, sourcePath, ingestErr)
+		if err == nil {
+			response := map[string]any{
+				"ok":                    true,
+				"accepted":              true,
+				"event_id":              spooled["event_id"],
+				"telemetry_routed":      true,
+				"telemetry_spooled":     true,
+				"lane":                  "telemetry_spool_fallback",
+				"spool_ref":             spooled["spool_ref"],
+				"retention_window_days": envInt("GO_TELEMETRY_RETENTION_DAYS", 75),
+				"storage_schema": map[string]any{
+					"event_schema_version": telemetryEventSchemaV2,
+					"spool_schema_version": telemetrySpoolSchemaVersion,
+					"compression":          "ndjson",
+					"reference_mode":       "local_spool_ref",
+				},
+				"warnings": []string{
+					"Telemetry sink unavailable; write accepted into local spool fallback for deferred durability.",
+				},
+				"fanout": map[string]any{
+					"memory_bank":       "skipped_low_value",
+					"mongo_raw":         "deferred_spooled",
+					"qdrant":            "skipped_low_value",
+					"postgres_pgvector": "skipped_low_value",
+					"mindsdb":           "skipped_low_value",
+					"letta":             "skipped_low_value",
+					"langfuse":          "optional",
+				},
+			}
+			if ingestErr != nil {
+				response["degraded"] = true
+				response["degraded_reason"] = ingestErr.Error()
+			}
+			return response, http.StatusAccepted, nil
+		}
+		spoolErr = fmt.Errorf("telemetry spool write failed: %w", err)
 	}
-	spooled, err := s.telemetrySpool.spoolWrite(item, sourcePath, ingestErr)
-	if err != nil {
-		return nil, 0, fmt.Errorf("telemetry ingest failed and spool fallback failed: %w", err)
+
+	ringSnapshot := map[string]any{}
+	if s.telemetryRing != nil {
+		ringSnapshot = s.telemetryRing.snapshot()
 	}
+	if s.telemetryRing != nil && s.telemetryRing.enabled {
+		buffered, ringErr := s.telemetryRing.enqueue(item, sourcePath, ingestErr, spoolErr)
+		if ringErr == nil {
+			log.Printf(
+				"telemetry lane degraded accepted: sink_error=%v spool_error=%v lane=telemetry_ring_fallback",
+				ingestErr,
+				spoolErr,
+			)
+			response := map[string]any{
+				"ok":                    true,
+				"accepted":              true,
+				"accepted_degraded":     true,
+				"event_id":              buffered["event_id"],
+				"telemetry_routed":      true,
+				"telemetry_buffered":    true,
+				"lane":                  "telemetry_ring_fallback",
+				"ring_ref":              buffered["ring_ref"],
+				"retention_window_days": envInt("GO_TELEMETRY_RETENTION_DAYS", 75),
+				"degraded":              true,
+				"degraded_reason":       ingestErr.Error(),
+				"storage_schema": map[string]any{
+					"event_schema_version": telemetryEventSchemaV2,
+					"ring_schema_version":  telemetryRingSchemaVersion,
+					"compression":          "in_memory",
+					"reference_mode":       "inmem_ring_ref",
+				},
+				"warnings": []string{
+					"Telemetry sink and spool unavailable; write accepted in bounded in-memory ring. Persisted durability may lag until downstream recovers.",
+				},
+				"alerts": []map[string]any{
+					{
+						"code":     "telemetry_sink_spool_unavailable",
+						"severity": "warning",
+						"message":  "Telemetry write accepted_degraded via in-memory ring fallback.",
+					},
+				},
+				"metrics": map[string]any{
+					"sink_error":       errorString(ingestErr),
+					"spool_error":      errorString(spoolErr),
+					"ring_depth":       buffered["ring_depth"],
+					"ring_capacity":    buffered["ring_capacity"],
+					"ring_dropped":     buffered["ring_dropped"],
+					"ring_dropped_low": buffered["ring_dropped_low"],
+				},
+				"fanout": map[string]any{
+					"memory_bank":       "skipped_low_value",
+					"mongo_raw":         "deferred_ring_buffer",
+					"qdrant":            "skipped_low_value",
+					"postgres_pgvector": "skipped_low_value",
+					"mindsdb":           "skipped_low_value",
+					"letta":             "skipped_low_value",
+					"langfuse":          "optional",
+				},
+			}
+			if evictedID := strings.TrimSpace(anyToString(buffered["ring_evicted_event_id"])); evictedID != "" {
+				response["warnings"] = append(
+					response["warnings"].([]string),
+					"Ring buffer full: evicted oldest low-value telemetry entry before accepting this write.",
+				)
+				response["ring_evicted_event_id"] = evictedID
+				response["ring_evicted_low_value"] = buffered["ring_evicted_low_value"]
+			}
+			return response, http.StatusAccepted, nil
+		}
+		spoolErr = fmt.Errorf("%w; telemetry ring enqueue failed: %v", spoolErr, ringErr)
+	}
+
+	log.Printf(
+		"telemetry lane accepted_degraded without buffer: sink_error=%v spool_error=%v ring=%v",
+		ingestErr,
+		spoolErr,
+		ringSnapshot,
+	)
 	response := map[string]any{
-		"ok":                    true,
-		"accepted":              true,
-		"event_id":              spooled["event_id"],
-		"telemetry_routed":      true,
-		"telemetry_spooled":     true,
-		"lane":                  "telemetry_spool_fallback",
-		"spool_ref":             spooled["spool_ref"],
-		"retention_window_days": envInt("GO_TELEMETRY_RETENTION_DAYS", 75),
-		"storage_schema": map[string]any{
-			"event_schema_version": telemetryEventSchemaV2,
-			"spool_schema_version": telemetrySpoolSchemaVersion,
-			"compression":          "ndjson",
-			"reference_mode":       "local_spool_ref",
-		},
+		"ok":                 true,
+		"accepted":           true,
+		"accepted_degraded":  true,
+		"telemetry_routed":   true,
+		"telemetry_buffered": false,
+		"telemetry_dropped":  true,
+		"lane":               "telemetry_fail_open_unbuffered",
+		"degraded":           true,
+		"degraded_reason":    ingestErr.Error(),
 		"warnings": []string{
-			"Telemetry sink unavailable; write accepted into local spool fallback for deferred durability.",
+			"Telemetry sink and spool unavailable and ring buffer disabled/unavailable; write accepted_degraded without durable persistence.",
+		},
+		"alerts": []map[string]any{
+			{
+				"code":     "telemetry_all_fallbacks_unavailable",
+				"severity": "critical",
+				"message":  "Telemetry write accepted_degraded but not buffered; verify sink/spool/ring health immediately.",
+			},
+		},
+		"metrics": map[string]any{
+			"sink_error":  errorString(ingestErr),
+			"spool_error": errorString(spoolErr),
+			"ring_state":  ringSnapshot,
 		},
 		"fanout": map[string]any{
 			"memory_bank":       "skipped_low_value",
-			"mongo_raw":         "deferred_spooled",
+			"mongo_raw":         "degraded_unbuffered",
 			"qdrant":            "skipped_low_value",
 			"postgres_pgvector": "skipped_low_value",
 			"mindsdb":           "skipped_low_value",
 			"letta":             "skipped_low_value",
 			"langfuse":          "optional",
 		},
-	}
-	if ingestErr != nil {
-		response["degraded"] = true
-		response["degraded_reason"] = ingestErr.Error()
 	}
 	return response, http.StatusAccepted, nil
 }
