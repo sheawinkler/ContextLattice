@@ -240,6 +240,165 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	}
 }
 
+func TestGoFirstRetrievalContractDefaults(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_PYTHON_HOT_PATH_OWNERSHIP_MODE", "")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	if !s.retrieval.enabled {
+		t.Fatalf("expected GO_RETRIEVAL_STAGED_ENABLED default to true")
+	}
+	fast := toSourceSet(s.retrieval.fastSources)
+	for _, source := range []string{"topic_rollups", "qdrant", "weaviate", "postgres_pgvector"} {
+		if _, ok := fast[source]; !ok {
+			t.Fatalf("expected %s in default fast sources, got %v", source, s.retrieval.fastSources)
+		}
+	}
+	if strings.TrimSpace(s.pythonHotPathMode) != "warn" {
+		t.Fatalf("expected default GO_PYTHON_HOT_PATH_OWNERSHIP_MODE=warn, got %q", s.pythonHotPathMode)
+	}
+}
+
+func TestMemorySearchFallbackRecordsPythonHotPathOwnership(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_PYTHON_HOT_PATH_OWNERSHIP_MODE", "warn")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+
+	backendCalls := 0
+	lastBackendPath := ""
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		lastBackendPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"source":"python-fallback"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(`{"query"`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 1 || lastBackendPath != "/memory/search" {
+		t.Fatalf("expected one fallback proxy call to /memory/search, calls=%d path=%s", backendCalls, lastBackendPath)
+	}
+
+	infoResp, err := http.Get(gateway.URL + "/v1/info")
+	if err != nil {
+		t.Fatalf("info request failed: %v", err)
+	}
+	defer infoResp.Body.Close()
+	if infoResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected info 200, got %d", infoResp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(infoResp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode info response: %v", err)
+	}
+	ownership, ok := payload["pythonHotPathOwnership"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing pythonHotPathOwnership payload: %#v", payload["pythonHotPathOwnership"])
+	}
+	if anyToBool(ownership["ok"]) {
+		t.Fatalf("expected ownership assertion to flag fallback")
+	}
+	if anyToInt(ownership["fallbacks"], 0) != 1 {
+		t.Fatalf("expected fallback count=1, got %#v", ownership["fallbacks"])
+	}
+	if strings.TrimSpace(anyToString(ownership["status"])) != "python_fallback_detected" {
+		t.Fatalf("expected status python_fallback_detected, got %#v", ownership["status"])
+	}
+}
+
+func TestMemorySearchFallbackBlockedWhenPythonHotPathModeStrict(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_PYTHON_HOT_PATH_OWNERSHIP_MODE", "strict")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(`{"query"`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode strict fallback payload: %v", err)
+	}
+	if strings.TrimSpace(anyToString(payload["error"])) != "python_hot_path_fallback_blocked" {
+		t.Fatalf("unexpected strict fallback error payload: %#v", payload)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected strict mode to block backend proxy fallback, calls=%d", backendCalls)
+	}
+}
+
+func TestHotPathRoutesRemainGoOwned(t *testing.T) {
+	sourceBytes, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	source := string(sourceBytes)
+	required := []string{
+		`mux.HandleFunc("/memory/search", s.memorySearch)`,
+		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
+		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)`,
+		`mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)`,
+	}
+	for _, needle := range required {
+		if !strings.Contains(source, needle) {
+			t.Fatalf("hot-path route ownership missing required handler mapping: %s", needle)
+		}
+	}
+	blocked := []string{
+		`mux.HandleFunc("/memory/search", s.proxy)`,
+		`mux.HandleFunc("/v1/retrieval/query", s.proxy)`,
+		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.proxy)`,
+		`mux.HandleFunc("/v1/retrieval/batch-query", s.proxy)`,
+	}
+	for _, needle := range blocked {
+		if strings.Contains(source, needle) {
+			t.Fatalf("hot-path route drifted back to direct python proxy mapping: %s", needle)
+		}
+	}
+}
+
 func TestMemorySearchRejectsExplicitInvalidAPIKey(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")

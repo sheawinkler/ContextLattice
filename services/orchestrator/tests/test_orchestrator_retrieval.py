@@ -3994,7 +3994,8 @@ async def test_build_refreshed_recall_eval_case_set_uses_hot_pathways(monkeypatc
     assert case["project"] == "algotraderv2_rust"
     assert case["topic_path"] == "runbooks/performance"
     assert case["retrieval_mode"] == "fast"
-    assert case["sources"] == ["qdrant", "topic_rollups"]
+    sources = set(case.get("sources") or [])
+    assert {"qdrant", "topic_rollups"}.issubset(sources)
     assert "qdrant" in (case.get("expected_substrings") or [])
 
 
