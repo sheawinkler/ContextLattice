@@ -325,6 +325,14 @@ RUST_RETRIEVAL_BACKEND_STRICT = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 QDRANT_URL = QDRANT_CLUSTER_ENDPOINT if QDRANT_USE_CLOUD and QDRANT_CLUSTER_ENDPOINT else QDRANT_LOCAL_URL
 QDRANT_COLLECTION = os.getenv("ORCH_QDRANT_COLLECTION", "contextlattice_notes")
+QDRANT_DIMENSION_POLICY = (
+    os.getenv("ORCH_QDRANT_DIMENSION_POLICY", "rollover").strip().lower() or "rollover"
+)
+if QDRANT_DIMENSION_POLICY not in {"rollover", "strict", "legacy_fallback"}:
+    QDRANT_DIMENSION_POLICY = "rollover"
+QDRANT_DIMENSION_SUFFIX = (
+    os.getenv("ORCH_QDRANT_DIMENSION_SUFFIX", "__d").strip() or "__d"
+)
 MINDSDB_URL = os.getenv("MINDSDB_URL", "http://mindsdb:47334")
 MINDSDB_USER = os.getenv("MINDSDB_USER", "mindsdb")
 MINDSDB_PASSWORD = os.getenv("MINDSDB_PASSWORD", "")
@@ -5350,6 +5358,14 @@ recall_quality_updated_at: str | None = None
 agent_memory_profile_lock = asyncio.Lock()
 agent_memory_profiles: dict[str, dict[str, Any]] = {}
 qdrant_collection_dim_cache: dict[str, int] = {}
+qdrant_collection_dim_routes: dict[tuple[str, int], str] = {}
+qdrant_dimension_route_state: dict[str, Any] = {
+    "policy": QDRANT_DIMENSION_POLICY,
+    "lastRouteAt": None,
+    "lastRoute": {},
+    "routes": 0,
+    "strictFailures": 0,
+}
 qdrant_payload_index_cache_lock = asyncio.Lock()
 qdrant_payload_index_cache: dict[str, dict[str, Any]] = {}
 topic_rollup_last_snapshot_for_delta: dict[str, Any] = {}
@@ -8231,6 +8247,8 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
             "freshTtlSecs": RETRIEVAL_BACKLOG_GATING_FRESH_TTL_SECS,
         },
         "qdrantTuning": {
+            "collection": QDRANT_COLLECTION,
+            "dimensionPolicy": QDRANT_DIMENSION_POLICY,
             "baseHnswEf": QDRANT_SEARCH_HNSW_EF,
             "modeHnswEf": _parse_qdrant_mode_int_map(QDRANT_SEARCH_MODE_HNSW_EF_ENV, defaults={}),
             "modeLimitCaps": _parse_qdrant_mode_int_map(
@@ -8250,6 +8268,7 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 "state": dict(qdrant_payload_index_state),
                 "collections": qdrant_payload_index_snapshot,
             },
+            "dimensionRoutes": dict(qdrant_dimension_route_state),
         },
         "latency": latency,
         "recallQuality": recall_quality,
@@ -8697,7 +8716,12 @@ async def _qdrant_payload_index_worker() -> None:
     error_text: str | None = None
     last_result: dict[str, Any] = {}
     try:
-        last_result = await _ensure_qdrant_payload_indexes(QDRANT_COLLECTION, force=True)
+        target_collection = await _resolve_qdrant_collection_for_dimension(
+            QDRANT_COLLECTION,
+            max(1, FALLBACK_EMBED_DIM),
+            operation="payload_index",
+        )
+        last_result = await _ensure_qdrant_payload_indexes(target_collection, force=True)
         if isinstance(last_result.get("failedFields"), dict) and last_result.get("failedFields"):
             error_text = (
                 "failed fields: "
@@ -9353,10 +9377,33 @@ async def start_background_tasks() -> None:
 
 @app.on_event("startup")
 async def init_mcp_client() -> None:
-    global MCP_CLIENT
+    global MCP_CLIENT, QDRANT_COLLECTION
     if MCP_CLIENT is None:
         MCP_CLIENT = httpx.AsyncClient(timeout=MCP_CLIENT_TIMEOUT, limits=MCP_CLIENT_LIMITS)
     await _ensure_shared_service_clients()
+    try:
+        resolved_collection = await _resolve_qdrant_collection_for_dimension(
+            QDRANT_COLLECTION,
+            max(1, FALLBACK_EMBED_DIM),
+            operation="startup",
+        )
+        if resolved_collection != QDRANT_COLLECTION:
+            logger.warning(
+                "Qdrant default collection rerouted at startup: base=%s resolved=%s dim=%s policy=%s",
+                QDRANT_COLLECTION,
+                resolved_collection,
+                FALLBACK_EMBED_DIM,
+                QDRANT_DIMENSION_POLICY,
+            )
+            QDRANT_COLLECTION = resolved_collection
+    except Exception as exc:
+        logger.warning(
+            "Qdrant startup dimension preflight failed: collection=%s dim=%s policy=%s error=%s",
+            QDRANT_COLLECTION,
+            FALLBACK_EMBED_DIM,
+            QDRANT_DIMENSION_POLICY,
+            str(exc)[:300],
+        )
     if PGVECTOR_ENABLED:
         if await ensure_pgvector_schema():
             logger.info(
@@ -9489,6 +9536,11 @@ async def close_mcp_client() -> None:
     pgvector_vectorscale_available = False
     pgvector_last_error = None
     qdrant_collection_dim_cache.clear()
+    qdrant_collection_dim_routes.clear()
+    qdrant_dimension_route_state["lastRouteAt"] = None
+    qdrant_dimension_route_state["lastRoute"] = {}
+    qdrant_dimension_route_state["routes"] = 0
+    qdrant_dimension_route_state["strictFailures"] = 0
     async with qdrant_payload_index_cache_lock:
         qdrant_payload_index_cache.clear()
     MCP_SESSION_ID = None
@@ -19735,6 +19787,82 @@ def _qdrant_expected_dim(error_text: str) -> int | None:
     return None
 
 
+def _qdrant_dimension_collection_name(collection: str, vector_size: int) -> str:
+    base = str(collection or QDRANT_COLLECTION).strip() or QDRANT_COLLECTION
+    return f"{base}{QDRANT_DIMENSION_SUFFIX}{int(vector_size)}"
+
+
+def _record_qdrant_dimension_route(
+    base_collection: str,
+    resolved_collection: str,
+    vector_size: int,
+    existing_dim: int,
+    operation: str,
+) -> None:
+    now_iso = _utc_now()
+    qdrant_dimension_route_state["lastRouteAt"] = now_iso
+    qdrant_dimension_route_state["lastRoute"] = {
+        "baseCollection": base_collection,
+        "resolvedCollection": resolved_collection,
+        "vectorSize": int(vector_size),
+        "existingDim": int(existing_dim),
+        "operation": operation,
+        "policy": QDRANT_DIMENSION_POLICY,
+    }
+    qdrant_dimension_route_state["routes"] = int(qdrant_dimension_route_state.get("routes", 0) or 0) + 1
+
+
+async def _resolve_qdrant_collection_for_dimension(
+    collection_name: str | None,
+    vector_size: int,
+    *,
+    operation: str,
+) -> str:
+    normalized_size = max(1, int(vector_size))
+    base_collection = str(collection_name or QDRANT_COLLECTION).strip() or QDRANT_COLLECTION
+    cached = qdrant_collection_dim_routes.get((base_collection, normalized_size))
+    if cached:
+        return cached
+    try:
+        await ensure_qdrant_collection(normalized_size, base_collection)
+        return base_collection
+    except RuntimeError as exc:
+        message = str(exc)
+        existing_dim = _qdrant_expected_dim(message)
+        if not existing_dim or existing_dim <= 0 or existing_dim == normalized_size:
+            raise
+        if QDRANT_DIMENSION_POLICY == "strict":
+            qdrant_dimension_route_state["strictFailures"] = (
+                int(qdrant_dimension_route_state.get("strictFailures", 0) or 0) + 1
+            )
+            raise RuntimeError(
+                "Qdrant dimension mismatch blocked by strict policy: "
+                f"collection={base_collection} existing={existing_dim} required={normalized_size} operation={operation}"
+            ) from exc
+        if QDRANT_DIMENSION_POLICY == "legacy_fallback":
+            return base_collection
+        resolved_collection = _qdrant_dimension_collection_name(base_collection, normalized_size)
+        await ensure_qdrant_collection(normalized_size, resolved_collection)
+        qdrant_collection_dim_routes[(base_collection, normalized_size)] = resolved_collection
+        _record_qdrant_dimension_route(
+            base_collection,
+            resolved_collection,
+            normalized_size,
+            existing_dim,
+            operation,
+        )
+        logger.warning(
+            "Qdrant dimension mismatch routed (%s): base=%s existing=%s required=%s resolved=%s policy=%s",
+            operation,
+            base_collection,
+            existing_dim,
+            normalized_size,
+            resolved_collection,
+            QDRANT_DIMENSION_POLICY,
+        )
+        return resolved_collection
+
+
 def _pgvector_vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
 
@@ -20041,23 +20169,14 @@ async def push_batch_to_qdrant(items: list[dict[str, Any]]) -> None:
     for collection, rows in grouped.items():
         contents = [str(row.get("content") or "") for row in rows]
         vectors = await embed_text_batch(contents)
-
-        vector_dim = len(vectors[0]) if vectors else 0
-        try:
-            await ensure_qdrant_collection(vector_dim, collection)
-        except RuntimeError as exc:
-            message = str(exc)
-            expected_dim = _qdrant_expected_dim(message)
-            if expected_dim and expected_dim > 0 and expected_dim != vector_dim:
-                logger.warning(
-                    "Qdrant dimension mismatch for writes (expected=%s got=%s); using deterministic fallback embedding",
-                    expected_dim,
-                    vector_dim,
-                )
-                vectors = [_cheap_embedding(str(row.get("content") or ""), expected_dim) for row in rows]
-                vector_dim = expected_dim
-            else:
-                raise
+        if not vectors:
+            vectors = [_cheap_embedding(str(row.get("content") or ""), FALLBACK_EMBED_DIM) for row in rows]
+        vector_dim = max(1, len(vectors[0]))
+        target_collection = await _resolve_qdrant_collection_for_dimension(
+            collection,
+            vector_dim,
+            operation="write",
+        )
 
         points = [
             _qdrant_point_payload(
@@ -20072,42 +20191,60 @@ async def push_batch_to_qdrant(items: list[dict[str, Any]]) -> None:
             for idx, row in enumerate(rows)
         ]
 
-        async def _upsert(batch_points: list[Any]) -> Any:
+        async def _upsert(target: str, batch_points: list[Any]) -> Any:
             async with _fanout_rate_limit(qdrant_fanout_rate_limiter):
                 return await _qdrant_call(
                     "upsert",
                     lambda client, _: client.upsert(
-                        collection_name=collection,
+                        collection_name=target,
                         points=batch_points,
                         wait=False,
                     ),
                 )
 
         try:
-            await _upsert(points)
+            await _upsert(target_collection, points)
             continue
         except Exception as exc:
             expected_dim = _qdrant_expected_dim(str(exc))
             if not expected_dim or expected_dim <= 0 or expected_dim == vector_dim:
                 raise RuntimeError(f"Qdrant upsert failed: {exc}") from exc
-
-        qdrant_collection_dim_cache[collection] = expected_dim
-        fallback_points = [
-            _qdrant_point_payload(
-                str(row.get("project") or ""),
-                str(row.get("file") or ""),
-                str(row.get("content") or ""),
-                _cheap_embedding(str(row.get("content") or ""), expected_dim),
-                row.get("topic_path"),
-                row.get("topic_tags"),
-                row.get("code_context") if isinstance(row.get("code_context"), dict) else None,
+        if QDRANT_DIMENSION_POLICY == "legacy_fallback":
+            qdrant_collection_dim_cache[target_collection] = expected_dim
+            logger.warning(
+                "Qdrant upsert dimension mismatch fallback (legacy mode): collection=%s expected=%s got=%s",
+                target_collection,
+                expected_dim,
+                vector_dim,
             )
-            for row in rows
-        ]
+            fallback_points = [
+                _qdrant_point_payload(
+                    str(row.get("project") or ""),
+                    str(row.get("file") or ""),
+                    str(row.get("content") or ""),
+                    _cheap_embedding(str(row.get("content") or ""), expected_dim),
+                    row.get("topic_path"),
+                    row.get("topic_tags"),
+                    row.get("code_context") if isinstance(row.get("code_context"), dict) else None,
+                )
+                for row in rows
+            ]
+            try:
+                await _upsert(target_collection, fallback_points)
+                continue
+            except Exception as retry_exc:
+                raise RuntimeError(f"Qdrant upsert failed after legacy fallback: {retry_exc}") from retry_exc
+        rerouted_collection = await _resolve_qdrant_collection_for_dimension(
+            collection,
+            vector_dim,
+            operation="write_retry",
+        )
         try:
-            await _upsert(fallback_points)
-        except Exception as exc:
-            raise RuntimeError(f"Qdrant upsert failed after fallback: {exc}") from exc
+            await _upsert(rerouted_collection, points)
+        except Exception as retry_exc:
+            raise RuntimeError(
+                f"Qdrant upsert failed after reroute (collection={rerouted_collection}): {retry_exc}"
+            ) from retry_exc
 
 
 def _langfuse_trace_event(project: str, summary: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -20213,6 +20350,14 @@ async def search_qdrant(
             str(exc)[:200],
         )
         query_vector = _cheap_embedding(query, FALLBACK_EMBED_DIM)
+    if not query_vector:
+        query_vector = _cheap_embedding(query, FALLBACK_EMBED_DIM)
+    query_dim = max(1, len(query_vector))
+    target_collection = await _resolve_qdrant_collection_for_dimension(
+        QDRANT_COLLECTION,
+        query_dim,
+        operation="read",
+    )
 
     if qdrant_models is None:
         raise RuntimeError("qdrant-client dependency is required for Qdrant operations")
@@ -20264,7 +20409,7 @@ async def search_qdrant(
             indexed_only=bool(QDRANT_SEARCH_INDEXED_ONLY),
         )
 
-    async def _run_search(vector: list[float], requested_limit: int) -> Any:
+    async def _run_search(vector: list[float], requested_limit: int, collection_name: str) -> Any:
         bounded_limit = _qdrant_mode_limit_cap(normalized_mode, max(1, int(requested_limit)))
         if query_filter is None and QDRANT_FILTERLESS_LIMIT_CAP > 0:
             bounded_limit = min(bounded_limit, int(QDRANT_FILTERLESS_LIMIT_CAP))
@@ -20272,7 +20417,7 @@ async def search_qdrant(
         async def _execute_search(client: Any, _: str) -> Any:
             if hasattr(client, "search"):
                 return await client.search(
-                    collection_name=QDRANT_COLLECTION,
+                    collection_name=collection_name,
                     query_vector=vector,
                     query_filter=query_filter,
                     limit=bounded_limit,
@@ -20281,7 +20426,7 @@ async def search_qdrant(
                 )
             if hasattr(client, "query_points"):
                 response = await client.query_points(
-                    collection_name=QDRANT_COLLECTION,
+                    collection_name=collection_name,
                     query=vector,
                     query_filter=query_filter,
                     limit=bounded_limit,
@@ -20294,15 +20439,23 @@ async def search_qdrant(
         return await _qdrant_call("search", _execute_search)
 
     try:
-        hits = await _run_search(query_vector, limit)
+        hits = await _run_search(query_vector, limit, target_collection)
     except Exception as exc:
         expected_dim = _qdrant_expected_dim(str(exc))
         if expected_dim and expected_dim > 0 and expected_dim != len(query_vector):
-            fallback_vector = _cheap_embedding(query, expected_dim)
-            hits = await _run_search(fallback_vector, limit)
+            if QDRANT_DIMENSION_POLICY == "legacy_fallback":
+                fallback_vector = _cheap_embedding(query, expected_dim)
+                hits = await _run_search(fallback_vector, limit, QDRANT_COLLECTION)
+            else:
+                rerouted_collection = await _resolve_qdrant_collection_for_dimension(
+                    QDRANT_COLLECTION,
+                    query_dim,
+                    operation="read_retry",
+                )
+                hits = await _run_search(query_vector, limit, rerouted_collection)
         elif QDRANT_SEARCH_TIMEOUT_RETRY_ENABLED and _is_retrieval_timeout_error(exc):
             retry_limit = max(1, int(math.ceil(limit * QDRANT_SEARCH_TIMEOUT_RETRY_LIMIT_FACTOR)))
-            hits = await _run_search(query_vector, retry_limit)
+            hits = await _run_search(query_vector, retry_limit, target_collection)
         else:
             raise RuntimeError(f"Qdrant search failed: {exc}") from exc
 

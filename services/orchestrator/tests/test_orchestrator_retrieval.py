@@ -6831,3 +6831,92 @@ async def test_engine_memory_get_returns_content(monkeypatch: pytest.MonkeyPatch
     assert memory["project"] == "alpha"
     assert memory["file_name"] == "notes/a.md"
     assert memory["content"] == "content-body"
+
+
+@pytest.mark.asyncio
+async def test_qdrant_dimension_resolution_rollover_routes_to_dimensioned_collection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(orchestrator, "QDRANT_DIMENSION_POLICY", "rollover")
+    monkeypatch.setattr(orchestrator, "QDRANT_DIMENSION_SUFFIX", "__d")
+    orchestrator.qdrant_collection_dim_routes.clear()
+    calls: list[tuple[int, str]] = []
+
+    async def _ensure(vector_size: int, collection_name: str | None = None) -> None:
+        collection = str(collection_name or orchestrator.QDRANT_COLLECTION)
+        calls.append((int(vector_size), collection))
+        if collection == "contextlattice_notes":
+            raise RuntimeError(
+                "Qdrant collection dimension mismatch: existing=32, required=768. "
+                "Drop the collection or adjust the embedding model."
+            )
+
+    monkeypatch.setattr(orchestrator, "ensure_qdrant_collection", _ensure)
+    resolved = await orchestrator._resolve_qdrant_collection_for_dimension(
+        "contextlattice_notes",
+        768,
+        operation="write",
+    )
+    assert resolved == "contextlattice_notes__d768"
+    assert calls[0] == (768, "contextlattice_notes")
+    assert calls[1] == (768, "contextlattice_notes__d768")
+
+
+@pytest.mark.asyncio
+async def test_qdrant_dimension_resolution_strict_policy_raises(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(orchestrator, "QDRANT_DIMENSION_POLICY", "strict")
+    orchestrator.qdrant_collection_dim_routes.clear()
+
+    async def _ensure(vector_size: int, collection_name: str | None = None) -> None:
+        _ = vector_size
+        _ = collection_name
+        raise RuntimeError(
+            "Qdrant collection dimension mismatch: existing=32, required=768. "
+            "Drop the collection or adjust the embedding model."
+        )
+
+    monkeypatch.setattr(orchestrator, "ensure_qdrant_collection", _ensure)
+    with pytest.raises(RuntimeError, match="strict policy"):
+        await orchestrator._resolve_qdrant_collection_for_dimension(
+            "contextlattice_notes",
+            768,
+            operation="read",
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_qdrant_uses_dimension_resolved_collection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    async def _embed(_query: str) -> list[float]:
+        return [0.25] * 768
+
+    async def _resolve(collection_name: str | None, vector_size: int, *, operation: str) -> str:
+        assert collection_name == orchestrator.QDRANT_COLLECTION
+        assert vector_size == 768
+        assert operation == "read"
+        return "contextlattice_notes__d768"
+
+    class _Client:
+        async def search(self, **kwargs):
+            captured.update(kwargs)
+            return []
+
+    async def _qdrant_call(_name: str, fn):
+        return await fn(_Client(), "local")
+
+    monkeypatch.setattr(orchestrator, "embed_text", _embed)
+    monkeypatch.setattr(
+        orchestrator,
+        "qdrant_models",
+        SimpleNamespace(SearchParams=lambda **_kwargs: None),
+    )
+    monkeypatch.setattr(orchestrator, "_resolve_qdrant_collection_for_dimension", _resolve)
+    monkeypatch.setattr(orchestrator, "_qdrant_call", _qdrant_call)
+    rows = await orchestrator.search_qdrant("hello world", limit=3)
+    assert rows == []
+    assert captured["collection_name"] == "contextlattice_notes__d768"
