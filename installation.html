@@ -59,6 +59,7 @@
         <a href="#install-quickstart">Quickstart</a>
         <a href="#install-download">Downloads</a>
         <a href="#install-monitoring">Monitoring</a>
+        <a href="#install-requirements">Requirements</a>
         <a href="#install-modes">Modes</a>
         <a href="#install-storage">Storage</a>
         <a href="#install-verify">Verify</a>
@@ -147,6 +148,19 @@ gmake monitor-check</code></pre>
       </article>
     </section>
 
+    <section class="section" id="install-requirements">
+      <article class="card">
+        <div class="kicker">Personal computer requirements</div>
+        <h3>Size your machine by app version lane + mode</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
+        <ul class="spec-list">
+          <li><strong>Public <code>v3.2.x</code> (current public release <code>v3.2.3</code>) Lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>25-60 GB</code> SSD</li>
+          <li><strong>Public <code>v3.2.x</code> (current public release <code>v3.2.3</code>) Full:</strong> <code>6-8</code> vCPU, <code>16-24 GB</code> RAM, <code>120-200 GB</code> SSD</li>
+          <li><strong>Private <code>v4</code> tuning lane:</strong> start from Full baseline and add headroom (especially SSD); external NVMe is strongly recommended</li>
+        </ul>
+      </article>
+    </section>
+
     <section class="section" id="install-storage">
       <article class="card">
         <div class="kicker">Storage layout</div>
@@ -179,6 +193,7 @@ gmake monitor-check</code></pre>
           <h3>Lite installation</h3>
           <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
           <ul class="spec-list">
+            <li><strong>App version lane:</strong> Public <code>v3.2.x</code> (including <code>v3.2.3</code>)</li>
             <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
             <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + qdrant + postgres_pgvector</code></li>
             <li><strong>Resource target:</strong> 2-4 vCPU, 4-8 GB RAM, 25-60 GB SSD</li>
@@ -189,6 +204,7 @@ gmake monitor-check</code></pre>
           <h3>Full installation</h3>
           <p>Enables full retrieval fabric and operations stack including analytics, observability, and deeper RAG support.</p>
           <ul class="spec-list">
+            <li><strong>App version lane:</strong> Public <code>v3.2.x</code> Full, and baseline for private <code>v4</code> tuning</li>
             <li><strong>Services:</strong> Lite stack plus MindsDB, Letta, and observability profile</li>
             <li><strong>Deep continuation lane:</strong> async coverage from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Resource target:</strong> 6-8 vCPU, 16-24 GB RAM, 120-200 GB SSD</li>
