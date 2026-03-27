@@ -130,6 +130,7 @@ _APP_ENV_PREFIXES = (
     "MONGO_",
     "MONGODB_",
     "QDRANT_",
+    "WEAVIATE_",
     "LETTA_",
     "MINDSDB_",
     "PGVECTOR_",
@@ -333,6 +334,40 @@ if QDRANT_DIMENSION_POLICY not in {"rollover", "strict", "legacy_fallback"}:
 QDRANT_DIMENSION_SUFFIX = (
     os.getenv("ORCH_QDRANT_DIMENSION_SUFFIX", "__d").strip() or "__d"
 )
+WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080").strip()
+WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY", "").strip()
+WEAVIATE_ENABLED = os.getenv("ORCH_WEAVIATE_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+WEAVIATE_FANOUT_ENABLED = WEAVIATE_ENABLED and (
+    os.getenv("ORCH_WEAVIATE_FANOUT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+)
+WEAVIATE_CLASS = re.sub(
+    r"[^a-zA-Z0-9_]",
+    "",
+    os.getenv("ORCH_WEAVIATE_CLASS", "ContextLatticeNote"),
+).strip() or "ContextLatticeNote"
+WEAVIATE_TIMEOUT_SECS = max(1.0, float(os.getenv("ORCH_WEAVIATE_TIMEOUT_SECS", "6")))
+WEAVIATE_BATCH_SIZE = max(1, int(os.getenv("ORCH_WEAVIATE_BATCH_SIZE", "32")))
+WEAVIATE_BOOTSTRAP_SCHEMA = os.getenv("ORCH_WEAVIATE_BOOTSTRAP_SCHEMA", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+WEAVIATE_FAIL_OPEN_ON_ERROR = os.getenv("ORCH_WEAVIATE_FAIL_OPEN_ON_ERROR", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+WEAVIATE_TELEMETRY_GUARD_ENABLED = os.getenv(
+    "ORCH_WEAVIATE_TELEMETRY_GUARD_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes", "on")
 MINDSDB_URL = os.getenv("MINDSDB_URL", "http://mindsdb:47334")
 MINDSDB_USER = os.getenv("MINDSDB_USER", "mindsdb")
 MINDSDB_PASSWORD = os.getenv("MINDSDB_PASSWORD", "")
@@ -543,7 +578,7 @@ EMBEDDING_CACHE_ENABLED = os.getenv("EMBEDDING_CACHE_ENABLED", "true").lower() i
 EMBEDDING_CACHE_MAX_KEYS = int(os.getenv("EMBEDDING_CACHE_MAX_KEYS", "50000"))
 RETRIEVAL_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_SOURCES",
-    "qdrant,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank",
+    "qdrant,weaviate,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank",
 )
 RETRIEVAL_INTENT_DEFAULT = os.getenv(
     "ORCH_RETRIEVAL_INTENT_DEFAULT",
@@ -551,15 +586,15 @@ RETRIEVAL_INTENT_DEFAULT = os.getenv(
 ).strip().lower()
 RETRIEVAL_INTENT_DECISION_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_INTENT_DECISION_SOURCES",
-    "topic_rollups,qdrant,postgres_pgvector,memory_bank,mindsdb,mongo_raw,letta",
+    "topic_rollups,qdrant,weaviate,postgres_pgvector,memory_bank,mindsdb,mongo_raw,letta",
 )
 RETRIEVAL_INTENT_OPS_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_INTENT_OPS_SOURCES",
-    "topic_rollups,qdrant,postgres_pgvector,memory_bank,mindsdb,mongo_raw,letta",
+    "topic_rollups,qdrant,weaviate,postgres_pgvector,memory_bank,mindsdb,mongo_raw,letta",
 )
 RETRIEVAL_INTENT_RAW_SOURCES_ENV = os.getenv(
     "ORCH_RETRIEVAL_INTENT_RAW_SOURCES",
-    "mongo_raw,memory_bank,qdrant,postgres_pgvector,mindsdb,topic_rollups,letta",
+    "mongo_raw,memory_bank,qdrant,weaviate,postgres_pgvector,mindsdb,topic_rollups,letta",
 )
 RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS = os.getenv(
     "ORCH_RETRIEVAL_INTENT_RAW_DISABLE_LOW_VALUE_SUPPRESS",
@@ -604,6 +639,7 @@ RETRIEVAL_LETTA_ASYNC_WARM_FAILURE_COOLDOWN_SECS = max(
 )
 QDRANT_EMBED_TIMEOUT_SECS = float(os.getenv("ORCH_QDRANT_EMBED_TIMEOUT_SECS", "2.0"))
 RETRIEVAL_QDRANT_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "8"))
+RETRIEVAL_WEAVIATE_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_WEAVIATE_TIMEOUT_SECS", "4"))
 RETRIEVAL_PGVECTOR_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_PGVECTOR_TIMEOUT_SECS", "3"))
 RETRIEVAL_MONGO_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", "6"))
 RETRIEVAL_MINDSDB_TIMEOUT_SECS = float(os.getenv("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", "8"))
@@ -1500,11 +1536,13 @@ FANOUT_RUNNING_STALE_SECS = int(os.getenv("FANOUT_RUNNING_STALE_SECS", "120"))
 FANOUT_SUMMARY_TIMEOUT_SECS = float(os.getenv("FANOUT_SUMMARY_TIMEOUT_SECS", "20.0"))
 FANOUT_SUMMARY_CACHE_TTL_SECS = float(os.getenv("FANOUT_SUMMARY_CACHE_TTL_SECS", "6.0"))
 FANOUT_QDRANT_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_QDRANT_RATE_LIMIT_PER_SEC", "40"))
+FANOUT_WEAVIATE_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_WEAVIATE_RATE_LIMIT_PER_SEC", "24"))
 FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC", "20"))
 FANOUT_MINDSDB_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_MINDSDB_RATE_LIMIT_PER_SEC", "15"))
 FANOUT_LETTA_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_LETTA_RATE_LIMIT_PER_SEC", "6"))
 FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC = float(os.getenv("FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC", "20"))
 FANOUT_QDRANT_BULK_SIZE = max(1, int(os.getenv("FANOUT_QDRANT_BULK_SIZE", "16")))
+FANOUT_WEAVIATE_BULK_SIZE = max(1, int(os.getenv("FANOUT_WEAVIATE_BULK_SIZE", "24")))
 FANOUT_PGVECTOR_BULK_SIZE = max(1, int(os.getenv("FANOUT_PGVECTOR_BULK_SIZE", "16")))
 FANOUT_MINDSDB_BULK_SIZE = max(1, int(os.getenv("FANOUT_MINDSDB_BULK_SIZE", "12")))
 FANOUT_MONGO_BULK_SIZE = max(1, int(os.getenv("FANOUT_MONGO_BULK_SIZE", "24")))
@@ -1520,7 +1558,7 @@ FANOUT_COALESCE_ENABLED = os.getenv("FANOUT_COALESCE_ENABLED", "true").lower() i
 FANOUT_COALESCE_WINDOW_SECS = float(os.getenv("FANOUT_COALESCE_WINDOW_SECS", "6"))
 FANOUT_COALESCE_TARGETS_ENV = os.getenv(
     "FANOUT_COALESCE_TARGETS",
-    "qdrant,postgres_pgvector,mindsdb,letta,langfuse",
+    "qdrant,weaviate,postgres_pgvector,mindsdb,letta,langfuse",
 )
 FANOUT_COALESCE_STALE_TARGETS_ENV = os.getenv("FANOUT_COALESCE_STALE_TARGETS", "letta")
 FANOUT_BACKPRESSURE_ENABLED = os.getenv("FANOUT_BACKPRESSURE_ENABLED", "true").lower() in (
@@ -2156,11 +2194,13 @@ SHARED_SERVICE_CLIENT_LIMITS = httpx.Limits(
 MINDSDB_CLIENT_TIMEOUT = httpx.Timeout(30.0)
 LETTA_CLIENT_TIMEOUT = httpx.Timeout(max(30.0, LETTA_REQUEST_TIMEOUT_SECS))
 LANGFUSE_CLIENT_TIMEOUT = httpx.Timeout(10.0)
+WEAVIATE_CLIENT_TIMEOUT = httpx.Timeout(max(1.0, WEAVIATE_TIMEOUT_SECS))
 QDRANT_CLIENT: AsyncQdrantClient | None = None
 QDRANT_CLOUD_CLIENT: AsyncQdrantClient | None = None
 MINDSDB_CLIENT: httpx.AsyncClient | None = None
 LETTA_CLIENT: httpx.AsyncClient | None = None
 LANGFUSE_CLIENT: httpx.AsyncClient | None = None
+WEAVIATE_CLIENT: httpx.AsyncClient | None = None
 PGVECTOR_POOL = None
 MCP_SESSION_HEADER = "mcp-session-id"
 MCP_CLIENT_NAME = os.getenv("MCP_CLIENT_NAME", "contextlattice-orchestrator").strip() or "contextlattice-orchestrator"
@@ -2168,6 +2208,7 @@ MCP_CLIENT_VERSION = os.getenv("MCP_CLIENT_VERSION", "0.1.0").strip() or "0.1.0"
 
 FANOUT_TARGET_MONGO_RAW = "mongo_raw"
 FANOUT_TARGET_QDRANT = "qdrant"
+FANOUT_TARGET_WEAVIATE = "weaviate"
 FANOUT_TARGET_POSTGRES_PGVECTOR = "postgres_pgvector"
 FANOUT_TARGET_LANGFUSE = "langfuse"
 FANOUT_TARGET_MINDSDB = "mindsdb"
@@ -2175,6 +2216,7 @@ FANOUT_TARGET_LETTA = "letta"
 FANOUT_TARGETS = (
     FANOUT_TARGET_MONGO_RAW,
     FANOUT_TARGET_QDRANT,
+    FANOUT_TARGET_WEAVIATE,
     FANOUT_TARGET_POSTGRES_PGVECTOR,
     FANOUT_TARGET_LANGFUSE,
     FANOUT_TARGET_MINDSDB,
@@ -2404,6 +2446,7 @@ if not LETTA_AUTO_PRUNE_STATUSES:
     LETTA_AUTO_PRUNE_STATUSES = ["pending", "retrying"]
 
 RETRIEVAL_SOURCE_QDRANT = "qdrant"
+RETRIEVAL_SOURCE_WEAVIATE = FANOUT_TARGET_WEAVIATE
 RETRIEVAL_SOURCE_POSTGRES_PGVECTOR = FANOUT_TARGET_POSTGRES_PGVECTOR
 RETRIEVAL_SOURCE_MEMORY_BANK = "memory_bank"
 RETRIEVAL_SOURCE_MONGO_RAW = FANOUT_TARGET_MONGO_RAW
@@ -2412,6 +2455,7 @@ RETRIEVAL_SOURCE_LETTA = FANOUT_TARGET_LETTA
 RETRIEVAL_SOURCE_TOPIC_ROLLUPS = "topic_rollups"
 RETRIEVAL_SOURCES = (
     RETRIEVAL_SOURCE_QDRANT,
+    RETRIEVAL_SOURCE_WEAVIATE,
     RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
     RETRIEVAL_SOURCE_MONGO_RAW,
     RETRIEVAL_SOURCE_MINDSDB,
@@ -2452,6 +2496,7 @@ if not DEFAULT_RETRIEVAL_FAST_SOURCES:
     DEFAULT_RETRIEVAL_FAST_SOURCES = [
         RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
         RETRIEVAL_SOURCE_QDRANT,
+        RETRIEVAL_SOURCE_WEAVIATE,
         RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
     ]
 DEFAULT_RETRIEVAL_SLOW_SOURCES = _normalize_retrieval_source_csv(RETRIEVAL_SLOW_SOURCES_ENV)
@@ -2486,6 +2531,7 @@ RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = _normalize_retrieval_source_csv(
 if not RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES:
     RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES = [
         RETRIEVAL_SOURCE_QDRANT,
+        RETRIEVAL_SOURCE_WEAVIATE,
         RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
         RETRIEVAL_SOURCE_MINDSDB,
         RETRIEVAL_SOURCE_MONGO_RAW,
@@ -2688,6 +2734,7 @@ async def _build_refreshed_recall_eval_case_set(
     if not fast_eval_sources:
         fast_eval_sources = [
             RETRIEVAL_SOURCE_QDRANT,
+            RETRIEVAL_SOURCE_WEAVIATE,
             RETRIEVAL_SOURCE_POSTGRES_PGVECTOR,
             RETRIEVAL_SOURCE_TOPIC_ROLLUPS,
         ]
@@ -2695,6 +2742,8 @@ async def _build_refreshed_recall_eval_case_set(
     def _default_source_weight(source: str) -> float:
         if source == RETRIEVAL_SOURCE_QDRANT:
             return 1.0
+        if source == RETRIEVAL_SOURCE_WEAVIATE:
+            return 0.98
         if source == RETRIEVAL_SOURCE_POSTGRES_PGVECTOR:
             return 0.96
         if source == RETRIEVAL_SOURCE_TOPIC_ROLLUPS:
@@ -2926,6 +2975,7 @@ INDEX_FILE_LATEST_HINTS = {
 
 DEFAULT_RETRIEVAL_SOURCE_WEIGHTS: dict[str, float] = {
     RETRIEVAL_SOURCE_QDRANT: 1.0,
+    RETRIEVAL_SOURCE_WEAVIATE: 0.98,
     RETRIEVAL_SOURCE_POSTGRES_PGVECTOR: 0.96,
     RETRIEVAL_SOURCE_LETTA: 0.9,
     RETRIEVAL_SOURCE_TOPIC_ROLLUPS: 0.88,
@@ -4138,6 +4188,47 @@ def _is_telemetry_memory_record(
     return False
 
 
+def _filter_fanout_targets_for_telemetry_policy(
+    targets: list[str] | tuple[str, ...],
+    *,
+    file_name: str | None,
+    topic_path: str | None,
+    summary: str | None,
+) -> tuple[list[str], bool]:
+    normalized_targets: list[str] = []
+    seen: set[str] = set()
+    for item in targets:
+        target = str(item or "").strip().lower()
+        if not target or target in seen or target not in FANOUT_TARGETS:
+            continue
+        seen.add(target)
+        normalized_targets.append(target)
+
+    telemetry_like = _is_telemetry_memory_record(file_name, topic_path, summary)
+    if not telemetry_like:
+        return normalized_targets, False
+
+    if TELEMETRY_STRICT_SINK_ISOLATION:
+        return [target for target in normalized_targets if target == FANOUT_TARGET_MONGO_RAW], True
+
+    filtered_targets: list[str] = []
+    for target in normalized_targets:
+        if target == FANOUT_TARGET_QDRANT and QDRANT_TELEMETRY_GUARD_ENABLED:
+            continue
+        if target == FANOUT_TARGET_WEAVIATE and WEAVIATE_TELEMETRY_GUARD_ENABLED:
+            continue
+        if target == FANOUT_TARGET_POSTGRES_PGVECTOR and PGVECTOR_TELEMETRY_GUARD_ENABLED:
+            continue
+        if target == FANOUT_TARGET_MINDSDB and MINDSDB_TELEMETRY_GUARD_ENABLED:
+            continue
+        if target == FANOUT_TARGET_LETTA and LETTA_TELEMETRY_GUARD_ENABLED:
+            continue
+        if target == FANOUT_TARGET_LANGFUSE and LANGFUSE_TELEMETRY_GUARD_ENABLED:
+            continue
+        filtered_targets.append(target)
+    return filtered_targets, True
+
+
 def _looks_low_value_file(file_name: str | None) -> bool:
     lowered = str(file_name or "").strip().lower()
     if not lowered:
@@ -4377,6 +4468,19 @@ async def _handle_fanout_job_error(job: dict[str, Any], worker_id: int, exc: Exc
         else:
             await mark_fanout_failed(job["id"], error_text)
             next_status = "failed"
+    elif target_name == FANOUT_TARGET_WEAVIATE and WEAVIATE_FAIL_OPEN_ON_ERROR:
+        await mark_fanout_success(job["id"])
+        memory_write_queue_processed += 1
+        next_status = "degraded_success"
+        _json_log(
+            "memory.write.fanout_fail_open",
+            {
+                "target": FANOUT_TARGET_WEAVIATE,
+                "worker": worker_id,
+                "event_id": job.get("event_id"),
+                "error": error_text[:220],
+            },
+        )
     else:
         next_status = await mark_fanout_retry(job, error_text)
     _json_log(
@@ -4447,6 +4551,30 @@ async def _memory_write_worker(
                         await _mark_fanout_job_success(job, FANOUT_TARGET_QDRANT)
                 except Exception as exc:  # pragma: no cover
                     for job in qdrant_batch:
+                        await _handle_fanout_job_error(job, worker_id, exc)
+
+            weaviate_jobs = jobs_by_target.pop(FANOUT_TARGET_WEAVIATE, [])
+            for weaviate_batch in _chunk_rows(weaviate_jobs, FANOUT_WEAVIATE_BULK_SIZE):
+                try:
+                    await _apply_fanout_backpressure(FANOUT_TARGET_WEAVIATE, worker_id, len(weaviate_batch))
+                    payload_rows: list[dict[str, Any]] = []
+                    for job in weaviate_batch:
+                        payload = job.get("payload") or {}
+                        payload_rows.append(
+                            {
+                                "event_id": payload.get("event_id") or job.get("event_id"),
+                                "project": payload.get("project") or "",
+                                "file": payload.get("file") or "",
+                                "summary": payload.get("summary") or "",
+                                "topic_path": payload.get("topic_path"),
+                                "topic_tags": payload.get("topic_tags") or [],
+                            }
+                        )
+                    await push_batch_to_weaviate(payload_rows)
+                    for job in weaviate_batch:
+                        await _mark_fanout_job_success(job, FANOUT_TARGET_WEAVIATE)
+                except Exception as exc:  # pragma: no cover
+                    for job in weaviate_batch:
                         await _handle_fanout_job_error(job, worker_id, exc)
 
             pgvector_jobs = jobs_by_target.pop(FANOUT_TARGET_POSTGRES_PGVECTOR, [])
@@ -4615,6 +4743,14 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
         strict_telemetry_isolation
         or (telemetry_like and QDRANT_TELEMETRY_GUARD_ENABLED)
     )
+    weaviate_enabled = (
+        WEAVIATE_FANOUT_ENABLED
+        and FANOUT_TARGET_WEAVIATE not in fanout_exclude_targets
+        and not (
+            strict_telemetry_isolation
+            or (telemetry_like and WEAVIATE_TELEMETRY_GUARD_ENABLED)
+        )
+    )
     pgvector_enabled = (
         PGVECTOR_FANOUT_ENABLED
         and FANOUT_TARGET_POSTGRES_PGVECTOR not in fanout_exclude_targets
@@ -4639,6 +4775,8 @@ async def _enqueue_memory_write_fanout(item: dict[str, Any]) -> None:
     fanout_targets: list[str] = []
     if qdrant_enabled:
         fanout_targets.append(FANOUT_TARGET_QDRANT)
+    if weaviate_enabled:
+        fanout_targets.append(FANOUT_TARGET_WEAVIATE)
     if pgvector_enabled:
         fanout_targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
     if mindsdb_enabled:
@@ -5193,6 +5331,7 @@ MIGRATION_RUNTIME_LOCK = asyncio.Lock()
 if _runtime_import_error:
     logger.warning("Runtime migration modules unavailable; falling back to legacy paths: %s", _runtime_import_error)
 qdrant_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_QDRANT_RATE_LIMIT_PER_SEC)
+weaviate_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_WEAVIATE_RATE_LIMIT_PER_SEC)
 pgvector_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC)
 mindsdb_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_MINDSDB_RATE_LIMIT_PER_SEC)
 letta_fanout_rate_limiter = _build_fanout_rate_limiter(FANOUT_LETTA_RATE_LIMIT_PER_SEC)
@@ -5201,6 +5340,7 @@ if AsyncLimiter is None and any(
     _normalize_rate_limit(rate) > 0
     for rate in (
         FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
+        FANOUT_WEAVIATE_RATE_LIMIT_PER_SEC,
         FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC,
         FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
         FANOUT_LETTA_RATE_LIMIT_PER_SEC,
@@ -5368,6 +5508,9 @@ qdrant_dimension_route_state: dict[str, Any] = {
 }
 qdrant_payload_index_cache_lock = asyncio.Lock()
 qdrant_payload_index_cache: dict[str, dict[str, Any]] = {}
+weaviate_schema_lock = asyncio.Lock()
+weaviate_schema_ready = False
+weaviate_schema_last_error: str | None = None
 topic_rollup_last_snapshot_for_delta: dict[str, Any] = {}
 MCP_SESSION_ID: str | None = None
 MONGO_CLIENT = None
@@ -7116,6 +7259,7 @@ async def _get_retrieval_template(mode: str, resolved_sources: list[str]) -> tup
     )
     source_timeouts: dict[str, float] = {
         RETRIEVAL_SOURCE_QDRANT: max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale),
+        RETRIEVAL_SOURCE_WEAVIATE: max(1.0, RETRIEVAL_WEAVIATE_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_POSTGRES_PGVECTOR: max(1.0, RETRIEVAL_PGVECTOR_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_MONGO_RAW: max(1.0, RETRIEVAL_MONGO_TIMEOUT_SECS * timeout_scale),
         RETRIEVAL_SOURCE_MINDSDB: max(1.0, RETRIEVAL_MINDSDB_TIMEOUT_SECS * timeout_scale),
@@ -7439,6 +7583,8 @@ def _base_source_timeout_for_mode(source: str, retrieval_mode: str) -> float:
     source_name = str(source or "").strip().lower()
     if source_name == RETRIEVAL_SOURCE_QDRANT:
         return max(1.0, RETRIEVAL_QDRANT_TIMEOUT_SECS * timeout_scale)
+    if source_name == RETRIEVAL_SOURCE_WEAVIATE:
+        return max(1.0, RETRIEVAL_WEAVIATE_TIMEOUT_SECS * timeout_scale)
     if source_name == RETRIEVAL_SOURCE_POSTGRES_PGVECTOR:
         return max(1.0, RETRIEVAL_PGVECTOR_TIMEOUT_SECS * timeout_scale)
     if source_name == RETRIEVAL_SOURCE_MONGO_RAW:
@@ -8755,13 +8901,14 @@ def _should_log_http_request(status: int, duration_ms: float) -> bool:
 
 
 async def _ensure_shared_service_clients() -> None:
-    global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
+    global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT, WEAVIATE_CLIENT
     cloud_needed = bool(QDRANT_CLUSTER_ENDPOINT)
     if (
         QDRANT_CLIENT is not None
         and MINDSDB_CLIENT is not None
         and LETTA_CLIENT is not None
         and (not LANGFUSE_API_KEY or LANGFUSE_CLIENT is not None)
+        and (not WEAVIATE_ENABLED or WEAVIATE_CLIENT is not None)
         and (not cloud_needed or QDRANT_CLOUD_CLIENT is not None)
     ):
         return
@@ -8794,6 +8941,11 @@ async def _ensure_shared_service_clients() -> None:
         if LANGFUSE_CLIENT is None and LANGFUSE_API_KEY:
             LANGFUSE_CLIENT = httpx.AsyncClient(
                 timeout=LANGFUSE_CLIENT_TIMEOUT,
+                limits=SHARED_SERVICE_CLIENT_LIMITS,
+            )
+        if WEAVIATE_CLIENT is None and WEAVIATE_ENABLED:
+            WEAVIATE_CLIENT = httpx.AsyncClient(
+                timeout=WEAVIATE_CLIENT_TIMEOUT,
                 limits=SHARED_SERVICE_CLIENT_LIMITS,
             )
 
@@ -8867,6 +9019,15 @@ async def _get_langfuse_client() -> httpx.AsyncClient:
         await _ensure_shared_service_clients()
     assert LANGFUSE_CLIENT is not None
     return LANGFUSE_CLIENT
+
+
+async def _get_weaviate_client() -> httpx.AsyncClient:
+    if not WEAVIATE_ENABLED:
+        raise OrchestratorError("Weaviate source is disabled")
+    if WEAVIATE_CLIENT is None:
+        await _ensure_shared_service_clients()
+    assert WEAVIATE_CLIENT is not None
+    return WEAVIATE_CLIENT
 
 
 def validate_orchestrator_security_posture() -> None:
@@ -9138,6 +9299,64 @@ def _configure_prometheus_metrics(app_instance: FastAPI) -> None:
 _configure_prometheus_metrics(app)
 
 
+PYTHON_HOT_PATH_OWNERSHIP_MODE = os.getenv("ORCH_PYTHON_HOT_PATH_OWNERSHIP_MODE", "warn").strip().lower()
+if PYTHON_HOT_PATH_OWNERSHIP_MODE not in {"off", "warn", "strict"}:
+    PYTHON_HOT_PATH_OWNERSHIP_MODE = "warn"
+PYTHON_HOT_PATH_ASSERT_ENABLED = PYTHON_HOT_PATH_OWNERSHIP_MODE != "off"
+PYTHON_HOT_PATH_PREFIXES: tuple[str, ...] = (
+    "/memory/search",
+    "/memory/context-pack",
+    "/memory/write",
+    "/memory/write/batch",
+    "/v1/memory/put",
+    "/v1/memory/batch-put",
+    "/v1/retrieval/query",
+    "/v1/retrieval/query-with-grounding",
+    "/v1/retrieval/batch-query",
+)
+python_hot_path_non_gateway_total = 0
+python_hot_path_non_gateway_by_path: dict[str, int] = {}
+python_hot_path_last_non_gateway_at: str | None = None
+python_hot_path_ownership_lock = asyncio.Lock()
+
+
+def _is_python_hot_path(path: str) -> bool:
+    normalized = "/" + str(path or "").strip().lstrip("/")
+    for prefix in PYTHON_HOT_PATH_PREFIXES:
+        if normalized == prefix or normalized.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def _is_gateway_origin(request: Request) -> bool:
+    marker = request.headers.get("x-contextlattice-gateway", "").strip().lower()
+    return marker == "gateway-go"
+
+
+async def _record_python_hot_path_non_gateway(path: str) -> None:
+    global python_hot_path_non_gateway_total, python_hot_path_last_non_gateway_at
+    normalized = "/" + str(path or "").strip().lstrip("/")
+    async with python_hot_path_ownership_lock:
+        python_hot_path_non_gateway_total += 1
+        python_hot_path_non_gateway_by_path[normalized] = int(
+            python_hot_path_non_gateway_by_path.get(normalized, 0)
+        ) + 1
+        python_hot_path_last_non_gateway_at = _utc_now()
+
+
+def _python_hot_path_ownership_payload() -> dict[str, Any]:
+    total = int(python_hot_path_non_gateway_total)
+    status = "clean" if total == 0 else "non_gateway_hot_path_traffic_detected"
+    return {
+        "mode": PYTHON_HOT_PATH_OWNERSHIP_MODE,
+        "ok": total == 0,
+        "status": status,
+        "nonGatewayRequests": total,
+        "byPath": dict(python_hot_path_non_gateway_by_path),
+        "lastNonGatewayAt": python_hot_path_last_non_gateway_at,
+    }
+
+
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
@@ -9171,6 +9390,23 @@ async def request_context_middleware(request: Request, call_next):
             return JSONResponse(
                 status_code=401,
                 content={"ok": False, "error": "Invalid API key"},
+                headers={"x-request-id": request_id},
+            )
+    if PYTHON_HOT_PATH_ASSERT_ENABLED and _is_python_hot_path(request.url.path) and not _is_gateway_origin(request):
+        await _record_python_hot_path_non_gateway(request.url.path)
+        logger.warning(
+            "python hot-path non-gateway request detected path=%s mode=%s",
+            request.url.path,
+            PYTHON_HOT_PATH_OWNERSHIP_MODE,
+        )
+        if PYTHON_HOT_PATH_OWNERSHIP_MODE == "strict":
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "ok": False,
+                    "error": "python_hot_path_non_gateway_blocked",
+                    "path": request.url.path,
+                },
                 headers={"x-request-id": request_id},
             )
     start = time.monotonic()
@@ -9310,6 +9546,20 @@ async def start_background_tasks() -> None:
                     "reason": "mindsdb fanout disabled",
                 },
             )
+    if not WEAVIATE_FANOUT_ENABLED:
+        settled = await settle_disabled_fanout_target_backlog(
+            FANOUT_TARGET_WEAVIATE,
+            "weaviate fanout disabled by ORCH_WEAVIATE_FANOUT_ENABLED",
+        )
+        if settled > 0:
+            _json_log(
+                "memory.write.fanout_target_settled",
+                {
+                    "target": FANOUT_TARGET_WEAVIATE,
+                    "count": settled,
+                    "reason": "weaviate fanout disabled",
+                },
+            )
     if MINDSDB_AUTOSYNC and mindsdb_queue_task is None:
         mindsdb_queue_task = asyncio.create_task(_mindsdb_queue_worker())
     if MINDSDB_AUTOSYNC and MINDSDB_AUTOSYNC_BOOTSTRAP:
@@ -9434,7 +9684,7 @@ async def close_mcp_client() -> None:
     global task_scheduler_task, agent_task_worker_tasks
     global letta_auto_prune_task
     global qdrant_warmup_task, qdrant_payload_index_task
-    global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT
+    global QDRANT_CLIENT, QDRANT_CLOUD_CLIENT, MINDSDB_CLIENT, LETTA_CLIENT, LANGFUSE_CLIENT, WEAVIATE_CLIENT
     global PGVECTOR_POOL, pgvector_schema_ready, pgvector_vectorscale_available, pgvector_last_error
     if task_scheduler_task is not None:
         task_scheduler_task.cancel()
@@ -9528,6 +9778,9 @@ async def close_mcp_client() -> None:
     if LANGFUSE_CLIENT is not None:
         await LANGFUSE_CLIENT.aclose()
         LANGFUSE_CLIENT = None
+    if WEAVIATE_CLIENT is not None:
+        await WEAVIATE_CLIENT.aclose()
+        WEAVIATE_CLIENT = None
     if PGVECTOR_POOL is not None:
         with contextlib.suppress(Exception):
             await PGVECTOR_POOL.close()
@@ -20247,6 +20500,149 @@ async def push_batch_to_qdrant(items: list[dict[str, Any]]) -> None:
             ) from retry_exc
 
 
+def _weaviate_headers() -> dict[str, str]:
+    headers = {"content-type": "application/json"}
+    if WEAVIATE_API_KEY:
+        headers["Authorization"] = f"Bearer {WEAVIATE_API_KEY}"
+    return headers
+
+
+def _weaviate_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _weaviate_graphql_escape(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
+def _weaviate_stable_id(item: dict[str, Any]) -> str:
+    seed = (
+        _weaviate_text(item.get("event_id"))
+        or f"{_weaviate_text(item.get('project'))}:{_weaviate_text(item.get('file'))}:{_weaviate_text(item.get('summary'))}"
+    )
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
+
+async def _ensure_weaviate_schema() -> None:
+    global weaviate_schema_ready, weaviate_schema_last_error
+    if not WEAVIATE_ENABLED:
+        return
+    if not WEAVIATE_BOOTSTRAP_SCHEMA:
+        return
+    if weaviate_schema_ready:
+        return
+    async with weaviate_schema_lock:
+        if weaviate_schema_ready:
+            return
+        client = await _get_weaviate_client()
+        base = WEAVIATE_URL.rstrip("/")
+        headers = _weaviate_headers()
+        class_url = f"{base}/v1/schema/{WEAVIATE_CLASS}"
+        try:
+            response = await client.get(class_url, headers=headers)
+            if response.status_code == 200:
+                weaviate_schema_ready = True
+                weaviate_schema_last_error = None
+                return
+            if response.status_code != 404:
+                raise OrchestratorError(
+                    f"weaviate schema probe failed ({response.status_code}): {response.text[:240]}"
+                )
+            schema_payload = {
+                "class": WEAVIATE_CLASS,
+                "vectorizer": "none",
+                "properties": [
+                    {"name": "project", "dataType": ["text"]},
+                    {"name": "file", "dataType": ["text"]},
+                    {"name": "summary", "dataType": ["text"]},
+                    {"name": "topic_path", "dataType": ["text"]},
+                    {"name": "topic_tags", "dataType": ["text[]"]},
+                    {"name": "event_id", "dataType": ["text"]},
+                    {"name": "created_at", "dataType": ["text"]},
+                ],
+            }
+            create = await client.post(f"{base}/v1/schema", json=schema_payload, headers=headers)
+            if create.status_code >= 300:
+                raise OrchestratorError(
+                    f"weaviate schema create failed ({create.status_code}): {create.text[:240]}"
+                )
+            weaviate_schema_ready = True
+            weaviate_schema_last_error = None
+        except Exception as exc:
+            weaviate_schema_last_error = str(exc).strip() or exc.__class__.__name__
+            raise
+
+
+async def push_batch_to_weaviate(items: list[dict[str, Any]]) -> None:
+    if not items or not WEAVIATE_FANOUT_ENABLED:
+        return
+    await _ensure_weaviate_schema()
+    client = await _get_weaviate_client()
+    base = WEAVIATE_URL.rstrip("/")
+    headers = _weaviate_headers()
+    for chunk in _chunk_rows(items, WEAVIATE_BATCH_SIZE):
+        objects: list[dict[str, Any]] = []
+        for item in chunk:
+            objects.append(
+                {
+                    "class": WEAVIATE_CLASS,
+                    "id": _weaviate_stable_id(item),
+                    "properties": {
+                        "project": _weaviate_text(item.get("project")),
+                        "file": _weaviate_text(item.get("file")),
+                        "summary": _weaviate_text(item.get("summary")),
+                        "topic_path": _weaviate_text(item.get("topic_path")),
+                        "topic_tags": [
+                            _weaviate_text(tag)
+                            for tag in (item.get("topic_tags") if isinstance(item.get("topic_tags"), list) else [])
+                            if _weaviate_text(tag)
+                        ],
+                        "event_id": _weaviate_text(item.get("event_id")),
+                        "created_at": _utc_now(),
+                    },
+                }
+            )
+        async with _fanout_rate_limit(weaviate_fanout_rate_limiter):
+            response = await client.post(
+                f"{base}/v1/batch/objects",
+                json={"objects": objects},
+                headers=headers,
+            )
+        if response.status_code >= 300:
+            raise OrchestratorError(
+                f"Weaviate batch upsert failed ({response.status_code}): {response.text[:240]}"
+            )
+        payload = response.json() if response.content else {}
+        if isinstance(payload, dict):
+            batch_rows = payload.get("objects")
+        elif isinstance(payload, list):
+            batch_rows = payload
+        else:
+            batch_rows = []
+        if isinstance(batch_rows, list):
+            for row in batch_rows:
+                if not isinstance(row, dict):
+                    continue
+                result = row.get("result") if isinstance(row.get("result"), dict) else {}
+                errors = result.get("errors") if isinstance(result.get("errors"), dict) else {}
+                messages = errors.get("error") if isinstance(errors.get("error"), list) else []
+                if messages:
+                    text = "; ".join(
+                        str(message.get("message") or message.get("msg") or "")
+                        for message in messages
+                        if isinstance(message, dict)
+                    ).strip()
+                    raise OrchestratorError(
+                        f"Weaviate batch item failed: {text or 'unknown error'}"
+                    )
+
+
 def _langfuse_trace_event(project: str, summary: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(uuid.uuid4()),
@@ -20480,6 +20876,97 @@ async def search_qdrant(
         {"query_length": len(query), "results": len(results)},
     )
     return results
+
+
+async def search_weaviate(
+    query: str,
+    limit: int = 10,
+    project_filter: str | None = None,
+    topic_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    if not WEAVIATE_ENABLED:
+        return []
+    await _ensure_weaviate_schema()
+    client = await _get_weaviate_client()
+    base = WEAVIATE_URL.rstrip("/")
+    headers = _weaviate_headers()
+    escaped_query = _weaviate_graphql_escape(query)
+    where_clauses: list[str] = []
+    if project_filter:
+        where_clauses.append(
+            '{path:["project"],operator:Equal,valueText:"%s"}'
+            % _weaviate_graphql_escape(project_filter)
+        )
+    if topic_filter:
+        where_clauses.append(
+            '{path:["topic_path"],operator:Like,valueText:"%s*"}'
+            % _weaviate_graphql_escape(topic_filter)
+        )
+    where_block = ""
+    if len(where_clauses) == 1:
+        where_block = f" where:{where_clauses[0]}"
+    elif len(where_clauses) > 1:
+        where_block = " where:{operator:And operands:[%s]}" % ",".join(where_clauses)
+    graphql = (
+        "{ Get { %s(limit:%d bm25:{query:\"%s\"}%s) "
+        "{ project file summary topic_path topic_tags _additional { score } } } }"
+        % (
+            WEAVIATE_CLASS,
+            max(1, int(limit)),
+            escaped_query,
+            where_block,
+        )
+    )
+    response = await client.post(
+        f"{base}/v1/graphql",
+        json={"query": graphql},
+        headers=headers,
+        timeout=max(1.0, RETRIEVAL_WEAVIATE_TIMEOUT_SECS),
+    )
+    if response.status_code >= 300:
+        raise OrchestratorError(
+            f"Weaviate search failed ({response.status_code}): {response.text[:240]}"
+        )
+    payload = response.json() if response.content else {}
+    rows = (
+        payload.get("data", {})
+        .get("Get", {})
+        .get(WEAVIATE_CLASS, [])
+        if isinstance(payload, dict)
+        else []
+    )
+    if not isinstance(rows, list):
+        return []
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        project_name = _weaviate_text(row.get("project"))
+        file_name = _weaviate_text(row.get("file"))
+        summary = _weaviate_text(row.get("summary"))
+        topic_path = normalize_topic_path(_weaviate_text(row.get("topic_path")))
+        if topic_filter and topic_path and not (
+            topic_path == topic_filter or topic_path.startswith(f"{topic_filter}/")
+        ):
+            continue
+        if not project_name or not file_name or not summary:
+            continue
+        additional = row.get("_additional") if isinstance(row.get("_additional"), dict) else {}
+        score = additional.get("score")
+        if score is None:
+            score = _text_match_score(query, f"{project_name}\n{file_name}\n{summary}")
+        results.append(
+            {
+                "project": project_name,
+                "file": file_name,
+                "summary": summary,
+                "score": float(score or 0.0),
+                "source": RETRIEVAL_SOURCE_WEAVIATE,
+                "topic_path": topic_path or derive_topic_path(file_name, None),
+            }
+        )
+    results.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    return results[: max(1, int(limit))]
 
 
 async def search_memory_bank_lexical(
@@ -21524,6 +22011,13 @@ async def federated_search_memory(
                 project_filter=project_filter,
                 topic_filter=topic_filter,
                 retrieval_mode=source_mode,
+            )
+        if source == RETRIEVAL_SOURCE_WEAVIATE:
+            return search_weaviate(
+                query,
+                limit=source_limit,
+                project_filter=project_filter,
+                topic_filter=topic_filter,
             )
         if source == RETRIEVAL_SOURCE_POSTGRES_PGVECTOR:
             return search_postgres_pgvector(
@@ -23921,6 +24415,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
             "memory_bank": "skipped",
             FANOUT_TARGET_MONGO_RAW: "pending",
             FANOUT_TARGET_QDRANT: "skipped",
+            FANOUT_TARGET_WEAVIATE: "skipped",
             FANOUT_TARGET_POSTGRES_PGVECTOR: "skipped",
             FANOUT_TARGET_MINDSDB: "skipped",
             FANOUT_TARGET_LANGFUSE: "skipped",
@@ -23984,6 +24479,7 @@ async def write_memory(payload: MemoryWrite, request: Request):
                 "memory_bank": "skipped",
                 FANOUT_TARGET_MONGO_RAW: "skipped",
                 FANOUT_TARGET_QDRANT: "skipped",
+                FANOUT_TARGET_WEAVIATE: "skipped",
                 FANOUT_TARGET_POSTGRES_PGVECTOR: "skipped",
                 FANOUT_TARGET_MINDSDB: "skipped",
                 FANOUT_TARGET_LANGFUSE: "skipped",
@@ -24024,6 +24520,9 @@ async def write_memory(payload: MemoryWrite, request: Request):
     qdrant_telemetry_skipped = strict_telemetry_isolation or (
         telemetry_like_record and QDRANT_TELEMETRY_GUARD_ENABLED
     )
+    weaviate_telemetry_skipped = strict_telemetry_isolation or (
+        telemetry_like_record and WEAVIATE_TELEMETRY_GUARD_ENABLED
+    )
     pgvector_telemetry_skipped = strict_telemetry_isolation or (
         telemetry_like_record and PGVECTOR_TELEMETRY_GUARD_ENABLED
     )
@@ -24044,17 +24543,18 @@ async def write_memory(payload: MemoryWrite, request: Request):
         warnings.append("memory-bank persistence skipped for telemetry-like artifact")
     if telemetry_like_record and (
         qdrant_telemetry_skipped
+        or weaviate_telemetry_skipped
         or pgvector_telemetry_skipped
         or mindsdb_telemetry_skipped
         or letta_telemetry_skipped
     ):
         if strict_telemetry_isolation:
             warnings.append(
-                "strict telemetry sink isolation routed artifact to mongo_raw-only lane; qdrant/postgres_pgvector/mindsdb/letta/memory_bank fanout filtered"
+                "strict telemetry sink isolation routed artifact to mongo_raw-only lane; qdrant/weaviate/postgres_pgvector/mindsdb/letta/langfuse/memory_bank fanout filtered"
             )
         else:
             warnings.append(
-                "telemetry-like artifact routed to telemetry sink path; qdrant/postgres_pgvector/mindsdb/letta fanout filtered"
+                "telemetry-like artifact routed to telemetry sink path; qdrant/weaviate/postgres_pgvector/mindsdb/letta/langfuse fanout filtered"
             )
     fanout_status: dict[str, str] = {
         "memory_bank": (
@@ -24063,6 +24563,15 @@ async def write_memory(payload: MemoryWrite, request: Request):
         FANOUT_TARGET_MONGO_RAW: "pending",
         FANOUT_TARGET_QDRANT: (
             "skipped_low_value" if qdrant_telemetry_skipped else ("deferred_rollup" if hot_rollup_mode else "pending")
+        ),
+        FANOUT_TARGET_WEAVIATE: (
+            "disabled"
+            if not WEAVIATE_FANOUT_ENABLED
+            else (
+                "skipped_low_value"
+                if weaviate_telemetry_skipped
+                else ("deferred_rollup" if hot_rollup_mode else "pending")
+            )
         ),
         FANOUT_TARGET_POSTGRES_PGVECTOR: (
             "disabled"
@@ -24468,6 +24977,22 @@ async def status():
     except Exception as exc:  # pragma: no cover
         services.append({"name": "qdrant", "healthy": False, "detail": str(exc)})
 
+    # Weaviate
+    if not WEAVIATE_ENABLED:
+        services.append({"name": "weaviate", "healthy": True, "detail": "disabled"})
+    else:
+        try:
+            client = await _get_weaviate_client()
+            headers = _weaviate_headers()
+            resp = await client.get(f"{WEAVIATE_URL.rstrip('/')}/v1/meta", headers=headers)
+            services.append({
+                "name": "weaviate",
+                "healthy": resp.status_code < 500,
+                "detail": f"status {resp.status_code}",
+            })
+        except Exception as exc:  # pragma: no cover
+            services.append({"name": "weaviate", "healthy": False, "detail": str(exc)})
+
     # MindsDB
     if not MINDSDB_ENABLED:
         services.append({"name": "mindsdb", "healthy": True, "detail": "disabled"})
@@ -24499,7 +25024,11 @@ async def status():
     with contextlib.suppress(Exception):
         task_runtime = await get_task_runtime_snapshot()
 
-    return {"services": services, "taskRuntime": task_runtime}
+    return {
+        "services": services,
+        "taskRuntime": task_runtime,
+        "pythonHotPathOwnership": _python_hot_path_ownership_payload(),
+    }
 
 
 @app.get("/migration/runtime")
@@ -24649,6 +25178,7 @@ async def get_memory_metrics():
             },
             "rateLimitsPerSec": {
                 "qdrant": FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
+                "weaviate": FANOUT_WEAVIATE_RATE_LIMIT_PER_SEC,
                 "postgres_pgvector": FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC,
                 "mindsdb": FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
                 "letta": FANOUT_LETTA_RATE_LIMIT_PER_SEC,
@@ -24656,6 +25186,7 @@ async def get_memory_metrics():
             },
             "rateLimiterActive": {
                 "qdrant": qdrant_fanout_rate_limiter is not None,
+                "weaviate": weaviate_fanout_rate_limiter is not None,
                 "postgres_pgvector": pgvector_fanout_rate_limiter is not None,
                 "mindsdb": mindsdb_fanout_rate_limiter is not None,
                 "letta": letta_fanout_rate_limiter is not None,
@@ -24663,6 +25194,7 @@ async def get_memory_metrics():
             },
             "batchSizes": {
                 "qdrant": FANOUT_QDRANT_BULK_SIZE,
+                "weaviate": FANOUT_WEAVIATE_BULK_SIZE,
                 "postgres_pgvector": FANOUT_PGVECTOR_BULK_SIZE,
                 "mindsdb": FANOUT_MINDSDB_BULK_SIZE,
                 "mongo_raw": FANOUT_MONGO_BULK_SIZE,
@@ -25263,6 +25795,7 @@ async def get_fanout_metrics():
         },
         "rateLimitsPerSec": {
             "qdrant": FANOUT_QDRANT_RATE_LIMIT_PER_SEC,
+            "weaviate": FANOUT_WEAVIATE_RATE_LIMIT_PER_SEC,
             "postgres_pgvector": FANOUT_PGVECTOR_RATE_LIMIT_PER_SEC,
             "mindsdb": FANOUT_MINDSDB_RATE_LIMIT_PER_SEC,
             "letta": FANOUT_LETTA_RATE_LIMIT_PER_SEC,
@@ -25270,6 +25803,7 @@ async def get_fanout_metrics():
         },
         "rateLimiterActive": {
             "qdrant": qdrant_fanout_rate_limiter is not None,
+            "weaviate": weaviate_fanout_rate_limiter is not None,
             "postgres_pgvector": pgvector_fanout_rate_limiter is not None,
             "mindsdb": mindsdb_fanout_rate_limiter is not None,
             "letta": letta_fanout_rate_limiter is not None,
@@ -25277,6 +25811,7 @@ async def get_fanout_metrics():
         },
         "batchSizes": {
             "qdrant": FANOUT_QDRANT_BULK_SIZE,
+            "weaviate": FANOUT_WEAVIATE_BULK_SIZE,
             "postgres_pgvector": FANOUT_PGVECTOR_BULK_SIZE,
             "mindsdb": FANOUT_MINDSDB_BULK_SIZE,
             "mongo_raw": FANOUT_MONGO_BULK_SIZE,
@@ -29911,6 +30446,8 @@ async def rehydrate_fanout(payload: FanoutRehydrateRequest):
             FANOUT_TARGET_QDRANT,
             FANOUT_TARGET_MINDSDB,
         ]
+        if WEAVIATE_FANOUT_ENABLED:
+            targets.append(FANOUT_TARGET_WEAVIATE)
         if PGVECTOR_FANOUT_ENABLED:
             targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
         if LANGFUSE_API_KEY:
@@ -30032,6 +30569,8 @@ async def backfill_fanout_from_qdrant(payload: QdrantBackfillRequest):
         targets = [t for t in requested_targets if t in FANOUT_TARGETS]
     else:
         targets = [FANOUT_TARGET_MONGO_RAW, FANOUT_TARGET_MINDSDB]
+        if WEAVIATE_FANOUT_ENABLED:
+            targets.append(FANOUT_TARGET_WEAVIATE)
         if PGVECTOR_FANOUT_ENABLED:
             targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
         if _letta_target_enabled():
@@ -30238,6 +30777,8 @@ async def backfill_fanout_from_mongo_raw(payload: MongoRawBackfillRequest):
         targets = [t for t in requested_targets if t in FANOUT_TARGETS]
     else:
         targets = [FANOUT_TARGET_QDRANT, FANOUT_TARGET_MINDSDB]
+        if WEAVIATE_FANOUT_ENABLED:
+            targets.append(FANOUT_TARGET_WEAVIATE)
         if PGVECTOR_FANOUT_ENABLED:
             targets.append(FANOUT_TARGET_POSTGRES_PGVECTOR)
         if _letta_target_enabled():

@@ -23,6 +23,7 @@ import (
 
 const (
 	sourceQdrant      = "qdrant"
+	sourceWeaviate    = "weaviate"
 	sourcePgvector    = "postgres_pgvector"
 	sourceMongoRaw    = "mongo_raw"
 	sourceMindsdb     = "mindsdb"
@@ -33,6 +34,7 @@ const (
 
 var defaultAllSources = []string{
 	sourceQdrant,
+	sourceWeaviate,
 	sourcePgvector,
 	sourceMongoRaw,
 	sourceMindsdb,
@@ -239,6 +241,12 @@ type server struct {
 	client                  *http.Client
 	retrieval               retrievalPolicy
 	toolCalls               toolCallPolicy
+	pythonHotPathMode       string
+	pythonHotPathFallbacks  atomic.Uint64
+	pythonHotPathMu         sync.Mutex
+	pythonHotPathByPath     map[string]uint64
+	pythonHotPathByReason   map[string]uint64
+	pythonHotPathLastAt     string
 	telemetry               *retrievalTelemetry
 	writePolicy             writeIngressPolicy
 	telemetrySink           *telemetrySink
@@ -252,6 +260,14 @@ type server struct {
 	continuationSubscribers map[string][]chan map[string]any
 	continuationHistory     map[string][]map[string]any
 	continuationExpiry      map[string]time.Time
+}
+
+func normalizeHotPath(path string) string {
+	normalized := "/" + strings.TrimSpace(strings.TrimPrefix(path, "/"))
+	if normalized == "/" {
+		return "unknown"
+	}
+	return normalized
 }
 
 func envDurationSeconds(name string, fallback float64) time.Duration {
@@ -610,7 +626,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if len(policy.defaultSources) == 0 {
 		policy.defaultSources = append([]string(nil), defaultAllSources...)
 	}
-	policy.fastSources = csvListEnv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant,postgres_pgvector")
+	policy.fastSources = csvListEnv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant,weaviate,postgres_pgvector")
 	policy.slowSources = csvListEnv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb,mongo_raw,letta,memory_bank")
 	policy.syncFallbackSources = csvListEnv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "mindsdb,mongo_raw")
 	policy.rustQualityFallbackEnabled = envBool("GO_RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", true)
@@ -682,10 +698,11 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.timeoutAdaptiveSkipEnabled = envBool("ORCH_RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED", true)
 	policy.timeoutAdaptiveSkipSources = toSourceSet(csvListEnv(
 		"ORCH_RECALL_TIMEOUT_ADAPTIVE_SKIP_SOURCES",
-		"qdrant,postgres_pgvector,mindsdb,mongo_raw",
+		"qdrant,weaviate,postgres_pgvector,mindsdb,mongo_raw",
 	))
 	policy.sourceTimeouts = map[string]time.Duration{
 		sourceQdrant:      envDurationSeconds("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", 8),
+		sourceWeaviate:    envDurationSeconds("ORCH_RETRIEVAL_WEAVIATE_TIMEOUT_SECS", 4),
 		sourcePgvector:    envDurationSeconds("ORCH_RETRIEVAL_PGVECTOR_TIMEOUT_SECS", 3),
 		sourceMongoRaw:    envDurationSeconds("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", 6),
 		sourceMindsdb:     envDurationSeconds("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", 8),
@@ -769,6 +786,13 @@ func newServer() *server {
 	if backendURL == "" {
 		backendURL = "http://contextlattice-orchestrator:8075"
 	}
+	pythonHotPathMode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_PYTHON_HOT_PATH_OWNERSHIP_MODE")))
+	if pythonHotPathMode == "" {
+		pythonHotPathMode = "warn"
+	}
+	if pythonHotPathMode != "off" && pythonHotPathMode != "warn" && pythonHotPathMode != "strict" {
+		pythonHotPathMode = "warn"
+	}
 	orchestratorAPIKey := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY"))
 	if orchestratorAPIKey == "" {
 		orchestratorAPIKey = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY"))
@@ -788,6 +812,9 @@ func newServer() *server {
 	s := &server{
 		backendURL:              backendURL,
 		orchestratorAPIKey:      orchestratorAPIKey,
+		pythonHotPathMode:       pythonHotPathMode,
+		pythonHotPathByPath:     map[string]uint64{},
+		pythonHotPathByReason:   map[string]uint64{},
 		client:                  &http.Client{Timeout: timeout},
 		retrieval:               policy,
 		toolCalls:               toolPolicy,
@@ -805,6 +832,72 @@ func newServer() *server {
 	}
 	t.start()
 	return s
+}
+
+func (s *server) recordPythonHotPathFallback(path string, reason string) uint64 {
+	normalizedPath := normalizeHotPath(path)
+	normalizedReason := strings.TrimSpace(strings.ToLower(reason))
+	if normalizedReason == "" {
+		normalizedReason = "unspecified"
+	}
+	total := s.pythonHotPathFallbacks.Add(1)
+	s.pythonHotPathMu.Lock()
+	s.pythonHotPathByPath[normalizedPath] = s.pythonHotPathByPath[normalizedPath] + 1
+	s.pythonHotPathByReason[normalizedReason] = s.pythonHotPathByReason[normalizedReason] + 1
+	s.pythonHotPathLastAt = nowUTCISO()
+	s.pythonHotPathMu.Unlock()
+	return total
+}
+
+func (s *server) pythonHotPathOwnershipSnapshot() map[string]any {
+	total := s.pythonHotPathFallbacks.Load()
+	byPath := map[string]uint64{}
+	byReason := map[string]uint64{}
+	lastAt := ""
+	s.pythonHotPathMu.Lock()
+	for key, value := range s.pythonHotPathByPath {
+		byPath[key] = value
+	}
+	for key, value := range s.pythonHotPathByReason {
+		byReason[key] = value
+	}
+	lastAt = s.pythonHotPathLastAt
+	s.pythonHotPathMu.Unlock()
+	status := "clean"
+	if total > 0 {
+		status = "python_fallback_detected"
+	}
+	return map[string]any{
+		"mode":           s.pythonHotPathMode,
+		"ok":             total == 0,
+		"status":         status,
+		"fallbacks":      total,
+		"byPath":         byPath,
+		"byReason":       byReason,
+		"lastFallbackAt": lastAt,
+	}
+}
+
+func (s *server) allowPythonHotPathFallback(w http.ResponseWriter, path string, reason string) bool {
+	total := s.recordPythonHotPathFallback(path, reason)
+	log.Printf(
+		"gateway-go python hot-path fallback mode=%s path=%s reason=%s total=%d",
+		s.pythonHotPathMode,
+		normalizeHotPath(path),
+		strings.TrimSpace(strings.ToLower(reason)),
+		total,
+	)
+	if s.pythonHotPathMode == "strict" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":        false,
+			"error":     "python_hot_path_fallback_blocked",
+			"path":      normalizeHotPath(path),
+			"reason":    strings.TrimSpace(strings.ToLower(reason)),
+			"fallbacks": total,
+		})
+		return false
+	}
+	return true
 }
 
 func isProxyPath(path string) bool {
@@ -1826,6 +1919,7 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"telemetryBatchEnabled":           s.retrieval.telemetryBatchEnabled,
 			"telemetryBatchFlushIntervalSecs": s.retrieval.telemetryBatchFlushInterval.Seconds(),
 		},
+		"pythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
 		"writeIngress": map[string]any{
 			"enabled":                   s.writePolicy.enabled,
 			"strictRequiredFields":      s.writePolicy.strictRequiredFields,
@@ -3795,6 +3889,9 @@ func (s *server) executeRetrieval(
 
 func (s *server) retrievalQuery(w http.ResponseWriter, r *http.Request) {
 	if !s.retrieval.enabled {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_disabled") {
+			return
+		}
 		s.proxy(w, r)
 		return
 	}
@@ -3809,12 +3906,18 @@ func (s *server) retrievalQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, err := parseJSONMap(bodyBytes)
 	if err != nil {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "invalid_json") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
 	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, false)
 	if execErr != nil {
 		log.Printf("staged retrieval query failed; falling back to backend proxy: %s", execErr)
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_exec_error") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
@@ -3823,6 +3926,9 @@ func (s *server) retrievalQuery(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) retrievalQueryWithGrounding(w http.ResponseWriter, r *http.Request) {
 	if !s.retrieval.enabled {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_disabled") {
+			return
+		}
 		s.proxy(w, r)
 		return
 	}
@@ -3837,12 +3943,18 @@ func (s *server) retrievalQueryWithGrounding(w http.ResponseWriter, r *http.Requ
 	}
 	payload, err := parseJSONMap(bodyBytes)
 	if err != nil {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "invalid_json") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
 	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, true)
 	if execErr != nil {
 		log.Printf("staged retrieval query-with-grounding failed; falling back to backend proxy: %s", execErr)
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_exec_error") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
@@ -3851,6 +3963,9 @@ func (s *server) retrievalQueryWithGrounding(w http.ResponseWriter, r *http.Requ
 
 func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 	if !s.retrieval.enabled {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_disabled") {
+			return
+		}
 		s.proxy(w, r)
 		return
 	}
@@ -3865,6 +3980,9 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, err := parseJSONMap(bodyBytes)
 	if err != nil {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "invalid_json") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
@@ -3872,6 +3990,9 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 	response, status, execErr := s.executeRetrieval(r.Context(), incomingHeaders, payload, includeGrounding)
 	if execErr != nil {
 		log.Printf("staged memory/search failed; falling back to backend proxy: %s", execErr)
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_exec_error") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
@@ -3901,6 +4022,9 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) retrievalBatchQuery(w http.ResponseWriter, r *http.Request) {
 	if !s.retrieval.enabled {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "staged_disabled") {
+			return
+		}
 		s.proxy(w, r)
 		return
 	}
@@ -3915,6 +4039,9 @@ func (s *server) retrievalBatchQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, err := parseJSONMap(bodyBytes)
 	if err != nil {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "invalid_json") {
+			return
+		}
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
