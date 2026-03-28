@@ -4,9 +4,10 @@
 # sets the GITHUB_PAT environment variable, and then starts the Docker Compose stack using the .env file
 # in the current directory.
 
-# Move into the mcp-servers directory (adjust this path if you've moved it elsewhere)
-cd "$HOME/mcp-servers" || {
-  echo "Directory $HOME/mcp-servers not found." >&2
+# Move into the repo directory that contains this launcher.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR" || {
+  echo "Directory $ROOT_DIR not found." >&2
   exit 1
 }
 
@@ -30,3 +31,10 @@ export GITHUB_PAT="$gh_pat"
 
 # Start the services using Docker Compose with the .env file
 docker compose --env-file .env up -d
+
+# Prevent observability drift where Langfuse stays in Created/Exited state.
+if [ -x scripts/ensure_langfuse_running.sh ]; then
+  PROFILES="${PROFILES:-$(awk -F= '/^COMPOSE_PROFILES=/{print substr($0,index($0,"=")+1)}' .env 2>/dev/null | tail -1)}" \
+    ENV_FILE=".env" \
+    scripts/ensure_langfuse_running.sh
+fi
