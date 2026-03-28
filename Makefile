@@ -94,6 +94,7 @@ up:
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > if [ -n "$(PROFILES)" ]; then echo ">> compose up (build) [profiles: $(PROFILES)] with $(ENV_FILE)"; else echo ">> compose up (build) with $(ENV_FILE)"; fi
 > $(DC) $(PROFILE_ARGS) up -d --build
+> PROFILES="$(PROFILES)" ENV_FILE="$(ENV_FILE)" scripts/ensure_langfuse_running.sh
 
 up-core:
 > $(MAKE) up PROFILES="core"
