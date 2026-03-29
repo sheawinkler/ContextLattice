@@ -38,7 +38,7 @@ def _now() -> str:
 
 
 def _build_cmd() -> list[str]:
-    base_url = _env("GATE_REFRESH_BASE_URL", "http://contextlattice-orchestrator:8075")
+    base_url = _env("GATE_REFRESH_BASE_URL", "http://gateway-go:8091")
     project = _env("GATE_REFRESH_PROJECT", "contextlattice")
     timeout = _env_float("GATE_REFRESH_TIMEOUT_SECS", 45.0)
     runs = _env_int("GATE_REFRESH_RUNS", 10)

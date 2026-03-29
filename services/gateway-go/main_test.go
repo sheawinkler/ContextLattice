@@ -108,6 +108,69 @@ func TestProxyMapsBearerAuthorizationToAPIKey(t *testing.T) {
 	}
 }
 
+func TestStatusOverlaysGatewayHotPathOwnership(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"ok": true,
+			"pythonHotPathOwnership": {
+				"mode": "warn",
+				"ok": false,
+				"status": "non_gateway_hot_path_traffic_detected",
+				"nonGatewayRequests": 5,
+				"byPath": {"/memory/search": 5}
+			}
+		}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status payload: %v", err)
+	}
+	if strings.TrimSpace(anyToString(payload["statusSource"])) != "gateway-go" {
+		t.Fatalf("expected statusSource=gateway-go, got %v", payload["statusSource"])
+	}
+	ownership, ok := payload["pythonHotPathOwnership"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing gateway pythonHotPathOwnership: %#v", payload["pythonHotPathOwnership"])
+	}
+	if strings.TrimSpace(anyToString(ownership["status"])) != "clean" {
+		t.Fatalf("expected gateway ownership status clean, got %v", ownership["status"])
+	}
+	backendOwnership, ok := payload["backendPythonHotPathOwnership"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing backendPythonHotPathOwnership: %#v", payload["backendPythonHotPathOwnership"])
+	}
+	if strings.TrimSpace(anyToString(backendOwnership["status"])) != "non_gateway_hot_path_traffic_detected" {
+		t.Fatalf("expected backend status preserved, got %v", backendOwnership["status"])
+	}
+	warnings := parseWarnings(payload["warnings"])
+	found := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "direct calls to python orchestrator") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning about backend direct python calls, got %v", warnings)
+	}
+}
+
 func TestProxyForwardsQueryParams(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedRawQuery string
