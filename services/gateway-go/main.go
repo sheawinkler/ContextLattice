@@ -66,6 +66,10 @@ type retrievalPolicy struct {
 	deepBlocking                     bool
 	qdrantSyncTimeoutCap             time.Duration
 	qdrantSyncTimeoutCapByMode       map[string]time.Duration
+	lettaTopKFactor                  float64
+	lettaTopKCap                     int
+	lettaTopKFactorByMode            map[string]float64
+	lettaTopKCapByMode               map[string]int
 	failOpenContinuationEnabled      bool
 	failOpenContinuationSources      map[string]struct{}
 	timeoutAdaptiveSkipEnabled       bool
@@ -694,6 +698,45 @@ func loadRetrievalPolicy() retrievalPolicy {
 			"ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_DEEP_SECS",
 			policy.qdrantSyncTimeoutCap.Seconds(),
 		),
+	}
+	policy.lettaTopKFactor = envFloat("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR", 2.0)
+	if policy.lettaTopKFactor < 1.0 {
+		policy.lettaTopKFactor = 1.0
+	}
+	policy.lettaTopKCap = envInt("ORCH_RETRIEVAL_LETTA_TOP_K_CAP", 24)
+	if policy.lettaTopKCap < 1 {
+		policy.lettaTopKCap = 1
+	}
+	policy.lettaTopKFactorByMode = map[string]float64{
+		"fast":     envFloat("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_FAST", 1.25),
+		"balanced": envFloat("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED", 1.5),
+		"deep": envFloat(
+			"ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP",
+			policy.lettaTopKFactor,
+		),
+	}
+	for mode, factor := range policy.lettaTopKFactorByMode {
+		if factor < 1.0 {
+			factor = 1.0
+		}
+		if factor > policy.lettaTopKFactor {
+			factor = policy.lettaTopKFactor
+		}
+		policy.lettaTopKFactorByMode[mode] = factor
+	}
+	policy.lettaTopKCapByMode = map[string]int{
+		"fast":     envInt("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_FAST", 12),
+		"balanced": envInt("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED", 18),
+		"deep":     envInt("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP", policy.lettaTopKCap),
+	}
+	for mode, capValue := range policy.lettaTopKCapByMode {
+		if capValue < 1 {
+			capValue = 1
+		}
+		if capValue > policy.lettaTopKCap {
+			capValue = policy.lettaTopKCap
+		}
+		policy.lettaTopKCapByMode[mode] = capValue
 	}
 	policy.failOpenContinuationEnabled = envBool("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", true)
 	policy.failOpenContinuationSources = toSourceSet(csvListEnv(
@@ -2472,8 +2515,18 @@ func isTimeoutError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }
 
-func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
+func normalizeRetrievalMode(mode string) string {
 	normalized := strings.TrimSpace(strings.ToLower(mode))
+	switch normalized {
+	case "fast", "balanced", "deep":
+		return normalized
+	default:
+		return "balanced"
+	}
+}
+
+func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
+	normalized := normalizeRetrievalMode(mode)
 	if timeout, ok := s.retrieval.qdrantSyncTimeoutCapByMode[normalized]; ok && timeout > 0 {
 		return timeout
 	}
@@ -2481,7 +2534,7 @@ func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
 }
 
 func (s *server) resolveMinFastResults(mode string) int {
-	normalized := strings.TrimSpace(strings.ToLower(mode))
+	normalized := normalizeRetrievalMode(mode)
 	if value, ok := s.retrieval.minFastResultsByMode[normalized]; ok && value > 0 {
 		return value
 	}
@@ -2489,6 +2542,40 @@ func (s *server) resolveMinFastResults(mode string) int {
 		return s.retrieval.minFastResults
 	}
 	return 1
+}
+
+func (s *server) lettaTopKForMode(mode string, limit int) int {
+	requested := limit
+	if requested < 1 {
+		requested = 1
+	}
+	normalizedMode := normalizeRetrievalMode(mode)
+	factor := s.retrieval.lettaTopKFactor
+	if modeFactor, ok := s.retrieval.lettaTopKFactorByMode[normalizedMode]; ok && modeFactor > 0 {
+		factor = modeFactor
+	}
+	if factor < 1.0 {
+		factor = 1.0
+	}
+	capLimit := s.retrieval.lettaTopKCap
+	if modeCap, ok := s.retrieval.lettaTopKCapByMode[normalizedMode]; ok && modeCap > 0 {
+		capLimit = modeCap
+	}
+	if capLimit < requested {
+		capLimit = requested
+	}
+	scaledExact := float64(requested) * factor
+	scaled := int(scaledExact)
+	if float64(scaled) < scaledExact {
+		scaled += 1
+	}
+	if scaled < requested {
+		scaled = requested
+	}
+	if capLimit > 0 && scaled > capLimit {
+		scaled = capLimit
+	}
+	return scaled
 }
 
 func normalizeTopicPathCandidate(value string) string {
@@ -2951,6 +3038,11 @@ func (s *server) callBackendSourceQuery(
 ) ([]map[string]any, []string, error) {
 	sourceRequest := cloneMap(baseRequest)
 	sourceRequest["sources"] = []string{source}
+	if source == sourceLetta {
+		mode := normalizeRetrievalMode(anyToString(sourceRequest["retrieval_mode"]))
+		limit := clampInt(anyToInt(sourceRequest["limit"], 10), 1, 100)
+		sourceRequest["limit"] = s.lettaTopKForMode(mode, limit)
+	}
 	if s.retrieval.subcallDisableExpansion && !explicitSourceOverride {
 		sourceRequest["query_expansion"] = false
 	}
@@ -3546,10 +3638,7 @@ func (s *server) executeRetrieval(
 		return map[string]any{"error": "query is required"}, http.StatusUnprocessableEntity, nil
 	}
 	limit := clampInt(anyToInt(requestPayload["limit"], 10), 1, 100)
-	retrievalMode := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["retrieval_mode"])))
-	if retrievalMode == "" {
-		retrievalMode = "balanced"
-	}
+	retrievalMode := normalizeRetrievalMode(anyToString(requestPayload["retrieval_mode"]))
 	retrievalIntent := strings.TrimSpace(strings.ToLower(anyToString(requestPayload["retrieval_intent"])))
 	if retrievalIntent == "" {
 		retrievalIntent = "decision"
@@ -4068,6 +4157,24 @@ func (s *server) executeRetrieval(
 				"balanced": s.resolveQdrantSyncCap("balanced").Seconds(),
 				"deep":     s.resolveQdrantSyncCap("deep").Seconds(),
 			},
+			"letta_top_k_by_mode": map[string]any{
+				"fast": map[string]any{
+					"factor": s.retrieval.lettaTopKFactorByMode["fast"],
+					"cap":    s.retrieval.lettaTopKCapByMode["fast"],
+				},
+				"balanced": map[string]any{
+					"factor": s.retrieval.lettaTopKFactorByMode["balanced"],
+					"cap":    s.retrieval.lettaTopKCapByMode["balanced"],
+				},
+				"deep": map[string]any{
+					"factor": s.retrieval.lettaTopKFactorByMode["deep"],
+					"cap":    s.retrieval.lettaTopKCapByMode["deep"],
+				},
+			},
+			"letta_top_k_global": map[string]any{
+				"factor": s.retrieval.lettaTopKFactor,
+				"cap":    s.retrieval.lettaTopKCap,
+			},
 			"fail_open_timeout_continuation_enabled": s.retrieval.failOpenContinuationEnabled,
 			"timeout_adaptive_skip_enabled":          s.retrieval.timeoutAdaptiveSkipEnabled,
 			"adaptive_timeout_enabled":               s.retrieval.adaptiveTimeoutEnabled,
@@ -4271,10 +4378,7 @@ func (s *server) memorySearch(w http.ResponseWriter, r *http.Request) {
 		s.proxyWithBody(w, r, bodyBytes)
 		return
 	}
-	retrievalMode := strings.TrimSpace(strings.ToLower(anyToString(payload["retrieval_mode"])))
-	if retrievalMode == "" {
-		retrievalMode = "balanced"
-	}
+	retrievalMode := normalizeRetrievalMode(anyToString(payload["retrieval_mode"]))
 	retrievalIntent := strings.TrimSpace(strings.ToLower(anyToString(payload["retrieval_intent"])))
 	if retrievalIntent == "" {
 		retrievalIntent = "decision"
