@@ -44,53 +44,57 @@ var defaultAllSources = []string{
 }
 
 type retrievalPolicy struct {
-	enabled                      bool
-	defaultSources               []string
-	fastSources                  []string
-	slowSources                  []string
-	syncFallbackSources          []string
-	rustQualityFallbackEnabled   bool
-	rustQualityFallbackSources   []string
-	rustQualityFallbackMode      string
-	minFastResults               int
-	minFastResultsByMode         map[string]int
-	disableSyncSlowFallback      bool
-	slowSyncTimeoutCap           time.Duration
-	rustLanePromotionEnabled     bool
-	topicPrefilterEnabled        bool
-	coverageRescueEnabled        bool
-	coverageRescueMinTokens      int
-	lexicalGuardEnabled          bool
-	lexicalGuardMinCoverage      float64
-	lexicalGuardMinResults       int
-	deepBlocking                 bool
-	qdrantSyncTimeoutCap         time.Duration
-	qdrantSyncTimeoutCapByMode   map[string]time.Duration
-	failOpenContinuationEnabled  bool
-	failOpenContinuationSources  map[string]struct{}
-	timeoutAdaptiveSkipEnabled   bool
-	timeoutAdaptiveSkipSources   map[string]struct{}
-	sourceTimeouts               map[string]time.Duration
-	continuationTimeoutDefault   time.Duration
-	continuationTimeoutBySource  map[string]time.Duration
-	continuationMaxInflight      int
-	subcallDisableExpansion      bool
-	subcallDisableAutoEscalate   bool
-	telemetryBatchEnabled        bool
-	telemetryBatchFlushInterval  time.Duration
-	telemetryBatchSize           int
-	telemetryBatchDropLogEvery   uint64
-	adaptiveTimeoutEnabled       bool
-	adaptiveTimeoutMinRequests   int
-	adaptiveTimeoutWindow        int
-	adaptiveTimeoutP95Factor     float64
-	adaptiveTimeoutMinScale      float64
-	adaptiveTimeoutMaxScale      float64
-	adaptiveTimeoutBacklogWeight float64
-	adaptiveTimeoutBacklogCap    int
-	continuationEventHistory     int
-	continuationEventTTL         time.Duration
-	continuationSSEHeartbeat     time.Duration
+	enabled                          bool
+	defaultSources                   []string
+	fastSources                      []string
+	slowSources                      []string
+	syncFallbackSources              []string
+	rustQualityFallbackEnabled       bool
+	rustQualityFallbackSources       []string
+	rustQualityFallbackMode          string
+	minFastResults                   int
+	minFastResultsByMode             map[string]int
+	disableSyncSlowFallback          bool
+	slowSyncTimeoutCap               time.Duration
+	rustLanePromotionEnabled         bool
+	topicPrefilterEnabled            bool
+	coverageRescueEnabled            bool
+	coverageRescueMinTokens          int
+	lexicalGuardEnabled              bool
+	lexicalGuardMinCoverage          float64
+	lexicalGuardMinResults           int
+	deepBlocking                     bool
+	qdrantSyncTimeoutCap             time.Duration
+	qdrantSyncTimeoutCapByMode       map[string]time.Duration
+	failOpenContinuationEnabled      bool
+	failOpenContinuationSources      map[string]struct{}
+	timeoutAdaptiveSkipEnabled       bool
+	timeoutAdaptiveSkipSources       map[string]struct{}
+	sourceTimeouts                   map[string]time.Duration
+	continuationTimeoutDefault       time.Duration
+	continuationTimeoutBySource      map[string]time.Duration
+	continuationMaxInflight          int
+	continuationMaxInflightPerSource int
+	continuationMaxInflightOverrides map[string]int
+	continuationSourceCooldown       time.Duration
+	continuationSourceCooldownBySrc  map[string]time.Duration
+	subcallDisableExpansion          bool
+	subcallDisableAutoEscalate       bool
+	telemetryBatchEnabled            bool
+	telemetryBatchFlushInterval      time.Duration
+	telemetryBatchSize               int
+	telemetryBatchDropLogEvery       uint64
+	adaptiveTimeoutEnabled           bool
+	adaptiveTimeoutMinRequests       int
+	adaptiveTimeoutWindow            int
+	adaptiveTimeoutP95Factor         float64
+	adaptiveTimeoutMinScale          float64
+	adaptiveTimeoutMaxScale          float64
+	adaptiveTimeoutBacklogWeight     float64
+	adaptiveTimeoutBacklogCap        int
+	continuationEventHistory         int
+	continuationEventTTL             time.Duration
+	continuationSSEHeartbeat         time.Duration
 }
 
 type retrievalEvent struct {
@@ -236,30 +240,31 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 type server struct {
-	backendURL              string
-	orchestratorAPIKey      string
-	client                  *http.Client
-	retrieval               retrievalPolicy
-	toolCalls               toolCallPolicy
-	pythonHotPathMode       string
-	pythonHotPathFallbacks  atomic.Uint64
-	pythonHotPathMu         sync.Mutex
-	pythonHotPathByPath     map[string]uint64
-	pythonHotPathByReason   map[string]uint64
-	pythonHotPathLastAt     string
-	telemetry               *retrievalTelemetry
-	writePolicy             writeIngressPolicy
-	telemetrySink           *telemetrySink
-	telemetrySpool          *telemetrySpool
-	telemetryRing           *telemetryRing
-	continuationSem         chan struct{}
-	adaptiveMu              sync.Mutex
-	adaptiveBySource        map[string]*adaptiveSourceStats
-	continuationMu          sync.Mutex
-	continuationInFlight    map[string]int
-	continuationSubscribers map[string][]chan map[string]any
-	continuationHistory     map[string][]map[string]any
-	continuationExpiry      map[string]time.Time
+	backendURL                      string
+	orchestratorAPIKey              string
+	client                          *http.Client
+	retrieval                       retrievalPolicy
+	toolCalls                       toolCallPolicy
+	pythonHotPathMode               string
+	pythonHotPathFallbacks          atomic.Uint64
+	pythonHotPathMu                 sync.Mutex
+	pythonHotPathByPath             map[string]uint64
+	pythonHotPathByReason           map[string]uint64
+	pythonHotPathLastAt             string
+	telemetry                       *retrievalTelemetry
+	writePolicy                     writeIngressPolicy
+	telemetrySink                   *telemetrySink
+	telemetrySpool                  *telemetrySpool
+	telemetryRing                   *telemetryRing
+	continuationSem                 chan struct{}
+	adaptiveMu                      sync.Mutex
+	adaptiveBySource                map[string]*adaptiveSourceStats
+	continuationMu                  sync.Mutex
+	continuationInFlight            map[string]int
+	continuationSourceCooldownUntil map[string]time.Time
+	continuationSubscribers         map[string][]chan map[string]any
+	continuationHistory             map[string][]map[string]any
+	continuationExpiry              map[string]time.Time
 }
 
 func normalizeHotPath(path string) string {
@@ -719,6 +724,55 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if policy.continuationMaxInflight < 1 {
 		policy.continuationMaxInflight = 1
 	}
+	policy.continuationMaxInflightPerSource = envInt("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", 2)
+	if policy.continuationMaxInflightPerSource < 1 {
+		policy.continuationMaxInflightPerSource = 1
+	}
+	if policy.continuationMaxInflightPerSource > policy.continuationMaxInflight {
+		policy.continuationMaxInflightPerSource = policy.continuationMaxInflight
+	}
+	policy.continuationMaxInflightOverrides = map[string]int{
+		sourceLetta: envInt(
+			"GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE_LETTA",
+			policy.continuationMaxInflightPerSource,
+		),
+		sourceMemoryBank: envInt(
+			"GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE_MEMORY_BANK",
+			policy.continuationMaxInflightPerSource,
+		),
+	}
+	for source, limit := range policy.continuationMaxInflightOverrides {
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > policy.continuationMaxInflight {
+			limit = policy.continuationMaxInflight
+		}
+		policy.continuationMaxInflightOverrides[source] = limit
+	}
+	continuationCooldownSecs := envFloat("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", 15)
+	if continuationCooldownSecs < 0 {
+		continuationCooldownSecs = 0
+	}
+	policy.continuationSourceCooldown = time.Duration(continuationCooldownSecs * float64(time.Second))
+	lettaCooldownSecs := envFloat("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS_LETTA", continuationCooldownSecs)
+	if lettaCooldownSecs < 0 {
+		lettaCooldownSecs = 0
+	}
+	memoryBankCooldownSecs := envFloat("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS_MEMORY_BANK", continuationCooldownSecs)
+	if memoryBankCooldownSecs < 0 {
+		memoryBankCooldownSecs = 0
+	}
+	policy.continuationSourceCooldownBySrc = map[string]time.Duration{
+		sourceLetta:      time.Duration(lettaCooldownSecs * float64(time.Second)),
+		sourceMemoryBank: time.Duration(memoryBankCooldownSecs * float64(time.Second)),
+	}
+	for source, cooldown := range policy.continuationSourceCooldownBySrc {
+		if cooldown < 0 {
+			cooldown = 0
+		}
+		policy.continuationSourceCooldownBySrc[source] = cooldown
+	}
 	policy.subcallDisableExpansion = envBool("GO_RETRIEVAL_SUBCALL_DISABLE_EXPANSION", true)
 	policy.subcallDisableAutoEscalate = envBool("GO_RETRIEVAL_SUBCALL_DISABLE_AUTO_ESCALATE", true)
 	policy.telemetryBatchEnabled = envBool("GO_RETRIEVAL_EVENT_BATCH_ENABLED", true)
@@ -810,25 +864,26 @@ func newServer() *server {
 	telemetryRingInstance := newTelemetryRingFromEnv()
 	t := newRetrievalTelemetry(policy)
 	s := &server{
-		backendURL:              backendURL,
-		orchestratorAPIKey:      orchestratorAPIKey,
-		pythonHotPathMode:       pythonHotPathMode,
-		pythonHotPathByPath:     map[string]uint64{},
-		pythonHotPathByReason:   map[string]uint64{},
-		client:                  &http.Client{Timeout: timeout},
-		retrieval:               policy,
-		toolCalls:               toolPolicy,
-		telemetry:               t,
-		writePolicy:             writePolicy,
-		telemetrySink:           telemetrySinkInstance,
-		telemetrySpool:          telemetrySpoolInstance,
-		telemetryRing:           telemetryRingInstance,
-		continuationSem:         make(chan struct{}, policy.continuationMaxInflight),
-		adaptiveBySource:        make(map[string]*adaptiveSourceStats),
-		continuationInFlight:    make(map[string]int),
-		continuationSubscribers: make(map[string][]chan map[string]any),
-		continuationHistory:     make(map[string][]map[string]any),
-		continuationExpiry:      make(map[string]time.Time),
+		backendURL:                      backendURL,
+		orchestratorAPIKey:              orchestratorAPIKey,
+		pythonHotPathMode:               pythonHotPathMode,
+		pythonHotPathByPath:             map[string]uint64{},
+		pythonHotPathByReason:           map[string]uint64{},
+		client:                          &http.Client{Timeout: timeout},
+		retrieval:                       policy,
+		toolCalls:                       toolPolicy,
+		telemetry:                       t,
+		writePolicy:                     writePolicy,
+		telemetrySink:                   telemetrySinkInstance,
+		telemetrySpool:                  telemetrySpoolInstance,
+		telemetryRing:                   telemetryRingInstance,
+		continuationSem:                 make(chan struct{}, policy.continuationMaxInflight),
+		adaptiveBySource:                make(map[string]*adaptiveSourceStats),
+		continuationInFlight:            make(map[string]int),
+		continuationSourceCooldownUntil: make(map[string]time.Time),
+		continuationSubscribers:         make(map[string][]chan map[string]any),
+		continuationHistory:             make(map[string][]map[string]any),
+		continuationExpiry:              make(map[string]time.Time),
 	}
 	t.start()
 	return s
@@ -1955,27 +2010,32 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 				"balanced": s.retrieval.qdrantSyncTimeoutCapByMode["balanced"].Seconds(),
 				"deep":     s.retrieval.qdrantSyncTimeoutCapByMode["deep"].Seconds(),
 			},
-			"failOpenContinuationEnabled":     s.retrieval.failOpenContinuationEnabled,
-			"continuationEventHistory":        s.retrieval.continuationEventHistory,
-			"continuationEventTTLSecs":        s.retrieval.continuationEventTTL.Seconds(),
-			"continuationSSEHeartbeatSecs":    s.retrieval.continuationSSEHeartbeat.Seconds(),
-			"timeoutAdaptiveSkipEnabled":      s.retrieval.timeoutAdaptiveSkipEnabled,
-			"adaptiveTimeoutEnabled":          s.retrieval.adaptiveTimeoutEnabled,
-			"adaptiveTimeoutMinRequests":      s.retrieval.adaptiveTimeoutMinRequests,
-			"adaptiveTimeoutWindow":           s.retrieval.adaptiveTimeoutWindow,
-			"adaptiveTimeoutP95Factor":        s.retrieval.adaptiveTimeoutP95Factor,
-			"adaptiveTimeoutMinScale":         s.retrieval.adaptiveTimeoutMinScale,
-			"adaptiveTimeoutMaxScale":         s.retrieval.adaptiveTimeoutMaxScale,
-			"adaptiveTimeoutBacklogWeight":    s.retrieval.adaptiveTimeoutBacklogWeight,
-			"adaptiveTimeoutBacklogCap":       s.retrieval.adaptiveTimeoutBacklogCap,
-			"lexicalGuardEnabled":             s.retrieval.lexicalGuardEnabled,
-			"lexicalGuardMinCoverage":         s.retrieval.lexicalGuardMinCoverage,
-			"lexicalGuardMinResults":          s.retrieval.lexicalGuardMinResults,
-			"continuationMaxInflight":         s.retrieval.continuationMaxInflight,
-			"subcallDisableExpansion":         s.retrieval.subcallDisableExpansion,
-			"subcallDisableAutoEscalate":      s.retrieval.subcallDisableAutoEscalate,
-			"telemetryBatchEnabled":           s.retrieval.telemetryBatchEnabled,
-			"telemetryBatchFlushIntervalSecs": s.retrieval.telemetryBatchFlushInterval.Seconds(),
+			"failOpenContinuationEnabled":      s.retrieval.failOpenContinuationEnabled,
+			"continuationEventHistory":         s.retrieval.continuationEventHistory,
+			"continuationEventTTLSecs":         s.retrieval.continuationEventTTL.Seconds(),
+			"continuationSSEHeartbeatSecs":     s.retrieval.continuationSSEHeartbeat.Seconds(),
+			"timeoutAdaptiveSkipEnabled":       s.retrieval.timeoutAdaptiveSkipEnabled,
+			"adaptiveTimeoutEnabled":           s.retrieval.adaptiveTimeoutEnabled,
+			"adaptiveTimeoutMinRequests":       s.retrieval.adaptiveTimeoutMinRequests,
+			"adaptiveTimeoutWindow":            s.retrieval.adaptiveTimeoutWindow,
+			"adaptiveTimeoutP95Factor":         s.retrieval.adaptiveTimeoutP95Factor,
+			"adaptiveTimeoutMinScale":          s.retrieval.adaptiveTimeoutMinScale,
+			"adaptiveTimeoutMaxScale":          s.retrieval.adaptiveTimeoutMaxScale,
+			"adaptiveTimeoutBacklogWeight":     s.retrieval.adaptiveTimeoutBacklogWeight,
+			"adaptiveTimeoutBacklogCap":        s.retrieval.adaptiveTimeoutBacklogCap,
+			"lexicalGuardEnabled":              s.retrieval.lexicalGuardEnabled,
+			"lexicalGuardMinCoverage":          s.retrieval.lexicalGuardMinCoverage,
+			"lexicalGuardMinResults":           s.retrieval.lexicalGuardMinResults,
+			"continuationMaxInflight":          s.retrieval.continuationMaxInflight,
+			"continuationMaxInflightPerSource": s.retrieval.continuationMaxInflightPerSource,
+			"continuationMaxInflightOverrides": cloneIntMap(s.retrieval.continuationMaxInflightOverrides),
+			"continuationSourceCooldownSecs":   s.retrieval.continuationSourceCooldown.Seconds(),
+			"continuationSourceCooldownBySrc":  durationMapToSeconds(s.retrieval.continuationSourceCooldownBySrc),
+			"continuationSourceCooldownActive": s.continuationSourceCooldownSnapshot(),
+			"subcallDisableExpansion":          s.retrieval.subcallDisableExpansion,
+			"subcallDisableAutoEscalate":       s.retrieval.subcallDisableAutoEscalate,
+			"telemetryBatchEnabled":            s.retrieval.telemetryBatchEnabled,
+			"telemetryBatchFlushIntervalSecs":  s.retrieval.telemetryBatchFlushInterval.Seconds(),
 		},
 		"pythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
 		"writeIngress": map[string]any{
@@ -2037,6 +2097,26 @@ func cloneMap(input map[string]any) map[string]any {
 	out := make(map[string]any, len(input))
 	for key, value := range input {
 		out[key] = value
+	}
+	return out
+}
+
+func cloneIntMap(input map[string]int) map[string]int {
+	out := make(map[string]int, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func durationMapToSeconds(input map[string]time.Duration) map[string]float64 {
+	out := make(map[string]float64, len(input))
+	for key, value := range input {
+		seconds := value.Seconds()
+		if seconds < 0 {
+			seconds = 0
+		}
+		out[key] = roundFloat(seconds, 3)
 	}
 	return out
 }
@@ -2610,6 +2690,114 @@ func (s *server) decrementContinuationBacklog(source string) {
 	s.continuationInFlight[normalized] = current - 1
 }
 
+func (s *server) continuationSourceCooldownSnapshot() map[string]float64 {
+	now := time.Now().UTC()
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	snapshot := map[string]float64{}
+	for source, until := range s.continuationSourceCooldownUntil {
+		if !until.After(now) {
+			delete(s.continuationSourceCooldownUntil, source)
+			continue
+		}
+		snapshot[source] = roundFloat(until.Sub(now).Seconds(), 3)
+	}
+	return snapshot
+}
+
+func (s *server) continuationMaxInflightForSource(source string) int {
+	maxPerSource := s.retrieval.continuationMaxInflightPerSource
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized != "" {
+		if override, ok := s.retrieval.continuationMaxInflightOverrides[normalized]; ok && override > 0 {
+			maxPerSource = override
+		}
+	}
+	if maxPerSource < 1 {
+		maxPerSource = 1
+	}
+	if s.retrieval.continuationMaxInflight > 0 && maxPerSource > s.retrieval.continuationMaxInflight {
+		maxPerSource = s.retrieval.continuationMaxInflight
+	}
+	return maxPerSource
+}
+
+func (s *server) continuationCooldownForSource(source string) time.Duration {
+	cooldown := s.retrieval.continuationSourceCooldown
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized != "" {
+		if override, ok := s.retrieval.continuationSourceCooldownBySrc[normalized]; ok {
+			cooldown = override
+		}
+	}
+	if cooldown < 0 {
+		return 0
+	}
+	return cooldown
+}
+
+func (s *server) applyContinuationSourceCooldown(source string) float64 {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return 0
+	}
+	cooldown := s.continuationCooldownForSource(normalized)
+	if cooldown <= 0 {
+		return 0
+	}
+	now := time.Now().UTC()
+	until := now.Add(cooldown)
+	s.continuationMu.Lock()
+	s.continuationSourceCooldownUntil[normalized] = until
+	s.continuationMu.Unlock()
+	return until.Sub(now).Seconds()
+}
+
+func (s *server) tryReserveContinuationSourceSlot(source string) (bool, string, float64) {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return false, "invalid_source", 0
+	}
+	now := time.Now().UTC()
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	if until, ok := s.continuationSourceCooldownUntil[normalized]; ok {
+		if until.After(now) {
+			return false, "cooldown", until.Sub(now).Seconds()
+		}
+		delete(s.continuationSourceCooldownUntil, normalized)
+	}
+	maxPerSource := s.continuationMaxInflightForSource(normalized)
+	cooldown := s.continuationCooldownForSource(normalized)
+	current := int(s.continuationInFlight[normalized])
+	if current >= maxPerSource {
+		cooldownRemaining := 0.0
+		if cooldown > 0 {
+			until := now.Add(cooldown)
+			s.continuationSourceCooldownUntil[normalized] = until
+			cooldownRemaining = until.Sub(now).Seconds()
+		}
+		return false, "max_inflight_per_source", cooldownRemaining
+	}
+	s.continuationInFlight[normalized] = current + 1
+	return true, "", 0
+}
+
+func (s *server) releaseContinuationSourceSlot(source string) {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	current := int(s.continuationInFlight[normalized])
+	if current <= 1 {
+		delete(s.continuationInFlight, normalized)
+		return
+	}
+	s.continuationInFlight[normalized] = current - 1
+}
+
 func (s *server) adaptiveTimeoutForSource(source string, base time.Duration) (time.Duration, map[string]any) {
 	detail := map[string]any{
 		"enabled":           s.retrieval.adaptiveTimeoutEnabled,
@@ -2961,7 +3149,22 @@ func (s *server) scheduleContinuationWarm(
 		})
 		return false
 	}
-	s.incrementContinuationBacklog(source)
+	reserved, reserveStatus, reserveCooldown := s.tryReserveContinuationSourceSlot(source)
+	if !reserved {
+		<-s.continuationSem
+		log.Printf("continuation warm skipped source=%s reason=%s detail=%s", source, reason, reserveStatus)
+		skipPayload := map[string]any{
+			"event":  "skipped",
+			"status": reserveStatus,
+			"source": source,
+			"reason": reason,
+		}
+		if reserveCooldown > 0 {
+			skipPayload["cooldown_remaining_secs"] = roundFloat(reserveCooldown, 3)
+		}
+		s.publishContinuationEvent(streamToken, skipPayload)
+		return false
+	}
 	s.publishContinuationEvent(streamToken, map[string]any{
 		"event":  "queued",
 		"status": "queued",
@@ -2970,7 +3173,7 @@ func (s *server) scheduleContinuationWarm(
 	})
 	go func() {
 		defer func() { <-s.continuationSem }()
-		defer s.decrementContinuationBacklog(source)
+		defer s.releaseContinuationSourceSlot(source)
 		timeout := s.resolveContinuationTimeout(source)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
@@ -2978,21 +3181,27 @@ func (s *server) scheduleContinuationWarm(
 		_, _, err := s.callBackendSourceQuery(ctx, incomingHeaders, baseRequest, source, true)
 		status := "ok"
 		errorText := ""
+		cooldownRemaining := 0.0
 		if err != nil {
 			status = "error"
 			errorText = err.Error()
+			cooldownRemaining = s.applyContinuationSourceCooldown(source)
 			log.Printf("continuation warm failed source=%s reason=%s error=%s", source, reason, err)
 		}
 		latency := time.Since(start).Milliseconds()
 		s.telemetry.record(retrievalEvent{Source: source, Phase: "continuation", Status: status, LatencyMs: latency})
-		s.publishContinuationEvent(streamToken, map[string]any{
+		completePayload := map[string]any{
 			"event":      "completed",
 			"status":     status,
 			"source":     source,
 			"reason":     reason,
 			"latency_ms": latency,
 			"error":      errorText,
-		})
+		}
+		if cooldownRemaining > 0 {
+			completePayload["cooldown_remaining_secs"] = roundFloat(cooldownRemaining, 3)
+		}
+		s.publishContinuationEvent(streamToken, completePayload)
 	}()
 	return true
 }
@@ -3869,23 +4078,31 @@ func (s *server) executeRetrieval(
 			"adaptive_timeout_max_scale":             s.retrieval.adaptiveTimeoutMaxScale,
 			"adaptive_timeout_backlog_weight":        s.retrieval.adaptiveTimeoutBacklogWeight,
 			"adaptive_timeout_backlog_cap":           s.retrieval.adaptiveTimeoutBacklogCap,
-			"lexical_guard_enabled":                  s.retrieval.lexicalGuardEnabled,
-			"lexical_guard_min_coverage":             s.retrieval.lexicalGuardMinCoverage,
-			"lexical_guard_min_results":              s.retrieval.lexicalGuardMinResults,
-			"runtime_backend_policy":                 rustBackendPolicy,
-			"traffic_class":                          trafficClass,
-			"rust_lane_gate_applied":                 rustLaneGateApplied,
-			"topic_prefilter_applied":                topicPrefilterApplied,
-			"topic_prefilter_hint":                   topicPrefilterHint,
-			"coverage_rescue_enabled":                s.retrieval.coverageRescueEnabled,
-			"coverage_rescue_min_tokens":             s.retrieval.coverageRescueMinTokens,
-			"coverage_rescue_applied":                coverageRescueApplied,
-			"coverage_rescue_query":                  coverageRescueQuery,
-			"coverage_rescue_sources":                coverageRescueSources,
-			"memory_bank_backend_effective":          strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
-			"rust_quality_fallback_enabled":          s.retrieval.rustQualityFallbackEnabled,
-			"rust_quality_fallback_sources":          s.retrieval.rustQualityFallbackSources,
-			"rust_quality_fallback_mode":             s.retrieval.rustQualityFallbackMode,
+			"continuation_max_inflight":              s.retrieval.continuationMaxInflight,
+			"continuation_max_inflight_per_source":   s.retrieval.continuationMaxInflightPerSource,
+			"continuation_max_inflight_overrides":    cloneIntMap(s.retrieval.continuationMaxInflightOverrides),
+			"continuation_source_cooldown_secs":      s.retrieval.continuationSourceCooldown.Seconds(),
+			"continuation_source_cooldown_by_source_secs": durationMapToSeconds(
+				s.retrieval.continuationSourceCooldownBySrc,
+			),
+			"continuation_source_cooldown_active": s.continuationSourceCooldownSnapshot(),
+			"lexical_guard_enabled":               s.retrieval.lexicalGuardEnabled,
+			"lexical_guard_min_coverage":          s.retrieval.lexicalGuardMinCoverage,
+			"lexical_guard_min_results":           s.retrieval.lexicalGuardMinResults,
+			"runtime_backend_policy":              rustBackendPolicy,
+			"traffic_class":                       trafficClass,
+			"rust_lane_gate_applied":              rustLaneGateApplied,
+			"topic_prefilter_applied":             topicPrefilterApplied,
+			"topic_prefilter_hint":                topicPrefilterHint,
+			"coverage_rescue_enabled":             s.retrieval.coverageRescueEnabled,
+			"coverage_rescue_min_tokens":          s.retrieval.coverageRescueMinTokens,
+			"coverage_rescue_applied":             coverageRescueApplied,
+			"coverage_rescue_query":               coverageRescueQuery,
+			"coverage_rescue_sources":             coverageRescueSources,
+			"memory_bank_backend_effective":       strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
+			"rust_quality_fallback_enabled":       s.retrieval.rustQualityFallbackEnabled,
+			"rust_quality_fallback_sources":       s.retrieval.rustQualityFallbackSources,
+			"rust_quality_fallback_mode":          s.retrieval.rustQualityFallbackMode,
 		},
 		"staged_fetch": map[string]any{
 			"enabled":                          true,
