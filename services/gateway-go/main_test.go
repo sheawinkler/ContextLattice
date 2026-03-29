@@ -2309,3 +2309,83 @@ func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 		t.Fatalf("expected backlog_inflight in adaptive detail, got %#v", detailWithBacklog)
 	}
 }
+
+func TestContinuationPerSourceInflightOverrideByLane(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "1")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE_LETTA", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", "10")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+
+	ok, status, _ := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if !ok || status != "" {
+		t.Fatalf("expected first Letta reservation to pass, got ok=%v status=%q", ok, status)
+	}
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceLetta)
+	if !ok || status != "" {
+		t.Fatalf("expected second Letta reservation to pass with override, got ok=%v status=%q", ok, status)
+	}
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceLetta)
+	if ok || status != "max_inflight_per_source" {
+		t.Fatalf("expected third Letta reservation to fail, got ok=%v status=%q", ok, status)
+	}
+	s.releaseContinuationSourceSlot(sourceLetta)
+	s.releaseContinuationSourceSlot(sourceLetta)
+
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceMemoryBank)
+	if !ok || status != "" {
+		t.Fatalf("expected first memory-bank reservation to pass, got ok=%v status=%q", ok, status)
+	}
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceMemoryBank)
+	if ok || status != "max_inflight_per_source" {
+		t.Fatalf("expected second memory-bank reservation to fail with global cap, got ok=%v status=%q", ok, status)
+	}
+	s.releaseContinuationSourceSlot(sourceMemoryBank)
+}
+
+func TestContinuationPerSourceCooldownOverrideByLane(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "1")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", "10")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS_LETTA", "0")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	ok, status, _ := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if !ok || status != "" {
+		t.Fatalf("expected first Letta reservation to pass, got ok=%v status=%q", ok, status)
+	}
+	ok, status, remaining := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if ok || status != "max_inflight_per_source" {
+		t.Fatalf("expected Letta max inflight rejection, got ok=%v status=%q", ok, status)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected zero cooldown remaining with Letta override cooldown=0, got %f", remaining)
+	}
+	s.releaseContinuationSourceSlot(sourceLetta)
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceLetta)
+	if !ok || status != "" {
+		t.Fatalf("expected Letta reservation to recover immediately with cooldown override, got ok=%v status=%q", ok, status)
+	}
+	s.releaseContinuationSourceSlot(sourceLetta)
+}
