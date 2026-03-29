@@ -5261,11 +5261,11 @@ async def test_federated_search_staged_fetch_skips_slow_sources(
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_RESULTS", 1)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_TOP_SCORE", 0.8)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_MIN_DIVERSITY", 1)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES", False)
 
     results, debug, _ = await orchestrator.federated_search_memory(
         "alpha",
-        limit=5,
-        sources=["qdrant", "mongo_raw", "mindsdb", "topic_rollups", "letta", "memory_bank"],
+        limit=1,
         rerank_with_learning=False,
     )
     assert results
@@ -5527,15 +5527,79 @@ async def test_search_memory_bank_lexical_spike_fallbacks_to_native(monkeypatch:
     monkeypatch.setattr(orchestrator, "RETRIEVAL_MEMORY_SCAN_LIMIT", 12)
     monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", True)
 
+    fallback_trace: dict[str, object] = {}
     rows = await orchestrator.search_memory_bank_lexical(
         "profitability baseline ladder",
         project_filter="alpha",
         limit=6,
         time_budget_secs=5.0,
+        fallback_trace=fallback_trace,
     )
     assert rows
     assert rows[0]["file"] == "runbooks/profitability/baseline_ladder.md"
     assert int(orchestrator.memory_bank_spike_fallbacks) >= start_fallbacks + 1
+    assert fallback_trace.get("selected_backend") == "native"
+    assert fallback_trace.get("native_used") is True
+    steps = fallback_trace.get("steps")
+    assert isinstance(steps, list) and steps
+    assert any(step.get("reason") == "error_to_native" for step in steps if isinstance(step, dict))
+
+
+@pytest.mark.asyncio
+async def test_federated_search_surfaces_memory_bank_fallback_chain(monkeypatch: pytest.MonkeyPatch):
+    async def _memory_bank(query: str, **kwargs):
+        trace = kwargs.get("fallback_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "version": 1,
+                    "backend_requested": "icm_spike",
+                    "backend_sequence": ["icm_spike", "native"],
+                    "steps": [
+                        {"backend": "icm_spike", "status": "empty", "reason": "no_rows", "rows": 0},
+                        {"backend": "icm_spike", "status": "fallback", "reason": "empty_result_to_native"},
+                        {"backend": "native", "status": "success", "reason": "rows_returned", "rows": 1},
+                    ],
+                    "selected_backend": "native",
+                    "native_used": True,
+                    "native_rows": 1,
+                    "budget_secs": float(kwargs.get("time_budget_secs") or 0.0),
+                    "empty_result_fallback": True,
+                    "fallback_to_native": True,
+                    "reason": "native_success",
+                }
+            )
+        return [
+            {
+                "project": "alpha",
+                "file": "runbooks/profitability/baseline_ladder.md",
+                "summary": f"{query} native fallback result",
+                "score": 0.92,
+                "source": "memory_bank",
+                "topic_path": "runbooks/profitability",
+            }
+        ]
+
+    monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _memory_bank)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_ENABLE_STAGED_FETCH", False)
+
+    results, debug, _ = await orchestrator.federated_search_memory(
+        "profitability baseline ladder",
+        limit=3,
+        sources=["memory_bank"],
+        rerank_with_learning=False,
+    )
+    assert results
+    source_policy = debug.get("source_policy")
+    assert isinstance(source_policy, dict)
+    fallback_chain = source_policy.get("memory_bank_fallback_chain")
+    assert isinstance(fallback_chain, list) and fallback_chain
+    chain_entry = fallback_chain[0]
+    assert chain_entry.get("selected_backend") == "native"
+    assert chain_entry.get("native_used") is True
+    source_chain_debug = source_policy.get("source_chain_debug")
+    assert isinstance(source_chain_debug, dict)
+    assert "memory_bank" in source_chain_debug
 
 
 @pytest.mark.asyncio
