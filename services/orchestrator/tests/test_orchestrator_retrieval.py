@@ -899,6 +899,58 @@ async def test_search_letta_archival_applies_top_k_cap_and_cache(monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_search_letta_archival_uses_mode_specific_top_k(monkeypatch: pytest.MonkeyPatch):
+    class _FakeResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.content = b"{}"
+            self.text = "{}"
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "id": "passage-1",
+                        "content": "project=alpha file=notes/a.md topic=decisions\nsummary: mode test",
+                        "timestamp": "2026-03-02T18:00:00Z",
+                    }
+                ]
+            }
+
+    class _FakeClient:
+        def __init__(self):
+            self.calls: list[int] = []
+
+        async def get(self, _url: str, params: dict[str, Any], headers: dict[str, str], timeout: float):
+            self.calls.append(int(params.get("top_k") or 0))
+            return _FakeResponse()
+
+    fake_client = _FakeClient()
+
+    async def _resolve(_session_id: str, _headers: dict[str, str]) -> str:
+        return "agent-test"
+
+    async def _client() -> _FakeClient:
+        return fake_client
+
+    monkeypatch.setattr(orchestrator, "_resolve_letta_agent_id", _resolve)
+    monkeypatch.setattr(orchestrator, "_get_letta_client", _client)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_CACHE_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_TOP_K_FACTOR_FAST", 1.2)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED", 1.5)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP", 3.0)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_TOP_K_CAP_FAST", 8)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_TOP_K_CAP_BALANCED", 9)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_TOP_K_CAP_DEEP", 20)
+
+    await orchestrator.search_letta_archival("mode fast", limit=6, retrieval_mode="fast")
+    await orchestrator.search_letta_archival("mode balanced", limit=6, retrieval_mode="balanced")
+    await orchestrator.search_letta_archival("mode deep", limit=6, retrieval_mode="deep")
+
+    assert fake_client.calls == [7, 9, 12]
+
+
+@pytest.mark.asyncio
 async def test_search_letta_archival_timeout_warms_cache_async(monkeypatch: pytest.MonkeyPatch):
     class _FakeResponse:
         def __init__(self, body: dict[str, Any]):

@@ -608,6 +608,30 @@ RETRIEVAL_MEMORY_PROJECT_LIMIT = int(os.getenv("ORCH_RETRIEVAL_MEMORY_PROJECT_LI
 RETRIEVAL_MEMORY_FILES_PER_PROJECT = int(os.getenv("ORCH_RETRIEVAL_MEMORY_FILES_PER_PROJECT", "40"))
 RETRIEVAL_LETTA_TOP_K_FACTOR = float(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR", "2.0"))
 RETRIEVAL_LETTA_TOP_K_CAP = max(1, int(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP", "24")))
+RETRIEVAL_LETTA_TOP_K_FACTOR_FAST = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_FAST", "1.25")),
+)
+RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED", "1.5")),
+)
+RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP = max(
+    1.0,
+    float(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP", str(RETRIEVAL_LETTA_TOP_K_FACTOR))),
+)
+RETRIEVAL_LETTA_TOP_K_CAP_FAST = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_FAST", "12")),
+)
+RETRIEVAL_LETTA_TOP_K_CAP_BALANCED = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED", "18")),
+)
+RETRIEVAL_LETTA_TOP_K_CAP_DEEP = max(
+    1,
+    int(os.getenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP", str(RETRIEVAL_LETTA_TOP_K_CAP))),
+)
 RETRIEVAL_LETTA_SCAN_LIMIT = max(1, int(os.getenv("ORCH_RETRIEVAL_LETTA_SCAN_LIMIT", "24")))
 RETRIEVAL_LETTA_CACHE_ENABLED = os.getenv("ORCH_RETRIEVAL_LETTA_CACHE_ENABLED", "true").lower() in (
     "1",
@@ -6312,6 +6336,7 @@ def _schedule_background_letta_query_warm(
     project_filter: str | None,
     topic_filter: str | None,
     timeout_hint_secs: float,
+    retrieval_mode: str | None = None,
 ) -> None:
     if not RETRIEVAL_LETTA_ASYNC_WARM_ENABLED:
         return
@@ -6332,8 +6357,9 @@ def _schedule_background_letta_query_warm(
         except Exception as exc:
             logger.debug("Letta warm scheduling skipped: %s", exc)
             return
-        top_k = max(limit, int(limit * max(1.0, RETRIEVAL_LETTA_TOP_K_FACTOR)))
-        top_k = min(top_k, RETRIEVAL_LETTA_TOP_K_CAP)
+        top_k_factor, top_k_cap = _letta_top_k_settings_for_mode(retrieval_mode)
+        top_k = max(limit, int(limit * max(1.0, top_k_factor)))
+        top_k = min(top_k, max(1, int(top_k_cap)))
         cache_key = _letta_search_cache_key(
             query=query,
             limit=limit,
@@ -6455,6 +6481,7 @@ def _schedule_background_source_warm(
     topic_filter: str | None,
     timeout_hint_secs: float,
     force: bool = False,
+    retrieval_mode: str | None = None,
 ) -> None:
     source_name = str(source or "").strip().lower()
     if not source_name:
@@ -6466,6 +6493,7 @@ def _schedule_background_source_warm(
             project_filter=project_filter,
             topic_filter=topic_filter,
             timeout_hint_secs=timeout_hint_secs,
+            retrieval_mode=retrieval_mode,
         )
         return
     if not RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES and not force:
@@ -6568,6 +6596,26 @@ def _normalize_retrieval_mode(mode: str | None) -> str:
     if candidate not in RETRIEVAL_MODES:
         return RETRIEVAL_MODE_BALANCED
     return candidate
+
+
+def _letta_top_k_settings_for_mode(mode: str | None) -> tuple[float, int]:
+    normalized = _normalize_retrieval_mode(mode)
+    global_factor_cap = max(1.0, float(RETRIEVAL_LETTA_TOP_K_FACTOR))
+    global_cap_limit = max(1, int(RETRIEVAL_LETTA_TOP_K_CAP))
+    if normalized == RETRIEVAL_MODE_FAST:
+        return (
+            min(max(1.0, float(RETRIEVAL_LETTA_TOP_K_FACTOR_FAST)), global_factor_cap),
+            min(max(1, int(RETRIEVAL_LETTA_TOP_K_CAP_FAST)), global_cap_limit),
+        )
+    if normalized == RETRIEVAL_MODE_DEEP:
+        return (
+            min(max(1.0, float(RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP)), global_factor_cap),
+            min(max(1, int(RETRIEVAL_LETTA_TOP_K_CAP_DEEP)), global_cap_limit),
+        )
+    return (
+        min(max(1.0, float(RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED)), global_factor_cap),
+        min(max(1, int(RETRIEVAL_LETTA_TOP_K_CAP_BALANCED)), global_cap_limit),
+    )
 
 
 def _normalize_retrieval_intent(intent: str | None) -> str:
@@ -8360,6 +8408,20 @@ async def _build_retrieval_metrics_payload(top_limit: int) -> dict[str, Any]:
                 "enabled": RETRIEVAL_LETTA_ASYNC_WARM_ENABLED,
                 "timeoutSecs": RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS,
                 "maxInflight": RETRIEVAL_LETTA_ASYNC_WARM_MAX_INFLIGHT,
+                "topKByMode": {
+                    RETRIEVAL_MODE_FAST: {
+                        "factor": RETRIEVAL_LETTA_TOP_K_FACTOR_FAST,
+                        "cap": RETRIEVAL_LETTA_TOP_K_CAP_FAST,
+                    },
+                    RETRIEVAL_MODE_BALANCED: {
+                        "factor": RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED,
+                        "cap": RETRIEVAL_LETTA_TOP_K_CAP_BALANCED,
+                    },
+                    RETRIEVAL_MODE_DEEP: {
+                        "factor": RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP,
+                        "cap": RETRIEVAL_LETTA_TOP_K_CAP_DEEP,
+                    },
+                },
                 "inflight": letta_warm_inflight,
                 "started": letta_search_warm_started,
                 "completed": letta_search_warm_completed,
@@ -21677,6 +21739,7 @@ async def search_letta_archival(
     project_filter: str | None = None,
     topic_filter: str | None = None,
     timeout_secs: float | None = None,
+    retrieval_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     if not _letta_config_enabled():
         return []
@@ -21689,8 +21752,9 @@ async def search_letta_archival(
     except Exception as exc:
         logger.warning("Letta retrieval agent resolution failed: %s", exc)
         return []
-    top_k = max(limit, int(limit * max(1.0, RETRIEVAL_LETTA_TOP_K_FACTOR)))
-    top_k = min(top_k, RETRIEVAL_LETTA_TOP_K_CAP)
+    top_k_factor, top_k_cap = _letta_top_k_settings_for_mode(retrieval_mode)
+    top_k = max(limit, int(limit * max(1.0, top_k_factor)))
+    top_k = min(top_k, max(1, int(top_k_cap)))
     cache_key = _letta_search_cache_key(
         query=query,
         limit=limit,
@@ -22113,6 +22177,7 @@ async def federated_search_memory(
                 effective_source_timeouts.get(normalized, RETRIEVAL_LETTA_TIMEOUT_SECS)
             ),
             force=True,
+            retrieval_mode=normalized_mode,
         )
         fail_open_continuation_sources.append(normalized)
         return True
@@ -22238,6 +22303,7 @@ async def federated_search_memory(
                 project_filter=project_filter,
                 topic_filter=topic_filter,
                 timeout_secs=timeout_secs,
+                retrieval_mode=source_mode,
             )
         if source == RETRIEVAL_SOURCE_MEMORY_BANK:
             memory_bank_trace: dict[str, Any] = {}
@@ -22310,6 +22376,7 @@ async def federated_search_memory(
                             timeout_hint_secs=float(
                                 effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
                             ),
+                            retrieval_mode=normalized_mode,
                         )
                     deferred_sources.append(source)
                 return batch_rows, batch_errors, batch_warnings
@@ -22454,6 +22521,7 @@ async def federated_search_memory(
                         timeout_hint_secs=float(
                             effective_source_timeouts.get(source, RETRIEVAL_LETTA_TIMEOUT_SECS)
                         ),
+                        retrieval_mode=normalized_mode,
                     )
             with contextlib.suppress(Exception):
                 await asyncio.gather(*pending, return_exceptions=True)
@@ -22877,6 +22945,7 @@ async def federated_search_memory(
                         source == RETRIEVAL_SOURCE_MONGO_RAW
                         and RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW
                     ),
+                    retrieval_mode=normalized_mode,
                 )
     else:
         batch_rows, batch_errors, batch_warnings = await _run_source_batch(
@@ -22991,6 +23060,20 @@ async def federated_search_memory(
             "memory_bank_sync_non_deep_enabled": RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED,
             "memory_bank_backend_configured": MEMORY_BANK_SPIKE_BACKEND,
             "memory_bank_backend_effective": memory_bank_backend_effective,
+            "letta_top_k_by_mode": {
+                RETRIEVAL_MODE_FAST: {
+                    "factor": RETRIEVAL_LETTA_TOP_K_FACTOR_FAST,
+                    "cap": RETRIEVAL_LETTA_TOP_K_CAP_FAST,
+                },
+                RETRIEVAL_MODE_BALANCED: {
+                    "factor": RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED,
+                    "cap": RETRIEVAL_LETTA_TOP_K_CAP_BALANCED,
+                },
+                RETRIEVAL_MODE_DEEP: {
+                    "factor": RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP,
+                    "cap": RETRIEVAL_LETTA_TOP_K_CAP_DEEP,
+                },
+            },
             "source_chain_debug": {
                 str(source_name): [
                     dict(entry)
