@@ -20976,6 +20976,7 @@ async def search_memory_bank_lexical(
     topic_filter: str | None = None,
     time_budget_secs: float | None = None,
     backend_mode_override: str | None = None,
+    fallback_trace: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     global memory_bank_spike_fallbacks
 
@@ -21079,10 +21080,45 @@ async def search_memory_bank_lexical(
             raise
 
     terms = _query_terms(query)
+    trace_payload = fallback_trace if isinstance(fallback_trace, dict) else None
+    trace_steps: list[dict[str, Any]] = []
+    trace_native_used = False
+    trace_selected_backend: str | None = None
+    trace_native_rows = 0
     if not terms:
+        if trace_payload is not None:
+            trace_payload.clear()
+            trace_payload.update(
+                {
+                    "version": 1,
+                    "backend_requested": None,
+                    "backend_sequence": [],
+                    "steps": [],
+                    "selected_backend": None,
+                    "native_used": False,
+                    "native_rows": 0,
+                    "budget_secs": 0.0,
+                    "reason": "empty_query_terms",
+                }
+            )
         return []
     backend_mode = _memory_bank_backend_mode()
     if backend_mode == "disabled":
+        if trace_payload is not None:
+            trace_payload.clear()
+            trace_payload.update(
+                {
+                    "version": 1,
+                    "backend_requested": backend_mode,
+                    "backend_sequence": [],
+                    "steps": [],
+                    "selected_backend": None,
+                    "native_used": False,
+                    "native_rows": 0,
+                    "budget_secs": 0.0,
+                    "reason": "backend_disabled",
+                }
+            )
         return []
     fallback_candidates: list[str] = []
     for configured in MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:
@@ -21102,10 +21138,67 @@ async def search_memory_bank_lexical(
     def _remaining_budget() -> float:
         return max(0.0, budget_secs - (time.monotonic() - started))
 
+    def _record_trace_step(
+        *,
+        backend: str,
+        status: str,
+        reason: str,
+        rows: int | None = None,
+        error: str | None = None,
+        elapsed_ms: float | None = None,
+        timeout_secs: float | None = None,
+        next_backend: str | None = None,
+    ) -> None:
+        if trace_payload is None:
+            return
+        step: dict[str, Any] = {
+            "backend": str(backend).strip().lower(),
+            "status": str(status).strip().lower(),
+            "reason": str(reason).strip().lower(),
+        }
+        if rows is not None:
+            step["rows"] = max(0, int(rows))
+        if error:
+            step["error"] = str(error).strip()[:240]
+        if elapsed_ms is not None:
+            step["elapsed_ms"] = round(max(0.0, float(elapsed_ms)), 3)
+        if timeout_secs is not None:
+            step["timeout_secs"] = round(max(0.0, float(timeout_secs)), 3)
+        if next_backend:
+            step["next_backend"] = str(next_backend).strip().lower()
+        trace_steps.append(step)
+
+    def _finalize_trace(*, reason: str, selected_backend: str | None, native_rows: int = 0) -> None:
+        if trace_payload is None:
+            return
+        trace_payload.clear()
+        trace_payload.update(
+            {
+                "version": 1,
+                "backend_requested": backend_mode,
+                "backend_sequence": (
+                    [backend_mode, *fallback_candidates]
+                    if backend_mode != "native"
+                    else ["native"]
+                ),
+                "steps": [dict(step) for step in trace_steps],
+                "selected_backend": selected_backend,
+                "native_used": bool(selected_backend == "native" or trace_native_used or backend_mode == "native"),
+                "native_rows": max(0, int(native_rows)),
+                "budget_secs": round(max(0.0, float(budget_secs)), 3),
+                "empty_result_fallback": bool(MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK),
+                "fallback_to_native": bool(MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE),
+                "reason": str(reason).strip().lower(),
+            }
+        )
+
     if backend_mode != "native":
         spike_candidates = [backend_mode, *fallback_candidates]
         for idx, spike_backend in enumerate(spike_candidates):
             is_last_candidate = idx == (len(spike_candidates) - 1)
+            candidate_started = time.monotonic()
+            remaining_budget = _remaining_budget()
+            timeout_budget = max(0.2, min(budget_secs, max(0.2, remaining_budget)))
             try:
                 spike_rows = await _search_memory_bank_spike_backend(
                     backend_mode=spike_backend,
@@ -21113,24 +21206,86 @@ async def search_memory_bank_lexical(
                     search_limit=limit,
                     project_name=project_filter,
                     topic_path=topic_filter,
-                    budget_secs=budget_secs,
+                    budget_secs=timeout_budget,
                 )
                 if spike_rows:
+                    trace_selected_backend = spike_backend
+                    _record_trace_step(
+                        backend=spike_backend,
+                        status="success",
+                        reason="rows_returned",
+                        rows=len(spike_rows),
+                        elapsed_ms=(time.monotonic() - candidate_started) * 1000.0,
+                        timeout_secs=timeout_budget,
+                    )
+                    _finalize_trace(
+                        reason="spike_success",
+                        selected_backend=trace_selected_backend,
+                        native_rows=0,
+                    )
                     return spike_rows[:limit]
+                _record_trace_step(
+                    backend=spike_backend,
+                    status="empty",
+                    reason="no_rows",
+                    rows=0,
+                    elapsed_ms=(time.monotonic() - candidate_started) * 1000.0,
+                    timeout_secs=timeout_budget,
+                    next_backend=(
+                        "native"
+                        if is_last_candidate or not MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK
+                        else spike_candidates[idx + 1]
+                    ),
+                )
                 if not MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK or is_last_candidate:
                     if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
+                        trace_selected_backend = spike_backend
+                        _finalize_trace(
+                            reason="spike_empty_terminal",
+                            selected_backend=trace_selected_backend,
+                            native_rows=0,
+                        )
                         return []
                     memory_bank_spike_fallbacks += 1
+                    _record_trace_step(
+                        backend=spike_backend,
+                        status="fallback",
+                        reason="empty_result_to_native",
+                        rows=0,
+                        next_backend="native",
+                    )
                     break
                 memory_bank_spike_fallbacks += 1
+                _record_trace_step(
+                    backend=spike_backend,
+                    status="fallback",
+                    reason="empty_result_to_next",
+                    rows=0,
+                    next_backend=spike_candidates[idx + 1],
+                )
                 logger.debug(
                     "Memory-bank spike backend %s returned no rows; trying fallback backend %s",
                     spike_backend,
                     spike_candidates[idx + 1],
                 )
             except Exception as exc:
+                _record_trace_step(
+                    backend=spike_backend,
+                    status="error",
+                    reason="backend_error",
+                    error=str(exc),
+                    elapsed_ms=(time.monotonic() - candidate_started) * 1000.0,
+                    timeout_secs=timeout_budget,
+                    next_backend=("native" if is_last_candidate else spike_candidates[idx + 1]),
+                )
                 if not is_last_candidate:
                     memory_bank_spike_fallbacks += 1
+                    _record_trace_step(
+                        backend=spike_backend,
+                        status="fallback",
+                        reason="error_to_next",
+                        next_backend=spike_candidates[idx + 1],
+                    )
                     logger.debug(
                         "Memory-bank spike backend %s failed (%s); trying fallback backend %s",
                         spike_backend,
@@ -21139,9 +21294,22 @@ async def search_memory_bank_lexical(
                     )
                     continue
                 if not MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:
+                    trace_selected_backend = spike_backend
+                    _finalize_trace(
+                        reason="spike_error_terminal",
+                        selected_backend=trace_selected_backend,
+                        native_rows=0,
+                    )
                     return []
                 memory_bank_spike_fallbacks += 1
+                _record_trace_step(
+                    backend=spike_backend,
+                    status="fallback",
+                    reason="error_to_native",
+                    next_backend="native",
+                )
                 logger.debug("Memory-bank spike backend %s failed (%s); using native fallback", spike_backend, exc)
+        trace_native_used = True
 
     project_cap = min(
         max(1, RETRIEVAL_MEMORY_PROJECT_LIMIT),
@@ -21200,6 +21368,11 @@ async def search_memory_bank_lexical(
                 continue
             heapq.heapreplace(candidates, (name_score, project, file_name))
     if not candidates:
+        _finalize_trace(
+            reason="native_no_candidates",
+            selected_backend=("native" if (trace_native_used or backend_mode == "native") else trace_selected_backend),
+            native_rows=0,
+        )
         return []
     selected = sorted(candidates, key=lambda row: row[0], reverse=True)[:scan_limit]
     parallelism = max(2, min(8, int(math.ceil(budget_secs * 1.5))))
@@ -21237,6 +21410,21 @@ async def search_memory_bank_lexical(
 
     await asyncio.gather(*[_inspect(score, project, file_name) for score, project, file_name in selected])
     rows.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
+    if trace_selected_backend is None and rows:
+        trace_selected_backend = "native"
+    trace_native_rows = len(rows)
+    _record_trace_step(
+        backend="native",
+        status="success" if rows else "empty",
+        reason="native_scan_completed",
+        rows=len(rows),
+        elapsed_ms=(time.monotonic() - started) * 1000.0,
+    )
+    _finalize_trace(
+        reason="native_completed",
+        selected_backend=(trace_selected_backend or "native"),
+        native_rows=trace_native_rows,
+    )
     return rows[:limit]
 
 
@@ -21968,6 +22156,8 @@ async def federated_search_memory(
             payload["timeout_secs"] = round(max(0.0, float(timeout_secs)), 3)
         return payload
 
+    source_chain_debug: dict[str, list[dict[str, Any]]] = {}
+
     async def _timed_source(
         source_name: str,
         timeout_secs: float,
@@ -22050,6 +22240,8 @@ async def federated_search_memory(
                 timeout_secs=timeout_secs,
             )
         if source == RETRIEVAL_SOURCE_MEMORY_BANK:
+            memory_bank_trace: dict[str, Any] = {}
+            source_chain_debug.setdefault(RETRIEVAL_SOURCE_MEMORY_BANK, []).append(memory_bank_trace)
             return search_memory_bank_lexical(
                 query,
                 limit=source_limit,
@@ -22057,6 +22249,7 @@ async def federated_search_memory(
                 topic_filter=topic_filter,
                 time_budget_secs=timeout_secs,
                 backend_mode_override=memory_bank_backend_effective,
+                fallback_trace=memory_bank_trace,
             )
         if source == RETRIEVAL_SOURCE_TOPIC_ROLLUPS:
             return search_topic_rollups(
@@ -22798,6 +22991,20 @@ async def federated_search_memory(
             "memory_bank_sync_non_deep_enabled": RETRIEVAL_MEMORY_SYNC_NON_DEEP_ENABLED,
             "memory_bank_backend_configured": MEMORY_BANK_SPIKE_BACKEND,
             "memory_bank_backend_effective": memory_bank_backend_effective,
+            "source_chain_debug": {
+                str(source_name): [
+                    dict(entry)
+                    for entry in entries
+                    if isinstance(entry, dict)
+                ]
+                for source_name, entries in source_chain_debug.items()
+                if isinstance(entries, list)
+            },
+            "memory_bank_fallback_chain": [
+                dict(entry)
+                for entry in source_chain_debug.get(RETRIEVAL_SOURCE_MEMORY_BANK, [])
+                if isinstance(entry, dict)
+            ],
             "mongo_raw_deep_sync_only_for_raw_intent": RETRIEVAL_MONGO_RAW_DEEP_SYNC_ONLY_FOR_RAW_INTENT,
             "mongo_raw_deep_async_warm_non_raw": RETRIEVAL_MONGO_RAW_DEEP_ASYNC_WARM_NON_RAW,
             "mongo_raw_intent_async_sources": mongo_raw_intent_async_sources,
