@@ -1706,6 +1706,103 @@ func TestStagedRetrievalAppliesQdrantSyncCapByMode(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalAppliesLettaTopKByMode(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "letta")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "letta")
+	t.Setenv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "letta")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", "false")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR", "2.0")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP", "24")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_FAST", "1.2")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED", "1.6")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP", "2.0")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_FAST", "6")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED", "9")
+	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP", "15")
+
+	var mu sync.Mutex
+	capturedLimitByMode := map[string]int{}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		mode := strings.TrimSpace(strings.ToLower(anyToString(request["retrieval_mode"])))
+		limit := anyToInt(request["limit"], 0)
+		source := ""
+		if sources, ok := request["sources"].([]any); ok && len(sources) > 0 {
+			source = strings.TrimSpace(strings.ToLower(anyToString(sources[0])))
+		}
+		if source == "letta" {
+			mu.Lock()
+			capturedLimitByMode[mode] = limit
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"archive.md","summary":"letta row","score":0.93,"source":"letta"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	cases := []struct {
+		mode          string
+		expectedLimit int
+	}{
+		{mode: "fast", expectedLimit: 6},
+		{mode: "balanced", expectedLimit: 8},
+		{mode: "deep", expectedLimit: 10},
+	}
+	for _, tc := range cases {
+		reqBody := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"` + tc.mode + `"}}`
+		resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+		if err != nil {
+			t.Fatalf("%s request failed: %v", tc.mode, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("expected 200 for %s mode, got %d body=%s", tc.mode, resp.StatusCode, string(body))
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			t.Fatalf("decode response for %s mode: %v", tc.mode, err)
+		}
+		resp.Body.Close()
+		debug, _ := payload["retrieval_debug"].(map[string]any)
+		policy, _ := debug["source_policy"].(map[string]any)
+		topKByMode, _ := policy["letta_top_k_by_mode"].(map[string]any)
+		if len(topKByMode) == 0 {
+			t.Fatalf("expected letta_top_k_by_mode policy block for %s mode", tc.mode)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, tc := range cases {
+		if got := capturedLimitByMode[tc.mode]; got != tc.expectedLimit {
+			t.Fatalf("expected letta subcall limit %d for mode %s, got %d", tc.expectedLimit, tc.mode, got)
+		}
+	}
+}
+
 func TestStagedRetrievalSuppressesSlowTimeoutWarningsWhenFastSourcesSucceed(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups,mindsdb")
