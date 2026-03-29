@@ -1870,6 +1870,64 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *server) status(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
+	if !ok {
+		return
+	}
+	backendPath := "/status"
+	if raw := strings.TrimSpace(r.URL.RawQuery); raw != "" {
+		backendPath += "?" + raw
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	payload, statusCode, err := s.backendJSONRequest(ctx, http.MethodGet, backendPath, incomingHeaders, nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"ok":                     false,
+			"error":                  "backend_status_unavailable",
+			"detail":                 err.Error(),
+			"backendUrl":             s.backendURL,
+			"statusSource":           "gateway-go",
+			"pythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
+		})
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	gatewayOwnership := s.pythonHotPathOwnershipSnapshot()
+	backendOwnership, backendOwnershipExists := payload["pythonHotPathOwnership"]
+	if backendOwnershipExists {
+		payload["backendPythonHotPathOwnership"] = backendOwnership
+	}
+	payload["pythonHotPathOwnership"] = gatewayOwnership
+	payload["gatewayPythonHotPathOwnership"] = gatewayOwnership
+	payload["statusSource"] = "gateway-go"
+	payload["backendStatusSource"] = "contextlattice-orchestrator"
+
+	warnings := parseWarnings(payload["warnings"])
+	if backendMap, ok := backendOwnership.(map[string]any); ok {
+		backendStatus := strings.TrimSpace(strings.ToLower(anyToString(backendMap["status"])))
+		backendNonGateway := anyToInt(backendMap["nonGatewayRequests"], 0)
+		gatewayFallbacks := anyToInt(gatewayOwnership["fallbacks"], 0)
+		if backendStatus == "non_gateway_hot_path_traffic_detected" && backendNonGateway > 0 && gatewayFallbacks == 0 {
+			warnings = append(
+				warnings,
+				"Backend non-gateway counters indicate direct calls to python orchestrator; gateway fallback counters are authoritative at pythonHotPathOwnership.fallbacks.",
+			)
+		}
+	}
+	if len(warnings) > 0 {
+		payload["warnings"] = dedupeWarnings(warnings)
+	}
+	writeJSON(w, statusCode, payload)
+}
+
 func (s *server) info(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,
@@ -4097,7 +4155,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/health", s.proxy)
-	mux.HandleFunc("/status", s.proxy)
+	mux.HandleFunc("/status", s.status)
 	mux.HandleFunc("/v1/info", s.info)
 	mux.HandleFunc("/v1/codex/preflight", s.codexPreflight)
 	mux.HandleFunc("/v1/agents/preflight", s.agentsPreflight)

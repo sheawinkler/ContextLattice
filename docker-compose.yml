@@ -1082,7 +1082,7 @@ services:
       contextlattice-orchestrator:
         condition: service_started
     environment:
-      GATE_REFRESH_BASE_URL: ${GATE_REFRESH_BASE_URL:-http://contextlattice-orchestrator:8075}
+      GATE_REFRESH_BASE_URL: ${GATE_REFRESH_BASE_URL:-http://gateway-go:8091}
       GATE_REFRESH_API_KEY: ${GATE_REFRESH_API_KEY:-${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}}
       GATE_REFRESH_PROJECT: ${GATE_REFRESH_PROJECT:-contextlattice}
       GATE_REFRESH_INTERVAL_SECS: ${GATE_REFRESH_INTERVAL_SECS:-1800}
@@ -1227,7 +1227,7 @@ services:
       APP_URL: ${DASHBOARD_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${DASHBOARD_NEXTAUTH_SECRET:-dev_secret_change_me}
       AUTH_REQUIRED: ${DASHBOARD_AUTH_REQUIRED:-false}
-      CONTEXTLATTICE_ORCHESTRATOR_URL: http://contextlattice-orchestrator:8075
+      CONTEXTLATTICE_ORCHESTRATOR_URL: http://gateway-go:8091
       CONTEXTLATTICE_ORCHESTRATOR_API_KEY: ${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}
     volumes:
       - dashboard_data:/data
