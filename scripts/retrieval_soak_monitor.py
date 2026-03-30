@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -19,7 +21,11 @@ def _iso_now() -> str:
 def _load_api_key(explicit: str | None) -> str:
     if explicit:
         return explicit
-    for name in ("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "CONTEXTLATTICE_ORCHESTRATOR_API_KEY"):
+    for name in (
+        "CONTEXTLATTICE_ORCHESTRATOR_API_KEY",
+        "MEMMCP_ORCHESTRATOR_API_KEY",
+        "ORCH_API_KEY",
+    ):
         value = os.getenv(name, "").strip()
         if value:
             return value
@@ -71,6 +77,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--project", default=None, help="Optional project filter.")
     parser.add_argument("--limit", type=int, default=5, help="Search result limit.")
     parser.add_argument(
+        "--sources",
+        default="",
+        help="Optional comma-separated source override (e.g. topic_rollups,memory_bank).",
+    )
+    parser.add_argument(
+        "--memory-bank-backend",
+        default="",
+        help="Optional backend_policy.memory_bank_backend override (e.g. quickwit_spike).",
+    )
+    parser.add_argument(
         "--modes",
         default="fast,balanced,deep",
         help="Comma-separated retrieval modes to exercise each cycle.",
@@ -79,11 +95,102 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-hours", type=float, default=24.0, help="Total runtime in hours.")
     parser.add_argument("--timeout-secs", type=float, default=60.0, help="HTTP timeout per request.")
     parser.add_argument(
+        "--traffic-class",
+        default="benchmark",
+        help="Traffic class for retrieval + telemetry calls.",
+    )
+    parser.add_argument(
+        "--sample-docker-memory",
+        action="store_true",
+        help="Sample Docker memory usage once per cycle for selected services.",
+    )
+    parser.add_argument(
+        "--docker-services",
+        default="gateway-go,memory-bank-spike-rs,letta,memory-mcp-server",
+        help="Comma-separated Docker service/container names to sample when --sample-docker-memory is set.",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="NDJSON output path (default: reports/retrieval_soak_<timestamp>.ndjson)",
     )
     return parser.parse_args()
+
+
+_MEMORY_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([kmgti]?i?b)\s*$", re.IGNORECASE)
+
+
+def _mem_to_mib(raw: str) -> float | None:
+    token = (raw or "").strip()
+    if not token:
+        return None
+    match = _MEMORY_RE.match(token)
+    if not match:
+        return None
+    value = float(match.group(1))
+    unit = match.group(2).lower()
+    scale = {
+        "b": 1.0 / (1024.0 * 1024.0),
+        "kb": 1.0 / 1024.0,
+        "kib": 1.0 / 1024.0,
+        "mb": 1.0,
+        "mib": 1.0,
+        "gb": 1024.0,
+        "gib": 1024.0,
+        "tb": 1024.0 * 1024.0,
+        "tib": 1024.0 * 1024.0,
+    }.get(unit)
+    if scale is None:
+        return None
+    return round(value * scale, 3)
+
+
+def _sample_docker_memory(services: list[str]) -> dict[str, dict[str, Any]]:
+    if not services:
+        return {}
+    command = [
+        "docker",
+        "stats",
+        "--no-stream",
+        "--format",
+        "{{.Name}}\t{{.MemUsage}}",
+    ]
+    try:
+        proc = subprocess.run(command, check=True, capture_output=True, text=True, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        return {"_error": {"message": str(exc)}}
+    lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    by_name: dict[str, dict[str, Any]] = {}
+    for line in lines:
+        parts = line.split("\t")
+        if len(parts) != 2:
+            continue
+        name = parts[0].strip()
+        usage = parts[1].strip()
+        used_raw, _, limit_raw = usage.partition("/")
+        used_raw = used_raw.strip()
+        limit_raw = limit_raw.strip()
+        by_name[name] = {
+            "usedRaw": used_raw,
+            "limitRaw": limit_raw,
+            "usedMiB": _mem_to_mib(used_raw),
+            "limitMiB": _mem_to_mib(limit_raw),
+        }
+    selected: dict[str, dict[str, Any]] = {}
+    for wanted in services:
+        key = wanted.strip()
+        if not key:
+            continue
+        match_name = None
+        for actual in by_name:
+            if actual == key or actual.endswith(f"-{key}-1") or actual.endswith(f"_{key}_1") or key in actual:
+                match_name = actual
+                break
+        if match_name is None:
+            selected[key] = {"missing": True}
+        else:
+            selected[key] = {"missing": False, "container": match_name, **by_name[match_name]}
+    return selected
 
 
 def main() -> int:
@@ -96,6 +203,8 @@ def main() -> int:
     modes = [part.strip().lower() for part in str(args.modes or "").split(",") if part.strip()]
     if not modes:
         modes = ["balanced"]
+    explicit_sources = [part.strip().lower() for part in str(args.sources or "").split(",") if part.strip()]
+    memory_bank_backend = str(args.memory_bank_backend or "").strip().lower()
     base_url = args.base_url.rstrip("/")
     started_iso = _iso_now()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -104,34 +213,74 @@ def main() -> int:
     duration_secs = max(60.0, float(args.duration_hours) * 3600.0)
     deadline = time.monotonic() + duration_secs
     cycle = 0
-    print(f"starting soak: output={output_path} duration_hours={args.duration_hours} interval_secs={args.interval_secs}")
+    docker_services = [part.strip() for part in str(args.docker_services or "").split(",") if part.strip()]
+    print(
+        f"starting soak: output={output_path} duration_hours={args.duration_hours} "
+        f"interval_secs={args.interval_secs} sample_docker_memory={bool(args.sample_docker_memory)}"
+    )
     with output_path.open("a", encoding="utf-8") as handle:
         while time.monotonic() < deadline:
             cycle += 1
             cycle_started = time.monotonic()
             mode_results: list[dict[str, Any]] = []
+            degraded_count = 0
             for mode in modes:
+                payload_body: dict[str, Any] = {
+                    "query": args.query,
+                    "limit": max(1, int(args.limit)),
+                    "project": args.project,
+                    "retrieval_mode": mode,
+                    "include_retrieval_debug": True,
+                    "traffic_class": str(args.traffic_class or "benchmark"),
+                }
+                if explicit_sources:
+                    payload_body["sources"] = explicit_sources
+                if memory_bank_backend:
+                    payload_body["backend_policy"] = {
+                        "memory_bank_backend": memory_bank_backend,
+                        "strict": False,
+                    }
                 status, payload, elapsed_ms = _http_json(
                     method="POST",
                     url=f"{base_url}/memory/search",
-                    payload={
-                        "query": args.query,
-                        "limit": max(1, int(args.limit)),
-                        "project": args.project,
-                        "retrieval_mode": mode,
-                        "include_retrieval_debug": True,
-                        "traffic_class": "benchmark",
-                    },
+                    payload=payload_body,
                     api_key=api_key,
                     timeout_secs=max(5.0, float(args.timeout_secs)),
                 )
                 retrieval = payload.get("retrieval") if isinstance(payload, dict) else {}
                 staged = retrieval.get("staged_fetch") if isinstance(retrieval, dict) else {}
+                lifecycle = payload.get("retrieval_lifecycle") if isinstance(payload, dict) else {}
+                result_state = ""
+                if isinstance(payload, dict):
+                    result_state = str(payload.get("result_state") or "")
+                degraded = False
+                if isinstance(payload, dict):
+                    degraded = bool(payload.get("degraded")) or result_state == "degraded"
+                if degraded:
+                    degraded_count += 1
                 mode_results.append(
                     {
                         "mode": mode,
                         "status": status,
                         "elapsedMs": round(elapsed_ms, 3),
+                        "degraded": degraded,
+                        "resultState": result_state,
+                        "pendingSources": len(
+                            (
+                                (lifecycle.get("sources") or {}).get("pending")
+                                if isinstance(lifecycle, dict)
+                                else []
+                            )
+                            or []
+                        ),
+                        "returnedNowSources": len(
+                            (
+                                (lifecycle.get("sources") or {}).get("returned_now")
+                                if isinstance(lifecycle, dict)
+                                else []
+                            )
+                            or []
+                        ),
                         "results": len(payload.get("results") or []) if isinstance(payload, dict) else 0,
                         "sourceErrors": retrieval.get("source_errors") if isinstance(retrieval, dict) else None,
                         "slowSourcesSkipped": staged.get("slow_sources_skipped") if isinstance(staged, dict) else None,
@@ -140,7 +289,7 @@ def main() -> int:
 
             telemetry_status, telemetry_payload, telemetry_elapsed_ms = _http_json(
                 method="GET",
-                url=f"{base_url}/telemetry/retrieval?traffic_class=benchmark",
+                url=f"{base_url}/telemetry/retrieval?traffic_class={str(args.traffic_class or 'benchmark')}",
                 payload=None,
                 api_key=api_key,
                 timeout_secs=max(5.0, float(args.timeout_secs)),
@@ -152,10 +301,16 @@ def main() -> int:
                 else {}
             )
             letta_latency = latency_sources.get("letta") if isinstance(latency_sources, dict) else None
+            docker_memory = {}
+            if args.sample_docker_memory:
+                docker_memory = _sample_docker_memory(docker_services)
             record = {
                 "timestamp": _iso_now(),
                 "cycle": cycle,
                 "modeResults": mode_results,
+                "degradedCount": degraded_count,
+                "degradedRate": round(float(degraded_count) / float(len(mode_results)), 6) if mode_results else 0.0,
+                "dockerMemory": docker_memory,
                 "telemetry": {
                     "status": telemetry_status,
                     "elapsedMs": round(telemetry_elapsed_ms, 3),
@@ -173,6 +328,7 @@ def main() -> int:
             sleep_for = max(0.0, float(args.interval_secs) - elapsed_cycle)
             print(
                 f"[cycle={cycle}] alerts={record['telemetry']['alertsCount']} "
+                f"degraded_rate={record['degradedRate']} "
                 f"letta_p95={record['telemetry']['lettaLatency'].get('p95Ms')} "
                 f"letta_p99={record['telemetry']['lettaLatency'].get('p99Ms')} "
                 f"sleep={round(sleep_for, 2)}s"
