@@ -158,6 +158,13 @@ func normalizeWriteBatchPayload(path string, payload map[string]any) ([]normaliz
 			item.topicPath = strings.TrimSpace(anyToString(itemMap["topicPath"]))
 			item.itemID = strings.TrimSpace(anyToString(itemMap["itemId"]))
 			item.idempotencyKey = strings.TrimSpace(anyToString(itemMap["idempotencyKey"]))
+		case "/tools/memory_write_batch":
+			item.project = strings.TrimSpace(anyToString(itemMap["projectName"]))
+			item.fileName = strings.TrimSpace(anyToString(itemMap["fileName"]))
+			item.content = strings.TrimSpace(anyToString(itemMap["content"]))
+			item.topicPath = strings.TrimSpace(anyToString(itemMap["topicPath"]))
+			item.itemID = strings.TrimSpace(anyToString(itemMap["itemId"]))
+			item.idempotencyKey = strings.TrimSpace(anyToString(itemMap["idempotencyKey"]))
 		case "/v1/memory/batch-put":
 			item.project = strings.TrimSpace(anyToString(itemMap["project"]))
 			item.fileName = strings.TrimSpace(anyToString(itemMap["file_name"]))

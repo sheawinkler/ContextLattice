@@ -64,6 +64,35 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, status, response)
 		return
 	}
+	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+		entry, deduped, storeErr := s.memoryStore.put(item)
+		if storeErr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error":  "memory store write failed",
+				"detail": storeErr.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                    true,
+			"event_id":              entry.EventID,
+			"source":                "go_memory_store",
+			"warnings":              []string{},
+			"rollup_buffered":       true,
+			"deduped":               deduped,
+			"latest_hash_unchanged": deduped,
+			"fanout": map[string]any{
+				"go_memory_store": "succeeded",
+				"python_backend":  "disabled",
+			},
+		})
+		return
+	}
+	if s.strictNoPythonRuntime {
+		if !s.allowPythonHotPathFallback(w, path, "strict_runtime_backend_forward_disabled") {
+			return
+		}
+	}
 
 	forwardPayload := mergeForwardPayload(path, payload, item, s.writePolicy.fanoutExcludeTargets)
 	response, status, backendErr := s.callBackendJSON(r.Context(), incomingHeaders, http.MethodPost, path, forwardPayload)
@@ -184,37 +213,75 @@ func (s *server) handleWriteBatchIngress(
 						ok = true
 					}
 				} else {
-					forwardPayload := buildForwardPayload(singlePath, item, s.writePolicy.fanoutExcludeTargets)
-					response, status, backendErr := s.callBackendJSON(
-						r.Context(),
-						incomingHeaders,
-						http.MethodPost,
-						singlePath,
-						forwardPayload,
-					)
-					if backendErr != nil {
-						row = map[string]any{
-							"index":  idx,
-							"itemId": item.itemID,
-							"ok":     false,
-							"error":  map[string]any{"status": 502, "detail": backendErr.Error()},
+					if s.memoryStore != nil && s.memoryStore.policy.enabled {
+						entry, deduped, storeErr := s.memoryStore.put(item)
+						if storeErr != nil {
+							row = map[string]any{
+								"index":  idx,
+								"itemId": item.itemID,
+								"ok":     false,
+								"error":  map[string]any{"status": 502, "detail": storeErr.Error()},
+							}
+						} else {
+							row = map[string]any{
+								"index":                 idx,
+								"itemId":                item.itemID,
+								"ok":                    true,
+								"event_id":              entry.EventID,
+								"warnings":              []string{},
+								"fanout":                map[string]any{"go_memory_store": "succeeded", "python_backend": "disabled"},
+								"rollup_buffered":       true,
+								"deduped":               deduped,
+								"latest_hash_unchanged": deduped,
+								"source":                "go_memory_store",
+							}
+							ok = true
 						}
 					} else {
-						row = map[string]any{
-							"index":                 idx,
-							"itemId":                item.itemID,
-							"ok":                    anyToBool(response["ok"]) && status >= 200 && status < 300,
-							"event_id":              response["event_id"],
-							"warnings":              response["warnings"],
-							"fanout":                response["fanout"],
-							"rollup_buffered":       anyToBool(response["rollup_buffered"]),
-							"deduped":               anyToBool(response["deduped"]),
-							"latest_hash_unchanged": anyToBool(response["latest_hash_unchanged"]),
+						if s.strictNoPythonRuntime {
+							row = map[string]any{
+								"index":  idx,
+								"itemId": item.itemID,
+								"ok":     false,
+								"error":  map[string]any{"status": 503, "detail": "python runtime disabled by strict policy"},
+							}
+							resultsMu.Lock()
+							results = append(results, batchOutcome{index: idx, result: row, ok: false})
+							resultsMu.Unlock()
+							continue
 						}
-						if status < 200 || status >= 300 {
-							row["error"] = map[string]any{"status": status, "detail": anyToString(response["detail"])}
+						forwardPayload := buildForwardPayload(singlePath, item, s.writePolicy.fanoutExcludeTargets)
+						response, status, backendErr := s.callBackendJSON(
+							r.Context(),
+							incomingHeaders,
+							http.MethodPost,
+							singlePath,
+							forwardPayload,
+						)
+						if backendErr != nil {
+							row = map[string]any{
+								"index":  idx,
+								"itemId": item.itemID,
+								"ok":     false,
+								"error":  map[string]any{"status": 502, "detail": backendErr.Error()},
+							}
+						} else {
+							row = map[string]any{
+								"index":                 idx,
+								"itemId":                item.itemID,
+								"ok":                    anyToBool(response["ok"]) && status >= 200 && status < 300,
+								"event_id":              response["event_id"],
+								"warnings":              response["warnings"],
+								"fanout":                response["fanout"],
+								"rollup_buffered":       anyToBool(response["rollup_buffered"]),
+								"deduped":               anyToBool(response["deduped"]),
+								"latest_hash_unchanged": anyToBool(response["latest_hash_unchanged"]),
+							}
+							if status < 200 || status >= 300 {
+								row["error"] = map[string]any{"status": status, "detail": anyToString(response["detail"])}
+							}
+							ok = anyToBool(row["ok"])
 						}
-						ok = anyToBool(row["ok"])
 					}
 				}
 				resultsMu.Lock()
@@ -527,6 +594,9 @@ func (s *server) callBackendJSON(
 	path string,
 	payload map[string]any,
 ) (map[string]any, int, error) {
+	if s.strictNoPythonRuntime {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("python runtime disabled by strict policy")
+	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, err

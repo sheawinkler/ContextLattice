@@ -19,6 +19,8 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	t.Setenv("BACKEND_URL", backendURL)
 	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
 	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
