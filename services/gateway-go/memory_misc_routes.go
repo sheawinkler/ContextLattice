@@ -22,6 +22,200 @@ func methodAllowed(method string, allowed ...string) bool {
 	return false
 }
 
+func parseNormalizedCSVSet(raw string, fallback string) map[string]struct{} {
+	res := map[string]struct{}{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(fallback)
+	}
+	for _, part := range strings.Split(trimmed, ",") {
+		normalized := strings.TrimSpace(strings.ToLower(part))
+		if normalized == "" {
+			continue
+		}
+		res[normalized] = struct{}{}
+	}
+	return res
+}
+
+func normalizeHTTPPath(raw string) string {
+	token := strings.TrimSpace(strings.ToLower(raw))
+	if token == "" {
+		return ""
+	}
+	if !strings.HasPrefix(token, "/") {
+		token = "/" + token
+	}
+	if len(token) > 1 {
+		token = strings.TrimRight(token, "/")
+	}
+	return token
+}
+
+func parseHTTPPathSet(raw string, fallback string) map[string]struct{} {
+	res := map[string]struct{}{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(fallback)
+	}
+	for _, part := range strings.Split(trimmed, ",") {
+		normalized := normalizeHTTPPath(part)
+		if normalized == "" {
+			continue
+		}
+		res[normalized] = struct{}{}
+	}
+	return res
+}
+
+func parseAliasMap(raw string, fallback string) map[string]string {
+	res := map[string]string{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(fallback)
+	}
+	for _, part := range strings.Split(trimmed, ",") {
+		pair := strings.SplitN(strings.TrimSpace(strings.ToLower(part)), ":", 2)
+		if len(pair) != 2 {
+			continue
+		}
+		alias := strings.TrimSpace(pair[0])
+		target := strings.TrimSpace(pair[1])
+		if alias == "" || target == "" {
+			continue
+		}
+		res[alias] = target
+	}
+	return res
+}
+
+func normalizeEntitlementPlan(raw string, aliases map[string]string) string {
+	plan := strings.TrimSpace(strings.ToLower(raw))
+	if plan == "" {
+		return ""
+	}
+	if mapped, ok := aliases[plan]; ok {
+		plan = strings.TrimSpace(strings.ToLower(mapped))
+	}
+	return plan
+}
+
+func (s *server) entitlementPathProtected(path string) bool {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_V4_ENTITLEMENT_MODE")))
+	switch mode {
+	case "", "off":
+		return false
+	case "warn", "enforce":
+	default:
+		return false
+	}
+	protected := parseHTTPPathSet(
+		os.Getenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS"),
+		"/v1/inference/route,/v1/inference/chat,/v1/inference/embedding-policy,/maintenance/storage/run,/maintenance/telemetry/blob-gc,/migration/runtime",
+	)
+	normalized := normalizeHTTPPath(path)
+	if normalized == "" {
+		return false
+	}
+	if _, ok := protected[normalized]; ok {
+		return true
+	}
+	for candidate := range protected {
+		if candidate == "" {
+			continue
+		}
+		if strings.HasSuffix(candidate, "/*") {
+			prefix := strings.TrimSuffix(candidate, "/*")
+			if prefix != "" && strings.HasPrefix(normalized, prefix+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *server) enforceV4Entitlement(w http.ResponseWriter, r *http.Request, path string) bool {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_V4_ENTITLEMENT_MODE")))
+	switch mode {
+	case "", "off":
+		return true
+	case "warn", "enforce":
+	default:
+		return true
+	}
+	if !s.entitlementPathProtected(path) {
+		return true
+	}
+
+	environment := strings.TrimSpace(strings.ToLower(os.Getenv("CONTEXTLATTICE_ENV")))
+	if environment == "" {
+		environment = strings.TrimSpace(strings.ToLower(os.Getenv("MEMMCP_ENV")))
+	}
+	securityStrict := envBool("ORCH_SECURITY_STRICT", false)
+	if !securityStrict && environment != "production" && envBool("GO_V4_ENTITLEMENT_DEV_ALLOW", true) {
+		return true
+	}
+
+	requiredKey := strings.TrimSpace(os.Getenv("GO_V4_ENTITLEMENT_KEY"))
+	if requiredKey != "" && !secureTokenEqual(r.Header.Get("X-ContextLattice-Entitlement-Key"), requiredKey) {
+		if mode == "warn" {
+			return true
+		}
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"ok":      false,
+			"error":   "entitlement_required",
+			"message": "missing or invalid entitlement key",
+			"path":    path,
+		})
+		return false
+	}
+
+	aliases := parseAliasMap(
+		os.Getenv("GO_V4_ENTITLEMENT_PLAN_ALIASES"),
+		"pro:team,business:enterprise",
+	)
+	allowedPlans := parseNormalizedCSVSet(
+		os.Getenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS"),
+		"team,enterprise",
+	)
+	plan := normalizeEntitlementPlan(r.Header.Get("X-ContextLattice-Plan"), aliases)
+	if len(allowedPlans) > 0 {
+		if _, ok := allowedPlans[plan]; !ok {
+			if mode == "warn" {
+				return true
+			}
+			writeJSON(w, http.StatusPaymentRequired, map[string]any{
+				"ok":      false,
+				"error":   "entitlement_required",
+				"message": "plan is not entitled for this route",
+				"path":    path,
+			})
+			return false
+		}
+	}
+
+	allowedRoles := parseNormalizedCSVSet(
+		os.Getenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES"),
+		"owner,admin",
+	)
+	role := strings.TrimSpace(strings.ToLower(r.Header.Get("X-ContextLattice-Workspace-Role")))
+	if len(allowedRoles) > 0 {
+		if _, ok := allowedRoles[role]; !ok {
+			if mode == "warn" {
+				return true
+			}
+			writeJSON(w, http.StatusPaymentRequired, map[string]any{
+				"ok":      false,
+				"error":   "entitlement_required",
+				"message": "workspace role is not entitled for this route",
+				"path":    path,
+			})
+			return false
+		}
+	}
+	return true
+}
+
 func backendPathWithQuery(path string, rawQuery string) string {
 	trimmed := strings.TrimSpace(rawQuery)
 	if trimmed == "" {

@@ -141,18 +141,6 @@ type toolCallPolicy struct {
 	orchestratorRole   toolRolePolicy
 }
 
-type entitlementPolicy struct {
-	mode           string
-	environment    string
-	devAllow       bool
-	failureMode    string
-	protectedPaths map[string]struct{}
-	allowedPlans   map[string]struct{}
-	planAliases    map[string]string
-	allowedRoles   map[string]struct{}
-	requiredKey    string
-}
-
 type toolRolePolicy struct {
 	allowAll  bool
 	allowlist map[string]struct{}
@@ -286,8 +274,6 @@ type server struct {
 	retrieval                       retrievalPolicy
 	letta                           lettaConfig
 	toolCalls                       toolCallPolicy
-	entitlement                     entitlementPolicy
-	machineBinding                  *machineBindingRuntime
 	pythonHotPathMode               string
 	pythonHotPathFallbacks          atomic.Uint64
 	pythonHotPathMu                 sync.Mutex
@@ -313,6 +299,14 @@ type server struct {
 	lettaAgentMu                    sync.Mutex
 	lettaAgentBySession             map[string]string
 	lettaAgentVerifiedAt            map[string]time.Time
+}
+
+func normalizeHotPath(path string) string {
+	normalized := "/" + strings.TrimSpace(strings.TrimPrefix(path, "/"))
+	if normalized == "/" {
+		return "unknown"
+	}
+	return normalized
 }
 
 func envDurationSeconds(name string, fallback float64) time.Duration {
@@ -432,121 +426,6 @@ func parseNormalizedSet(raw string, fallback string) map[string]struct{} {
 		res[normalized] = struct{}{}
 	}
 	return res
-}
-
-func parseAliasMap(raw string, fallback string) map[string]string {
-	res := map[string]string{}
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		trimmed = strings.TrimSpace(fallback)
-	}
-	for _, part := range strings.Split(trimmed, ",") {
-		pair := strings.SplitN(strings.TrimSpace(strings.ToLower(part)), ":", 2)
-		if len(pair) != 2 {
-			continue
-		}
-		alias := strings.TrimSpace(pair[0])
-		target := strings.TrimSpace(pair[1])
-		if alias == "" || target == "" {
-			continue
-		}
-		res[alias] = target
-	}
-	return res
-}
-
-func normalizeEntitlementPlan(raw string, aliases map[string]string) string {
-	plan := strings.TrimSpace(strings.ToLower(raw))
-	if plan == "" {
-		return ""
-	}
-	if mapped, ok := aliases[plan]; ok {
-		plan = strings.TrimSpace(strings.ToLower(mapped))
-	}
-	return plan
-}
-
-func normalizeHTTPPath(raw string) string {
-	token := strings.TrimSpace(strings.ToLower(raw))
-	if token == "" {
-		return ""
-	}
-	if !strings.HasPrefix(token, "/") {
-		token = "/" + token
-	}
-	if len(token) > 1 {
-		token = strings.TrimRight(token, "/")
-	}
-	return token
-}
-
-func parseHTTPPathSet(raw string, fallback string) map[string]struct{} {
-	res := map[string]struct{}{}
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		trimmed = strings.TrimSpace(fallback)
-	}
-	for _, part := range strings.Split(trimmed, ",") {
-		normalized := normalizeHTTPPath(part)
-		if normalized == "" {
-			continue
-		}
-		res[normalized] = struct{}{}
-	}
-	return res
-}
-
-func loadEntitlementPolicy() entitlementPolicy {
-	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_V4_ENTITLEMENT_MODE")))
-	switch mode {
-	case "off", "warn", "enforce":
-	default:
-		mode = "off"
-	}
-	environment := strings.TrimSpace(strings.ToLower(os.Getenv("CONTEXTLATTICE_ENV")))
-	if environment == "" {
-		environment = strings.TrimSpace(strings.ToLower(os.Getenv("MEMMCP_ENV")))
-	}
-	failureMode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_V4_ENTITLEMENT_FAILURE_MODE")))
-	switch failureMode {
-	case "", "deny":
-		failureMode = "deny"
-	case "v3_safe":
-	default:
-		failureMode = "deny"
-	}
-	planAliases := parseAliasMap(
-		os.Getenv("GO_V4_ENTITLEMENT_PLAN_ALIASES"),
-		"pro:team,business:enterprise",
-	)
-	allowedPlans := map[string]struct{}{}
-	for plan := range parseNormalizedSet(
-		os.Getenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS"),
-		"team,enterprise",
-	) {
-		normalized := normalizeEntitlementPlan(plan, planAliases)
-		if normalized == "" {
-			continue
-		}
-		allowedPlans[normalized] = struct{}{}
-	}
-	return entitlementPolicy{
-		mode:        mode,
-		environment: environment,
-		devAllow:    envBool("GO_V4_ENTITLEMENT_DEV_ALLOW", true),
-		failureMode: failureMode,
-		protectedPaths: parseHTTPPathSet(
-			os.Getenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS"),
-			"/v1/inference/route,/v1/inference/chat,/v1/inference/embedding-policy,/maintenance/storage/run,/maintenance/telemetry/blob-gc,/migration/runtime",
-		),
-		allowedPlans: allowedPlans,
-		planAliases:  planAliases,
-		allowedRoles: parseNormalizedSet(
-			os.Getenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES"),
-			"owner,admin",
-		),
-		requiredKey: strings.TrimSpace(os.Getenv("GO_V4_ENTITLEMENT_KEY")),
-	}
 }
 
 func loadToolCallPolicy(orchestratorAPIKey string) toolCallPolicy {
@@ -954,7 +833,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.failOpenContinuationEnabled = envBool("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", true)
 	policy.failOpenContinuationSources = toSourceSet(csvListEnv(
 		"ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES",
-		"letta,memory_bank,mindsdb,mongo_raw",
+		"letta,memory_bank",
 	))
 	policy.timeoutAdaptiveSkipEnabled = envBool("ORCH_RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED", true)
 	policy.timeoutAdaptiveSkipSources = toSourceSet(csvListEnv(
@@ -976,7 +855,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 		sourceLetta:      envDurationSeconds("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS", 180),
 		sourceMemoryBank: envDurationSeconds("ORCH_RETRIEVAL_MEMORY_DEEP_TIMEOUT_CAP_SECS", 18),
 	}
-	policy.continuationMaxInflight = envInt("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", 3)
+	policy.continuationMaxInflight = envInt("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", 4)
 	if policy.continuationMaxInflight < 1 {
 		policy.continuationMaxInflight = 1
 	}
@@ -1164,8 +1043,6 @@ func newServer() *server {
 	policy := loadRetrievalPolicy()
 	letta := loadLettaConfig()
 	toolPolicy := loadToolCallPolicy(orchestratorAPIKey)
-	entitlement := loadEntitlementPolicy()
-	machineBinding := newMachineBindingRuntime(loadMachineBindingPolicy())
 	writePolicy := loadWriteIngressPolicy()
 	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
 	if sinkErr != nil {
@@ -1191,8 +1068,6 @@ func newServer() *server {
 		retrieval:                       policy,
 		letta:                           letta,
 		toolCalls:                       toolPolicy,
-		entitlement:                     entitlement,
-		machineBinding:                  machineBinding,
 		telemetry:                       t,
 		writePolicy:                     writePolicy,
 		memoryStore:                     memoryStoreInstance,
@@ -1215,10 +1090,7 @@ func newServer() *server {
 }
 
 func (s *server) recordPythonHotPathFallback(path string, reason string) uint64 {
-	normalizedPath := normalizeHTTPPath(path)
-	if normalizedPath == "" {
-		normalizedPath = "unknown"
-	}
+	normalizedPath := normalizeHotPath(path)
 	normalizedReason := strings.TrimSpace(strings.ToLower(reason))
 	if normalizedReason == "" {
 		normalizedReason = "unspecified"
@@ -1266,7 +1138,7 @@ func (s *server) allowPythonHotPathFallback(w http.ResponseWriter, path string, 
 	log.Printf(
 		"gateway-go python hot-path fallback mode=%s path=%s reason=%s total=%d",
 		s.pythonHotPathMode,
-		normalizeHTTPPath(path),
+		normalizeHotPath(path),
 		strings.TrimSpace(strings.ToLower(reason)),
 		total,
 	)
@@ -1278,7 +1150,7 @@ func (s *server) allowPythonHotPathFallback(w http.ResponseWriter, path string, 
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"ok":        false,
 			"error":     errorCode,
-			"path":      normalizeHTTPPath(path),
+			"path":      normalizeHotPath(path),
 			"reason":    strings.TrimSpace(strings.ToLower(reason)),
 			"fallbacks": total,
 			"strict":    true,
@@ -1420,141 +1292,6 @@ func requestAPIKey(r *http.Request) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func requestHeaderOrQueryValue(r *http.Request, headerName string, queryNames ...string) string {
-	if r == nil {
-		return ""
-	}
-	if token := strings.TrimSpace(r.Header.Get(headerName)); token != "" {
-		return token
-	}
-	query := r.URL.Query()
-	for _, key := range queryNames {
-		if token := strings.TrimSpace(query.Get(key)); token != "" {
-			return token
-		}
-	}
-	return ""
-}
-
-func (s *server) entitlementPathProtected(path string) bool {
-	normalized := normalizeHTTPPath(path)
-	if normalized == "" {
-		return false
-	}
-	_, ok := s.entitlement.protectedPaths[normalized]
-	return ok
-}
-
-func (s *server) entitlementDevBypassActive() bool {
-	if !s.entitlement.devAllow {
-		return false
-	}
-	env := strings.TrimSpace(strings.ToLower(s.entitlement.environment))
-	return env != "production" && env != "prod"
-}
-
-func (s *server) evaluateV4Entitlement(r *http.Request, path string) (bool, string, map[string]any) {
-	mode := strings.TrimSpace(strings.ToLower(s.entitlement.mode))
-	detail := map[string]any{
-		"path":        normalizeHTTPPath(path),
-		"mode":        mode,
-		"environment": s.entitlement.environment,
-	}
-	if !s.entitlementPathProtected(path) {
-		detail["protected"] = false
-		return true, "path_not_protected", detail
-	}
-	detail["protected"] = true
-	if mode == "off" {
-		return true, "mode_off", detail
-	}
-	if s.entitlementDevBypassActive() {
-		detail["dev_bypass"] = true
-		return true, "dev_bypass", detail
-	}
-
-	rawPlan := requestHeaderOrQueryValue(r, "X-ContextLattice-Plan", "plan")
-	plan := normalizeEntitlementPlan(rawPlan, s.entitlement.planAliases)
-	role := strings.TrimSpace(strings.ToLower(requestHeaderOrQueryValue(r, "X-ContextLattice-Workspace-Role", "role")))
-	providedKey := strings.TrimSpace(requestHeaderOrQueryValue(r, "X-ContextLattice-Entitlement-Key", "entitlement_key"))
-	detail["plan_raw"] = strings.TrimSpace(strings.ToLower(rawPlan))
-	detail["plan"] = plan
-	detail["role"] = role
-
-	if strings.TrimSpace(s.entitlement.requiredKey) != "" {
-		if providedKey == "" {
-			return false, "entitlement_key_missing", detail
-		}
-		if !secureTokenEqual(providedKey, s.entitlement.requiredKey) {
-			return false, "entitlement_key_invalid", detail
-		}
-	}
-
-	if len(s.entitlement.allowedPlans) > 0 {
-		if strings.TrimSpace(rawPlan) == "" {
-			return false, "plan_missing", detail
-		}
-		if plan == "" {
-			return false, "plan_unrecognized", detail
-		}
-		if _, ok := s.entitlement.allowedPlans[plan]; !ok {
-			return false, "plan_not_allowed", detail
-		}
-	}
-
-	if len(s.entitlement.allowedRoles) > 0 {
-		if role == "" {
-			return false, "role_missing", detail
-		}
-		if _, ok := s.entitlement.allowedRoles[role]; !ok {
-			return false, "role_not_allowed", detail
-		}
-	}
-
-	allowedMachine, machineReason, machineDetail := s.evaluateMachineBinding(r, detail)
-	detail = machineDetail
-	if !allowedMachine {
-		return false, machineReason, detail
-	}
-	if machineReason != "machine_binding_disabled" && machineReason != "machine_match" {
-		return true, machineReason, detail
-	}
-
-	return true, "entitled", detail
-}
-
-func (s *server) enforceV4Entitlement(w http.ResponseWriter, r *http.Request, path string) bool {
-	allowed, reason, detail := s.evaluateV4Entitlement(r, path)
-	if allowed {
-		w.Header().Set("X-ContextLattice-Entitlement", reason)
-		return true
-	}
-	if strings.TrimSpace(strings.ToLower(s.entitlement.mode)) == "warn" {
-		w.Header().Set("X-ContextLattice-Entitlement-Warn", reason)
-		log.Printf("gateway-go entitlement warn path=%s reason=%s detail=%v", normalizeHTTPPath(path), reason, detail)
-		return true
-	}
-	if s.maybeServeV3SafeEntitlementFallback(w, path, reason, detail) {
-		return false
-	}
-	writeJSON(w, http.StatusPaymentRequired, map[string]any{
-		"ok":          false,
-		"error":       "entitlement_required",
-		"reason":      reason,
-		"entitlement": detail,
-	})
-	return false
-}
-
-func (s *server) withV4Entitlement(path string, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.enforceV4Entitlement(w, r, path) {
-			return
-		}
-		next(w, r)
-	}
 }
 
 func (s *server) prepareAuthorizedHeaders(w http.ResponseWriter, r *http.Request) (http.Header, bool) {
@@ -2640,18 +2377,6 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 				"denylist":  mapKeysSorted(s.toolCalls.orchestratorRole.denylist),
 			},
 		},
-		"entitlement": map[string]any{
-			"mode":                  s.entitlement.mode,
-			"environment":           s.entitlement.environment,
-			"devBypassEnabled":      s.entitlement.devAllow,
-			"failureMode":           s.entitlement.failureMode,
-			"protectedPaths":        mapKeysSorted(s.entitlement.protectedPaths),
-			"allowedPlans":          mapKeysSorted(s.entitlement.allowedPlans),
-			"planAliases":           s.entitlement.planAliases,
-			"allowedRoles":          mapKeysSorted(s.entitlement.allowedRoles),
-			"requiredKeyConfigured": strings.TrimSpace(s.entitlement.requiredKey) != "",
-			"machineBinding":        s.machineBinding.snapshot(),
-		},
 	})
 }
 
@@ -3643,19 +3368,19 @@ func (s *server) resolveSourceTimeout(
 	retrievalMode string,
 	syncPhase bool,
 	isSlowSource bool,
-	explicitSourceOverride bool,
+	blockingSlowSources bool,
 ) (time.Duration, map[string]any) {
 	timeout, ok := s.retrieval.sourceTimeouts[source]
 	if !ok || timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	if syncPhase && !explicitSourceOverride && source == sourceQdrant {
+	if syncPhase && !blockingSlowSources && source == sourceQdrant {
 		capDuration := s.resolveQdrantSyncCap(retrievalMode)
 		if capDuration > 0 && timeout > capDuration {
 			timeout = capDuration
 		}
 	}
-	if syncPhase && !explicitSourceOverride && isSlowSource && s.retrieval.slowSyncTimeoutCap > 0 && timeout > s.retrieval.slowSyncTimeoutCap {
+	if syncPhase && !blockingSlowSources && isSlowSource && s.retrieval.slowSyncTimeoutCap > 0 && timeout > s.retrieval.slowSyncTimeoutCap {
 		timeout = s.retrieval.slowSyncTimeoutCap
 	}
 	detail := map[string]any{
@@ -3664,7 +3389,7 @@ func (s *server) resolveSourceTimeout(
 		"adjusted":              false,
 		"adjusted_timeout_secs": roundFloat(timeout.Seconds(), 3),
 	}
-	if syncPhase && !explicitSourceOverride {
+	if syncPhase && !blockingSlowSources {
 		adjusted, adaptive := s.adaptiveTimeoutForSource(source, timeout)
 		return adjusted, adaptive
 	}
@@ -4015,7 +3740,7 @@ func (s *server) queryTopicRollupsSource(
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
 	topics := make([]any, 0)
 	if s.memoryStore != nil && s.memoryStore.policy.enabled {
-		rollups := s.memoryStore.topicRollups(projectFilter, 1, 5000, 0)
+		rollups := s.memoryStore.topicRollupsWithContext(ctx, projectFilter, 1, 5000, 0)
 		if memoryTopics, ok := rollups["topics"].([]any); ok && len(memoryTopics) > 0 {
 			topics = memoryTopics
 		}
@@ -4516,6 +4241,7 @@ func (s *server) runSourceBatch(
 	retrievalMode string,
 	phase string,
 	explicitSourceOverride bool,
+	blockingSlowSources bool,
 	syncPhase bool,
 	suppressSlowTimeoutWarnings bool,
 	adaptiveSkipped map[string]struct{},
@@ -4556,7 +4282,7 @@ func (s *server) runSourceBatch(
 			retrievalMode,
 			syncPhase,
 			isSlowSource,
-			explicitSourceOverride,
+			blockingSlowSources,
 		)
 		output.effectiveTimeoutsSecs[normalized] = roundFloat(sourceTimeout.Seconds(), 3)
 		output.adaptiveBudgets[normalized] = adaptiveBudget
@@ -4570,7 +4296,7 @@ func (s *server) runSourceBatch(
 			budgetExceeded := false
 			if err != nil {
 				timedOut = isTimeoutError(err) || errors.Is(sourceCtx.Err(), context.DeadlineExceeded)
-				if timedOut && syncPhase && !explicitSourceOverride {
+				if timedOut && syncPhase && !blockingSlowSources {
 					if _, isSlow := slowSet[sourceName]; isSlow {
 						budgetExceeded = true
 					}
@@ -4869,6 +4595,9 @@ func (s *server) executeRetrieval(
 	}
 	explicitSources := anyToStringSlice(requestPayload["sources"])
 	explicitSourceOverride := len(explicitSources) > 0
+	blockingSlowSources := anyToBool(requestPayload["blocking"]) ||
+		anyToBool(requestPayload["sync_slow_sources"]) ||
+		anyToBool(requestPayload["wait_for_slow_sources"])
 	resolvedSources := explicitSources
 	if len(resolvedSources) == 0 {
 		resolvedSources = append([]string(nil), s.retrieval.defaultSources...)
@@ -4908,6 +4637,7 @@ func (s *server) executeRetrieval(
 		retrievalMode,
 		"fast",
 		explicitSourceOverride,
+		blockingSlowSources,
 		true,
 		false,
 		adaptiveSkipped,
@@ -4932,7 +4662,7 @@ func (s *server) executeRetrieval(
 	warnings = append(warnings, fastBatch.warnings...)
 	for _, source := range fastBatch.timedOutSources {
 		timedOutObserved[source] = struct{}{}
-		if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+		if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 			adaptiveSkipped[source] = struct{}{}
 		}
 	}
@@ -4954,12 +4684,19 @@ func (s *server) executeRetrieval(
 		lexicalGuardCoverage = lexicalCoverageScore(query, merged)
 	}
 	fastPathFailed := len(merged) == 0 || len(fastBatch.sourceErrors) > 0
-	skipSlow := !explicitSourceOverride && (retrievalMode != "deep" || !s.retrieval.deepBlocking)
+	skipSlow := !blockingSlowSources && (retrievalMode != "deep" || !s.retrieval.deepBlocking || explicitSourceOverride)
 	if len(slowSources) > 0 {
 		if skipSlow {
 			needsFallback := len(merged) < minFastTarget
 			if needsFallback && s.retrieval.disableSyncSlowFallback {
 				needsFallback = false
+			}
+			if needsFallback && explicitSourceOverride && !blockingSlowSources {
+				needsFallback = false
+				warnings = append(
+					warnings,
+					"Explicit sources requested in staged fail-open mode; slow sources deferred asynchronously. Set blocking=true (or sync_slow_sources=true) to wait for blocking completion.",
+				)
 			}
 			if needsFallback &&
 				lexicalGuardEligible &&
@@ -4996,6 +4733,7 @@ func (s *server) executeRetrieval(
 							s.retrieval.rustQualityFallbackMode,
 							"rust-quality-sync-fallback",
 							explicitSourceOverride,
+							blockingSlowSources,
 							true,
 							!fastPathFailed,
 							adaptiveSkipped,
@@ -5052,7 +4790,7 @@ func (s *server) executeRetrieval(
 				if len(fallback) == 0 {
 					fallback = append(fallback, slowSources...)
 				}
-				if s.retrieval.timeoutAdaptiveSkipEnabled && !explicitSourceOverride {
+				if s.retrieval.timeoutAdaptiveSkipEnabled && !blockingSlowSources {
 					filtered := make([]string, 0, len(fallback))
 					for _, source := range fallback {
 						if _, skip := adaptiveSkipped[source]; skip {
@@ -5071,6 +4809,7 @@ func (s *server) executeRetrieval(
 					retrievalMode,
 					"slow-sync-fallback",
 					explicitSourceOverride,
+					blockingSlowSources,
 					true,
 					!fastPathFailed,
 					adaptiveSkipped,
@@ -5095,7 +4834,7 @@ func (s *server) executeRetrieval(
 				warnings = append(warnings, slowBatch.warnings...)
 				for _, source := range slowBatch.timedOutSources {
 					timedOutObserved[source] = struct{}{}
-					if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+					if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 						adaptiveSkipped[source] = struct{}{}
 					}
 				}
@@ -5122,6 +4861,7 @@ func (s *server) executeRetrieval(
 				retrievalMode,
 				"slow-sync",
 				explicitSourceOverride,
+				blockingSlowSources,
 				true,
 				!fastPathFailed,
 				adaptiveSkipped,
@@ -5146,7 +4886,7 @@ func (s *server) executeRetrieval(
 			warnings = append(warnings, slowBatch.warnings...)
 			for _, source := range slowBatch.timedOutSources {
 				timedOutObserved[source] = struct{}{}
-				if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+				if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 					adaptiveSkipped[source] = struct{}{}
 				}
 			}
@@ -5175,6 +4915,7 @@ func (s *server) executeRetrieval(
 				retrievalMode,
 				"coverage-rescue-fast",
 				explicitSourceOverride,
+				blockingSlowSources,
 				true,
 				false,
 				adaptiveSkipped,
@@ -5202,7 +4943,7 @@ func (s *server) executeRetrieval(
 			warnings = append(warnings, rescueBatch.warnings...)
 			for _, source := range rescueBatch.timedOutSources {
 				timedOutObserved[source] = struct{}{}
-				if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+				if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 					adaptiveSkipped[source] = struct{}{}
 				}
 			}
@@ -5439,6 +5180,8 @@ func (s *server) executeRetrieval(
 			"min_fast_results":             s.retrieval.minFastResults,
 			"min_fast_results_by_mode":     s.retrieval.minFastResultsByMode,
 			"deep_blocking":                s.retrieval.deepBlocking,
+			"blocking_slow_sources":        blockingSlowSources,
+			"explicit_source_override":     explicitSourceOverride,
 			"disable_sync_slow_fallback":   s.retrieval.disableSyncSlowFallback,
 			"slow_sync_timeout_cap_secs":   s.retrieval.slowSyncTimeoutCap.Seconds(),
 			"qdrant_sync_timeout_cap_secs": s.retrieval.qdrantSyncTimeoutCap.Seconds(),
@@ -5778,18 +5521,15 @@ func (s *server) retrievalHealth(w http.ResponseWriter, r *http.Request) {
 
 func buildMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerEntitled := func(path string, handler http.HandlerFunc) {
-		mux.HandleFunc(path, s.withV4Entitlement(path, handler))
-	}
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/status", s.status)
 	mux.HandleFunc("/v1/info", s.info)
 	mux.HandleFunc("/v1/codex/preflight", s.codexPreflight)
 	mux.HandleFunc("/v1/agents/preflight", s.agentsPreflight)
-	registerEntitled("/v1/inference/route", s.inferenceRouteHandler)
-	registerEntitled("/v1/inference/chat", s.inferenceChatHandler)
-	registerEntitled("/v1/inference/embedding-policy", s.inferenceEmbeddingPolicyHandler)
+	mux.HandleFunc("/v1/inference/route", s.inferenceRouteHandler)
+	mux.HandleFunc("/v1/inference/chat", s.inferenceChatHandler)
+	mux.HandleFunc("/v1/inference/embedding-policy", s.inferenceEmbeddingPolicyHandler)
 	// Retrieval + memory engine API (go-first ingress, python fallback backend).
 	mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)
@@ -5821,8 +5561,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)
 	mux.HandleFunc("/telemetry/storage", s.storageTelemetry)
 	mux.HandleFunc("/telemetry/", s.telemetryRoute)
-	registerEntitled("/maintenance/storage/run", s.storageMaintenanceRun)
-	registerEntitled("/maintenance/telemetry/blob-gc", s.telemetryBlobGC)
+	mux.HandleFunc("/maintenance/storage/run", s.storageMaintenanceRun)
+	mux.HandleFunc("/maintenance/telemetry/blob-gc", s.telemetryBlobGC)
 	mux.HandleFunc("/maintenance/", s.maintenanceRoute)
 	mux.HandleFunc("/ops/queue/status", s.opsQueueStatus)
 	mux.HandleFunc("/ops/capabilities", s.opsCapabilities)
@@ -5835,7 +5575,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/memory/get", s.memoryV1Get)
 	mux.HandleFunc("/v1/memory/neighbors", s.memoryV1Neighbors)
 	mux.HandleFunc("/v1/memory/batch-put", s.memoryBatchPut)
-	registerEntitled("/migration/runtime", s.migrationRuntime)
+	mux.HandleFunc("/migration/runtime", s.migrationRuntime)
 	return mux
 }
 

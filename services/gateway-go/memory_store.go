@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -474,9 +475,12 @@ func (m *memoryStore) recentItems(project string, topicPath string, limit int, o
 	return rows
 }
 
-func (m *memoryStore) collectDocs(projectFilter string) ([]memoryStoreDoc, error) {
+func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]memoryStoreDoc, error) {
 	if m == nil || !m.policy.enabled {
 		return []memoryStoreDoc{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	root := m.policy.rootPath
 	if strings.TrimSpace(projectFilter) != "" {
@@ -503,6 +507,11 @@ func (m *memoryStore) collectDocs(projectFilter string) ([]memoryStoreDoc, error
 	docs := make([]memoryStoreDoc, 0, 1024)
 	scanned := 0
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		if err != nil {
 			return nil
 		}
@@ -544,6 +553,11 @@ func (m *memoryStore) collectDocs(projectFilter string) ([]memoryStoreDoc, error
 		if readErr != nil {
 			return nil
 		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		topic := latestTopic[memoryStoreKey(project, fileName)]
 		if strings.TrimSpace(topic) == "" {
 			topic = deriveTopicFromFile(fileName)
@@ -562,6 +576,9 @@ func (m *memoryStore) collectDocs(projectFilter string) ([]memoryStoreDoc, error
 		})
 		return nil
 	})
+	if walkErr != nil && (errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded)) {
+		return nil, walkErr
+	}
 	if walkErr != nil && !strings.Contains(strings.ToLower(walkErr.Error()), "scan_limit_reached") {
 		return nil, walkErr
 	}
@@ -590,6 +607,10 @@ func topicDepth(topic string) int {
 }
 
 func (m *memoryStore) topicRollups(project string, minCount int, limit int, offset int) map[string]any {
+	return m.topicRollupsWithContext(context.Background(), project, minCount, limit, offset)
+}
+
+func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project string, minCount int, limit int, offset int) map[string]any {
 	if minCount < 1 {
 		minCount = 1
 	}
@@ -602,7 +623,7 @@ func (m *memoryStore) topicRollups(project string, minCount int, limit int, offs
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.collectDocs(project)
+	rows, err := m.collectDocs(ctx, project)
 	if err != nil {
 		return map[string]any{
 			"project": project,

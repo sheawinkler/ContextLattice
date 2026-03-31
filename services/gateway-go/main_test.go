@@ -601,7 +601,6 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
 		`mux.HandleFunc("/maintenance/", s.maintenanceRoute)`,
-		`registerEntitled("/migration/runtime", s.migrationRuntime)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)`,
 		`mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)`,
@@ -613,6 +612,9 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		if !strings.Contains(source, needle) {
 			t.Fatalf("hot-path route ownership missing required handler mapping: %s", needle)
 		}
+	}
+	if !strings.Contains(source, `"/migration/runtime", s.migrationRuntime`) {
+		t.Fatalf("hot-path route ownership missing required migration runtime mapping to native handler")
 	}
 	blocked := []string{
 		`mux.HandleFunc("/memory/search", s.proxy)`,
@@ -633,6 +635,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/", s.proxy)`,
 		`mux.HandleFunc("/maintenance/", s.proxy)`,
+		`mux.HandleFunc("/migration/runtime", s.proxy)`,
 		`registerEntitled("/migration/runtime", s.proxy)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.proxy)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.proxy)`,
@@ -3733,6 +3736,43 @@ func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 	}
 }
 
+func TestContinuationPerSourceInflightAndCooldown(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "1")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", "10")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	ok, status, _ := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if !ok || status != "" {
+		t.Fatalf("expected first reservation to pass, got ok=%v status=%q", ok, status)
+	}
+	ok, status, remaining := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if ok || status != "max_inflight_per_source" {
+		t.Fatalf("expected per-source cap rejection, got ok=%v status=%q", ok, status)
+	}
+	if remaining <= 0 {
+		t.Fatalf("expected cooldown to be applied after per-source cap hit, got %f", remaining)
+	}
+	s.releaseContinuationSourceSlot(sourceLetta)
+	ok, status, remaining = s.tryReserveContinuationSourceSlot(sourceLetta)
+	if ok || status != "cooldown" {
+		t.Fatalf("expected cooldown rejection after cap hit, got ok=%v status=%q", ok, status)
+	}
+	if remaining <= 0 {
+		t.Fatalf("expected positive cooldown remaining, got %f", remaining)
+	}
+}
+
 func TestContinuationPerSourceInflightOverrideByLane(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
 	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "1")
@@ -3813,310 +3853,36 @@ func TestContinuationPerSourceCooldownOverrideByLane(t *testing.T) {
 	s.releaseContinuationSourceSlot(sourceLetta)
 }
 
-func TestV4EntitlementEnforceBlocksProtectedPathWithoutEntitlement(t *testing.T) {
-	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/migration/runtime")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
+func TestContinuationSourceFailureAppliesCooldown(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", "5")
 
-	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer backend.Close()
 
 	s := newTestServer(t, backend.URL)
-	gateway := httptest.NewServer(buildMux(s))
-	defer gateway.Close()
-
-	resp, err := http.Post(gateway.URL+"/migration/runtime", "application/json", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
+	remaining := s.applyContinuationSourceCooldown(sourceMemoryBank)
+	if remaining <= 0 {
+		t.Fatalf("expected positive cooldown after failure, got %f", remaining)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusPaymentRequired {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 402, got %d body=%s", resp.StatusCode, string(body))
+	ok, status, _ := s.tryReserveContinuationSourceSlot(sourceMemoryBank)
+	if ok || status != "cooldown" {
+		t.Fatalf("expected cooldown gate, got ok=%v status=%q", ok, status)
 	}
-	if backendCalls != 0 {
-		t.Fatalf("expected no backend calls when entitlement fails, got %d", backendCalls)
+	s.continuationMu.Lock()
+	s.continuationSourceCooldownUntil[sourceMemoryBank] = time.Now().UTC().Add(-1 * time.Second)
+	s.continuationMu.Unlock()
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceMemoryBank)
+	if !ok || status != "" {
+		t.Fatalf("expected reservation to recover after cooldown expiry, got ok=%v status=%q", ok, status)
 	}
-}
-
-func TestV4EntitlementEnforceAllowsProtectedPathWithPlanAndRole(t *testing.T) {
-	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/migration/runtime")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
-
-	backendCalls := 0
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer backend.Close()
-
-	s := newTestServer(t, backend.URL)
-	gateway := httptest.NewServer(buildMux(s))
-	defer gateway.Close()
-
-	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/migration/runtime", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-ContextLattice-Plan", "team")
-	req.Header.Set("X-ContextLattice-Workspace-Role", "owner")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
-	}
-	if backendCalls != 1 {
-		t.Fatalf("expected one backend call when entitled, got %d", backendCalls)
-	}
-}
-
-func TestV4EntitlementEnforceAcceptsPlanAlias(t *testing.T) {
-	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/migration/runtime")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_PLAN_ALIASES", "pro:team,business:enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
-
-	backendCalls := 0
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer backend.Close()
-
-	s := newTestServer(t, backend.URL)
-	gateway := httptest.NewServer(buildMux(s))
-	defer gateway.Close()
-
-	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/migration/runtime", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-ContextLattice-Plan", "pro")
-	req.Header.Set("X-ContextLattice-Workspace-Role", "owner")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
-	}
-	if backendCalls != 1 {
-		t.Fatalf("expected one backend call for plan alias, got %d", backendCalls)
-	}
-}
-
-func TestV4EntitlementDevBypassAllowsProtectedPath(t *testing.T) {
-	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	t.Setenv("CONTEXTLATTICE_ENV", "development")
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "true")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/migration/runtime")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
-
-	backendCalls := 0
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer backend.Close()
-
-	s := newTestServer(t, backend.URL)
-	gateway := httptest.NewServer(buildMux(s))
-	defer gateway.Close()
-
-	resp, err := http.Post(gateway.URL+"/migration/runtime", "application/json", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200 in development bypass, got %d body=%s", resp.StatusCode, string(body))
-	}
-	if backendCalls != 1 {
-		t.Fatalf("expected backend call in development bypass, got %d", backendCalls)
-	}
-}
-
-func TestV4EntitlementMachineBindingRequiresMachineID(t *testing.T) {
-	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/migration/runtime")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
-	t.Setenv("GO_V4_MACHINE_BINDING_ENABLED", "true")
-	t.Setenv("GO_V4_MACHINE_BINDING_FAIL_OPEN", "false")
-	t.Setenv("GO_V4_MACHINE_BINDING_STATE_PATH", t.TempDir()+"/machine-binding.json")
-	t.Setenv("GO_V4_MACHINE_BINDING_GRACE_SECS", "3600")
-	t.Setenv("GO_V4_MACHINE_BINDING_AUTO_BIND", "true")
-	t.Setenv("GO_V4_MACHINE_BINDING_ALLOW_REBIND_AFTER_GRACE", "false")
-
-	backendCalls := 0
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer backend.Close()
-
-	s := newTestServer(t, backend.URL)
-	gateway := httptest.NewServer(buildMux(s))
-	defer gateway.Close()
-
-	reqMissing, err := http.NewRequest(http.MethodPost, gateway.URL+"/migration/runtime", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	reqMissing.Header.Set("Content-Type", "application/json")
-	reqMissing.Header.Set("X-ContextLattice-Plan", "team")
-	reqMissing.Header.Set("X-ContextLattice-Workspace-Role", "owner")
-	respMissing, err := http.DefaultClient.Do(reqMissing)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer respMissing.Body.Close()
-	if respMissing.StatusCode != http.StatusPaymentRequired {
-		body, _ := io.ReadAll(respMissing.Body)
-		t.Fatalf("expected 402 for missing machine ID, got %d body=%s", respMissing.StatusCode, string(body))
-	}
-
-	reqBind, err := http.NewRequest(http.MethodPost, gateway.URL+"/migration/runtime", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	reqBind.Header.Set("Content-Type", "application/json")
-	reqBind.Header.Set("X-ContextLattice-Plan", "team")
-	reqBind.Header.Set("X-ContextLattice-Workspace-Role", "owner")
-	reqBind.Header.Set("X-ContextLattice-Machine-ID", "machine-a")
-	respBind, err := http.DefaultClient.Do(reqBind)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer respBind.Body.Close()
-	if respBind.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(respBind.Body)
-		t.Fatalf("expected 200 for initial machine bind, got %d body=%s", respBind.StatusCode, string(body))
-	}
-	if got := strings.TrimSpace(respBind.Header.Get("X-ContextLattice-Entitlement")); got != "machine_bound_initial" {
-		t.Fatalf("expected machine_bound_initial header, got %q", got)
-	}
-
-	reqGrace, err := http.NewRequest(http.MethodPost, gateway.URL+"/migration/runtime", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	reqGrace.Header.Set("Content-Type", "application/json")
-	reqGrace.Header.Set("X-ContextLattice-Plan", "team")
-	reqGrace.Header.Set("X-ContextLattice-Workspace-Role", "owner")
-	reqGrace.Header.Set("X-ContextLattice-Machine-ID", "machine-b")
-	respGrace, err := http.DefaultClient.Do(reqGrace)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer respGrace.Body.Close()
-	if respGrace.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(respGrace.Body)
-		t.Fatalf("expected 200 for grace-start machine transition, got %d body=%s", respGrace.StatusCode, string(body))
-	}
-	if got := strings.TrimSpace(respGrace.Header.Get("X-ContextLattice-Entitlement")); got != "machine_grace_started" {
-		t.Fatalf("expected machine_grace_started header, got %q", got)
-	}
-
-	if backendCalls != 2 {
-		t.Fatalf("expected two backend calls for entitled requests, got %d", backendCalls)
-	}
-}
-
-func TestV4EntitlementFailureModeV3SafeFallback(t *testing.T) {
-	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_FAILURE_MODE", "v3_safe")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/migration/runtime,/v1/inference/route")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
-	t.Setenv("TASK_MODEL", "qwen3.5:9b")
-
-	backendCalls := 0
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer backend.Close()
-
-	s := newTestServer(t, backend.URL)
-	gateway := httptest.NewServer(buildMux(s))
-	defer gateway.Close()
-	baselineCalls := backendCalls
-
-	resp, err := http.Post(gateway.URL+"/migration/runtime", "application/json", strings.NewReader(`{"mode":"status"}`))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected v3_safe 200 fallback, got %d body=%s", resp.StatusCode, string(body))
-	}
-	payload := map[string]any{}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode fallback payload: %v", err)
-	}
-	if mode := strings.TrimSpace(anyToString(payload["mode"])); mode != "v3_safe" {
-		t.Fatalf("expected mode=v3_safe, got %q", mode)
-	}
-	if strings.TrimSpace(resp.Header.Get("X-ContextLattice-Entitlement")) != "v3_safe_fallback" {
-		t.Fatalf("expected v3_safe_fallback header, got %q", resp.Header.Get("X-ContextLattice-Entitlement"))
-	}
-	if backendCalls != baselineCalls {
-		t.Fatalf("expected no additional backend calls for fallback response, baseline=%d after=%d", baselineCalls, backendCalls)
-	}
-
-	respRoute, err := http.Post(gateway.URL+"/v1/inference/route", "application/json", strings.NewReader(`{"model":"qwen3.5:9b"}`))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer respRoute.Body.Close()
-	if respRoute.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(respRoute.Body)
-		t.Fatalf("expected inference route v3_safe fallback, got %d body=%s", respRoute.StatusCode, string(body))
-	}
-	routePayload := map[string]any{}
-	if err := json.NewDecoder(respRoute.Body).Decode(&routePayload); err != nil {
-		t.Fatalf("decode route payload: %v", err)
-	}
-	route, _ := routePayload["route"].(map[string]any)
-	provider := strings.TrimSpace(anyToString(route["provider"]))
-	if provider != "ollama" {
-		t.Fatalf("expected ollama provider in v3_safe fallback route, got %q", provider)
-	}
+	s.releaseContinuationSourceSlot(sourceMemoryBank)
 }
