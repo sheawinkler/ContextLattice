@@ -13,6 +13,13 @@ Use this playbook to connect common agent clients to ContextLattice with consist
   4. Run one final recency retrieval before final output.
   5. If memory is degraded, continue execution and report degraded-memory mode.
 
+## Expected Access Pattern (User + Agent)
+
+1. Start with `POST /memory/search` in `fast` or `balanced` mode.
+2. If `continuation_async` is returned, use partial results immediately and then either stream `GET /memory/search/continuations/{token}/events` or re-run the same read after 5-15s.
+3. Use blocking slow-source reads only when necessary by setting `blocking=true` (or `sync_slow_sources=true`) and a longer caller timeout.
+4. Use `POST /memory/context-pack` for broad synthesis and `POST /v1/memory/neighbors` for graph-neighbor recall.
+
 ## Profile-Aware Preflight
 
 Prefer profile-aware preflight so each agent gets a stable `agent_id`, topic scope, and preflight query.

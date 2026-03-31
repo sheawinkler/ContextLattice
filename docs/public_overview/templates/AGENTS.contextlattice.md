@@ -22,7 +22,9 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 - Set caller timeout by retrieval mode:
   - `fast`: `25s`
   - `balanced`: `60s`
-  - `deep` (or explicit `letta` / `memory_bank`): `75s`
+  - `deep` (blocking reads): `75s`
+- Explicit source selection does not force blocking.
+  - Use `blocking=true` (or `sync_slow_sources=true`) only when you need blocking slow-source completion.
 - Note: first deep reads may be slower; repeated calls often return faster after staged fetch and async cache warming.
 - Optional profile-aware preflight endpoint:
   - `POST /v1/agents/preflight`
@@ -52,3 +54,4 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 - If reads time out, verify the agent/tool timeout is not lower than ContextLattice runtime budget.
 - Keep staged fetch enabled to return fast-source results while slower sources continue in parallel.
 - Retry the same query once before declaring failure; cache warming improves follow-up latency.
+- Use `POST /v1/memory/neighbors` when you need graph-neighbor detail exploration.
