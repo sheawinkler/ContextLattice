@@ -2975,19 +2975,19 @@ func (s *server) resolveSourceTimeout(
 	retrievalMode string,
 	syncPhase bool,
 	isSlowSource bool,
-	explicitSourceOverride bool,
+	blockingSlowSources bool,
 ) (time.Duration, map[string]any) {
 	timeout, ok := s.retrieval.sourceTimeouts[source]
 	if !ok || timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	if syncPhase && !explicitSourceOverride && source == sourceQdrant {
+	if syncPhase && !blockingSlowSources && source == sourceQdrant {
 		capDuration := s.resolveQdrantSyncCap(retrievalMode)
 		if capDuration > 0 && timeout > capDuration {
 			timeout = capDuration
 		}
 	}
-	if syncPhase && !explicitSourceOverride && isSlowSource && s.retrieval.slowSyncTimeoutCap > 0 && timeout > s.retrieval.slowSyncTimeoutCap {
+	if syncPhase && !blockingSlowSources && isSlowSource && s.retrieval.slowSyncTimeoutCap > 0 && timeout > s.retrieval.slowSyncTimeoutCap {
 		timeout = s.retrieval.slowSyncTimeoutCap
 	}
 	detail := map[string]any{
@@ -2996,7 +2996,7 @@ func (s *server) resolveSourceTimeout(
 		"adjusted":              false,
 		"adjusted_timeout_secs": roundFloat(timeout.Seconds(), 3),
 	}
-	if syncPhase && !explicitSourceOverride {
+	if syncPhase && !blockingSlowSources {
 		adjusted, adaptive := s.adaptiveTimeoutForSource(source, timeout)
 		return adjusted, adaptive
 	}
@@ -3330,6 +3330,7 @@ func (s *server) runSourceBatch(
 	retrievalMode string,
 	phase string,
 	explicitSourceOverride bool,
+	blockingSlowSources bool,
 	syncPhase bool,
 	suppressSlowTimeoutWarnings bool,
 	adaptiveSkipped map[string]struct{},
@@ -3368,7 +3369,7 @@ func (s *server) runSourceBatch(
 			retrievalMode,
 			syncPhase,
 			isSlowSource,
-			explicitSourceOverride,
+			blockingSlowSources,
 		)
 		output.effectiveTimeoutsSecs[normalized] = roundFloat(sourceTimeout.Seconds(), 3)
 		output.adaptiveBudgets[normalized] = adaptiveBudget
@@ -3382,7 +3383,7 @@ func (s *server) runSourceBatch(
 			budgetExceeded := false
 			if err != nil {
 				timedOut = isTimeoutError(err) || errors.Is(sourceCtx.Err(), context.DeadlineExceeded)
-				if timedOut && syncPhase && !explicitSourceOverride {
+				if timedOut && syncPhase && !blockingSlowSources {
 					if _, isSlow := slowSet[sourceName]; isSlow {
 						budgetExceeded = true
 					}
@@ -3664,6 +3665,9 @@ func (s *server) executeRetrieval(
 	}
 	explicitSources := anyToStringSlice(requestPayload["sources"])
 	explicitSourceOverride := len(explicitSources) > 0
+	blockingSlowSources := anyToBool(requestPayload["blocking"]) ||
+		anyToBool(requestPayload["sync_slow_sources"]) ||
+		anyToBool(requestPayload["wait_for_slow_sources"])
 	resolvedSources := explicitSources
 	if len(resolvedSources) == 0 {
 		resolvedSources = append([]string(nil), s.retrieval.defaultSources...)
@@ -3701,6 +3705,7 @@ func (s *server) executeRetrieval(
 		retrievalMode,
 		"fast",
 		explicitSourceOverride,
+		blockingSlowSources,
 		true,
 		false,
 		adaptiveSkipped,
@@ -3721,7 +3726,7 @@ func (s *server) executeRetrieval(
 	warnings = append(warnings, fastBatch.warnings...)
 	for _, source := range fastBatch.timedOutSources {
 		timedOutObserved[source] = struct{}{}
-		if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+		if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 			adaptiveSkipped[source] = struct{}{}
 		}
 	}
@@ -3743,12 +3748,19 @@ func (s *server) executeRetrieval(
 		lexicalGuardCoverage = lexicalCoverageScore(query, merged)
 	}
 	fastPathFailed := len(merged) == 0 || len(fastBatch.sourceErrors) > 0
-	skipSlow := !explicitSourceOverride && (retrievalMode != "deep" || !s.retrieval.deepBlocking)
+	skipSlow := !blockingSlowSources && (retrievalMode != "deep" || !s.retrieval.deepBlocking || explicitSourceOverride)
 	if len(slowSources) > 0 {
 		if skipSlow {
 			needsFallback := len(merged) < minFastTarget
 			if needsFallback && s.retrieval.disableSyncSlowFallback {
 				needsFallback = false
+			}
+			if needsFallback && explicitSourceOverride && !blockingSlowSources {
+				needsFallback = false
+				warnings = append(
+					warnings,
+					"Explicit sources requested in staged fail-open mode; slow sources deferred asynchronously. Set blocking=true (or sync_slow_sources=true) to wait for blocking completion.",
+				)
 			}
 			if needsFallback &&
 				lexicalGuardEligible &&
@@ -3785,6 +3797,7 @@ func (s *server) executeRetrieval(
 							s.retrieval.rustQualityFallbackMode,
 							"rust-quality-sync-fallback",
 							explicitSourceOverride,
+							blockingSlowSources,
 							true,
 							!fastPathFailed,
 							adaptiveSkipped,
@@ -3837,7 +3850,7 @@ func (s *server) executeRetrieval(
 				if len(fallback) == 0 {
 					fallback = append(fallback, slowSources...)
 				}
-				if s.retrieval.timeoutAdaptiveSkipEnabled && !explicitSourceOverride {
+				if s.retrieval.timeoutAdaptiveSkipEnabled && !blockingSlowSources {
 					filtered := make([]string, 0, len(fallback))
 					for _, source := range fallback {
 						if _, skip := adaptiveSkipped[source]; skip {
@@ -3856,6 +3869,7 @@ func (s *server) executeRetrieval(
 					retrievalMode,
 					"slow-sync-fallback",
 					explicitSourceOverride,
+					blockingSlowSources,
 					true,
 					!fastPathFailed,
 					adaptiveSkipped,
@@ -3876,7 +3890,7 @@ func (s *server) executeRetrieval(
 				warnings = append(warnings, slowBatch.warnings...)
 				for _, source := range slowBatch.timedOutSources {
 					timedOutObserved[source] = struct{}{}
-					if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+					if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 						adaptiveSkipped[source] = struct{}{}
 					}
 				}
@@ -3903,6 +3917,7 @@ func (s *server) executeRetrieval(
 				retrievalMode,
 				"slow-sync",
 				explicitSourceOverride,
+				blockingSlowSources,
 				true,
 				!fastPathFailed,
 				adaptiveSkipped,
@@ -3923,7 +3938,7 @@ func (s *server) executeRetrieval(
 			warnings = append(warnings, slowBatch.warnings...)
 			for _, source := range slowBatch.timedOutSources {
 				timedOutObserved[source] = struct{}{}
-				if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+				if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 					adaptiveSkipped[source] = struct{}{}
 				}
 			}
@@ -3952,6 +3967,7 @@ func (s *server) executeRetrieval(
 				retrievalMode,
 				"coverage-rescue-fast",
 				explicitSourceOverride,
+				blockingSlowSources,
 				true,
 				false,
 				adaptiveSkipped,
@@ -3975,7 +3991,7 @@ func (s *server) executeRetrieval(
 			warnings = append(warnings, rescueBatch.warnings...)
 			for _, source := range rescueBatch.timedOutSources {
 				timedOutObserved[source] = struct{}{}
-				if s.shouldAdaptiveSkip(source) && !explicitSourceOverride {
+				if s.shouldAdaptiveSkip(source) && !blockingSlowSources {
 					adaptiveSkipped[source] = struct{}{}
 				}
 			}
@@ -4149,6 +4165,8 @@ func (s *server) executeRetrieval(
 			"min_fast_results":             s.retrieval.minFastResults,
 			"min_fast_results_by_mode":     s.retrieval.minFastResultsByMode,
 			"deep_blocking":                s.retrieval.deepBlocking,
+			"blocking_slow_sources":        blockingSlowSources,
+			"explicit_source_override":     explicitSourceOverride,
 			"disable_sync_slow_fallback":   s.retrieval.disableSyncSlowFallback,
 			"slow_sync_timeout_cap_secs":   s.retrieval.slowSyncTimeoutCap.Seconds(),
 			"qdrant_sync_timeout_cap_secs": s.retrieval.qdrantSyncTimeoutCap.Seconds(),

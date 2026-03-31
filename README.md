@@ -364,8 +364,9 @@ Required behavior:
 6) Use read-call timeouts that match retrieval mode:
    - fast: 25s
    - balanced: 60s
-   - deep (or explicit `letta`/`memory_bank` sources): 75s
-   Fast/balanced modes keep slow sources async by default unless explicitly requested (`sources=[...]`).
+   - deep (blocking reads): 75s
+   Fast/balanced modes keep slow sources async by default.
+   Explicit `sources=[...]` does not force blocking; use `blocking=true` (or `sync_slow_sources=true`) when you intentionally want blocking slow-source completion.
    Deep mode now defaults to async completion: you get immediate partial results plus `job_id`/`poll_url`/`events_url`, then fetch final results from `GET /memory/search/jobs/{job_id}` (or `/memory/search/async/{job_id}`) or stream updates from `GET /memory/search/jobs/{job_id}/events`.
    Read responses expose `retrieval_lifecycle` for explicit status (`queued|running|partial|succeeded|failed`) and source availability.
    If a deep read returns partials, show those immediately and poll once after 5-15s for warmed slow-source completion.
@@ -378,6 +379,12 @@ Required behavior:
 ```
 
 Detailed playbook: `docs/human_agent_instruction_playbook.md`
+
+Expected user/agent access pattern:
+1. `POST /memory/search` (`fast` or `balanced`) with `project`, optional `topic_path`, and `include_grounding=true`.
+2. If `continuation_async` is returned, read partials immediately and either stream `GET /memory/search/continuations/{token}/events` or re-run the same search after 5-15s.
+3. Only use blocking reads when required: set `blocking=true` (or `sync_slow_sources=true`) and keep a longer caller timeout.
+4. Use `POST /memory/context-pack` for broad synthesis and `POST /v1/memory/neighbors` for graph-neighbor exploration.
 
 Lifecycle-aware local helper:
 
@@ -684,6 +691,7 @@ Ingress endpoints:
 - `POST /memory/write`
 - `POST /memory/search`
 - `POST /memory/context-pack`
+- `POST /v1/memory/neighbors`
 - `GET /memory/search/continuations/{token}/events`
 - `POST /tools/feedback_submit`
 - `POST /integrations/messaging/command`
