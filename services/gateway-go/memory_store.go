@@ -295,13 +295,35 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	topicPath := sanitizeTopicPath(item.topicPath, fileName)
 	contentHash := sha256Hex(content)
 	key := memoryStoreKey(project, fileName)
+	filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))
 
 	m.mu.RLock()
 	previousHash := m.latestHash[key]
+	previousTopic := m.latestTopic[key]
 	m.mu.RUnlock()
 	deduped := previousHash != "" && previousHash == contentHash
 
-	filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))
+	buildEntry := func() memoryStoreEntry {
+		return memoryStoreEntry{
+			EventID:     primitive.NewObjectID().Hex(),
+			Project:     project,
+			FileName:    fileName,
+			TopicPath:   topicPath,
+			Summary:     clipSummary(content, m.policy.maxSummaryChars),
+			ContentHash: contentHash,
+			CreatedAt:   nowUTCISO(),
+			RawBytes:    len(content),
+			Source:      "go_memory_store",
+		}
+	}
+
+	if deduped && strings.EqualFold(strings.TrimSpace(previousTopic), strings.TrimSpace(topicPath)) {
+		// No payload or topic change: skip redundant rewrite/history append.
+		if _, err := os.Stat(filePath); err == nil {
+			return buildEntry(), true, nil
+		}
+	}
+
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return memoryStoreEntry{}, false, fmt.Errorf("create memory file directory: %w", err)
 	}
@@ -314,17 +336,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 		return memoryStoreEntry{}, false, fmt.Errorf("commit memory file: %w", err)
 	}
 
-	entry := memoryStoreEntry{
-		EventID:     primitive.NewObjectID().Hex(),
-		Project:     project,
-		FileName:    fileName,
-		TopicPath:   topicPath,
-		Summary:     clipSummary(content, m.policy.maxSummaryChars),
-		ContentHash: contentHash,
-		CreatedAt:   nowUTCISO(),
-		RawBytes:    len(content),
-		Source:      "go_memory_store",
-	}
+	entry := buildEntry()
 
 	m.mu.Lock()
 	m.recordEntry(entry)
