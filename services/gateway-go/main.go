@@ -782,7 +782,7 @@ func defaultRustBackendPolicy() map[string]any {
 		"memory_bank_backend": normalizeRustBackendChoice(
 			os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"),
 			memoryBankAllowed,
-			"quickwit_spike",
+			"shodh_spike",
 		),
 	}
 }

@@ -826,6 +826,63 @@ func parseMemoryBankSpikeFallbackBackends(
 	return out
 }
 
+func capMemoryBankBackendSequence(sequence []string, maxBackends int) []string {
+	if maxBackends <= 0 || len(sequence) <= maxBackends {
+		return append([]string(nil), sequence...)
+	}
+	return append([]string(nil), sequence[:maxBackends]...)
+}
+
+func parseMemoryBankSpikeHedgeBackends(
+	sequence []string,
+	configuredList string,
+	maxParallel int,
+) []string {
+	if len(sequence) < 2 || maxParallel < 2 {
+		return []string{}
+	}
+	maxParallel = clampInt(maxParallel, 2, len(sequence))
+	configuredSet := map[string]struct{}{}
+	configured := []string{}
+	for _, token := range strings.Split(configuredList, ",") {
+		normalized := normalizeMemoryBankSpikeBackend(token, "")
+		if normalized == "" || normalized == "native" || normalized == "disabled" {
+			continue
+		}
+		if _, exists := configuredSet[normalized]; exists {
+			continue
+		}
+		configuredSet[normalized] = struct{}{}
+		configured = append(configured, normalized)
+	}
+	candidates := make([]string, 0, maxParallel)
+	for _, backend := range sequence {
+		if len(configured) > 0 {
+			if _, ok := configuredSet[backend]; !ok {
+				continue
+			}
+		}
+		already := false
+		for _, existing := range candidates {
+			if existing == backend {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+		candidates = append(candidates, backend)
+		if len(candidates) >= maxParallel {
+			break
+		}
+	}
+	if len(candidates) < 2 {
+		return []string{}
+	}
+	return candidates
+}
+
 func memoryBankSpikeBaseURL() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL")), "/")
 }
@@ -907,6 +964,162 @@ func classifyMemoryBankSpikeError(err error) (string, string, bool) {
 		return "request_error", "network_error", false
 	}
 	return "backend_error", "backend_error", false
+}
+
+type memoryBankSpikeProbeResult struct {
+	backend    string
+	rows       []map[string]any
+	err        error
+	timedOut   bool
+	errorKind  string
+	errorCode  string
+	timeout    time.Duration
+	elapsedMs  float64
+	orderIndex int
+}
+
+func shouldReplaceMemoryBankHedgeWinner(
+	candidateScore float64,
+	candidateRows int,
+	candidateOrder int,
+	winnerScore float64,
+	winnerRows int,
+	winnerOrder int,
+) bool {
+	if winnerOrder < 0 {
+		return true
+	}
+	if candidateScore > winnerScore {
+		return true
+	}
+	if candidateScore < winnerScore {
+		return false
+	}
+	if candidateRows > winnerRows {
+		return true
+	}
+	if candidateRows < winnerRows {
+		return false
+	}
+	return candidateOrder < winnerOrder
+}
+
+func (s *server) queryMemoryBankSpikeHedge(
+	ctx context.Context,
+	query string,
+	limit int,
+	projectFilter string,
+	topicFilter string,
+	backends []string,
+) ([]map[string]any, string, []map[string]any) {
+	if len(backends) < 2 {
+		return nil, "", []map[string]any{}
+	}
+	results := make([]memoryBankSpikeProbeResult, 0, len(backends))
+	resultCh := make(chan memoryBankSpikeProbeResult, len(backends))
+	var wg sync.WaitGroup
+	for idx, backend := range backends {
+		wg.Add(1)
+		go func(orderIndex int, candidate string) {
+			defer wg.Done()
+			timeout := memoryBankSpikeTimeoutForBackend(candidate)
+			started := time.Now()
+			rows, err := s.queryMemoryBankSpikeBackend(ctx, query, limit, projectFilter, topicFilter, candidate, timeout)
+			errorKind, errorCode, timedOut := classifyMemoryBankSpikeError(err)
+			resultCh <- memoryBankSpikeProbeResult{
+				backend:    candidate,
+				rows:       rows,
+				err:        err,
+				timedOut:   timedOut,
+				errorKind:  errorKind,
+				errorCode:  errorCode,
+				timeout:    timeout,
+				elapsedMs:  roundFloat(float64(time.Since(started).Milliseconds()), 3),
+				orderIndex: orderIndex,
+			}
+		}(idx, backend)
+	}
+	wg.Wait()
+	close(resultCh)
+	for result := range resultCh {
+		results = append(results, result)
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].orderIndex < results[j].orderIndex
+	})
+	winnerRows := []map[string]any{}
+	winnerBackend := ""
+	winnerScore := -1.0
+	winnerCount := -1
+	winnerOrder := -1
+	steps := make([]map[string]any, 0, len(results)+1)
+	for _, result := range results {
+		step := map[string]any{
+			"backend":      result.backend,
+			"trigger":      "hedge_probe",
+			"timeout_secs": roundFloat(result.timeout.Seconds(), 3),
+			"elapsed_ms":   result.elapsedMs,
+			"rows":         len(result.rows),
+			"order_index":  result.orderIndex + 1,
+			"order_total":  len(results),
+		}
+		if result.err != nil {
+			step["status"] = "error"
+			step["reason"] = "backend_error"
+			if result.timedOut {
+				step["reason"] = "timeout"
+			}
+			step["error"] = strings.TrimSpace(result.err.Error())
+			step["error_kind"] = result.errorKind
+			step["error_code"] = result.errorCode
+			step["timed_out"] = result.timedOut
+			step["policy_action"] = "hedge_continue"
+			step["terminal"] = false
+			steps = append(steps, step)
+			continue
+		}
+		if len(result.rows) == 0 {
+			step["status"] = "empty"
+			step["reason"] = "no_rows"
+			step["policy_action"] = "hedge_continue"
+			step["terminal"] = false
+			steps = append(steps, step)
+			continue
+		}
+		topScore := parseScore(result.rows[0])
+		step["status"] = "success"
+		step["reason"] = "rows_returned"
+		step["top_score"] = roundFloat(topScore, 6)
+		step["policy_action"] = "hedge_candidate"
+		step["terminal"] = false
+		steps = append(steps, step)
+		if shouldReplaceMemoryBankHedgeWinner(
+			topScore,
+			len(result.rows),
+			result.orderIndex,
+			winnerScore,
+			winnerCount,
+			winnerOrder,
+		) {
+			winnerRows = result.rows
+			winnerBackend = result.backend
+			winnerScore = topScore
+			winnerCount = len(result.rows)
+			winnerOrder = result.orderIndex
+		}
+	}
+	if winnerBackend != "" && len(winnerRows) > 0 {
+		steps = append(steps, map[string]any{
+			"backend":       winnerBackend,
+			"status":        "winner",
+			"reason":        "top_score_then_rows_then_order",
+			"policy_action": "return_rows",
+			"rows":          len(winnerRows),
+			"top_score":     roundFloat(winnerScore, 6),
+			"terminal":      true,
+		})
+	}
+	return winnerRows, winnerBackend, steps
 }
 
 func (s *server) queryMemoryBankSpikeBackend(
@@ -1065,7 +1278,7 @@ func (s *server) queryMemoryBankSource(
 	}
 	backendRequested := normalizeMemoryBankSpikeBackend(
 		anyToString(backendPolicy["memory_bank_backend"]),
-		normalizeMemoryBankSpikeBackend(os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"), "quickwit_spike"),
+		normalizeMemoryBankSpikeBackend(os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"), "shodh_spike"),
 	)
 	fallbackList := parseMemoryBankSpikeFallbackBackends(
 		backendRequested,
@@ -1079,10 +1292,25 @@ func (s *server) queryMemoryBankSource(
 	if backendRequested != "native" && backendRequested != "disabled" {
 		sequence = append(sequence, fallbackList...)
 	}
+	maxChainBackends := envInt("ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS", 3)
+	if maxChainBackends < 1 {
+		maxChainBackends = 1
+	}
+	sequence = capMemoryBankBackendSequence(sequence, maxChainBackends)
 	emptyFallbackEnabled := envBool("ORCH_MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK", true)
 	fallbackToNativeEnabled := envBool("ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE", true)
 	if s.strictNoPythonRuntime {
 		fallbackToNativeEnabled = false
+	}
+	hedgeEnabled := envBool("ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED", false)
+	hedgeMaxParallel := envInt("ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL", 2)
+	if hedgeMaxParallel < 2 {
+		hedgeMaxParallel = 2
+	}
+	hedgeConfiguredList := strings.TrimSpace(os.Getenv("ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS"))
+	hedgeBackends := []string{}
+	if hedgeEnabled {
+		hedgeBackends = parseMemoryBankSpikeHedgeBackends(sequence, hedgeConfiguredList, hedgeMaxParallel)
 	}
 	steps := []map[string]any{}
 	selectedBackend := ""
@@ -1109,10 +1337,15 @@ func (s *server) queryMemoryBankSource(
 			"policy": map[string]any{
 				"deterministic":               true,
 				"spike_sequence":              append([]string{}, sequence...),
+				"max_chain_backends":          maxChainBackends,
 				"on_rows_returned":            "return_rows",
 				"on_empty_result":             "fallback_next_then_native_if_enabled",
 				"on_backend_timeout_or_error": "fallback_next_then_native_if_enabled",
 				"terminal_without_native":     !fallbackToNativeEnabled,
+				"hedge_enabled":               hedgeEnabled,
+				"hedge_backends":              append([]string{}, hedgeBackends...),
+				"hedge_max_parallel":          hedgeMaxParallel,
+				"hedge_tie_break":             "top_score_then_rows_then_order",
 			},
 			"reason": strings.TrimSpace(strings.ToLower(reason)),
 		}
@@ -1185,9 +1418,52 @@ func (s *server) queryMemoryBankSource(
 		}
 		return runNative("native_requested")
 	}
+	attemptedBackends := map[string]struct{}{}
+	if hedgeEnabled && len(hedgeBackends) >= 2 {
+		hedgeRows, hedgeWinner, hedgeSteps := s.queryMemoryBankSpikeHedge(
+			ctx,
+			query,
+			limit,
+			projectFilter,
+			topicFilter,
+			hedgeBackends,
+		)
+		for _, backend := range hedgeBackends {
+			attemptedBackends[backend] = struct{}{}
+		}
+		for _, step := range hedgeSteps {
+			appendStep(step)
+		}
+		if len(hedgeRows) > 0 && strings.TrimSpace(hedgeWinner) != "" {
+			selectedBackend = strings.TrimSpace(hedgeWinner)
+			return hedgeRows, nil, buildTrace("spike_hedge_success"), sourceOwnerGoNative, nil
+		}
+		appendStep(map[string]any{
+			"backend":       strings.Join(hedgeBackends, ","),
+			"status":        "fallback",
+			"reason":        "hedge_exhausted",
+			"trigger":       "hedge_probe",
+			"policy_action": "fallback_sequence",
+			"terminal":      false,
+		})
+	}
 
-	chainTotal := len(sequence)
-	for idx, backend := range sequence {
+	remainingSequence := make([]string, 0, len(sequence))
+	for _, backend := range sequence {
+		if _, attempted := attemptedBackends[backend]; attempted {
+			continue
+		}
+		remainingSequence = append(remainingSequence, backend)
+	}
+	if len(remainingSequence) == 0 {
+		if fallbackToNativeEnabled {
+			return runNative("spike_hedge_exhausted")
+		}
+		return []map[string]any{}, nil, buildTrace("spike_hedge_exhausted_terminal"), sourceOwnerGoNative, nil
+	}
+
+	chainTotal := len(remainingSequence)
+	for idx, backend := range remainingSequence {
 		chainIndex := idx + 1
 		isLast := chainIndex == chainTotal
 		timeout := memoryBankSpikeTimeoutForBackend(backend)

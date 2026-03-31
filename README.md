@@ -234,11 +234,15 @@ ORCH_TELEMETRY_DB=contextlattice_raw
 ORCH_TELEMETRY_COLLECTION=retrieval_telemetry
 ORCH_TELEMETRY_PERSIST_ENABLED=true
 ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true
-ORCH_MEMORY_BANK_SEARCH_BACKEND=icm_spike
+ORCH_MEMORY_BANK_SEARCH_BACKEND=shodh_spike
 ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND=surrealdb_spike
-ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS=surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike
+ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS=surrealdb_spike,memvid_spike,icm_spike,quickwit_spike
 ORCH_MEMORY_BANK_SPIKE_HTTP_URL=http://memory-bank-spike-rs:8096
 ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE=/search
+ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS=3
+ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED=false
+ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL=2
+ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS=shodh_spike,surrealdb_spike
 MEMORY_BANK_SPIKE_RS_MEILI_URL=http://meilisearch:7700
 MEMORY_BANK_SPIKE_RS_MEILI_INDEX=contextlattice_memory
 MEMORY_BANK_SPIKE_RS_MEILI_TASK_TIMEOUT_SECS=30
@@ -484,7 +488,13 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 - Storage pressure controls: retention runner, low-value TTL pruning, optional snapshot pruning, and external NVMe cold path support.
 - Retrieval path: parallel source reads with orchestrator merge/rank loop and preference-learning feedback.
 - Telemetry routing guards (default-on): telemetry-like writes are filtered out of `qdrant`/`mindsdb`/`letta` fanout.
-- Memory-bank policy: promoted source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true`) with default `icm_spike` and fallback chain `surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike`.
+- Memory-bank policy: promoted source (`ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true`) with default `shodh_spike`, deterministic fallback chain `surrealdb_spike,memvid_spike,icm_spike,quickwit_spike`, and chain breadth cap (`ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS=3`) for RAM-safe operation.
+
+Memory-bank profiles:
+- `balanced` (default): `shodh_spike` with deterministic fallback chain, capped to 3 backends.
+- `low-ram`: `icm_spike` only, chain cap `1`, hedge disabled.
+- `quality-hedge` (opt-in): 2-way parallel hedge across `shodh_spike,surrealdb_spike`.
+- Full decision record: `docs/private/cutover/memory-bank-b2-b3-presets-2026-03-31.md`.
 
 ## Version Lanes (Launch Clarity)
 
@@ -496,7 +506,7 @@ curl -fsS -X POST http://127.0.0.1:8075/agents/tasks/<TASK_ID>/status \
 | Fallback lane | Python orchestrator on `:18075` | Python orchestrator on `:18075` |
 | Rust/Go posture | Enabled by default | Enabled by default |
 | Retrieval policy | staged fast-return + async slow continuation | staged + aggressive adaptive experiments |
-| Memory-bank default | `icm_spike` | `icm_spike` with active candidate promotions |
+| Memory-bank default | `icm_spike` | `shodh_spike` with deterministic fallback chain and optional hedge mode |
 | Release intent | stable public baseline | experimental/tuning lane behind hard gates |
 | Promotion rule | benchmark + parity proof in release notes | benchmark + parity + operational soak before public sync |
 
@@ -568,6 +578,11 @@ The orchestrator now runs Rust+Go as the default runtime path. Python remains in
   - `ORCH_RUST_RETRIEVAL_BACKEND_STRICT`
   - `ORCH_MEMORY_BANK_SEARCH_BACKEND` (`native|disabled|meilisearch_spike|quickwit_spike|tantivy_spike|lancedb_spike|trieve_spike|helixdb_spike|icm_spike|shodh_spike|memvid_spike|surrealdb_spike`)
   - `ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND`
+  - `ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS`
+  - `ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS`
+  - `ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED`
+  - `ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL`
+  - `ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS`
   - `ORCH_MEMORY_BANK_SPIKE_HTTP_URL`
   - `MEMORY_BANK_SPIKE_RS_MEILI_URL`
   - `MEMORY_BANK_SPIKE_RS_MEILI_INDEX`

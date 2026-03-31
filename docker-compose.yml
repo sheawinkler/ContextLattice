@@ -14,7 +14,9 @@ services:
   mongo:
     image: mongo:7
     # Source can be either a named volume (default) or a host path (e.g., /Volumes/ExternalSSD/contextlattice/mongo)
-    volumes: ["${MONGO_DATA:-mongo_data}:/data/db"]
+    volumes:
+      - "${MONGO_DATA:-mongo_data}:/data/db"
+      - "${MONGO_CONFIG_DATA:-mongo_config_data}:/data/configdb"
     restart: unless-stopped
     profiles: ["core"]
 
@@ -247,7 +249,7 @@ services:
       timeout: 15s
       retries: 10
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["spike-lab"]
 
   trieve-spike-adapter:
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
@@ -272,7 +274,7 @@ services:
       timeout: 15s
       retries: 10
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["spike-lab"]
 
   helixdb-spike-adapter:
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
@@ -297,7 +299,7 @@ services:
       timeout: 15s
       retries: 10
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["spike-lab"]
 
   icm-spike-adapter:
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
@@ -347,7 +349,7 @@ services:
       timeout: 15s
       retries: 10
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["spike-lab"]
 
   memvid-spike-adapter:
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
@@ -372,7 +374,7 @@ services:
       timeout: 15s
       retries: 10
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["spike-lab"]
 
   surrealdb-spike-adapter:
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
@@ -397,26 +399,14 @@ services:
       timeout: 15s
       retries: 10
     restart: unless-stopped
-    profiles: ["core"]
+    profiles: ["spike-lab"]
 
   memory-bank-spike-rs:
     build: { context: ., dockerfile: Dockerfile.memory-bank-spike-rs }
     depends_on:
       meilisearch:
         condition: service_started
-      lancedb-spike-adapter:
-        condition: service_started
-      trieve-spike-adapter:
-        condition: service_started
-      helixdb-spike-adapter:
-        condition: service_started
       icm-spike-adapter:
-        condition: service_started
-      shodh-spike-adapter:
-        condition: service_started
-      memvid-spike-adapter:
-        condition: service_started
-      surrealdb-spike-adapter:
         condition: service_started
       memorymcp-http:
         condition: service_started
@@ -525,6 +515,7 @@ services:
       - ${REDIS_AUTH:-change_me}
       - --maxmemory-policy
       - noeviction
+    volumes: ["${LF_REDIS_DATA:-lf_redis_data}:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -566,8 +557,8 @@ services:
     environment: &langfuse-env
       NEXTAUTH_URL: "http://localhost:${LANGFUSE_PORT:-15510}"
       DATABASE_URL: postgres://${LF_DB_USER:-postgres}:${LF_DB_PASS:-postgres}@${LF_DB_HOST:-lf-postgres}:5432/${LF_DB_NAME:-langfuse}
-      SALT: ${LANGFUSE_SALT:-change_me_32_chars________________}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-change_me_64_chars________________________________________}
+      SALT: ${LANGFUSE_SALT:-0123456789abcdef0123456789abcdef}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-true}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
       CLICKHOUSE_MIGRATION_URL: ${CLICKHOUSE_MIGRATION_URL:-clickhouse://default:langfuse_dev@lf-clickhouse:9000}
@@ -674,6 +665,7 @@ services:
       memory-bank-spike-rs:
         condition: service_started
     environment:
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-core,llm,observability}
       CONTEXTLATTICE_HTTP_URL: ${CONTEXTLATTICE_HTTP_URL:-http://memorymcp-http:59081/mcp}
       CONTEXTLATTICE_LIST_TIMEOUT_SECS: ${CONTEXTLATTICE_LIST_TIMEOUT_SECS:-4}
       CONTEXTLATTICE_READ_TIMEOUT_SECS: ${CONTEXTLATTICE_READ_TIMEOUT_SECS:-15}
@@ -687,7 +679,8 @@ services:
       CONTEXTLATTICE_GO_ORCHESTRATOR_URL: ${CONTEXTLATTICE_GO_ORCHESTRATOR_URL:-http://orchestrator-go:8090}
       MIGRATION_SHADOW_DUAL_RUN: ${MIGRATION_SHADOW_DUAL_RUN:-true}
       MIGRATION_CANARY_ENABLED: ${MIGRATION_CANARY_ENABLED:-true}
-      ORCH_SECURITY_STRICT: ${ORCH_SECURITY_STRICT:-true}
+      ORCH_SECURITY_STRICT: ${ORCH_SECURITY_STRICT:-false}
+      ORCH_PRODUCTION_REQUIRE_API_KEY: ${ORCH_PRODUCTION_REQUIRE_API_KEY:-false}
       ORCH_PUBLIC_STATUS: ${ORCH_PUBLIC_STATUS:-false}
       ORCH_PUBLIC_DOCS: ${ORCH_PUBLIC_DOCS:-false}
       ORCH_PYTHON_HOT_PATH_OWNERSHIP_MODE: ${ORCH_PYTHON_HOT_PATH_OWNERSHIP_MODE:-warn}
@@ -995,15 +988,19 @@ services:
       ORCH_MEMORY_BANK_TELEMETRY_GUARD_ENABLED: ${ORCH_MEMORY_BANK_TELEMETRY_GUARD_ENABLED:-true}
       ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES: ${ORCH_MEMORY_BANK_TELEMETRY_TOPIC_PREFIXES:-telemetry,metrics,signals,overrides}
       ORCH_MEMORY_BANK_TELEMETRY_MARKERS: ${ORCH_MEMORY_BANK_TELEMETRY_MARKERS:-telemetry,metrics,__state__,__stats__,__snapshots__,__health__,__allocations__,_agg-,queue__}
-      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-icm_spike}
+      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-shodh_spike}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND:-surrealdb_spike}
-      ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:-surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike}
+      ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:-surrealdb_spike,memvid_spike,icm_spike,quickwit_spike}
       ORCH_MEMORY_BANK_SPIKE_HTTP_URL: ${ORCH_MEMORY_BANK_SPIKE_HTTP_URL:-http://memory-bank-spike-rs:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}}
       ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE: ${ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE:-/search}
       ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS: ${ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS:-1.5}
       ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_ICM: ${ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_ICM:-0.85}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE:-true}
       ORCH_MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK: ${ORCH_MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK:-true}
+      ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS:-3}
+      ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED: ${ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED:-false}
+      ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL: ${ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL:-2}
+      ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS:-shodh_spike,surrealdb_spike}
       ORCH_QDRANT_TELEMETRY_GUARD_ENABLED: ${ORCH_QDRANT_TELEMETRY_GUARD_ENABLED:-true}
       ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED: ${ORCH_MINDSDB_TELEMETRY_GUARD_ENABLED:-true}
       ORCH_LETTA_TELEMETRY_GUARD_ENABLED: ${ORCH_LETTA_TELEMETRY_GUARD_ENABLED:-true}
@@ -1027,10 +1024,10 @@ services:
       SINK_RETENTION_SCAN_LIMIT: ${SINK_RETENTION_SCAN_LIMIT:-5000}
       SINK_RETENTION_DELETE_BATCH: ${SINK_RETENTION_DELETE_BATCH:-128}
       SINK_RETENTION_MAX_DELETES_PER_RUN: ${SINK_RETENTION_MAX_DELETES_PER_RUN:-5000}
-      QDRANT_LOW_VALUE_RETENTION_HOURS: ${QDRANT_LOW_VALUE_RETENTION_HOURS:-1800}
-      LETTA_LOW_VALUE_RETENTION_HOURS: ${LETTA_LOW_VALUE_RETENTION_HOURS:-1800}
+      QDRANT_LOW_VALUE_RETENTION_HOURS: ${QDRANT_LOW_VALUE_RETENTION_HOURS:-336}
+      LETTA_LOW_VALUE_RETENTION_HOURS: ${LETTA_LOW_VALUE_RETENTION_HOURS:-336}
       MONGO_RAW_LOW_VALUE_RETENTION_HOURS: ${MONGO_RAW_LOW_VALUE_RETENTION_HOURS:-0}
-      MINDSDB_LOW_VALUE_RETENTION_HOURS: ${MINDSDB_LOW_VALUE_RETENTION_HOURS:-1800}
+      MINDSDB_LOW_VALUE_RETENTION_HOURS: ${MINDSDB_LOW_VALUE_RETENTION_HOURS:-336}
       ORCH_RETENTION_TELEMETRY_ONLY: ${ORCH_RETENTION_TELEMETRY_ONLY:-true}
       ORCH_RETENTION_APPLICATION_STATE_HOURS: ${ORCH_RETENTION_APPLICATION_STATE_HOURS:-1800}
       LETTA_RETENTION_PAGE_LIMIT: ${LETTA_RETENTION_PAGE_LIMIT:-100}
@@ -1147,12 +1144,26 @@ services:
       ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS: ${ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS:-8}
       ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS: ${ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS:-2}
       ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS: ${ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS:-45}
+      ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR: ${ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR:-2.0}
+      ORCH_RETRIEVAL_LETTA_TOP_K_CAP: ${ORCH_RETRIEVAL_LETTA_TOP_K_CAP:-24}
+      ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_FAST: ${ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_FAST:-1.25}
+      ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED: ${ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_BALANCED:-1.5}
+      ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP: ${ORCH_RETRIEVAL_LETTA_TOP_K_FACTOR_DEEP:-2.0}
+      ORCH_RETRIEVAL_LETTA_TOP_K_CAP_FAST: ${ORCH_RETRIEVAL_LETTA_TOP_K_CAP_FAST:-12}
+      ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED: ${ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED:-18}
+      ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP: ${ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP:-24}
       ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS: ${ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS:-3}
-      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-icm_spike}
+      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-shodh_spike}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND:-surrealdb_spike}
-      ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:-surrealdb_spike,memvid_spike,shodh_spike,quickwit_spike}
+      ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:-surrealdb_spike,memvid_spike,icm_spike,quickwit_spike}
+      ORCH_MEMORY_BANK_SPIKE_HTTP_URL: ${ORCH_MEMORY_BANK_SPIKE_HTTP_URL:-http://memory-bank-spike-rs:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}}
+      ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE: ${ORCH_MEMORY_BANK_SPIKE_SEARCH_ROUTE:-/search}
       ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS: ${ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS:-1.5}
       ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_ICM: ${ORCH_MEMORY_BANK_SPIKE_TIMEOUT_SECS_ICM:-0.85}
+      ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS:-3}
+      ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED: ${ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED:-false}
+      ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL: ${ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL:-2}
+      ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS:-shodh_spike,surrealdb_spike}
       ORCH_RUST_RETRIEVAL_VECTOR_BACKEND: ${ORCH_RUST_RETRIEVAL_VECTOR_BACKEND:-qdrant_remote}
       ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND: ${ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND:-tantivy_lexical}
       ORCH_RUST_RETRIEVAL_BACKEND_STRICT: ${ORCH_RUST_RETRIEVAL_BACKEND_STRICT:-false}
@@ -1246,7 +1257,7 @@ services:
       CONTEXTLATTICE_ORCHESTRATOR_URL: http://gateway-go:8091
       CONTEXTLATTICE_ORCHESTRATOR_API_KEY: ${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}
     volumes:
-      - dashboard_data:/data
+      - ${DASHBOARD_DATA:-dashboard_data}:/data
     ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-3000}:3000"]
     restart: unless-stopped
     profiles: ["core"]
@@ -1254,6 +1265,7 @@ services:
 volumes:
   qdrant_storage: {}
   mongo_data: {}
+  mongo_config_data: {}
   mindsdb_data: {}
   memory_bank_data: {}
   orchestrator_data: {}
@@ -1264,4 +1276,5 @@ volumes:
   lf_pgdata: {}
   clickhouse_data: {}
   lf_minio_data: {}
+  lf_redis_data: {}
   dashboard_data: {}
