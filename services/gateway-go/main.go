@@ -7,11 +7,14 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +33,10 @@ const (
 	sourceTopicRollup = "topic_rollups"
 	sourceLetta       = "letta"
 	sourceMemoryBank  = "memory_bank"
+
+	sourceOwnerGoNative              = "go_native"
+	sourceOwnerRustNative            = "rust_native"
+	sourceOwnerPythonBackendFallback = "python_backend_fallback"
 )
 
 var defaultAllSources = []string{
@@ -99,6 +106,8 @@ type retrievalPolicy struct {
 	continuationEventHistory         int
 	continuationEventTTL             time.Duration
 	continuationSSEHeartbeat         time.Duration
+	sourceOwnershipMode              string
+	sourceOwnershipStrictFastAllowPy map[string]struct{}
 }
 
 type retrievalEvent struct {
@@ -143,6 +152,20 @@ type adaptiveSourceStats struct {
 	requests  int
 	timeouts  int
 }
+
+type lettaConfig struct {
+	url            string
+	apiKey         string
+	requireAPIKey  bool
+	autoSessionID  string
+	agentModel     string
+	agentEmbedding string
+	requestTimeout time.Duration
+	verifyInterval time.Duration
+}
+
+var queryTermPattern = regexp.MustCompile(`[A-Za-z0-9_:/.-]{3,}`)
+var lettaHeaderPattern = regexp.MustCompile(`\b([a-zA-Z_]+)=([^\s]+)`)
 
 func newRetrievalTelemetry(policy retrievalPolicy) *retrievalTelemetry {
 	if !policy.telemetryBatchEnabled {
@@ -246,8 +269,10 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 type server struct {
 	backendURL                      string
 	orchestratorAPIKey              string
+	strictNoPythonRuntime           bool
 	client                          *http.Client
 	retrieval                       retrievalPolicy
+	letta                           lettaConfig
 	toolCalls                       toolCallPolicy
 	pythonHotPathMode               string
 	pythonHotPathFallbacks          atomic.Uint64
@@ -257,6 +282,8 @@ type server struct {
 	pythonHotPathLastAt             string
 	telemetry                       *retrievalTelemetry
 	writePolicy                     writeIngressPolicy
+	memoryStore                     *memoryStore
+	memoryProfilesStore             *memoryProfileStore
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
 	telemetryRing                   *telemetryRing
@@ -269,6 +296,9 @@ type server struct {
 	continuationSubscribers         map[string][]chan map[string]any
 	continuationHistory             map[string][]map[string]any
 	continuationExpiry              map[string]time.Time
+	lettaAgentMu                    sync.Mutex
+	lettaAgentBySession             map[string]string
+	lettaAgentVerifiedAt            map[string]time.Time
 }
 
 func normalizeHotPath(path string) string {
@@ -382,6 +412,22 @@ func parseToolPathSetWithDefault(raw string, fallback string) map[string]struct{
 	return parseToolPathSet(trimmed)
 }
 
+func parseNormalizedSet(raw string, fallback string) map[string]struct{} {
+	res := map[string]struct{}{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(fallback)
+	}
+	for _, part := range strings.Split(trimmed, ",") {
+		normalized := strings.TrimSpace(strings.ToLower(part))
+		if normalized == "" {
+			continue
+		}
+		res[normalized] = struct{}{}
+	}
+	return res
+}
+
 func loadToolCallPolicy(orchestratorAPIKey string) toolCallPolicy {
 	workerKey := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_WORKER_API_KEY"))
 	if workerKey == "" {
@@ -479,9 +525,55 @@ func normalizeSourceList(sources []string) []string {
 func toSourceSet(sources []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(sources))
 	for _, source := range sources {
-		set[source] = struct{}{}
+		normalized := strings.TrimSpace(strings.ToLower(source))
+		if normalized == "" {
+			continue
+		}
+		set[normalized] = struct{}{}
 	}
 	return set
+}
+
+func sourceOwnerForSource(source string) string {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	switch normalized {
+	case sourceQdrant, sourceWeaviate, sourcePgvector, sourceTopicRollup, sourceLetta, sourceMemoryBank:
+		return sourceOwnerGoNative
+	default:
+		return sourceOwnerPythonBackendFallback
+	}
+}
+
+func sourceOwnerCounts(sourceOwners map[string]string) map[string]int {
+	counts := map[string]int{}
+	for _, owner := range sourceOwners {
+		normalized := strings.TrimSpace(strings.ToLower(owner))
+		if normalized == "" {
+			normalized = "unknown"
+		}
+		counts[normalized] = counts[normalized] + 1
+	}
+	return counts
+}
+
+func sourceOwnerClass(sourceOwners map[string]string) string {
+	if len(sourceOwners) == 0 {
+		return "unknown"
+	}
+	seen := map[string]struct{}{}
+	last := ""
+	for _, owner := range sourceOwners {
+		normalized := strings.TrimSpace(strings.ToLower(owner))
+		if normalized == "" {
+			normalized = "unknown"
+		}
+		seen[normalized] = struct{}{}
+		last = normalized
+	}
+	if len(seen) == 1 {
+		return last
+	}
+	return "mixed"
 }
 
 func percentileFloat(values []float64, pct float64) float64 {
@@ -569,7 +661,7 @@ func defaultRustBackendPolicy() map[string]any {
 		"memory_bank_backend": normalizeRustBackendChoice(
 			os.Getenv("ORCH_MEMORY_BANK_SEARCH_BACKEND"),
 			memoryBankAllowed,
-			"quickwit_spike",
+			"shodh_spike",
 		),
 	}
 }
@@ -875,7 +967,56 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if policy.continuationSSEHeartbeat < 3*time.Second {
 		policy.continuationSSEHeartbeat = 3 * time.Second
 	}
+	policy.sourceOwnershipMode = strings.TrimSpace(strings.ToLower(os.Getenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE")))
+	switch policy.sourceOwnershipMode {
+	case "", "off":
+		policy.sourceOwnershipMode = "off"
+	case "warn", "strict":
+	default:
+		policy.sourceOwnershipMode = "off"
+	}
+	policy.sourceOwnershipStrictFastAllowPy = parseNormalizedSet(
+		os.Getenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_STRICT_FAST_ALLOW_PYTHON"),
+		"",
+	)
 	return policy
+}
+
+func loadLettaConfig() lettaConfig {
+	lettaURL := strings.TrimSpace(os.Getenv("LETTA_URL"))
+	if lettaURL == "" {
+		lettaURL = "http://letta:8283"
+	}
+	lettaURL = strings.TrimRight(lettaURL, "/")
+	autoSessionID := strings.TrimSpace(os.Getenv("LETTA_AUTO_SESSION_ID"))
+	if autoSessionID == "" {
+		autoSessionID = "memmcp-default"
+	}
+	apiKey := strings.TrimSpace(os.Getenv("LETTA_API_KEY"))
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("CONTEXTLATTICE_LETTA_API_KEY"))
+	}
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("MEMMCP_LETTA_API_KEY"))
+	}
+	requestTimeout := envDurationSeconds("LETTA_REQUEST_TIMEOUT_SECS", 240)
+	if requestTimeout < time.Second {
+		requestTimeout = time.Second
+	}
+	verifyInterval := envDurationSeconds("LETTA_AGENT_VERIFY_INTERVAL_SECS", 300)
+	if verifyInterval < time.Second {
+		verifyInterval = time.Second
+	}
+	return lettaConfig{
+		url:            lettaURL,
+		apiKey:         apiKey,
+		requireAPIKey:  envBool("LETTA_REQUIRE_API_KEY", false),
+		autoSessionID:  autoSessionID,
+		agentModel:     strings.TrimSpace(os.Getenv("LETTA_AGENT_MODEL")),
+		agentEmbedding: strings.TrimSpace(os.Getenv("LETTA_AGENT_EMBEDDING")),
+		requestTimeout: requestTimeout,
+		verifyInterval: verifyInterval,
+	}
 }
 
 func newServer() *server {
@@ -883,9 +1024,13 @@ func newServer() *server {
 	if backendURL == "" {
 		backendURL = "http://contextlattice-orchestrator:8075"
 	}
+	strictNoPythonRuntime := envBool("GO_RUNTIME_STRICT_NO_PYTHON", false)
 	pythonHotPathMode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_PYTHON_HOT_PATH_OWNERSHIP_MODE")))
 	if pythonHotPathMode == "" {
 		pythonHotPathMode = "warn"
+	}
+	if strictNoPythonRuntime {
+		pythonHotPathMode = "strict"
 	}
 	if pythonHotPathMode != "off" && pythonHotPathMode != "warn" && pythonHotPathMode != "strict" {
 		pythonHotPathMode = "warn"
@@ -896,6 +1041,7 @@ func newServer() *server {
 	}
 	timeout := envDurationSeconds("GATEWAY_PROXY_TIMEOUT_SECS", 95)
 	policy := loadRetrievalPolicy()
+	letta := loadLettaConfig()
 	toolPolicy := loadToolCallPolicy(orchestratorAPIKey)
 	writePolicy := loadWriteIngressPolicy()
 	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
@@ -905,18 +1051,27 @@ func newServer() *server {
 	}
 	telemetrySpoolInstance := newTelemetrySpoolFromEnv()
 	telemetryRingInstance := newTelemetryRingFromEnv()
+	memoryStoreInstance, memoryStoreErr := newMemoryStoreFromEnv()
+	if memoryStoreErr != nil {
+		log.Printf("gateway-go memory store disabled: %v", memoryStoreErr)
+		memoryStoreInstance = &memoryStore{policy: memoryStorePolicy{enabled: false}}
+	}
 	t := newRetrievalTelemetry(policy)
 	s := &server{
 		backendURL:                      backendURL,
 		orchestratorAPIKey:              orchestratorAPIKey,
+		strictNoPythonRuntime:           strictNoPythonRuntime,
 		pythonHotPathMode:               pythonHotPathMode,
 		pythonHotPathByPath:             map[string]uint64{},
 		pythonHotPathByReason:           map[string]uint64{},
 		client:                          &http.Client{Timeout: timeout},
 		retrieval:                       policy,
+		letta:                           letta,
 		toolCalls:                       toolPolicy,
 		telemetry:                       t,
 		writePolicy:                     writePolicy,
+		memoryStore:                     memoryStoreInstance,
+		memoryProfilesStore:             newMemoryProfileStore(policy),
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,
@@ -927,6 +1082,8 @@ func newServer() *server {
 		continuationSubscribers:         make(map[string][]chan map[string]any),
 		continuationHistory:             make(map[string][]map[string]any),
 		continuationExpiry:              make(map[string]time.Time),
+		lettaAgentBySession:             make(map[string]string),
+		lettaAgentVerifiedAt:            make(map[string]time.Time),
 	}
 	t.start()
 	return s
@@ -985,13 +1142,18 @@ func (s *server) allowPythonHotPathFallback(w http.ResponseWriter, path string, 
 		strings.TrimSpace(strings.ToLower(reason)),
 		total,
 	)
-	if s.pythonHotPathMode == "strict" {
+	if s.strictNoPythonRuntime || s.pythonHotPathMode == "strict" {
+		errorCode := "python_hot_path_fallback_blocked"
+		if s.strictNoPythonRuntime {
+			errorCode = "python_runtime_disabled"
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"ok":        false,
-			"error":     "python_hot_path_fallback_blocked",
+			"error":     errorCode,
 			"path":      normalizeHotPath(path),
 			"reason":    strings.TrimSpace(strings.ToLower(reason)),
 			"fallbacks": total,
+			"strict":    true,
 		})
 		return false
 	}
@@ -1158,6 +1320,11 @@ func (s *server) proxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
 		return
 	}
+	if s.strictNoPythonRuntime {
+		if !s.allowPythonHotPathFallback(w, r.URL.Path, "strict_runtime_backend_forward_disabled") {
+			return
+		}
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -1191,6 +1358,11 @@ func (s *server) proxyWithBodyToTarget(
 	targetQuery string,
 	bodyBytes []byte,
 ) {
+	if s.strictNoPythonRuntime {
+		if !s.allowPythonHotPathFallback(w, targetPath, "strict_runtime_backend_forward_disabled") {
+			return
+		}
+	}
 	targetURL := s.backendURL + targetPath
 	if query := strings.TrimSpace(targetQuery); query != "" {
 		targetURL += "?" + query
@@ -1401,6 +1573,11 @@ func (s *server) toolsFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
+	if s.strictNoPythonRuntime {
+		if !s.allowPythonHotPathFallback(w, "/tools/feedback_submit", "strict_runtime_backend_forward_disabled") {
+			return
+		}
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
@@ -1418,12 +1595,19 @@ func (s *server) toolsMemoryWriteBatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
+	if _, ok := s.prepareToolHeaders(w, r, "/tools/memory_write_batch"); !ok {
+		return
+	}
+	if s.strictNoPythonRuntime || (s.memoryStore != nil && s.memoryStore.policy.enabled) {
+		s.handleWriteBatchIngress(w, r, "/tools/memory_write_batch", "/memory/write")
+		return
+	}
 	bodyBytes, err := readRequestBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
 		return
 	}
-	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/memory_write_batch")
+	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
 	if !ok {
 		return
 	}
@@ -1435,22 +1619,16 @@ func (s *server) toolsCapabilityMap(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/capability_map")
-	if !ok {
+	if _, ok := s.prepareToolHeaders(w, r, "/tools/capability_map"); !ok {
 		return
 	}
-	bodyBytes := []byte("{}")
 	if r.Method == http.MethodPost {
-		raw, err := readRequestBody(r)
-		if err != nil {
+		if _, err := readRequestBody(r); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
 			return
 		}
-		if strings.TrimSpace(string(raw)) != "" {
-			bodyBytes = raw
-		}
 	}
-	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodPost, "/tools/capability_map", "", bodyBytes)
+	writeJSON(w, http.StatusOK, s.capabilityMapPayload())
 }
 
 func (s *server) toolsOpsQueueStatus(w http.ResponseWriter, r *http.Request) {
@@ -1458,8 +1636,7 @@ func (s *server) toolsOpsQueueStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/ops_queue_status")
-	if !ok {
+	if _, ok := s.prepareToolHeaders(w, r, "/tools/ops_queue_status"); !ok {
 		return
 	}
 	query := r.URL.Query()
@@ -1481,13 +1658,21 @@ func (s *server) toolsOpsQueueStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !hasInclude {
-		query.Set("include_deadletters", "false")
-	} else if includeDeadletters {
-		query.Set("include_deadletters", "true")
-	} else {
-		query.Set("include_deadletters", "false")
+		includeDeadletters = false
 	}
-	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodGet, "/ops/queue/status", query.Encode(), nil)
+	deadletterLimit := parseOptionalIntQuery(query.Get("deadletter_limit"), 100, 1, 500)
+	deadletterTarget := strings.TrimSpace(strings.ToLower(query.Get("deadletter_target")))
+	highWatermark := parseOptionalFloatQuery(query.Get("queue_high_watermark"), 0.85, 0.1, 1.0)
+	pendingThreshold := parseOptionalIntQuery(query.Get("pending_high_threshold"), maxInt(3, cap(s.continuationSem)/2), 1, 100000)
+	retryingThreshold := parseOptionalIntQuery(query.Get("retrying_high_threshold"), maxInt(2, cap(s.continuationSem)/4), 1, 100000)
+	writeJSON(w, http.StatusOK, s.buildQueueStatusPayload(
+		includeDeadletters,
+		deadletterLimit,
+		deadletterTarget,
+		highWatermark,
+		pendingThreshold,
+		retryingThreshold,
+	))
 }
 
 type agentPreflightRequest struct {
@@ -1600,6 +1785,9 @@ func (s *server) backendJSONRequest(
 	headers http.Header,
 	payload any,
 ) (map[string]any, int, error) {
+	if s.strictNoPythonRuntime {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("python backend forwarding disabled by strict runtime policy")
+	}
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -1945,6 +2133,9 @@ func (s *server) continuationEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) backendHealthy(ctx context.Context) bool {
+	if s.strictNoPythonRuntime {
+		return false
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.backendURL+"/health", nil)
 	if err != nil {
 		return false
@@ -1961,10 +2152,11 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":            true,
-		"service":       "gateway-go",
-		"backendUrl":    s.backendURL,
-		"backendHealth": s.backendHealthy(ctx),
+		"ok":                    true,
+		"service":               "gateway-go",
+		"backendUrl":            s.backendURL,
+		"backendHealth":         s.backendHealthy(ctx),
+		"strictNoPythonRuntime": s.strictNoPythonRuntime,
 	})
 }
 
@@ -1975,6 +2167,54 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	incomingHeaders, ok := s.prepareAuthorizedHeaders(w, r)
 	if !ok {
+		return
+	}
+	if s.strictNoPythonRuntime {
+		queueDepth, queueBySource, cooldownActive := s.currentContinuationBacklog()
+		queueMax := cap(s.continuationSem)
+		if queueMax < 1 {
+			queueMax = 1
+		}
+		queueRatio := float64(queueDepth) / float64(queueMax)
+		services := []map[string]any{
+			{"name": "gateway-go", "status": "healthy", "owner": sourceOwnerGoNative},
+			{"name": "memory-store", "status": func() string {
+				if s.memoryStore != nil && s.memoryStore.policy.enabled {
+					return "healthy"
+				}
+				return "degraded"
+			}(), "owner": sourceOwnerGoNative},
+			{"name": "memory-bank-spike-rs", "status": "healthy", "owner": sourceOwnerGoNative},
+			{"name": "qdrant/weaviate/pgvector", "status": "healthy", "owner": sourceOwnerGoNative},
+		}
+		payload := map[string]any{
+			"ok":                            true,
+			"statusSource":                  "gateway-go",
+			"backendStatusSource":           "disabled_by_strict_runtime",
+			"routeOwnerClass":               sourceOwnerGoNative,
+			"pythonHotPathOwnership":        s.pythonHotPathOwnershipSnapshot(),
+			"gatewayPythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
+			"backendPythonHotPathOwnership": map[string]any{"status": "disabled_by_strict_runtime", "fallbacks": 0},
+			"strictNoPythonRuntime":         true,
+			"sourceOwnershipMode":           s.retrieval.sourceOwnershipMode,
+			"services":                      services,
+			"runtimeBackendPolicy":          defaultRustBackendPolicy(),
+			"retrievalFastSources":          append([]string{}, s.retrieval.fastSources...),
+			"retrievalSlowSources":          append([]string{}, s.retrieval.slowSources...),
+			"retrievalDefaultSources":       append([]string{}, s.retrieval.defaultSources...),
+			"queue": map[string]any{
+				"pending":               queueDepth,
+				"memoryWriteQueueDepth": queueDepth,
+				"memoryWriteQueueMax":   queueMax,
+				"memoryWriteQueueRatio": queueRatio,
+				"bySource":              queueBySource,
+				"cooldownActive":        cooldownActive,
+			},
+			"warnings": []string{
+				"Python backend forwarding is disabled by strict runtime policy; all active lanes run through Go/Rust services.",
+			},
+		}
+		writeJSON(w, http.StatusOK, payload)
 		return
 	}
 	backendPath := "/status"
@@ -2007,6 +2247,11 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	payload["gatewayPythonHotPathOwnership"] = gatewayOwnership
 	payload["statusSource"] = "gateway-go"
 	payload["backendStatusSource"] = "contextlattice-orchestrator"
+	payload["routeOwnerClass"] = sourceOwnerGoNative
+	payload["fallbackCounts"] = map[string]any{
+		"pythonHotPathTotal": anyToInt(gatewayOwnership["fallbacks"], 0),
+	}
+	payload["sourceOwnershipMode"] = s.retrieval.sourceOwnershipMode
 
 	warnings := parseWarnings(payload["warnings"])
 	if backendMap, ok := backendOwnership.(map[string]any); ok {
@@ -2028,9 +2273,21 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) info(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"description": "ContextLattice gateway-go retrieval/memory proxy",
-		"backendUrl":  s.backendURL,
+		"ok":                    true,
+		"description":           "ContextLattice gateway-go retrieval/memory proxy",
+		"backendUrl":            s.backendURL,
+		"strictNoPythonRuntime": s.strictNoPythonRuntime,
+		"memoryStore": map[string]any{
+			"enabled": func() bool {
+				return s.memoryStore != nil && s.memoryStore.policy.enabled
+			}(),
+			"rootPath": func() string {
+				if s.memoryStore == nil {
+					return ""
+				}
+				return s.memoryStore.policy.rootPath
+			}(),
+		},
 		"retrieval": map[string]any{
 			"stagedEnabled":              s.retrieval.enabled,
 			"fastSources":                s.retrieval.fastSources,
@@ -2079,6 +2336,16 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"subcallDisableAutoEscalate":       s.retrieval.subcallDisableAutoEscalate,
 			"telemetryBatchEnabled":            s.retrieval.telemetryBatchEnabled,
 			"telemetryBatchFlushIntervalSecs":  s.retrieval.telemetryBatchFlushInterval.Seconds(),
+			"sourceOwnershipMode":              s.retrieval.sourceOwnershipMode,
+			"sourceOwnershipStrictFastAllowPy": mapKeysSorted(s.retrieval.sourceOwnershipStrictFastAllowPy),
+			"sourceOwnersKnownNative": map[string]any{
+				sourceQdrant:      sourceOwnerGoNative,
+				sourceWeaviate:    sourceOwnerGoNative,
+				sourcePgvector:    sourceOwnerGoNative,
+				sourceTopicRollup: sourceOwnerGoNative,
+				sourceLetta:       sourceOwnerGoNative,
+			},
+			"routeOwnerClass": sourceOwnerGoNative,
 		},
 		"pythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
 		"writeIngress": map[string]any{
@@ -2315,6 +2582,132 @@ func parseRows(value any) []map[string]any {
 		}
 	}
 	return rows
+}
+
+func parseJSONArray(value []byte) ([]any, error) {
+	var payload []any
+	if err := json.Unmarshal(value, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func queryTerms(query string, maxTerms int) []string {
+	normalized := strings.ToLower(strings.TrimSpace(query))
+	if normalized == "" || maxTerms < 1 {
+		return nil
+	}
+	matches := queryTermPattern.FindAllString(normalized, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	terms := make([]string, 0, maxTerms)
+	for _, token := range matches {
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		terms = append(terms, token)
+		if len(terms) >= maxTerms {
+			break
+		}
+	}
+	return terms
+}
+
+func textMatchScore(query string, text string) float64 {
+	queryText := strings.ToLower(strings.TrimSpace(query))
+	body := strings.ToLower(text)
+	if queryText == "" || strings.TrimSpace(body) == "" {
+		return 0
+	}
+	if strings.Contains(body, queryText) {
+		return 1.0
+	}
+	terms := queryTerms(queryText, 10)
+	if len(terms) == 0 {
+		return 0
+	}
+	hits := 0
+	for _, term := range terms {
+		if strings.Contains(body, term) {
+			hits += 1
+		}
+	}
+	if hits <= 0 {
+		return 0
+	}
+	density := float64(len(body)) / 4000.0
+	if density > 1.0 {
+		density = 1.0
+	}
+	score := (float64(hits) / float64(len(terms))) * (0.55 + 0.45*density)
+	if score > 0.95 {
+		return 0.95
+	}
+	return score
+}
+
+func parseLettaArchivalContent(text string) map[string]string {
+	project := ""
+	fileName := ""
+	topicPath := ""
+	summary := ""
+	lines := strings.Split(text, "\n")
+	trimmed := make([]string, 0, len(lines))
+	for _, line := range lines {
+		candidate := strings.TrimSpace(line)
+		if candidate != "" {
+			trimmed = append(trimmed, candidate)
+		}
+	}
+	if len(trimmed) > 0 {
+		header := trimmed[0]
+		for _, match := range lettaHeaderPattern.FindAllStringSubmatch(header, -1) {
+			if len(match) < 3 {
+				continue
+			}
+			key := strings.TrimSpace(strings.ToLower(match[1]))
+			value := strings.TrimSpace(match[2])
+			switch key {
+			case "project":
+				project = value
+			case "file":
+				fileName = value
+			case "topic":
+				topicPath = value
+			}
+		}
+	}
+	for _, line := range trimmed[1:] {
+		if strings.HasPrefix(strings.ToLower(line), "summary:") {
+			summary = strings.TrimSpace(strings.TrimPrefix(line, "summary:"))
+			if summary == line {
+				summary = strings.TrimSpace(strings.TrimPrefix(line, "Summary:"))
+			}
+			break
+		}
+	}
+	if summary == "" {
+		summary = strings.TrimSpace(text)
+		if len(summary) > 500 {
+			summary = summary[:500]
+		}
+	}
+	normalizeValue := func(value string) string {
+		candidate := strings.TrimSpace(value)
+		if candidate == "-" {
+			return ""
+		}
+		return candidate
+	}
+	return map[string]string{
+		"project":    normalizeValue(project),
+		"file":       normalizeValue(fileName),
+		"topic_path": normalizeValue(topicPath),
+		"summary":    summary,
+	}
 }
 
 func parseScore(row map[string]any) float64 {
@@ -3029,35 +3422,533 @@ func (s *server) shouldAdaptiveSkip(source string) bool {
 	return ok
 }
 
+func (s *server) lettaConfigEnabled() bool {
+	if strings.TrimSpace(s.letta.autoSessionID) == "" {
+		return false
+	}
+	if s.letta.requireAPIKey && strings.TrimSpace(s.letta.apiKey) == "" {
+		return false
+	}
+	return strings.TrimSpace(s.letta.url) != ""
+}
+
+func capContextTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= timeout {
+			return ctx, func() {}
+		}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func (s *server) doLettaRequest(
+	ctx context.Context,
+	method string,
+	path string,
+	queryParams url.Values,
+	body any,
+) (int, []byte, error) {
+	if strings.TrimSpace(s.letta.url) == "" {
+		return 0, nil, errors.New("letta url not configured")
+	}
+	fullURL := strings.TrimRight(s.letta.url, "/") + path
+	if len(queryParams) > 0 {
+		fullURL = fullURL + "?" + queryParams.Encode()
+	}
+	var reader io.Reader
+	if body != nil {
+		payloadBytes, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, err
+		}
+		reader = bytes.NewReader(payloadBytes)
+	}
+	requestCtx, cancel := capContextTimeout(ctx, s.letta.requestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, method, fullURL, reader)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token := strings.TrimSpace(s.letta.apiKey); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, payload, nil
+}
+
+func parseLettaAgentIDFromList(payload []byte) string {
+	rows, err := parseJSONArray(payload)
+	if err != nil || len(rows) == 0 {
+		return ""
+	}
+	first, ok := rows[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(anyToString(first["id"]))
+}
+
+func parseLettaAgentIDFromObject(payload []byte) string {
+	obj, err := parseJSONMap(payload)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(anyToString(obj["id"]))
+}
+
+func parseLettaResponseError(statusCode int, payload []byte) error {
+	body := strings.TrimSpace(string(payload))
+	if len(body) > 300 {
+		body = body[:300]
+	}
+	return fmt.Errorf("Letta request failed: status=%d body=%s", statusCode, body)
+}
+
+func (s *server) resolveLettaAgentID(ctx context.Context) (string, error) {
+	sessionID := strings.TrimSpace(s.letta.autoSessionID)
+	if strings.HasPrefix(sessionID, "agent-") {
+		return sessionID, nil
+	}
+	now := time.Now().UTC()
+	s.lettaAgentMu.Lock()
+	cached := strings.TrimSpace(s.lettaAgentBySession[sessionID])
+	verifiedAt := s.lettaAgentVerifiedAt[sessionID]
+	if cached != "" && now.Sub(verifiedAt) < s.letta.verifyInterval {
+		s.lettaAgentMu.Unlock()
+		return cached, nil
+	}
+	s.lettaAgentMu.Unlock()
+
+	verifyAgent := func(agentID string) (string, error) {
+		if strings.TrimSpace(agentID) == "" {
+			return "", errors.New("letta agent id is empty")
+		}
+		statusCode, payload, err := s.doLettaRequest(ctx, http.MethodGet, "/v1/agents/"+agentID, nil, nil)
+		if err != nil {
+			return "", err
+		}
+		if statusCode >= 400 {
+			return "", parseLettaResponseError(statusCode, payload)
+		}
+		s.lettaAgentMu.Lock()
+		s.lettaAgentBySession[sessionID] = agentID
+		s.lettaAgentVerifiedAt[sessionID] = time.Now().UTC()
+		s.lettaAgentMu.Unlock()
+		return agentID, nil
+	}
+
+	if cached != "" {
+		agentID, err := verifyAgent(cached)
+		if err == nil {
+			return agentID, nil
+		}
+	}
+
+	lookupParams := url.Values{}
+	lookupParams.Set("name", sessionID)
+	statusCode, payload, err := s.doLettaRequest(ctx, http.MethodGet, "/v1/agents/", lookupParams, nil)
+	if err != nil {
+		return "", err
+	}
+	if statusCode >= 400 {
+		return "", parseLettaResponseError(statusCode, payload)
+	}
+	if agentID := parseLettaAgentIDFromList(payload); agentID != "" {
+		return verifyAgent(agentID)
+	}
+
+	createPayload := map[string]any{"name": sessionID}
+	if model := strings.TrimSpace(s.letta.agentModel); model != "" {
+		createPayload["model"] = model
+	}
+	if embedding := strings.TrimSpace(s.letta.agentEmbedding); embedding != "" {
+		createPayload["embedding"] = embedding
+	}
+	statusCode, payload, err = s.doLettaRequest(ctx, http.MethodPost, "/v1/agents/", nil, createPayload)
+	if err != nil {
+		return "", err
+	}
+	if statusCode >= 400 {
+		if statusCode == http.StatusConflict || statusCode == http.StatusUnprocessableEntity {
+			retryStatus, retryPayload, retryErr := s.doLettaRequest(ctx, http.MethodGet, "/v1/agents/", lookupParams, nil)
+			if retryErr != nil {
+				return "", retryErr
+			}
+			if retryStatus >= 400 {
+				return "", parseLettaResponseError(retryStatus, retryPayload)
+			}
+			if agentID := parseLettaAgentIDFromList(retryPayload); agentID != "" {
+				return verifyAgent(agentID)
+			}
+		}
+		return "", parseLettaResponseError(statusCode, payload)
+	}
+	agentID := parseLettaAgentIDFromObject(payload)
+	if agentID == "" {
+		return "", errors.New("Letta agent create returned no id")
+	}
+	return verifyAgent(agentID)
+}
+
+func parseLettaSearchResults(payload []byte) ([]any, error) {
+	response, err := parseJSONMap(payload)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := response["results"].([]any)
+	if !ok {
+		return nil, nil
+	}
+	return raw, nil
+}
+
+func (s *server) queryLettaSource(
+	ctx context.Context,
+	baseRequest map[string]any,
+) ([]map[string]any, []string, error) {
+	if !s.lettaConfigEnabled() {
+		return nil, nil, nil
+	}
+	query := strings.TrimSpace(anyToString(baseRequest["query"]))
+	if query == "" {
+		return nil, nil, nil
+	}
+	limit := clampInt(anyToInt(baseRequest["limit"], 10), 1, 100)
+	retrievalMode := normalizeRetrievalMode(anyToString(baseRequest["retrieval_mode"]))
+	topK := s.lettaTopKForMode(retrievalMode, limit)
+	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
+	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
+
+	agentID, err := s.resolveLettaAgentID(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	params := url.Values{}
+	params.Set("query", query)
+	params.Set("top_k", strconv.Itoa(topK))
+	if projectFilter != "" {
+		params.Add("tags", "project:"+projectFilter)
+	}
+	statusCode, payload, err := s.doLettaRequest(
+		ctx,
+		http.MethodGet,
+		"/v1/agents/"+agentID+"/archival-memory/search",
+		params,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if statusCode >= 400 {
+		return nil, nil, parseLettaResponseError(statusCode, payload)
+	}
+	results, err := parseLettaSearchResults(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows := make([]map[string]any, 0, len(results))
+	for _, item := range results {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		content := strings.TrimSpace(anyToString(entry["content"]))
+		if content == "" {
+			content = strings.TrimSpace(anyToString(entry["text"]))
+		}
+		parsed := parseLettaArchivalContent(content)
+		project := strings.TrimSpace(parsed["project"])
+		if project == "" {
+			project = projectFilter
+		}
+		fileName := strings.TrimSpace(parsed["file"])
+		topicPath := strings.TrimSpace(parsed["topic_path"])
+		summary := strings.TrimSpace(parsed["summary"])
+		if summary == "" {
+			summary = clipText(content, 500)
+		}
+		if projectFilter != "" && project != "" && project != projectFilter {
+			continue
+		}
+		if topicFilter != "" && topicPath != "" && !strings.HasPrefix(topicPath, topicFilter) {
+			continue
+		}
+		score := textMatchScore(query, project+"\n"+fileName+"\n"+summary+"\n"+content)
+		if score <= 0 {
+			continue
+		}
+		row := map[string]any{
+			"project":          nil,
+			"file":             nil,
+			"summary":          summary,
+			"score":            score,
+			"source":           sourceLetta,
+			"topic_path":       nil,
+			"created_at":       entry["timestamp"],
+			"letta_passage_id": entry["id"],
+		}
+		if project != "" {
+			row["project"] = project
+		}
+		if fileName != "" {
+			row["file"] = fileName
+		}
+		if topicPath != "" {
+			row["topic_path"] = topicPath
+		}
+		rows = append(rows, row)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return parseScore(rows[i]) > parseScore(rows[j])
+	})
+	if len(rows) == 0 && !s.strictNoPythonRuntime {
+		return nil, nil, errors.New("memory store topic rollups empty")
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil, nil
+}
+
+func (s *server) queryTopicRollupsSource(
+	ctx context.Context,
+	incomingHeaders http.Header,
+	baseRequest map[string]any,
+) ([]map[string]any, []string, error) {
+	query := strings.TrimSpace(anyToString(baseRequest["query"]))
+	if query == "" {
+		return nil, nil, errors.New("query is required")
+	}
+	limit := clampInt(anyToInt(baseRequest["limit"], 10), 1, 100)
+	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
+	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
+	topics := make([]any, 0)
+	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+		rollups := s.memoryStore.topicRollupsWithContext(ctx, projectFilter, 1, 5000, 0)
+		if memoryTopics, ok := rollups["topics"].([]any); ok && len(memoryTopics) > 0 {
+			topics = memoryTopics
+		}
+	}
+	if len(topics) == 0 {
+		if s.strictNoPythonRuntime {
+			return nil, nil, errors.New("memory store topic rollups empty")
+		}
+		backendPayload := map[string]any{
+			"project":  projectFilter,
+			"topN":     5000,
+			"maxDepth": 1,
+		}
+		backendRollups, _, err := s.backendJSONRequest(
+			ctx,
+			http.MethodPost,
+			"/memory/topic-rollups",
+			incomingHeaders,
+			backendPayload,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("backend topic rollups unavailable: %w", err)
+		}
+		if backendTopics, ok := backendRollups["topics"].([]any); ok && len(backendTopics) > 0 {
+			topics = backendTopics
+		}
+	}
+	if len(topics) == 0 {
+		return nil, nil, errors.New("topic rollups unavailable")
+	}
+	rows := make([]map[string]any, 0, len(topics))
+	for _, topicRow := range topics {
+		topic, ok := topicRow.(map[string]any)
+		if !ok {
+			continue
+		}
+		topicPath := strings.TrimSpace(anyToString(topic["path"]))
+		if topicPath == "" {
+			continue
+		}
+		if topicFilter != "" {
+			if topicPath != topicFilter && !strings.HasPrefix(topicPath, topicFilter+"/") {
+				continue
+			}
+		}
+		project := strings.TrimSpace(anyToString(topic["project"]))
+		if project == "" {
+			project = projectFilter
+		}
+		snippets := anyToStringSlice(topic["summarySnippets"])
+		text := strings.TrimSpace(topicPath + "\n" + strings.Join(snippets, "\n"))
+		score := textMatchScore(query, text)
+		if score <= 0 {
+			continue
+		}
+		summary := ""
+		if len(snippets) > 0 {
+			summary = strings.TrimSpace(snippets[0])
+		}
+		if summary == "" {
+			summary = "Topic rollup for " + topicPath
+		}
+		fileName := "_rollups/topics/" + strings.ReplaceAll(topicPath, "/", "_") + ".json"
+		rows = append(rows, map[string]any{
+			"project":    project,
+			"file":       fileName,
+			"summary":    summary,
+			"score":      score,
+			"source":     sourceTopicRollup,
+			"topic_path": topicPath,
+			"created_at": topic["latestTimestamp"],
+		})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return parseScore(rows[i]) > parseScore(rows[j])
+	})
+	if len(rows) == 0 {
+		return nil, nil, errors.New("topic rollups did not match query")
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil, nil
+}
+
 func (s *server) callBackendSourceQuery(
 	ctx context.Context,
 	incomingHeaders http.Header,
 	baseRequest map[string]any,
 	source string,
 	explicitSourceOverride bool,
-) ([]map[string]any, []string, error) {
+) ([]map[string]any, []string, map[string]any, string, error) {
+	if source == sourceLetta {
+		rows, warnings, err := s.queryLettaSource(ctx, baseRequest)
+		return rows, warnings, nil, sourceOwnerGoNative, err
+	}
+	if source == sourceMemoryBank {
+		rows, warnings, sourceTrace, owner, err := s.queryMemoryBankSource(
+			ctx,
+			incomingHeaders,
+			baseRequest,
+			explicitSourceOverride,
+		)
+		return rows, warnings, sourceTrace, owner, err
+	}
+	fallbackWarnings := []string{}
+	if source == sourceQdrant {
+		rows, warnings, err := s.queryQdrantSource(ctx, baseRequest)
+		if err == nil {
+			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		fallbackWarnings = append(
+			fallbackWarnings,
+			"qdrant go-adapter fallback to backend retrieval lane: "+err.Error(),
+		)
+	}
+	if source == sourceWeaviate {
+		rows, warnings, err := s.queryWeaviateSource(ctx, baseRequest)
+		if err == nil {
+			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		fallbackWarnings = append(
+			fallbackWarnings,
+			"weaviate go-adapter fallback to backend retrieval lane: "+err.Error(),
+		)
+	}
+	if source == sourcePgvector {
+		rows, warnings, err := s.queryPostgresPgvectorSource(ctx, baseRequest)
+		if err == nil {
+			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		fallbackWarnings = append(
+			fallbackWarnings,
+			"postgres_pgvector go-adapter fallback to backend retrieval lane: "+err.Error(),
+		)
+	}
+	if source == sourceTopicRollup {
+		rows, warnings, err := s.queryTopicRollupsSource(ctx, incomingHeaders, baseRequest)
+		if err == nil {
+			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		fallbackWarnings = append(
+			fallbackWarnings,
+			"topic_rollups go-adapter fallback to backend retrieval lane: "+err.Error(),
+		)
+	}
+	if s.strictNoPythonRuntime {
+		if len(fallbackWarnings) > 0 {
+			fallbackWarnings = append(fallbackWarnings, "python backend fallback disabled by strict runtime policy")
+		}
+		return []map[string]any{}, fallbackWarnings, nil, sourceOwnerGoNative, errors.New("python backend fallback disabled for source " + source)
+	}
+	rows, warnings, _, err := s.queryBackendSourceSingle(
+		ctx,
+		incomingHeaders,
+		baseRequest,
+		source,
+		explicitSourceOverride,
+		"",
+	)
+	if err != nil {
+		return nil, nil, nil, sourceOwnerPythonBackendFallback, err
+	}
+	for _, row := range rows {
+		if strings.TrimSpace(anyToString(row["source"])) == "" {
+			row["source"] = source
+		}
+	}
+	warnings = append(warnings, fallbackWarnings...)
+	return rows, warnings, nil, sourceOwnerPythonBackendFallback, nil
+}
+
+func (s *server) queryBackendSourceSingle(
+	ctx context.Context,
+	incomingHeaders http.Header,
+	baseRequest map[string]any,
+	source string,
+	explicitSourceOverride bool,
+	memoryBankBackendOverride string,
+) ([]map[string]any, []string, map[string]any, error) {
+	if s.strictNoPythonRuntime {
+		return nil, nil, nil, errors.New("python backend retrieval disabled by strict runtime policy")
+	}
 	sourceRequest := cloneMap(baseRequest)
 	sourceRequest["sources"] = []string{source}
-	if source == sourceLetta {
-		mode := normalizeRetrievalMode(anyToString(sourceRequest["retrieval_mode"]))
-		limit := clampInt(anyToInt(sourceRequest["limit"], 10), 1, 100)
-		sourceRequest["limit"] = s.lettaTopKForMode(mode, limit)
-	}
 	if s.retrieval.subcallDisableExpansion && !explicitSourceOverride {
 		sourceRequest["query_expansion"] = false
 	}
 	if s.retrieval.subcallDisableAutoEscalate && !explicitSourceOverride {
 		sourceRequest["auto_escalate"] = false
 	}
+	if source == sourceMemoryBank && strings.TrimSpace(memoryBankBackendOverride) != "" {
+		backendPolicy := map[string]any{}
+		if existing, ok := sourceRequest["backend_policy"].(map[string]any); ok {
+			backendPolicy = cloneMap(existing)
+		}
+		backendPolicy["memory_bank_backend"] = strings.TrimSpace(strings.ToLower(memoryBankBackendOverride))
+		sourceRequest["backend_policy"] = backendPolicy
+	}
 	wrapper := map[string]any{"request": sourceRequest}
 	payloadBytes, err := json.Marshal(wrapper)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	requestURL := s.backendURL + "/v1/retrieval/query"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payloadBytes))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	s.copyHeaders(req.Header, incomingHeaders)
@@ -3065,28 +3956,23 @@ func (s *server) callBackendSourceQuery(
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, nil, errors.New("backend retrieval status=" + strconv.Itoa(resp.StatusCode))
+		return nil, nil, nil, errors.New("backend retrieval status=" + strconv.Itoa(resp.StatusCode))
 	}
 	payload, err := parseJSONMap(bodyBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	rows := parseRows(payload["results"])
-	for _, row := range rows {
-		if strings.TrimSpace(anyToString(row["source"])) == "" {
-			row["source"] = source
-		}
-	}
 	warnings := parseWarnings(payload["warnings"])
-	return rows, warnings, nil
+	return rows, warnings, payload, nil
 }
 
 func cloneAnyMap(input map[string]any) map[string]any {
@@ -3098,6 +3984,27 @@ func cloneAnyMap(input map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func mergeSourceChainDebug(
+	target map[string][]map[string]any,
+	delta map[string][]map[string]any,
+) {
+	if target == nil || len(delta) == 0 {
+		return
+	}
+	for source, entries := range delta {
+		source = strings.TrimSpace(strings.ToLower(source))
+		if source == "" || len(entries) == 0 {
+			continue
+		}
+		for _, entry := range entries {
+			if len(entry) == 0 {
+				continue
+			}
+			target[source] = append(target[source], cloneAnyMap(entry))
+		}
+	}
 }
 
 func nowUTCISO() string {
@@ -3270,7 +4177,7 @@ func (s *server) scheduleContinuationWarm(
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		start := time.Now()
-		_, _, err := s.callBackendSourceQuery(ctx, incomingHeaders, baseRequest, source, true)
+		_, _, _, _, err := s.callBackendSourceQuery(ctx, incomingHeaders, baseRequest, source, true)
 		status := "ok"
 		errorText := ""
 		cooldownRemaining := 0.0
@@ -3300,6 +4207,8 @@ func (s *server) scheduleContinuationWarm(
 
 type sourceCallResult struct {
 	source         string
+	sourceOwner    string
+	sourceTrace    map[string]any
 	phase          string
 	rows           []map[string]any
 	warnings       []string
@@ -3312,7 +4221,9 @@ type sourceCallResult struct {
 
 type sourceBatchOutput struct {
 	rows                  map[string][]map[string]any
+	sourceOwners          map[string]string
 	sourceErrors          map[string]map[string]any
+	sourceChainDebug      map[string][]map[string]any
 	warnings              []string
 	timedOutSources       []string
 	budgetExceededSources []string
@@ -3338,7 +4249,9 @@ func (s *server) runSourceBatch(
 ) sourceBatchOutput {
 	output := sourceBatchOutput{
 		rows:                  make(map[string][]map[string]any),
+		sourceOwners:          make(map[string]string),
 		sourceErrors:          make(map[string]map[string]any),
+		sourceChainDebug:      make(map[string][]map[string]any),
 		warnings:              []string{},
 		effectiveTimeoutsSecs: make(map[string]float64),
 		adaptiveBudgets:       make(map[string]map[string]any),
@@ -3377,7 +4290,7 @@ func (s *server) runSourceBatch(
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			rows, warnings, err := s.callBackendSourceQuery(sourceCtx, incomingHeaders, baseRequest, sourceName, explicitSourceOverride)
+			rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(sourceCtx, incomingHeaders, baseRequest, sourceName, explicitSourceOverride)
 			latency := time.Since(start)
 			timedOut := false
 			budgetExceeded := false
@@ -3409,6 +4322,8 @@ func (s *server) runSourceBatch(
 			})
 			resultsCh <- sourceCallResult{
 				source:         sourceName,
+				sourceOwner:    owner,
+				sourceTrace:    sourceTrace,
 				phase:          phase,
 				rows:           rows,
 				warnings:       warnings,
@@ -3423,6 +4338,21 @@ func (s *server) runSourceBatch(
 
 	for i := 0; i < started; i++ {
 		result := <-resultsCh
+		if strings.TrimSpace(result.sourceOwner) == "" {
+			result.sourceOwner = sourceOwnerForSource(result.source)
+		}
+		output.sourceOwners[result.source] = result.sourceOwner
+		if len(result.sourceTrace) > 0 {
+			output.sourceChainDebug[result.source] = append(
+				output.sourceChainDebug[result.source],
+				cloneAnyMap(result.sourceTrace),
+			)
+		}
+		for _, row := range result.rows {
+			if strings.TrimSpace(anyToString(row["source_owner"])) == "" {
+				row["source_owner"] = result.sourceOwner
+			}
+		}
 		if len(result.rows) > 0 {
 			output.rows[result.source] = result.rows
 		}
@@ -3682,7 +4612,9 @@ func (s *server) executeRetrieval(
 
 	warnings := []string{}
 	sourceErrors := map[string]map[string]any{}
+	sourceOwners := map[string]string{}
 	sourceRows := map[string][]map[string]any{}
+	sourceChainDebug := map[string][]map[string]any{}
 	effectiveTimeouts := map[string]float64{}
 	adaptiveBudgets := map[string]map[string]any{}
 	timedOutObserved := map[string]struct{}{}
@@ -3714,6 +4646,10 @@ func (s *server) executeRetrieval(
 	for source, rows := range fastBatch.rows {
 		sourceRows[source] = rows
 	}
+	for source, owner := range fastBatch.sourceOwners {
+		sourceOwners[source] = owner
+	}
+	mergeSourceChainDebug(sourceChainDebug, fastBatch.sourceChainDebug)
 	for source, payload := range fastBatch.sourceErrors {
 		sourceErrors[source] = payload
 	}
@@ -3806,6 +4742,10 @@ func (s *server) executeRetrieval(
 						for source, rows := range rustBatch.rows {
 							sourceRows[source] = rows
 						}
+						for source, owner := range rustBatch.sourceOwners {
+							sourceOwners[source] = owner
+						}
+						mergeSourceChainDebug(sourceChainDebug, rustBatch.sourceChainDebug)
 						for source, payload := range rustBatch.sourceErrors {
 							sourceErrors[source] = payload
 						}
@@ -3878,6 +4818,10 @@ func (s *server) executeRetrieval(
 				for source, rows := range slowBatch.rows {
 					sourceRows[source] = rows
 				}
+				for source, owner := range slowBatch.sourceOwners {
+					sourceOwners[source] = owner
+				}
+				mergeSourceChainDebug(sourceChainDebug, slowBatch.sourceChainDebug)
 				for source, payload := range slowBatch.sourceErrors {
 					sourceErrors[source] = payload
 				}
@@ -3926,6 +4870,10 @@ func (s *server) executeRetrieval(
 			for source, rows := range slowBatch.rows {
 				sourceRows[source] = rows
 			}
+			for source, owner := range slowBatch.sourceOwners {
+				sourceOwners[source] = owner
+			}
+			mergeSourceChainDebug(sourceChainDebug, slowBatch.sourceChainDebug)
 			for source, payload := range slowBatch.sourceErrors {
 				sourceErrors[source] = payload
 			}
@@ -3979,6 +4927,10 @@ func (s *server) executeRetrieval(
 				}
 				sourceRows[source] = rows
 			}
+			for source, owner := range rescueBatch.sourceOwners {
+				sourceOwners[source] = owner
+			}
+			mergeSourceChainDebug(sourceChainDebug, rescueBatch.sourceChainDebug)
 			for source, payload := range rescueBatch.sourceErrors {
 				sourceErrors[source] = payload
 			}
@@ -4059,6 +5011,51 @@ func (s *server) executeRetrieval(
 		returnedSources = append(returnedSources, source)
 	}
 	sort.Strings(returnedSources)
+	sourceOwnerBySource := map[string]string{}
+	for source, owner := range sourceOwners {
+		normalizedSource := strings.TrimSpace(strings.ToLower(source))
+		if normalizedSource == "" {
+			continue
+		}
+		normalizedOwner := strings.TrimSpace(strings.ToLower(owner))
+		if normalizedOwner == "" {
+			normalizedOwner = sourceOwnerForSource(normalizedSource)
+		}
+		sourceOwnerBySource[normalizedSource] = normalizedOwner
+	}
+	sourceOwnerCountsMap := sourceOwnerCounts(sourceOwnerBySource)
+	ownershipViolations := []string{}
+	if s.retrieval.sourceOwnershipMode != "off" {
+		for _, source := range fastSources {
+			owner := strings.TrimSpace(strings.ToLower(sourceOwnerBySource[source]))
+			if owner != sourceOwnerPythonBackendFallback {
+				continue
+			}
+			if _, allowed := s.retrieval.sourceOwnershipStrictFastAllowPy[source]; allowed {
+				continue
+			}
+			ownershipViolations = append(ownershipViolations, source)
+		}
+		ownershipViolations = normalizeSourceList(ownershipViolations)
+		if len(ownershipViolations) > 0 {
+			message := "Source ownership policy detected python fallback on fast-source lanes: " + strings.Join(ownershipViolations, ", ") + "."
+			if s.retrieval.sourceOwnershipMode == "strict" {
+				return map[string]any{
+					"ok":                    false,
+					"error":                 "source_ownership_violation",
+					"route_owner_class":     sourceOwnerGoNative,
+					"source_owner_class":    sourceOwnerClass(sourceOwnerBySource),
+					"source_owners":         sourceOwnerBySource,
+					"source_owner_counts":   sourceOwnerCountsMap,
+					"ownership_violations":  ownershipViolations,
+					"python_hotpath_counts": s.pythonHotPathOwnershipSnapshot(),
+					"message":               message,
+				}, http.StatusServiceUnavailable, nil
+			}
+			warnings = append(warnings, message)
+		}
+	}
+
 	deferredCandidatesSet := map[string]struct{}{}
 	for _, source := range asyncWarmSlowSources {
 		deferredCandidatesSet[source] = struct{}{}
@@ -4142,6 +5139,17 @@ func (s *server) executeRetrieval(
 	if hasMaterialSourceErrors {
 		resultState = "degraded"
 	}
+	sourceChainDebugPayload := map[string]any{}
+	for source, entries := range sourceChainDebug {
+		if len(entries) == 0 {
+			continue
+		}
+		sourceChainDebugPayload[source] = entries
+	}
+	memoryBankFallbackChain := []map[string]any{}
+	if entries, ok := sourceChainDebug[sourceMemoryBank]; ok && len(entries) > 0 {
+		memoryBankFallbackChain = entries
+	}
 	lifecycle := buildRetrievalLifecyclePayload(
 		resultState,
 		returnedSources,
@@ -4152,11 +5160,18 @@ func (s *server) executeRetrieval(
 		budgetExceededList,
 	)
 	debug := map[string]any{
-		"retrieval_mode":   retrievalMode,
-		"retrieval_intent": retrievalIntent,
-		"sources":          resolvedSources,
-		"source_counts":    sourceCounts,
-		"source_errors":    sourceErrors,
+		"retrieval_mode":      retrievalMode,
+		"retrieval_intent":    retrievalIntent,
+		"sources":             resolvedSources,
+		"source_counts":       sourceCounts,
+		"source_errors":       sourceErrors,
+		"source_owners":       sourceOwnerBySource,
+		"source_owner_counts": sourceOwnerCountsMap,
+		"source_owner_class":  sourceOwnerClass(sourceOwnerBySource),
+		"route_owner_class":   sourceOwnerGoNative,
+		"fallback_counts": map[string]any{
+			"python_hot_path_total": s.pythonHotPathFallbacks.Load(),
+		},
 		"source_policy": map[string]any{
 			"staged_enabled":               s.retrieval.enabled,
 			"fast_sources":                 s.retrieval.fastSources,
@@ -4193,6 +5208,8 @@ func (s *server) executeRetrieval(
 				"factor": s.retrieval.lettaTopKFactor,
 				"cap":    s.retrieval.lettaTopKCap,
 			},
+			"letta_native_gateway_lane":              true,
+			"letta_native_gateway_config_enabled":    s.lettaConfigEnabled(),
 			"fail_open_timeout_continuation_enabled": s.retrieval.failOpenContinuationEnabled,
 			"timeout_adaptive_skip_enabled":          s.retrieval.timeoutAdaptiveSkipEnabled,
 			"adaptive_timeout_enabled":               s.retrieval.adaptiveTimeoutEnabled,
@@ -4228,6 +5245,12 @@ func (s *server) executeRetrieval(
 			"rust_quality_fallback_enabled":       s.retrieval.rustQualityFallbackEnabled,
 			"rust_quality_fallback_sources":       s.retrieval.rustQualityFallbackSources,
 			"rust_quality_fallback_mode":          s.retrieval.rustQualityFallbackMode,
+			"source_ownership_mode":               s.retrieval.sourceOwnershipMode,
+			"source_ownership_strict_fast_allow_python": mapKeysSorted(
+				s.retrieval.sourceOwnershipStrictFastAllowPy,
+			),
+			"source_chain_debug":         sourceChainDebugPayload,
+			"memory_bank_fallback_chain": memoryBankFallbackChain,
 		},
 		"staged_fetch": map[string]any{
 			"enabled":                          true,
@@ -4262,6 +5285,11 @@ func (s *server) executeRetrieval(
 		"warnings":            dedupeWarnings(warnings),
 		"result_state":        resultState,
 		"retrieval_lifecycle": lifecycle,
+		"route_owner_class":   sourceOwnerGoNative,
+		"source_owner_class":  sourceOwnerClass(sourceOwnerBySource),
+		"fallback_counts": map[string]any{
+			"python_hot_path_total": s.pythonHotPathFallbacks.Load(),
+		},
 		"source_summary": map[string]any{
 			"sources":                 resolvedSources,
 			"returned_now":            returnedSources,
@@ -4271,6 +5299,7 @@ func (s *server) executeRetrieval(
 			"failed_sources":          failedSources,
 			"budget_exceeded_sources": budgetExceededList,
 			"skipped_sources":         skippedList,
+			"source_owners":           sourceOwnerBySource,
 		},
 	}
 	if len(continuationSources) > 0 && continuationToken != "" {
@@ -4493,7 +5522,7 @@ func (s *server) retrievalHealth(w http.ResponseWriter, r *http.Request) {
 func buildMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
-	mux.HandleFunc("/health", s.proxy)
+	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/status", s.status)
 	mux.HandleFunc("/v1/info", s.info)
 	mux.HandleFunc("/v1/codex/preflight", s.codexPreflight)
@@ -4506,47 +5535,47 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)
 	mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)
 	mux.HandleFunc("/v1/retrieval/health", s.retrievalHealth)
-	mux.HandleFunc("/memory/search/continuations/", s.continuationEvents)
+	mux.HandleFunc("/memory/search/continuations/", s.memorySearchContinuationsRoute)
 	mux.HandleFunc("/memory/search", s.memorySearch)
-	mux.HandleFunc("/memory/search/async/", s.proxy)
-	mux.HandleFunc("/memory/search/jobs/", s.proxy)
+	mux.HandleFunc("/memory/search/async/", s.memorySearchAsyncStatus)
+	mux.HandleFunc("/memory/search/jobs/", s.memorySearchJobsRoute)
 	mux.HandleFunc("/memory/write", s.memoryWrite)
-	mux.HandleFunc("/memory/recall/eval-cases", s.proxy)
-	mux.HandleFunc("/memory/recall/eval-cases/refresh", s.proxy)
-	mux.HandleFunc("/memory/recall/evaluate/saved", s.proxy)
+	mux.HandleFunc("/memory/recall/eval-cases", s.memoryRecallEvalCases)
+	mux.HandleFunc("/memory/recall/eval-cases/refresh", s.memoryRecallEvalCasesRefresh)
+	mux.HandleFunc("/memory/recall/evaluate/saved", s.memoryRecallEvaluateSaved)
 	mux.HandleFunc("/memory/write/batch", s.memoryWriteBatch)
-	mux.HandleFunc("/memory/recent", s.proxy)
-	mux.HandleFunc("/memory/files/", s.proxy)
-	mux.HandleFunc("/memory/profiles", s.proxy)
-	mux.HandleFunc("/memory/profiles/", s.proxy)
-	mux.HandleFunc("/memory/continuity/snapshot", s.proxy)
-	mux.HandleFunc("/memory/continuity/snapshots", s.proxy)
-	mux.HandleFunc("/memory/continuity/snapshots/", s.proxy)
-	mux.HandleFunc("/memory/topics", s.proxy)
-	mux.HandleFunc("/memory/topics/list", s.proxy)
-	mux.HandleFunc("/memory/topic-rollups", s.proxy)
-	mux.HandleFunc("/memory/browser-context", s.proxy)
-	mux.HandleFunc("/memory/context-pack", s.proxy)
-	mux.HandleFunc("/feedback", s.proxy)
-	mux.HandleFunc("/agents/tasks", s.proxy)
-	mux.HandleFunc("/agents/tasks/", s.proxy)
+	mux.HandleFunc("/memory/recent", s.memoryRecent)
+	mux.HandleFunc("/memory/files/", s.memoryFilesByProject)
+	mux.HandleFunc("/memory/profiles", s.memoryProfiles)
+	mux.HandleFunc("/memory/profiles/", s.memoryProfilesByID)
+	mux.HandleFunc("/memory/continuity/snapshot", s.memoryContinuitySnapshot)
+	mux.HandleFunc("/memory/continuity/snapshots", s.memoryContinuitySnapshots)
+	mux.HandleFunc("/memory/continuity/snapshots/", s.memoryContinuitySnapshotByID)
+	mux.HandleFunc("/memory/topics", s.memoryTopicTree)
+	mux.HandleFunc("/memory/topics/list", s.memoryTopicList)
+	mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)
+	mux.HandleFunc("/memory/browser-context", s.memoryBrowserContext)
+	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
+	mux.HandleFunc("/feedback", s.feedbackRoute)
+	mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)
+	mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)
 	mux.HandleFunc("/telemetry/storage", s.storageTelemetry)
-	mux.HandleFunc("/telemetry/", s.proxy)
+	mux.HandleFunc("/telemetry/", s.telemetryRoute)
 	mux.HandleFunc("/maintenance/storage/run", s.storageMaintenanceRun)
 	mux.HandleFunc("/maintenance/telemetry/blob-gc", s.telemetryBlobGC)
-	mux.HandleFunc("/maintenance/", s.proxy)
-	mux.HandleFunc("/ops/queue/status", s.proxy)
-	mux.HandleFunc("/ops/capabilities", s.proxy)
+	mux.HandleFunc("/maintenance/", s.maintenanceRoute)
+	mux.HandleFunc("/ops/queue/status", s.opsQueueStatus)
+	mux.HandleFunc("/ops/capabilities", s.opsCapabilities)
 	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
 	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)
 	mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)
 	mux.HandleFunc("/v1/memory/put", s.memoryPut)
-	mux.HandleFunc("/v1/memory/update", s.proxy)
-	mux.HandleFunc("/v1/memory/get", s.proxy)
-	mux.HandleFunc("/v1/memory/neighbors", s.proxy)
+	mux.HandleFunc("/v1/memory/update", s.memoryV1Update)
+	mux.HandleFunc("/v1/memory/get", s.memoryV1Get)
+	mux.HandleFunc("/v1/memory/neighbors", s.memoryV1Neighbors)
 	mux.HandleFunc("/v1/memory/batch-put", s.memoryBatchPut)
-	mux.HandleFunc("/migration/runtime", s.proxy)
+	mux.HandleFunc("/migration/runtime", s.migrationRuntime)
 	return mux
 }
 

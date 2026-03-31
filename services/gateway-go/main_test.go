@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,6 +20,8 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	t.Setenv("BACKEND_URL", backendURL)
 	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
 	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -144,6 +147,16 @@ func TestStatusOverlaysGatewayHotPathOwnership(t *testing.T) {
 	if strings.TrimSpace(anyToString(payload["statusSource"])) != "gateway-go" {
 		t.Fatalf("expected statusSource=gateway-go, got %v", payload["statusSource"])
 	}
+	if strings.TrimSpace(anyToString(payload["routeOwnerClass"])) != sourceOwnerGoNative {
+		t.Fatalf("expected routeOwnerClass=%s got %v", sourceOwnerGoNative, payload["routeOwnerClass"])
+	}
+	fallbackCounts, ok := payload["fallbackCounts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fallbackCounts payload, got %#v", payload["fallbackCounts"])
+	}
+	if anyToInt(fallbackCounts["pythonHotPathTotal"], -1) != 0 {
+		t.Fatalf("expected pythonHotPathTotal=0, got %#v", fallbackCounts["pythonHotPathTotal"])
+	}
 	ownership, ok := payload["pythonHotPathOwnership"].(map[string]any)
 	if !ok {
 		t.Fatalf("missing gateway pythonHotPathOwnership: %#v", payload["pythonHotPathOwnership"])
@@ -196,6 +209,137 @@ func TestProxyForwardsQueryParams(t *testing.T) {
 	}
 	if !strings.Contains(capturedRawQuery, "memory_id=") {
 		t.Fatalf("expected memory_id query to be forwarded, got %q", capturedRawQuery)
+	}
+}
+
+func TestMemoryV1UpdateMergesPatchAndWritesViaV1Put(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	callOrder := []string{}
+	var putPayload map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callOrder = append(callOrder, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/memory/get":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"memory":{"id":"alpha::notes/a.md","project":"alpha","file_name":"notes/a.md","content":"{\"alpha\":1}"}}`))
+		case "/v1/memory/put":
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &putPayload)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"memory_id":"alpha::notes/a.md","result":{"event_id":"evt_alpha"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"unexpected path"}`))
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/v1/memory/update",
+		strings.NewReader(`{"memory_id":"alpha::notes/a.md","patch":{"beta":2,"topic_path":"runbooks/testing"}}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("memory update request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 for /v1/memory/update, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode update payload: %v", err)
+	}
+	if strings.TrimSpace(anyToString(payload["memory_id"])) != "alpha::notes/a.md" {
+		t.Fatalf("unexpected memory_id response: %#v", payload)
+	}
+	if len(callOrder) != 2 || callOrder[0] != "/v1/memory/get" || callOrder[1] != "/v1/memory/put" {
+		t.Fatalf("expected get->put call order, got %v", callOrder)
+	}
+	item, ok := putPayload["item"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected item payload, got %#v", putPayload)
+	}
+	if strings.TrimSpace(anyToString(item["project"])) != "alpha" {
+		t.Fatalf("unexpected project in put payload: %#v", item)
+	}
+	if strings.TrimSpace(anyToString(item["file_name"])) != "notes/a.md" {
+		t.Fatalf("unexpected file_name in put payload: %#v", item)
+	}
+	if strings.TrimSpace(anyToString(item["topic_path"])) != "runbooks/testing" {
+		t.Fatalf("unexpected topic_path in put payload: %#v", item)
+	}
+	content := strings.TrimSpace(anyToString(item["content"]))
+	if !strings.Contains(content, `"alpha":1`) || !strings.Contains(content, `"beta":2`) {
+		t.Fatalf("expected merged json content in put payload, got %s", content)
+	}
+}
+
+func TestMemoryV1NeighborsRequiresMemoryID(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/v1/memory/neighbors", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("neighbors request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 422 for missing memory_id, got %d body=%s", resp.StatusCode, string(body))
+	}
+}
+
+func TestMemoryV1NeighborsFallsBackToBackendWhenStagedRetrievalDisabled(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	capturedPath := ""
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"source":"topic_rollups","project":"alpha","file":"notes/a.md","summary":"ok","score":0.8}]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/v1/memory/neighbors",
+		"application/json",
+		strings.NewReader(`{"memory_id":"alpha::notes/a.md","limit":5}`),
+	)
+	if err != nil {
+		t.Fatalf("neighbors request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 for neighbors fallback, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if capturedPath != "/v1/memory/neighbors" {
+		t.Fatalf("expected neighbors fallback path, got %s", capturedPath)
 	}
 }
 
@@ -440,20 +584,65 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 	source := string(sourceBytes)
 	required := []string{
 		`mux.HandleFunc("/memory/search", s.memorySearch)`,
+		`mux.HandleFunc("/memory/browser-context", s.memoryBrowserContext)`,
+		`mux.HandleFunc("/memory/recall/eval-cases", s.memoryRecallEvalCases)`,
+		`mux.HandleFunc("/memory/recall/eval-cases/refresh", s.memoryRecallEvalCasesRefresh)`,
+		`mux.HandleFunc("/memory/recall/evaluate/saved", s.memoryRecallEvaluateSaved)`,
+		`mux.HandleFunc("/memory/recent", s.memoryRecent)`,
+		`mux.HandleFunc("/memory/files/", s.memoryFilesByProject)`,
+		`mux.HandleFunc("/memory/continuity/snapshot", s.memoryContinuitySnapshot)`,
+		`mux.HandleFunc("/memory/continuity/snapshots", s.memoryContinuitySnapshots)`,
+		`mux.HandleFunc("/memory/continuity/snapshots/", s.memoryContinuitySnapshotByID)`,
+		`mux.HandleFunc("/memory/topics", s.memoryTopicTree)`,
+		`mux.HandleFunc("/memory/topics/list", s.memoryTopicList)`,
+		`mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)`,
+		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
+		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
+		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
+		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
+		`mux.HandleFunc("/maintenance/", s.maintenanceRoute)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)`,
 		`mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)`,
+		`mux.HandleFunc("/v1/memory/get", s.memoryV1Get)`,
+		`mux.HandleFunc("/v1/memory/update", s.memoryV1Update)`,
+		`mux.HandleFunc("/v1/memory/neighbors", s.memoryV1Neighbors)`,
 	}
 	for _, needle := range required {
 		if !strings.Contains(source, needle) {
 			t.Fatalf("hot-path route ownership missing required handler mapping: %s", needle)
 		}
 	}
+	if !strings.Contains(source, `"/migration/runtime", s.migrationRuntime`) {
+		t.Fatalf("hot-path route ownership missing required migration runtime mapping to native handler")
+	}
 	blocked := []string{
 		`mux.HandleFunc("/memory/search", s.proxy)`,
+		`mux.HandleFunc("/memory/browser-context", s.proxy)`,
+		`mux.HandleFunc("/memory/recall/eval-cases", s.proxy)`,
+		`mux.HandleFunc("/memory/recall/eval-cases/refresh", s.proxy)`,
+		`mux.HandleFunc("/memory/recall/evaluate/saved", s.proxy)`,
+		`mux.HandleFunc("/memory/recent", s.proxy)`,
+		`mux.HandleFunc("/memory/files/", s.proxy)`,
+		`mux.HandleFunc("/memory/continuity/snapshot", s.proxy)`,
+		`mux.HandleFunc("/memory/continuity/snapshots", s.proxy)`,
+		`mux.HandleFunc("/memory/continuity/snapshots/", s.proxy)`,
+		`mux.HandleFunc("/memory/topics", s.proxy)`,
+		`mux.HandleFunc("/memory/topics/list", s.proxy)`,
+		`mux.HandleFunc("/memory/topic-rollups", s.proxy)`,
+		`mux.HandleFunc("/feedback", s.proxy)`,
+		`mux.HandleFunc("/agents/tasks", s.proxy)`,
+		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
+		`mux.HandleFunc("/telemetry/", s.proxy)`,
+		`mux.HandleFunc("/maintenance/", s.proxy)`,
+		`mux.HandleFunc("/migration/runtime", s.proxy)`,
+		`registerEntitled("/migration/runtime", s.proxy)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.proxy)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.proxy)`,
 		`mux.HandleFunc("/v1/retrieval/batch-query", s.proxy)`,
+		`mux.HandleFunc("/v1/memory/get", s.proxy)`,
+		`mux.HandleFunc("/v1/memory/update", s.proxy)`,
+		`mux.HandleFunc("/v1/memory/neighbors", s.proxy)`,
 	}
 	for _, needle := range blocked {
 		if strings.Contains(source, needle) {
@@ -583,81 +772,180 @@ func TestMemorySearchAcceptsQueryParamAPIKey(t *testing.T) {
 	}
 }
 
-func TestProxyForwardsAsyncMemorySearchPath(t *testing.T) {
-	var capturedPath string
-	var capturedQuery string
+func TestMemorySearchAsyncStatusServedFromGatewayState(t *testing.T) {
+	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
-		capturedQuery = r.URL.RawQuery
+		backendCalls += 1
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true,"status":"running"}`))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer backend.Close()
 
 	s := newTestServer(t, backend.URL)
+	token := "token-123"
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "queued",
+		"status": "queued",
+		"source": "memory_bank",
+	})
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "completed",
+		"status": "ok",
+		"source": "memory_bank",
+	})
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	resp, err := http.Get(gateway.URL + "/memory/search/async/token-123?include_result=false")
+	resp, err := http.Get(gateway.URL + "/memory/search/async/" + token + "?include_result=false")
 	if err != nil {
-		t.Fatalf("proxy request failed: %v", err)
+		t.Fatalf("async status request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
 	}
-	if capturedPath != "/memory/search/async/token-123" {
-		t.Fatalf("expected async path proxied, got %s", capturedPath)
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode async status payload: %v", err)
 	}
-	if capturedQuery != "include_result=false" {
-		t.Fatalf("expected query params forwarded, got %s", capturedQuery)
+	if strings.TrimSpace(anyToString(payload["status"])) != "completed" {
+		t.Fatalf("expected completed status, got %#v", payload["status"])
+	}
+	if _, present := payload["result"]; present {
+		t.Fatalf("expected include_result=false to omit result payload")
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend proxy calls, got %d", backendCalls)
 	}
 }
 
-func TestProxyForwardsAsyncMemorySearchEventsPath(t *testing.T) {
-	var capturedPath string
-	var capturedQuery string
+func TestMemorySearchJobsEventsServedFromGatewayContinuationStream(t *testing.T) {
+	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
-		capturedQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "text/event-stream")
+		backendCalls += 1
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("event: snapshot\ndata: {\"status\":\"running\"}\n\n"))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer backend.Close()
 
 	s := newTestServer(t, backend.URL)
+	token := "token-123"
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "queued",
+		"status": "queued",
+		"source": "memory_bank",
+	})
+
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	resp, err := http.Get(gateway.URL + "/memory/search/jobs/token-123/events?include_result=false")
+	resp, err := http.Get(gateway.URL + "/memory/search/jobs/" + token + "/events?include_result=false")
 	if err != nil {
-		t.Fatalf("proxy request failed: %v", err)
+		t.Fatalf("events request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "event: snapshot") {
-		t.Fatalf("expected stream payload, got %s", string(body))
+	reader := bufio.NewReader(resp.Body)
+	lines := []string{}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		lines = append(lines, line)
+		if strings.Contains(line, "event: ready") {
+			break
+		}
+	}
+	rendered := strings.Join(lines, "")
+	if !strings.Contains(rendered, "event: snapshot") {
+		t.Fatalf("expected snapshot SSE event, got %s", rendered)
+	}
+	if !strings.Contains(rendered, token) {
+		t.Fatalf("expected token in SSE payload, got %s", rendered)
 	}
 	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 		t.Fatalf("expected text/event-stream content type, got %s", resp.Header.Get("Content-Type"))
 	}
-	if capturedPath != "/memory/search/jobs/token-123/events" {
-		t.Fatalf("expected events path proxied, got %s", capturedPath)
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend proxy calls, got %d", backendCalls)
 	}
-	if capturedQuery != "include_result=false" {
-		t.Fatalf("expected query params forwarded, got %s", capturedQuery)
+}
+
+func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	proxyPathCalls := 0
+	retrievalCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/retrieval/query":
+			retrievalCalls += 1
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/a.md","source":"qdrant","score":0.88,"summary":"context pack fact","topic_path":"runbooks/codex-integration","timestamp":"2026-03-30T00:00:00Z"}],"warnings":[]}`))
+			return
+		case "/memory/context-pack":
+			proxyPathCalls += 1
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"proxy path should not be called"}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","query":"gateway native context pack","topic_path":"runbooks/codex-integration","limit":5,"max_facts":10,"include_retrieval_debug":true}`
+	resp, err := http.Post(gateway.URL+"/memory/context-pack", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("context-pack request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode context-pack payload: %v", err)
+	}
+	if payload["context_pack"] == nil {
+		t.Fatalf("expected context_pack payload, got %#v", payload)
+	}
+	contextPack, _ := payload["context_pack"].(map[string]any)
+	if strings.TrimSpace(anyToString(contextPack["query"])) != "gateway native context pack" {
+		t.Fatalf("unexpected context pack query: %#v", contextPack["query"])
+	}
+	if retrievalCalls < 1 {
+		t.Fatalf("expected at least one retrieval backend call, got %d", retrievalCalls)
+	}
+	if proxyPathCalls != 0 {
+		t.Fatalf("expected zero backend /memory/context-pack proxy calls, got %d", proxyPathCalls)
 	}
 }
 
 func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	var capturedPath string
+	var capturedBody string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		capturedBody = string(raw)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -718,8 +1006,8 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /ops/queue/status, got %d", resp2.StatusCode)
 	}
-	if capturedPath != "/ops/queue/status" {
-		t.Fatalf("expected /ops/queue/status to be proxied, got %s", capturedPath)
+	if capturedPath == "/ops/queue/status" {
+		t.Fatalf("expected /ops/queue/status to be handled natively, got proxied path %s", capturedPath)
 	}
 
 	req3, err := http.NewRequest(
@@ -739,8 +1027,14 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if resp3.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /memory/browser-context, got %d", resp3.StatusCode)
 	}
-	if capturedPath != "/memory/browser-context" {
-		t.Fatalf("expected /memory/browser-context to be proxied, got %s", capturedPath)
+	if capturedPath != "/memory/write" {
+		t.Fatalf("expected /memory/browser-context to route through native writer, got backend path %s", capturedPath)
+	}
+	if !strings.Contains(capturedBody, `"topicPath":"browser/context"`) {
+		t.Fatalf("expected browser context topic path in forwarded write body, got %s", capturedBody)
+	}
+	if !strings.Contains(capturedBody, "Browser Context Snapshot") {
+		t.Fatalf("expected browser snapshot header in forwarded write body, got %s", capturedBody)
 	}
 
 	resp4, err := http.Get(gateway.URL + "/ops/capabilities")
@@ -751,8 +1045,8 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if resp4.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /ops/capabilities, got %d", resp4.StatusCode)
 	}
-	if capturedPath != "/ops/capabilities" {
-		t.Fatalf("expected /ops/capabilities to be proxied, got %s", capturedPath)
+	if capturedPath == "/ops/capabilities" {
+		t.Fatalf("expected /ops/capabilities to be handled natively, got proxied path %s", capturedPath)
 	}
 
 	req5, err := http.NewRequest(
@@ -775,20 +1069,257 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if capturedPath != "/memory/recall/eval-cases/refresh" {
 		t.Fatalf("expected /memory/recall/eval-cases/refresh to be proxied, got %s", capturedPath)
 	}
+
+	resp6, err := http.Get(gateway.URL + "/memory/recent?project=contextlattice")
+	if err != nil {
+		t.Fatalf("memory recent request failed: %v", err)
+	}
+	defer resp6.Body.Close()
+	if resp6.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /memory/recent, got %d", resp6.StatusCode)
+	}
+	if capturedPath != "/memory/recent" {
+		t.Fatalf("expected /memory/recent to be forwarded by native route, got %s", capturedPath)
+	}
+
+	resp7, err := http.Get(gateway.URL + "/memory/topics?project=contextlattice")
+	if err != nil {
+		t.Fatalf("memory topics request failed: %v", err)
+	}
+	defer resp7.Body.Close()
+	if resp7.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /memory/topics, got %d", resp7.StatusCode)
+	}
+	if capturedPath != "/memory/topics" {
+		t.Fatalf("expected /memory/topics to be forwarded by native route, got %s", capturedPath)
+	}
+
+	req8, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/feedback",
+		strings.NewReader(`{"project":"alpha","content":"native feedback route"}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req8.Header.Set("Content-Type", "application/json")
+	resp8, err := http.DefaultClient.Do(req8)
+	if err != nil {
+		t.Fatalf("feedback route request failed: %v", err)
+	}
+	defer resp8.Body.Close()
+	if resp8.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /feedback, got %d", resp8.StatusCode)
+	}
+	if capturedPath != "/feedback" {
+		t.Fatalf("expected /feedback to be forwarded by native route, got %s", capturedPath)
+	}
+
+	resp9, err := http.Get(gateway.URL + "/agents/tasks?project=contextlattice")
+	if err != nil {
+		t.Fatalf("agents tasks request failed: %v", err)
+	}
+	defer resp9.Body.Close()
+	if resp9.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /agents/tasks, got %d", resp9.StatusCode)
+	}
+	if capturedPath != "/agents/tasks" {
+		t.Fatalf("expected /agents/tasks to be forwarded by native route, got %s", capturedPath)
+	}
+
+	resp10, err := http.Get(gateway.URL + "/telemetry/recall")
+	if err != nil {
+		t.Fatalf("telemetry request failed: %v", err)
+	}
+	defer resp10.Body.Close()
+	if resp10.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /telemetry/recall, got %d", resp10.StatusCode)
+	}
+	if capturedPath != "/telemetry/recall" {
+		t.Fatalf("expected /telemetry/recall to be forwarded by native route, got %s", capturedPath)
+	}
+
+	resp11, err := http.Get(gateway.URL + "/maintenance/diagnostics")
+	if err != nil {
+		t.Fatalf("maintenance request failed: %v", err)
+	}
+	defer resp11.Body.Close()
+	if resp11.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /maintenance/diagnostics, got %d", resp11.StatusCode)
+	}
+	if capturedPath != "/maintenance/diagnostics" {
+		t.Fatalf("expected /maintenance/diagnostics to be forwarded by native route, got %s", capturedPath)
+	}
 }
 
-func TestToolsCapabilityMapGETIsServedViaPOSTBackend(t *testing.T) {
+func TestTelemetryRouteRejectsNonGET(t *testing.T) {
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/telemetry/recall", strings.NewReader(`{"noop":true}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("telemetry method gate request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 405, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend calls for disallowed telemetry method, got %d", backendCalls)
+	}
+}
+
+func TestMaintenanceRouteMethodGateAndProtectedEntitlement(t *testing.T) {
+	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
+	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
+	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/maintenance/diagnostics")
+	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
+	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqMethod, err := http.NewRequest(http.MethodPut, gateway.URL+"/maintenance/diagnostics", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	respMethod, err := http.DefaultClient.Do(reqMethod)
+	if err != nil {
+		t.Fatalf("maintenance method gate request failed: %v", err)
+	}
+	defer respMethod.Body.Close()
+	if respMethod.StatusCode != http.StatusPaymentRequired {
+		body, _ := io.ReadAll(respMethod.Body)
+		t.Fatalf("expected 402 for protected maintenance path without entitlement, got %d body=%s", respMethod.StatusCode, string(body))
+	}
+
+	reqEntitled, err := http.NewRequest(http.MethodGet, gateway.URL+"/maintenance/diagnostics", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	reqEntitled.Header.Set("X-ContextLattice-Plan", "team")
+	reqEntitled.Header.Set("X-ContextLattice-Workspace-Role", "owner")
+	respEntitled, err := http.DefaultClient.Do(reqEntitled)
+	if err != nil {
+		t.Fatalf("maintenance entitled request failed: %v", err)
+	}
+	defer respEntitled.Body.Close()
+	if respEntitled.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respEntitled.Body)
+		t.Fatalf("expected 200 for entitled maintenance request, got %d body=%s", respEntitled.StatusCode, string(body))
+	}
+	if backendCalls != 1 {
+		t.Fatalf("expected one backend call for entitled maintenance request, got %d", backendCalls)
+	}
+}
+
+func TestMemoryBrowserContextValidationBlocksMissingProject(t *testing.T) {
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/memory/browser-context",
+		strings.NewReader(`{"pageUrl":"https://example.com","textSnapshot":"hello world"}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("browser context request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 422 for missing projectName, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend calls on validation failure, got %d", backendCalls)
+	}
+}
+
+func TestMemoryBrowserContextDisabledByEnv(t *testing.T) {
+	t.Setenv("ORCH_BROWSER_CONTEXT_INGEST_ENABLED", "false")
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/memory/browser-context",
+		strings.NewReader(`{"projectName":"alpha","pageUrl":"https://example.com","textSnapshot":"hello world"}`),
+	)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("browser context request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503 when browser context ingest is disabled, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend calls when ingest is disabled, got %d", backendCalls)
+	}
+}
+
+func TestToolsCapabilityMapGETIsServedNatively(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
 
-	var capturedPath string
-	var capturedMethod string
-	var capturedAPIKey string
+	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
-		capturedMethod = r.Method
-		capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
+		backendCalls += 1
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"enabled":true}`))
 	}))
@@ -807,26 +1338,62 @@ func TestToolsCapabilityMapGETIsServedViaPOSTBackend(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
 	}
-	if capturedPath != "/tools/capability_map" {
-		t.Fatalf("expected /tools/capability_map backend path, got %s", capturedPath)
+	if backendCalls != 0 {
+		t.Fatalf("expected no backend calls for native capability map, got %d", backendCalls)
 	}
-	if capturedMethod != http.MethodPost {
-		t.Fatalf("expected backend POST, got %s", capturedMethod)
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
 	}
-	if capturedAPIKey != "good-key" {
-		t.Fatalf("expected configured key injected, got %q", capturedAPIKey)
+	if !anyToBool(payload["enabled"]) {
+		t.Fatalf("expected enabled=true, got %#v", payload["enabled"])
+	}
+	tools, _ := payload["tools"].(map[string]any)
+	if !anyToBool(tools["browser_context_ingest"]) {
+		t.Fatalf("expected browser_context_ingest=true by default, got %#v", tools["browser_context_ingest"])
+	}
+}
+
+func TestToolsCapabilityMapReflectsBrowserContextToggle(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_GATEWAY_TEST_KEEP_ORCH_KEY", "true")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
+	t.Setenv("ORCH_BROWSER_CONTEXT_INGEST_ENABLED", "false")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"enabled":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/tools/capability_map")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	tools, _ := payload["tools"].(map[string]any)
+	if anyToBool(tools["browser_context_ingest"]) {
+		t.Fatalf("expected browser_context_ingest=false when disabled by env, got %#v", tools["browser_context_ingest"])
 	}
 }
 
 func TestToolsOpsQueueStatusDefaultsToExcludeDeadletters(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
-	var capturedPath string
-	var capturedMethod string
-	var capturedQuery string
+	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
-		capturedMethod = r.Method
-		capturedQuery = r.URL.RawQuery
+		backendCalls += 1
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -845,14 +1412,16 @@ func TestToolsOpsQueueStatusDefaultsToExcludeDeadletters(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
 	}
-	if capturedPath != "/ops/queue/status" {
-		t.Fatalf("expected /ops/queue/status backend path, got %s", capturedPath)
+	if backendCalls != 0 {
+		t.Fatalf("expected no backend calls for native ops queue status, got %d", backendCalls)
 	}
-	if capturedMethod != http.MethodGet {
-		t.Fatalf("expected backend GET, got %s", capturedMethod)
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
 	}
-	if !strings.Contains(capturedQuery, "include_deadletters=false") {
-		t.Fatalf("expected include_deadletters=false query, got %q", capturedQuery)
+	deadletters, _ := payload["deadletters"].(map[string]any)
+	if anyToBool(deadletters["included"]) {
+		t.Fatalf("expected include_deadletters default false for tools route, got %#v", deadletters["included"])
 	}
 }
 
@@ -862,10 +1431,8 @@ func TestToolsDefaultOpenIgnoresExplicitInvalidKeyUnlessEnforced(t *testing.T) {
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "good-key")
 
 	backendCalls := 0
-	var capturedAPIKey string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalls += 1
-		capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"enabled":true}`))
 	}))
@@ -890,11 +1457,8 @@ func TestToolsDefaultOpenIgnoresExplicitInvalidKeyUnlessEnforced(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
 	}
-	if backendCalls != 1 {
-		t.Fatalf("expected backend call, got %d", backendCalls)
-	}
-	if capturedAPIKey != "good-key" {
-		t.Fatalf("expected configured key to be used, got %q", capturedAPIKey)
+	if backendCalls != 0 {
+		t.Fatalf("expected native capability map with zero backend calls, got %d", backendCalls)
 	}
 
 	t.Setenv("GO_TOOL_CALLS_ENFORCE_PROVIDED_KEY", "true")
@@ -966,14 +1530,8 @@ func TestToolRoleSplitWorkerLaneAllowsReadOnlyTools(t *testing.T) {
 	t.Setenv("GO_TOOL_CALLS_WORKER_DENYLIST", "feedback_submit,memory_write_batch")
 
 	backendCalls := 0
-	var capturedPath string
-	var capturedRole string
-	var capturedAPIKey string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalls++
-		capturedPath = r.URL.Path
-		capturedRole = strings.TrimSpace(r.Header.Get("X-ContextLattice-Caller-Role"))
-		capturedAPIKey = strings.TrimSpace(r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -998,14 +1556,8 @@ func TestToolRoleSplitWorkerLaneAllowsReadOnlyTools(t *testing.T) {
 		body, _ := io.ReadAll(respAllowed.Body)
 		t.Fatalf("expected 200 for worker capability_map, got %d body=%s", respAllowed.StatusCode, string(body))
 	}
-	if capturedPath != "/tools/capability_map" {
-		t.Fatalf("expected /tools/capability_map backend path, got %s", capturedPath)
-	}
-	if capturedRole != "worker" {
-		t.Fatalf("expected worker role header, got %q", capturedRole)
-	}
-	if capturedAPIKey != "orch-key" {
-		t.Fatalf("expected orchestrator key injected upstream, got %q", capturedAPIKey)
+	if backendCalls != 0 {
+		t.Fatalf("expected capability_map to be served natively, got backendCalls=%d", backendCalls)
 	}
 
 	reqBlocked, err := http.NewRequest(
@@ -1027,8 +1579,8 @@ func TestToolRoleSplitWorkerLaneAllowsReadOnlyTools(t *testing.T) {
 		body, _ := io.ReadAll(respBlocked.Body)
 		t.Fatalf("expected 403 for worker feedback_submit, got %d body=%s", respBlocked.StatusCode, string(body))
 	}
-	if backendCalls != 1 {
-		t.Fatalf("expected only the allowlisted worker call to reach backend, got %d backend calls", backendCalls)
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend calls for native allowlisted/blocked worker tool routes, got %d backend calls", backendCalls)
 	}
 }
 
@@ -1072,6 +1624,113 @@ func TestToolRoleSplitAutoSkipsWhenWorkerKeyMatchesOrchestrator(t *testing.T) {
 	policy := loadToolCallPolicy("same-key")
 	if policy.roleSplitEnabled {
 		t.Fatalf("expected role split disabled when worker key equals orchestrator key")
+	}
+}
+
+func TestMemoryProfilesCRUDServedNatively(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	profilePath := filepath.Join(t.TempDir(), "agent_memory_profiles.json")
+	t.Setenv("AGENT_MEMORY_PROFILE_PATH", profilePath)
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	respList, err := http.Get(gateway.URL + "/memory/profiles")
+	if err != nil {
+		t.Fatalf("list profiles request failed: %v", err)
+	}
+	defer respList.Body.Close()
+	if respList.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respList.Body)
+		t.Fatalf("expected 200 listing profiles, got %d body=%s", respList.StatusCode, string(body))
+	}
+	var listPayload map[string]any
+	if err := json.NewDecoder(respList.Body).Decode(&listPayload); err != nil {
+		t.Fatalf("decode list payload: %v", err)
+	}
+	if anyToInt(listPayload["count"], 0) < 1 {
+		t.Fatalf("expected at least default profile, got %#v", listPayload["count"])
+	}
+
+	reqUpsert, err := http.NewRequest(
+		http.MethodPut,
+		gateway.URL+"/memory/profiles/codex_gpt5",
+		strings.NewReader(`{"retrieval_mode":"fast","sources":["topic_rollups","qdrant"],"default_project":"algotraderv2_rust"}`),
+	)
+	if err != nil {
+		t.Fatalf("build upsert request: %v", err)
+	}
+	reqUpsert.Header.Set("Content-Type", "application/json")
+	respUpsert, err := http.DefaultClient.Do(reqUpsert)
+	if err != nil {
+		t.Fatalf("upsert profile request failed: %v", err)
+	}
+	defer respUpsert.Body.Close()
+	if respUpsert.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respUpsert.Body)
+		t.Fatalf("expected 200 upserting profile, got %d body=%s", respUpsert.StatusCode, string(body))
+	}
+
+	respGet, err := http.Get(gateway.URL + "/memory/profiles/codex_gpt5")
+	if err != nil {
+		t.Fatalf("get profile request failed: %v", err)
+	}
+	defer respGet.Body.Close()
+	if respGet.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respGet.Body)
+		t.Fatalf("expected 200 getting profile, got %d body=%s", respGet.StatusCode, string(body))
+	}
+	var getPayload map[string]any
+	if err := json.NewDecoder(respGet.Body).Decode(&getPayload); err != nil {
+		t.Fatalf("decode get payload: %v", err)
+	}
+	if !anyToBool(getPayload["exists"]) {
+		t.Fatalf("expected exists=true for codex profile")
+	}
+	profile, _ := getPayload["profile"].(map[string]any)
+	if strings.TrimSpace(anyToString(profile["retrieval_mode"])) != "fast" {
+		t.Fatalf("expected retrieval_mode=fast, got %#v", profile["retrieval_mode"])
+	}
+
+	reqDeleteDefault, err := http.NewRequest(http.MethodDelete, gateway.URL+"/memory/profiles/default", nil)
+	if err != nil {
+		t.Fatalf("build default delete request: %v", err)
+	}
+	respDeleteDefault, err := http.DefaultClient.Do(reqDeleteDefault)
+	if err != nil {
+		t.Fatalf("delete default request failed: %v", err)
+	}
+	defer respDeleteDefault.Body.Close()
+	if respDeleteDefault.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(respDeleteDefault.Body)
+		t.Fatalf("expected 400 deleting default profile, got %d body=%s", respDeleteDefault.StatusCode, string(body))
+	}
+
+	reqDelete, err := http.NewRequest(http.MethodDelete, gateway.URL+"/memory/profiles/codex_gpt5", nil)
+	if err != nil {
+		t.Fatalf("build delete request: %v", err)
+	}
+	respDelete, err := http.DefaultClient.Do(reqDelete)
+	if err != nil {
+		t.Fatalf("delete profile request failed: %v", err)
+	}
+	defer respDelete.Body.Close()
+	if respDelete.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respDelete.Body)
+		t.Fatalf("expected 200 deleting profile, got %d body=%s", respDelete.StatusCode, string(body))
+	}
+
+	if backendCalls != 0 {
+		t.Fatalf("expected native profile handlers without backend calls, got %d", backendCalls)
 	}
 }
 
@@ -1575,6 +2234,333 @@ func TestStagedRetrievalMergesSourcesAndGrounding(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalReportsSourceOwnershipDebug(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE", "off")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"a.md","summary":"vector row","score":0.88,"source":"qdrant"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(`{"request":{"query":"alpha","limit":5}}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.TrimSpace(anyToString(payload["route_owner_class"])) != sourceOwnerGoNative {
+		t.Fatalf("expected route_owner_class=%s got %#v", sourceOwnerGoNative, payload["route_owner_class"])
+	}
+	if strings.TrimSpace(anyToString(payload["source_owner_class"])) != sourceOwnerPythonBackendFallback {
+		t.Fatalf("expected source_owner_class=%s got %#v", sourceOwnerPythonBackendFallback, payload["source_owner_class"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	sourceOwners, _ := debug["source_owners"].(map[string]any)
+	if strings.TrimSpace(anyToString(sourceOwners["qdrant"])) != sourceOwnerPythonBackendFallback {
+		t.Fatalf("expected qdrant source owner=%s got %#v", sourceOwnerPythonBackendFallback, sourceOwners["qdrant"])
+	}
+	sourcePolicy, _ := debug["source_policy"].(map[string]any)
+	if strings.TrimSpace(anyToString(sourcePolicy["source_ownership_mode"])) != "off" {
+		t.Fatalf("expected source_ownership_mode=off got %#v", sourcePolicy["source_ownership_mode"])
+	}
+}
+
+func TestStagedRetrievalQdrantGoAdapterOwnership(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE", "off")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true")
+	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
+	t.Setenv("QDRANT_LOCAL_URL", "")
+
+	backendRetrievalCalls := 0
+	qdrantCollectionCalls := 0
+	qdrantSearchCalls := 0
+	var qdrantCapturedBody string
+	var qdrantCapturedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/collections/contextlattice_notes":
+			qdrantCollectionCalls += 1
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":{"config":{"params":{"vectors":{"size":768,"distance":"Cosine"}}}}}`))
+			return
+		case "/collections/contextlattice_notes/points/search":
+			qdrantSearchCalls += 1
+			raw, _ := io.ReadAll(r.Body)
+			qdrantCapturedBody = string(raw)
+			qdrantCapturedPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":[{"score":0.91,"payload":{"project":"alpha","file":"notes/a.md","summary":"profitability baseline ladder","topic_path":"runbooks/testing","created_at":"2026-03-30T00:00:00Z"}}]}`))
+			return
+		case "/v1/retrieval/query":
+			backendRetrievalCalls += 1
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+	t.Setenv("QDRANT_URL", backend.URL)
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(`{"request":{"query":"profitability baseline ladder","project":"alpha","topic_path":"runbooks/testing","limit":5}}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	results, _ := payload["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("expected qdrant go adapter result, got %#v", payload["results"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	sourceOwners, _ := debug["source_owners"].(map[string]any)
+	if strings.TrimSpace(anyToString(sourceOwners["qdrant"])) != sourceOwnerGoNative {
+		t.Fatalf("expected qdrant source owner=%s got %#v", sourceOwnerGoNative, sourceOwners["qdrant"])
+	}
+	if strings.TrimSpace(anyToString(debug["source_owner_class"])) != sourceOwnerGoNative {
+		t.Fatalf("expected source_owner_class=%s got %#v", sourceOwnerGoNative, debug["source_owner_class"])
+	}
+	if qdrantCollectionCalls < 1 {
+		t.Fatalf("expected qdrant collection probe call, got %d", qdrantCollectionCalls)
+	}
+	if qdrantSearchCalls != 1 {
+		t.Fatalf("expected one qdrant search call, got %d", qdrantSearchCalls)
+	}
+	if backendRetrievalCalls != 0 {
+		t.Fatalf("expected zero backend /v1/retrieval/query calls for qdrant go adapter success, got %d", backendRetrievalCalls)
+	}
+	if qdrantCapturedPath != "/collections/contextlattice_notes/points/search" {
+		t.Fatalf("unexpected qdrant path: %s", qdrantCapturedPath)
+	}
+	if !strings.Contains(qdrantCapturedBody, `"vector":[`) {
+		t.Fatalf("expected qdrant payload to include query vector, got %s", qdrantCapturedBody)
+	}
+}
+
+func TestStagedRetrievalTopicRollupsGoAdapterOwnership(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE", "off")
+
+	backendRetrievalCalls := 0
+	backendRollupCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/memory/topic-rollups":
+			backendRollupCalls += 1
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"topics":[{"project":"alpha","path":"runbooks/testing","summarySnippets":["profitability baseline ladder"],"latestTimestamp":"2026-03-30T00:00:00Z"}]}`))
+			return
+		case "/v1/retrieval/query":
+			backendRetrievalCalls += 1
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/v1/retrieval/query",
+		"application/json",
+		strings.NewReader(`{"request":{"query":"profitability baseline ladder","project":"alpha","limit":5}}`),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	results, _ := payload["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("expected go adapter to produce topic rollup results, got %#v", payload["results"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	sourceOwners, _ := debug["source_owners"].(map[string]any)
+	if strings.TrimSpace(anyToString(sourceOwners["topic_rollups"])) != sourceOwnerGoNative {
+		t.Fatalf("expected topic_rollups source owner=%s got %#v", sourceOwnerGoNative, sourceOwners["topic_rollups"])
+	}
+	if strings.TrimSpace(anyToString(debug["source_owner_class"])) != sourceOwnerGoNative {
+		t.Fatalf("expected source_owner_class=%s got %#v", sourceOwnerGoNative, debug["source_owner_class"])
+	}
+	if backendRollupCalls != 1 {
+		t.Fatalf("expected one /memory/topic-rollups adapter call, got %d", backendRollupCalls)
+	}
+	if backendRetrievalCalls != 0 {
+		t.Fatalf("expected zero backend /v1/retrieval/query calls for go adapter success, got %d", backendRetrievalCalls)
+	}
+}
+
+func TestStagedRetrievalSourceOwnershipStrictGate(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE", "strict")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_STRICT_FAST_ALLOW_PYTHON", "")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"a.md","summary":"vector row","score":0.88,"source":"qdrant"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(`{"request":{"query":"alpha","limit":5}}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503 strict ownership violation, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.TrimSpace(anyToString(payload["error"])) != "source_ownership_violation" {
+		t.Fatalf("expected source_ownership_violation error, got %#v", payload["error"])
+	}
+	violations := anyToStringSlice(payload["ownership_violations"])
+	if len(violations) != 1 || violations[0] != "qdrant" {
+		t.Fatalf("expected ownership violation [qdrant], got %v", violations)
+	}
+	if backendCalls < 1 {
+		t.Fatalf("expected at least one backend call for source ownership accounting, got %d", backendCalls)
+	}
+}
+
+func TestStagedRetrievalSourceOwnershipStrictAllowlist(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE", "strict")
+	t.Setenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_STRICT_FAST_ALLOW_PYTHON", "qdrant")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"a.md","summary":"vector row","score":0.88,"source":"qdrant"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(`{"request":{"query":"alpha","limit":5}}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 with strict allowlist, got %d body=%s", resp.StatusCode, string(body))
+	}
+}
+
 func TestStagedRetrievalAppliesQdrantSyncCap(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
@@ -1721,41 +2707,53 @@ func TestStagedRetrievalAppliesLettaTopKByMode(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_FAST", "6")
 	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED", "9")
 	t.Setenv("ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP", "15")
+	t.Setenv("LETTA_AUTO_SESSION_ID", "gateway-go-test")
+	t.Setenv("LETTA_REQUIRE_API_KEY", "false")
 
 	var mu sync.Mutex
 	capturedLimitByMode := map[string]int{}
+	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		backendCalls++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	letta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/agents/") && strings.HasSuffix(r.URL.Path, "/archival-memory/search"):
+			topK := anyToInt(r.URL.Query().Get("top_k"), 0)
+			query := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("query")))
+			mode := "balanced"
+			if strings.Contains(query, "mode:fast") {
+				mode = "fast"
+			} else if strings.Contains(query, "mode:deep") {
+				mode = "deep"
+			}
+			mu.Lock()
+			capturedLimitByMode[mode] = topK
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"ok":true}`))
+			_, _ = w.Write([]byte(`{"results":[{"id":"passage-1","timestamp":"2026-03-29T00:00:00Z","content":"project=alpha file=archive.md topic=runbooks/testing\nsummary: letta row"}]}`))
 			return
-		}
-		if r.URL.Path != "/v1/retrieval/query" {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"id":"agent-test"}]`))
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents/agent-test":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"agent-test","name":"gateway-go-test"}`))
+			return
+		default:
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		var payload map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		request, _ := payload["request"].(map[string]any)
-		mode := strings.TrimSpace(strings.ToLower(anyToString(request["retrieval_mode"])))
-		limit := anyToInt(request["limit"], 0)
-		source := ""
-		if sources, ok := request["sources"].([]any); ok && len(sources) > 0 {
-			source = strings.TrimSpace(strings.ToLower(anyToString(sources[0])))
-		}
-		if source == "letta" {
-			mu.Lock()
-			capturedLimitByMode[mode] = limit
-			mu.Unlock()
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"archive.md","summary":"letta row","score":0.93,"source":"letta"}],"warnings":[]}`))
 	}))
-	defer backend.Close()
+	defer letta.Close()
+	t.Setenv("LETTA_URL", letta.URL)
 
 	s := newTestServer(t, backend.URL)
 	gateway := httptest.NewServer(buildMux(s))
@@ -1770,7 +2768,7 @@ func TestStagedRetrievalAppliesLettaTopKByMode(t *testing.T) {
 		{mode: "deep", expectedLimit: 10},
 	}
 	for _, tc := range cases {
-		reqBody := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"` + tc.mode + `"}}`
+		reqBody := `{"request":{"query":"alpha mode:` + tc.mode + `","limit":5,"retrieval_mode":"` + tc.mode + `"}}`
 		resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
 		if err != nil {
 			t.Fatalf("%s request failed: %v", tc.mode, err)
@@ -1792,14 +2790,65 @@ func TestStagedRetrievalAppliesLettaTopKByMode(t *testing.T) {
 		if len(topKByMode) == 0 {
 			t.Fatalf("expected letta_top_k_by_mode policy block for %s mode", tc.mode)
 		}
+		if !anyToBool(policy["letta_native_gateway_lane"]) {
+			t.Fatalf("expected letta native gateway lane enabled for %s mode", tc.mode)
+		}
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected no python backend subcalls for letta source, got %d", backendCalls)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	for _, tc := range cases {
 		if got := capturedLimitByMode[tc.mode]; got != tc.expectedLimit {
-			t.Fatalf("expected letta subcall limit %d for mode %s, got %d", tc.expectedLimit, tc.mode, got)
+			t.Fatalf("expected letta top_k %d for mode %s, got %d", tc.expectedLimit, tc.mode, got)
 		}
+	}
+}
+
+func TestStagedRetrievalLettaConfigDisabledSkipsWithoutPythonFallback(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "letta")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "letta")
+	t.Setenv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "letta")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", "false")
+	t.Setenv("LETTA_AUTO_SESSION_ID", "gateway-go-test")
+	t.Setenv("LETTA_REQUIRE_API_KEY", "true")
+	t.Setenv("LETTA_API_KEY", "")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"alpha","limit":5,"retrieval_mode":"balanced"}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) != 0 {
+		t.Fatalf("expected empty results when letta config disabled, got %#v", payload["results"])
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected no python backend calls when letta config disabled, got %d", backendCalls)
 	}
 }
 
@@ -2308,6 +3357,201 @@ func TestStagedRetrievalCarriesRuntimeBackendPolicy(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalMemoryBankFallbackChainDebug(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "icm_spike")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL", "")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS", "")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE", "true")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK", "true")
+
+	capturedPolicy := map[string]any{}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		if backendPolicy, ok := request["backend_policy"].(map[string]any); ok {
+			for key, value := range backendPolicy {
+				capturedPolicy[key] = value
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"native fallback row","score":0.82,"source":"memory_bank","topic_path":"runbooks/testing"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"alpha","project":"alpha","topic_path":"runbooks/testing","limit":5,"retrieval_mode":"balanced"}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("expected fallback native rows, got %#v", payload["results"])
+	}
+	if got := strings.TrimSpace(anyToString(capturedPolicy["memory_bank_backend"])); got != "native" {
+		t.Fatalf("expected fallback native backend policy in backend subcall, got %#v", capturedPolicy)
+	}
+
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	policyBlock, _ := debug["source_policy"].(map[string]any)
+	fallbackChainAny, ok := policyBlock["memory_bank_fallback_chain"].([]any)
+	if !ok || len(fallbackChainAny) == 0 {
+		t.Fatalf("expected memory_bank_fallback_chain entries, got %#v", policyBlock["memory_bank_fallback_chain"])
+	}
+	chainEntry, _ := fallbackChainAny[0].(map[string]any)
+	if strings.TrimSpace(anyToString(chainEntry["backend_requested"])) != "icm_spike" {
+		t.Fatalf("expected backend_requested=icm_spike, got %#v", chainEntry["backend_requested"])
+	}
+	steps, _ := chainEntry["steps"].([]any)
+	if len(steps) == 0 {
+		t.Fatalf("expected fallback chain steps, got %#v", chainEntry)
+	}
+	foundFallbackNative := false
+	foundNativeSuccess := false
+	for _, rawStep := range steps {
+		step, _ := rawStep.(map[string]any)
+		if strings.TrimSpace(anyToString(step["policy_action"])) == "fallback_native" {
+			foundFallbackNative = true
+		}
+		if strings.TrimSpace(anyToString(step["backend"])) == "native" &&
+			strings.TrimSpace(anyToString(step["status"])) == "success" {
+			foundNativeSuccess = true
+		}
+	}
+	if !foundFallbackNative || !foundNativeSuccess {
+		t.Fatalf("expected fallback_native + native success steps, got %#v", steps)
+	}
+
+	sourceChainDebug, _ := policyBlock["source_chain_debug"].(map[string]any)
+	if _, ok := sourceChainDebug["memory_bank"]; !ok {
+		t.Fatalf("expected source_chain_debug entry for memory_bank, got %#v", sourceChainDebug)
+	}
+}
+
+func TestStagedRetrievalMemoryBankHedgePolicyDebug(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "shodh_spike")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS", "surrealdb_spike,memvid_spike")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_HTTP_URL", "")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_FALLBACK_TO_NATIVE", "true")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_EMPTY_RESULT_FALLBACK", "true")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_MAX_CHAIN_BACKENDS", "3")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_HEDGE_ENABLED", "true")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_HEDGE_MAX_PARALLEL", "2")
+	t.Setenv("ORCH_MEMORY_BANK_SPIKE_HEDGE_BACKENDS", "shodh_spike,surrealdb_spike")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/hedge.md","summary":"native fallback row","score":0.91,"source":"memory_bank","topic_path":"runbooks/testing"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"alpha","project":"alpha","topic_path":"runbooks/testing","limit":5,"retrieval_mode":"balanced"}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("expected fallback native rows, got %#v", payload["results"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	policyBlock, _ := debug["source_policy"].(map[string]any)
+	fallbackChainAny, _ := policyBlock["memory_bank_fallback_chain"].([]any)
+	if len(fallbackChainAny) == 0 {
+		t.Fatalf("expected memory_bank_fallback_chain entries, got %#v", policyBlock["memory_bank_fallback_chain"])
+	}
+	chainEntry, _ := fallbackChainAny[0].(map[string]any)
+	policy, _ := chainEntry["policy"].(map[string]any)
+	if enabled, _ := policy["hedge_enabled"].(bool); !enabled {
+		t.Fatalf("expected hedge_enabled=true, got %#v", policy["hedge_enabled"])
+	}
+	hedgeBackends, _ := policy["hedge_backends"].([]any)
+	if len(hedgeBackends) < 2 {
+		t.Fatalf("expected hedge_backends in policy, got %#v", policy["hedge_backends"])
+	}
+	if strings.TrimSpace(anyToString(hedgeBackends[0])) != "shodh_spike" ||
+		strings.TrimSpace(anyToString(hedgeBackends[1])) != "surrealdb_spike" {
+		t.Fatalf("unexpected hedge backend ordering: %#v", hedgeBackends)
+	}
+	steps, _ := chainEntry["steps"].([]any)
+	foundHedgeProbe := false
+	foundNativeSuccess := false
+	for _, rawStep := range steps {
+		step, _ := rawStep.(map[string]any)
+		if strings.TrimSpace(anyToString(step["trigger"])) == "hedge_probe" {
+			foundHedgeProbe = true
+		}
+		if strings.TrimSpace(anyToString(step["backend"])) == "native" &&
+			strings.TrimSpace(anyToString(step["status"])) == "success" {
+			foundNativeSuccess = true
+		}
+	}
+	if !foundHedgeProbe {
+		t.Fatalf("expected hedge_probe steps in chain trace, got %#v", steps)
+	}
+	if !foundNativeSuccess {
+		t.Fatalf("expected native success step after hedge fallback, got %#v", steps)
+	}
+}
+
 func TestResolveRustBackendPolicyAcceptsExtendedMemoryBackends(t *testing.T) {
 	cases := []string{
 		"lancedb_spike",
@@ -2492,6 +3736,43 @@ func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 	}
 }
 
+func TestContinuationPerSourceInflightAndCooldown(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "1")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", "10")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	ok, status, _ := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if !ok || status != "" {
+		t.Fatalf("expected first reservation to pass, got ok=%v status=%q", ok, status)
+	}
+	ok, status, remaining := s.tryReserveContinuationSourceSlot(sourceLetta)
+	if ok || status != "max_inflight_per_source" {
+		t.Fatalf("expected per-source cap rejection, got ok=%v status=%q", ok, status)
+	}
+	if remaining <= 0 {
+		t.Fatalf("expected cooldown to be applied after per-source cap hit, got %f", remaining)
+	}
+	s.releaseContinuationSourceSlot(sourceLetta)
+	ok, status, remaining = s.tryReserveContinuationSourceSlot(sourceLetta)
+	if ok || status != "cooldown" {
+		t.Fatalf("expected cooldown rejection after cap hit, got ok=%v status=%q", ok, status)
+	}
+	if remaining <= 0 {
+		t.Fatalf("expected positive cooldown remaining, got %f", remaining)
+	}
+}
+
 func TestContinuationPerSourceInflightOverrideByLane(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
 	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "1")
@@ -2570,4 +3851,38 @@ func TestContinuationPerSourceCooldownOverrideByLane(t *testing.T) {
 		t.Fatalf("expected Letta reservation to recover immediately with cooldown override, got ok=%v status=%q", ok, status)
 	}
 	s.releaseContinuationSourceSlot(sourceLetta)
+}
+
+func TestContinuationSourceFailureAppliesCooldown(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT", "8")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_MAX_INFLIGHT_PER_SOURCE", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_SOURCE_COOLDOWN_SECS", "5")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	remaining := s.applyContinuationSourceCooldown(sourceMemoryBank)
+	if remaining <= 0 {
+		t.Fatalf("expected positive cooldown after failure, got %f", remaining)
+	}
+	ok, status, _ := s.tryReserveContinuationSourceSlot(sourceMemoryBank)
+	if ok || status != "cooldown" {
+		t.Fatalf("expected cooldown gate, got ok=%v status=%q", ok, status)
+	}
+	s.continuationMu.Lock()
+	s.continuationSourceCooldownUntil[sourceMemoryBank] = time.Now().UTC().Add(-1 * time.Second)
+	s.continuationMu.Unlock()
+	ok, status, _ = s.tryReserveContinuationSourceSlot(sourceMemoryBank)
+	if !ok || status != "" {
+		t.Fatalf("expected reservation to recover after cooldown expiry, got ok=%v status=%q", ok, status)
+	}
+	s.releaseContinuationSourceSlot(sourceMemoryBank)
 }
