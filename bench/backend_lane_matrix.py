@@ -430,6 +430,7 @@ def run_case(
     policy_mismatches: list[dict[str, Any]] = []
     effective_policy_samples: list[dict[str, Any]] = []
     source_count_samples: list[dict[str, int]] = []
+    source_count_aggregate: dict[str, int] = {}
 
     for idx in range(max(1, runs)):
         q = case.query
@@ -448,6 +449,12 @@ def run_case(
             "include_retrieval_debug": True,
             "traffic_class": "benchmark",
         }
+        requested_memory_bank_backend = str(profile.backend_policy.get("memory_bank_backend") or "").strip().lower()
+        if "memory_bank" in profile.sources and requested_memory_bank_backend not in {"", "native"}:
+            # Benchmark profiles must exercise the requested memory_bank backend synchronously;
+            # fail-open default would otherwise defer the lane and invalidate backend comparisons.
+            req_payload["sync_slow_sources"] = True
+            req_payload["blocking"] = True
         started = time.perf_counter()
         try:
             resp = client.post(
@@ -485,12 +492,13 @@ def run_case(
                     policy_mismatches.append(mismatch)
                 source_counts = retrieval_debug.get("source_counts")
                 if isinstance(source_counts, dict):
-                    source_count_samples.append(
-                        {
-                            str(k): int(v or 0)
-                            for k, v in source_counts.items()
-                        }
-                    )
+                    normalized_source_counts = {
+                        str(k): int(v or 0)
+                        for k, v in source_counts.items()
+                    }
+                    source_count_samples.append(normalized_source_counts)
+                    for source_name, source_hits in normalized_source_counts.items():
+                        source_count_aggregate[source_name] = int(source_count_aggregate.get(source_name) or 0) + int(source_hits)
             if isinstance(results, list):
                 result_counts.append(len(results))
                 top = results[0] if results else {}
@@ -536,6 +544,7 @@ def run_case(
         "policyMismatchesSample": policy_mismatches[:3],
         "effectivePolicySample": effective_policy_samples[-1] if effective_policy_samples else {},
         "sourceCountsSample": source_count_samples[-1] if source_count_samples else {},
+        "sourceCountsAggregate": source_count_aggregate,
     }
 
 
@@ -553,6 +562,42 @@ def _summarize_profile(profile_cases: dict[str, dict[str, Any]]) -> dict[str, An
         "maxP95Ms": _compact_float(max(p95_values) if p95_values else 0.0),
         "avgErrorRate": round(statistics.mean(error_rates) if error_rates else 0.0, 6),
         "policyMismatchTotal": policy_mismatch_total,
+    }
+
+
+def _derive_memory_bank_exercise_evidence(
+    profile_cases: dict[str, dict[str, Any]],
+    *,
+    requested_backend: str,
+) -> dict[str, Any]:
+    total_cases = 0
+    effective_backend_match_cases = 0
+    memory_bank_hit_cases = 0
+    memory_bank_hits_total = 0
+    for payload in profile_cases.values():
+        total_cases += 1
+        effective_policy = payload.get("effectivePolicySample")
+        effective_backend = (
+            str(effective_policy.get("memory_bank_backend") or "").strip().lower()
+            if isinstance(effective_policy, dict)
+            else ""
+        )
+        if requested_backend and effective_backend == requested_backend:
+            effective_backend_match_cases += 1
+        source_counts_aggregate = payload.get("sourceCountsAggregate")
+        memory_bank_hits = (
+            int(source_counts_aggregate.get("memory_bank") or 0)
+            if isinstance(source_counts_aggregate, dict)
+            else 0
+        )
+        if memory_bank_hits > 0:
+            memory_bank_hit_cases += 1
+            memory_bank_hits_total += memory_bank_hits
+    return {
+        "totalCases": total_cases,
+        "effectiveBackendMatchCases": effective_backend_match_cases,
+        "memoryBankHitCases": memory_bank_hit_cases,
+        "memoryBankHitsTotal": memory_bank_hits_total,
     }
 
 
@@ -624,13 +669,28 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             spike_backend_requested = str(profile.backend_policy.get("memory_bank_backend") or "native")
             spike_backend_enabled = spike_backend_requested not in {"", "native", "disabled"}
             profile_notes: list[str] = []
+            exercise_evidence = _derive_memory_bank_exercise_evidence(
+                case_rows,
+                requested_backend=spike_backend_requested.strip().lower(),
+            )
             if spike_backend_enabled:
-                if not bool(profile_before_mb.get("spikeUrlConfigured")):
+                spike_url_configured = profile_before_mb.get("spikeUrlConfigured")
+                if (
+                    isinstance(spike_url_configured, bool)
+                    and not spike_url_configured
+                    and int(exercise_evidence.get("effectiveBackendMatchCases") or 0) <= 0
+                ):
                     profile_notes.append("memory-bank spike URL is not configured; spike backends can only fall back to native.")
-                if delta["attempts"] <= 0:
+                if delta["attempts"] <= 0 and int(exercise_evidence.get("effectiveBackendMatchCases") or 0) <= 0:
                     profile_notes.append("no spike backend attempts were recorded for this profile.")
+                if delta["attempts"] <= 0 and int(exercise_evidence.get("effectiveBackendMatchCases") or 0) > 0:
+                    profile_notes.append(
+                        "Go runtime does not expose spike attempt counters here; backend exercise inferred from retrieval_debug effective policy."
+                    )
                 elif delta["successes"] <= 0:
                     profile_notes.append("spike backend attempts did not succeed during this run.")
+                if int(exercise_evidence.get("memoryBankHitCases") or 0) <= 0:
+                    profile_notes.append("memory_bank produced no source hits in sampled cases for this profile.")
             if int(profile_summary.get("policyMismatchTotal") or 0) > 0:
                 profile_notes.append("requested backend policy differed from effective runtime policy on some runs.")
             results[profile_name] = {
@@ -653,6 +713,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "after": profile_after_mb,
                     "delta": delta,
                 },
+                "memoryBankExerciseEvidence": exercise_evidence,
                 "notes": profile_notes,
             }
         overall_after = _fetch_retrieval_telemetry(client, base_url, headers)
@@ -694,11 +755,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "memory_bank_memvid_spike",
         "memory_bank_surrealdb_spike",
     ]
-    if any(
-        not bool(results.get(name, {}).get("memoryBankBackend", {}).get("before", {}).get("spikeUrlConfigured"))
+    spike_config_values = [
+        results.get(name, {}).get("memoryBankBackend", {}).get("before", {}).get("spikeUrlConfigured")
         for name in spike_profiles
-        if name in results
-    ):
+        if name in results and isinstance(results.get(name, {}).get("memoryBankBackend", {}).get("before", {}), dict)
+    ]
+    if any(value is False for value in spike_config_values):
         recommendations.append(
             "Memory-bank spike sidecar URL is not configured; meilisearch/quickwit/tantivy spikes are currently fallback-only measurements."
         )
