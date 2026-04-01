@@ -600,10 +600,37 @@ func nativePgvectorEnabled() bool {
 func nativePgvectorDSN() string {
 	for _, key := range []string{"ORCH_PGVECTOR_DSN", "PGVECTOR_DSN"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return value
+			return normalizePgvectorDSN(value)
 		}
 	}
 	return ""
+}
+
+func normalizePgvectorDSN(raw string) string {
+	dsn := strings.TrimSpace(raw)
+	if dsn == "" {
+		return ""
+	}
+	lower := strings.ToLower(dsn)
+	if strings.Contains(lower, "sslmode=") {
+		return dsn
+	}
+	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
+		parsed, err := url.Parse(dsn)
+		if err == nil {
+			query := parsed.Query()
+			if query.Get("sslmode") == "" {
+				query.Set("sslmode", "disable")
+				parsed.RawQuery = query.Encode()
+			}
+			return parsed.String()
+		}
+		if strings.Contains(dsn, "?") {
+			return dsn + "&sslmode=disable"
+		}
+		return dsn + "?sslmode=disable"
+	}
+	return dsn + " sslmode=disable"
 }
 
 func nativePgvectorTable() string {
