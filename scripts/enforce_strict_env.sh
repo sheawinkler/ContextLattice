@@ -116,18 +116,36 @@ for i in "${!keys[@]}"; do
   fi
 done
 
-# Keep legacy API key alias aligned to prevent caller drift.
-orchestrator_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
-legacy_key="$(get_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY)"
-if [[ -n "$orchestrator_key" && "$legacy_key" != "$orchestrator_key" ]]; then
-  if [[ "$MODE" == "--apply" ]]; then
-    set_env_key CONTEXTLATTICE_ORCHESTRATOR_API_KEY "$orchestrator_key"
-    echo ">> synced CONTEXTLATTICE_ORCHESTRATOR_API_KEY to CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
-  else
-    echo "drift: CONTEXTLATTICE_ORCHESTRATOR_API_KEY does not match CONTEXTLATTICE_ORCHESTRATOR_API_KEY"
-    drift_count=$((drift_count + 1))
+# Keep legacy aliases aligned to prevent caller drift.
+sync_alias_pair() {
+  local canonical_key="$1"
+  local alias_key="$2"
+  local value
+  value="$(get_env_key "$canonical_key")"
+  if [[ -z "$value" ]]; then
+    value="$(get_env_key "$alias_key")"
   fi
-fi
+  [[ -n "$value" ]] || return 0
+
+  local canonical_current alias_current
+  canonical_current="$(get_env_key "$canonical_key")"
+  alias_current="$(get_env_key "$alias_key")"
+
+  if [[ "$canonical_current" != "$value" || "$alias_current" != "$value" ]]; then
+    if [[ "$MODE" == "--apply" ]]; then
+      set_env_key "$canonical_key" "$value"
+      set_env_key "$alias_key" "$value"
+      echo ">> synced $canonical_key <-> $alias_key"
+    else
+      echo "drift: $canonical_key / $alias_key mismatch"
+      drift_count=$((drift_count + 1))
+    fi
+  fi
+}
+
+sync_alias_pair CONTEXTLATTICE_ORCHESTRATOR_API_KEY MEMMCP_ORCHESTRATOR_API_KEY
+sync_alias_pair CONTEXTLATTICE_ORCHESTRATOR_URL MEMMCP_ORCHESTRATOR_URL
+sync_alias_pair CONTEXTLATTICE_AGENT_ID MEMMCP_AGENT_ID
 
 required_non_empty=(
   CONTEXTLATTICE_ORCHESTRATOR_API_KEY
