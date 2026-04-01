@@ -148,9 +148,11 @@ type toolRolePolicy struct {
 }
 
 type adaptiveSourceStats struct {
-	latencyMs []float64
-	requests  int
-	timeouts  int
+	latencyMs      []float64
+	requests       int
+	timeouts       int
+	errors         int
+	budgetExceeded int
 }
 
 type lettaConfig struct {
@@ -287,6 +289,13 @@ type server struct {
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
 	telemetryRing                   *telemetryRing
+	telemetryMetricsMu              sync.Mutex
+	telemetryMetricsState           map[string]any
+	tradingMu                       sync.Mutex
+	tradingState                    map[string]any
+	tradingHistory                  []map[string]any
+	tradingHistoryPath              string
+	tradingHistoryLimit             int
 	continuationSem                 chan struct{}
 	adaptiveMu                      sync.Mutex
 	adaptiveBySource                map[string]*adaptiveSourceStats
@@ -1044,6 +1053,15 @@ func newServer() *server {
 	letta := loadLettaConfig()
 	toolPolicy := loadToolCallPolicy(orchestratorAPIKey)
 	writePolicy := loadWriteIngressPolicy()
+	trackedPaths := defaultTrackedPaths()
+	tradingHistoryPath := strings.TrimSpace(trackedPaths["trading_history"])
+	if tradingHistoryPath == "" {
+		tradingHistoryPath = "services/orchestrator/data/trading_metrics.ndjson"
+	}
+	tradingHistoryLimit := envInt("TRADING_HISTORY_LIMIT", 256)
+	if tradingHistoryLimit < 1 {
+		tradingHistoryLimit = 1
+	}
 	telemetrySinkInstance, sinkErr := newTelemetrySinkFromEnv()
 	if sinkErr != nil {
 		log.Printf("gateway-go telemetry sink disabled: %v", sinkErr)
@@ -1075,6 +1093,11 @@ func newServer() *server {
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,
+		telemetryMetricsState:           defaultTelemetryMetricsState(),
+		tradingState:                    defaultTradingState(),
+		tradingHistory:                  make([]map[string]any, 0, tradingHistoryLimit),
+		tradingHistoryPath:              tradingHistoryPath,
+		tradingHistoryLimit:             tradingHistoryLimit,
 		continuationSem:                 make(chan struct{}, policy.continuationMaxInflight),
 		adaptiveBySource:                make(map[string]*adaptiveSourceStats),
 		continuationInFlight:            make(map[string]int),
@@ -1084,6 +1107,9 @@ func newServer() *server {
 		continuationExpiry:              make(map[string]time.Time),
 		lettaAgentBySession:             make(map[string]string),
 		lettaAgentVerifiedAt:            make(map[string]time.Time),
+	}
+	if err := s.loadTradingHistoryFromDisk(); err != nil {
+		log.Printf("gateway-go trading history load failed: %v", err)
 	}
 	t.start()
 	return s
@@ -3267,7 +3293,13 @@ func (s *server) applyRustLanePromotionGate(policy map[string]any, trafficClass 
 	return resolved, true
 }
 
-func (s *server) recordAdaptiveObservation(source string, latency time.Duration, timedOut bool) {
+func (s *server) recordAdaptiveObservation(
+	source string,
+	latency time.Duration,
+	timedOut bool,
+	errored bool,
+	budgetExceeded bool,
+) {
 	if !s.retrieval.adaptiveTimeoutEnabled {
 		return
 	}
@@ -3289,6 +3321,12 @@ func (s *server) recordAdaptiveObservation(source string, latency time.Duration,
 	entry.requests += 1
 	if timedOut {
 		entry.timeouts += 1
+	}
+	if errored {
+		entry.errors += 1
+	}
+	if budgetExceeded {
+		entry.budgetExceeded += 1
 	}
 	entry.latencyMs = append(entry.latencyMs, ms)
 	window := s.retrieval.adaptiveTimeoutWindow
@@ -4601,6 +4639,8 @@ func (s *server) runSourceBatch(
 			result.source,
 			result.latency,
 			result.timedOut || result.budgetExceeded,
+			result.err != nil,
+			result.budgetExceeded,
 		)
 	}
 
@@ -5745,6 +5785,11 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)
 	mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)
 	mux.HandleFunc("/telemetry/storage", s.storageTelemetry)
+	mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)
+	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
+	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
+	mux.HandleFunc("/telemetry/trading", s.telemetryTradingRoute)
+	mux.HandleFunc("/telemetry/trading/history", s.telemetryTradingHistoryRoute)
 	mux.HandleFunc("/telemetry/", s.telemetryRoute)
 	mux.HandleFunc("/maintenance/storage/run", s.storageMaintenanceRun)
 	mux.HandleFunc("/maintenance/telemetry/blob-gc", s.telemetryBlobGC)
