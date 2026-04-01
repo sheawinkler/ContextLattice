@@ -599,6 +599,11 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
+		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
+		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
+		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
+		`mux.HandleFunc("/telemetry/trading", s.telemetryTradingRoute)`,
+		`mux.HandleFunc("/telemetry/trading/history", s.telemetryTradingHistoryRoute)`,
 		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
 		`mux.HandleFunc("/maintenance/", s.maintenanceRoute)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
@@ -633,6 +638,11 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/feedback", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
+		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
+		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
+		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
+		`mux.HandleFunc("/telemetry/trading", s.proxy)`,
+		`mux.HandleFunc("/telemetry/trading/history", s.proxy)`,
 		`mux.HandleFunc("/telemetry/", s.proxy)`,
 		`mux.HandleFunc("/maintenance/", s.proxy)`,
 		`mux.HandleFunc("/migration/runtime", s.proxy)`,
@@ -1181,6 +1191,167 @@ func TestTelemetryRouteRejectsNonGET(t *testing.T) {
 	}
 	if backendCalls != 0 {
 		t.Fatalf("expected zero backend calls for disallowed telemetry method, got %d", backendCalls)
+	}
+}
+
+func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	t.Setenv("TRADING_HISTORY_LIMIT", "16")
+	t.Setenv("TRADING_HISTORY_PATH", filepath.Join(t.TempDir(), "trading_metrics.ndjson"))
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant,weaviate,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant,weaviate,postgres_pgvector")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb,mongo_raw,letta,memory_bank")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	metricsPost, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/telemetry/metrics",
+		strings.NewReader(`{"timestamp":"2026-04-01T00:00:00Z","queueDepth":3,"batchSize":64,"totals":{"enqueued":10,"dropped":1,"batches":2,"flushedEvents":9}}`),
+	)
+	if err != nil {
+		t.Fatalf("metrics post request: %v", err)
+	}
+	metricsPost.Header.Set("Content-Type", "application/json")
+	metricsPostResp, err := http.DefaultClient.Do(metricsPost)
+	if err != nil {
+		t.Fatalf("metrics post failed: %v", err)
+	}
+	defer metricsPostResp.Body.Close()
+	if metricsPostResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(metricsPostResp.Body)
+		t.Fatalf("expected 200 for /telemetry/metrics POST, got %d body=%s", metricsPostResp.StatusCode, string(body))
+	}
+
+	metricsResp, err := http.Get(gateway.URL + "/telemetry/metrics")
+	if err != nil {
+		t.Fatalf("metrics get failed: %v", err)
+	}
+	defer metricsResp.Body.Close()
+	if metricsResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(metricsResp.Body)
+		t.Fatalf("expected 200 for /telemetry/metrics GET, got %d body=%s", metricsResp.StatusCode, string(body))
+	}
+	var metricsPayload map[string]any
+	if err := json.NewDecoder(metricsResp.Body).Decode(&metricsPayload); err != nil {
+		t.Fatalf("decode metrics payload: %v", err)
+	}
+	if anyToInt(metricsPayload["queueDepth"], 0) != 3 {
+		t.Fatalf("expected queueDepth=3, got %#v", metricsPayload["queueDepth"])
+	}
+
+	retrievalResp, err := http.Get(gateway.URL + "/telemetry/retrieval?traffic_class=user")
+	if err != nil {
+		t.Fatalf("retrieval telemetry failed: %v", err)
+	}
+	defer retrievalResp.Body.Close()
+	if retrievalResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(retrievalResp.Body)
+		t.Fatalf("expected 200 for /telemetry/retrieval, got %d body=%s", retrievalResp.StatusCode, string(body))
+	}
+	var retrievalPayload map[string]any
+	if err := json.NewDecoder(retrievalResp.Body).Decode(&retrievalPayload); err != nil {
+		t.Fatalf("decode retrieval payload: %v", err)
+	}
+	latency, _ := retrievalPayload["latency"].(map[string]any)
+	sources, _ := latency["sources"].(map[string]any)
+	if len(sources) == 0 {
+		t.Fatalf("expected retrieval latency sources in payload, got %#v", retrievalPayload)
+	}
+
+	qualityResp, err := http.Get(gateway.URL + "/telemetry/retrieval/source-quality?traffic_class=user&window_mins=30")
+	if err != nil {
+		t.Fatalf("source-quality request failed: %v", err)
+	}
+	defer qualityResp.Body.Close()
+	if qualityResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(qualityResp.Body)
+		t.Fatalf("expected 200 for /telemetry/retrieval/source-quality, got %d body=%s", qualityResp.StatusCode, string(body))
+	}
+	var qualityPayload map[string]any
+	if err := json.NewDecoder(qualityResp.Body).Decode(&qualityPayload); err != nil {
+		t.Fatalf("decode source-quality payload: %v", err)
+	}
+	rows, _ := qualityPayload["sources"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("expected source-quality rows, got %#v", qualityPayload)
+	}
+
+	tradingPost, err := http.NewRequest(
+		http.MethodPost,
+		gateway.URL+"/telemetry/trading",
+		strings.NewReader(`{"timestamp":"2026-04-01T00:01:00Z","open_positions":2,"total_value_usd":1200.5,"unrealized_pnl":12.3,"realized_pnl":5.1,"daily_pnl":17.4,"positions":[{"symbol":"SOL","size":1.2}]}`),
+	)
+	if err != nil {
+		t.Fatalf("trading post request: %v", err)
+	}
+	tradingPost.Header.Set("Content-Type", "application/json")
+	tradingPostResp, err := http.DefaultClient.Do(tradingPost)
+	if err != nil {
+		t.Fatalf("trading post failed: %v", err)
+	}
+	defer tradingPostResp.Body.Close()
+	if tradingPostResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(tradingPostResp.Body)
+		t.Fatalf("expected 200 for /telemetry/trading POST, got %d body=%s", tradingPostResp.StatusCode, string(body))
+	}
+
+	tradingResp, err := http.Get(gateway.URL + "/telemetry/trading")
+	if err != nil {
+		t.Fatalf("trading get failed: %v", err)
+	}
+	defer tradingResp.Body.Close()
+	if tradingResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(tradingResp.Body)
+		t.Fatalf("expected 200 for /telemetry/trading GET, got %d body=%s", tradingResp.StatusCode, string(body))
+	}
+	var tradingPayload map[string]any
+	if err := json.NewDecoder(tradingResp.Body).Decode(&tradingPayload); err != nil {
+		t.Fatalf("decode trading payload: %v", err)
+	}
+	if anyToInt(tradingPayload["openPositions"], 0) != 2 {
+		t.Fatalf("expected openPositions=2, got %#v", tradingPayload["openPositions"])
+	}
+
+	historyResp, err := http.Get(gateway.URL + "/telemetry/trading/history?limit=5")
+	if err != nil {
+		t.Fatalf("trading history get failed: %v", err)
+	}
+	defer historyResp.Body.Close()
+	if historyResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(historyResp.Body)
+		t.Fatalf("expected 200 for /telemetry/trading/history, got %d body=%s", historyResp.StatusCode, string(body))
+	}
+	var historyPayload map[string]any
+	if err := json.NewDecoder(historyResp.Body).Decode(&historyPayload); err != nil {
+		t.Fatalf("decode history payload: %v", err)
+	}
+	historyRows, _ := historyPayload["history"].([]any)
+	if len(historyRows) != 1 {
+		t.Fatalf("expected trading history size=1, got %#v", historyPayload["history"])
+	}
+
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend calls for go-native telemetry routes, got %d", backendCalls)
+	}
+	if s.pythonHotPathFallbacks.Load() != 0 {
+		t.Fatalf("expected zero python fallback count, got %d", s.pythonHotPathFallbacks.Load())
 	}
 }
 
@@ -3707,9 +3878,9 @@ func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 	defer backend.Close()
 
 	s := newTestServer(t, backend.URL)
-	s.recordAdaptiveObservation(sourceLetta, 25*time.Second, false)
-	s.recordAdaptiveObservation(sourceLetta, 30*time.Second, false)
-	s.recordAdaptiveObservation(sourceLetta, 28*time.Second, false)
+	s.recordAdaptiveObservation(sourceLetta, 25*time.Second, false, false, false)
+	s.recordAdaptiveObservation(sourceLetta, 30*time.Second, false, false, false)
+	s.recordAdaptiveObservation(sourceLetta, 28*time.Second, false, false, false)
 
 	adjustedNoBacklog, detailNoBacklog := s.resolveSourceTimeout(sourceLetta, "balanced", true, false, false)
 	if adjustedNoBacklog <= 20*time.Second {
