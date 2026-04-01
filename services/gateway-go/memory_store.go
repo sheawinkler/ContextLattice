@@ -28,15 +28,19 @@ type memoryStorePolicy struct {
 }
 
 type memoryStoreEntry struct {
-	EventID     string `json:"event_id"`
-	Project     string `json:"project"`
-	FileName    string `json:"file"`
-	TopicPath   string `json:"topic_path,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	ContentHash string `json:"content_hash,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	RawBytes    int    `json:"raw_bytes,omitempty"`
-	Source      string `json:"source,omitempty"`
+	EventID     string   `json:"event_id"`
+	Project     string   `json:"project"`
+	FileName    string   `json:"file"`
+	TopicPath   string   `json:"topic_path,omitempty"`
+	AgentID     string   `json:"agent_id,omitempty"`
+	SessionID   string   `json:"session_id,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Summary     string   `json:"summary,omitempty"`
+	ContentHash string   `json:"content_hash,omitempty"`
+	ContentRef  string   `json:"content_ref,omitempty"`
+	CreatedAt   string   `json:"created_at"`
+	RawBytes    int      `json:"raw_bytes,omitempty"`
+	Source      string   `json:"source,omitempty"`
 }
 
 type memoryStoreDoc struct {
@@ -310,8 +314,12 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 			Project:     project,
 			FileName:    fileName,
 			TopicPath:   topicPath,
+			AgentID:     item.agentID,
+			SessionID:   item.sessionID,
+			Tags:        append([]string{}, item.tags...),
 			Summary:     clipSummary(content, m.policy.maxSummaryChars),
 			ContentHash: contentHash,
+			ContentRef:  "sha256:" + contentHash,
 			CreatedAt:   nowUTCISO(),
 			RawBytes:    len(content),
 			Source:      "go_memory_store",

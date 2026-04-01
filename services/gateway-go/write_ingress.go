@@ -47,6 +47,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	recordMetadataContractObservation(item)
 	if err := s.writePolicy.validateWrite(item); err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return
@@ -145,6 +146,7 @@ func (s *server) handleWriteBatchIngress(
 		return
 	}
 	for idx, item := range items {
+		recordMetadataContractObservation(item)
 		if err := s.writePolicy.validateWrite(item); err != nil {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"error":  "invalid write item",
@@ -338,6 +340,18 @@ func mergeForwardPayload(
 		if len(fanoutExcludeTargets) > 0 {
 			forward["fanoutExcludeTargets"] = append([]string{}, fanoutExcludeTargets...)
 		}
+		if item.agentID != "" {
+			forward["agent_id"] = item.agentID
+		}
+		if item.sessionID != "" {
+			forward["session_id"] = item.sessionID
+		}
+		if len(item.tags) > 0 {
+			forward["tags"] = append([]string{}, item.tags...)
+		}
+		if item.createdAt != "" {
+			forward["created_at"] = item.createdAt
+		}
 		return forward
 	}
 	if path == "/v1/memory/put" {
@@ -354,6 +368,18 @@ func mergeForwardPayload(
 		}
 		if len(fanoutExcludeTargets) > 0 {
 			rawItem["fanout_exclude_targets"] = append([]string{}, fanoutExcludeTargets...)
+		}
+		if item.agentID != "" {
+			rawItem["agent_id"] = item.agentID
+		}
+		if item.sessionID != "" {
+			rawItem["session_id"] = item.sessionID
+		}
+		if len(item.tags) > 0 {
+			rawItem["tags"] = append([]string{}, item.tags...)
+		}
+		if item.createdAt != "" {
+			rawItem["created_at"] = item.createdAt
 		}
 		forward["item"] = rawItem
 		return forward
@@ -377,7 +403,10 @@ func (s *server) routeTelemetryWrite(
 	defer cancel()
 	meta := map[string]any{
 		"source_path": sourcePath,
-		"agent_id":    strings.TrimSpace(anyToString(item.raw["agent_id"])),
+		"agent_id":    item.agentID,
+		"session_id":  item.sessionID,
+		"tags":        append([]string{}, item.tags...),
+		"created_at":  item.createdAt,
 		"topic_path":  item.topicPath,
 		"ingested_by": "gateway-go",
 	}
