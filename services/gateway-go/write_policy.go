@@ -24,6 +24,10 @@ type normalizedWrite struct {
 	fileName       string
 	content        string
 	topicPath      string
+	agentID        string
+	sessionID      string
+	tags           []string
+	createdAt      string
 	itemID         string
 	idempotencyKey string
 	raw            map[string]any
@@ -131,6 +135,11 @@ func normalizeWritePayload(path string, payload map[string]any) (normalizedWrite
 	default:
 		return normalizedWrite{}, fmt.Errorf("unsupported write path: %s", path)
 	}
+	meta := normalizeWriteMetadata(item.raw)
+	item.agentID = meta.agentID
+	item.sessionID = meta.sessionID
+	item.tags = meta.tags
+	item.createdAt = meta.createdAt
 	return item, nil
 }
 
@@ -173,6 +182,11 @@ func normalizeWriteBatchPayload(path string, payload map[string]any) ([]normaliz
 		default:
 			return nil, fmt.Errorf("unsupported batch path: %s", path)
 		}
+		meta := normalizeWriteMetadata(item.raw)
+		item.agentID = meta.agentID
+		item.sessionID = meta.sessionID
+		item.tags = meta.tags
+		item.createdAt = meta.createdAt
 		rows = append(rows, item)
 	}
 	return rows, nil
@@ -289,6 +303,18 @@ func buildForwardPayload(path string, item normalizedWrite, fanoutExcludeTargets
 		if len(fanoutExcludeTargets) > 0 {
 			forward["fanoutExcludeTargets"] = append([]string{}, fanoutExcludeTargets...)
 		}
+		if item.agentID != "" {
+			forward["agent_id"] = item.agentID
+		}
+		if item.sessionID != "" {
+			forward["session_id"] = item.sessionID
+		}
+		if len(item.tags) > 0 {
+			forward["tags"] = append([]string{}, item.tags...)
+		}
+		if item.createdAt != "" {
+			forward["created_at"] = item.createdAt
+		}
 		return forward
 	case "/v1/memory/put":
 		rawItem := map[string]any{
@@ -299,6 +325,18 @@ func buildForwardPayload(path string, item normalizedWrite, fanoutExcludeTargets
 		}
 		if len(fanoutExcludeTargets) > 0 {
 			rawItem["fanout_exclude_targets"] = append([]string{}, fanoutExcludeTargets...)
+		}
+		if item.agentID != "" {
+			rawItem["agent_id"] = item.agentID
+		}
+		if item.sessionID != "" {
+			rawItem["session_id"] = item.sessionID
+		}
+		if len(item.tags) > 0 {
+			rawItem["tags"] = append([]string{}, item.tags...)
+		}
+		if item.createdAt != "" {
+			rawItem["created_at"] = item.createdAt
 		}
 		return map[string]any{
 			"item": rawItem,

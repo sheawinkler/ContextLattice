@@ -537,7 +537,7 @@ func toSourceSet(sources []string) map[string]struct{} {
 func sourceOwnerForSource(source string) string {
 	normalized := strings.TrimSpace(strings.ToLower(source))
 	switch normalized {
-	case sourceQdrant, sourceWeaviate, sourcePgvector, sourceTopicRollup, sourceLetta, sourceMemoryBank:
+	case sourceQdrant, sourceWeaviate, sourcePgvector, sourceMongoRaw, sourceMindsdb, sourceTopicRollup, sourceLetta, sourceMemoryBank:
 		return sourceOwnerGoNative
 	default:
 		return sourceOwnerPythonBackendFallback
@@ -2160,6 +2160,169 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func serviceRow(name string, status string, owner string, detail string) map[string]any {
+	normalizedStatus := strings.TrimSpace(strings.ToLower(status))
+	healthy := normalizedStatus == "healthy"
+	row := map[string]any{
+		"name":    name,
+		"status":  status,
+		"healthy": healthy,
+		"owner":   owner,
+	}
+	if token := strings.TrimSpace(detail); token != "" {
+		row["detail"] = token
+	}
+	return row
+}
+
+func orderedSourceUnion(primary []string, extras ...[]string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(primary))
+	push := func(source string) {
+		normalized := strings.TrimSpace(strings.ToLower(source))
+		if normalized == "" {
+			return
+		}
+		if _, exists := seen[normalized]; exists {
+			return
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	for _, source := range primary {
+		push(source)
+	}
+	for _, group := range extras {
+		for _, source := range group {
+			push(source)
+		}
+	}
+	return out
+}
+
+func (s *server) strictRuntimeLaneStatus(source string) (string, string, string) {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	owner := sourceOwnerForSource(normalized)
+	if owner == sourceOwnerPythonBackendFallback && s.strictNoPythonRuntime {
+		return "degraded", owner, "lane currently requires python fallback, which is disabled in strict runtime"
+	}
+	switch normalized {
+	case sourceQdrant:
+		if !nativeSourceAdapterEnabled(sourceQdrant, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		if strings.TrimSpace(nativeQdrantURL()) == "" {
+			return "degraded", sourceOwnerGoNative, "qdrant URL is not configured"
+		}
+		return "healthy", sourceOwnerGoNative, "native adapter enabled"
+	case sourceWeaviate:
+		if !envBool("ORCH_WEAVIATE_ENABLED", false) {
+			return "disabled", sourceOwnerGoNative, "ORCH_WEAVIATE_ENABLED=false"
+		}
+		if !nativeSourceAdapterEnabled(sourceWeaviate, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		if strings.TrimSpace(nativeWeaviateURL()) == "" {
+			return "degraded", sourceOwnerGoNative, "weaviate URL is not configured"
+		}
+		return "healthy", sourceOwnerGoNative, "native adapter enabled"
+	case sourcePgvector:
+		if !nativeSourceAdapterEnabled(sourcePgvector, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		if !nativePgvectorEnabled() {
+			return "disabled", sourceOwnerGoNative, "ORCH_PGVECTOR_ENABLED=false"
+		}
+		if strings.TrimSpace(nativePgvectorDSN()) == "" {
+			return "degraded", sourceOwnerGoNative, "pgvector DSN is not configured"
+		}
+		return "healthy", sourceOwnerGoNative, "native adapter enabled"
+	case sourceTopicRollup:
+		if s.memoryStore != nil && s.memoryStore.policy.enabled {
+			return "healthy", sourceOwnerGoNative, "served from go memory store"
+		}
+		return "degraded", sourceOwnerGoNative, "memory store policy is disabled"
+	case sourceLetta:
+		if !nativeSourceAdapterEnabled(sourceLetta, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		if strings.TrimSpace(s.letta.url) == "" {
+			return "degraded", sourceOwnerGoNative, "LETTA_URL is not configured"
+		}
+		return "healthy", sourceOwnerGoNative, "native adapter enabled"
+	case sourceMemoryBank:
+		if !nativeSourceAdapterEnabled(sourceMemoryBank, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		policy := defaultRustBackendPolicy()
+		backend := strings.TrimSpace(strings.ToLower(anyToString(policy["memory_bank_backend"])))
+		if backend == "disabled" {
+			return "disabled", sourceOwnerGoNative, "memory bank backend is disabled"
+		}
+		if backend == "" {
+			backend = "shodh_spike"
+		}
+		return "healthy", sourceOwnerGoNative, "backend=" + backend
+	case sourceMongoRaw:
+		if !nativeSourceAdapterEnabled(sourceMongoRaw, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		if s.telemetrySink != nil && s.telemetrySink.enabled {
+			return "healthy", sourceOwnerGoNative, "native mongo telemetry collection adapter enabled"
+		}
+		if s.telemetrySpool != nil && s.telemetrySpool.enabled {
+			return "healthy", sourceOwnerGoNative, "native telemetry spool fallback adapter enabled"
+		}
+		return "degraded", sourceOwnerGoNative, "telemetry sink and spool adapters are unavailable"
+	case sourceMindsdb:
+		if !nativeSourceAdapterEnabled(sourceMindsdb, true) {
+			return "disabled", sourceOwnerGoNative, "native adapter disabled by config"
+		}
+		if !nativeMindsdbEnabled() {
+			return "disabled", sourceOwnerGoNative, "MINDSDB_ENABLED=false"
+		}
+		if strings.TrimSpace(nativeMindsdbSQLURL()) == "" {
+			return "degraded", sourceOwnerGoNative, "mindsdb SQL endpoint is not configured"
+		}
+		return "healthy", sourceOwnerGoNative, "native SQL adapter enabled"
+	default:
+		return "degraded", owner, "lane state unknown"
+	}
+}
+
+func (s *server) strictRuntimeServices() []map[string]any {
+	rows := []map[string]any{
+		serviceRow("gateway-go", "healthy", sourceOwnerGoNative, "HTTP orchestrator gateway"),
+		serviceRow("memory-store", func() string {
+			if s.memoryStore != nil && s.memoryStore.policy.enabled {
+				return "healthy"
+			}
+			return "degraded"
+		}(), sourceOwnerGoNative, "topic rollups + local graph store"),
+	}
+
+	memoryBankStatus, memoryBankOwner, memoryBankDetail := s.strictRuntimeLaneStatus(sourceMemoryBank)
+	rows = append(rows, serviceRow("memory-bank-spike-rs", memoryBankStatus, memoryBankOwner, memoryBankDetail))
+
+	laneSources := orderedSourceUnion(
+		s.retrieval.defaultSources,
+		s.retrieval.fastSources,
+		s.retrieval.slowSources,
+		s.retrieval.syncFallbackSources,
+	)
+	if len(laneSources) == 0 {
+		laneSources = append([]string{}, defaultAllSources...)
+	}
+	for _, source := range laneSources {
+		status, owner, detail := s.strictRuntimeLaneStatus(source)
+		if strings.TrimSpace(strings.ToLower(status)) != "healthy" {
+			continue
+		}
+		rows = append(rows, serviceRow("retrieval/"+source, status, owner, detail))
+	}
+	return rows
+}
+
 func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -2176,16 +2339,12 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			queueMax = 1
 		}
 		queueRatio := float64(queueDepth) / float64(queueMax)
-		services := []map[string]any{
-			{"name": "gateway-go", "status": "healthy", "owner": sourceOwnerGoNative},
-			{"name": "memory-store", "status": func() string {
-				if s.memoryStore != nil && s.memoryStore.policy.enabled {
-					return "healthy"
-				}
-				return "degraded"
-			}(), "owner": sourceOwnerGoNative},
-			{"name": "memory-bank-spike-rs", "status": "healthy", "owner": sourceOwnerGoNative},
-			{"name": "qdrant/weaviate/pgvector", "status": "healthy", "owner": sourceOwnerGoNative},
+		services := s.strictRuntimeServices()
+		healthyServiceCount := 0
+		for _, row := range services {
+			if anyToBool(row["healthy"]) {
+				healthyServiceCount++
+			}
 		}
 		payload := map[string]any{
 			"ok":                            true,
@@ -2198,10 +2357,14 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"strictNoPythonRuntime":         true,
 			"sourceOwnershipMode":           s.retrieval.sourceOwnershipMode,
 			"services":                      services,
-			"runtimeBackendPolicy":          defaultRustBackendPolicy(),
-			"retrievalFastSources":          append([]string{}, s.retrieval.fastSources...),
-			"retrievalSlowSources":          append([]string{}, s.retrieval.slowSources...),
-			"retrievalDefaultSources":       append([]string{}, s.retrieval.defaultSources...),
+			"serviceHealth": map[string]any{
+				"healthy": healthyServiceCount,
+				"total":   len(services),
+			},
+			"runtimeBackendPolicy":    defaultRustBackendPolicy(),
+			"retrievalFastSources":    append([]string{}, s.retrieval.fastSources...),
+			"retrievalSlowSources":    append([]string{}, s.retrieval.slowSources...),
+			"retrievalDefaultSources": append([]string{}, s.retrieval.defaultSources...),
 			"queue": map[string]any{
 				"pending":               queueDepth,
 				"memoryWriteQueueDepth": queueDepth,
@@ -2213,6 +2376,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"warnings": []string{
 				"Python backend forwarding is disabled by strict runtime policy; all active lanes run through Go/Rust services.",
 			},
+			"metadataContract": metadataContractSnapshot(),
 		}
 		writeJSON(w, http.StatusOK, payload)
 		return
@@ -2252,6 +2416,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		"pythonHotPathTotal": anyToInt(gatewayOwnership["fallbacks"], 0),
 	}
 	payload["sourceOwnershipMode"] = s.retrieval.sourceOwnershipMode
+	payload["metadataContract"] = metadataContractSnapshot()
 
 	warnings := parseWarnings(payload["warnings"])
 	if backendMap, ok := backendOwnership.(map[string]any); ok {
@@ -3833,6 +3998,7 @@ func (s *server) callBackendSourceQuery(
 	source string,
 	explicitSourceOverride bool,
 ) ([]map[string]any, []string, map[string]any, string, error) {
+	fallbackWarnings := []string{}
 	if source == sourceLetta {
 		rows, warnings, err := s.queryLettaSource(ctx, baseRequest)
 		return rows, warnings, nil, sourceOwnerGoNative, err
@@ -3846,7 +4012,26 @@ func (s *server) callBackendSourceQuery(
 		)
 		return rows, warnings, sourceTrace, owner, err
 	}
-	fallbackWarnings := []string{}
+	if source == sourceMongoRaw {
+		rows, warnings, err := s.queryMongoRawSource(ctx, baseRequest)
+		if err == nil {
+			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		fallbackWarnings = append(
+			fallbackWarnings,
+			"mongo_raw go-adapter fallback to backend retrieval lane: "+err.Error(),
+		)
+	}
+	if source == sourceMindsdb {
+		rows, warnings, err := s.queryMindsdbSource(ctx, baseRequest)
+		if err == nil {
+			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		fallbackWarnings = append(
+			fallbackWarnings,
+			"mindsdb go-adapter fallback to backend retrieval lane: "+err.Error(),
+		)
+	}
 	if source == sourceQdrant {
 		rows, warnings, err := s.queryQdrantSource(ctx, baseRequest)
 		if err == nil {
