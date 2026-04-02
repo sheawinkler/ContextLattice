@@ -53,6 +53,22 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-04-02 · v3.3.1 · Public Spike-Lab Guardrails + Release Sync</span>
+        <h3>Public main now documents spike-lab as advanced opt-in with one-lane controls</h3>
+        <p class="spotlight">
+          We kept spike benchmarking transparent for advanced operators while reducing default-user risk: public startup remains clean,
+          and spike-lab now has explicit lane-by-lane control and published benchmark references.
+        </p>
+        <ul>
+          <li><strong>No default runtime expansion:</strong> default profiles stay <code>core,llm,observability</code>.</li>
+          <li><strong>One-lane operator controls:</strong> <code>gmake mem-spike-ls</code>, <code>gmake mem-spike-up SPIKE_LANE=&lt;lane&gt;</code>, <code>gmake mem-spike-down SPIKE_LANE=&lt;lane&gt;</code>.</li>
+          <li><strong>Resource guardrail:</strong> documented Docker VM RSS guard policy for spike services (<code>DOCKER_VM_RSS_GUARD_*</code>).</li>
+          <li><strong>Published benchmark transparency:</strong> <code>bench/results/backend_lane_matrix_latest.json</code>, <code>bench/results/memory_bank_spike_direct_matrix_latest.json</code>, and <code>docs/perf_v3_spike_matrix.md</code>.</li>
+          <li><strong>Included commit train since v3.3.0:</strong> gateway-go telemetry route cutover, mongo_raw+mindsdb go-native sync, build-integrity restore, and env/runtime stability hardening.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-03-24 · v3.2.13 · Glama-lite SQLite Acceleration</span>
         <h3>Lite mode now ships sqlite WAL + FTS5 BM25 acceleration with optional sqlite-vec detection</h3>
         <p class="spotlight">

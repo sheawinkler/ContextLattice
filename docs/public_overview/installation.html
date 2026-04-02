@@ -136,6 +136,22 @@ gmake monitor-check</code></pre>
           </ul>
         </details>
       </article>
+      <article class="card">
+        <div class="kicker">Spike lab policy</div>
+        <h3>Spike-lab is advanced and opt-in (one lane at a time)</h3>
+        <div class="priority-row"><span class="priority-chip advanced">Advanced</span></div>
+        <p>Public <code>main</code> includes spike adapters for transparency and reproducibility, but standard users should stay on default profiles.</p>
+        <ul class="spec-list">
+          <li><strong>Default profile remains:</strong> <code>core,llm,observability</code> (no global <code>spike-lab</code> enablement).</li>
+          <li><strong>One-lane guardrail:</strong> use <code>gmake mem-spike-up SPIKE_LANE=&lt;lane&gt;</code> and stop before switching.</li>
+          <li><strong>Lane list:</strong> <code>gmake mem-spike-ls</code> (lancedb, trieve, helixdb, shodh, memvid, surrealdb).</li>
+          <li><strong>Resource guard:</strong> keep <code>DOCKER_VM_RSS_GUARD_*</code> enabled in <code>.env</code>.</li>
+          <li><strong>Published evidence:</strong> use shipped benchmark artifacts if you do not need local spike runs.</li>
+        </ul>
+<pre><code>gmake mem-spike-ls
+gmake mem-spike-up SPIKE_LANE=surrealdb
+gmake mem-spike-down SPIKE_LANE=surrealdb</code></pre>
+      </article>
     </section>
 
     <section class="section" id="install-auth">

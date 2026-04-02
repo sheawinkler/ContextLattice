@@ -310,6 +310,33 @@ gmake mem-mode-full
 gmake mem-mode-core
 ```
 
+### 5a) Spike lab (advanced opt-in only)
+
+`spike-lab` is kept in public `main` for transparent operator benchmarking, but it is not part of default runtime.
+
+Guardrails:
+- Keep `COMPOSE_PROFILES` default as `core,llm,observability` (do not add `spike-lab` globally).
+- Run one spike lane at a time.
+- Keep Docker VM RSS guard enabled in `.env` (`DOCKER_VM_RSS_GUARD_*`).
+
+Commands:
+
+```bash
+# list available lanes
+gmake mem-spike-ls
+
+# start exactly one spike lane
+gmake mem-spike-up SPIKE_LANE=surrealdb
+
+# stop that lane when done
+gmake mem-spike-down SPIKE_LANE=surrealdb
+```
+
+Published benchmark transparency (no local spike run required):
+- lane matrix artifact: `bench/results/backend_lane_matrix_latest.json`
+- direct spike matrix artifact: `bench/results/memory_bank_spike_direct_matrix_latest.json`
+- matrix summary doc: `docs/perf_v3_spike_matrix.md`
+
 ### 6) Verify health and telemetry
 
 ```bash
@@ -756,6 +783,7 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 ## Docs Index
 
 - Release notes:
+  - `docs/releases/v3.3.1.md` (public guardrails for spike-lab + release notes from `v3.3.0..v3.3.1`)
   - `docs/releases/v3.2.13.md` (Glama-lite sqlite acceleration lane + capability detection)
   - `docs/releases/v3.2.3.md` (final install/deployment docs alignment for staged runtime lanes)
   - `docs/releases/v3.2.2.md` (README/website graphics + runtime ownership alignment)
