@@ -55,6 +55,8 @@ type retrievalPolicy struct {
 	defaultSources                   []string
 	fastSources                      []string
 	slowSources                      []string
+	nonDegradableSources             map[string]struct{}
+	protectedSources                 map[string]struct{}
 	syncFallbackSources              []string
 	rustQualityFallbackEnabled       bool
 	rustQualityFallbackSources       []string
@@ -740,6 +742,14 @@ func loadRetrievalPolicy() retrievalPolicy {
 	}
 	policy.fastSources = csvListEnv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant,weaviate,postgres_pgvector")
 	policy.slowSources = csvListEnv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb,mongo_raw,letta,memory_bank")
+	policy.nonDegradableSources = toSourceSet(csvListEnv("GO_RETRIEVAL_NON_DEGRADABLE_SOURCES", "topic_rollups"))
+	if len(policy.nonDegradableSources) == 0 {
+		policy.nonDegradableSources = map[string]struct{}{sourceTopicRollup: {}}
+	}
+	policy.protectedSources = toSourceSet(csvListEnv("GO_RETRIEVAL_PROTECTED_SOURCES", "topic_rollups,qdrant,weaviate,postgres_pgvector"))
+	if len(policy.protectedSources) == 0 {
+		policy.protectedSources = toSourceSet(policy.fastSources)
+	}
 	policy.syncFallbackSources = csvListEnv("ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", "mindsdb,mongo_raw")
 	policy.rustQualityFallbackEnabled = envBool("GO_RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", true)
 	policy.rustQualityFallbackSources = csvListEnv(
@@ -3635,6 +3645,24 @@ func (s *server) shouldScheduleContinuation(source string) bool {
 	return ok
 }
 
+func (s *server) isNonDegradableSource(source string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return false
+	}
+	_, ok := s.retrieval.nonDegradableSources[normalized]
+	return ok
+}
+
+func (s *server) isProtectedSource(source string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	if normalized == "" {
+		return false
+	}
+	_, ok := s.retrieval.protectedSources[normalized]
+	return ok
+}
+
 func (s *server) shouldAdaptiveSkip(source string) bool {
 	if !s.retrieval.timeoutAdaptiveSkipEnabled {
 		return false
@@ -4615,6 +4643,7 @@ func (s *server) runSourceBatch(
 			}
 		}
 		if result.err != nil {
+			nonDegradableLane := s.isNonDegradableSource(result.source)
 			errorKind := "error"
 			if result.timedOut {
 				if result.budgetExceeded {
@@ -4632,25 +4661,40 @@ func (s *server) runSourceBatch(
 				"phase":           result.phase,
 				"timeout_secs":    result.timeout.Seconds(),
 				"latency_ms":      result.latency.Milliseconds(),
+				"non_degradable":  nonDegradableLane,
 			}
 			output.sourceErrors[result.source] = errorPayload
 			if result.timedOut {
 				if result.budgetExceeded {
 					output.budgetExceededSources = append(output.budgetExceededSources, result.source)
 					if !suppressSlowTimeoutWarnings {
-						output.warnings = append(
-							output.warnings,
-							result.source+" retrieval sync budget exceeded after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
-						)
+						if nonDegradableLane {
+							output.warnings = append(
+								output.warnings,
+								result.source+" retrieval sync budget exceeded after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s (non-degradable lane; continuing asynchronously).",
+							)
+						} else {
+							output.warnings = append(
+								output.warnings,
+								result.source+" retrieval sync budget exceeded after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
+							)
+						}
 					}
 				} else {
 					output.timedOutSources = append(output.timedOutSources, result.source)
-					output.warnings = append(
-						output.warnings,
-						result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
-					)
+					if nonDegradableLane {
+						output.warnings = append(
+							output.warnings,
+							result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s (non-degradable lane; continuing asynchronously).",
+						)
+					} else {
+						output.warnings = append(
+							output.warnings,
+							result.source+" retrieval timed out after "+strconv.FormatFloat(result.timeout.Seconds(), 'f', 1, 64)+"s",
+						)
+					}
 				}
-				if s.shouldScheduleContinuation(result.source) {
+				if s.shouldScheduleContinuation(result.source) || nonDegradableLane {
 					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-timeout", continuationToken) {
 						output.continuationSources = append(output.continuationSources, result.source)
 						if !suppressSlowTimeoutWarnings || !result.budgetExceeded {
@@ -4663,6 +4707,15 @@ func (s *server) runSourceBatch(
 				}
 			} else {
 				output.warnings = append(output.warnings, result.source+" retrieval failed: "+result.err.Error())
+				if nonDegradableLane {
+					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-error", continuationToken) {
+						output.continuationSources = append(output.continuationSources, result.source)
+						output.warnings = append(
+							output.warnings,
+							result.source+" is a non-degradable lane; continuing asynchronously after error.",
+						)
+					}
+				}
 			}
 		}
 		s.recordAdaptiveObservation(
@@ -4771,7 +4824,9 @@ func buildRetrievalLifecyclePayload(
 	case "pending":
 		status = "partial"
 	default:
-		if len(returnedNow) == 0 && len(pending) > 0 {
+		if len(returnedNow) > 0 {
+			status = "succeeded"
+		} else if len(pending) > 0 {
 			status = "partial"
 		} else if len(failed) > 0 || len(timedOut) > 0 {
 			status = "failed"
@@ -5326,15 +5381,46 @@ func (s *server) executeRetrieval(
 		deferredCandidates = append(deferredCandidates, source)
 	}
 	sort.Strings(deferredCandidates)
-	hasMaterialSourceErrors := false
-	for _, payload := range sourceErrors {
+	materialErrorSources := map[string]struct{}{}
+	for source, payload := range sourceErrors {
 		kind := strings.TrimSpace(strings.ToLower(anyToString(payload["kind"])))
 		if kind == "" {
 			kind = "error"
 		}
+		if s.isNonDegradableSource(source) {
+			continue
+		}
 		if kind == "timeout" || kind == "error" {
+			materialErrorSources[source] = struct{}{}
+		}
+	}
+	hasMaterialSourceErrors := false
+	if len(materialErrorSources) > 0 {
+		protectedCandidates := []string{}
+		for _, source := range resolvedSources {
+			if s.isProtectedSource(source) {
+				protectedCandidates = append(protectedCandidates, source)
+			}
+		}
+		protectedCandidates = normalizeSourceList(protectedCandidates)
+		returnedSet := toSourceSet(returnedSources)
+		protectedReturned := false
+		for _, source := range protectedCandidates {
+			if _, ok := returnedSet[source]; ok {
+				protectedReturned = true
+				break
+			}
+		}
+		protectedFailed := 0
+		for _, source := range protectedCandidates {
+			if _, ok := materialErrorSources[source]; ok {
+				protectedFailed += 1
+			}
+		}
+		if len(protectedCandidates) == 0 {
+			hasMaterialSourceErrors = len(returnedSources) == 0
+		} else if !protectedReturned && protectedFailed == len(protectedCandidates) && len(returnedSources) == 0 {
 			hasMaterialSourceErrors = true
-			break
 		}
 	}
 	if len(returnedSources) > 0 && (len(deferredCandidates) > 0 || hasMaterialSourceErrors) {
@@ -5384,6 +5470,20 @@ func (s *server) executeRetrieval(
 		failedSources = append(failedSources, source)
 	}
 	sort.Strings(failedSources)
+	timedOutForLifecycle := make([]string, 0, len(timedOutList))
+	for _, source := range timedOutList {
+		if s.isNonDegradableSource(source) {
+			continue
+		}
+		timedOutForLifecycle = append(timedOutForLifecycle, source)
+	}
+	failedForLifecycle := make([]string, 0, len(failedSources))
+	for _, source := range failedSources {
+		if s.isNonDegradableSource(source) {
+			continue
+		}
+		failedForLifecycle = append(failedForLifecycle, source)
+	}
 	resultState := "empty"
 	if len(merged) > 0 {
 		resultState = "ready"
@@ -5410,8 +5510,8 @@ func (s *server) executeRetrieval(
 		returnedSources,
 		deferredCandidates,
 		warmingSources,
-		failedSources,
-		timedOutList,
+		failedForLifecycle,
+		timedOutForLifecycle,
 		budgetExceededList,
 	)
 	debug := map[string]any{
@@ -5431,6 +5531,8 @@ func (s *server) executeRetrieval(
 			"staged_enabled":               s.retrieval.enabled,
 			"fast_sources":                 s.retrieval.fastSources,
 			"slow_sources":                 s.retrieval.slowSources,
+			"protected_sources":            mapKeysSorted(s.retrieval.protectedSources),
+			"non_degradable_sources":       mapKeysSorted(s.retrieval.nonDegradableSources),
 			"sync_fallback_sources":        s.retrieval.syncFallbackSources,
 			"min_fast_results":             s.retrieval.minFastResults,
 			"min_fast_results_by_mode":     s.retrieval.minFastResultsByMode,

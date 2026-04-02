@@ -3373,6 +3373,86 @@ func TestStagedRetrievalExplicitSourcesRemainFailOpenByDefault(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalTopicRollupsTimeoutIsNonDegradable(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", "0.25")
+	t.Setenv("GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_SECS", "0.25")
+	t.Setenv("GO_RETRIEVAL_NON_DEGRADABLE_SOURCES", "topic_rollups")
+	t.Setenv("GO_RETRIEVAL_PROTECTED_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", "true")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/memory/topic-rollups" {
+			time.Sleep(450 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"topics":[{"path":"runbooks/profitability","summarySnippets":["selector tuning"],"latestTimestamp":"2026-04-01T00:00:00Z"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"selector tuning","limit":5,"retrieval_mode":"balanced","sources":["topic_rollups"]}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.TrimSpace(strings.ToLower(anyToString(payload["result_state"]))) == "degraded" {
+		t.Fatalf("topic_rollups timeout must not mark response degraded: %#v", payload)
+	}
+	if degraded, _ := payload["degraded"].(bool); degraded {
+		t.Fatalf("expected degraded=false, got true")
+	}
+
+	lifecycle, _ := payload["retrieval_lifecycle"].(map[string]any)
+	if strings.TrimSpace(strings.ToLower(anyToString(lifecycle["status"]))) == "failed" {
+		t.Fatalf("expected lifecycle status to avoid failed on non-degradable lane timeout, got %#v", lifecycle["status"])
+	}
+
+	summary, _ := payload["source_summary"].(map[string]any)
+	timedOut := anyToStringSlice(summary["timed_out_sources"])
+	if len(timedOut) != 1 || timedOut[0] != "topic_rollups" {
+		t.Fatalf("expected timed_out_sources=[topic_rollups], got %v", timedOut)
+	}
+
+	continuation, _ := payload["continuation_async"].(map[string]any)
+	if continuation == nil {
+		t.Fatalf("expected continuation_async for non-degradable timeout lane")
+	}
+	pending := anyToStringSlice(continuation["pending_sources"])
+	if len(pending) == 0 || pending[0] != "topic_rollups" {
+		t.Fatalf("expected continuation pending source topic_rollups, got %v", pending)
+	}
+
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if !strings.Contains(warnings, "non-degradable lane") {
+		t.Fatalf("expected non-degradable warning context, got %v", payload["warnings"])
+	}
+}
+
 func TestStagedRetrievalCoverageRescueQueryVariant(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("GO_RETRIEVAL_COVERAGE_RESCUE_ENABLED", "true")
