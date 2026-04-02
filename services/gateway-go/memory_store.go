@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ type memoryStorePolicy struct {
 	scanLimit         int
 	maxSummaryChars   int
 	maxRollupSnippets int
+	rollupCacheTTL    time.Duration
 }
 
 type memoryStoreEntry struct {
@@ -70,6 +72,13 @@ type memoryStore struct {
 	recent      []memoryStoreEntry
 	latestTopic map[string]string
 	latestHash  map[string]string
+	rollupCache map[string]topicRollupCacheEntry
+}
+
+type topicRollupCacheEntry struct {
+	generatedAt time.Time
+	total       int
+	topics      []map[string]any
 }
 
 func loadMemoryStorePolicy() memoryStorePolicy {
@@ -94,6 +103,7 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		scanLimit:         clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
 		maxSummaryChars:   clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
 		maxRollupSnippets: clampInt(envInt("GO_MEMORY_STORE_ROLLUP_SNIPPETS", 3), 1, 8),
+		rollupCacheTTL:    envDurationSeconds("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", 15),
 	}
 }
 
@@ -104,6 +114,7 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 		recent:      make([]memoryStoreEntry, 0, policy.maxRecent),
 		latestTopic: map[string]string{},
 		latestHash:  map[string]string{},
+		rollupCache: map[string]topicRollupCacheEntry{},
 	}
 	if !policy.enabled {
 		return store, nil
@@ -254,11 +265,84 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 			m.latestHash[key] = entry.ContentHash
 		}
 	}
+	m.invalidateTopicRollupCacheLocked(entry.Project)
 	m.recent = append(m.recent, entry)
 	if len(m.recent) > m.policy.maxRecent {
 		over := len(m.recent) - m.policy.maxRecent
 		m.recent = append([]memoryStoreEntry(nil), m.recent[over:]...)
 	}
+}
+
+func cloneTopicRows(rows []map[string]any) []map[string]any {
+	if len(rows) == 0 {
+		return []map[string]any{}
+	}
+	cloned := make([]map[string]any, len(rows))
+	copy(cloned, rows)
+	return cloned
+}
+
+func normalizeRollupProject(project string) string {
+	return strings.ToLower(strings.TrimSpace(project))
+}
+
+func topicRollupCacheKey(project string, minCount int) string {
+	if minCount < 1 {
+		minCount = 1
+	}
+	return normalizeRollupProject(project) + "|" + strconv.Itoa(minCount)
+}
+
+func (m *memoryStore) invalidateTopicRollupCacheLocked(project string) {
+	if m == nil || len(m.rollupCache) == 0 {
+		return
+	}
+	prefix := normalizeRollupProject(project)
+	for key := range m.rollupCache {
+		parts := strings.SplitN(key, "|", 2)
+		if len(parts) == 0 {
+			continue
+		}
+		if strings.EqualFold(parts[0], prefix) {
+			delete(m.rollupCache, key)
+		}
+	}
+}
+
+func (m *memoryStore) getTopicRollupCache(project string, minCount int) (topicRollupCacheEntry, bool) {
+	if m == nil || m.policy.rollupCacheTTL <= 0 {
+		return topicRollupCacheEntry{}, false
+	}
+	key := topicRollupCacheKey(project, minCount)
+	now := time.Now()
+	m.mu.RLock()
+	entry, ok := m.rollupCache[key]
+	m.mu.RUnlock()
+	if !ok {
+		return topicRollupCacheEntry{}, false
+	}
+	if now.Sub(entry.generatedAt) > m.policy.rollupCacheTTL {
+		m.mu.Lock()
+		delete(m.rollupCache, key)
+		m.mu.Unlock()
+		return topicRollupCacheEntry{}, false
+	}
+	entry.topics = cloneTopicRows(entry.topics)
+	return entry, true
+}
+
+func (m *memoryStore) putTopicRollupCache(project string, minCount int, rows []map[string]any, total int) {
+	if m == nil || m.policy.rollupCacheTTL <= 0 {
+		return
+	}
+	key := topicRollupCacheKey(project, minCount)
+	m.mu.Lock()
+	m.rollupCache[key] = topicRollupCacheEntry{
+		generatedAt: time.Now(),
+		total:       total,
+		topics:      cloneTopicRows(rows),
+	}
+	m.mu.Unlock()
 }
 
 func (m *memoryStore) appendHistory(entry memoryStoreEntry) error {
@@ -631,6 +715,34 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 	if offset < 0 {
 		offset = 0
 	}
+	if cached, ok := m.getTopicRollupCache(project, minCount); ok {
+		topics := cached.topics
+		total := cached.total
+		if offset >= total {
+			topics = []map[string]any{}
+		} else {
+			topics = topics[offset:]
+		}
+		if len(topics) > limit {
+			topics = topics[:limit]
+		}
+		out := make([]any, 0, len(topics))
+		for _, row := range topics {
+			out = append(out, row)
+		}
+		return map[string]any{
+			"project":               project,
+			"topics":                out,
+			"total":                 total,
+			"offset":                offset,
+			"limit":                 limit,
+			"min_count":             minCount,
+			"historyEntriesScanned": len(m.recent),
+			"historyEntriesDeduped": len(m.recent),
+			"generatedAt":           nowUTCISO(),
+			"cache":                 "hit",
+		}
+	}
 	rows, err := m.collectDocs(ctx, project)
 	if err != nil {
 		return map[string]any{
@@ -740,6 +852,7 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 	})
 
 	total := len(topics)
+	m.putTopicRollupCache(project, minCount, topics, total)
 	if offset >= total {
 		topics = []map[string]any{}
 	} else {
@@ -763,6 +876,7 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 		"historyEntriesScanned": len(m.recent),
 		"historyEntriesDeduped": len(m.recent),
 		"generatedAt":           nowUTCISO(),
+		"cache":                 "miss",
 	}
 }
 

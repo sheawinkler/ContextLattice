@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMemoryStorePutSkipsUnchangedDuplicateHistory(t *testing.T) {
@@ -103,4 +105,61 @@ func countNonEmptyLines(raw string) int {
 		}
 	}
 	return count
+}
+
+func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	projectRoot := filepath.Join(root, "contextlattice")
+	manualFile := filepath.Join(projectRoot, "notes", "manual-outside-put.md")
+
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+	t.Setenv("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", "1")
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	if _, _, err := store.put(normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/seed.md",
+		content:   "seed",
+		topicPath: "runbooks/testing",
+	}); err != nil {
+		t.Fatalf("seed put failed: %v", err)
+	}
+
+	first := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0)
+	totalBefore := anyToInt(first["total"], 0)
+	if totalBefore < 1 {
+		t.Fatalf("expected non-empty topic rollups, got %#v", first)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(manualFile), 0o755); err != nil {
+		t.Fatalf("mkdir manual file path failed: %v", err)
+	}
+	if err := os.WriteFile(manualFile, []byte("manual update\n"), 0o644); err != nil {
+		t.Fatalf("write manual file failed: %v", err)
+	}
+
+	cached := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0)
+	totalCached := anyToInt(cached["total"], 0)
+	if totalCached != totalBefore {
+		t.Fatalf("expected cached rollups unchanged before ttl expiry, before=%d cached=%d", totalBefore, totalCached)
+	}
+	if strings.TrimSpace(anyToString(cached["cache"])) != "hit" {
+		t.Fatalf("expected cache hit before ttl expiry, got %#v", cached["cache"])
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	after := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0)
+	totalAfter := anyToInt(after["total"], 0)
+	if totalAfter <= totalBefore {
+		t.Fatalf("expected cache expiry to pick up manual file, before=%d after=%d", totalBefore, totalAfter)
+	}
+	if strings.TrimSpace(anyToString(after["cache"])) != "miss" {
+		t.Fatalf("expected cache miss after ttl expiry, got %#v", after["cache"])
+	}
 }
