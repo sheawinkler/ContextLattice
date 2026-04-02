@@ -82,6 +82,8 @@ type retrievalPolicy struct {
 	timeoutAdaptiveSkipEnabled       bool
 	timeoutAdaptiveSkipSources       map[string]struct{}
 	sourceTimeouts                   map[string]time.Duration
+	topicRollupSyncTimeoutFloor      time.Duration
+	topicRollupSearchTopN            int
 	continuationTimeoutDefault       time.Duration
 	continuationTimeoutBySource      map[string]time.Duration
 	continuationMaxInflight          int
@@ -859,6 +861,8 @@ func loadRetrievalPolicy() retrievalPolicy {
 		sourceLetta:       envDurationSeconds("ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS", 45),
 		sourceMemoryBank:  envDurationSeconds("ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS", 3),
 	}
+	policy.topicRollupSyncTimeoutFloor = envDurationSeconds("GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_SECS", 3.5)
+	policy.topicRollupSearchTopN = clampInt(envInt("GO_RETRIEVAL_TOPIC_ROLLUP_SEARCH_TOPN", 2000), 200, 10000)
 	policy.continuationTimeoutDefault = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_TIMEOUT_SECS", 45)
 	policy.continuationTimeoutBySource = map[string]time.Duration{
 		sourceLetta:      envDurationSeconds("ORCH_RETRIEVAL_LETTA_ASYNC_WARM_TIMEOUT_SECS", 180),
@@ -3594,7 +3598,21 @@ func (s *server) resolveSourceTimeout(
 	}
 	if syncPhase && !blockingSlowSources {
 		adjusted, adaptive := s.adaptiveTimeoutForSource(source, timeout)
+		if source == sourceTopicRollup && s.retrieval.topicRollupSyncTimeoutFloor > 0 && adjusted < s.retrieval.topicRollupSyncTimeoutFloor {
+			adjusted = s.retrieval.topicRollupSyncTimeoutFloor
+			adaptive["adjusted"] = true
+			adaptive["adjusted_timeout_secs"] = roundFloat(adjusted.Seconds(), 3)
+			adaptive["topic_rollup_timeout_floor_secs"] = roundFloat(s.retrieval.topicRollupSyncTimeoutFloor.Seconds(), 3)
+			adaptive["topic_rollup_timeout_floor_applied"] = true
+		}
 		return adjusted, adaptive
+	}
+	if source == sourceTopicRollup && s.retrieval.topicRollupSyncTimeoutFloor > 0 && timeout < s.retrieval.topicRollupSyncTimeoutFloor {
+		timeout = s.retrieval.topicRollupSyncTimeoutFloor
+		detail["adjusted"] = true
+		detail["adjusted_timeout_secs"] = roundFloat(timeout.Seconds(), 3)
+		detail["topic_rollup_timeout_floor_secs"] = roundFloat(s.retrieval.topicRollupSyncTimeoutFloor.Seconds(), 3)
+		detail["topic_rollup_timeout_floor_applied"] = true
 	}
 	return timeout, detail
 }
@@ -3943,7 +3961,19 @@ func (s *server) queryTopicRollupsSource(
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
 	topics := make([]any, 0)
 	if s.memoryStore != nil && s.memoryStore.policy.enabled {
-		rollups := s.memoryStore.topicRollupsWithContext(ctx, projectFilter, 1, 5000, 0)
+		topN := s.retrieval.topicRollupSearchTopN
+		if topN < limit {
+			topN = limit
+		}
+		if topicFilter != "" {
+			// Scoped reads need extra headroom so topic filtering doesn't drop relevant descendants.
+			scopedTopN := limit * 120
+			if scopedTopN > topN {
+				topN = scopedTopN
+			}
+		}
+		topN = clampInt(topN, 200, 5000)
+		rollups := s.memoryStore.topicRollupsWithContext(ctx, projectFilter, 1, topN, 0)
 		if memoryTopics, ok := rollups["topics"].([]any); ok && len(memoryTopics) > 0 {
 			topics = memoryTopics
 		}
