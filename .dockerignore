@@ -14,9 +14,7 @@ dist
 build
 tmp
 logs
-bench
 docs
-contextlattice-dashboard
 docker_compose_backup
 *.sqlite
 *.sqlite3
