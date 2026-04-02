@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full mem-spike-ls mem-spike-up mem-spike-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -36,6 +36,7 @@ help:
 > echo "    (set PROFILES=core,llm to limit docker compose)"
 > echo "  up-core: helper for PROFILES=core docker compose up"
 > echo "  mem-mode-show|mem-mode-core|mem-mode-full: toggle persistent COMPOSE_PROFILES in .env"
+> echo "  mem-spike-ls|mem-spike-up|mem-spike-down: advanced spike-lab lane control (one lane at a time)"
 > echo "  models-pull: pull local Ollama models (optional)"
 > echo "  mcp-proxy-up: configure & start mcp-proxy on :9090"
 > echo "  init: qdrant-init + optional mindsdb/letta seeds"
@@ -450,6 +451,7 @@ MEM_PROFILE_CORE := core
 MEM_PROFILE_FULL := core,analytics,llm,observability
 MEM_PROFILES_DEFAULT := $(shell [ -f "$(ENV_FILE)" ] && awk -F= '/^COMPOSE_PROFILES=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)
 MEM_PROFILES ?= $(if $(strip $(MEM_PROFILES_DEFAULT)),$(strip $(MEM_PROFILES_DEFAULT)),core)
+SPIKE_LANE ?= shodh
 
 mem-mode-show:
 > if [ -f "$(ENV_FILE)" ]; then \
@@ -495,6 +497,41 @@ mem-up-core:
 
 mem-up-full:
 > PROFILES="$(MEM_PROFILE_FULL)" $(MAKE) up
+
+mem-spike-ls:
+> echo "Available spike lanes:"
+> echo "  lancedb trieve helixdb shodh memvid surrealdb"
+> echo "Example: gmake mem-spike-up SPIKE_LANE=surrealdb"
+
+mem-spike-up:
+> lane="$(SPIKE_LANE)"; \
+> case "$$lane" in \
+>   lancedb) svc="lancedb-spike-adapter" ;; \
+>   trieve) svc="trieve-spike-adapter" ;; \
+>   helixdb) svc="helixdb-spike-adapter" ;; \
+>   shodh) svc="shodh-spike-adapter" ;; \
+>   memvid) svc="memvid-spike-adapter" ;; \
+>   surrealdb) svc="surrealdb-spike-adapter" ;; \
+>   *) echo "Invalid SPIKE_LANE=$$lane"; echo "Use: gmake mem-spike-ls"; exit 2 ;; \
+> esac; \
+> echo ">> starting spike lane $$lane ($$svc)"; \
+> echo ">> guardrail: run one spike lane at a time to avoid RAM pressure"; \
+> COMPOSE_PROFILES=spike-lab $(DC) up -d "$$svc"
+
+mem-spike-down:
+> lane="$(SPIKE_LANE)"; \
+> case "$$lane" in \
+>   lancedb) svc="lancedb-spike-adapter" ;; \
+>   trieve) svc="trieve-spike-adapter" ;; \
+>   helixdb) svc="helixdb-spike-adapter" ;; \
+>   shodh) svc="shodh-spike-adapter" ;; \
+>   memvid) svc="memvid-spike-adapter" ;; \
+>   surrealdb) svc="surrealdb-spike-adapter" ;; \
+>   *) echo "Invalid SPIKE_LANE=$$lane"; echo "Use: gmake mem-spike-ls"; exit 2 ;; \
+> esac; \
+> echo ">> stopping spike lane $$lane ($$svc)"; \
+> COMPOSE_PROFILES=spike-lab $(DC) stop "$$svc" || true; \
+> COMPOSE_PROFILES=spike-lab $(DC) rm -f "$$svc" || true
 
 .PHONY: mem-up-lite mem-down-lite mem-ps-lite
 mem-up-lite:
