@@ -150,13 +150,16 @@ gmake monitor-check</code></pre>
 
     <section class="section" id="install-requirements">
       <article class="card">
-        <div class="kicker">Personal computer requirements</div>
-        <h3>Size your machine by app version lane + mode</h3>
+        <div class="kicker">Resource requirements</div>
+        <h3>Size your machine by lane and deployment mode</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <ul class="spec-list">
-          <li><strong>Public <code>v3.2.x</code> (current public release <code>v3.2.3</code>) Lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>25-60 GB</code> SSD</li>
-          <li><strong>Public <code>v3.2.x</code> (current public release <code>v3.2.3</code>) Full:</strong> <code>6-8</code> vCPU, <code>16-24 GB</code> RAM, <code>120-200 GB</code> SSD</li>
-          <li><strong>Private <code>v4</code> tuning lane:</strong> start from Full baseline and add headroom (especially SSD); external NVMe is strongly recommended</li>
+          <li><strong>Public <code>v3.3.x</code> Hugging Face / Glama lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>20-50 GB</code> SSD</li>
+          <li><strong>Public <code>v3.3.x</code> local Lite:</strong> <code>2-4</code> vCPU, <code>8-12 GB</code> RAM, <code>25-80 GB</code> SSD</li>
+          <li><strong>Public <code>v3.3.x</code> local Full (no spike-lab):</strong> <code>6-8</code> vCPU, <code>12-20 GB</code> RAM, <code>100-180 GB</code> SSD</li>
+          <li><strong>Public <code>v3.3.x</code> local Full + spike-lab:</strong> <code>8-12</code> vCPU, <code>24-32 GB</code> RAM, <code>180-300 GB</code> SSD/NVMe</li>
+          <li><strong>Public-paid / private <code>v4</code> local premium:</strong> <code>8-12</code> vCPU, <code>24-48 GB</code> RAM, <code>250 GB-1 TB</code> SSD/NVMe</li>
+          <li><strong>Private <code>v4</code> hosted baseline:</strong> <code>16+</code> vCPU host, <code>64+ GB</code> RAM, GPU lane, <code>1-2 TB</code> NVMe for retrieval indexes/snapshots</li>
         </ul>
       </article>
     </section>
@@ -190,13 +193,24 @@ gmake monitor-check</code></pre>
       <div class="priority-row"><span class="priority-chip required">Required</span></div>
       <div class="grid mode-grid">
         <article class="card mode-card">
+          <h3>Hugging Face / Glama lite</h3>
+          <p>Single-container lane for lowest operational overhead and maximum compatibility.</p>
+          <ul class="spec-list">
+            <li><strong>App version lane:</strong> Public <code>v3.3.x</code></li>
+            <li><strong>Services:</strong> Gateway + orchestrator in one container, topic rollups retrieval lane</li>
+            <li><strong>Retrieval lanes:</strong> <code>topic_rollups</code> default, async continuation where configured</li>
+            <li><strong>Resource target:</strong> 2-4 vCPU, 4-8 GB RAM, 20-50 GB SSD</li>
+            <li><strong>Startup path:</strong> <code>Dockerfile.hf-lite</code> on port <code>7860</code></li>
+          </ul>
+        </article>
+        <article class="card mode-card">
           <h3>Lite installation</h3>
           <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.2.x</code> (including <code>v3.2.3</code>)</li>
+            <li><strong>App version lane:</strong> Public <code>v3.3.x</code></li>
             <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
             <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + qdrant + postgres_pgvector</code></li>
-            <li><strong>Resource target:</strong> 2-4 vCPU, 4-8 GB RAM, 25-60 GB SSD</li>
+            <li><strong>Resource target:</strong> 2-4 vCPU, 8-12 GB RAM, 25-80 GB SSD</li>
             <li><strong>Startup command:</strong> <code>gmake mem-up-lite</code></li>
           </ul>
         </article>
@@ -204,10 +218,11 @@ gmake monitor-check</code></pre>
           <h3>Full installation</h3>
           <p>Enables full retrieval fabric and operations stack including analytics, observability, and deeper RAG support.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.2.x</code> Full, and baseline for private <code>v4</code> tuning</li>
+            <li><strong>App version lane:</strong> Public <code>v3.3.x</code> Full, and baseline for private <code>v4</code> tuning</li>
             <li><strong>Services:</strong> Lite stack plus MindsDB, Letta, and observability profile</li>
             <li><strong>Deep continuation lane:</strong> async coverage from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
-            <li><strong>Resource target:</strong> 6-8 vCPU, 16-24 GB RAM, 120-200 GB SSD</li>
+            <li><strong>Resource target:</strong> 6-8 vCPU, 12-20 GB RAM, 100-180 GB SSD (without spike-lab)</li>
+            <li><strong>If spike-lab adapters are active:</strong> 8-12 vCPU, 24-32 GB RAM, 180-300 GB SSD/NVMe</li>
             <li><strong>Startup command:</strong> <code>gmake mem-up-full</code> (or <code>gmake mem-mode-full</code> then <code>gmake mem-up</code>)</li>
           </ul>
         </article>
@@ -223,6 +238,7 @@ gmake monitor-check</code></pre>
           <li>Container app requirement: a Compose v2-compatible container runtime is required (<code>docker compose</code>), such as Docker Desktop, Docker Engine, or another runtime that supports Compose v2</li>
           <li>Supported host environments: macOS, Linux, or Windows (WSL2)</li>
           <li>Host machine sized for selected profile (<code>lite</code> vs <code>full</code>) with enough CPU, RAM, and disk</li>
+          <li>Recommended guardrail: keep at least <code>40 GB</code> free at storage-governance root to avoid pressure-band throttling</li>
           <li><code>gmake</code>, <code>jq</code>, <code>rg</code>, <code>python3</code>, and <code>curl</code></li>
           <li>Tested baseline: macOS 13+ with Docker Desktop</li>
           <li>Project root initialized with <code>.env</code> and compose env symlink</li>
