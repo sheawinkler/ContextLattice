@@ -14,7 +14,7 @@
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-HTTP%20Gateway-6b7280?style=for-the-badge" alt="MCP HTTP Gateway"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/Deploy-Docker%20Compose-4b5563?style=for-the-badge" alt="Docker Compose"></a>
   <a href="#performance-profile"><img src="https://img.shields.io/badge/Write%20Rate-100%2B%20msg%2Fs-374151?style=for-the-badge" alt="Write rate"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-1f2937?style=for-the-badge" alt="Apache 2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSL%201.1-1f2937?style=for-the-badge" alt="BSL 1.1"></a>
 </p>
 
 [![context-lattice MCP server](https://glama.ai/mcp/servers/sheawinkler/context-lattice/badges/card.svg?v=20260324-2)](https://glama.ai/mcp/servers/sheawinkler/context-lattice)
@@ -78,6 +78,10 @@ Context Lattice is built for teams running high-volume memory writes where durab
 - `gmake`, `jq`, `rg`, `python3`, `curl`
 - Tested baseline: macOS 13+ with Docker Desktop
 
+### Private V4 release gates
+
+- Paid launch gate checklist: `docs/private/commercialization/v4_paid_release_gate_checklist.md`
+
 ### Distribution Options (Less technical + dev users)
 
 - Less technical macOS users: DMG bootstrap launcher  
@@ -107,17 +111,24 @@ gmake linux-bundle-build
 # attach this file to the latest GitHub release
 ```
 
-### Personal computer requirements + app versions
+### Resource requirements (all lanes)
 
-| App lane | Recommended profile | CPU | RAM | Storage |
+| Lane | Runtime profile | CPU | RAM | Storage |
 | --- | --- | --- | --- | --- |
-| Public `v3.2.x` (current public release `v3.2.13`) | Glama-lite (single container) | `2-4` vCPU | `4-8 GB` | `20-50 GB` SSD |
-| Public `v3.2.x` (current public release `v3.2.13`) | Full | `6-8` vCPU | `16-24 GB` | `120-200 GB` SSD |
-| Private `v4` tuning lane | Full baseline + tuning headroom | Start from Full baseline | Start from Full baseline | Start from Full baseline; external NVMe strongly recommended |
+| Public `v3.3.x` | Hugging Face / Glama lite (single container) | `2-4` vCPU | `4-8 GB` | `20-50 GB` SSD |
+| Public `v3.3.x` | Local Lite compose (core lane) | `2-4` vCPU | `8-12 GB` | `25-80 GB` SSD |
+| Public `v3.3.x` | Local Full compose (no spike-lab) | `6-8` vCPU | `12-20 GB` | `100-180 GB` SSD |
+| Public `v3.3.x` | Local Full + spike-lab adapters | `8-12` vCPU | `24-32 GB` | `180-300 GB` SSD/NVMe |
+| Public-paid / private `v4` | Local premium tuning lane | `8-12` vCPU | `24-48 GB` | `250 GB-1 TB` SSD/NVMe (external strongly recommended) |
+| Private `v4` hosted | Multi-node baseline | `16+` vCPU host + GPU lane | `64+ GB` host RAM | `1-2 TB` NVMe for indexes/snapshots/logs |
 
-Notes:
-- Public operators should use `v3.2.13` sizing targets above.
-- Private `v4` work adds benchmark-heavy tuning and should be treated as heavier than public Full mode.
+Operational notes:
+- Live sample (2026-04-04): Full + spike-lab runtime measured `~16.39 GiB` container RSS; Full baseline (excluding spike-lab adapters) measured `~7.70 GiB`.
+- Keep Docker VM memory capped to a stable fraction of host memory (for a 64 GB host, `20-28 GB` is a safe starting range; raise only when running spike-lab).
+- Keep at least `40 GB` free at the storage-governance root (`ORCH_STORAGE_GOVERNANCE_MIN_FREE_GB=40` default).
+- Telemetry retention/compression defaults are already set in strict runtime: `GO_TELEMETRY_RETENTION_DAYS=75`, blob compression enabled, blob GC enabled.
+- Non-telemetry learning artifacts remain protected by retention policy (`ORCH_RETENTION_TELEMETRY_ONLY=true` with protected topic/file rules).
+
 ### 1) Configure environment
 
 ```bash
@@ -258,7 +269,6 @@ gmake quickstart
 This command:
 - creates `.env` if missing
 - links compose env
-- generates `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` if missing
 - applies secure local defaults
 - applies strict runtime tuning lock
 - boots the stack
@@ -310,33 +320,6 @@ gmake mem-mode-full
 gmake mem-mode-core
 ```
 
-### 5a) Spike lab (advanced opt-in only)
-
-`spike-lab` is kept in public `main` for transparent operator benchmarking, but it is not part of default runtime.
-
-Guardrails:
-- Keep `COMPOSE_PROFILES` default as `core,llm,observability` (do not add `spike-lab` globally).
-- Run one spike lane at a time.
-- Keep Docker VM RSS guard enabled in `.env` (`DOCKER_VM_RSS_GUARD_*`).
-
-Commands:
-
-```bash
-# list available lanes
-gmake mem-spike-ls
-
-# start exactly one spike lane
-gmake mem-spike-up SPIKE_LANE=surrealdb
-
-# stop that lane when done
-gmake mem-spike-down SPIKE_LANE=surrealdb
-```
-
-Published benchmark transparency (no local spike run required):
-- lane matrix artifact: `bench/results/backend_lane_matrix_latest.json`
-- direct spike matrix artifact: `bench/results/memory_bank_spike_direct_matrix_latest.json`
-- matrix summary doc: `docs/perf_v3_spike_matrix.md`
-
 ### 6) Verify health and telemetry
 
 ```bash
@@ -361,11 +344,13 @@ curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
 scripts/first_run.sh --allow-secrets-storage
 scripts/first_run.sh --block-secrets-storage
 scripts/first_run.sh --insecure-local
+scripts/first_run.sh --security-mode strict
 ```
 
 `scripts/first_run.sh` now enforces secure local-first defaults unless explicitly overridden:
 - loopback-only host port binding (`HOST_BIND_ADDRESS=127.0.0.1`)
-- production auth posture (`CONTEXTLATTICE_ENV=production`, strict API key requirement)
+- production auth posture (`CONTEXTLATTICE_ENV=production`, API key optional by default)
+- strict auth posture (`CONTEXTLATTICE_ENV=strict`, API key required)
 - private status/docs/webhook endpoints
 - secrets-safe writes (`SECRETS_STORAGE_MODE=redact`)
 
@@ -373,6 +358,7 @@ Security toggles:
 - `--allow-secrets-storage`
 - `--block-secrets-storage`
 - `--insecure-local` (explicit opt-out)
+- `--security-mode development|production|strict`
 
 ## Agent Operator Prompt (Paste Once)
 
@@ -413,7 +399,9 @@ Detailed playbook: `docs/human_agent_instruction_playbook.md`
 
 Expected user/agent access pattern:
 1. `POST /memory/search` (`fast` or `balanced`) with `project`, optional `topic_path`, and `include_grounding=true`.
-2. If `continuation_async` is returned, read partials immediately and either stream `GET /memory/search/continuations/{token}/events` or re-run the same search after 5-15s.
+2. If response includes `continuation_async`, read partials immediately and either:
+   - stream `GET /memory/search/continuations/{token}/events`, or
+   - re-run the same search after 5-15s.
 3. Only use blocking reads when required: set `blocking=true` (or `sync_slow_sources=true`) and keep a longer caller timeout.
 4. Use `POST /memory/context-pack` for broad synthesis and `POST /v1/memory/neighbors` for graph-neighbor exploration.
 
@@ -525,15 +513,15 @@ Memory-bank profiles:
 
 ## Version Lanes (Launch Clarity)
 
-`v3.2` (public) and `v4` (private) are intentionally different lanes:
+`v3.3` (public) and `v4` (private) are intentionally different lanes:
 
-| Area | Public `v3.2` | Private `v4` |
+| Area | Public `v3.3` | Private `v4` |
 |---|---|---|
 | Runtime frontdoor | `gateway-go` on `:8075` | `gateway-go` on `:8075` |
 | Fallback lane | Python orchestrator on `:18075` | Python orchestrator on `:18075` |
 | Rust/Go posture | Enabled by default | Enabled by default |
 | Retrieval policy | staged fast-return + async slow continuation | staged + aggressive adaptive experiments |
-| Memory-bank default | `icm_spike` | `shodh_spike` with deterministic fallback chain and optional hedge mode |
+| Memory-bank default | `shodh_spike` (with bounded fallback chain) | `shodh_spike` with deterministic fallback chain and optional hedge mode |
 | Release intent | stable public baseline | experimental/tuning lane behind hard gates |
 | Promotion rule | benchmark + parity proof in release notes | benchmark + parity + operational soak before public sync |
 
@@ -675,13 +663,21 @@ Dashboard retrieval observability:
   - continuation SSE event stream view
   - rollup-first result ordering and raw evidence drill-down (`/v1/memory/get`)
 
+Balanced compose launcher:
+- `scripts/compose_v4_balanced.sh` now keeps observability enabled by default.
+- Use `--without-observability` only when you intentionally want a lighter runtime.
+
+Console + paid-public endpoint verification:
+- Run `scripts/check_paid_public_endpoints.sh` after UI/API route changes.
+- The script validates expected status behavior for core console pages and paid-public APIs.
+
 ## Model Runtime
 
 - Ships with a sane local default (`qwen3.5:9b` via Ollama).
 - Default task inference provider is `auto`:
   - on Apple Silicon (M-series macOS), auto selects `ollama/coreml`
   - on other hosts, auto selects standard `ollama`
-- Public v3 keeps ANE sidecar disabled by default.
+- V4 private lane supports ANE sidecar preference (`ORCH_INFER_PROVIDER=auto` + `ORCH_ANE_SIDECAR_ENABLED=true`) with automatic fallback to Ollama.
 - Any OpenAI-compatible endpoint can be used when preferred.
 - BYO model runtimes supported through:
   - Ollama
@@ -783,7 +779,6 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 ## Docs Index
 
 - Release notes:
-  - `docs/releases/v3.3.1.md` (public guardrails for spike-lab + release notes from `v3.3.0..v3.3.1`)
   - `docs/releases/v3.2.13.md` (Glama-lite sqlite acceleration lane + capability detection)
   - `docs/releases/v3.2.3.md` (final install/deployment docs alignment for staged runtime lanes)
   - `docs/releases/v3.2.2.md` (README/website graphics + runtime ownership alignment)
@@ -798,7 +793,6 @@ CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
 - Benchmark harness docs: `bench/README.md`
 - Public overview site source: `docs/public_overview/README.md`
 - Legal and licensing: `docs/legal/README.md`
-- Glama release compliance: `docs/glama-release-compliance.md`
 
 Pre-submit verifier:
 
@@ -822,7 +816,7 @@ Public landing collateral publishes from `sheawinkler/ContextLattice` branch `gh
 
 ## License
 
-Apache License 2.0. See `LICENSE`.
-
-Commercial terms for hosted offerings and private enterprise agreements are
-documented in `docs/legal/README.md`.
+Business Source License 1.1 with change-date transition to Apache-2.0.
+Additional Use Grant allows personal/non-production and internal production use
+up to 2M JSON-RPC requests/month/organization; usage outside grant requires a
+separate commercial license. See `LICENSE` and `docs/legal/README.md`.
