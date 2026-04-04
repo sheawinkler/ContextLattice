@@ -2,6 +2,13 @@
 
 This guide deploys the single-container lite lane on Hugging Face Spaces with low drift risk and reproducible behavior.
 
+## Resource profile (hf-lite lane)
+
+- Target lane: Public `v3.3.x` compatibility profile.
+- Baseline sizing: `2-4` vCPU, `4-8 GB` RAM, `20-50 GB` SSD.
+- Recommended disk headroom: keep at least `10 GB` free in `/data` to avoid compaction/rewrite pressure.
+- Retrieval default in this lane: `topic_rollups` (single-container-safe).
+
 ## What this repo now provides
 
 - `Dockerfile.hf-lite` with pinned runtime defaults for single-container operation.
@@ -57,6 +64,7 @@ FANOUT_OUTBOX_PAYLOAD_BLOB_DIR=/data/fanout_payload_blobs
 ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data
 ORCH_STORAGE_GOVERNANCE_ENABLED=true
 ORCH_STORAGE_GOVERNANCE_RUN_ON_STARTUP=true
+ORCH_STORAGE_GOVERNANCE_MIN_FREE_GB=10
 SIGNAL_REFRESH_ENABLED=false
 OVERRIDE_REFRESH_ENABLED=false
 SINK_RETENTION_ENABLED=false
