@@ -157,7 +157,9 @@ func (s *server) memoryV1Update(w http.ResponseWriter, r *http.Request) {
 				"ok":        true,
 				"memory_id": project + "::" + fileName,
 				"result": map[string]any{
-					"event_id": entry.EventID,
+					"event_id":     entry.EventID,
+					"content_hash": entry.ContentHash,
+					"content_ref":  entry.ContentRef,
 				},
 			}
 		}

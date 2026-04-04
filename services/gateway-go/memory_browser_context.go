@@ -178,11 +178,13 @@ func (s *server) memoryBrowserContext(w http.ResponseWriter, r *http.Request) {
 		}
 		status = http.StatusOK
 		response = map[string]any{
-			"ok":       true,
-			"event_id": entry.EventID,
-			"source":   "go_memory_store",
-			"deduped":  deduped,
-			"warnings": []string{},
+			"ok":           true,
+			"event_id":     entry.EventID,
+			"source":       "go_memory_store",
+			"deduped":      deduped,
+			"content_hash": entry.ContentHash,
+			"content_ref":  entry.ContentRef,
+			"warnings":     []string{},
 			"fanout": map[string]any{
 				"go_memory_store": "succeeded",
 			},

@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -161,5 +163,90 @@ func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
 	}
 	if strings.TrimSpace(anyToString(after["cache"])) != "miss" {
 		t.Fatalf("expected cache miss after ttl expiry, got %#v", after["cache"])
+	}
+}
+
+func TestMemoryStoreContentAddressedBlobHardlinkMode(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+	t.Setenv("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_CONTENT_LINK_MODE", "hardlink")
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+
+	content := "shared payload for content-addressed storage"
+	first := normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/a.md",
+		content:   content,
+		topicPath: "runbooks/testing",
+	}
+	second := normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/b.md",
+		content:   content,
+		topicPath: "runbooks/testing",
+	}
+	entryA, _, err := store.put(first)
+	if err != nil {
+		t.Fatalf("first put failed: %v", err)
+	}
+	entryB, _, err := store.put(second)
+	if err != nil {
+		t.Fatalf("second put failed: %v", err)
+	}
+	if strings.TrimSpace(entryA.ContentRef) == "" || strings.TrimSpace(entryB.ContentRef) == "" {
+		t.Fatalf("expected content_ref values, got %#v %#v", entryA.ContentRef, entryB.ContentRef)
+	}
+	if entryA.ContentRef != entryB.ContentRef {
+		t.Fatalf("expected shared content_ref for identical payloads, got %q vs %q", entryA.ContentRef, entryB.ContentRef)
+	}
+
+	hash := strings.TrimPrefix(entryA.ContentRef, "sha256:")
+	blobPath := filepath.Join(root, "_contextlattice", "content_blobs", hash[:2], hash+".txt")
+	blobBytes, err := os.ReadFile(blobPath)
+	if err != nil {
+		t.Fatalf("expected blob file %s, err=%v", blobPath, err)
+	}
+	if strings.TrimSpace(string(blobBytes)) != content {
+		t.Fatalf("unexpected blob content: %q", string(blobBytes))
+	}
+
+	fileA := filepath.Join(root, "contextlattice", "notes", "a.md")
+	fileB := filepath.Join(root, "contextlattice", "notes", "b.md")
+	rawA, err := os.ReadFile(fileA)
+	if err != nil {
+		t.Fatalf("read fileA failed: %v", err)
+	}
+	rawB, err := os.ReadFile(fileB)
+	if err != nil {
+		t.Fatalf("read fileB failed: %v", err)
+	}
+	if string(rawA) != string(rawB) {
+		t.Fatalf("expected identical logical file content")
+	}
+	if runtime.GOOS != "windows" {
+		infoA, err := os.Stat(fileA)
+		if err != nil {
+			t.Fatalf("stat fileA failed: %v", err)
+		}
+		infoB, err := os.Stat(fileB)
+		if err != nil {
+			t.Fatalf("stat fileB failed: %v", err)
+		}
+		statA, okA := infoA.Sys().(*syscall.Stat_t)
+		statB, okB := infoB.Sys().(*syscall.Stat_t)
+		if okA && okB {
+			if statA.Ino != statB.Ino {
+				t.Fatalf("expected hardlinked logical files to share inode, got %d vs %d", statA.Ino, statB.Ino)
+			}
+		}
 	}
 }
