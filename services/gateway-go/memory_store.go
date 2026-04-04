@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -22,6 +23,9 @@ type memoryStorePolicy struct {
 	enabled           bool
 	rootPath          string
 	historyPath       string
+	contentAddressed  bool
+	contentBlobsPath  string
+	contentLinkMode   string
 	maxRecent         int
 	scanLimit         int
 	maxSummaryChars   int
@@ -95,10 +99,25 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	if historyPath == "" {
 		historyPath = filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
 	}
+	contentBlobsPath := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH"))
+	if contentBlobsPath == "" {
+		contentBlobsPath = filepath.Join(root, "_contextlattice", "content_blobs")
+	}
+	contentLinkMode := strings.ToLower(strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_CONTENT_LINK_MODE")))
+	switch contentLinkMode {
+	case "", "hardlink":
+		contentLinkMode = "hardlink"
+	case "copy", "symlink":
+	default:
+		contentLinkMode = "hardlink"
+	}
 	return memoryStorePolicy{
 		enabled:           envBool("GO_MEMORY_STORE_ENABLED", true),
 		rootPath:          root,
 		historyPath:       filepath.Clean(historyPath),
+		contentAddressed:  envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
+		contentBlobsPath:  filepath.Clean(contentBlobsPath),
+		contentLinkMode:   contentLinkMode,
 		maxRecent:         clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
 		scanLimit:         clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
 		maxSummaryChars:   clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
@@ -124,6 +143,11 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 	}
 	if err := os.MkdirAll(filepath.Dir(policy.historyPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create memory store history directory: %w", err)
+	}
+	if policy.contentAddressed {
+		if err := os.MkdirAll(policy.contentBlobsPath, 0o755); err != nil {
+			return nil, fmt.Errorf("create memory store content blobs directory: %w", err)
+		}
 	}
 	if err := store.loadHistory(); err != nil {
 		return nil, err
@@ -365,6 +389,133 @@ func (m *memoryStore) appendHistory(entry memoryStoreEntry) error {
 	return nil
 }
 
+func isHexDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (m *memoryStore) blobPathForHash(contentHash string) (string, error) {
+	if m == nil {
+		return "", errors.New("memory store unavailable")
+	}
+	token := strings.ToLower(strings.TrimSpace(contentHash))
+	if !isHexDigest(token) {
+		return "", errors.New("invalid content hash")
+	}
+	prefix := token[:2]
+	return filepath.Join(m.policy.contentBlobsPath, prefix, token+".txt"), nil
+}
+
+func writeAtomicFile(path string, content []byte, mode fs.FileMode) error {
+	tmpPath := path + ".tmp-" + primitive.NewObjectID().Hex()
+	if err := os.WriteFile(tmpPath, content, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func copyFileAtomic(src string, dst string, mode fs.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmpPath := dst + ".tmp-" + primitive.NewObjectID().Hex()
+	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func (m *memoryStore) ensureBlob(contentHash string, content string) (string, error) {
+	blobPath, err := m.blobPathForHash(contentHash)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(blobPath); err == nil {
+		return blobPath, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0o755); err != nil {
+		return "", fmt.Errorf("create blob directory: %w", err)
+	}
+	if err := writeAtomicFile(blobPath, []byte(content), 0o644); err != nil {
+		if statErr := func() error {
+			_, e := os.Stat(blobPath)
+			return e
+		}(); statErr == nil {
+			return blobPath, nil
+		}
+		return "", fmt.Errorf("write blob file: %w", err)
+	}
+	return blobPath, nil
+}
+
+func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return fmt.Errorf("create memory file directory: %w", err)
+	}
+	tmpPath := filePath + ".tmp-" + primitive.NewObjectID().Hex()
+
+	mode := m.policy.contentLinkMode
+	if mode == "" {
+		mode = "hardlink"
+	}
+	linkErr := error(nil)
+	switch mode {
+	case "symlink":
+		linkErr = os.Symlink(blobPath, tmpPath)
+	case "copy":
+		linkErr = copyFileAtomic(blobPath, filePath, 0o644)
+	default:
+		linkErr = os.Link(blobPath, tmpPath)
+	}
+
+	usedTmpPath := mode != "copy"
+	if linkErr != nil && mode != "copy" {
+		// Hardlink/symlink can fail on some filesystems or policies; fall back to copy.
+		usedTmpPath = false
+		linkErr = copyFileAtomic(blobPath, filePath, 0o644)
+	}
+	if linkErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("materialize memory content from blob: %w", linkErr)
+	}
+	if usedTmpPath {
+		if err := os.Rename(tmpPath, filePath); err != nil {
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("commit linked memory file: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) {
 	if m == nil || !m.policy.enabled {
 		return memoryStoreEntry{}, false, errors.New("go memory store is disabled")
@@ -417,16 +568,21 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-		return memoryStoreEntry{}, false, fmt.Errorf("create memory file directory: %w", err)
-	}
-	tmpPath := filePath + ".tmp-" + primitive.NewObjectID().Hex()
-	if err := os.WriteFile(tmpPath, []byte(content), 0o644); err != nil {
-		return memoryStoreEntry{}, false, fmt.Errorf("write temporary memory file: %w", err)
-	}
-	if err := os.Rename(tmpPath, filePath); err != nil {
-		_ = os.Remove(tmpPath)
-		return memoryStoreEntry{}, false, fmt.Errorf("commit memory file: %w", err)
+	if m.policy.contentAddressed {
+		blobPath, err := m.ensureBlob(contentHash, content)
+		if err != nil {
+			return memoryStoreEntry{}, false, err
+		}
+		if err := m.linkOrCopyBlob(blobPath, filePath); err != nil {
+			return memoryStoreEntry{}, false, err
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+			return memoryStoreEntry{}, false, fmt.Errorf("create memory file directory: %w", err)
+		}
+		if err := writeAtomicFile(filePath, []byte(content), 0o644); err != nil {
+			return memoryStoreEntry{}, false, fmt.Errorf("commit memory file: %w", err)
+		}
 	}
 
 	entry := buildEntry()
