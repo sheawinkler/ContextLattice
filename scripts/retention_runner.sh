@@ -37,6 +37,46 @@ else
   echo ">> qdrant snapshot prune (disabled)"
 fi
 
+if [[ "${COLD_SNAPSHOT_PACK_ENABLED:-1}" == "1" ]]; then
+  echo ">> cold snapshot pack (zstd + manifest)"
+  PACK_ARGS=(
+    --cold-root "${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}"
+    --level "${COLD_SNAPSHOT_ZSTD_LEVEL:-3}"
+  )
+  if [[ "${COLD_SNAPSHOT_PACK_APPLY:-1}" == "1" ]]; then
+    PACK_ARGS+=(--apply)
+  fi
+  if [[ "${COLD_SNAPSHOT_PACK_KEEP_ORIGINAL:-0}" == "1" ]]; then
+    PACK_ARGS+=(--keep-original)
+  fi
+  if [[ "${COLD_SNAPSHOT_PACK_VERIFY:-1}" == "0" ]]; then
+    PACK_ARGS+=(--no-verify)
+  fi
+  if [[ -n "${COLD_SNAPSHOT_PACK_MAX_FILES:-}" ]]; then
+    PACK_ARGS+=(--max-files "${COLD_SNAPSHOT_PACK_MAX_FILES}")
+  fi
+  if ! python3 scripts/cold_snapshot_pack.py "${PACK_ARGS[@]}"; then
+    echo "!! cold snapshot pack failed; continuing retention run" >&2
+  fi
+fi
+
+if [[ "${COLD_SNAPSHOT_TIER_ENABLED:-1}" == "1" ]]; then
+  echo ">> cold snapshot tiering"
+  TIER_ARGS=(
+    --cold-root "${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}"
+    --keep-latest "${COLD_SNAPSHOT_KEEP_LATEST:-6}"
+    --keep-daily "${COLD_SNAPSHOT_KEEP_DAILY:-21}"
+    --keep-weekly "${COLD_SNAPSHOT_KEEP_WEEKLY:-12}"
+    --keep-monthly "${COLD_SNAPSHOT_KEEP_MONTHLY:-12}"
+  )
+  if [[ "${COLD_SNAPSHOT_TIER_APPLY:-1}" == "1" ]]; then
+    TIER_ARGS+=(--apply)
+  fi
+  if ! python3 scripts/cold_snapshot_tiering.py "${TIER_ARGS[@]}"; then
+    echo "!! cold snapshot tiering failed; continuing retention run" >&2
+  fi
+fi
+
 if [[ "${MEMORY_BANK_EXPORT_ENABLED:-1}" == "1" ]]; then
   echo ">> memory bank export"
   if ! scripts/memory_bank_export.sh; then

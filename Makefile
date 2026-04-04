@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := services/orchestrator/tests/test_orchestrator_retrieval.py services/orchestrator/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-full mem-up-core mem-up-full mem-spike-ls mem-spike-up mem-spike-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
 
 help:
 > echo "Targets:"
@@ -35,8 +35,9 @@ help:
 > echo "  up/down/status/logs/build/rebuild/pull/clean/prune/ps"
 > echo "    (set PROFILES=core,llm to limit docker compose)"
 > echo "  up-core: helper for PROFILES=core docker compose up"
-> echo "  mem-mode-show|mem-mode-core|mem-mode-full: toggle persistent COMPOSE_PROFILES in .env"
-> echo "  mem-spike-ls|mem-spike-up|mem-spike-down: advanced spike-lab lane control (one lane at a time)"
+> echo "  mem-mode-show|mem-mode-core|mem-mode-balanced|mem-mode-full: toggle persistent COMPOSE_PROFILES in .env"
+> echo "  mem-up-balanced: bounded v4 launcher (single active spike lane, observability off by default)"
+> echo "  observability-up|observability-down: on-demand Langfuse stack controls"
 > echo "  models-pull: pull local Ollama models (optional)"
 > echo "  mcp-proxy-up: configure & start mcp-proxy on :9090"
 > echo "  init: qdrant-init + optional mindsdb/letta seeds"
@@ -47,6 +48,7 @@ help:
 > echo "  msi-build: build ContextLattice Windows MSI bootstrap installer in ./dist"
 > echo "  linux-bundle-build: build ContextLattice Linux bootstrap tarball in ./dist"
 > echo "  fanout-status|fanout-deadletters|fanout-rehydrate: durability + replay ops"
+> echo "  cold-snapshot-pack|cold-snapshot-tier|cold-snapshot-restore: compact + tier + restore cold snapshots"
 > echo "  qdrant-cutover: set QDRANT_COLLECTION and rehydrate vectors"
 > echo "  service-version-audit|service-version-apply: check/apply stable image tag bumps"
 > echo "  service-update-pipeline: audit -> validate -> redeploy -> tests -> health checks"
@@ -210,6 +212,36 @@ qdrant-snapshot-prune:
 >   --timeout-secs "$${QDRANT_HTTP_TIMEOUT_SECS:-300}" \
 >   $$([ "$${QDRANT_SKIP_SNAPSHOT:-0}" = "1" ] && echo --skip-snapshot) \
 >   $$([ "$${QDRANT_SKIP_PRUNE:-0}" = "1" ] && echo --skip-prune)
+
+cold-snapshot-pack:
+> python3 scripts/cold_snapshot_pack.py \
+>   --cold-root "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}" \
+>   --level "$${COLD_SNAPSHOT_ZSTD_LEVEL:-3}" \
+>   $$([ "$${COLD_SNAPSHOT_PACK_APPLY:-1}" = "1" ] && echo --apply) \
+>   $$([ "$${COLD_SNAPSHOT_PACK_KEEP_ORIGINAL:-0}" = "1" ] && echo --keep-original) \
+>   $$([ "$${COLD_SNAPSHOT_PACK_VERIFY:-1}" = "0" ] && echo --no-verify) \
+>   $$([ -n "$${COLD_SNAPSHOT_PACK_MAX_FILES:-}" ] && echo --max-files "$${COLD_SNAPSHOT_PACK_MAX_FILES}")
+
+cold-snapshot-tier:
+> python3 scripts/cold_snapshot_tiering.py \
+>   --cold-root "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}" \
+>   --keep-latest "$${COLD_SNAPSHOT_KEEP_LATEST:-6}" \
+>   --keep-daily "$${COLD_SNAPSHOT_KEEP_DAILY:-21}" \
+>   --keep-weekly "$${COLD_SNAPSHOT_KEEP_WEEKLY:-12}" \
+>   --keep-monthly "$${COLD_SNAPSHOT_KEEP_MONTHLY:-12}" \
+>   $$([ "$${COLD_SNAPSHOT_TIER_APPLY:-1}" = "1" ] && echo --apply)
+
+cold-snapshot-restore:
+> COLLECTION="$${COLLECTION:?set COLLECTION=<bucket_name>}" \
+> SNAPSHOT="$${SNAPSHOT:-}" \
+> OUT_DIR="$${OUT_DIR:-}" \
+> FORCE="$${FORCE:-0}" \
+> python3 scripts/cold_snapshot_restore.py \
+>   --cold-root "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}" \
+>   --collection "$$COLLECTION" \
+>   $$([ -n "$$SNAPSHOT" ] && echo --snapshot "$$SNAPSHOT") \
+>   $$([ -n "$$OUT_DIR" ] && echo --out-dir "$$OUT_DIR") \
+>   $$([ "$$FORCE" = "1" ] && echo --force)
 
 qdrant-cutover:
 > TARGET_COLLECTION="$${TARGET_COLLECTION:?set TARGET_COLLECTION=<new_collection>}" LIMIT="$${LIMIT:-2000}" PROJECT="$${PROJECT:-}" scripts/qdrant_collection_cutover.sh --target "$$TARGET_COLLECTION" --limit "$$LIMIT" $${PROJECT:+--project "$$PROJECT"}
@@ -448,10 +480,10 @@ trae-shell: trae-install trae-config
 # Lightweight memory stack shortcuts (avoid mk/memory.mk)
 .PHONY: mem-up mem-down mem mem-ps quickstart
 MEM_PROFILE_CORE := core
+MEM_PROFILE_BALANCED := core,llm
 MEM_PROFILE_FULL := core,analytics,llm,observability
 MEM_PROFILES_DEFAULT := $(shell [ -f "$(ENV_FILE)" ] && awk -F= '/^COMPOSE_PROFILES=/{print substr($$0,index($$0,"=")+1)}' "$(ENV_FILE)" | tail -1)
 MEM_PROFILES ?= $(if $(strip $(MEM_PROFILES_DEFAULT)),$(strip $(MEM_PROFILES_DEFAULT)),core)
-SPIKE_LANE ?= shodh
 
 mem-mode-show:
 > if [ -f "$(ENV_FILE)" ]; then \
@@ -463,6 +495,10 @@ mem-mode-show:
 
 mem-mode-core:
 > bash scripts/set_compose_profiles.sh "$(ENV_FILE)" "$(MEM_PROFILE_CORE)"
+> $(MAKE) mem-mode-show
+
+mem-mode-balanced:
+> bash scripts/set_compose_profiles.sh "$(ENV_FILE)" "$(MEM_PROFILE_BALANCED)"
 > $(MAKE) mem-mode-show
 
 mem-mode-full:
@@ -495,43 +531,26 @@ quickstart:
 mem-up-core:
 > PROFILES="$(MEM_PROFILE_CORE)" $(MAKE) up
 
+mem-up-balanced:
+> ENV_FILE="$(ENV_FILE)" scripts/compose_v4_balanced.sh --env-file "$(ENV_FILE)"
+
+mem-guard-start:
+> ENV_FILE="$(ENV_FILE)" scripts/docker_vm_rss_guard.sh start --env-file "$(ENV_FILE)"
+
+mem-guard-stop:
+> ENV_FILE="$(ENV_FILE)" scripts/docker_vm_rss_guard.sh stop --env-file "$(ENV_FILE)"
+
+mem-guard-status:
+> ENV_FILE="$(ENV_FILE)" scripts/docker_vm_rss_guard.sh status --env-file "$(ENV_FILE)"
+
 mem-up-full:
 > PROFILES="$(MEM_PROFILE_FULL)" $(MAKE) up
 
-mem-spike-ls:
-> echo "Available spike lanes:"
-> echo "  lancedb trieve helixdb shodh memvid surrealdb"
-> echo "Example: gmake mem-spike-up SPIKE_LANE=surrealdb"
+observability-up:
+> ENV_FILE="$(ENV_FILE)" scripts/compose_v4_balanced.sh --env-file "$(ENV_FILE)" --with-observability
 
-mem-spike-up:
-> lane="$(SPIKE_LANE)"; \
-> case "$$lane" in \
->   lancedb) svc="lancedb-spike-adapter" ;; \
->   trieve) svc="trieve-spike-adapter" ;; \
->   helixdb) svc="helixdb-spike-adapter" ;; \
->   shodh) svc="shodh-spike-adapter" ;; \
->   memvid) svc="memvid-spike-adapter" ;; \
->   surrealdb) svc="surrealdb-spike-adapter" ;; \
->   *) echo "Invalid SPIKE_LANE=$$lane"; echo "Use: gmake mem-spike-ls"; exit 2 ;; \
-> esac; \
-> echo ">> starting spike lane $$lane ($$svc)"; \
-> echo ">> guardrail: run one spike lane at a time to avoid RAM pressure"; \
-> COMPOSE_PROFILES=spike-lab $(DC) up -d "$$svc"
-
-mem-spike-down:
-> lane="$(SPIKE_LANE)"; \
-> case "$$lane" in \
->   lancedb) svc="lancedb-spike-adapter" ;; \
->   trieve) svc="trieve-spike-adapter" ;; \
->   helixdb) svc="helixdb-spike-adapter" ;; \
->   shodh) svc="shodh-spike-adapter" ;; \
->   memvid) svc="memvid-spike-adapter" ;; \
->   surrealdb) svc="surrealdb-spike-adapter" ;; \
->   *) echo "Invalid SPIKE_LANE=$$lane"; echo "Use: gmake mem-spike-ls"; exit 2 ;; \
-> esac; \
-> echo ">> stopping spike lane $$lane ($$svc)"; \
-> COMPOSE_PROFILES=spike-lab $(DC) stop "$$svc" || true; \
-> COMPOSE_PROFILES=spike-lab $(DC) rm -f "$$svc" || true
+observability-down:
+> docker compose --env-file "$(ENV_FILE)" stop langfuse langfuse-worker lf-postgres lf-clickhouse lf-minio || true
 
 .PHONY: mem-up-lite mem-down-lite mem-ps-lite
 mem-up-lite:
