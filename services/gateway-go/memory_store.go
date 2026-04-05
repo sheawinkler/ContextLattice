@@ -293,7 +293,8 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 	m.recent = append(m.recent, entry)
 	if len(m.recent) > m.policy.maxRecent {
 		over := len(m.recent) - m.policy.maxRecent
-		m.recent = append([]memoryStoreEntry(nil), m.recent[over:]...)
+		// Avoid O(n^2) copies during large history replays at startup.
+		m.recent = m.recent[over:]
 	}
 }
 
