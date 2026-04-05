@@ -268,11 +268,20 @@ gmake quickstart
 
 This command:
 - creates `.env` if missing
+- prompts for runtime profile (`lite` vs `full`) with CPU/RAM/storage guidance (interactive shells)
 - links compose env
 - applies secure local defaults
 - applies strict runtime tuning lock
 - boots the stack
 - runs smoke + auth-safe health checks
+
+Non-interactive profile selection:
+
+```bash
+QUICKSTART_PROFILE_PROMPT=0 QUICKSTART_PROFILE_DEFAULT=lite gmake quickstart
+# or
+BOOTSTRAP=1 scripts/first_run.sh --profile full --no-profile-prompt
+```
 
 Easy monitoring after launch:
 
