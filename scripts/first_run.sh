@@ -16,6 +16,10 @@ LETTA_URL_OVERRIDE=""
 INSECURE_LOCAL=0
 SECRETS_STORAGE_MODE_OVERRIDE=""
 COMPOSE_PROFILES_EFFECTIVE=""
+PROFILE_SELECTION_LOCK=0
+QUICKSTART_PROFILE_OVERRIDE=""
+QUICKSTART_PROFILE_DEFAULT="${QUICKSTART_PROFILE_DEFAULT:-}"
+QUICKSTART_PROFILE_PROMPT="${QUICKSTART_PROFILE_PROMPT:-1}"
 TOOL_POLICY_OVERRIDE=""
 TOOL_POLICY_PROMPT="${TOOL_POLICY_PROMPT:-1}"
 
@@ -31,7 +35,9 @@ Options:
   --allow-secrets-storage Store write payloads as-is (no redaction)
   --block-secrets-storage Reject writes that include secret-like values
   --redact-secrets-storage Force redaction mode (default)
+  --profile <mode>        Runtime profile: lite|full
   --tool-policy <mode>    Tool-call policy: liberal|require-key|restricted
+  --no-profile-prompt     Disable interactive lite/full profile prompt
   --no-tool-policy-prompt Disable interactive tool policy prompt
   --insecure-local        Opt out of secure production defaults for local-only experimentation
   -h, --help              Show this help
@@ -39,6 +45,8 @@ Options:
 Env toggles:
   BOOTSTRAP=1             Run gmake mem-up before smoke test
   MINDSDB_REQUIRED=auto/0/1  Whether smoke requires MindsDB readiness
+  QUICKSTART_PROFILE_PROMPT=1 Prompt for lite/full profile in interactive shells (default)
+  QUICKSTART_PROFILE_DEFAULT=lite|full  Optional default profile when prompt is shown
   TOOL_POLICY_PROMPT=1    Prompt for tool-call policy in interactive shells (default)
 USAGE
 }
@@ -77,6 +85,11 @@ while [[ $# -gt 0 ]]; do
       SECRETS_STORAGE_MODE_OVERRIDE="redact"
       shift
       ;;
+    --profile)
+      [[ $# -ge 2 ]] || { echo "Missing value for --profile" >&2; exit 2; }
+      QUICKSTART_PROFILE_OVERRIDE="$2"
+      shift 2
+      ;;
     --tool-policy)
       [[ $# -ge 2 ]] || { echo "Missing value for --tool-policy" >&2; exit 2; }
       TOOL_POLICY_OVERRIDE="$2"
@@ -84,6 +97,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-tool-policy-prompt)
       TOOL_POLICY_PROMPT="0"
+      shift
+      ;;
+    --no-profile-prompt)
+      QUICKSTART_PROFILE_PROMPT="0"
       shift
       ;;
     --insecure-local)
@@ -128,11 +145,99 @@ set_env_key() {
   mv "$tmp_file" "$ENV_FILE"
 }
 
+normalize_profile_label() {
+  local value
+  value="$(echo "$1" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$value" in
+    1|lite|core|min|minimal)
+      echo "lite"
+      ;;
+    2|full|max|maximum)
+      echo "full"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+current_profile_label() {
+  local current normalized
+  current="$(get_env_key COMPOSE_PROFILES)"
+  current="$(echo "$current" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  if [[ -z "$current" ]]; then
+    echo "lite"
+    return 0
+  fi
+  if [[ ",${current}," == *",analytics,"* ]]; then
+    echo "full"
+    return 0
+  fi
+  normalized="$(normalize_profile_label "$current")"
+  if [[ -n "$normalized" ]]; then
+    echo "$normalized"
+    return 0
+  fi
+  echo "lite"
+}
+
+profiles_csv_for_label() {
+  local label
+  label="$(normalize_profile_label "$1")"
+  case "$label" in
+    full)
+      echo "core,analytics,llm,observability"
+      ;;
+    lite|*)
+      echo "core"
+      ;;
+  esac
+}
+
+configure_runtime_profile() {
+  local selected default_profile mode_choice profiles_csv
+
+  selected="$(normalize_profile_label "${QUICKSTART_PROFILE_OVERRIDE:-}")"
+  default_profile="$(normalize_profile_label "${QUICKSTART_PROFILE_DEFAULT:-}")"
+  if [[ -z "$default_profile" ]]; then
+    default_profile="$(current_profile_label)"
+  fi
+  [[ -n "$default_profile" ]] || default_profile="lite"
+
+  if [[ -z "$selected" && "$QUICKSTART_PROFILE_PROMPT" != "0" ]] && is_interactive_setup; then
+    cat <<PROMPT
+>> Runtime profile selection (choose based on machine capacity)
+   1) lite  (core)
+      - CPU: 2-4 vCPU
+      - RAM: 8-12 GB
+      - Storage: 25-80 GB SSD
+   2) full  (core,analytics,llm,observability)
+      - CPU: 6-8 vCPU
+      - RAM: 12-20 GB
+      - Storage: 100-180 GB SSD
+Press Enter for [${default_profile}].
+PROMPT
+    read -r -p "Select profile [1-2|lite|full]: " mode_choice
+    selected="$(normalize_profile_label "$mode_choice")"
+  fi
+
+  if [[ -z "$selected" ]]; then
+    selected="$default_profile"
+  fi
+  [[ -n "$selected" ]] || selected="lite"
+
+  profiles_csv="$(profiles_csv_for_label "$selected")"
+  PROFILE_SELECTION_LOCK=1
+  COMPOSE_PROFILES_EFFECTIVE="$profiles_csv"
+  set_env_key "COMPOSE_PROFILES" "$profiles_csv"
+  echo ">> runtime profile: ${selected} (COMPOSE_PROFILES=${profiles_csv})"
+}
+
 configure_profiles_for_letta() {
   local current profiles_csv has_llm=0
   current="$(awk -F= '/^COMPOSE_PROFILES=/{print substr($0,index($0,"=")+1)}' "$ENV_FILE" 2>/dev/null | tail -1)"
   if [[ -z "${current}" ]]; then
-    current="core,analytics,llm,observability"
+    current="core"
   fi
 
   IFS=',' read -r -a parts <<< "$current"
@@ -149,7 +254,7 @@ configure_profiles_for_letta() {
     cleaned+=("$part")
   done
 
-  if [[ "$EXTERNAL_LETTA" == "0" && "$has_llm" == "0" ]]; then
+  if [[ "$PROFILE_SELECTION_LOCK" != "1" && "$EXTERNAL_LETTA" == "0" && "$has_llm" == "0" ]]; then
     cleaned+=("llm")
   fi
   if [[ "${#cleaned[@]}" -eq 0 ]]; then
@@ -325,6 +430,8 @@ configure_security_posture() {
   fi
   echo ">> security posture: production defaults (loopback + auth) applied"
 }
+
+configure_runtime_profile
 
 if [[ "$EXTERNAL_LETTA" == "1" ]]; then
   if [[ -n "$LETTA_API_KEY_OVERRIDE" ]]; then
