@@ -59,7 +59,7 @@ if ! command -v gmake >/dev/null 2>&1; then
 fi
 
 cd "${TARGET_DIR}"
-gmake quickstart
+QUICKSTART_PROFILE_DEFAULT="${QUICKSTART_PROFILE_DEFAULT:-lite}" gmake quickstart
 
 if [[ -x ./scripts/open_monitoring.sh ]]; then
   ./scripts/open_monitoring.sh || true
@@ -121,4 +121,3 @@ hdiutil create \
   "${DMG_PATH}" >/dev/null
 
 echo "Built DMG: ${DMG_PATH}"
-
