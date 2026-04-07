@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  Private-by-default memory and context orchestration for agents and apps.
+  Local-first memory and context orchestration for agents and apps
 </p>
 
 <p align="center">
