@@ -5,6 +5,7 @@ import math
 import os
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,25 @@ def _refresh_worker() -> None:
     refreshed_at = int(time.time())
     try:
         docs, fingerprint = _scan_docs()
+        with _lock:
+            previous_fingerprint = str(_state.get("fingerprint") or "")
+            previous_docs_loaded = int(_state.get("docs_loaded") or 0)
+            previous_db = _state.get("db")
+            previous_table = _state.get("table")
+            previous_fts_enabled = bool(_state.get("fts_enabled"))
+
+        if (
+            fingerprint
+            and fingerprint == previous_fingerprint
+            and previous_table is not None
+            and previous_docs_loaded == len(docs)
+        ):
+            # Avoid producing new table/index versions when source files did not change.
+            with _lock:
+                _state["last_refresh_unix_secs"] = refreshed_at
+                _state["last_error"] = None
+            return
+
         db = None
         table = None
         fts_enabled = False
@@ -140,15 +160,25 @@ def _refresh_worker() -> None:
                 fts_enabled = True
             except Exception:
                 fts_enabled = False
+            # Best effort: remove stale versions left by repeated overwrite cycles.
+            try:
+                cleanup_old_versions = getattr(table, "cleanup_old_versions", None)
+                if callable(cleanup_old_versions):
+                    try:
+                        cleanup_old_versions(older_than=timedelta(seconds=0))
+                    except TypeError:
+                        cleanup_old_versions()
+            except Exception:
+                pass
         with _lock:
             _state["docs_cache"] = docs
             _state["docs_loaded"] = len(docs)
             _state["fingerprint"] = fingerprint
             _state["last_refresh_unix_secs"] = refreshed_at
             _state["last_error"] = None
-            _state["db"] = db
-            _state["table"] = table
-            _state["fts_enabled"] = fts_enabled
+            _state["db"] = db if db is not None else previous_db
+            _state["table"] = table if table is not None else previous_table
+            _state["fts_enabled"] = fts_enabled if table is not None else previous_fts_enabled
     except Exception as exc:
         with _lock:
             _state["last_error"] = str(exc)
