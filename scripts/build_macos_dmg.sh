@@ -61,6 +61,45 @@ fi
 cd "${TARGET_DIR}"
 QUICKSTART_PROFILE_DEFAULT="${QUICKSTART_PROFILE_DEFAULT:-lite}" gmake quickstart
 
+INSTR_DIR="${TARGET_DIR}/setup"
+INSTR_FILE="${INSTR_DIR}/agent_smoke_write_read.md"
+mkdir -p "${INSTR_DIR}"
+cat > "${INSTR_FILE}" <<'EOF_SMOKE'
+# ContextLattice Agent Smoke Test (Write -> Read)
+
+Use this exact sequence after install to confirm your agent can write and read memory through the orchestrator.
+
+```bash
+export CONTEXTLATTICE_ORCHESTRATOR_URL="http://127.0.0.1:8075"
+export MEMMCP_ORCHESTRATOR_URL="http://127.0.0.1:8075"
+export ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' "$HOME/ContextLattice/.env" | tail -1)"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+FILE_NAME="setup/smoke_${STAMP}.md"
+
+# 1) Write memory
+curl -sS -X POST "$CONTEXTLATTICE_ORCHESTRATOR_URL/memory/write" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: ${ORCH_KEY}" \
+  -d "{\"projectName\":\"contextlattice\",\"fileName\":\"${FILE_NAME}\",\"content\":\"smoke write ${STAMP}\",\"topicPath\":\"runbooks/setup/smoke\"}" | jq .
+
+# 2) Read memory
+curl -sS -X POST "$CONTEXTLATTICE_ORCHESTRATOR_URL/memory/search" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: ${ORCH_KEY}" \
+  -d "{\"project\":\"contextlattice\",\"query\":\"smoke write ${STAMP}\",\"topic_path\":\"runbooks/setup/smoke\",\"include_grounding\":true}" | jq .
+```
+
+Expected:
+- write returns `ok: true`
+- read returns at least one matching result
+EOF_SMOKE
+
+if command -v pbcopy >/dev/null 2>&1; then
+  pbcopy < "${INSTR_FILE}" || true
+  echo "Copied agent smoke instructions to clipboard."
+fi
+echo "Agent smoke instructions: ${INSTR_FILE}"
+
 if [[ -x ./scripts/open_monitoring.sh ]]; then
   ./scripts/open_monitoring.sh || true
 fi
@@ -97,6 +136,7 @@ used by technical users, but in a lower-friction launcher format.
 Included:
 - ContextLattice.command  : clone/update + gmake quickstart
 - Monitoring.command      : open dashboard + health/status checks
+- setup/agent_smoke_write_read.md : copy-ready write/read verification flow
 
 Requirements:
 - Docker Desktop installed and running

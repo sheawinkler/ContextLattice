@@ -71,6 +71,7 @@ gmake quickstart
 - `gmake`, `jq`, `rg`, `python3`, `curl`
 
 ### Launch
+### 1) Configure environment
 
 ```bash
 cp .env.example .env
@@ -79,6 +80,7 @@ gmake quickstart
 ```
 
 `gmake quickstart` prompts for a runtime profile and launches with sensible defaults.
+If launched from the macOS DMG bootstrap, it also generates `~/ContextLattice/setup/agent_smoke_write_read.md` and copies it to clipboard for an immediate write/read agent smoke check.
 
 ### Verify
 
