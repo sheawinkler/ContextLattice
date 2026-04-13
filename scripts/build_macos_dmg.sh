@@ -63,9 +63,31 @@ QUICKSTART_PROFILE_DEFAULT="${QUICKSTART_PROFILE_DEFAULT:-lite}" gmake quickstar
 
 INSTR_DIR="${TARGET_DIR}/setup"
 INSTR_FILE="${INSTR_DIR}/agent_smoke_write_read.md"
+AGENT_INSTR_FILE="${INSTR_DIR}/agent_contextlattice_instructions.md"
+UNIVERSAL_TEMPLATE_FILE="${TARGET_DIR}/docs/public_overview/templates/agents/universal.md"
 mkdir -p "${INSTR_DIR}"
+
+if [[ -f "${UNIVERSAL_TEMPLATE_FILE}" ]]; then
+  cp "${UNIVERSAL_TEMPLATE_FILE}" "${AGENT_INSTR_FILE}"
+else
+  cat > "${AGENT_INSTR_FILE}" <<'EOF_AGENT'
+# ContextLattice Agent Contract
+
+Use ContextLattice at http://127.0.0.1:8075 for every task:
+- read context before inference (`POST /memory/search`, `include_grounding=true`)
+- use `POST /memory/context-pack` for broad tasks
+- checkpoint key progress via `POST /memory/write`
+- final recency read before final output
+- use async continuation token/events when returned
+- use `POST /v1/memory/neighbors` for graph-neighbor recall
+EOF_AGENT
+fi
+
 cat > "${INSTR_FILE}" <<'EOF_SMOKE'
 # ContextLattice Agent Smoke Test (Write -> Read)
+
+Before running this smoke test, paste the operating contract from:
+- `~/ContextLattice/setup/agent_contextlattice_instructions.md`
 
 Use this exact sequence after install to confirm your agent can write and read memory through the orchestrator.
 
@@ -95,10 +117,11 @@ Expected:
 EOF_SMOKE
 
 if command -v pbcopy >/dev/null 2>&1; then
-  pbcopy < "${INSTR_FILE}" || true
-  echo "Copied agent smoke instructions to clipboard."
+  pbcopy < "${AGENT_INSTR_FILE}" || true
+  echo "Copied agent operating instructions to clipboard."
 fi
 echo "Agent smoke instructions: ${INSTR_FILE}"
+echo "Agent operating instructions: ${AGENT_INSTR_FILE}"
 
 if [[ -x ./scripts/open_monitoring.sh ]]; then
   ./scripts/open_monitoring.sh || true
@@ -136,7 +159,8 @@ used by technical users, but in a lower-friction launcher format.
 Included:
 - ContextLattice.command  : clone/update + gmake quickstart
 - Monitoring.command      : open dashboard + health/status checks
-- setup/agent_smoke_write_read.md : copy-ready write/read verification flow
+- setup/agent_contextlattice_instructions.md : copy-ready agent instruction contract
+- setup/agent_smoke_write_read.md : operator write/read verification flow
 
 Requirements:
 - Docker Desktop installed and running

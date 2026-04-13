@@ -8,9 +8,9 @@ Runtime:
 Session bootstrap:
 ```bash
 export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
-export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
+export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075
 export CONTEXTLATTICE_AGENT_ID=codex_gpt5
-export CONTEXTLATTICE_AGENT_ID=codex_gpt5
+export MEMMCP_AGENT_ID=codex_gpt5
 ```
 
 Preflight:
@@ -18,8 +18,5 @@ Preflight:
 python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration
 ```
 
-Rules:
-1. Always run `POST /memory/search` before planning/coding.
-2. Use `POST /memory/context-pack` for broad tasks.
-3. Checkpoint via `POST /memory/write` during long tasks.
-4. Run one final recency read before final output.
+Behavior contract:
+- Paste `docs/public_overview/templates/agents/universal.md` into system instructions.

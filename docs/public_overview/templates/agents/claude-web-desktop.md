@@ -1,15 +1,11 @@
 # Claude Web/Desktop Integration Template
 
-Paste into a new Claude session:
+Paste into a new Claude session instruction:
 
 ```text
-Use ContextLattice as memory/context at http://127.0.0.1:8075.
-Before planning, call POST /memory/search with include_grounding=true.
-Use topic_path whenever known; broaden if scoped results are empty.
-For broad tasks, call POST /memory/context-pack.
-Checkpoint via POST /memory/write and do one final recency retrieval.
-If memory is degraded, continue and report degraded-memory mode.
-Use agent profile claude-web (or claude-desktop) with stable agent_id claude_web_agent (or claude_desktop_agent).
+Use ContextLattice at http://127.0.0.1:8075.
+Use stable agent_id claude_web_agent (or claude_desktop_agent).
+Follow the full operating contract in docs/public_overview/templates/agents/universal.md.
 ```
 
 Operator preflight:

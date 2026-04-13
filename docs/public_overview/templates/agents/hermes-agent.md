@@ -8,9 +8,9 @@ Runtime:
 Session bootstrap:
 ```bash
 export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
-export CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075
+export MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075
 export CONTEXTLATTICE_AGENT_ID=hermes_agent
-export CONTEXTLATTICE_AGENT_ID=hermes_agent
+export MEMMCP_AGENT_ID=hermes_agent
 ```
 
 Preflight:
@@ -18,7 +18,5 @@ Preflight:
 python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
 ```
 
-Rules:
-1. Run scoped retrieval first.
-2. Submit feedback via `POST /tools/feedback_submit` for learning.
-3. Keep numbers as verbatim copies from retrieved data.
+Behavior contract:
+- Paste `docs/public_overview/templates/agents/universal.md` into system instructions.
