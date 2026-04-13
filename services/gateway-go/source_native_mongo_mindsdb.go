@@ -143,6 +143,10 @@ func (s *server) queryMongoRawSource(
 	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
 	scanLimit := maxInt(limit*12, envInt("GO_RETRIEVAL_MONGO_SCAN_LIMIT", 128))
+	timeout := s.retrieval.sourceTimeouts[sourceMongoRaw]
+	if timeout <= 0 {
+		timeout = 6 * time.Second
+	}
 
 	warnings := []string{}
 	rows := []map[string]any{}
@@ -156,7 +160,9 @@ func (s *server) queryMongoRawSource(
 	}
 
 	if len(rows) == 0 && s.telemetrySpool != nil && s.telemetrySpool.enabled {
-		spoolRows, spoolErr := s.queryMongoRawSpool(query, limit, scanLimit, projectFilter, topicFilter)
+		spoolCtx, cancel := capContextTimeout(ctx, timeout)
+		spoolRows, spoolErr := s.queryMongoRawSpool(spoolCtx, query, limit, scanLimit, projectFilter, topicFilter)
+		cancel()
 		if spoolErr != nil {
 			warnings = append(warnings, "mongo_raw spool fallback query failed: "+spoolErr.Error())
 		} else {
@@ -307,6 +313,7 @@ func (s *server) queryMongoRawTelemetryCollection(
 }
 
 func (s *server) queryMongoRawSpool(
+	ctx context.Context,
 	query string,
 	limit int,
 	scanLimit int,
@@ -316,8 +323,17 @@ func (s *server) queryMongoRawSpool(
 	if s.telemetrySpool == nil || !s.telemetrySpool.enabled {
 		return nil, errors.New("telemetry spool unavailable")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	maxScanBytes := int64(clampInt(envInt("GO_RETRIEVAL_MONGO_SPOOL_MAX_SCAN_BYTES", 64*1024*1024), 256*1024, 2*1024*1024*1024))
+	maxScanLines := clampInt(envInt("GO_RETRIEVAL_MONGO_SPOOL_MAX_SCAN_LINES", 250000), 1000, 5000000)
 	paths := []string{s.telemetrySpool.path, s.telemetrySpool.backupPath}
 	rows := make([]map[string]any, 0, maxInt(limit, 8))
+	scannedBytes := int64(0)
+	scannedLines := 0
+	scanBudgetExceeded := false
+pathLoop:
 	for _, path := range paths {
 		if strings.TrimSpace(path) == "" {
 			continue
@@ -332,9 +348,22 @@ func (s *server) queryMongoRawSpool(
 		scanner := bufio.NewScanner(file)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				_ = file.Close()
+				return rows, ctx.Err()
+			default:
+			}
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
 				continue
+			}
+			scannedLines += 1
+			scannedBytes += int64(len(line))
+			if scannedLines > maxScanLines || scannedBytes > maxScanBytes {
+				scanBudgetExceeded = true
+				_ = file.Close()
+				break pathLoop
 			}
 			entry := map[string]any{}
 			if err := json.Unmarshal([]byte(line), &entry); err != nil {
@@ -389,6 +418,9 @@ func (s *server) queryMongoRawSpool(
 	})
 	if len(rows) > limit {
 		rows = rows[:limit]
+	}
+	if scanBudgetExceeded && len(rows) == 0 {
+		return rows, errors.New("mongo_raw spool scan budget exceeded")
 	}
 	return rows, nil
 }
