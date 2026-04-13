@@ -80,7 +80,9 @@ gmake quickstart
 ```
 
 `gmake quickstart` prompts for a runtime profile and launches with sensible defaults.
-If launched from the macOS DMG bootstrap, it also generates `~/ContextLattice/setup/agent_smoke_write_read.md` and copies it to clipboard for an immediate write/read agent smoke check.
+If launched from the macOS DMG bootstrap, it also generates:
+- `~/ContextLattice/setup/agent_contextlattice_instructions.md` (copied to clipboard)
+- `~/ContextLattice/setup/agent_smoke_write_read.md` (operator write/read smoke check)
 
 ### Verify
 

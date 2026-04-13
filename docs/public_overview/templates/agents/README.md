@@ -2,6 +2,7 @@
 
 These files provide copy-ready instruction blocks for common agents.
 
+- `universal.md` (canonical behavior contract: before/during/after + async + tasks)
 - `codex.md`
 - `claude-code.md`
 - `opencode.md`

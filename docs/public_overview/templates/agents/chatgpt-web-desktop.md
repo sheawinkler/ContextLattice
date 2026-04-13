@@ -1,15 +1,11 @@
 # ChatGPT Web/Desktop Integration Template
 
-Paste into a new ChatGPT session:
+Paste into a new ChatGPT session system/custom instruction:
 
 ```text
-Use ContextLattice as memory/context at http://127.0.0.1:8075.
-Before planning, call POST /memory/search with include_grounding=true.
-For broad tasks, call POST /memory/context-pack.
-During long tasks, checkpoint via POST /memory/write.
-Before final answer, run one recency read.
-If memory is degraded, continue and state degraded-memory mode.
-Use agent profile chatgpt-web (or chatgpt-desktop) and stable agent_id chatgpt_web_agent (or chatgpt_desktop_agent).
+Use ContextLattice at http://127.0.0.1:8075.
+Use stable agent_id chatgpt_web_agent (or chatgpt_desktop_agent).
+Follow the full operating contract in docs/public_overview/templates/agents/universal.md.
 ```
 
 Operator preflight:

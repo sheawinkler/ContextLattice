@@ -1,81 +1,48 @@
-# ContextLattice Migration Rules
+# ContextLattice Agent Contract
 
-## Objective
+This file is the canonical contract for external agents and LLM apps using ContextLattice.
 
-Migrate the Python implementation to a hybrid architecture:
+## Endpoint + identity pinning
 
-- Python: SDK + developer interface
-- Rust: memory + retrieval engine
-- Go: orchestration services
+- Orchestrator base URL: `http://127.0.0.1:8075`
+- Set both aliases for compatibility:
+  - `CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8075`
+  - `MEMMCP_ORCHESTRATOR_URL=http://127.0.0.1:8075`
+- Use a stable agent identity:
+  - `CONTEXTLATTICE_AGENT_ID=<stable_id>`
+  - `MEMMCP_AGENT_ID=<stable_id>`
 
-## Agent Endpoint Pinning (Required)
+## Preflight before major work
 
-- External agents must call the orchestrator endpoint at `http://127.0.0.1:8075` by default.
-- If users run this on a different host/port, they must explicitly override:
-  - `CONTEXTLATTICE_ORCHESTRATOR_URL`
-  - `CONTEXTLATTICE_ORCHESTRATOR_URL`
+- Profile-aware preflight: `POST /v1/agents/preflight`
+- Compatibility alias: `POST /v1/codex/preflight`
 
-## Agent Integration Defaults
+## Required operating loop (before/during/after)
 
-- External agents should use named preflight profiles:
-  - `codex`
-  - `claude-code`
-  - `opencode`
-  - `hermes-agent`
-  - `chatgpt-web`, `chatgpt-desktop`
-  - `claude-web`, `claude-desktop`
-- Use stable agent identity for reads/writes so profile defaults apply:
-  - `CONTEXTLATTICE_AGENT_ID` (defaults to `codex_gpt5`)
-  - `CONTEXTLATTICE_AGENT_ID`
-- Before major work, run one of:
-  - `python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration`
-  - `python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice`
-  - `python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice`
-  - `python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice`
-- Gateway preflight routes:
-  - `POST /v1/codex/preflight` (compatibility alias)
-  - `POST /v1/agents/preflight` (generic profile-aware preflight)
+1. Before inference: `POST /memory/search` with `include_grounding=true` and scoped `project/topic_path` when known.
+2. If scoped search is empty/degraded: run one broader search in the same project.
+3. Broad or multi-file tasks: `POST /memory/context-pack`.
+4. During execution: write checkpoints with `POST /memory/write`.
+5. Before final output: run one recency retrieval (`/memory/search` or `/memory/context-pack`).
+6. Graph-neighbor recall: `POST /v1/memory/neighbors` when relationship context is relevant.
+7. If `continuation_async` is present: return partial results now, then follow `GET /memory/search/continuations/{token}/events` (or short re-query).
+8. Treat copied numbers as verbatim facts; do not rewrite numeric values.
 
-## Non-goals
+## Task + agent orchestration endpoints
 
-- Do not rewrite the entire system at once.
-- Preserve current behavior unless explicitly approved.
+- Submit: `POST /v1/tasks/submit`
+- Claim: `POST /v1/tasks/claim`
+- Status updates: `POST /v1/tasks/status`
+- Queue metrics: `GET /v1/tasks/metrics`
+- Compatibility routes also exist under `/agents/tasks/*` for legacy workers.
 
-## Working Rules
+## Degraded-memory policy
 
-1. Benchmark before optimizing.
-2. Every phase must leave the repository runnable.
-3. All migrations must be behind feature flags.
-4. Preserve API compatibility.
-5. Prefer small reviewable commits.
-6. Add parity tests before replacing functionality.
-7. Document service boundaries.
-8. Never claim performance improvements without benchmarks.
+- Continue execution when memory is degraded.
+- Explicitly report degraded-memory mode and include continuation token/status if available.
 
-## Priorities
+## Copy-ready templates
 
-1. correctness
-2. benchmarked performance
-3. rollback safety
-4. code clarity
-5. developer ergonomics
-
-## Deliverables Per Phase
-
-- code
-- tests
-- benchmarks
-- documentation
-- migration notes
-
-## Current Tasking
-
-Phase 1-8 migration execution is active:
-
-- keep Python behavior as the default runtime path
-- route hot paths through migration interfaces behind feature flags
-- maintain rollback-safe Rust/Go scaffolding (`USE_*` flags)
-- enforce parity tests and benchmark validation before any default cutover
-- document service contracts and migration runtime health endpoints
-
-Do not remove Python fallback paths until benchmark and parity gates pass.
+- Universal contract: `docs/public_overview/templates/agents/universal.md`
+- Per-agent templates: `docs/public_overview/templates/agents/`
+- Human/operator playbook: `docs/human_agent_instruction_playbook.md`
