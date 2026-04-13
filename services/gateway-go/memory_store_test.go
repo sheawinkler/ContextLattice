@@ -166,6 +166,56 @@ func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreCollectDocsSkipsLargeFilesAndBoundsRead(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+	t.Setenv("GO_MEMORY_STORE_ROLLUP_MAX_FILE_BYTES", "2048")
+	t.Setenv("GO_MEMORY_STORE_ROLLUP_MAX_READ_BYTES", "1024")
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+
+	projectRoot := filepath.Join(root, "contextlattice", "notes")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("mkdir project root failed: %v", err)
+	}
+
+	smallPath := filepath.Join(projectRoot, "small.md")
+	smallContent := "HEAD_MARKER " + strings.Repeat("x", 1300) + " TAIL_MARKER"
+	if err := os.WriteFile(smallPath, []byte(smallContent), 0o644); err != nil {
+		t.Fatalf("write small file failed: %v", err)
+	}
+
+	largePath := filepath.Join(projectRoot, "large.md")
+	largeContent := "LARGE_MARKER " + strings.Repeat("z", 5000)
+	if err := os.WriteFile(largePath, []byte(largeContent), 0o644); err != nil {
+		t.Fatalf("write large file failed: %v", err)
+	}
+
+	rows, err := store.collectDocs(context.Background(), "contextlattice")
+	if err != nil {
+		t.Fatalf("collectDocs failed: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly one row after large-file skip, got %d", len(rows))
+	}
+	if rows[0].FileName != "notes/small.md" {
+		t.Fatalf("expected only notes/small.md, got %q", rows[0].FileName)
+	}
+	if !strings.Contains(rows[0].Summary, "HEAD_MARKER") {
+		t.Fatalf("expected summary to contain head marker, summary=%q", rows[0].Summary)
+	}
+	if strings.Contains(rows[0].Summary, "TAIL_MARKER") {
+		t.Fatalf("expected bounded read to trim tail marker, summary=%q", rows[0].Summary)
+	}
+}
+
 func TestMemoryStoreContentAddressedBlobHardlinkMode(t *testing.T) {
 	root := t.TempDir()
 	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")

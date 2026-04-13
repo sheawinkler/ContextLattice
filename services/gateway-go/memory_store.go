@@ -20,17 +20,19 @@ import (
 )
 
 type memoryStorePolicy struct {
-	enabled           bool
-	rootPath          string
-	historyPath       string
-	contentAddressed  bool
-	contentBlobsPath  string
-	contentLinkMode   string
-	maxRecent         int
-	scanLimit         int
-	maxSummaryChars   int
-	maxRollupSnippets int
-	rollupCacheTTL    time.Duration
+	enabled            bool
+	rootPath           string
+	historyPath        string
+	contentAddressed   bool
+	contentBlobsPath   string
+	contentLinkMode    string
+	maxRecent          int
+	scanLimit          int
+	maxSummaryChars    int
+	maxRollupSnippets  int
+	maxRollupReadBytes int64
+	maxRollupFileBytes int64
+	rollupCacheTTL     time.Duration
 }
 
 type memoryStoreEntry struct {
@@ -122,7 +124,17 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		scanLimit:         clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
 		maxSummaryChars:   clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
 		maxRollupSnippets: clampInt(envInt("GO_MEMORY_STORE_ROLLUP_SNIPPETS", 3), 1, 8),
-		rollupCacheTTL:    envDurationSeconds("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", 15),
+		maxRollupReadBytes: int64(clampInt(
+			envInt("GO_MEMORY_STORE_ROLLUP_MAX_READ_BYTES", 65536),
+			1024,
+			4*1024*1024,
+		)),
+		maxRollupFileBytes: int64(clampInt(
+			envInt("GO_MEMORY_STORE_ROLLUP_MAX_FILE_BYTES", 2*1024*1024),
+			1024,
+			64*1024*1024,
+		)),
+		rollupCacheTTL: envDurationSeconds("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", 15),
 	}
 }
 
@@ -264,6 +276,52 @@ func clipSummary(content string, maxChars int) string {
 		maxChars = 80
 	}
 	return clipText(strings.TrimSpace(content), maxChars)
+}
+
+func readFileHeadWithContext(ctx context.Context, path string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return []byte{}, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	const chunkSize = 32 * 1024
+	buffer := make([]byte, 0, minInt64(maxBytes, 64*1024))
+	chunk := make([]byte, chunkSize)
+	remaining := maxBytes
+	for remaining > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		toRead := len(chunk)
+		if int64(toRead) > remaining {
+			toRead = int(remaining)
+		}
+		n, readErr := file.Read(chunk[:toRead])
+		if n > 0 {
+			buffer = append(buffer, chunk[:n]...)
+			remaining -= int64(n)
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+	return buffer, nil
+}
+
+func minInt64(left int64, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
@@ -798,7 +856,14 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]
 		if strings.TrimSpace(fileName) == "" {
 			return nil
 		}
-		bytes, readErr := os.ReadFile(path)
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil
+		}
+		if info.Size() > m.policy.maxRollupFileBytes {
+			return nil
+		}
+		bytes, readErr := readFileHeadWithContext(ctx, path, m.policy.maxRollupReadBytes)
 		if readErr != nil {
 			return nil
 		}
@@ -811,9 +876,8 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]
 		if strings.TrimSpace(topic) == "" {
 			topic = deriveTopicFromFile(fileName)
 		}
-		info, statErr := os.Stat(path)
 		updatedAt := time.Time{}
-		if statErr == nil {
+		if info != nil {
 			updatedAt = info.ModTime().UTC()
 		}
 		docs = append(docs, memoryStoreDoc{

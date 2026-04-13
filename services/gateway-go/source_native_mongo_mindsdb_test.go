@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestQueryMongoRawSourceUsesSpoolFallbackWithCanonicalMetadata(t *testing.T) {
@@ -64,6 +66,42 @@ func TestQueryMongoRawSourceUsesSpoolFallbackWithCanonicalMetadata(t *testing.T)
 	}
 	if len(warnings) == 0 || !strings.Contains(strings.ToLower(strings.Join(warnings, " | ")), "spool fallback") {
 		t.Fatalf("expected spool fallback warning, got %v", warnings)
+	}
+}
+
+func TestQueryMongoRawSpoolHonorsContextDeadline(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	tempDir := t.TempDir()
+	spoolPath := filepath.Join(tempDir, "telemetry_spool.jsonl")
+	line := `{"project":"alpha","file_name":"notes/plan.md","topic_path":"runbooks/testing","content":"profitability baseline ladder","timestamp":"2026-04-01T00:00:00Z","spool_ref":"spool://alpha-1"}` + "\n"
+	payload := strings.Repeat(line, 20000)
+	if err := os.WriteFile(spoolPath, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write spool fixture: %v", err)
+	}
+
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SPOOL_ENABLED", "true")
+	t.Setenv("GO_TELEMETRY_SPOOL_PATH", spoolPath)
+	t.Setenv("GO_TELEMETRY_SPOOL_BACKUP_PATH", filepath.Join(tempDir, "telemetry_spool.backup.jsonl"))
+	t.Setenv("GO_RETRIEVAL_NATIVE_MONGO_RAW_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_MONGO_SPOOL_MAX_SCAN_LINES", "500000")
+	t.Setenv("GO_RETRIEVAL_MONGO_SPOOL_MAX_SCAN_BYTES", "268435456")
+
+	s := newTestServer(t, backend.URL)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-10*time.Millisecond))
+	defer cancel()
+	_, err := s.queryMongoRawSpool(ctx, "baseline", 5, 50, "alpha", "runbooks/testing")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded from spool fallback, got %v", err)
 	}
 }
 

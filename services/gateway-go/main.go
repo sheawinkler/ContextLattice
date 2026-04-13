@@ -4500,6 +4500,14 @@ type sourceCallResult struct {
 	latency        time.Duration
 }
 
+type sourceCallPayload struct {
+	rows        []map[string]any
+	warnings    []string
+	sourceTrace map[string]any
+	owner       string
+	err         error
+}
+
 type sourceBatchOutput struct {
 	rows                  map[string][]map[string]any
 	sourceOwners          map[string]string
@@ -4571,7 +4579,40 @@ func (s *server) runSourceBatch(
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(sourceCtx, incomingHeaders, baseRequest, sourceName, explicitSourceOverride)
+			callDone := make(chan sourceCallPayload, 1)
+			go func() {
+				rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(
+					sourceCtx,
+					incomingHeaders,
+					baseRequest,
+					sourceName,
+					explicitSourceOverride,
+				)
+				callDone <- sourceCallPayload{
+					rows:        rows,
+					warnings:    warnings,
+					sourceTrace: sourceTrace,
+					owner:       owner,
+					err:         err,
+				}
+			}()
+			rows := []map[string]any{}
+			warnings := []string{}
+			sourceTrace := map[string]any(nil)
+			owner := sourceOwnerForSource(sourceName)
+			err := error(nil)
+			select {
+			case payload := <-callDone:
+				rows = payload.rows
+				warnings = payload.warnings
+				sourceTrace = payload.sourceTrace
+				if strings.TrimSpace(payload.owner) != "" {
+					owner = payload.owner
+				}
+				err = payload.err
+			case <-sourceCtx.Done():
+				err = sourceCtx.Err()
+			}
 			latency := time.Since(start)
 			timedOut := false
 			budgetExceeded := false
