@@ -147,33 +147,42 @@ def main() -> int:
         default=12,
         help="HTTP timeout seconds for --online checks.",
     )
+    parser.add_argument(
+        "--include-internal-docs",
+        action="store_true",
+        help="Require private/internal submission docs that are intentionally excluded from public repo.",
+    )
     args = parser.parse_args()
 
     checks: list[CheckResult] = []
-    checks.extend(
-        _exists(
+    required_paths = [
+        "README.md",
+        "LICENSE",
+        "SECURITY.md",
+        "docs/legal/PRIVACY_POLICY.md",
+        "docs/legal/TERMS_OF_SERVICE.md",
+        "docs/public_overview/CNAME",
+        "docs/public_overview/index.html",
+        "docs/public_overview/installation.html",
+        "docs/public_overview/integration.html",
+        "docs/public_overview/troubleshooting.html",
+        "docs/public_overview/contact.html",
+        "docs/public_overview/.nojekyll",
+        "docs/public_overview/assets/contextlattice-og-1200x630.png",
+        "docs/public_overview/assets/contextlattice-icon-512.png",
+        "docs/public_overview/.well-known/glama.json",
+        "registry/contextlattice.server.template.json",
+    ]
+    if args.include_internal_docs:
+        required_paths.extend(
             [
-                "README.md",
-                "LICENSE",
-                "SECURITY.md",
-                "docs/legal/PRIVACY_POLICY.md",
-                "docs/legal/TERMS_OF_SERVICE.md",
                 "docs/publish_execution_tracker.md",
                 "docs/launch_channel_copybook.md",
-                "docs/public_overview/CNAME",
-                "docs/public_overview/index.html",
-                "docs/public_overview/installation.html",
-                "docs/public_overview/integration.html",
-                "docs/public_overview/troubleshooting.html",
-                "docs/public_overview/contact.html",
-                "docs/public_overview/.nojekyll",
-                "docs/public_overview/assets/contextlattice-og-1200x630.png",
-                "docs/public_overview/assets/contextlattice-icon-512.png",
-                "docs/public_overview/.well-known/glama.json",
-                "registry/contextlattice.server.template.json",
                 "docs/submission_requirements.md",
             ]
         )
+    checks.extend(
+        _exists(required_paths)
     )
     checks.extend(
         _contains(
