@@ -59,21 +59,72 @@ def _load_config() -> BridgeConfig:
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "health",
-        "description": "Get orchestrator health status.",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "description": (
+            "Check ContextLattice runtime health before retrieval or writes. "
+            "Returns service status, queue telemetry, and readiness details. "
+            "Use this for startup validation and troubleshooting connection/runtime issues. "
+            "This tool is read-only and has no side effects."
+        ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "memory.search",
-        "description": "Search contextual memory entries.",
+        "description": (
+            "Search contextual memory for a specific project and query. "
+            "Use this before inference to retrieve relevant prior context. "
+            "Use topic_path when known to narrow scope; set include_retrieval_debug=true for diagnostics "
+            "and source-level timing/continuation metadata. "
+            "For broad multi-file tasks, consider context-pack endpoints; for persistence, use memory.write. "
+            "This tool is read-only and has no write side effects."
+        ),
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string"},
-                "query": {"type": "string"},
-                "topic_path": {"type": "string"},
-                "include_grounding": {"type": "boolean"},
-                "include_retrieval_debug": {"type": "boolean"},
-                "agent_id": {"type": "string"},
+                "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Project identifier to scope retrieval (for example: contextlattice, algotraderv2_rust).",
+                },
+                "query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Natural-language retrieval query describing what context is needed right now.",
+                },
+                "topic_path": {
+                    "type": "string",
+                    "description": "Optional topic hierarchy for scoped retrieval (for example: runbooks/release).",
+                },
+                "include_grounding": {
+                    "type": "boolean",
+                    "description": "Include grounding facts and strict numeric-fact copies in the response.",
+                    "default": False,
+                },
+                "include_retrieval_debug": {
+                    "type": "boolean",
+                    "description": "Include source policy, timing, staged-fetch lifecycle, and failure diagnostics.",
+                    "default": False,
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Optional stable agent identity used for retrieval profile defaults and tuning.",
+                },
             },
             "required": ["project", "query"],
             "additionalProperties": True,
@@ -81,14 +132,40 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "memory.write",
-        "description": "Write a memory item.",
+        "description": (
+            "Persist a contextual memory item into ContextLattice for future recall. "
+            "This is a state-changing operation: it writes to durable memory and may trigger fanout/indexing/rollup updates. "
+            "Use for checkpoints, implementation notes, and decisions that should be retrievable later. "
+            "For retrieval use memory.search; for readiness checks use health."
+        ),
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
-                "projectName": {"type": "string"},
-                "fileName": {"type": "string"},
-                "content": {"type": "string"},
-                "topicPath": {"type": "string"},
+                "projectName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Project identifier for the write (must match the intended retrieval scope).",
+                },
+                "fileName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Logical memory filename/path used for grouping and future lookup (for example: notes/codex/xyz.md).",
+                },
+                "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Memory payload to persist. Keep numeric facts verbatim when logging metrics or measurements.",
+                },
+                "topicPath": {
+                    "type": "string",
+                    "description": "Optional topic hierarchy for retrieval scoping (for example: runbooks/runtime-hardening).",
+                },
             },
             "required": ["projectName", "fileName", "content"],
             "additionalProperties": True,
