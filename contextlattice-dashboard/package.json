@@ -23,7 +23,7 @@
     "@solana/web3.js": "^1.98.2",
     "bcryptjs": "^2.4.3",
     "bignumber.js": "^9.1.2",
-    "nodemailer": "^7.0.12",
+    "nodemailer": "^8.0.5",
     "next": "14.2.35",
     "next-auth": "^4.24.7",
     "react": "18.3.1",
