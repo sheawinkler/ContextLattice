@@ -141,13 +141,15 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "memory.search",
         "description": (
-            "Retrieve contextual memory for the current task before inference. "
-            "Required inputs are project + query; add topic_path when you know the scope to reduce noise and latency. "
-            "Set include_grounding=true to receive factual grounding blocks (including verbatim numeric copies) and set "
-            "include_retrieval_debug=true when diagnosing source timeouts/degraded lanes. "
-            "This tool is read-only and returns a lifecycle state (ready/pending/degraded/empty) plus per-source status; "
-            "it never writes memory. If the request is unauthorized or upstream is unavailable, isError is true and the error "
-            "payload is returned in both text and structured JSON."
+            "Read-only contextual retrieval for pre-inference recall. "
+            "Required: project + query. Keep project aligned with prior memory.write calls so ranking and topic continuity remain coherent. "
+            "Parameter interactions: topic_path narrows scope and usually reduces noise/latency; if scoped reads return empty/degraded, retry once without topic_path. "
+            "include_grounding=true adds citation-safe grounding with strict numeric copy behavior (numbers must be consumed verbatim). "
+            "include_retrieval_debug=true adds source policy/timing/failure detail for diagnosis and can increase payload size. "
+            "agent_id should stay stable across sessions so retrieval profile defaults (mode/sources/escalation) remain deterministic. "
+            "Lifecycle handling: result_state can be ready/pending/degraded/empty; when pending/degraded, use warnings/source status and continuation metadata to re-read after cache warm. "
+            "Do not use this tool for writes or health checks: use memory.write for persistence and health for startup/readiness checks. "
+            "On auth/upstream failures this returns isError=true with structured error payload."
         ),
         "annotations": {
             "readOnlyHint": True,
@@ -213,12 +215,14 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "memory.write",
         "description": (
-            "Persist a contextual memory item into ContextLattice for future recall. "
-            "This is a state-changing operation: it writes to durable memory and may trigger fanout/indexing/rollup updates. "
-            "Use for checkpoints, implementation notes, and decisions that should be retrievable later. "
-            "If topicPath is omitted, the service derives scope from fileName to keep retrieval grouping stable. "
-            "Success is indicated by ok=true and event_id; fanout targets may still be pending/retrying and are reported explicitly. "
-            "For retrieval use memory.search; for readiness checks use health."
+            "State-changing durable memory write used for checkpoints, implementation decisions, and compact recall artifacts. "
+            "Parameter interactions: projectName should match the project used by memory.search; fileName is the logical lineage key (stable fileName preserves continuity and dedupe behavior); "
+            "topicPath controls retrieval partitioning and, if omitted, is derived from fileName. "
+            "content should be concise and factual (avoid full transcripts; preserve numeric facts verbatim). "
+            "Side effects: successful writes may trigger asynchronous fanout/indexing/rollup work. "
+            "ok=true with event_id means the write was accepted, but per-target fanout can still be pending/retrying and is returned in fanout/warnings. "
+            "Do not use this for retrieval or diagnostics: use memory.search for reads and health for readiness checks. "
+            "On auth/upstream errors this returns isError=true with structured error payload."
         ),
         "annotations": {
             "readOnlyHint": False,
