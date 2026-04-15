@@ -102,6 +102,16 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.servic
 
 ## Core API examples
 
+### MCP Tool Contract (Glama-lite / stdio bridge)
+
+The Glama single-container profile exposes three MCP tools with explicit scope:
+
+- `health`: read-only readiness/troubleshooting check (`GET /health`), no side effects.
+- `memory.search`: read-only scoped retrieval (`POST /memory/search`) with lifecycle states (`ready|pending|degraded|empty`) and optional grounding/debug payloads.
+- `memory.write`: state-changing durable write (`POST /memory/write`) with explicit fanout status and warning fields.
+
+All three tools return JSON in both text content and structured payload form for client compatibility.
+
 ### Write memory
 
 ```bash

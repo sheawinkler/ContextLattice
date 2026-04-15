@@ -60,10 +60,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "health",
         "description": (
-            "Check ContextLattice runtime health before retrieval or writes. "
-            "Returns service status, queue telemetry, and readiness details. "
-            "Use this for startup validation and troubleshooting connection/runtime issues. "
-            "This tool is read-only and has no side effects."
+            "Run a non-destructive runtime health check before any memory tool call. "
+            "Use this when a connection fails, startup seems incomplete, or you need readiness evidence before writes. "
+            "Returns a JSON health envelope (for example: status/services/components/queue fields) as both text and structured JSON. "
+            "If the orchestrator requires an API key and the bridge is not configured, this returns an auth failure instead of mutating state."
         ),
         "annotations": {
             "readOnlyHint": True,
@@ -77,16 +77,29 @@ TOOLS: list[dict[str, Any]] = [
             "required": [],
             "additionalProperties": False,
         },
+        "outputSchema": {
+            "type": "object",
+            "description": "Health payload from GET /health.",
+            "properties": {
+                "status": {"type": "string"},
+                "services": {"type": "object", "additionalProperties": True},
+                "components": {"type": "object", "additionalProperties": True},
+                "queue": {"type": "object", "additionalProperties": True},
+                "ok": {"type": "boolean"},
+            },
+            "additionalProperties": True,
+        },
     },
     {
         "name": "memory.search",
         "description": (
-            "Search contextual memory for a specific project and query. "
-            "Use this before inference to retrieve relevant prior context. "
-            "Use topic_path when known to narrow scope; set include_retrieval_debug=true for diagnostics "
-            "and source-level timing/continuation metadata. "
-            "For broad multi-file tasks, consider context-pack endpoints; for persistence, use memory.write. "
-            "This tool is read-only and has no write side effects."
+            "Retrieve contextual memory for the current task before inference. "
+            "Required inputs are project + query; add topic_path when you know the scope to reduce noise and latency. "
+            "Set include_grounding=true to receive factual grounding blocks (including verbatim numeric copies) and set "
+            "include_retrieval_debug=true when diagnosing source timeouts/degraded lanes. "
+            "This tool is read-only and returns a lifecycle state (ready/pending/degraded/empty) plus per-source status; "
+            "it never writes memory. If the request is unauthorized or upstream is unavailable, isError is true and the error "
+            "payload is returned in both text and structured JSON."
         ),
         "annotations": {
             "readOnlyHint": True,
@@ -100,33 +113,52 @@ TOOLS: list[dict[str, Any]] = [
                 "project": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Project identifier to scope retrieval (for example: contextlattice, algotraderv2_rust).",
+                    "description": "Project identifier to scope retrieval (for example: contextlattice, algotraderv2_rust). Unknown projects can return project_suggestions.",
                 },
                 "query": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Natural-language retrieval query describing what context is needed right now.",
+                    "description": "Natural-language retrieval query describing what context is needed now. Keep it specific to improve ranking and reduce continuation work.",
                 },
                 "topic_path": {
                     "type": "string",
-                    "description": "Optional topic hierarchy for scoped retrieval (for example: runbooks/release).",
+                    "description": "Optional topic hierarchy for scoped retrieval (for example: runbooks/release). Omit for broader recall when scoped reads return empty/degraded.",
                 },
                 "include_grounding": {
                     "type": "boolean",
-                    "description": "Include grounding facts and strict numeric-fact copies in the response.",
+                    "description": "When true, response includes a grounding object with factual snippets and strict numeric copies for citation-safe reasoning.",
                     "default": False,
                 },
                 "include_retrieval_debug": {
                     "type": "boolean",
-                    "description": "Include source policy, timing, staged-fetch lifecycle, and failure diagnostics.",
+                    "description": "When true, response includes retrieval debug details (source policy, timings, staged continuation, failures/timeouts).",
                     "default": False,
                 },
                 "agent_id": {
                     "type": "string",
-                    "description": "Optional stable agent identity used for retrieval profile defaults and tuning.",
+                    "description": "Optional stable agent identity used to apply retrieval profile defaults (mode/sources/escalation/query expansion).",
                 },
             },
             "required": ["project", "query"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "description": "Memory search payload from POST /memory/search.",
+            "properties": {
+                "results": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                "result_state": {
+                    "type": "string",
+                    "enum": ["ready", "pending", "degraded", "empty"],
+                },
+                "degraded": {"type": "boolean"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "source_summary": {"type": "object", "additionalProperties": True},
+                "source_status": {"type": "object", "additionalProperties": True},
+                "retrieval_lifecycle": {"type": "object", "additionalProperties": True},
+                "grounding": {"type": "object", "additionalProperties": True},
+                "retrieval": {"type": "object", "additionalProperties": True},
+            },
             "additionalProperties": True,
         },
     },
@@ -136,6 +168,8 @@ TOOLS: list[dict[str, Any]] = [
             "Persist a contextual memory item into ContextLattice for future recall. "
             "This is a state-changing operation: it writes to durable memory and may trigger fanout/indexing/rollup updates. "
             "Use for checkpoints, implementation notes, and decisions that should be retrievable later. "
+            "If topicPath is omitted, the service derives scope from fileName to keep retrieval grouping stable. "
+            "Success is indicated by ok=true and event_id; fanout targets may still be pending/retrying and are reported explicitly. "
             "For retrieval use memory.search; for readiness checks use health."
         ),
         "annotations": {
@@ -150,24 +184,37 @@ TOOLS: list[dict[str, Any]] = [
                 "projectName": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Project identifier for the write (must match the intended retrieval scope).",
+                    "description": "Project identifier for the write (must match intended retrieval scope and future search project).",
                 },
                 "fileName": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Logical memory filename/path used for grouping and future lookup (for example: notes/codex/xyz.md).",
+                    "description": "Logical memory filename/path used for grouping and lookup (for example: notes/codex/xyz.md). Keep stable across updates to preserve continuity.",
                 },
                 "content": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Memory payload to persist. Keep numeric facts verbatim when logging metrics or measurements.",
+                    "description": "Memory payload to persist. Keep numeric facts verbatim. Secret handling follows server policy (redact/block/allow).",
                 },
                 "topicPath": {
                     "type": "string",
-                    "description": "Optional topic hierarchy for retrieval scoping (for example: runbooks/runtime-hardening).",
+                    "description": "Optional topic hierarchy for retrieval scoping (for example: runbooks/runtime-hardening). If omitted, topic is derived from fileName.",
                 },
             },
             "required": ["projectName", "fileName", "content"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "description": "Memory write acknowledgement payload from POST /memory/write.",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "event_id": {"type": "string"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "fanout": {"type": "object", "additionalProperties": {"type": "string"}},
+                "deduped": {"type": "boolean"},
+                "latest_hash_unchanged": {"type": "boolean"},
+            },
             "additionalProperties": True,
         },
     },
@@ -219,6 +266,19 @@ def _write_message(payload: dict[str, Any]) -> None:
     sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
     sys.stdout.buffer.write(data)
     sys.stdout.buffer.flush()
+
+
+def _tool_result(ok: bool, payload: Any) -> dict[str, Any]:
+    text = json.dumps(payload, ensure_ascii=True)
+    result: dict[str, Any] = {
+        "isError": not ok,
+        "content": [{"type": "text", "text": text}],
+    }
+    if isinstance(payload, dict):
+        result["structuredContent"] = payload
+    else:
+        result["structuredContent"] = {"value": payload}
+    return result
 
 
 def _jsonrpc_result(req_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -311,25 +371,13 @@ class BridgeRuntime:
         self.ensure_orchestrator()
         if name == "health":
             status, payload = _http_json(self.config, "GET", "/health")
-            ok = status == 200
-            return {
-                "isError": not ok,
-                "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=True)}],
-            }
+            return _tool_result(status == 200, payload)
         if name == "memory.search":
             status, payload = _http_json(self.config, "POST", "/memory/search", arguments)
-            ok = status == 200
-            return {
-                "isError": not ok,
-                "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=True)}],
-            }
+            return _tool_result(status == 200, payload)
         if name == "memory.write":
             status, payload = _http_json(self.config, "POST", "/memory/write", arguments)
-            ok = status == 200
-            return {
-                "isError": not ok,
-                "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=True)}],
-            }
+            return _tool_result(status == 200, payload)
         return {
             "isError": True,
             "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
