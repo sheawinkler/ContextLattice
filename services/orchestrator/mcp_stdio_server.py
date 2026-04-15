@@ -12,11 +12,13 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -36,15 +38,58 @@ class BridgeConfig:
     orchestrator_base_url: str
     orchestrator_api_key: str
     start_internal_orchestrator: bool
+    internal_runtime: str
+    gateway_go_bin: str
+    repo_root: str
     startup_timeout_secs: float
 
 
+def _normalize_runtime(raw_value: str) -> str:
+    normalized = raw_value.strip().lower().replace("_", "-")
+    if normalized in ("go", "gateway-go"):
+        return "gateway-go"
+    if normalized in ("python", "python-orchestrator"):
+        return "python-orchestrator"
+    if normalized in ("auto",):
+        return "auto"
+    return "gateway-go"
+
+
+def _resolve_gateway_binary(repo_root: str) -> str:
+    explicit = (
+        os.getenv("ORCH_GATEWAY_BIN", "").strip()
+        or os.getenv("CONTEXTLATTICE_GATEWAY_BIN", "").strip()
+    )
+    candidates = [
+        explicit,
+        str(Path(repo_root) / "services" / "gateway-go" / "gateway-go"),
+        str(Path(repo_root) / "services" / "gateway-go" / "bin" / "gateway-go"),
+        "/usr/local/bin/contextlattice-gateway-go",
+        "gateway-go",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if "/" in candidate:
+            candidate_path = Path(candidate)
+            if candidate_path.exists() and os.access(candidate_path, os.X_OK):
+                return str(candidate_path)
+            continue
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return explicit or str(Path(repo_root) / "services" / "gateway-go" / "gateway-go")
+
+
 def _load_config() -> BridgeConfig:
+    repo_root = str(Path(__file__).resolve().parents[2])
     host = os.getenv("ORCH_HOST", "127.0.0.1").strip() or "127.0.0.1"
     port = int(os.getenv("ORCH_PORT", "8075"))
     base = os.getenv("ORCH_BASE_URL", f"http://{host}:{port}").strip() or f"http://{host}:{port}"
     api_key = os.getenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "").strip()
     start_internal = os.getenv("ORCH_START_INTERNAL", "true").lower() in ("1", "true", "yes", "on")
+    runtime = _normalize_runtime(os.getenv("ORCH_INTERNAL_RUNTIME", "auto"))
+    gateway_go_bin = _resolve_gateway_binary(repo_root)
     startup_timeout = max(5.0, float(os.getenv("ORCH_STARTUP_TIMEOUT_SECS", "30")))
     return BridgeConfig(
         orchestrator_host=host,
@@ -52,6 +97,9 @@ def _load_config() -> BridgeConfig:
         orchestrator_base_url=base.rstrip("/"),
         orchestrator_api_key=api_key,
         start_internal_orchestrator=start_internal,
+        internal_runtime=runtime,
+        gateway_go_bin=gateway_go_bin,
+        repo_root=repo_root,
         startup_timeout_secs=startup_timeout,
     )
 
@@ -334,11 +382,54 @@ class BridgeRuntime:
                 proc.kill()
         self.orchestrator_proc = None
 
-    def ensure_orchestrator(self) -> None:
-        if not self.config.start_internal_orchestrator:
-            return
-        if self.orchestrator_proc is not None and self.orchestrator_proc.poll() is None:
-            return
+    def _wait_for_ready(self) -> None:
+        deadline = time.time() + self.config.startup_timeout_secs
+        while time.time() < deadline:
+            status, _ = _http_json(self.config, "GET", "/health")
+            if status == 200:
+                return
+            if self.orchestrator_proc is not None and self.orchestrator_proc.poll() is not None:
+                raise RuntimeError("internal runtime exited during startup")
+            time.sleep(0.25)
+        raise RuntimeError("internal runtime did not become healthy before timeout")
+
+    def _start_gateway_go(self) -> None:
+        gateway_bin = self.config.gateway_go_bin
+        if "/" in gateway_bin and not Path(gateway_bin).exists():
+            raise RuntimeError(
+                f"gateway-go runtime requested but binary is missing: {gateway_bin}. "
+                "Set ORCH_GATEWAY_BIN to a valid executable or switch ORCH_INTERNAL_RUNTIME=python-orchestrator."
+            )
+        env = dict(os.environ)
+        env.setdefault("PORT", str(self.config.orchestrator_port))
+        env.setdefault("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+        env.setdefault("GO_PYTHON_HOT_PATH_OWNERSHIP_MODE", "strict")
+        env.setdefault("CONTEXTLATTICE_ENV", "development")
+        env.setdefault("FANOUT_OUTBOX_BACKEND", "sqlite")
+        env.setdefault("MONGO_RAW_ENABLED", "false")
+        env.setdefault("MINDSDB_ENABLED", "false")
+        env.setdefault("ORCH_PGVECTOR_ENABLED", "false")
+        env.setdefault("ORCH_RETRIEVAL_DEFAULT_SOURCES", "topic_rollups")
+        env.setdefault("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+        env.setdefault("TOPIC_ROLLUP_SQLITE_ENABLED", "true")
+        env.setdefault("TOPIC_ROLLUP_SQLITE_FTS_ENABLED", "true")
+        env.setdefault("TOPIC_ROLLUP_SQLITE_VEC_ENABLED", "true")
+        env.setdefault("SIGNAL_REFRESH_ENABLED", "false")
+        env.setdefault("OVERRIDE_REFRESH_ENABLED", "false")
+        env.setdefault("SINK_RETENTION_ENABLED", "false")
+        if self.config.orchestrator_api_key and not env.get("CONTEXTLATTICE_ORCHESTRATOR_API_KEY"):
+            env["CONTEXTLATTICE_ORCHESTRATOR_API_KEY"] = self.config.orchestrator_api_key
+        cmd = [gateway_bin]
+        self.orchestrator_proc = subprocess.Popen(
+            cmd,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+            text=True,
+            cwd=self.config.repo_root,
+            env=env,
+        )
+
+    def _start_python_orchestrator(self) -> None:
         cmd = [
             sys.executable,
             "-m",
@@ -356,16 +447,33 @@ class BridgeRuntime:
             stdout=sys.stderr,
             stderr=sys.stderr,
             text=True,
+            cwd=self.config.repo_root,
         )
-        deadline = time.time() + self.config.startup_timeout_secs
-        while time.time() < deadline:
-            status, _ = _http_json(self.config, "GET", "/health")
-            if status == 200:
-                return
-            if self.orchestrator_proc.poll() is not None:
-                raise RuntimeError("orchestrator process exited during startup")
-            time.sleep(0.25)
-        raise RuntimeError("orchestrator did not become healthy before timeout")
+
+    def ensure_orchestrator(self) -> None:
+        if not self.config.start_internal_orchestrator:
+            return
+        if self.orchestrator_proc is not None and self.orchestrator_proc.poll() is None:
+            return
+        runtime = self.config.internal_runtime
+        if runtime == "python-orchestrator":
+            self._start_python_orchestrator()
+            self._wait_for_ready()
+            return
+        if runtime == "gateway-go":
+            self._start_gateway_go()
+            self._wait_for_ready()
+            return
+        # auto mode: try go first, then fail-open to python compatibility.
+        try:
+            self._start_gateway_go()
+            self._wait_for_ready()
+            return
+        except Exception as exc:
+            _stderr(f"gateway-go startup failed in auto mode, falling back to python orchestrator: {exc}")
+            self.stop()
+            self._start_python_orchestrator()
+            self._wait_for_ready()
 
     def tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.ensure_orchestrator()
