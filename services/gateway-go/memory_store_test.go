@@ -119,6 +119,7 @@ func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
 	t.Setenv("GO_MEMORY_STORE_ROOT", root)
 	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
 	t.Setenv("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", "1")
+	t.Setenv("GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX", "false")
 
 	store, err := newMemoryStoreFromEnv()
 	if err != nil {

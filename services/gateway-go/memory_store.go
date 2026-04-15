@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,19 +22,22 @@ import (
 )
 
 type memoryStorePolicy struct {
-	enabled            bool
-	rootPath           string
-	historyPath        string
-	contentAddressed   bool
-	contentBlobsPath   string
-	contentLinkMode    string
-	maxRecent          int
-	scanLimit          int
-	maxSummaryChars    int
-	maxRollupSnippets  int
-	maxRollupReadBytes int64
-	maxRollupFileBytes int64
-	rollupCacheTTL     time.Duration
+	enabled                    bool
+	rootPath                   string
+	historyPath                string
+	contentAddressed           bool
+	contentBlobsPath           string
+	contentLinkMode            string
+	rollupUseHistoryIndex      bool
+	historyStartupMaxLines     int
+	historyStartupTailMaxBytes int64
+	maxRecent                  int
+	scanLimit                  int
+	maxSummaryChars            int
+	maxRollupSnippets          int
+	maxRollupReadBytes         int64
+	maxRollupFileBytes         int64
+	rollupCacheTTL             time.Duration
 }
 
 type memoryStoreEntry struct {
@@ -113,17 +118,29 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	default:
 		contentLinkMode = "hardlink"
 	}
+	historyStartupMaxLines := envInt("GO_MEMORY_STORE_HISTORY_STARTUP_MAX_LINES", 20000)
+	if historyStartupMaxLines < 0 {
+		historyStartupMaxLines = 0
+	}
+	historyStartupTailMaxBytes := int64(clampInt(
+		envInt("GO_MEMORY_STORE_HISTORY_STARTUP_TAIL_MAX_BYTES", 64*1024*1024),
+		1024*1024,
+		1024*1024*1024,
+	))
 	return memoryStorePolicy{
-		enabled:           envBool("GO_MEMORY_STORE_ENABLED", true),
-		rootPath:          root,
-		historyPath:       filepath.Clean(historyPath),
-		contentAddressed:  envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
-		contentBlobsPath:  filepath.Clean(contentBlobsPath),
-		contentLinkMode:   contentLinkMode,
-		maxRecent:         clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
-		scanLimit:         clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
-		maxSummaryChars:   clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
-		maxRollupSnippets: clampInt(envInt("GO_MEMORY_STORE_ROLLUP_SNIPPETS", 3), 1, 8),
+		enabled:                    envBool("GO_MEMORY_STORE_ENABLED", true),
+		rootPath:                   root,
+		historyPath:                filepath.Clean(historyPath),
+		contentAddressed:           envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
+		contentBlobsPath:           filepath.Clean(contentBlobsPath),
+		contentLinkMode:            contentLinkMode,
+		rollupUseHistoryIndex:      envBool("GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX", true),
+		historyStartupMaxLines:     historyStartupMaxLines,
+		historyStartupTailMaxBytes: historyStartupTailMaxBytes,
+		maxRecent:                  clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
+		scanLimit:                  clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
+		maxSummaryChars:            clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
+		maxRollupSnippets:          clampInt(envInt("GO_MEMORY_STORE_ROLLUP_SNIPPETS", 3), 1, 8),
 		maxRollupReadBytes: int64(clampInt(
 			envInt("GO_MEMORY_STORE_ROLLUP_MAX_READ_BYTES", 65536),
 			1024,
@@ -180,9 +197,34 @@ func (m *memoryStore) loadHistory() error {
 	}
 	defer file.Close()
 
+	maxStartupLines := m.policy.historyStartupMaxLines
+	if maxStartupLines > 0 {
+		ordered, err := readHistoryTailLines(file, maxStartupLines, m.policy.historyStartupTailMaxBytes)
+		if err != nil {
+			return fmt.Errorf("read memory store history tail: %w", err)
+		}
+		loaded := 0
+		for _, line := range ordered {
+			var entry memoryStoreEntry
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				continue
+			}
+			m.recordEntry(entry)
+			loaded += 1
+		}
+		log.Printf(
+			"gateway-go memory store history startup load: scanned=%d loaded=%d cap=%d mode=tail",
+			len(ordered),
+			loaded,
+			maxStartupLines,
+		)
+		return nil
+	}
+
 	scanner := bufio.NewScanner(file)
 	buffer := make([]byte, 0, 1024*64)
 	scanner.Buffer(buffer, 1024*1024)
+	loaded := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -193,11 +235,83 @@ func (m *memoryStore) loadHistory() error {
 			continue
 		}
 		m.recordEntry(entry)
+		loaded += 1
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan memory store history: %w", err)
 	}
+	log.Printf("gateway-go memory store history startup load: scanned=%d loaded=%d cap=%d", loaded, loaded, 0)
 	return nil
+}
+
+func readHistoryTailLines(file *os.File, maxLines int, maxBytes int64) ([]string, error) {
+	if file == nil || maxLines <= 0 {
+		return []string{}, nil
+	}
+	if maxBytes < 1 {
+		maxBytes = 64 * 1024 * 1024
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	if size <= 0 {
+		return []string{}, nil
+	}
+	const chunkSize int64 = 64 * 1024
+	buf := make([]byte, 0, minInt64(size, maxBytes))
+	pos := size
+	newlineCount := 0
+	for pos > 0 && newlineCount <= maxLines {
+		readSize := chunkSize
+		if pos < readSize {
+			readSize = pos
+		}
+		pos -= readSize
+		if _, err := file.Seek(pos, io.SeekStart); err != nil {
+			return nil, err
+		}
+		chunk := make([]byte, readSize)
+		n, readErr := io.ReadFull(file, chunk)
+		if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+			return nil, readErr
+		}
+		if n <= 0 {
+			break
+		}
+		chunk = chunk[:n]
+		available := int(maxBytes) - len(buf)
+		if available <= 0 {
+			break
+		}
+		if len(chunk) > available {
+			chunk = chunk[len(chunk)-available:]
+			pos = 0
+		}
+		buf = append(chunk, buf...)
+		newlineCount = bytes.Count(buf, []byte{'\n'})
+		if int64(len(buf)) >= maxBytes {
+			break
+		}
+	}
+	linesRaw := strings.Split(string(buf), "\n")
+	if pos > 0 && len(linesRaw) > 0 {
+		// Buffer started mid-line; drop partial head for valid NDJSON parsing.
+		linesRaw = linesRaw[1:]
+	}
+	lines := make([]string, 0, len(linesRaw))
+	for _, line := range linesRaw {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return lines, nil
 }
 
 func sanitizeMemoryProject(project string) (string, error) {
@@ -789,6 +903,9 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if docs, ok := m.collectDocsFromHistoryIndex(ctx, projectFilter); ok {
+		return docs, nil
+	}
 	root := m.policy.rootPath
 	if strings.TrimSpace(projectFilter) != "" {
 		project, err := sanitizeMemoryProject(projectFilter)
@@ -896,6 +1013,87 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]
 		return nil, walkErr
 	}
 	return docs, nil
+}
+
+func parseMemoryStoreKeyToken(token string) (string, string, bool) {
+	parts := strings.SplitN(strings.TrimSpace(token), "::", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	project := strings.TrimSpace(parts[0])
+	fileName := strings.TrimSpace(parts[1])
+	if project == "" || fileName == "" {
+		return "", "", false
+	}
+	return project, fileName, true
+}
+
+func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFilter string) ([]memoryStoreDoc, bool) {
+	if m == nil || !m.policy.rollupUseHistoryIndex {
+		return nil, false
+	}
+	normalizedProject := strings.TrimSpace(projectFilter)
+	m.mu.RLock()
+	latestTopic := make(map[string]string, len(m.latestTopic))
+	for key, value := range m.latestTopic {
+		latestTopic[key] = value
+	}
+	recent := append([]memoryStoreEntry(nil), m.recent...)
+	m.mu.RUnlock()
+	if len(latestTopic) == 0 {
+		return nil, false
+	}
+	type recentMeta struct {
+		summary string
+		updated time.Time
+	}
+	metadataByKey := map[string]recentMeta{}
+	for i := len(recent) - 1; i >= 0; i-- {
+		entry := recent[i]
+		key := memoryStoreKey(entry.Project, entry.FileName)
+		if key == "::" {
+			continue
+		}
+		if _, exists := metadataByKey[key]; exists {
+			continue
+		}
+		updated := time.Time{}
+		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(entry.CreatedAt)); err == nil {
+			updated = parsed.UTC()
+		}
+		metadataByKey[key] = recentMeta{
+			summary: strings.TrimSpace(entry.Summary),
+			updated: updated,
+		}
+	}
+	docs := make([]memoryStoreDoc, 0, len(latestTopic))
+	for key, topicPath := range latestTopic {
+		select {
+		case <-ctx.Done():
+			return docs, true
+		default:
+		}
+		project, fileName, ok := parseMemoryStoreKeyToken(key)
+		if !ok {
+			continue
+		}
+		if normalizedProject != "" && !strings.EqualFold(project, normalizedProject) {
+			continue
+		}
+		topic := strings.TrimSpace(topicPath)
+		if topic == "" {
+			topic = deriveTopicFromFile(fileName)
+		}
+		meta := metadataByKey[key]
+		docs = append(docs, memoryStoreDoc{
+			Project:   project,
+			FileName:  fileName,
+			TopicPath: topic,
+			Summary:   clipSummary(meta.summary, m.policy.maxSummaryChars),
+			UpdatedAt: meta.updated,
+		})
+	}
+	return docs, true
 }
 
 func topicPrefixes(topic string) []string {

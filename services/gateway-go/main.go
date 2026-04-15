@@ -51,67 +51,77 @@ var defaultAllSources = []string{
 }
 
 type retrievalPolicy struct {
-	enabled                          bool
-	defaultSources                   []string
-	fastSources                      []string
-	slowSources                      []string
-	nonDegradableSources             map[string]struct{}
-	protectedSources                 map[string]struct{}
-	syncFallbackSources              []string
-	rustQualityFallbackEnabled       bool
-	rustQualityFallbackSources       []string
-	rustQualityFallbackMode          string
-	minFastResults                   int
-	minFastResultsByMode             map[string]int
-	disableSyncSlowFallback          bool
-	slowSyncTimeoutCap               time.Duration
-	rustLanePromotionEnabled         bool
-	topicPrefilterEnabled            bool
-	coverageRescueEnabled            bool
-	coverageRescueMinTokens          int
-	lexicalGuardEnabled              bool
-	lexicalGuardMinCoverage          float64
-	lexicalGuardMinResults           int
-	deepBlocking                     bool
-	qdrantSyncTimeoutCap             time.Duration
-	qdrantSyncTimeoutCapByMode       map[string]time.Duration
-	lettaTopKFactor                  float64
-	lettaTopKCap                     int
-	lettaTopKFactorByMode            map[string]float64
-	lettaTopKCapByMode               map[string]int
-	failOpenContinuationEnabled      bool
-	failOpenContinuationSources      map[string]struct{}
-	timeoutAdaptiveSkipEnabled       bool
-	timeoutAdaptiveSkipSources       map[string]struct{}
-	sourceTimeouts                   map[string]time.Duration
-	topicRollupSyncTimeoutFloor      time.Duration
-	topicRollupSearchTopN            int
-	continuationTimeoutDefault       time.Duration
-	continuationTimeoutBySource      map[string]time.Duration
-	continuationMaxInflight          int
-	continuationMaxInflightPerSource int
-	continuationMaxInflightOverrides map[string]int
-	continuationSourceCooldown       time.Duration
-	continuationSourceCooldownBySrc  map[string]time.Duration
-	subcallDisableExpansion          bool
-	subcallDisableAutoEscalate       bool
-	telemetryBatchEnabled            bool
-	telemetryBatchFlushInterval      time.Duration
-	telemetryBatchSize               int
-	telemetryBatchDropLogEvery       uint64
-	adaptiveTimeoutEnabled           bool
-	adaptiveTimeoutMinRequests       int
-	adaptiveTimeoutWindow            int
-	adaptiveTimeoutP95Factor         float64
-	adaptiveTimeoutMinScale          float64
-	adaptiveTimeoutMaxScale          float64
-	adaptiveTimeoutBacklogWeight     float64
-	adaptiveTimeoutBacklogCap        int
-	continuationEventHistory         int
-	continuationEventTTL             time.Duration
-	continuationSSEHeartbeat         time.Duration
-	sourceOwnershipMode              string
-	sourceOwnershipStrictFastAllowPy map[string]struct{}
+	enabled                           bool
+	defaultSources                    []string
+	fastSources                       []string
+	slowSources                       []string
+	nonDegradableSources              map[string]struct{}
+	protectedSources                  map[string]struct{}
+	syncFallbackSources               []string
+	rustQualityFallbackEnabled        bool
+	rustQualityFallbackSources        []string
+	rustQualityFallbackMode           string
+	minFastResults                    int
+	minFastResultsByMode              map[string]int
+	disableSyncSlowFallback           bool
+	slowSyncTimeoutCap                time.Duration
+	rustLanePromotionEnabled          bool
+	topicPrefilterEnabled             bool
+	coverageRescueEnabled             bool
+	coverageRescueMinTokens           int
+	lexicalGuardEnabled               bool
+	lexicalGuardMinCoverage           float64
+	lexicalGuardMinResults            int
+	deepBlocking                      bool
+	qdrantSyncTimeoutCap              time.Duration
+	qdrantSyncTimeoutCapByMode        map[string]time.Duration
+	lettaTopKFactor                   float64
+	lettaTopKCap                      int
+	lettaTopKFactorByMode             map[string]float64
+	lettaTopKCapByMode                map[string]int
+	failOpenContinuationEnabled       bool
+	failOpenContinuationSources       map[string]struct{}
+	timeoutAdaptiveSkipEnabled        bool
+	timeoutAdaptiveSkipSources        map[string]struct{}
+	sourceTimeouts                    map[string]time.Duration
+	topicRollupSyncTimeoutFloor       time.Duration
+	topicRollupSyncTimeoutFloorByMode map[string]time.Duration
+	topicRollupSearchTopN             int
+	continuationTimeoutDefault        time.Duration
+	continuationTimeoutBySource       map[string]time.Duration
+	continuationMaxInflight           int
+	continuationMaxInflightPerSource  int
+	continuationMaxInflightOverrides  map[string]int
+	continuationSourceCooldown        time.Duration
+	continuationSourceCooldownBySrc   map[string]time.Duration
+	continuationSheddingEnabled       bool
+	continuationSheddingQueueRatio    float64
+	continuationSheddingPendingHigh   int
+	continuationSheddingSources       map[string]struct{}
+	syncSourceConcurrencyDefault      int
+	syncSourceConcurrencyOverrides    map[string]int
+	syncQueueAgeWarnSecs              float64
+	syncQueueAgeHighSecs              float64
+	timeoutContractGrace              time.Duration
+	subcallDisableExpansion           bool
+	subcallDisableAutoEscalate        bool
+	telemetryBatchEnabled             bool
+	telemetryBatchFlushInterval       time.Duration
+	telemetryBatchSize                int
+	telemetryBatchDropLogEvery        uint64
+	adaptiveTimeoutEnabled            bool
+	adaptiveTimeoutMinRequests        int
+	adaptiveTimeoutWindow             int
+	adaptiveTimeoutP95Factor          float64
+	adaptiveTimeoutMinScale           float64
+	adaptiveTimeoutMaxScale           float64
+	adaptiveTimeoutBacklogWeight      float64
+	adaptiveTimeoutBacklogCap         int
+	continuationEventHistory          int
+	continuationEventTTL              time.Duration
+	continuationSSEHeartbeat          time.Duration
+	sourceOwnershipMode               string
+	sourceOwnershipStrictFastAllowPy  map[string]struct{}
 }
 
 type retrievalEvent struct {
@@ -867,11 +877,31 @@ func loadRetrievalPolicy() retrievalPolicy {
 		sourcePgvector:    envDurationSeconds("ORCH_RETRIEVAL_PGVECTOR_TIMEOUT_SECS", 3),
 		sourceMongoRaw:    envDurationSeconds("ORCH_RETRIEVAL_MONGO_TIMEOUT_SECS", 6),
 		sourceMindsdb:     envDurationSeconds("ORCH_RETRIEVAL_MINDSDB_TIMEOUT_SECS", 8),
-		sourceTopicRollup: envDurationSeconds("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", 2),
+		sourceTopicRollup: envDurationSeconds("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", 25),
 		sourceLetta:       envDurationSeconds("ORCH_RETRIEVAL_LETTA_TIMEOUT_SECS", 45),
 		sourceMemoryBank:  envDurationSeconds("ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS", 3),
 	}
-	policy.topicRollupSyncTimeoutFloor = envDurationSeconds("GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_SECS", 3.5)
+	policy.topicRollupSyncTimeoutFloor = envDurationSeconds("GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_SECS", 25)
+	policy.topicRollupSyncTimeoutFloorByMode = map[string]time.Duration{
+		"fast": envDurationSeconds(
+			"GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_FAST_SECS",
+			12,
+		),
+		"balanced": envDurationSeconds(
+			"GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_BALANCED_SECS",
+			policy.topicRollupSyncTimeoutFloor.Seconds(),
+		),
+		"deep": envDurationSeconds(
+			"GO_RETRIEVAL_TOPIC_ROLLUP_SYNC_TIMEOUT_FLOOR_DEEP_SECS",
+			40,
+		),
+	}
+	for mode, floor := range policy.topicRollupSyncTimeoutFloorByMode {
+		if floor < 0 {
+			floor = 0
+		}
+		policy.topicRollupSyncTimeoutFloorByMode[mode] = floor
+	}
 	policy.topicRollupSearchTopN = clampInt(envInt("GO_RETRIEVAL_TOPIC_ROLLUP_SEARCH_TOPN", 2000), 200, 10000)
 	policy.continuationTimeoutDefault = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_TIMEOUT_SECS", 45)
 	policy.continuationTimeoutBySource = map[string]time.Duration{
@@ -2515,6 +2545,12 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 				"balanced": s.retrieval.qdrantSyncTimeoutCapByMode["balanced"].Seconds(),
 				"deep":     s.retrieval.qdrantSyncTimeoutCapByMode["deep"].Seconds(),
 			},
+			"topicRollupSyncTimeoutFloorSecs": s.retrieval.topicRollupSyncTimeoutFloor.Seconds(),
+			"topicRollupSyncTimeoutFloorByModeSecs": map[string]any{
+				"fast":     s.resolveTopicRollupSyncTimeoutFloor("fast").Seconds(),
+				"balanced": s.resolveTopicRollupSyncTimeoutFloor("balanced").Seconds(),
+				"deep":     s.resolveTopicRollupSyncTimeoutFloor("deep").Seconds(),
+			},
 			"failOpenContinuationEnabled":      s.retrieval.failOpenContinuationEnabled,
 			"continuationEventHistory":         s.retrieval.continuationEventHistory,
 			"continuationEventTTLSecs":         s.retrieval.continuationEventTTL.Seconds(),
@@ -3131,6 +3167,17 @@ func (s *server) resolveQdrantSyncCap(mode string) time.Duration {
 	return s.retrieval.qdrantSyncTimeoutCap
 }
 
+func (s *server) resolveTopicRollupSyncTimeoutFloor(mode string) time.Duration {
+	normalized := normalizeRetrievalMode(mode)
+	if timeout, ok := s.retrieval.topicRollupSyncTimeoutFloorByMode[normalized]; ok && timeout > 0 {
+		return timeout
+	}
+	if s.retrieval.topicRollupSyncTimeoutFloor > 0 {
+		return s.retrieval.topicRollupSyncTimeoutFloor
+	}
+	return 0
+}
+
 func (s *server) resolveMinFastResults(mode string) int {
 	normalized := normalizeRetrievalMode(mode)
 	if value, ok := s.retrieval.minFastResultsByMode[normalized]; ok && value > 0 {
@@ -3587,10 +3634,12 @@ func (s *server) resolveSourceTimeout(
 	isSlowSource bool,
 	blockingSlowSources bool,
 ) (time.Duration, map[string]any) {
+	normalizedMode := normalizeRetrievalMode(retrievalMode)
 	timeout, ok := s.retrieval.sourceTimeouts[source]
 	if !ok || timeout <= 0 {
 		timeout = 8 * time.Second
 	}
+	topicRollupFloor := s.resolveTopicRollupSyncTimeoutFloor(normalizedMode)
 	if syncPhase && !blockingSlowSources && source == sourceQdrant {
 		capDuration := s.resolveQdrantSyncCap(retrievalMode)
 		if capDuration > 0 && timeout > capDuration {
@@ -3608,21 +3657,23 @@ func (s *server) resolveSourceTimeout(
 	}
 	if syncPhase && !blockingSlowSources {
 		adjusted, adaptive := s.adaptiveTimeoutForSource(source, timeout)
-		if source == sourceTopicRollup && s.retrieval.topicRollupSyncTimeoutFloor > 0 && adjusted < s.retrieval.topicRollupSyncTimeoutFloor {
-			adjusted = s.retrieval.topicRollupSyncTimeoutFloor
+		if source == sourceTopicRollup && topicRollupFloor > 0 && adjusted < topicRollupFloor {
+			adjusted = topicRollupFloor
 			adaptive["adjusted"] = true
 			adaptive["adjusted_timeout_secs"] = roundFloat(adjusted.Seconds(), 3)
-			adaptive["topic_rollup_timeout_floor_secs"] = roundFloat(s.retrieval.topicRollupSyncTimeoutFloor.Seconds(), 3)
+			adaptive["topic_rollup_timeout_floor_secs"] = roundFloat(topicRollupFloor.Seconds(), 3)
 			adaptive["topic_rollup_timeout_floor_applied"] = true
+			adaptive["topic_rollup_timeout_floor_mode"] = normalizedMode
 		}
 		return adjusted, adaptive
 	}
-	if source == sourceTopicRollup && s.retrieval.topicRollupSyncTimeoutFloor > 0 && timeout < s.retrieval.topicRollupSyncTimeoutFloor {
-		timeout = s.retrieval.topicRollupSyncTimeoutFloor
+	if source == sourceTopicRollup && topicRollupFloor > 0 && timeout < topicRollupFloor {
+		timeout = topicRollupFloor
 		detail["adjusted"] = true
 		detail["adjusted_timeout_secs"] = roundFloat(timeout.Seconds(), 3)
-		detail["topic_rollup_timeout_floor_secs"] = roundFloat(s.retrieval.topicRollupSyncTimeoutFloor.Seconds(), 3)
+		detail["topic_rollup_timeout_floor_secs"] = roundFloat(topicRollupFloor.Seconds(), 3)
 		detail["topic_rollup_timeout_floor_applied"] = true
+		detail["topic_rollup_timeout_floor_mode"] = normalizedMode
 	}
 	return timeout, detail
 }
@@ -5588,6 +5639,12 @@ func (s *server) executeRetrieval(
 				"balanced": s.resolveQdrantSyncCap("balanced").Seconds(),
 				"deep":     s.resolveQdrantSyncCap("deep").Seconds(),
 			},
+			"topic_rollup_sync_timeout_floor_secs": s.retrieval.topicRollupSyncTimeoutFloor.Seconds(),
+			"topic_rollup_sync_timeout_floor_by_mode_secs": map[string]any{
+				"fast":     s.resolveTopicRollupSyncTimeoutFloor("fast").Seconds(),
+				"balanced": s.resolveTopicRollupSyncTimeoutFloor("balanced").Seconds(),
+				"deep":     s.resolveTopicRollupSyncTimeoutFloor("deep").Seconds(),
+			},
 			"letta_top_k_by_mode": map[string]any{
 				"fast": map[string]any{
 					"factor": s.retrieval.lettaTopKFactorByMode["fast"],
@@ -5987,10 +6044,28 @@ func main() {
 	if port == "" {
 		port = "8091"
 	}
+	bindHost := strings.TrimSpace(os.Getenv("HOST_BIND_ADDRESS"))
+	if bindHost == "" {
+		bindHost = "0.0.0.0"
+	}
+	listenAddr := net.JoinHostPort(bindHost, port)
+	listenNetwork := strings.TrimSpace(strings.ToLower(os.Getenv("GO_GATEWAY_LISTEN_NETWORK")))
+	if listenNetwork == "" {
+		listenNetwork = "tcp4"
+	}
 	srv := newServer()
 	mux := buildMux(srv)
-	log.Printf("gateway-go listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	listener, err := net.Listen(listenNetwork, listenAddr)
+	if err != nil && listenNetwork != "tcp" {
+		log.Printf("gateway-go listen fallback: network=%s addr=%s err=%v", listenNetwork, listenAddr, err)
+		listenNetwork = "tcp"
+		listener, err = net.Listen(listenNetwork, listenAddr)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("gateway-go listening on %s (%s)", listenAddr, listenNetwork)
+	if err := http.Serve(listener, mux); err != nil {
 		log.Fatal(err)
 	}
 }
