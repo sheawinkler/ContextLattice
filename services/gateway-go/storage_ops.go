@@ -86,6 +86,7 @@ func defaultTrackedPaths() map[string]string {
 		"memory_bank_cleanup_state": resolveStoragePath("ORCH_MEMORY_BANK_TELEMETRY_CLEANUP_STATE_PATH", filepath.Join(dataDir, "memory_bank_telemetry_cleanup_state.json")),
 		"fanout_payload_blobs":      resolveStoragePath("FANOUT_OUTBOX_PAYLOAD_BLOB_DIR", filepath.Join(dataDir, "fanout_payload_blobs")),
 		"mongo_raw_content_blobs":   resolveStoragePath("ORCH_MONGO_RAW_CONTENT_BLOB_DIR", filepath.Join(dataDir, "mongo_raw_content_blobs")),
+		"continuation_outbox":       resolveStoragePath("GO_RETRIEVAL_CONTINUATION_DURABLE_DIR", filepath.Join(dataDir, "continuation_outbox")),
 	}
 }
 
@@ -281,6 +282,28 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 			"retentionHighMultiplier": policy.retentionHighFactor,
 			"taskDbCompactEnabled":    policy.taskDBCompactEnabled,
 			"pressureBand":            pressure,
+		},
+		"dataClasses": map[string]any{
+			"learning_memory": map[string]any{
+				"retention":      "indefinite",
+				"storage":        "go_memory_store + content_blobs",
+				"deletionPolicy": "never_auto_delete",
+			},
+			"rollups": map[string]any{
+				"retention":      "indefinite",
+				"storage":        "topic rollup graph + history index",
+				"deletionPolicy": "never_auto_delete",
+			},
+			"telemetry": map[string]any{
+				"retention_days_hot": envInt("GO_TELEMETRY_RETENTION_DAYS", 75),
+				"storage":            "mongo telemetry + compressed blobs",
+				"cold_policy":        "content-addressed compressed blobs + pointer refs",
+			},
+			"ephemeral_state": map[string]any{
+				"retention_days_hot": envInt("GO_TELEMETRY_RETENTION_DAYS", 75),
+				"storage":            "telemetry lane (isolated)",
+				"cold_policy":        "compressed blob refs",
+			},
 		},
 		"disk":             disk,
 		"diskStatus":       diskStatus,

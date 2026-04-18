@@ -16,6 +16,13 @@ This file is the canonical contract for external agents and LLM apps using Conte
 
 - Profile-aware preflight: `POST /v1/agents/preflight`
 - Compatibility alias: `POST /v1/codex/preflight`
+- CLI preflight helper (from repo root):
+  - `python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration`
+- CLI preflight helper (from any working directory):
+  - `REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"`
+  - `python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration`
+- Shell wrapper equivalent:
+  - `./scripts/agent_orchestration.sh preflight contextlattice runbooks/codex-integration`
 
 ## Required operating loop (before/during/after)
 

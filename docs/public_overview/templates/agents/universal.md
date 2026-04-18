@@ -12,10 +12,24 @@ Operating rules:
 4) During execution, checkpoint key decisions/outcomes with POST /memory/write.
 5) Before final output, run one final recency retrieval (POST /memory/search or POST /memory/context-pack).
 6) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events (or re-query shortly after).
-7) Use POST /v1/memory/neighbors for relationship recall when graph-neighbor context is useful.
-8) Use profile-aware preflight via POST /v1/agents/preflight before major tasks.
-9) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
-10) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
+7) Retrieval mode semantics:
+   - balanced = fast sync now + slow async continuation.
+   - deep = broader/lower-cap retrieval budgets but still fail-open; do not wait forever on one lane.
+8) If a transport call times out with zero bytes, immediately retry once, then check continuation events and re-read.
+9) Use POST /v1/memory/neighbors for relationship recall when graph-neighbor context is useful.
+10) Use profile-aware preflight via POST /v1/agents/preflight before major tasks.
+11) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
+12) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
 
 If memory is degraded, continue execution, explicitly report degraded-memory mode, and provide continuation token/status when available.
+```
+
+Preflight command helper for CLI agents:
+```bash
+# repo-root invocation
+python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration
+
+# any-working-directory invocation
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
 ```

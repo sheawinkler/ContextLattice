@@ -120,6 +120,14 @@ type retrievalPolicy struct {
 	continuationEventHistory          int
 	continuationEventTTL              time.Duration
 	continuationSSEHeartbeat          time.Duration
+	continuationDurableEnabled        bool
+	continuationDurableDir            string
+	continuationDurableMaxPending     int
+	continuationDurableDrainBatch     int
+	continuationDurablePollInterval   time.Duration
+	continuationDurableRetryBase      time.Duration
+	continuationDurableRetryMax       time.Duration
+	continuationDurableMaxAttempts    int
 	sourceOwnershipMode               string
 	sourceOwnershipStrictFastAllowPy  map[string]struct{}
 }
@@ -311,14 +319,30 @@ type server struct {
 	tradingHistoryPath              string
 	tradingHistoryLimit             int
 	continuationSem                 chan struct{}
+	syncSourceSem                   map[string]chan struct{}
+	syncQueueMu                     sync.Mutex
+	syncSourcePending               map[string][]time.Time
+	syncSourceInFlight              map[string]int
+	syncSourceRetrying              map[string]int
 	adaptiveMu                      sync.Mutex
 	adaptiveBySource                map[string]*adaptiveSourceStats
 	continuationMu                  sync.Mutex
 	continuationInFlight            map[string]int
+	continuationInFlightStarted     map[string][]time.Time
+	continuationRetrying            map[string]int
 	continuationSourceCooldownUntil map[string]time.Time
 	continuationSubscribers         map[string][]chan map[string]any
 	continuationHistory             map[string][]map[string]any
 	continuationExpiry              map[string]time.Time
+	continuationDurable             *continuationDurableQueue
+	timeoutContractViolations       atomic.Uint64
+	timeoutContractMu               sync.Mutex
+	timeoutContractBySource         map[string]uint64
+	timeoutContractLast             map[string]any
+	driftMu                         sync.Mutex
+	driftByClass                    map[string]uint64
+	driftBySource                   map[string]uint64
+	driftLast                       map[string]any
 	lettaAgentMu                    sync.Mutex
 	lettaAgentBySession             map[string]string
 	lettaAgentVerifiedAt            map[string]time.Time
@@ -961,6 +985,51 @@ func loadRetrievalPolicy() retrievalPolicy {
 		}
 		policy.continuationSourceCooldownBySrc[source] = cooldown
 	}
+	policy.continuationSheddingEnabled = envBool("GO_RETRIEVAL_CONTINUATION_SHEDDING_ENABLED", true)
+	policy.continuationSheddingQueueRatio = envFloat("GO_RETRIEVAL_CONTINUATION_SHEDDING_QUEUE_RATIO", 0.85)
+	if policy.continuationSheddingQueueRatio <= 0 {
+		policy.continuationSheddingQueueRatio = 0.85
+	}
+	if policy.continuationSheddingQueueRatio > 1 {
+		policy.continuationSheddingQueueRatio = 1
+	}
+	policy.continuationSheddingPendingHigh = envInt("GO_RETRIEVAL_CONTINUATION_SHEDDING_PENDING_HIGH", maxInt(2, policy.continuationMaxInflight-1))
+	if policy.continuationSheddingPendingHigh < 1 {
+		policy.continuationSheddingPendingHigh = 1
+	}
+	policy.continuationSheddingSources = toSourceSet(csvListEnv(
+		"GO_RETRIEVAL_CONTINUATION_SHEDDING_SOURCES",
+		"letta,memory_bank,mongo_raw,mindsdb",
+	))
+	policy.syncSourceConcurrencyDefault = envInt("GO_RETRIEVAL_SYNC_SOURCE_CONCURRENCY_DEFAULT", 2)
+	if policy.syncSourceConcurrencyDefault < 1 {
+		policy.syncSourceConcurrencyDefault = 1
+	}
+	policy.syncSourceConcurrencyOverrides = intMapEnv(
+		"GO_RETRIEVAL_SYNC_SOURCE_CONCURRENCY_OVERRIDES",
+		map[string]int{
+			sourceTopicRollup: 1,
+			sourceQdrant:      policy.syncSourceConcurrencyDefault,
+			sourceWeaviate:    policy.syncSourceConcurrencyDefault,
+			sourcePgvector:    policy.syncSourceConcurrencyDefault,
+			sourceMongoRaw:    1,
+			sourceMindsdb:     1,
+			sourceLetta:       1,
+			sourceMemoryBank:  1,
+		},
+	)
+	policy.syncQueueAgeWarnSecs = envFloat("GO_RETRIEVAL_SYNC_QUEUE_AGE_WARN_SECS", 2.0)
+	if policy.syncQueueAgeWarnSecs < 0 {
+		policy.syncQueueAgeWarnSecs = 0
+	}
+	policy.syncQueueAgeHighSecs = envFloat("GO_RETRIEVAL_SYNC_QUEUE_AGE_HIGH_SECS", 5.0)
+	if policy.syncQueueAgeHighSecs < policy.syncQueueAgeWarnSecs {
+		policy.syncQueueAgeHighSecs = policy.syncQueueAgeWarnSecs
+	}
+	policy.timeoutContractGrace = envDurationSeconds("GO_RETRIEVAL_TIMEOUT_CONTRACT_GRACE_SECS", 0.075)
+	if policy.timeoutContractGrace < 0 {
+		policy.timeoutContractGrace = 0
+	}
 	policy.subcallDisableExpansion = envBool("GO_RETRIEVAL_SUBCALL_DISABLE_EXPANSION", true)
 	policy.subcallDisableAutoEscalate = envBool("GO_RETRIEVAL_SUBCALL_DISABLE_AUTO_ESCALATE", true)
 	policy.telemetryBatchEnabled = envBool("GO_RETRIEVAL_EVENT_BATCH_ENABLED", true)
@@ -1019,6 +1088,38 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.continuationSSEHeartbeat = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_SSE_HEARTBEAT_SECS", 15)
 	if policy.continuationSSEHeartbeat < 3*time.Second {
 		policy.continuationSSEHeartbeat = 3 * time.Second
+	}
+	policy.continuationDurableEnabled = envBool("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", true)
+	policy.continuationDurableDir = strings.TrimSpace(resolveStoragePath(
+		"GO_RETRIEVAL_CONTINUATION_DURABLE_DIR",
+		"services/orchestrator/data/continuation_outbox",
+	))
+	if policy.continuationDurableDir == "" {
+		policy.continuationDurableEnabled = false
+	}
+	policy.continuationDurableMaxPending = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_MAX_PENDING", 2000)
+	if policy.continuationDurableMaxPending < 64 {
+		policy.continuationDurableMaxPending = 64
+	}
+	policy.continuationDurableDrainBatch = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_DRAIN_BATCH", 32)
+	if policy.continuationDurableDrainBatch < 1 {
+		policy.continuationDurableDrainBatch = 1
+	}
+	policy.continuationDurablePollInterval = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_DURABLE_POLL_SECS", 2)
+	if policy.continuationDurablePollInterval < 250*time.Millisecond {
+		policy.continuationDurablePollInterval = 250 * time.Millisecond
+	}
+	policy.continuationDurableRetryBase = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_DURABLE_RETRY_BASE_SECS", 2)
+	if policy.continuationDurableRetryBase < 500*time.Millisecond {
+		policy.continuationDurableRetryBase = 500 * time.Millisecond
+	}
+	policy.continuationDurableRetryMax = envDurationSeconds("GO_RETRIEVAL_CONTINUATION_DURABLE_RETRY_MAX_SECS", 60)
+	if policy.continuationDurableRetryMax < policy.continuationDurableRetryBase {
+		policy.continuationDurableRetryMax = policy.continuationDurableRetryBase
+	}
+	policy.continuationDurableMaxAttempts = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_MAX_ATTEMPTS", 8)
+	if policy.continuationDurableMaxAttempts < 1 {
+		policy.continuationDurableMaxAttempts = 1
 	}
 	policy.sourceOwnershipMode = strings.TrimSpace(strings.ToLower(os.Getenv("GO_RETRIEVAL_SOURCE_OWNERSHIP_MODE")))
 	switch policy.sourceOwnershipMode {
@@ -1118,6 +1219,7 @@ func newServer() *server {
 		log.Printf("gateway-go memory store disabled: %v", memoryStoreErr)
 		memoryStoreInstance = &memoryStore{policy: memoryStorePolicy{enabled: false}}
 	}
+	continuationDurable := newContinuationDurableQueue(policy)
 	t := newRetrievalTelemetry(policy)
 	s := &server{
 		backendURL:                      backendURL,
@@ -1143,12 +1245,24 @@ func newServer() *server {
 		tradingHistoryPath:              tradingHistoryPath,
 		tradingHistoryLimit:             tradingHistoryLimit,
 		continuationSem:                 make(chan struct{}, policy.continuationMaxInflight),
+		syncSourceSem:                   buildSyncSourceSem(policy),
+		syncSourcePending:               make(map[string][]time.Time),
+		syncSourceInFlight:              make(map[string]int),
+		syncSourceRetrying:              make(map[string]int),
 		adaptiveBySource:                make(map[string]*adaptiveSourceStats),
 		continuationInFlight:            make(map[string]int),
+		continuationInFlightStarted:     make(map[string][]time.Time),
+		continuationRetrying:            make(map[string]int),
 		continuationSourceCooldownUntil: make(map[string]time.Time),
 		continuationSubscribers:         make(map[string][]chan map[string]any),
 		continuationHistory:             make(map[string][]map[string]any),
 		continuationExpiry:              make(map[string]time.Time),
+		continuationDurable:             continuationDurable,
+		timeoutContractBySource:         make(map[string]uint64),
+		timeoutContractLast:             make(map[string]any),
+		driftByClass:                    make(map[string]uint64),
+		driftBySource:                   make(map[string]uint64),
+		driftLast:                       make(map[string]any),
 		lettaAgentBySession:             make(map[string]string),
 		lettaAgentVerifiedAt:            make(map[string]time.Time),
 	}
@@ -1156,6 +1270,7 @@ func newServer() *server {
 		log.Printf("gateway-go trading history load failed: %v", err)
 	}
 	t.start()
+	s.startContinuationDurableWorker()
 	return s
 }
 
@@ -2403,7 +2518,12 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.strictNoPythonRuntime {
-		queueDepth, queueBySource, cooldownActive := s.currentContinuationBacklog()
+		continuation := s.continuationQueueSnapshot()
+		queueDepth := continuation.Pending
+		queueDepthTotal := continuation.PendingTotal
+		queueBySource := continuation.BySource
+		cooldownActive := continuation.CooldownActive
+		syncQueue := s.syncQueueSnapshot()
 		queueMax := cap(s.continuationSem)
 		if queueMax < 1 {
 			queueMax = 1
@@ -2414,6 +2534,38 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		for _, row := range services {
 			if anyToBool(row["healthy"]) {
 				healthyServiceCount++
+			}
+		}
+		warnings := []string{
+			"Python backend forwarding is disabled by strict runtime policy; all active lanes run through Go/Rust services.",
+		}
+		if continuation.OldestAgeSecs >= s.retrieval.syncQueueAgeWarnSecs && continuation.OldestAgeSecs > 0 {
+			warnings = append(
+				warnings,
+				"Continuation queue age is elevated; staged async warming is under pressure.",
+			)
+		}
+		if anyToFloat64(syncQueue["oldest_age_secs"], 0) >= s.retrieval.syncQueueAgeWarnSecs {
+			warnings = append(
+				warnings,
+				"Sync source queue age crossed warn threshold; consider reducing deep fanout or tuning per-source sync caps.",
+			)
+		}
+		storagePolicy := loadStorageGovernancePolicy()
+		storagePressure := "unknown"
+		storageDisk := map[string]any{"root": storagePolicy.diskRoot}
+		if disk, err := diskUsageSnapshot(storagePolicy.diskRoot); err == nil {
+			storageDisk = disk
+			storagePressure = pressureBand(
+				anyToFloat64(disk["usedRatio"], 0.0),
+				uint64(anyToInt64(disk["freeBytes"], 0)),
+				storagePolicy,
+			)
+			if storagePressure == "warn" || storagePressure == "high" {
+				warnings = append(
+					warnings,
+					"Storage pressure is "+storagePressure+" on configured disk root; run maintenance/compaction before risk increases.",
+				)
 			}
 		}
 		payload := map[string]any{
@@ -2437,15 +2589,40 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"retrievalDefaultSources": append([]string{}, s.retrieval.defaultSources...),
 			"queue": map[string]any{
 				"pending":               queueDepth,
+				"pendingTotal":          queueDepthTotal,
 				"memoryWriteQueueDepth": queueDepth,
 				"memoryWriteQueueMax":   queueMax,
 				"memoryWriteQueueRatio": queueRatio,
 				"bySource":              queueBySource,
 				"cooldownActive":        cooldownActive,
+				"retrying":              continuation.RetryingCount,
+				"retryingBySource":      continuation.RetryingBySrc,
+				"oldestAgeSecs":         continuation.OldestAgeSecs,
+				"durablePending":        continuation.DurablePending,
+				"durableBySource":       continuation.DurableBySrc,
+				"durableOldestAgeSecs":  continuation.DurableOldest,
+				"syncLane":              syncQueue,
+				"policy": map[string]any{
+					"syncSourceConcurrencyDefault":    s.retrieval.syncSourceConcurrencyDefault,
+					"syncSourceConcurrencyOverrides":  cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
+					"syncQueueAgeWarnSecs":            s.retrieval.syncQueueAgeWarnSecs,
+					"syncQueueAgeHighSecs":            s.retrieval.syncQueueAgeHighSecs,
+					"continuationSheddingEnabled":     s.retrieval.continuationSheddingEnabled,
+					"continuationSheddingQueueRatio":  s.retrieval.continuationSheddingQueueRatio,
+					"continuationSheddingPendingHigh": s.retrieval.continuationSheddingPendingHigh,
+				},
 			},
-			"warnings": []string{
-				"Python backend forwarding is disabled by strict runtime policy; all active lanes run through Go/Rust services.",
+			"timeoutContract": s.timeoutContractSnapshot(),
+			"drift":           s.driftSnapshot(),
+			"storageGovernance": map[string]any{
+				"diskRoot":      storagePolicy.diskRoot,
+				"warnUsedRatio": storagePolicy.warnUsedRatio,
+				"highUsedRatio": storagePolicy.highUsedRatio,
+				"minFreeBytes":  storagePolicy.minFreeBytes,
+				"pressureBand":  storagePressure,
+				"disk":          storageDisk,
 			},
+			"warnings":         warnings,
 			"metadataContract": metadataContractSnapshot(),
 		}
 		writeJSON(w, http.StatusOK, payload)
@@ -2573,6 +2750,15 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"continuationSourceCooldownSecs":   s.retrieval.continuationSourceCooldown.Seconds(),
 			"continuationSourceCooldownBySrc":  durationMapToSeconds(s.retrieval.continuationSourceCooldownBySrc),
 			"continuationSourceCooldownActive": s.continuationSourceCooldownSnapshot(),
+			"continuationSheddingEnabled":      s.retrieval.continuationSheddingEnabled,
+			"continuationSheddingQueueRatio":   s.retrieval.continuationSheddingQueueRatio,
+			"continuationSheddingPendingHigh":  s.retrieval.continuationSheddingPendingHigh,
+			"continuationSheddingSources":      mapKeysSorted(s.retrieval.continuationSheddingSources),
+			"syncSourceConcurrencyDefault":     s.retrieval.syncSourceConcurrencyDefault,
+			"syncSourceConcurrencyOverrides":   cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
+			"syncQueueAgeWarnSecs":             s.retrieval.syncQueueAgeWarnSecs,
+			"syncQueueAgeHighSecs":             s.retrieval.syncQueueAgeHighSecs,
+			"timeoutContractGraceSecs":         s.retrieval.timeoutContractGrace.Seconds(),
 			"subcallDisableExpansion":          s.retrieval.subcallDisableExpansion,
 			"subcallDisableAutoEscalate":       s.retrieval.subcallDisableAutoEscalate,
 			"telemetryBatchEnabled":            s.retrieval.telemetryBatchEnabled,
@@ -2589,6 +2775,12 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 			"routeOwnerClass": sourceOwnerGoNative,
 		},
 		"pythonHotPathOwnership": s.pythonHotPathOwnershipSnapshot(),
+		"timeoutContract":        s.timeoutContractSnapshot(),
+		"drift":                  s.driftSnapshot(),
+		"queueLanes": map[string]any{
+			"sync":         s.syncQueueSnapshot(),
+			"continuation": s.continuationQueueSnapshot(),
+		},
 		"writeIngress": map[string]any{
 			"enabled":                   s.writePolicy.enabled,
 			"strictRequiredFields":      s.writePolicy.strictRequiredFields,
@@ -2714,7 +2906,15 @@ func anyToInt(value any, fallback int) int {
 		return int(typed)
 	case int:
 		return typed
+	case uint:
+		return int(typed)
 	case int64:
+		return int(typed)
+	case uint64:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case uint32:
 		return int(typed)
 	case string:
 		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
@@ -3524,6 +3724,7 @@ func (s *server) tryReserveContinuationSourceSlot(source string) (bool, string, 
 		return false, "max_inflight_per_source", cooldownRemaining
 	}
 	s.continuationInFlight[normalized] = current + 1
+	s.continuationInFlightStarted[normalized] = append(s.continuationInFlightStarted[normalized], now)
 	return true, "", 0
 }
 
@@ -3537,9 +3738,16 @@ func (s *server) releaseContinuationSourceSlot(source string) {
 	current := int(s.continuationInFlight[normalized])
 	if current <= 1 {
 		delete(s.continuationInFlight, normalized)
+		delete(s.continuationInFlightStarted, normalized)
 		return
 	}
 	s.continuationInFlight[normalized] = current - 1
+	queue := s.continuationInFlightStarted[normalized]
+	if len(queue) <= 1 {
+		delete(s.continuationInFlightStarted, normalized)
+	} else {
+		s.continuationInFlightStarted[normalized] = queue[1:]
+	}
 }
 
 func (s *server) adaptiveTimeoutForSource(source string, base time.Duration) (time.Duration, map[string]any) {
@@ -4468,6 +4676,31 @@ func (s *server) scheduleContinuationWarm(
 	reason string,
 	streamToken string,
 ) bool {
+	ok, _, _ := s.scheduleContinuationWarmWithStatus(incomingHeaders, baseRequest, source, reason, streamToken)
+	return ok
+}
+
+func (s *server) scheduleContinuationWarmWithStatus(
+	incomingHeaders http.Header,
+	baseRequest map[string]any,
+	source string,
+	reason string,
+	streamToken string,
+) (bool, string, map[string]any) {
+	if shed, shedReason, shedDetail := s.shouldShedContinuation(source); shed {
+		log.Printf("continuation warm skipped source=%s reason=%s detail=%s", source, reason, shedReason)
+		payload := map[string]any{
+			"event":  "skipped",
+			"status": shedReason,
+			"source": source,
+			"reason": reason,
+		}
+		if len(shedDetail) > 0 {
+			payload["queue"] = shedDetail
+		}
+		s.publishContinuationEvent(streamToken, payload)
+		return false, shedReason, shedDetail
+	}
 	select {
 	case s.continuationSem <- struct{}{}:
 	default:
@@ -4478,7 +4711,9 @@ func (s *server) scheduleContinuationWarm(
 			"source": source,
 			"reason": reason,
 		})
-		return false
+		return false, "max_inflight", map[string]any{
+			"pending_count": s.continuationQueueSnapshot().Pending,
+		}
 	}
 	reserved, reserveStatus, reserveCooldown := s.tryReserveContinuationSourceSlot(source)
 	if !reserved {
@@ -4494,8 +4729,13 @@ func (s *server) scheduleContinuationWarm(
 			skipPayload["cooldown_remaining_secs"] = roundFloat(reserveCooldown, 3)
 		}
 		s.publishContinuationEvent(streamToken, skipPayload)
-		return false
+		statusPayload := map[string]any{}
+		if reserveCooldown > 0 {
+			statusPayload["cooldown_remaining_secs"] = roundFloat(reserveCooldown, 3)
+		}
+		return false, reserveStatus, statusPayload
 	}
+	s.decrementContinuationRetrying(source)
 	s.publishContinuationEvent(streamToken, map[string]any{
 		"event":  "queued",
 		"status": "queued",
@@ -4514,10 +4754,13 @@ func (s *server) scheduleContinuationWarm(
 		errorText := ""
 		cooldownRemaining := 0.0
 		if err != nil {
+			s.incrementContinuationRetrying(source)
 			status = "error"
 			errorText = err.Error()
 			cooldownRemaining = s.applyContinuationSourceCooldown(source)
 			log.Printf("continuation warm failed source=%s reason=%s error=%s", source, reason, err)
+		} else {
+			s.decrementContinuationRetrying(source)
 		}
 		latency := time.Since(start).Milliseconds()
 		s.telemetry.record(retrievalEvent{Source: source, Phase: "continuation", Status: status, LatencyMs: latency})
@@ -4534,7 +4777,7 @@ func (s *server) scheduleContinuationWarm(
 		}
 		s.publishContinuationEvent(streamToken, completePayload)
 	}()
-	return true
+	return true, "queued", nil
 }
 
 type sourceCallResult struct {
@@ -4560,17 +4803,18 @@ type sourceCallPayload struct {
 }
 
 type sourceBatchOutput struct {
-	rows                  map[string][]map[string]any
-	sourceOwners          map[string]string
-	sourceErrors          map[string]map[string]any
-	sourceChainDebug      map[string][]map[string]any
-	warnings              []string
-	timedOutSources       []string
-	budgetExceededSources []string
-	continuationSources   []string
-	skippedSources        []string
-	effectiveTimeoutsSecs map[string]float64
-	adaptiveBudgets       map[string]map[string]any
+	rows                    map[string][]map[string]any
+	sourceOwners            map[string]string
+	sourceErrors            map[string]map[string]any
+	sourceChainDebug        map[string][]map[string]any
+	warnings                []string
+	timedOutSources         []string
+	budgetExceededSources   []string
+	continuationSources     []string
+	continuationUnavailable []string
+	skippedSources          []string
+	effectiveTimeoutsSecs   map[string]float64
+	adaptiveBudgets         map[string]map[string]any
 }
 
 func (s *server) runSourceBatch(
@@ -4630,6 +4874,39 @@ func (s *server) runSourceBatch(
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			queueWait := time.Duration(0)
+			if syncPhase {
+				waited, acquired := s.acquireSyncSourceSlot(sourceCtx, sourceName)
+				queueWait = waited
+				if !acquired {
+					err := sourceCtx.Err()
+					if err == nil {
+						err = context.DeadlineExceeded
+					}
+					latency := time.Since(start)
+					s.telemetry.record(retrievalEvent{
+						Source:    sourceName,
+						Phase:     phase,
+						Status:    "queue_timeout",
+						LatencyMs: latency.Milliseconds(),
+					})
+					resultsCh <- sourceCallResult{
+						source:         sourceName,
+						sourceOwner:    sourceOwnerForSource(sourceName),
+						sourceTrace:    map[string]any{"sync_queue_wait_ms": queueWait.Milliseconds(), "queue_acquired": false},
+						phase:          phase,
+						rows:           nil,
+						warnings:       []string{"sync source queue wait exceeded timeout envelope"},
+						err:            err,
+						timedOut:       true,
+						budgetExceeded: false,
+						timeout:        timeout,
+						latency:        latency,
+					}
+					return
+				}
+				defer s.releaseSyncSourceSlot(sourceName)
+			}
 			callDone := make(chan sourceCallPayload, 1)
 			go func() {
 				rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(
@@ -4663,6 +4940,14 @@ func (s *server) runSourceBatch(
 				err = payload.err
 			case <-sourceCtx.Done():
 				err = sourceCtx.Err()
+				s.watchTimeoutContract(sourceName, phase, timeout, start, callDone)
+			}
+			if sourceTrace == nil {
+				sourceTrace = map[string]any{}
+			}
+			if syncPhase {
+				sourceTrace["sync_queue_wait_ms"] = queueWait.Milliseconds()
+				sourceTrace["queue_acquired"] = true
 			}
 			latency := time.Since(start)
 			timedOut := false
@@ -4721,6 +5006,9 @@ func (s *server) runSourceBatch(
 				cloneAnyMap(result.sourceTrace),
 			)
 		}
+		if len(result.rows) > 0 {
+			result.rows = s.normalizeSourceRows(result.source, result.rows)
+		}
 		for _, row := range result.rows {
 			if strings.TrimSpace(anyToString(row["source_owner"])) == "" {
 				row["source_owner"] = result.sourceOwner
@@ -4735,6 +5023,9 @@ func (s *server) runSourceBatch(
 			}
 		}
 		if result.err != nil {
+			if looksLikeParseError(result.err) {
+				s.recordDrift("parse_error", result.source, result.err.Error())
+			}
 			nonDegradableLane := s.isNonDegradableSource(result.source)
 			errorKind := "error"
 			if result.timedOut {
@@ -4787,7 +5078,14 @@ func (s *server) runSourceBatch(
 					}
 				}
 				if s.shouldScheduleContinuation(result.source) || nonDegradableLane {
-					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-timeout", continuationToken) {
+					continuationState, _, _ := s.scheduleOrDeferContinuation(
+						incomingHeaders,
+						baseRequest,
+						result.source,
+						result.phase+"-timeout",
+						continuationToken,
+					)
+					if continuationState == "scheduled" {
 						output.continuationSources = append(output.continuationSources, result.source)
 						if !suppressSlowTimeoutWarnings || !result.budgetExceeded {
 							output.warnings = append(
@@ -4795,16 +5093,47 @@ func (s *server) runSourceBatch(
 								result.source+" timed out; continuing asynchronously for cache warm.",
 							)
 						}
+					} else if continuationState == "deferred" {
+						output.continuationSources = append(output.continuationSources, result.source)
+						output.warnings = append(
+							output.warnings,
+							result.source+" timed out; async continuation deferred durably and will retry automatically.",
+						)
+					} else {
+						output.continuationUnavailable = append(output.continuationUnavailable, result.source)
+						output.warnings = append(
+							output.warnings,
+							result.source+" timed out; async continuation unavailable right now due queue/cooldown pressure.",
+						)
 					}
 				}
 			} else {
 				output.warnings = append(output.warnings, result.source+" retrieval failed: "+result.err.Error())
 				if nonDegradableLane {
-					if s.scheduleContinuationWarm(incomingHeaders, baseRequest, result.source, result.phase+"-error", continuationToken) {
+					continuationState, _, _ := s.scheduleOrDeferContinuation(
+						incomingHeaders,
+						baseRequest,
+						result.source,
+						result.phase+"-error",
+						continuationToken,
+					)
+					if continuationState == "scheduled" {
 						output.continuationSources = append(output.continuationSources, result.source)
 						output.warnings = append(
 							output.warnings,
 							result.source+" is a non-degradable lane; continuing asynchronously after error.",
+						)
+					} else if continuationState == "deferred" {
+						output.continuationSources = append(output.continuationSources, result.source)
+						output.warnings = append(
+							output.warnings,
+							result.source+" is non-degradable; async continuation deferred durably and will retry automatically.",
+						)
+					} else {
+						output.continuationUnavailable = append(output.continuationUnavailable, result.source)
+						output.warnings = append(
+							output.warnings,
+							result.source+" is non-degradable but async continuation is currently unavailable; retry for warmed context.",
 						)
 					}
 				}
@@ -4823,6 +5152,7 @@ func (s *server) runSourceBatch(
 	output.timedOutSources = normalizeSourceList(output.timedOutSources)
 	output.budgetExceededSources = normalizeSourceList(output.budgetExceededSources)
 	output.continuationSources = normalizeSourceList(output.continuationSources)
+	output.continuationUnavailable = normalizeSourceList(output.continuationUnavailable)
 	output.skippedSources = normalizeSourceList(output.skippedSources)
 	return output
 }
@@ -5023,6 +5353,7 @@ func (s *server) executeRetrieval(
 	budgetExceededObserved := map[string]struct{}{}
 	adaptiveSkipped := map[string]struct{}{}
 	continuationSources := []string{}
+	continuationUnavailable := []string{}
 	asyncWarmSlowSources := []string{}
 	syncFallbackSlowSources := []string{}
 	coverageRescueApplied := false
@@ -5069,6 +5400,7 @@ func (s *server) executeRetrieval(
 		}
 	}
 	continuationSources = append(continuationSources, fastBatch.continuationSources...)
+	continuationUnavailable = append(continuationUnavailable, fastBatch.continuationUnavailable...)
 	for _, source := range fastBatch.budgetExceededSources {
 		budgetExceededObserved[source] = struct{}{}
 	}
@@ -5162,6 +5494,7 @@ func (s *server) executeRetrieval(
 							timedOutObserved[source] = struct{}{}
 						}
 						continuationSources = append(continuationSources, rustBatch.continuationSources...)
+						continuationUnavailable = append(continuationUnavailable, rustBatch.continuationUnavailable...)
 						for _, source := range rustBatch.budgetExceededSources {
 							budgetExceededObserved[source] = struct{}{}
 						}
@@ -5241,6 +5574,7 @@ func (s *server) executeRetrieval(
 					}
 				}
 				continuationSources = append(continuationSources, slowBatch.continuationSources...)
+				continuationUnavailable = append(continuationUnavailable, slowBatch.continuationUnavailable...)
 				for _, source := range slowBatch.budgetExceededSources {
 					budgetExceededObserved[source] = struct{}{}
 				}
@@ -5293,6 +5627,7 @@ func (s *server) executeRetrieval(
 				}
 			}
 			continuationSources = append(continuationSources, slowBatch.continuationSources...)
+			continuationUnavailable = append(continuationUnavailable, slowBatch.continuationUnavailable...)
 			for _, source := range slowBatch.budgetExceededSources {
 				budgetExceededObserved[source] = struct{}{}
 			}
@@ -5350,6 +5685,7 @@ func (s *server) executeRetrieval(
 				}
 			}
 			continuationSources = append(continuationSources, rescueBatch.continuationSources...)
+			continuationUnavailable = append(continuationUnavailable, rescueBatch.continuationUnavailable...)
 			for _, source := range rescueBatch.budgetExceededSources {
 				budgetExceededObserved[source] = struct{}{}
 			}
@@ -5372,11 +5708,22 @@ func (s *server) executeRetrieval(
 
 	asyncWarmSlowSources = normalizeSourceList(asyncWarmSlowSources)
 	for _, source := range asyncWarmSlowSources {
-		if s.scheduleContinuationWarm(incomingHeaders, requestPayload, source, "slow-async-warm", continuationToken) {
+		continuationState, _, _ := s.scheduleOrDeferContinuation(
+			incomingHeaders,
+			requestPayload,
+			source,
+			"slow-async-warm",
+			continuationToken,
+		)
+		if continuationState == "scheduled" || continuationState == "deferred" {
 			continuationSources = append(continuationSources, source)
+		} else {
+			continuationUnavailable = append(continuationUnavailable, source)
 		}
 	}
 	continuationSources = normalizeSourceList(continuationSources)
+	continuationUnavailable = normalizeSourceList(continuationUnavailable)
+	continuationDurable := s.continuationDurableSnapshot()
 	warmingSources := append([]string(nil), continuationSources...)
 
 	if rustLaneGateApplied {
@@ -5525,6 +5872,12 @@ func (s *server) executeRetrieval(
 		warnings = append(
 			warnings,
 			"Additional context may be available later from: "+strings.Join(deferredCandidates, ", ")+". Re-run after cache warm or use deep mode / longer timeout budgets for blocking retrieval.",
+		)
+	}
+	if len(continuationUnavailable) > 0 {
+		warnings = append(
+			warnings,
+			"Async continuation was unavailable for: "+strings.Join(continuationUnavailable, ", ")+". Re-run shortly to pick up warmed sources once queue pressure clears.",
 		)
 	}
 
@@ -5683,24 +6036,47 @@ func (s *server) executeRetrieval(
 				s.retrieval.continuationSourceCooldownBySrc,
 			),
 			"continuation_source_cooldown_active": s.continuationSourceCooldownSnapshot(),
-			"lexical_guard_enabled":               s.retrieval.lexicalGuardEnabled,
-			"lexical_guard_min_coverage":          s.retrieval.lexicalGuardMinCoverage,
-			"lexical_guard_min_results":           s.retrieval.lexicalGuardMinResults,
-			"runtime_backend_policy":              rustBackendPolicy,
-			"traffic_class":                       trafficClass,
-			"rust_lane_gate_applied":              rustLaneGateApplied,
-			"topic_prefilter_applied":             topicPrefilterApplied,
-			"topic_prefilter_hint":                topicPrefilterHint,
-			"coverage_rescue_enabled":             s.retrieval.coverageRescueEnabled,
-			"coverage_rescue_min_tokens":          s.retrieval.coverageRescueMinTokens,
-			"coverage_rescue_applied":             coverageRescueApplied,
-			"coverage_rescue_query":               coverageRescueQuery,
-			"coverage_rescue_sources":             coverageRescueSources,
-			"memory_bank_backend_effective":       strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
-			"rust_quality_fallback_enabled":       s.retrieval.rustQualityFallbackEnabled,
-			"rust_quality_fallback_sources":       s.retrieval.rustQualityFallbackSources,
-			"rust_quality_fallback_mode":          s.retrieval.rustQualityFallbackMode,
-			"source_ownership_mode":               s.retrieval.sourceOwnershipMode,
+			"continuation_shedding_enabled":       s.retrieval.continuationSheddingEnabled,
+			"continuation_shedding_queue_ratio":   s.retrieval.continuationSheddingQueueRatio,
+			"continuation_shedding_pending_high":  s.retrieval.continuationSheddingPendingHigh,
+			"continuation_shedding_sources":       mapKeysSorted(s.retrieval.continuationSheddingSources),
+			"continuation_durable_enabled":        s.retrieval.continuationDurableEnabled,
+			"continuation_durable_dir":            s.retrieval.continuationDurableDir,
+			"continuation_durable_max_pending":    s.retrieval.continuationDurableMaxPending,
+			"continuation_durable_drain_batch":    s.retrieval.continuationDurableDrainBatch,
+			"continuation_durable_poll_secs":      roundFloat(s.retrieval.continuationDurablePollInterval.Seconds(), 3),
+			"continuation_durable_retry_base_secs": roundFloat(
+				s.retrieval.continuationDurableRetryBase.Seconds(),
+				3,
+			),
+			"continuation_durable_retry_max_secs": roundFloat(
+				s.retrieval.continuationDurableRetryMax.Seconds(),
+				3,
+			),
+			"continuation_durable_max_attempts": s.retrieval.continuationDurableMaxAttempts,
+			"sync_source_concurrency_default":   s.retrieval.syncSourceConcurrencyDefault,
+			"sync_source_concurrency_overrides": cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
+			"sync_queue_age_warn_secs":          s.retrieval.syncQueueAgeWarnSecs,
+			"sync_queue_age_high_secs":          s.retrieval.syncQueueAgeHighSecs,
+			"timeout_contract_grace_secs":       s.retrieval.timeoutContractGrace.Seconds(),
+			"lexical_guard_enabled":             s.retrieval.lexicalGuardEnabled,
+			"lexical_guard_min_coverage":        s.retrieval.lexicalGuardMinCoverage,
+			"lexical_guard_min_results":         s.retrieval.lexicalGuardMinResults,
+			"runtime_backend_policy":            rustBackendPolicy,
+			"traffic_class":                     trafficClass,
+			"rust_lane_gate_applied":            rustLaneGateApplied,
+			"topic_prefilter_applied":           topicPrefilterApplied,
+			"topic_prefilter_hint":              topicPrefilterHint,
+			"coverage_rescue_enabled":           s.retrieval.coverageRescueEnabled,
+			"coverage_rescue_min_tokens":        s.retrieval.coverageRescueMinTokens,
+			"coverage_rescue_applied":           coverageRescueApplied,
+			"coverage_rescue_query":             coverageRescueQuery,
+			"coverage_rescue_sources":           coverageRescueSources,
+			"memory_bank_backend_effective":     strings.TrimSpace(strings.ToLower(anyToString(rustBackendPolicy["memory_bank_backend"]))),
+			"rust_quality_fallback_enabled":     s.retrieval.rustQualityFallbackEnabled,
+			"rust_quality_fallback_sources":     s.retrieval.rustQualityFallbackSources,
+			"rust_quality_fallback_mode":        s.retrieval.rustQualityFallbackMode,
+			"source_ownership_mode":             s.retrieval.sourceOwnershipMode,
 			"source_ownership_strict_fast_allow_python": mapKeysSorted(
 				s.retrieval.sourceOwnershipStrictFastAllowPy,
 			),
@@ -5716,6 +6092,8 @@ func (s *server) executeRetrieval(
 			"async_warm_slow_sources":          asyncWarmSlowSources,
 			"warming_sources":                  warmingSources,
 			"fail_open_continuation_sources":   continuationSources,
+			"continuation_unavailable_sources": continuationUnavailable,
+			"continuation_durable":             continuationDurable,
 			"timeout_adaptive_skipped_sources": skippedList,
 			"timed_out_sources":                timedOutList,
 			"budget_exceeded_sources":          budgetExceededList,
@@ -5745,24 +6123,37 @@ func (s *server) executeRetrieval(
 		"fallback_counts": map[string]any{
 			"python_hot_path_total": s.pythonHotPathFallbacks.Load(),
 		},
+		"timeout_contract_violations": s.timeoutContractViolations.Load(),
+		"drift":                       s.driftSnapshot(),
 		"source_summary": map[string]any{
-			"sources":                 resolvedSources,
-			"returned_now":            returnedSources,
-			"pending_sources":         deferredCandidates,
-			"warming_sources":         warmingSources,
-			"timed_out_sources":       timedOutList,
-			"failed_sources":          failedSources,
-			"budget_exceeded_sources": budgetExceededList,
-			"skipped_sources":         skippedList,
-			"source_owners":           sourceOwnerBySource,
+			"sources":                          resolvedSources,
+			"returned_now":                     returnedSources,
+			"pending_sources":                  deferredCandidates,
+			"warming_sources":                  warmingSources,
+			"continuation_unavailable_sources": continuationUnavailable,
+			"continuation_durable":             continuationDurable,
+			"timed_out_sources":                timedOutList,
+			"failed_sources":                   failedSources,
+			"budget_exceeded_sources":          budgetExceededList,
+			"skipped_sources":                  skippedList,
+			"source_owners":                    sourceOwnerBySource,
 		},
 	}
 	if len(continuationSources) > 0 && continuationToken != "" {
 		response["continuation_async"] = map[string]any{
-			"token":           continuationToken,
-			"events_url":      "/memory/search/continuations/" + continuationToken + "/events",
-			"pending_sources": continuationSources,
-			"heartbeat_secs":  s.retrieval.continuationSSEHeartbeat.Seconds(),
+			"token":               continuationToken,
+			"events_url":          "/memory/search/continuations/" + continuationToken + "/events",
+			"pending_sources":     continuationSources,
+			"unavailable_sources": continuationUnavailable,
+			"heartbeat_secs":      s.retrieval.continuationSSEHeartbeat.Seconds(),
+		}
+	} else if len(continuationUnavailable) > 0 && continuationToken != "" {
+		response["continuation_async"] = map[string]any{
+			"token":               continuationToken,
+			"events_url":          "/memory/search/continuations/" + continuationToken + "/events",
+			"pending_sources":     []string{},
+			"unavailable_sources": continuationUnavailable,
+			"heartbeat_secs":      s.retrieval.continuationSSEHeartbeat.Seconds(),
 		}
 	}
 	if includeGrounding {

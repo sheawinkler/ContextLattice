@@ -47,28 +47,8 @@ func retrievalIntentDefault() string {
 }
 
 func (s *server) currentContinuationBacklog() (int, map[string]int, int) {
-	now := time.Now().UTC()
-	bySource := map[string]int{}
-	cooldownActive := 0
-	total := 0
-	s.continuationMu.Lock()
-	for source, count := range s.continuationInFlight {
-		if count <= 0 {
-			continue
-		}
-		bySource[source] = count
-		total += count
-	}
-	for source, until := range s.continuationSourceCooldownUntil {
-		if now.Before(until) {
-			if _, ok := bySource[source]; !ok {
-				bySource[source] = 0
-			}
-			cooldownActive += 1
-		}
-	}
-	s.continuationMu.Unlock()
-	return total, bySource, cooldownActive
+	snapshot := s.continuationQueueSnapshot()
+	return snapshot.Pending, snapshot.BySource, snapshot.CooldownActive
 }
 
 func (s *server) capabilityMapPayload() map[string]any {
@@ -294,7 +274,12 @@ func (s *server) buildQueueStatusPayload(
 	retryingHighThreshold int,
 ) map[string]any {
 	now := nowUTCISO()
-	pending, bySource, cooldownActive := s.currentContinuationBacklog()
+	continuation := s.continuationQueueSnapshot()
+	pending := continuation.Pending
+	pendingTotal := continuation.PendingTotal
+	bySource := continuation.BySource
+	cooldownActive := continuation.CooldownActive
+	syncQueue := s.syncQueueSnapshot()
 	queueMax := cap(s.continuationSem)
 	if queueMax < 1 {
 		queueMax = 1
@@ -314,11 +299,30 @@ func (s *server) buildQueueStatusPayload(
 		deadletters, deadlettersByTarget = s.collectQueueDeadletters(deadletterLimit, deadletterTarget)
 	}
 	nextActions := make([]string, 0, 4)
+	alerts := make([]map[string]any, 0, 4)
 	if pending >= pendingHighThreshold {
 		nextActions = append(nextActions, "Continuation backlog is elevated; keep staged fetch and reduce low-value deep reads until queue normalizes.")
+		alerts = append(alerts, map[string]any{
+			"code":     "continuation_pending_high",
+			"severity": "warning",
+			"message":  "Continuation pending count crossed configured high threshold.",
+		})
+	}
+	if anyToFloat64(syncQueue["oldest_age_secs"], 0) >= s.retrieval.syncQueueAgeWarnSecs {
+		nextActions = append(nextActions, "Sync source queue age is elevated; consider reducing deep fanout or increasing per-source sync caps for healthy lanes.")
+		alerts = append(alerts, map[string]any{
+			"code":     "sync_queue_age_warn",
+			"severity": "warning",
+			"message":  "Sync queue oldest age crossed warn threshold.",
+		})
 	}
 	if queueRatio >= queueHighWatermark {
 		nextActions = append(nextActions, "Continuation in-flight ratio crossed high watermark; increase max inflight only if host headroom is available.")
+		alerts = append(alerts, map[string]any{
+			"code":     "continuation_inflight_high",
+			"severity": "warning",
+			"message":  "Continuation in-flight ratio crossed configured high watermark.",
+		})
 	}
 	if cooldownActive > 0 {
 		nextActions = append(nextActions, "One or more sources are in cooldown due to prior timeout pressure; rely on continuation events for late arrivals.")
@@ -334,25 +338,32 @@ func (s *server) buildQueueStatusPayload(
 		"updatedAt": now,
 		"queue": map[string]any{
 			"pending":               pending,
-			"retrying":              0,
+			"pendingTotal":          pendingTotal,
+			"retrying":              continuation.RetryingCount,
 			"running":               0,
 			"succeeded":             0,
 			"failed":                len(deadletters),
-			"totalOutstanding":      pending,
+			"totalOutstanding":      pendingTotal,
 			"pendingRaw":            pending,
-			"retryingRaw":           0,
+			"retryingRaw":           continuation.RetryingCount,
 			"runningRaw":            0,
 			"succeededRaw":          0,
 			"failedRaw":             len(deadletters),
 			"memoryWriteQueueDepth": pending,
 			"memoryWriteQueueMax":   queueMax,
 			"memoryWriteQueueRatio": queueRatio,
+			"oldestAgeSecs":         continuation.OldestAgeSecs,
 			"highWatermark":         queueHighWatermark,
 			"pendingHighThreshold":  pendingHighThreshold,
 			"retryingHighThreshold": retryingHighThreshold,
 			"highWatermarkExceeded": queueRatio >= queueHighWatermark,
 			"bySource":              bySource,
+			"retryingBySource":      continuation.RetryingBySrc,
 			"cooldownActive":        cooldownActive,
+			"durablePending":        continuation.DurablePending,
+			"durableBySource":       continuation.DurableBySrc,
+			"durableOldestAgeSecs":  continuation.DurableOldest,
+			"syncLane":              syncQueue,
 		},
 		"deadletters": map[string]any{
 			"included": includeDeadletters,
@@ -362,8 +373,8 @@ func (s *server) buildQueueStatusPayload(
 		},
 		"trend": map[string]any{
 			"snapshotAt":      now,
-			"queueDepth":      pending,
-			"outstanding":     pending,
+			"queueDepth":      pendingTotal,
+			"outstanding":     pendingTotal,
 			"processed":       anyToInt(ringSnapshot["accepted"], 0),
 			"dropped":         anyToInt(ringSnapshot["dropped"], 0),
 			"lastProcessedAt": nil,
@@ -389,7 +400,10 @@ func (s *server) buildQueueStatusPayload(
 			"spool":           spoolSnapshot,
 			"ring":            ringSnapshot,
 		},
-		"nextActions": nextActions,
+		"timeoutContract": s.timeoutContractSnapshot(),
+		"drift":           s.driftSnapshot(),
+		"nextActions":     nextActions,
+		"alerts":          alerts,
 	}
 }
 
