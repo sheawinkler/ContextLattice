@@ -15,7 +15,10 @@ export MEMMCP_AGENT_ID=codex_gpt5
 
 Preflight:
 ```bash
-python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration
+./scripts/agent_orchestration.sh preflight contextlattice runbooks/codex-integration
+# Or from any working directory:
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
 ```
 
 Behavior contract:
