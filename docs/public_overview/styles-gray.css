@@ -1261,6 +1261,30 @@ pre code {
   letter-spacing: 0.07em;
 }
 
+.wiki-page .hero {
+  background:
+    linear-gradient(135deg, rgba(131, 206, 203, 0.08) 0%, rgba(255, 255, 255, 0.02) 50%, rgba(214, 189, 134, 0.08) 100%),
+    #151515;
+}
+
+.wiki-map-panel {
+  background:
+    radial-gradient(circle at 12% 12%, rgba(131, 206, 203, 0.1), transparent 45%),
+    radial-gradient(circle at 90% 88%, rgba(214, 189, 134, 0.1), transparent 35%),
+    #141820;
+  border-color: #6c7789;
+}
+
+.wiki-kpi-grid {
+  margin-top: 14px;
+}
+
+.wiki-kpi {
+  border-color: #666f80;
+  background:
+    linear-gradient(180deg, rgba(24, 29, 39, 0.98), rgba(19, 23, 30, 0.98));
+}
+
 @media (max-width: 980px) {
   .flow-grid {
     grid-template-columns: 1fr;
