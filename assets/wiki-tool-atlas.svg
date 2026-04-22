@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="840" viewBox="0 0 1440 840" role="img" aria-label="ContextLattice Wiki tool atlas">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111722"/>
+      <stop offset="52%" stop-color="#121418"/>
+      <stop offset="100%" stop-color="#0d1017"/>
+    </linearGradient>
+    <radialGradient id="glowCyan" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#83cecb" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#83cecb" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowAmber" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#d6bd86" stop-opacity="0.40"/>
+      <stop offset="100%" stop-color="#d6bd86" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#c9d3df"/>
+    </marker>
+    <style>
+      .panel { fill: #171d28; stroke: #637186; stroke-width: 1.5; }
+      .chip { fill: #1d2532; stroke: #72829a; stroke-width: 1.3; }
+      .core { fill: #81511f; stroke: #f2d3ad; stroke-width: 2.2; }
+      .lane { fill: #1b2029; stroke: #5f6d84; stroke-width: 1.4; }
+      .line { fill: none; stroke: #c9d3df; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .line-dash { fill: none; stroke: #95bfc9; stroke-width: 1.7; stroke-dasharray: 8 6; stroke-linecap: round; }
+      .title { font: 700 31px 'IBM Plex Sans', sans-serif; fill: #edf3fb; }
+      .subtitle { font: 600 13px 'IBM Plex Mono', monospace; fill: #ced7e5; letter-spacing: 0.08em; text-transform: uppercase; }
+      .label { font: 600 20px 'IBM Plex Sans', sans-serif; fill: #eef4ff; }
+      .small { font: 500 14px 'IBM Plex Sans', sans-serif; fill: #c2ccdb; }
+      .tiny { font: 600 11px 'IBM Plex Mono', monospace; fill: #c6d1de; letter-spacing: 0.06em; text-transform: uppercase; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="840" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1440" height="840" fill="url(#glowCyan)" filter="url(#blur)" opacity="0.20"/>
+  <rect x="1040" y="520" width="400" height="320" fill="url(#glowAmber)" filter="url(#blur)" opacity="0.24"/>
+
+  <text x="720" y="70" text-anchor="middle" class="subtitle">ContextLattice Wiki</text>
+  <text x="720" y="118" text-anchor="middle" class="title">Tool Atlas: how memory and retrieval move through the system</text>
+
+  <rect x="120" y="190" rx="22" ry="22" width="1200" height="560" class="panel"/>
+  <text x="720" y="230" text-anchor="middle" class="tiny">Public runtime lane</text>
+
+  <rect x="560" y="280" rx="18" ry="18" width="320" height="96" class="core"/>
+  <text x="720" y="330" text-anchor="middle" class="label">Orchestrator API :8075</text>
+  <text x="720" y="355" text-anchor="middle" class="small">Auth + policy + staged retrieval planner</text>
+
+  <rect x="190" y="300" rx="16" ry="16" width="250" height="78" class="chip"/>
+  <text x="315" y="344" text-anchor="middle" class="label" style="font-size:18px;">Clients + Agents</text>
+
+  <rect x="1000" y="300" rx="16" ry="16" width="250" height="78" class="chip"/>
+  <text x="1125" y="344" text-anchor="middle" class="label" style="font-size:18px;">Messaging Apps</text>
+
+  <rect x="250" y="470" rx="14" ry="14" width="188" height="86" class="lane"/>
+  <text x="344" y="505" text-anchor="middle" class="tiny">Fast now</text>
+  <text x="344" y="532" text-anchor="middle" class="small">topic_rollups</text>
+
+  <rect x="470" y="470" rx="14" ry="14" width="188" height="86" class="lane"/>
+  <text x="564" y="505" text-anchor="middle" class="tiny">Fast now</text>
+  <text x="564" y="532" text-anchor="middle" class="small">qdrant + weaviate</text>
+
+  <rect x="690" y="470" rx="14" ry="14" width="188" height="86" class="lane"/>
+  <text x="784" y="505" text-anchor="middle" class="tiny">Fast now</text>
+  <text x="784" y="532" text-anchor="middle" class="small">postgres_pgvector</text>
+
+  <rect x="910" y="470" rx="14" ry="14" width="188" height="86" class="lane"/>
+  <text x="1004" y="505" text-anchor="middle" class="tiny">Slow async</text>
+  <text x="1004" y="532" text-anchor="middle" class="small">letta + memory_bank</text>
+
+  <rect x="1130" y="470" rx="14" ry="14" width="140" height="86" class="lane"/>
+  <text x="1200" y="505" text-anchor="middle" class="tiny">Slow async</text>
+  <text x="1200" y="532" text-anchor="middle" class="small">mongo_raw</text>
+
+  <rect x="560" y="610" rx="14" ry="14" width="320" height="88" class="chip"/>
+  <text x="720" y="646" text-anchor="middle" class="tiny">Evidence + continuity</text>
+  <text x="720" y="673" text-anchor="middle" class="small">retrieval_debug, continuation token, events stream</text>
+
+  <path d="M440 340 C500 340, 510 330, 560 330" class="line" marker-end="url(#arrow)"/>
+  <path d="M880 330 C930 330, 940 340, 1000 340" class="line" marker-end="url(#arrow)"/>
+
+  <path d="M720 376 L720 470" class="line" marker-end="url(#arrow)"/>
+  <path d="M720 376 C660 410, 560 425, 344 470" class="line" marker-end="url(#arrow)"/>
+  <path d="M720 376 C700 415, 640 430, 564 470" class="line" marker-end="url(#arrow)"/>
+  <path d="M720 376 C770 425, 900 440, 1004 470" class="line-dash" marker-end="url(#arrow)"/>
+  <path d="M720 376 C820 425, 1030 438, 1200 470" class="line-dash" marker-end="url(#arrow)"/>
+
+  <path d="M344 556 C420 598, 510 615, 560 635" class="line" marker-end="url(#arrow)"/>
+  <path d="M564 556 C620 595, 652 612, 680 635" class="line" marker-end="url(#arrow)"/>
+  <path d="M784 556 C760 592, 748 612, 740 635" class="line" marker-end="url(#arrow)"/>
+  <path d="M1004 556 C930 596, 860 614, 820 635" class="line-dash" marker-end="url(#arrow)"/>
+  <path d="M1200 556 C1060 610, 930 620, 860 635" class="line-dash" marker-end="url(#arrow)"/>
+
+  <text x="244" y="412" class="tiny">Read / write</text>
+  <text x="934" y="414" class="tiny">Response / status</text>
+  <text x="930" y="442" class="tiny" fill="#9cc7cf">staged continuation</text>
+</svg>
