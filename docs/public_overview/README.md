@@ -5,6 +5,7 @@ This folder is the source for the public ContextLattice overview web pages.
 ## Files
 - `index.html` - public landing page
 - `architecture.html` - detailed runtime architecture
+- `wiki.html` - operator wiki with endpoint atlas and playbooks
 - `updates.html` - chronological updates page
 - `roadmap.html` - V3 integration and efficacy roadmap
 - `installation.html` - install and launch command guide
@@ -42,6 +43,7 @@ scripts/sync_public_overview.sh
 This syncs:
 - `index.html`
 - `architecture.html`
+- `wiki.html`
 - `updates.html`
 - `roadmap.html`
 - `installation.html`

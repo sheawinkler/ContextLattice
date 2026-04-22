@@ -22,6 +22,7 @@
 <p align="center">
   <a href="https://contextlattice.io/">Overview</a> |
   <a href="https://contextlattice.io/architecture.html">Architecture</a> |
+  <a href="https://contextlattice.io/wiki.html">Wiki</a> |
   <a href="https://contextlattice.io/roadmap.html">V3 Roadmap</a> |
   <a href="https://contextlattice.io/installation.html">Installation</a> |
   <a href="https://contextlattice.io/integration.html">Integrations</a> |
@@ -67,6 +68,14 @@ Context Lattice is built for teams running high-volume memory writes where durab
     </td>
   </tr>
 </table>
+
+## Operator Wiki
+
+Use the new operator wiki as the canonical “best tools + graphics” runtime manual for `public/main`.
+
+- Website wiki (recommended): `https://contextlattice.io/wiki.html`
+- Repo mirror: `docs/wiki/README.md`
+- Scope: endpoint atlas, retrieval mode policy, continuation behavior, release-ready playbooks, and agent templates
 
 ## Quickstart
 
