@@ -361,6 +361,25 @@ h3 {
   letter-spacing: -0.01em;
 }
 
+/* Text-overlap hardening for narrow widths and long labels. */
+h1,
+h2,
+h3,
+p,
+.kicker,
+.badge,
+.feature-tile,
+.update-meta,
+.nav a,
+.cta,
+.spec-list li,
+.step-list li,
+.lane-table th,
+.lane-table td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 p {
   color: #d5d5d5;
   line-height: 1.62;
@@ -911,6 +930,7 @@ pre code {
 .update-meta {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   border: 1.5px solid var(--line);
   border-radius: 0;
