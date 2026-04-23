@@ -41,8 +41,13 @@ Supported profiles:
 4. During execution: `POST /memory/write` checkpoints.
 5. Before final output: one recency retrieval (`/memory/search` or `/memory/context-pack`).
 6. For graph relationships: `POST /v1/memory/neighbors`.
-7. For async continuation: use `continuation_async` token and stream `GET /memory/search/continuations/{token}/events`.
-8. For queued orchestration: `/v1/tasks/submit`, `/v1/tasks/claim`, `/v1/tasks/status`, `/v1/tasks/metrics`.
+7. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`).
+8. For async continuation: use `continuation_async` token and stream `GET /memory/search/continuations/{token}/events`.
+9. For queued orchestration: `/v1/tasks/submit`, `/v1/tasks/claim`, `/v1/tasks/status`, `/v1/tasks/metrics`.
+
+Notes for quarantined skills:
+- Discovery only by default; do not auto-load quarantined skills from search results.
+- Reindex is explicit and disabled by default (`POST /v1/skills/quarantine/reindex` only when enabled by operator policy).
 
 ## 5) Minimal smoke (write -> read)
 

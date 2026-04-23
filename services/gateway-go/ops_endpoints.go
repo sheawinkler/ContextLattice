@@ -101,10 +101,12 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"coverageRescueEnabled":    s.retrieval.coverageRescueEnabled,
 		},
 		"tools": map[string]any{
-			"memory_write_batch":     true,
-			"ops_queue_status":       true,
-			"feedback_submit":        true,
-			"browser_context_ingest": envBoolAny(true, "GO_BROWSER_CONTEXT_INGEST_ENABLED", "ORCH_BROWSER_CONTEXT_INGEST_ENABLED"),
+			"memory_write_batch":        true,
+			"ops_queue_status":          true,
+			"feedback_submit":           true,
+			"skills_quarantine_search":  skillsQuarantineEnabled(),
+			"skills_quarantine_reindex": skillsQuarantineEnabled() && skillsQuarantineReindexEnabled(),
+			"browser_context_ingest":    envBoolAny(true, "GO_BROWSER_CONTEXT_INGEST_ENABLED", "ORCH_BROWSER_CONTEXT_INGEST_ENABLED"),
 		},
 		"integrations": map[string]any{
 			"openclaw":              envBoolAny(false, "MESSAGING_INTEGRATIONS_ENABLED"),

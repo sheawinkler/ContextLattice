@@ -753,8 +753,12 @@ Ingress endpoints:
 - `POST /memory/search`
 - `POST /memory/context-pack`
 - `POST /v1/memory/neighbors`
+- `GET|POST /v1/skills/quarantine/search`
+- `POST /v1/skills/quarantine/reindex` (opt-in; disabled by default)
 - `GET /memory/search/continuations/{token}/events`
 - `POST /tools/feedback_submit`
+- `GET|POST /tools/skills_quarantine_search`
+- `POST /tools/skills_quarantine_reindex` (opt-in; disabled by default)
 - `POST /integrations/messaging/command`
 - `POST /integrations/messaging/openclaw`
 - `POST /integrations/messaging/ironclaw`
@@ -797,6 +801,32 @@ CONTEXT_EXPANSION_L0_BUDGET_TOKENS=1200
 CONTEXT_EXPANSION_L1_BUDGET_TOKENS=800
 CONTEXT_EXPANSION_L2_BUDGET_TOKENS=400
 CONTEXT_EXPANSION_DEEP_ESCALATION_ENABLED=true
+```
+
+## Skills Quarantine Discovery (default enabled)
+
+ContextLattice now exposes quarantined-skill candidate discovery as a native Go route.
+This lane is read-only discovery and does **not** auto-load any quarantined skills.
+
+- Search endpoint: `GET|POST /v1/skills/quarantine/search`
+- Tool alias: `GET|POST /tools/skills_quarantine_search`
+- Reindex endpoint: `POST /v1/skills/quarantine/reindex` (off by default; enable explicitly)
+
+Runtime knobs:
+
+```bash
+ORCH_SKILLS_QUARANTINE_ENABLED=true
+ORCH_SKILLS_QUARANTINE_HOST_BIN_DIR=${HOME}/.local/bin
+ORCH_SKILLS_QUARANTINE_HOST_ROOT_DIR=${HOME}/.codex/skills_quarantine
+ORCH_SKILLS_QUARANTINE_SEARCH_CMD=/opt/contextlattice/skills/bin/codex-skills-quarantine-search
+ORCH_SKILLS_QUARANTINE_REINDEX_CMD=/opt/contextlattice/skills/bin/codex-skills-quarantine-reindex
+ORCH_SKILLS_QUARANTINE_TIMEOUT_SECS=8
+ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT=20
+ORCH_SKILLS_QUARANTINE_MAX_LIMIT=100
+ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED=false
+CODEX_SKILLS_QUARANTINE_ROOT=/opt/contextlattice/skills_quarantine
+CODEX_SKILLS_QUARANTINE_INDEX_DIR=/opt/contextlattice/skills_quarantine/index
+CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills_index.jsonl
 ```
 
 ## Docs Index
