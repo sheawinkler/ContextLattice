@@ -755,10 +755,14 @@ Ingress endpoints:
 - `POST /v1/memory/neighbors`
 - `GET|POST /v1/skills/quarantine/search`
 - `POST /v1/skills/quarantine/reindex` (opt-in; disabled by default)
+- `GET|POST /v1/skills/index/search` (alias)
+- `POST /v1/skills/index/reindex` (alias; opt-in)
 - `GET /memory/search/continuations/{token}/events`
 - `POST /tools/feedback_submit`
 - `GET|POST /tools/skills_quarantine_search`
 - `POST /tools/skills_quarantine_reindex` (opt-in; disabled by default)
+- `GET|POST /tools/skills_index_search` (alias)
+- `POST /tools/skills_index_reindex` (alias; opt-in)
 - `POST /integrations/messaging/command`
 - `POST /integrations/messaging/openclaw`
 - `POST /integrations/messaging/ironclaw`
@@ -810,6 +814,8 @@ This lane is read-only discovery and does **not** auto-load any quarantined skil
 
 - Search endpoint: `GET|POST /v1/skills/quarantine/search`
 - Tool alias: `GET|POST /tools/skills_quarantine_search`
+- Index alias endpoint: `GET|POST /v1/skills/index/search`
+- Index alias tool: `GET|POST /tools/skills_index_search`
 - Reindex endpoint: `POST /v1/skills/quarantine/reindex` (off by default; enable explicitly)
 
 Runtime knobs:

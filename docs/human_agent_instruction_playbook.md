@@ -41,7 +41,7 @@ Supported profiles:
 4. During execution: `POST /memory/write` checkpoints.
 5. Before final output: one recency retrieval (`/memory/search` or `/memory/context-pack`).
 6. For graph relationships: `POST /v1/memory/neighbors`.
-7. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`).
+7. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`) or alias `GET|POST /v1/skills/index/search`.
 8. For async continuation: use `continuation_async` token and stream `GET /memory/search/continuations/{token}/events`.
 9. For queued orchestration: `/v1/tasks/submit`, `/v1/tasks/claim`, `/v1/tasks/status`, `/v1/tasks/metrics`.
 

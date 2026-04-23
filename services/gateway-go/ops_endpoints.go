@@ -106,6 +106,8 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"feedback_submit":           true,
 			"skills_quarantine_search":  skillsQuarantineEnabled(),
 			"skills_quarantine_reindex": skillsQuarantineEnabled() && skillsQuarantineReindexEnabled(),
+			"skills_index_search":       skillsQuarantineEnabled(),
+			"skills_index_reindex":      skillsQuarantineEnabled() && skillsQuarantineReindexEnabled(),
 			"browser_context_ingest":    envBoolAny(true, "GO_BROWSER_CONTEXT_INGEST_ENABLED", "ORCH_BROWSER_CONTEXT_INGEST_ENABLED"),
 		},
 		"integrations": map[string]any{
