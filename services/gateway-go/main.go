@@ -1375,6 +1375,8 @@ func isProxyPath(path string) bool {
 		"/v1/retrieval/query-with-grounding",
 		"/v1/retrieval/batch-query",
 		"/v1/retrieval/health",
+		"/v1/skills/quarantine/search",
+		"/v1/skills/quarantine/reindex",
 		"/health",
 		"/status",
 		"/memory/search",
@@ -1400,6 +1402,8 @@ func isProxyPath(path string) bool {
 		"/tools/ops_queue_status",
 		"/tools/memory_write_batch",
 		"/tools/feedback_submit",
+		"/tools/skills_quarantine_search",
+		"/tools/skills_quarantine_reindex",
 		"/v1/memory/put",
 		"/v1/memory/update",
 		"/v1/memory/get",
@@ -6381,6 +6385,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)
 	mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)
 	mux.HandleFunc("/v1/retrieval/health", s.retrievalHealth)
+	mux.HandleFunc("/v1/skills/quarantine/search", s.skillsQuarantineSearchRoute)
+	mux.HandleFunc("/v1/skills/quarantine/reindex", s.skillsQuarantineReindexRoute)
 	mux.HandleFunc("/memory/search/continuations/", s.memorySearchContinuationsRoute)
 	mux.HandleFunc("/memory/search", s.memorySearch)
 	mux.HandleFunc("/memory/search/async/", s.memorySearchAsyncStatus)
@@ -6421,6 +6427,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
 	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)
 	mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)
+	mux.HandleFunc("/tools/skills_quarantine_search", s.toolsSkillsQuarantineSearch)
+	mux.HandleFunc("/tools/skills_quarantine_reindex", s.toolsSkillsQuarantineReindex)
 	mux.HandleFunc("/v1/memory/put", s.memoryPut)
 	mux.HandleFunc("/v1/memory/update", s.memoryV1Update)
 	mux.HandleFunc("/v1/memory/get", s.memoryV1Get)

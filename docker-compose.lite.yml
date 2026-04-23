@@ -526,6 +526,16 @@ services:
       - ${HOST_BIND_ADDRESS:-127.0.0.1}:${GO_GATEWAY_HOST_PORT:-8091}:${GO_GATEWAY_PORT_INTERNAL:-8091}
     environment:
       PORT: ${GO_GATEWAY_PORT_INTERNAL:-8091}
+      ORCH_SKILLS_QUARANTINE_ENABLED: ${ORCH_SKILLS_QUARANTINE_ENABLED:-true}
+      ORCH_SKILLS_QUARANTINE_SEARCH_CMD: ${ORCH_SKILLS_QUARANTINE_SEARCH_CMD:-/opt/contextlattice/skills/bin/codex-skills-quarantine-search}
+      ORCH_SKILLS_QUARANTINE_REINDEX_CMD: ${ORCH_SKILLS_QUARANTINE_REINDEX_CMD:-/opt/contextlattice/skills/bin/codex-skills-quarantine-reindex}
+      ORCH_SKILLS_QUARANTINE_TIMEOUT_SECS: ${ORCH_SKILLS_QUARANTINE_TIMEOUT_SECS:-8}
+      ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT: ${ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT:-20}
+      ORCH_SKILLS_QUARANTINE_MAX_LIMIT: ${ORCH_SKILLS_QUARANTINE_MAX_LIMIT:-100}
+      ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED: ${ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED:-false}
+      CODEX_SKILLS_QUARANTINE_ROOT: ${CODEX_SKILLS_QUARANTINE_ROOT:-/opt/contextlattice/skills_quarantine}
+      CODEX_SKILLS_QUARANTINE_INDEX_DIR: ${CODEX_SKILLS_QUARANTINE_INDEX_DIR:-/opt/contextlattice/skills_quarantine/index}
+      CODEX_SKILLS_QUARANTINE_INDEX: ${CODEX_SKILLS_QUARANTINE_INDEX:-/opt/contextlattice/skills_quarantine/index/skills_index.jsonl}
       ORCH_RETRIEVAL_SOURCES: ${ORCH_RETRIEVAL_SOURCES:-qdrant,postgres_pgvector,mongo_raw,mindsdb,topic_rollups,letta,memory_bank}
       ORCH_RETRIEVAL_FAST_SOURCES: ${ORCH_RETRIEVAL_FAST_SOURCES:-topic_rollups,qdrant,postgres_pgvector}
       ORCH_RETRIEVAL_SLOW_SOURCES: ${ORCH_RETRIEVAL_SLOW_SOURCES:-mindsdb,mongo_raw,letta,memory_bank}
@@ -607,6 +617,8 @@ services:
       GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX: ${GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX:-true}
     volumes:
       - ${MEMORY_BANK_DATA:-memory_bank_data}:/data
+      - ${ORCH_SKILLS_QUARANTINE_HOST_BIN_DIR:-${HOME}/.local/bin}:/opt/contextlattice/skills/bin:ro
+      - ${ORCH_SKILLS_QUARANTINE_HOST_ROOT_DIR:-${HOME}/.codex/skills_quarantine}:/opt/contextlattice/skills_quarantine
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GO_GATEWAY_PORT_INTERNAL:-8091}/healthz >/dev/null || exit 1"]
       interval: 30s
