@@ -54,6 +54,20 @@ export async function POST(request: Request) {
     cancel_url: `${appUrl}/billing?canceled=1`,
     allow_promotion_codes: true,
     client_reference_id: userId,
+    metadata: {
+      userId,
+      planId,
+      interval,
+      priceId,
+    },
+    subscription_data: {
+      metadata: {
+        userId,
+        planId,
+        interval,
+        priceId,
+      },
+    },
   });
 
   await recordPaymentIntent({
@@ -65,7 +79,10 @@ export async function POST(request: Request) {
     amount: 0,
     currency: "USD",
     reference: checkout.id,
-    metadata: JSON.stringify({ checkoutUrl: checkout.url }),
+    metadata: JSON.stringify({
+      checkoutUrl: checkout.url,
+      priceId,
+    }),
   });
 
   return Response.json({ ok: true, url: checkout.url });

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { updatePaymentIntentStatus } from "@/lib/billing/reconcile";
 
 const applyChanges = process.env.BILLING_RECONCILE_APPLY === "true";
 
@@ -41,10 +42,7 @@ async function reconcileCoinbase() {
         `[coinbase] intent ${intent.reference} ${intent.status} -> ${nextStatus}`,
       );
       if (applyChanges) {
-        await prisma.paymentIntent.update({
-          where: { id: intent.id },
-          data: { status: nextStatus },
-        });
+        await updatePaymentIntentStatus("coinbase", intent.reference, nextStatus);
       }
       updated += 1;
     }

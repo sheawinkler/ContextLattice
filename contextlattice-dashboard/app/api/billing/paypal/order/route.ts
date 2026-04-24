@@ -1,37 +1,10 @@
+import crypto from "crypto";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { PLANS } from "@/lib/billing/plans";
 import { recordPaymentIntent } from "@/lib/billing/reconcile";
-import { prisma } from "@/lib/db";
 import { fetchWithRetry } from "@/lib/http/retry";
-
-function getPayPalBaseUrl() {
-  return process.env.PAYPAL_ENV === "live"
-    ? "https://api-m.paypal.com"
-    : "https://api-m.sandbox.paypal.com";
-}
-
-async function getAccessToken() {
-  const clientId = process.env.PAYPAL_CLIENT_ID;
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    throw new Error("PayPal credentials missing");
-  }
-  const creds = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-  const res = await fetchWithRetry(`${getPayPalBaseUrl()}/v1/oauth2/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${creds}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: "grant_type=client_credentials",
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data?.error_description || "PayPal auth failed");
-  }
-  return data.access_token as string;
-}
+import { getPayPalAccessToken, getPayPalBaseUrl } from "@/lib/billing/paypal";
 
 export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
@@ -49,7 +22,7 @@ export async function POST(request: Request) {
   const billingInterval = interval === "annual" ? "annual" : "monthly";
   const amount = billingInterval === "annual" ? plan.annual : plan.monthly;
 
-  const token = await getAccessToken();
+  const token = await getPayPalAccessToken();
   const appUrl = process.env.APP_URL || "http://localhost:3000";
 
   const res = await fetchWithRetry(`${getPayPalBaseUrl()}/v2/checkout/orders`, {

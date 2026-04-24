@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getStripeClient } from "@/lib/billing/stripe";
+import { resolveStripePlanFromPriceId } from "@/lib/billing/providers";
+import { upsertSubscriptionFromPaymentEvent } from "@/lib/billing/reconcile";
 
 const applyChanges = process.env.BILLING_RECONCILE_APPLY === "true";
 const lookbackDays = Number(process.env.BILLING_RECONCILE_LOOKBACK_DAYS || "7");
@@ -57,6 +59,17 @@ async function reconcileCheckoutSessions() {
       const currentPeriodEnd = sub.current_period_end
         ? new Date(sub.current_period_end * 1000)
         : null;
+      const stripePriceId = sub.items?.data?.[0]?.price?.id;
+      const resolved = resolveStripePlanFromPriceId(stripePriceId);
+      const metadata = sub.metadata || {};
+      const planId =
+        String(metadata.planId || "").trim() ||
+        resolved?.planId ||
+        null;
+      const interval =
+        String(metadata.interval || "").trim() ||
+        resolved?.interval ||
+        null;
       const existing = await prisma.billingSubscription.findFirst({
         where: { provider: "stripe", subscription: sub.id },
       });
@@ -69,8 +82,20 @@ async function reconcileCheckoutSessions() {
               provider: "stripe",
               subscription: sub.id,
               status,
+              planId,
               currentPeriodEnd,
             },
+          });
+        }
+        if (applyChanges) {
+          await upsertSubscriptionFromPaymentEvent({
+            provider: "stripe",
+            userId: customer.userId,
+            status,
+            planId,
+            interval,
+            subscriptionRef: sub.id,
+            currentPeriodEnd,
           });
         }
         subsUpdated += 1;
@@ -78,13 +103,23 @@ async function reconcileCheckoutSessions() {
       }
       if (
         existing.status !== status ||
+        (existing.planId || null) !== (planId || null) ||
         existing.currentPeriodEnd?.getTime() !== currentPeriodEnd?.getTime()
       ) {
         console.log(`[stripe] subscription ${sub.id} status=${existing.status} -> ${status}`);
         if (applyChanges) {
           await prisma.billingSubscription.update({
             where: { id: existing.id },
-            data: { status, currentPeriodEnd },
+            data: { status, planId, currentPeriodEnd },
+          });
+          await upsertSubscriptionFromPaymentEvent({
+            provider: "stripe",
+            userId: existing.userId,
+            status,
+            planId,
+            interval,
+            subscriptionRef: sub.id,
+            currentPeriodEnd,
           });
         }
         subsUpdated += 1;

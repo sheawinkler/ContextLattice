@@ -91,3 +91,22 @@ export function getStripePriceId(planId: string, interval: "monthly" | "annual")
   const plan = priceIds[planId as keyof typeof priceIds];
   return plan?.[interval];
 }
+
+export function resolveStripePlanFromPriceId(priceId?: string | null): {
+  planId: string;
+  interval: "monthly" | "annual";
+} | null {
+  const target = (priceId || "").trim();
+  if (!target) {
+    return null;
+  }
+  for (const [planId, planPrices] of Object.entries(priceIds)) {
+    if (planPrices.monthly && planPrices.monthly === target) {
+      return { planId, interval: "monthly" };
+    }
+    if (planPrices.annual && planPrices.annual === target) {
+      return { planId, interval: "annual" };
+    }
+  }
+  return null;
+}
