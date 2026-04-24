@@ -1,37 +1,11 @@
 import { prisma } from "@/lib/db";
+import { updatePaymentIntentStatus } from "@/lib/billing/reconcile";
+import { getPayPalAccessToken, getPayPalBaseUrl } from "@/lib/billing/paypal";
 
 const applyChanges = process.env.BILLING_RECONCILE_APPLY === "true";
 
-function getPayPalBaseUrl() {
-  return process.env.PAYPAL_ENV === "live"
-    ? "https://api-m.paypal.com"
-    : "https://api-m.sandbox.paypal.com";
-}
-
-async function getAccessToken() {
-  const clientId = process.env.PAYPAL_CLIENT_ID;
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    throw new Error("Missing PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET");
-  }
-  const creds = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-  const res = await fetch(`${getPayPalBaseUrl()}/v1/oauth2/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${creds}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: "grant_type=client_credentials",
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data?.error_description || "PayPal auth failed");
-  }
-  return data.access_token as string;
-}
-
 async function reconcilePayPal() {
-  const token = await getAccessToken();
+  const token = await getPayPalAccessToken();
   const intents = await prisma.paymentIntent.findMany({
     where: { provider: "paypal" },
     orderBy: { createdAt: "desc" },
@@ -61,10 +35,7 @@ async function reconcilePayPal() {
         `[paypal] intent ${intent.reference} ${intent.status} -> ${nextStatus}`,
       );
       if (applyChanges) {
-        await prisma.paymentIntent.update({
-          where: { id: intent.id },
-          data: { status: nextStatus },
-        });
+        await updatePaymentIntentStatus("paypal", intent.reference, nextStatus);
       }
       updated += 1;
     }

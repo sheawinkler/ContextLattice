@@ -1,32 +1,37 @@
 import crypto from "crypto";
 import { updatePaymentIntentStatus } from "@/lib/billing/reconcile";
 import { recordBillingEvent } from "@/lib/billing/events";
+import { verifyPayPalWebhookSignature } from "@/lib/billing/paypal";
 
-// Note: Proper PayPal webhook verification requires API calls to validate signatures.
-// This placeholder validates against a shared secret for now.
 export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
-  const secret = process.env.PAYPAL_WEBHOOK_SECRET;
-  if (!secret) {
-    return Response.json({ ok: false, error: "Missing webhook secret" }, { status: 500 });
-  }
-
   const body = await request.text();
-  const signature = request.headers.get("paypal-signature") || "";
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(body, "utf8")
-    .digest("hex");
 
-  if (signature !== expected) {
-    return Response.json({ ok: false, error: "Invalid signature" }, { status: 400 });
+  let payload: any;
+  try {
+    payload = await verifyPayPalWebhookSignature({
+      headers: request.headers,
+      rawBody: body,
+    });
+  } catch (err: any) {
+    return Response.json(
+      { ok: false, error: err?.message || "PayPal webhook verification failed" },
+      { status: 400 },
+    );
   }
 
-  const payload = JSON.parse(body);
   const eventType = payload?.event_type || "";
+  const normalizedEventType = String(eventType).toUpperCase();
   const eventId = payload?.id || "paypal-unknown";
   const resource = payload?.resource || {};
-  const reference = resource?.id;
+  const related = resource?.supplementary_data?.related_ids || {};
+  const references = Array.from(
+    new Set(
+      [resource?.id, related?.order_id, related?.capture_id]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
 
   await recordBillingEvent({
     provider: "paypal",
@@ -38,8 +43,19 @@ export async function POST(request: Request) {
   });
 
   try {
-    if (reference) {
-      const status = eventType.includes("COMPLETED") ? "captured" : "pending";
+    let status = "pending";
+    if (normalizedEventType.includes("COMPLETED")) {
+      status = "captured";
+    } else if (
+      normalizedEventType.includes("DENIED") ||
+      normalizedEventType.includes("FAILED") ||
+      normalizedEventType.includes("REFUNDED") ||
+      normalizedEventType.includes("REVERSED") ||
+      normalizedEventType.includes("CANCEL")
+    ) {
+      status = "canceled";
+    }
+    for (const reference of references) {
       await updatePaymentIntentStatus("paypal", reference, status);
     }
     await recordBillingEvent({
