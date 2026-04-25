@@ -69,6 +69,7 @@
 
     <section class="section section-tight">
       <nav class="page-nav-inline" aria-label="On this page">
+        <a href="#integration-paid-host">Paid Host</a>
         <a href="#integration-prereq">Prereq</a>
         <a href="#integration-smoke">Smoke Test</a>
         <a href="#integration-human-guide">Human Guide</a>
@@ -77,6 +78,24 @@
         <a href="#integration-claw">Claw Mapping</a>
         <a href="#integration-web3">Advanced</a>
       </nav>
+    </section>
+
+    <section class="section" id="integration-paid-host">
+      <article class="card">
+        <div class="kicker">Hosted default</div>
+        <h3>Use a dedicated app host for paid runtime and billing webhooks</h3>
+        <div class="priority-row"><span class="priority-chip required">Required</span></div>
+        <p>Default host split for production is marketing on <code>contextlattice.io</code> and paid app/API on <code>app.contextlattice.io</code>.</p>
+        <ul class="spec-list">
+          <li><strong>Marketing/public site:</strong> <code>https://contextlattice.io</code></li>
+          <li><strong>Paid app + dashboard + API:</strong> <code>https://app.contextlattice.io</code></li>
+          <li><strong>Stripe webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/stripe/webhook</code></li>
+          <li><strong>PayPal webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/paypal/webhook</code></li>
+          <li><strong>Coinbase webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/coinbase/webhook</code></li>
+          <li><strong>Apple Pay + Google Pay:</strong> configured through Stripe checkout (no separate webhook URL).</li>
+          <li><strong>Operator verify routes:</strong> <code>/api/billing/solana-pay/verify</code> and <code>/api/billing/kraken/verify</code> require owner/admin auth.</li>
+        </ul>
+      </article>
     </section>
 
     <section class="section" id="integration-prereq">
