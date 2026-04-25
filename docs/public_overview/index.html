@@ -210,6 +210,18 @@ gmake monitor-check</code></pre>
     </section>
 
     <section class="section">
+      <article class="card">
+        <div class="kicker">Hosted default</div>
+        <h3>Production host split for paid launch</h3>
+        <ul class="spec-list">
+          <li><strong>Public marketing/docs:</strong> <code>https://contextlattice.io</code></li>
+          <li><strong>Paid app + dashboard + billing API:</strong> <code>https://app.contextlattice.io</code></li>
+          <li><strong>Webhook base:</strong> point Stripe/PayPal/Coinbase to <code>https://app.contextlattice.io/api/billing/*</code></li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section">
       <div class="kicker">Version Lanes</div>
       <h2>What is public now vs private next</h2>
       <div class="grid component-grid">
