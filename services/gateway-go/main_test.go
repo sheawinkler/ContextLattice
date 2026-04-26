@@ -597,12 +597,17 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.memoryTopicTree)`,
 		`mux.HandleFunc("/memory/topics/list", s.memoryTopicList)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)`,
+		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
+		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
+		`mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)`,
+		`mux.HandleFunc("/telemetry/recall/monitor", s.telemetryRecallMonitorRoute)`,
+		`mux.HandleFunc("/telemetry/tools/invocations", s.telemetryToolsInvocationsRoute)`,
 		`mux.HandleFunc("/telemetry/trading", s.telemetryTradingRoute)`,
 		`mux.HandleFunc("/telemetry/trading/history", s.telemetryTradingHistoryRoute)`,
 		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
@@ -640,12 +645,17 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.proxy)`,
 		`mux.HandleFunc("/memory/topics/list", s.proxy)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.proxy)`,
+		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
+		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
+		`mux.HandleFunc("/telemetry/recall", s.proxy)`,
+		`mux.HandleFunc("/telemetry/recall/monitor", s.proxy)`,
+		`mux.HandleFunc("/telemetry/tools/invocations", s.proxy)`,
 		`mux.HandleFunc("/telemetry/trading", s.proxy)`,
 		`mux.HandleFunc("/telemetry/trading/history", s.proxy)`,
 		`mux.HandleFunc("/telemetry/", s.proxy)`,
@@ -961,7 +971,9 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	var capturedPath string
 	var capturedBody string
+	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
 		capturedPath = r.URL.Path
 		raw, _ := io.ReadAll(r.Body)
 		capturedBody = string(raw)
@@ -1146,6 +1158,7 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 		t.Fatalf("expected /agents/tasks to be forwarded by native route, got %s", capturedPath)
 	}
 
+	backendCallsBeforeTelemetry := backendCalls
 	resp10, err := http.Get(gateway.URL + "/telemetry/recall")
 	if err != nil {
 		t.Fatalf("telemetry request failed: %v", err)
@@ -1154,8 +1167,30 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if resp10.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /telemetry/recall, got %d", resp10.StatusCode)
 	}
-	if capturedPath != "/telemetry/recall" {
-		t.Fatalf("expected /telemetry/recall to be forwarded by native route, got %s", capturedPath)
+	backendCallsAfterRecall := backendCalls
+	if backendCallsAfterRecall != backendCallsBeforeTelemetry {
+		t.Fatalf("expected /telemetry/recall to stay go-native, backend calls before=%d after=%d", backendCallsBeforeTelemetry, backendCallsAfterRecall)
+	}
+
+	resp10b, err := http.Get(gateway.URL + "/telemetry/fanout")
+	if err != nil {
+		t.Fatalf("fanout telemetry request failed: %v", err)
+	}
+	defer resp10b.Body.Close()
+	if resp10b.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /telemetry/fanout, got %d", resp10b.StatusCode)
+	}
+	if backendCalls != backendCallsAfterRecall {
+		t.Fatalf("expected /telemetry/fanout to stay go-native, backend calls before=%d after=%d", backendCallsAfterRecall, backendCalls)
+	}
+
+	resp10c, err := http.Get(gateway.URL + "/telemetry/tools/invocations")
+	if err != nil {
+		t.Fatalf("tools telemetry request failed: %v", err)
+	}
+	defer resp10c.Body.Close()
+	if resp10c.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for /telemetry/tools/invocations, got %d", resp10c.StatusCode)
 	}
 
 	resp11, err := http.Get(gateway.URL + "/maintenance/diagnostics")
@@ -1300,6 +1335,77 @@ func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
 	rows, _ := qualityPayload["sources"].([]any)
 	if len(rows) == 0 {
 		t.Fatalf("expected source-quality rows, got %#v", qualityPayload)
+	}
+
+	recallResp, err := http.Get(gateway.URL + "/telemetry/recall?traffic_class=user")
+	if err != nil {
+		t.Fatalf("recall telemetry failed: %v", err)
+	}
+	defer recallResp.Body.Close()
+	if recallResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(recallResp.Body)
+		t.Fatalf("expected 200 for /telemetry/recall, got %d body=%s", recallResp.StatusCode, string(body))
+	}
+	var recallPayload map[string]any
+	if err := json.NewDecoder(recallResp.Body).Decode(&recallPayload); err != nil {
+		t.Fatalf("decode recall payload: %v", err)
+	}
+	if recallPayload["quality"] == nil {
+		t.Fatalf("expected recall quality payload, got %#v", recallPayload)
+	}
+
+	monitorResp, err := http.Get(gateway.URL + "/telemetry/recall/monitor?limit=8")
+	if err != nil {
+		t.Fatalf("recall monitor telemetry failed: %v", err)
+	}
+	defer monitorResp.Body.Close()
+	if monitorResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(monitorResp.Body)
+		t.Fatalf("expected 200 for /telemetry/recall/monitor, got %d body=%s", monitorResp.StatusCode, string(body))
+	}
+	var monitorPayload map[string]any
+	if err := json.NewDecoder(monitorResp.Body).Decode(&monitorPayload); err != nil {
+		t.Fatalf("decode recall monitor payload: %v", err)
+	}
+	monitorRows, _ := monitorPayload["history"].([]any)
+	if len(monitorRows) == 0 {
+		t.Fatalf("expected recall monitor history entries, got %#v", monitorPayload)
+	}
+
+	fanoutResp, err := http.Get(gateway.URL + "/telemetry/fanout")
+	if err != nil {
+		t.Fatalf("fanout telemetry failed: %v", err)
+	}
+	defer fanoutResp.Body.Close()
+	if fanoutResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(fanoutResp.Body)
+		t.Fatalf("expected 200 for /telemetry/fanout, got %d body=%s", fanoutResp.StatusCode, string(body))
+	}
+	var fanoutPayload map[string]any
+	if err := json.NewDecoder(fanoutResp.Body).Decode(&fanoutPayload); err != nil {
+		t.Fatalf("decode fanout payload: %v", err)
+	}
+	fanoutSummary, _ := fanoutPayload["summary"].(map[string]any)
+	fanoutByStatus, _ := fanoutSummary["by_status"].(map[string]any)
+	if fanoutByStatus == nil {
+		t.Fatalf("expected fanout by_status payload, got %#v", fanoutPayload)
+	}
+
+	toolsResp, err := http.Get(gateway.URL + "/telemetry/tools/invocations?limit=10&status_min=400")
+	if err != nil {
+		t.Fatalf("tools telemetry failed: %v", err)
+	}
+	defer toolsResp.Body.Close()
+	if toolsResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(toolsResp.Body)
+		t.Fatalf("expected 200 for /telemetry/tools/invocations, got %d body=%s", toolsResp.StatusCode, string(body))
+	}
+	var toolsPayload map[string]any
+	if err := json.NewDecoder(toolsResp.Body).Decode(&toolsPayload); err != nil {
+		t.Fatalf("decode tools telemetry payload: %v", err)
+	}
+	if toolsPayload["items"] == nil {
+		t.Fatalf("expected tools telemetry items payload, got %#v", toolsPayload)
 	}
 
 	tradingPost, err := http.NewRequest(

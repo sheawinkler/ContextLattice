@@ -1,10 +1,10 @@
 const ORCHESTRATOR_URL =
   process.env.CONTEXTLATTICE_ORCHESTRATOR_URL ??
-  process.env.CONTEXTLATTICE_ORCHESTRATOR_URL ??
+  process.env.MEMMCP_ORCHESTRATOR_URL ??
   "http://127.0.0.1:8075";
 const ORCHESTRATOR_API_KEY =
   process.env.CONTEXTLATTICE_ORCHESTRATOR_API_KEY ??
-  process.env.CONTEXTLATTICE_ORCHESTRATOR_API_KEY ??
+  process.env.MEMMCP_ORCHESTRATOR_API_KEY ??
   "";
 
 export function orchestratorUrl(path: string): string {

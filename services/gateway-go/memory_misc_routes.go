@@ -519,6 +519,27 @@ func (s *server) telemetryRoute(w http.ResponseWriter, r *http.Request) {
 	s.forwardJSONGET(w, r, r.URL.Path)
 }
 
+func (s *server) preferencesRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": false,
+		"preferences": map[string]any{
+			"total":      0,
+			"positive":   []any{},
+			"negative":   []any{},
+			"notes":      []any{},
+			"updated_at": nil,
+		},
+		"reason": "go_runtime_preferences_not_enabled",
+	})
+}
+
 func (s *server) maintenanceRoute(w http.ResponseWriter, r *http.Request) {
 	if s.entitlementPathProtected(r.URL.Path) {
 		if !s.enforceV4Entitlement(w, r, r.URL.Path) {
