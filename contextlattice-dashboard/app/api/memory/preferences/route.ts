@@ -1,4 +1,4 @@
-import { callOrchestrator } from "@/lib/orchestrator";
+import { fetchOrchestrator } from "@/lib/orchestrator";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
@@ -13,6 +13,26 @@ export async function GET(req: NextRequest) {
   if (limit) params.set("limit", limit);
 
   const path = params.toString() ? `/preferences?${params.toString()}` : "/preferences";
-  const data = await callOrchestrator(path);
-  return NextResponse.json(data);
+  const fallback = {
+    enabled: false,
+    preferences: {
+      total: 0,
+      positive: [],
+      negative: [],
+      notes: [],
+      updated_at: null,
+    },
+    reason: "go_runtime_preferences_not_enabled",
+  };
+
+  try {
+    const response = await fetchOrchestrator(path, { method: "GET" });
+    if (!response.ok) {
+      return NextResponse.json(fallback);
+    }
+    const data = await response.json();
+    return NextResponse.json(data);
+  } catch {
+    return NextResponse.json(fallback);
+  }
 }

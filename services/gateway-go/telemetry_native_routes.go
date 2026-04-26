@@ -752,3 +752,317 @@ func (s *server) telemetryTradingHistoryRoute(w http.ResponseWriter, r *http.Req
 	s.tradingMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"history": rows})
 }
+
+func (s *server) telemetryFanoutRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+
+	query := r.URL.Query()
+	includeDeadletters := parseOptionalBoolQuery(query.Get("include_deadletters"), true)
+	deadletterLimit := parseOptionalIntQuery(query.Get("deadletter_limit"), 100, 1, 500)
+	deadletterTarget := strings.TrimSpace(strings.ToLower(query.Get("deadletter_target")))
+	highWatermark := parseOptionalFloatQuery(query.Get("queue_high_watermark"), 0.85, 0.1, 1.0)
+	pendingThreshold := parseOptionalIntQuery(query.Get("pending_high_threshold"), maxInt(3, cap(s.continuationSem)/2), 1, 100000)
+	retryingThreshold := parseOptionalIntQuery(query.Get("retrying_high_threshold"), maxInt(2, cap(s.continuationSem)/4), 1, 100000)
+	queuePayload := s.buildQueueStatusPayload(
+		includeDeadletters,
+		deadletterLimit,
+		deadletterTarget,
+		highWatermark,
+		pendingThreshold,
+		retryingThreshold,
+	)
+	queue, _ := queuePayload["queue"].(map[string]any)
+	deadletters, _ := queuePayload["deadletters"].(map[string]any)
+
+	metricsSnapshot := s.telemetryMetricsSnapshot()
+	totals, _ := metricsSnapshot["totals"].(map[string]any)
+	enqueued := anyToInt(totals["enqueued"], 0)
+	pending := anyToInt(queue["pending"], 0)
+	retrying := anyToInt(queue["retrying"], 0)
+	deadletterCount := anyToInt(deadletters["count"], 0)
+	succeeded := enqueued - pending - retrying - deadletterCount
+	if succeeded < 0 {
+		succeeded = 0
+	}
+
+	lastError := any(nil)
+	if items, ok := deadletters["items"].([]map[string]any); ok && len(items) > 0 {
+		lastError = anyToString(items[0]["detail"])
+	} else if genericItems, ok := deadletters["items"].([]any); ok && len(genericItems) > 0 {
+		if first, ok := genericItems[0].(map[string]any); ok {
+			lastError = anyToString(first["detail"])
+		}
+	}
+
+	outboxBackend := strings.TrimSpace(os.Getenv("FANOUT_OUTBOX_BACKEND"))
+	if outboxBackend == "" {
+		outboxBackend = "sqlite"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"updatedAt":     nowUTCISO(),
+		"outboxBackend": outboxBackend,
+		"summary": map[string]any{
+			"by_status": map[string]any{
+				"succeeded":  succeeded,
+				"failed":     deadletterCount,
+				"deadletter": deadletterCount,
+				"retrying":   retrying,
+				"pending":    pending,
+			},
+			"queueDepth": pending,
+			"queueMax":   maxInt(1, cap(s.continuationSem)),
+			"total":      maxInt(0, succeeded+deadletterCount+retrying+pending),
+		},
+		"health": map[string]any{
+			"lastError": lastError,
+			"spool":     s.telemetrySpool.snapshot(),
+			"ring":      s.telemetryRing.snapshot(),
+		},
+		"letta": map[string]any{
+			"enabled":                 s.lettaConfigEnabled(),
+			"runtimeEnabled":          s.lettaConfigEnabled(),
+			"disabledReason":          nil,
+			"transientErrorStreak":    0,
+			"transientErrorThreshold": 0,
+		},
+		"lettaAutoPrune": map[string]any{
+			"enabled":      envBool("LETTA_AUTO_PRUNE_ENABLED", false),
+			"intervalSecs": envDurationSeconds("LETTA_AUTO_PRUNE_INTERVAL_SECS", 60.0).Seconds(),
+			"state": map[string]any{
+				"lastRunAt":         nil,
+				"lastDeleted":       0,
+				"lastSkippedReason": nil,
+				"lastError":         nil,
+			},
+		},
+	})
+}
+
+func (s *server) telemetryRecallRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	trafficClass := normalizeTrafficClass(r.URL.Query().Get("traffic_class"))
+	updatedAt := nowUTCISO()
+	order, statsBySource := s.retrievalSourceStatsSnapshot()
+	bySource := make(map[string]any, len(order))
+	totalRequests := 0
+	totalTimeouts := 0
+	totalErrors := 0
+	for _, source := range order {
+		stats := statsBySource[source]
+		totalRequests += stats.Requests
+		totalTimeouts += stats.Timeouts
+		totalErrors += stats.Errors
+		bySource[source] = map[string]any{
+			"requests":       stats.Requests,
+			"timeouts":       stats.Timeouts,
+			"errors":         stats.Errors,
+			"budgetExceeded": stats.BudgetExceeded,
+			"p95Ms":          stats.P95Ms,
+		}
+	}
+
+	sourceErrorRate := 0.0
+	if totalRequests > 0 {
+		sourceErrorRate = float64(totalErrors) / float64(totalRequests)
+	}
+	alerts := buildRetrievalAlerts(order, statsBySource)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"updatedAt":    updatedAt,
+		"trafficClass": trafficClass,
+		"quality": map[string]any{
+			"updatedAt": updatedAt,
+			"totals": map[string]any{
+				"requests":          totalRequests,
+				"timeouts":          totalTimeouts,
+				"errors":            totalErrors,
+				"sourceErrorRate":   roundFloat(sourceErrorRate, 6),
+				"noHitRate":         0.0,
+				"lowConfidenceRate": 0.0,
+				"staleHitRate":      0.0,
+			},
+			"bySource": bySource,
+			"recent":   []any{},
+		},
+		"alerts": map[string]any{
+			"thresholds": map[string]any{
+				"noHitRate":         envFloat("RECALL_ALERT_NO_HIT_RATE", 0.25),
+				"lowConfidenceRate": envFloat("RECALL_ALERT_LOW_CONFIDENCE_RATE", 0.25),
+				"staleHitRate":      envFloat("RECALL_ALERT_STALE_HIT_RATE", 0.25),
+				"sourceErrorRate":   envFloat("RECALL_ALERT_SOURCE_ERROR_RATE", 0.25),
+				"minRequests":       envInt("RECALL_ALERT_MIN_REQUESTS", 10),
+			},
+			"active": alerts,
+			"count":  len(alerts),
+		},
+	})
+}
+
+func (s *server) readRecallMonitorHistory(limit int) []map[string]any {
+	path := resolveStoragePath(
+		"RECALL_MONITOR_PATH",
+		filepath.Join("services", "orchestrator", "data", "recall_monitor.ndjson"),
+	)
+	if path == "" {
+		return []map[string]any{}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer file.Close()
+
+	rows := make([]map[string]any, 0, limit)
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		row := map[string]any{}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		rows = append(rows, row)
+		if len(rows) > limit {
+			rows = append([]map[string]any(nil), rows[len(rows)-limit:]...)
+		}
+	}
+	return rows
+}
+
+func (s *server) syntheticRecallMonitorSample() map[string]any {
+	updatedAt := nowUTCISO()
+	order, statsBySource := s.retrievalSourceStatsSnapshot()
+	alertCount := len(buildRetrievalAlerts(order, statsBySource))
+	lettaP95 := 0.0
+	if stats, ok := statsBySource[sourceLetta]; ok {
+		lettaP95 = stats.P95Ms
+	}
+	return map[string]any{
+		"timestamp":           updatedAt,
+		"lettaP95Ms":          roundFloat(lettaP95, 3),
+		"retrievalAlertCount": alertCount,
+	}
+}
+
+func (s *server) telemetryRecallMonitorRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	limit := parseOptionalIntQuery(r.URL.Query().Get("limit"), 96, 1, 512)
+	rows := s.readRecallMonitorHistory(limit)
+	rows = append(rows, s.syntheticRecallMonitorSample())
+	if len(rows) > limit {
+		rows = append([]map[string]any(nil), rows[len(rows)-limit:]...)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"updatedAt": nowUTCISO(),
+		"history":   rows,
+		"count":     len(rows),
+		"config": map[string]any{
+			"historyLimit":  limit,
+			"lookbackHours": envFloat("RECALL_MONITOR_LOOKBACK_HOURS", 24.0),
+		},
+	})
+}
+
+func (s *server) telemetryToolsInvocationsRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	query := r.URL.Query()
+	limit := parseOptionalIntQuery(query.Get("limit"), 100, 1, 500)
+	toolFilter := strings.TrimSpace(strings.ToLower(query.Get("tool")))
+	statusMin := parseOptionalIntQuery(query.Get("status_min"), 0, 0, 599)
+
+	entries := s.telemetryRing.debugEntries()
+	items := make([]map[string]any, 0, minInt(limit, len(entries)))
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		path := strings.TrimSpace(entry.sourcePath)
+		if path == "" {
+			path = "/memory/write"
+		}
+		statusCode := 503
+		if statusCode < statusMin {
+			continue
+		}
+		if toolFilter != "" && !strings.Contains(strings.ToLower(path), toolFilter) {
+			continue
+		}
+		errorText := strings.TrimSpace(entry.ingestError)
+		if errorText == "" {
+			errorText = strings.TrimSpace(entry.spoolError)
+		}
+		if errorText == "" {
+			errorText = "telemetry sink unavailable"
+		}
+		items = append(items, map[string]any{
+			"id":          entry.eventID,
+			"timestamp":   entry.insertedAt.UTC().Format(time.RFC3339Nano),
+			"path":        path,
+			"tool":        strings.TrimPrefix(path, "/tools/"),
+			"status_code": statusCode,
+			"duration_ms": nil,
+			"project":     entry.project,
+			"agent_id":    nil,
+			"error":       errorText,
+		})
+		if len(items) >= limit {
+			break
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+		"count": len(items),
+		"limit": limit,
+		"filters": map[string]any{
+			"tool":      nullableString(toolFilter),
+			"statusMin": nullableInt(statusMin),
+		},
+		"audit": map[string]any{
+			"enabled":           false,
+			"retentionDays":     0,
+			"pruneIntervalSecs": 0,
+			"state":             map[string]any{},
+		},
+	})
+}
+
+func nullableString(value string) any {
+	token := strings.TrimSpace(value)
+	if token == "" {
+		return nil
+	}
+	return token
+}
+
+func nullableInt(value int) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
+}
