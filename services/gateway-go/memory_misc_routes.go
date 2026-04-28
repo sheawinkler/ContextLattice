@@ -458,14 +458,67 @@ func (s *server) feedbackRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) migrationRuntime(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.forwardJSONGET(w, r, "/migration/runtime")
-	case http.MethodPost:
-		s.forwardJSONPOST(w, r, "/migration/runtime")
-	default:
+	if !methodAllowed(r.Method, http.MethodGet, http.MethodPost) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
 	}
+	flags := map[string]any{
+		"use_rust_codec":     envBool("USE_RUST_CODEC", true),
+		"use_rust_memory":    envBool("USE_RUST_MEMORY", true),
+		"use_rust_retrieval": envBool("USE_RUST_RETRIEVAL", true),
+		"use_go_orchestrator": envBool(
+			"USE_GO_ORCHESTRATOR",
+			true,
+		),
+		"engine_mode":     strings.TrimSpace(os.Getenv("CONTEXTLATTICE_ENGINE_MODE")),
+		"shadow_dual_run": envBool("CONTEXTLATTICE_SHADOW_DUAL_RUN", false),
+		"canary_enabled":  envBool("CONTEXTLATTICE_CANARY_ENABLED", false),
+	}
+	if strings.TrimSpace(anyToString(flags["engine_mode"])) == "" {
+		flags["engine_mode"] = "service"
+	}
+	services := s.strictRuntimeServices()
+	healthyServices := 0
+	for _, svc := range services {
+		if anyToBool(svc["healthy"]) {
+			healthyServices++
+		}
+	}
+	pythonFallbackMode := "available"
+	if s.strictNoPythonRuntime {
+		pythonFallbackMode = "disabled"
+	}
+	payload := map[string]any{
+		"enabled": true,
+		"flags":   flags,
+		"implementations": map[string]any{
+			"gateway":         sourceOwnerGoNative,
+			"retrieval":       sourceOwnerGoNative,
+			"topic_rollups":   sourceOwnerGoNative,
+			"memory_bank":     sourceOwnerRustNative,
+			"python_fallback": pythonFallbackMode,
+		},
+		"snapshot": map[string]any{
+			"strictNoPythonRuntime": s.strictNoPythonRuntime,
+			"routeOwnerClass":       sourceOwnerGoNative,
+			"pythonHotPathOwnership": map[string]any{
+				"mode":       anyToString(s.pythonHotPathOwnershipSnapshot()["mode"]),
+				"fallbacks":  anyToInt(s.pythonHotPathOwnershipSnapshot()["fallbacks"], 0),
+				"status":     anyToString(s.pythonHotPathOwnershipSnapshot()["status"]),
+				"lastAt":     anyToString(s.pythonHotPathOwnershipSnapshot()["lastFallbackAt"]),
+				"lastReason": anyToString(s.pythonHotPathOwnershipSnapshot()["lastReason"]),
+			},
+			"runtimeBackendPolicy":    defaultRustBackendPolicy(),
+			"retrievalFastSources":    append([]string{}, s.retrieval.fastSources...),
+			"retrievalSlowSources":    append([]string{}, s.retrieval.slowSources...),
+			"retrievalDefaultSources": append([]string{}, s.retrieval.defaultSources...),
+			"serviceHealth": map[string]any{
+				"healthy": healthyServices,
+				"total":   len(services),
+			},
+		},
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *server) memoryFilesByProject(w http.ResponseWriter, r *http.Request) {
