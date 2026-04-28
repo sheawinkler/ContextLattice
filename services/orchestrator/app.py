@@ -30192,7 +30192,8 @@ async def evaluate_memory_recall(payload: RecallEvalRequest):
     }
 
 
-@app.post("/memory/recall/evaluate/saved")
+# Legacy helper retained for refresh workflows only.
+# Hot path is now Go-native at gateway-go (/memory/recall/evaluate/saved).
 async def evaluate_saved_recall_cases(payload: RecallEvalSavedRequest):
     config = _load_saved_recall_eval_config()
     cases = config.get("cases") if isinstance(config.get("cases"), list) else []

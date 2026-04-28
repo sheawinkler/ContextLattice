@@ -443,7 +443,7 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 }
 
 func (s *server) memoryRecallEvaluateSaved(w http.ResponseWriter, r *http.Request) {
-	s.forwardJSONPOST(w, r, "/memory/recall/evaluate/saved")
+	s.memoryRecallEvaluateSavedNative(w, r)
 }
 
 func (s *server) feedbackRoute(w http.ResponseWriter, r *http.Request) {
