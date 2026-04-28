@@ -756,6 +756,86 @@ func TestMemorySearchInjectsConfiguredAPIKeyWhenMissing(t *testing.T) {
 	}
 }
 
+func TestMemoryRecallEvaluateSavedIsGoNative(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+
+	recallCasesPath := filepath.Join(t.TempDir(), "recall_eval_cases.json")
+	if err := os.WriteFile(
+		recallCasesPath,
+		[]byte(`{
+  "version": 1,
+  "updatedAt": "2026-04-28T00:00:00Z",
+  "k": 5,
+  "gate": {"minRecallAtK": 0.5, "minMrr": 0.5, "minNumericExactness": 0.0},
+  "cases": [
+    {
+      "id": "native-go-route",
+      "query": "alpha",
+      "limit": 5,
+      "sources": ["qdrant"],
+      "expected_substrings": ["alpha"]
+    }
+  ]
+}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("write saved recall eval config: %v", err)
+	}
+	t.Setenv("ORCH_RECALL_EVAL_CASES_PATH", recallCasesPath)
+
+	var capturedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/retrieval/query":
+			_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/alpha.md","summary":"alpha topic","source":"qdrant","score":0.92}],"warnings":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/memory/recall/evaluate/saved", strings.NewReader(`{"include_retrieval_debug":true}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response payload: %v", err)
+	}
+	if !anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok=true, got %#v", payload)
+	}
+	if !anyToBool(payload["passed"]) {
+		t.Fatalf("expected passed=true, got %#v", payload)
+	}
+	metrics, _ := payload["metrics"].(map[string]any)
+	if anyToInt(metrics["casesEvaluated"], 0) != 1 {
+		t.Fatalf("expected one evaluated case, got %#v", metrics)
+	}
+	if capturedPath != "/v1/retrieval/query" {
+		t.Fatalf("expected go-native route to call retrieval query path, got %s", capturedPath)
+	}
+}
+
 func TestMemorySearchAcceptsQueryParamAPIKey(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
