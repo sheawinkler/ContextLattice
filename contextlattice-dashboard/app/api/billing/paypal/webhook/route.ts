@@ -14,9 +14,17 @@ export async function POST(request: Request) {
       rawBody: body,
     });
   } catch (err: any) {
+    const message = String(err?.message || "PayPal webhook verification failed");
+    const configuredMissing =
+      message.includes("Missing PAYPAL_WEBHOOK_ID") ||
+      message.includes("PayPal credentials missing");
     return Response.json(
-      { ok: false, error: err?.message || "PayPal webhook verification failed" },
-      { status: 400 },
+      {
+        ok: false,
+        error: configuredMissing ? "PayPal webhook not configured" : message,
+        code: configuredMissing ? "provider_not_configured" : "verification_failed",
+      },
+      { status: configuredMissing ? 503 : 400 },
     );
   }
 

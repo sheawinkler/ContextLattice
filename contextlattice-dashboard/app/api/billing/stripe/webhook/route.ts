@@ -14,7 +14,14 @@ export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
-    return Response.json({ ok: false, error: "Missing webhook secret" }, { status: 500 });
+    return Response.json(
+      {
+        ok: false,
+        error: "Stripe webhook not configured",
+        code: "provider_not_configured",
+      },
+      { status: 503 },
+    );
   }
 
   const sig = headers().get("stripe-signature");
