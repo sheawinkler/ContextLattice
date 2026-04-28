@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://contextlattice.io/" target="_blank" rel="noopener noreferrer">
-    <img src="docs/public_overview/assets/architecture-service-map.svg" alt="Context Lattice system context map" width="100%" />
+    <img src="docs/readme/contextlattice-architecture-readme-v2-2026-04-28.png" alt="Context Lattice architecture overview poster" width="100%" />
   </a>
 </p>
 
