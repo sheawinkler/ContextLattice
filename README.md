@@ -160,6 +160,8 @@ Canonical config layout:
 
 - `config/env/` -> runtime/tuning lockfiles
 - `config/mcp/` -> MCP hub/proxy/client config files
+- `.contextlattice.config/` -> repo-local helper runtime config (canonical)
+- `.mcp-servers/mem_mcp_lobehub` -> legacy compatibility shim to `.contextlattice.config/mcp-hub`
 
 Optional Letta backlog auto-prune tuning in `.env`:
 
