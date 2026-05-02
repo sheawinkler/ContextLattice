@@ -10,10 +10,29 @@ import {
 
 export const runtime = "nodejs";
 
+function configuredStripeWebhookSecrets(): string[] {
+  const raw = [
+    process.env.STRIPE_WEBHOOK_SECRET || "",
+    process.env.STRIPE_WEBHOOK_THIN_SECRET || "",
+    process.env.STRIPE_WEBHOOK_SNAPSHOT_SECRET || "",
+    ...(process.env.STRIPE_WEBHOOK_SECRETS || "")
+      .split(",")
+      .map((value) => value.trim()),
+  ];
+  const unique = new Set<string>();
+  for (const value of raw) {
+    const trimmed = String(value || "").trim();
+    if (trimmed) {
+      unique.add(trimmed);
+    }
+  }
+  return [...unique];
+}
+
 export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) {
+  const secrets = configuredStripeWebhookSecrets();
+  if (!secrets.length) {
     return Response.json(
       {
         ok: false,
@@ -33,10 +52,29 @@ export async function POST(request: Request) {
 
   const stripe = getStripeClient();
   let event;
+  let verificationError: any = null;
   try {
-    event = stripe.webhooks.constructEvent(body, sig, secret);
+    for (const secret of secrets) {
+      try {
+        event = stripe.webhooks.constructEvent(body, sig, secret);
+        verificationError = null;
+        break;
+      } catch (err: any) {
+        verificationError = err;
+      }
+    }
+    if (!event) {
+      throw verificationError || new Error("Webhook signature verification failed");
+    }
   } catch (err: any) {
-    return Response.json({ ok: false, error: err.message }, { status: 400 });
+    return Response.json(
+      {
+        ok: false,
+        error: err?.message || "Webhook signature verification failed",
+        code: "signature_verification_failed",
+      },
+      { status: 400 },
+    );
   }
 
   await recordBillingEvent({
