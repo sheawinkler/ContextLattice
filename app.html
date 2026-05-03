@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>App Surface | Context Lattice</title>
+  <meta name="description" content="app.contextlattice.io routing, webhook endpoints, and hosted split for premium operations." />
+  <link rel="stylesheet" href="styles-gray.css?v=20260427a" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="wiki.html">Wiki</a>
+        <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
+        <a href="installation.html">Installation</a>
+        <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a class="active" href="app.html">App</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">Hosted app surface</span>
+      <h1><code>app.contextlattice.io</code> is the premium control plane entrypoint.</h1>
+      <p class="sub">
+        Keep public docs on <code>contextlattice.io</code>, route paid app traffic to
+        <code>app.contextlattice.io</code>, and route runtime API traffic to
+        <code>api.contextlattice.io</code> (or equivalent ingress split).
+      </p>
+    </section>
+
+    <section class="section">
+      <article class="card mermaid-card">
+        <div class="kicker">Traffic split</div>
+        <h3>Recommended domain topology</h3>
+        <div class="mermaid">
+flowchart LR
+  A[contextlattice.io] --> B[Public docs + downloads]
+  C[app.contextlattice.io] --> D[Dashboard + Auth + Billing APIs]
+  E[api.contextlattice.io] --> F[Gateway-Go :8075]
+  D --> E
+  F --> G[Fast retrieval lanes]
+  F --> H[Slow continuation lanes]
+        </div>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Webhook routing</div>
+        <h3>Provider callbacks for paid operations</h3>
+        <table class="lane-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Method</th>
+              <th>Endpoint</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Stripe</td>
+              <td>POST</td>
+              <td><code>https://app.contextlattice.io/api/billing/stripe/webhook</code></td>
+            </tr>
+            <tr>
+              <td>PayPal</td>
+              <td>POST</td>
+              <td><code>https://app.contextlattice.io/api/billing/paypal/webhook</code></td>
+            </tr>
+            <tr>
+              <td>Solana Pay verify</td>
+              <td>POST</td>
+              <td><code>https://app.contextlattice.io/api/billing/solana-pay/verify</code></td>
+            </tr>
+            <tr>
+              <td>Kraken verify</td>
+              <td>POST</td>
+              <td><code>https://app.contextlattice.io/api/billing/kraken/verify</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="grid">
+        <article class="card">
+          <div class="kicker">DNS checklist</div>
+          <h3>What to point where</h3>
+          <ul class="spec-list">
+            <li><code>contextlattice.io</code> -> static docs host (GitHub Pages today)</li>
+            <li><code>app.contextlattice.io</code> -> dashboard host (Next.js + billing APIs)</li>
+            <li><code>api.contextlattice.io</code> -> orchestrator ingress for agent/runtime calls</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="kicker">Launch posture</div>
+          <h3>Near-term vs later</h3>
+          <ul class="spec-list">
+            <li><strong>Now:</strong> app domain handles auth, billing, entitlement state, and paid console.</li>
+            <li><strong>Later:</strong> optionally serve the lightweight app/lite runtime surface from the same domain.</li>
+            <li><strong>Always:</strong> keep webhook endpoints on app domain for deterministic provider configuration.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>App domain split reduces ops confusion during paid launch.</span>
+      <span>Use premium launch gates before enabling production entitlements.</span>
+    </footer>
+  </main>
+</body>
+</html>
