@@ -10,6 +10,15 @@ __pycache__
 *.log
 .DS_Store
 node_modules
+**/node_modules
+**/.next
+**/target
+.data
+.cache
+.cargo
+.rustup
+.npm
+.pnpm-store
 dist
 build
 tmp

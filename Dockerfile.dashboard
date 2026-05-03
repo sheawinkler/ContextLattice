@@ -14,4 +14,4 @@ ENV NODE_ENV=development
 ENV HOST=0.0.0.0
 ENV PORT=3000
 
-CMD ["sh", "-c", "npx prisma generate && npx prisma db push && npm run dev -- -H 0.0.0.0 -p ${PORT}"]
+CMD ["sh", "-c", "npx --yes prisma generate && npx --yes prisma db push --accept-data-loss && npm run dev -- -H 0.0.0.0 -p ${PORT}"]
