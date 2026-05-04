@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getEntitlements, isSubscriptionActive } from "@/lib/billing/entitlements";
+import { configuredPremiumDownloads } from "@/lib/billing/downloads";
 
 const DEFAULT_PLAN_ID = process.env.DEFAULT_PLAN_ID || "starter";
 const REQUIRE_ACTIVE_SUBSCRIPTION =
@@ -20,6 +21,7 @@ export async function GET() {
   const planId = subscription?.planId || DEFAULT_PLAN_ID;
   const entitlements = getEntitlements(planId);
   const active = isSubscriptionActive(subscription?.status);
+  const downloadConfigured = configuredPremiumDownloads().length > 0;
 
   const intents = await prisma.paymentIntent.findMany({
     where: { userId: session.user.id },
@@ -44,6 +46,8 @@ export async function GET() {
         }
       : null,
     active,
+    downloadEligible: active && downloadConfigured,
+    downloadConfigured,
     requiresSubscription: REQUIRE_ACTIVE_SUBSCRIPTION,
     intents: intents.map((intent) => ({
       provider: intent.provider,

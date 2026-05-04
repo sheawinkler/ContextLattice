@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import { PLANS } from "@/lib/billing/plans";
 
 const intervals = ["monthly", "annual"] as const;
@@ -21,6 +22,8 @@ type BillingSummary = {
     currentPeriodEnd?: string | null;
   } | null;
   active: boolean;
+  downloadEligible?: boolean;
+  downloadConfigured?: boolean;
   requiresSubscription: boolean;
   intents: Array<{
     provider: string;
@@ -34,8 +37,9 @@ type BillingSummary = {
   failedIntentCount: number;
 };
 
-export default function BillingPage() {
+function BillingPageContent() {
   const { data: session } = useSession();
+  const searchParams = useSearchParams();
   const [interval, setInterval] = useState<Interval>("monthly");
   const [message, setMessage] = useState<string | null>(null);
   const [solanaUrl, setSolanaUrl] = useState<string | null>(null);
@@ -48,6 +52,35 @@ export default function BillingPage() {
     failedWebhooks: number;
     windowDays: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("success") === "1") {
+      setMessage(
+        "Payment submitted. Once provider webhook finalizes, your premium download lane will unlock.",
+      );
+      return;
+    }
+    if (searchParams.get("canceled") === "1") {
+      setMessage("Checkout canceled. You can retry any plan below.");
+      return;
+    }
+    if (searchParams.get("paypal") === "success") {
+      setMessage("PayPal authorization returned. Capture/webhook reconciliation is in progress.");
+      return;
+    }
+    if (searchParams.get("paypal") === "cancel") {
+      setMessage("PayPal checkout canceled.");
+      return;
+    }
+    if (searchParams.get("coinbase") === "success") {
+      setMessage("Coinbase payment submitted. Awaiting webhook confirmation.");
+      return;
+    }
+    if (searchParams.get("coinbase") === "cancel") {
+      setMessage("Coinbase checkout canceled.");
+      return;
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let mounted = true;
@@ -278,6 +311,19 @@ export default function BillingPage() {
                 details or switch providers to restore access.
               </p>
             ) : null}
+            {summary.downloadConfigured && summary.downloadEligible ? (
+              <p className="text-xs text-emerald-300">
+                Premium downloads are ready.
+              </p>
+            ) : summary.downloadConfigured ? (
+              <p className="text-xs text-amber-300">
+                Premium artifacts are configured but locked until subscription becomes active.
+              </p>
+            ) : (
+              <p className="text-xs text-amber-300">
+                Premium artifacts are not configured by operator yet.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-slate-400">Loading subscription summary…</p>
@@ -394,6 +440,12 @@ export default function BillingPage() {
         >
           Open Stripe portal
         </button>
+        <a
+          className="mt-4 ml-2 inline-flex rounded border border-slate-700 px-4 py-2"
+          href="/downloads"
+        >
+          Open premium downloads
+        </a>
       </section>
 
       <section className="card">
@@ -479,5 +531,13 @@ export default function BillingPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={<div className="card text-sm text-slate-400">Loading billing…</div>}>
+      <BillingPageContent />
+    </Suspense>
   );
 }

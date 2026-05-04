@@ -39,6 +39,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <a className="shell-nav-link" href="/billing">
                   Billing
                 </a>
+                <a className="shell-nav-link" href="/downloads">
+                  Downloads
+                </a>
                 <a className="shell-nav-link" href="/settings">
                   Settings
                 </a>
