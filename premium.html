@@ -34,11 +34,15 @@
       <span class="badge">Premium</span>
       <h1>Choose the lane that matches your workload.</h1>
       <p class="sub">
-        Free stays high-quality and local-first. Premium adds entitlement control,
-        paid-provider billing surfaces, and advanced operations tooling for teams running
-        production-grade agent workloads.
+        Free stays high-quality and local-first. Premium adds team controls,
+        downloadable paid builds, and advanced operational tooling for production agent workloads.
       </p>
       <p class="muted-note">Hosted target surface: <code>app.contextlattice.io</code></p>
+      <div class="cta-row">
+        <a class="cta primary" href="https://app.contextlattice.io/billing" target="_blank" rel="noreferrer">Buy Premium</a>
+        <a class="cta secondary" href="https://app.contextlattice.io/downloads" target="_blank" rel="noreferrer">Premium Downloads</a>
+        <a class="cta secondary" href="https://app.contextlattice.io/auth/register" target="_blank" rel="noreferrer">Create Paid Account</a>
+      </div>
     </section>
 
     <section class="section">
@@ -131,31 +135,24 @@
       <div class="grid">
         <article class="card">
           <div class="kicker">Payment rails</div>
-          <h3>Supported methods</h3>
-          <ul class="spec-list">
-            <li>Stripe subscriptions (cards + Apple Pay + Google Pay through Stripe)</li>
-            <li>PayPal (order/capture/webhook flow)</li>
-            <li>Solana Pay (operator-verified flow)</li>
-            <li>Kraken Pay (operator-verified flow)</li>
-          </ul>
-          <p class="muted-note">Coinbase Commerce stays disabled for this launch scope.</p>
-        </article>
-        <article class="card">
-          <div class="kicker">Operator setup</div>
-          <h3>Production keys and controls</h3>
-          <ul class="spec-list">
-            <li><strong>Premium secret file:</strong> <code>~/.config/contextlattice/.env.premium</code></li>
-            <li><strong>Alias:</strong> <code>~/.contextlattice-paid.env</code></li>
-            <li><strong>Gate command:</strong> <code>scripts/paid_launch_checklist.sh --profile prod</code></li>
-            <li><strong>Webhook base:</strong> <code>https://app.contextlattice.io/api/billing/*</code></li>
-          </ul>
+          <h3>Pick a payment option</h3>
+          <p class="muted-note">
+            All options route to the same secure billing flow at <code>app.contextlattice.io/billing</code>.
+          </p>
+          <div class="cta-row">
+            <a class="cta primary" href="https://app.contextlattice.io/billing" target="_blank" rel="noreferrer">Card / Stripe</a>
+            <a class="cta secondary" href="https://app.contextlattice.io/billing?provider=paypal" target="_blank" rel="noreferrer">PayPal</a>
+            <a class="cta secondary" href="https://app.contextlattice.io/billing?provider=solana-pay" target="_blank" rel="noreferrer">Solana Pay</a>
+            <a class="cta secondary" href="https://app.contextlattice.io/billing?provider=kraken" target="_blank" rel="noreferrer">Kraken Pay</a>
+          </div>
+          <p class="muted-note">Apple Pay and Google Pay are available through Stripe checkout when supported by device/browser.</p>
         </article>
       </div>
     </section>
 
     <footer class="footer">
-      <span>Premium lane definitions are tracked with paid launch gates.</span>
-      <span>For implementation detail, see private commercialization docs in the dev repository.</span>
+      <span>Need deployment help? Use the Installation and App pages to choose local or hosted setup.</span>
+      <span>Billing and entitlement unlock premium downloads automatically after successful payment verification.</span>
     </footer>
   </main>
 </body>
