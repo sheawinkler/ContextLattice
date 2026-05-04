@@ -32,6 +32,10 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 - Common profile keys:
   - `codex`, `claude-code`, `opencode`, `hermes-agent`
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
+- Global helper CLIs (auto-installed by quickstart/installers):
+  - `contextlattice_agent_orchestration` (preflight/task helpers)
+  - `contextlattice_search` (lifecycle-aware search helper)
+  - `contextlattice_write` (checkpoint write helper)
 
 ## 3) Checkpoints and Final Recency Pass
 - During long tasks, write concise checkpoints via `POST /memory/write`.

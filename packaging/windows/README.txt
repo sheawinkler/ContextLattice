@@ -16,6 +16,9 @@ How to use:
 1) Open "ContextLattice-Install.cmd" as Administrator.
 2) Wait for Docker compose stack launch.
 3) Open "ContextLattice-Monitor.cmd" for health/status/telemetry checks.
+4) Open a new terminal and verify global helpers:
+   - contextlattice_search -h
+   - contextlattice_write -h
 
 Requirements:
 - Docker Desktop (running)

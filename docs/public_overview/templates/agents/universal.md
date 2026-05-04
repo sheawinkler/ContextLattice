@@ -32,4 +32,11 @@ python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-i
 # any-working-directory invocation
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
+
+# global wrapper invocation (auto-installed by quickstart/installers)
+contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integration
+
+# global retrieval/write helpers
+contextlattice_search -h
+contextlattice_write -h
 ```
