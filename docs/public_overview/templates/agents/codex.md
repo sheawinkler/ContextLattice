@@ -19,6 +19,8 @@ Preflight:
 # Or from any working directory:
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
+# Or from globally installed wrapper (~/.contextlattice/bin):
+contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integration
 ```
 
 Behavior contract:

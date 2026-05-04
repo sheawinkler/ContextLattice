@@ -14,6 +14,9 @@ How to use:
 1) Run ./ContextLattice-Install.sh
 2) Wait for Docker compose stack launch
 3) Run ./ContextLattice-Monitor.sh for health/status/telemetry checks
+4) Open a new terminal and verify global helpers:
+   - contextlattice_search -h
+   - contextlattice_write -h
 
 Requirements:
 - Docker Engine/Desktop with Compose v2
