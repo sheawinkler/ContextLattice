@@ -60,6 +60,9 @@ fi
 
 cd "${TARGET_DIR}"
 QUICKSTART_PROFILE_DEFAULT="${QUICKSTART_PROFILE_DEFAULT:-lite}" gmake quickstart
+if [[ -x ./scripts/install_global_agent_tools.sh ]]; then
+  ./scripts/install_global_agent_tools.sh --quiet || true
+fi
 
 INSTR_DIR="${TARGET_DIR}/setup"
 INSTR_FILE="${INSTR_DIR}/agent_smoke_write_read.md"

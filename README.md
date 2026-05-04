@@ -445,6 +445,32 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
 ```
 
+Global agent CLI tools (auto-installed by installers + `gmake quickstart`):
+
+```bash
+# Installed path:
+~/.contextlattice/bin/contextlattice_search
+~/.contextlattice/bin/contextlattice_write
+
+# Help output
+contextlattice_search -h
+contextlattice_write -h
+
+# Example scoped search
+contextlattice_search \
+  --query "phase B rollout status" \
+  --project contextlattice \
+  --topic-path runbooks/codex-integration \
+  --mode balanced
+
+# Example write checkpoint
+contextlattice_write \
+  --project contextlattice \
+  --file notes/codex/checkpoint.md \
+  --topic-path runbooks/codex-integration \
+  --content "Checkpoint: updated global CLI tool install flow."
+```
+
 Profile-aware preflight helpers:
 
 ```bash

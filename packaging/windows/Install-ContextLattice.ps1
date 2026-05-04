@@ -81,6 +81,15 @@ if (-not (Test-Path $InstallDir)) {
 
 Set-Location $InstallDir
 
+if (Test-Path "scripts\install_global_agent_tools.ps1") {
+    Write-Host "Installing global agent tools..."
+    try {
+        & powershell -ExecutionPolicy Bypass -File "scripts\install_global_agent_tools.ps1"
+    } catch {
+        Write-Warning "Global agent tool install failed: $($_.Exception.Message)"
+    }
+}
+
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
 }

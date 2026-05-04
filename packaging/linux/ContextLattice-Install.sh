@@ -80,6 +80,7 @@ echo "Install dir: ${INSTALL_DIR}"
 
 require_cmd git "Install git and rerun."
 require_cmd docker "Install Docker Engine/Desktop (with Compose v2) and rerun."
+require_cmd python3 "Install Python 3 and rerun."
 
 if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
   echo "Cloning repository..."
@@ -90,6 +91,11 @@ else
 fi
 
 cd "${INSTALL_DIR}"
+
+if [[ -x scripts/install_global_agent_tools.sh ]]; then
+  echo "Installing global agent tools..."
+  scripts/install_global_agent_tools.sh --quiet || echo "WARN: could not install global agent tools."
+fi
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
