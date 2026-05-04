@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
@@ -10,7 +10,22 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [oauthProviders, setOauthProviders] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
   const router = useRouter();
+
+  useEffect(() => {
+    fetch("/api/auth/providers")
+      .then((res) => res.json())
+      .then((providers) => {
+        const list = Object.values(providers || {})
+          .filter((provider: any) => provider.id !== "credentials")
+          .map((provider: any) => ({ id: provider.id, name: provider.name }));
+        setOauthProviders(list);
+      })
+      .catch(() => undefined);
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -87,6 +102,22 @@ export default function RegisterPage() {
           {loading ? "Creating..." : "Create account"}
         </button>
       </form>
+      {oauthProviders.length > 0 ? (
+        <div className="mt-6 space-y-2">
+          <div className="text-xs uppercase tracking-wide text-slate-500">
+            Or continue with
+          </div>
+          {oauthProviders.map((provider) => (
+            <button
+              key={provider.id}
+              className="w-full rounded border border-slate-700 py-2 text-sm"
+              onClick={() => signIn(provider.id, { callbackUrl: "/billing" })}
+            >
+              Sign in with {provider.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <p className="text-sm text-slate-400 mt-4">
         Already have an account?{" "}
         <a className="text-emerald-300" href="/auth/login">
