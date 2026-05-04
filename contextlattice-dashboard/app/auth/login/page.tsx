@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -15,6 +15,8 @@ export default function LoginPage() {
   const router = useRouter();
   const params = useSearchParams();
   const callbackUrl = params.get("callbackUrl") || "/billing";
+  const providerHint = (params.get("provider") || "").toLowerCase();
+  const providerAutoLaunchRef = useRef(false);
 
   useEffect(() => {
     fetch("/api/auth/providers")
@@ -27,6 +29,21 @@ export default function LoginPage() {
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (providerAutoLaunchRef.current) {
+      return;
+    }
+    if (!providerHint || oauthProviders.length === 0) {
+      return;
+    }
+    const match = oauthProviders.find((provider) => provider.id === providerHint);
+    if (!match) {
+      return;
+    }
+    providerAutoLaunchRef.current = true;
+    signIn(match.id, { callbackUrl });
+  }, [providerHint, oauthProviders, callbackUrl]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -97,6 +114,11 @@ export default function LoginPage() {
             </button>
           ))}
         </div>
+      ) : null}
+      {providerHint && oauthProviders.length > 0 && !oauthProviders.find((provider) => provider.id === providerHint) ? (
+        <p className="text-sm text-amber-300 mt-3">
+          Requested provider is not configured on this deployment.
+        </p>
       ) : null}
       <p className="text-sm text-slate-400 mt-4">
         Need an account?{" "}
