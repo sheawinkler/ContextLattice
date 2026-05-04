@@ -456,6 +456,16 @@ configure_tool_role_split
 
 configure_mindsdb_smoke_requirement
 
+if [[ "${CONTEXTLATTICE_SKIP_GLOBAL_TOOLS:-0}" != "1" ]]; then
+  echo ">> Installing global agent tools to ~/.contextlattice/bin"
+  if [[ -x "scripts/install_global_agent_tools.sh" ]]; then
+    scripts/install_global_agent_tools.sh --quiet
+  else
+    echo "ERROR: scripts/install_global_agent_tools.sh is missing." >&2
+    exit 1
+  fi
+fi
+
 if [[ "$BOOTSTRAP" == "1" ]]; then
   echo ">> Bootstrapping stack with gmake mem-up"
   gmake mem-up
