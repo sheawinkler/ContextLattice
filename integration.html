@@ -193,7 +193,13 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 # local helper script
 python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice
 python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
-python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice</code></pre>
+python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
+
+# auto-installed global CLI wrappers (~/.contextlattice/bin)
+contextlattice_search --query "release readiness" --project contextlattice --topic-path runbooks/codex-integration
+contextlattice_write --project contextlattice --file notes/codex/checkpoint.md --content "checkpoint saved" --topic-path runbooks/codex-integration
+contextlattice_search -h
+contextlattice_write -h</code></pre>
         <ul class="spec-list">
           <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
           <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>
