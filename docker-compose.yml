@@ -1295,8 +1295,8 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: ${DASHBOARD_DATABASE_URL:-file:/data/dashboard.db}
-      NEXTAUTH_URL: ${DASHBOARD_URL:-http://localhost:3000}
-      APP_URL: ${DASHBOARD_URL:-http://localhost:3000}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-${DASHBOARD_URL:-http://localhost:3000}}
+      APP_URL: ${APP_URL:-${DASHBOARD_URL:-http://localhost:3000}}
       NEXTAUTH_SECRET: ${DASHBOARD_NEXTAUTH_SECRET:-dev_secret_change_me}
       AUTH_REQUIRED: ${DASHBOARD_AUTH_REQUIRED:-false}
       CONTEXTLATTICE_ORCHESTRATOR_URL: http://gateway-go:8091
