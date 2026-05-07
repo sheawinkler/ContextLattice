@@ -10,6 +10,8 @@ This folder is the source for the public ContextLattice overview web pages.
 - `roadmap.html` - V3 integration and efficacy roadmap
 - `installation.html` - install and launch command guide
 - `integration.html` - client integration playbook
+- `premium.html` - paid tiers and free-vs-paid capability matrix
+- `app.html` - `app.contextlattice.io` public app-surface overview
 - `troubleshooting.html` - install/runtime recovery guide
 - `contact.html` - contact page
 - `styles.css` - shared styles
@@ -48,6 +50,8 @@ This syncs:
 - `roadmap.html`
 - `installation.html`
 - `integration.html`
+- `premium.html`
+- `app.html`
 - `troubleshooting.html`
 - `contact.html`
 - `styles.css`
