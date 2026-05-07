@@ -67,7 +67,9 @@ export const authOptions: NextAuthOptions = {
           }),
         ]
       : []),
-    ...(process.env.APPLE_ID && process.env.APPLE_CLIENT_SECRET
+    ...(process.env.APPLE_OAUTH_ENABLED === "true" &&
+      process.env.APPLE_ID &&
+      process.env.APPLE_CLIENT_SECRET
       ? [
           AppleProvider({
             clientId: process.env.APPLE_ID,
