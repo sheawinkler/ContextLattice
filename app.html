@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>App Surface | Context Lattice</title>
-  <meta name="description" content="app.contextlattice.io routing, webhook endpoints, and hosted split for premium operations." />
+  <meta name="description" content="app.contextlattice.io routing and hosted split for premium operations." />
   <link rel="stylesheet" href="styles-gray.css?v=20260427a" />
 </head>
 <body class="home">
@@ -34,9 +34,8 @@
       <span class="badge">Hosted app surface</span>
       <h1><code>app.contextlattice.io</code> is the premium control plane entrypoint.</h1>
       <p class="sub">
-        Keep public docs on <code>contextlattice.io</code>, route paid app traffic to
-        <code>app.contextlattice.io</code>, and route runtime API traffic to
-        <code>api.contextlattice.io</code> (or equivalent ingress split).
+        Keep public docs on <code>contextlattice.io</code> and route paid app traffic to
+        <code>app.contextlattice.io</code>. Internal service topology stays private.
       </p>
       <div class="cta-row">
         <a class="cta primary" href="https://app.contextlattice.io/billing" target="_blank" rel="noreferrer">Open Billing</a>
@@ -52,62 +51,32 @@
         <div class="mermaid">
 flowchart LR
   A[contextlattice.io] --> B[Public docs + downloads]
-  C[app.contextlattice.io] --> D[Dashboard + Auth + Billing APIs]
-  E[api.contextlattice.io] --> F[Gateway-Go :8075]
-  D --> E
-  F --> G[Fast retrieval lanes]
-  F --> H[Slow continuation lanes]
+  C[app.contextlattice.io] --> D[Dashboard + Auth + Billing]
+  D --> E[Private runtime services]
         </div>
       </article>
     </section>
 
     <section class="section">
       <article class="card">
-        <div class="kicker">Webhook routing</div>
-        <h3>Provider callbacks for paid operations</h3>
-        <table class="lane-table">
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Method</th>
-              <th>Endpoint</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Stripe</td>
-              <td>POST</td>
-              <td><code>https://app.contextlattice.io/api/billing/stripe/webhook</code></td>
-            </tr>
-            <tr>
-              <td>PayPal</td>
-              <td>POST</td>
-              <td><code>https://app.contextlattice.io/api/billing/paypal/webhook</code></td>
-            </tr>
-            <tr>
-              <td>Solana Pay verify</td>
-              <td>POST</td>
-              <td><code>https://app.contextlattice.io/api/billing/solana-pay/verify</code></td>
-            </tr>
-            <tr>
-              <td>Kraken verify</td>
-              <td>POST</td>
-              <td><code>https://app.contextlattice.io/api/billing/kraken/verify</code></td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="kicker">Billing operations</div>
+        <h3>Billing infrastructure is managed privately</h3>
+        <p class="muted-note">
+          Public pages intentionally do not publish internal billing route maps, verification controls,
+          or reconciliation internals. Those stay in private operator config.
+        </p>
       </article>
     </section>
 
     <section class="section">
       <div class="grid">
         <article class="card">
-          <div class="kicker">DNS checklist</div>
-          <h3>What to point where</h3>
+          <div class="kicker">Domain strategy</div>
+          <h3>Public routing (high-level)</h3>
           <ul class="spec-list">
-            <li><code>contextlattice.io</code> -> static docs host (GitHub Pages today)</li>
-            <li><code>app.contextlattice.io</code> -> dashboard host (Next.js + billing APIs)</li>
-            <li><code>api.contextlattice.io</code> -> orchestrator ingress for agent/runtime calls</li>
+            <li><code>contextlattice.io</code> -> public site and documentation.</li>
+            <li><code>app.contextlattice.io</code> -> premium app, auth, and billing experience.</li>
+            <li>Internal routing, callback handlers, and service lanes are private operator config.</li>
           </ul>
         </article>
         <article class="card">
@@ -116,7 +85,7 @@ flowchart LR
           <ul class="spec-list">
             <li><strong>Now:</strong> app domain handles auth, billing, entitlement state, and paid console.</li>
             <li><strong>Later:</strong> optionally serve the lightweight app/lite runtime surface from the same domain.</li>
-            <li><strong>Always:</strong> keep webhook endpoints on app domain for deterministic provider configuration.</li>
+            <li><strong>Always:</strong> keep premium operations on app-domain infrastructure only.</li>
           </ul>
         </article>
       </div>

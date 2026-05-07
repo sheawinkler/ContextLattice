@@ -197,7 +197,7 @@ curl -fsS -X POST -H "x-api-key: ${ORCH_KEY}" \
         <article class="card component-card">
           <h3>Messaging bridge not posting</h3>
           <p><strong>Impact:</strong> Telegram/Slack/OpenClaw commands do not write or recall memory.</p>
-          <p><strong>Action:</strong> verify webhook env vars and host routing. Keep marketing on <code>contextlattice.io</code> and route paid/billing webhooks to <code>app.contextlattice.io</code>. Then smoke test the command endpoint directly.</p>
+          <p><strong>Action:</strong> verify billing/provider environment variables and host routing using your private operator runbook. Then smoke test the command endpoint directly.</p>
 <pre><code>curl -fsS -H 'content-type: application/json' \
   -H "x-api-key: ${ORCH_KEY}" \
   -d '{"channel":"openclaw","source_id":"chat-1","text":"@ContextLattice status"}' \

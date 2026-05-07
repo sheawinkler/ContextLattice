@@ -6,6 +6,7 @@
   <title>Premium Plans | Context Lattice</title>
   <meta name="description" content="ContextLattice Premium plans, feature tiers, and free-vs-paid capability breakdown." />
   <link rel="stylesheet" href="styles-gray.css?v=20260427a" />
+  <link rel="stylesheet" href="styles-fracture.css?v=20260507a" />
 </head>
 <body class="home">
   <main class="container">
@@ -48,7 +49,7 @@
       <article class="card">
         <div class="kicker">Tier matrix</div>
         <h3>Subscription lanes</h3>
-        <table class="lane-table">
+        <table class="lane-table lane-table-stack">
           <thead>
             <tr>
               <th>Tier</th>
@@ -59,28 +60,28 @@
           </thead>
           <tbody>
             <tr>
-              <td><strong>Free</strong></td>
-              <td>$0</td>
-              <td>Solo builders, local development</td>
-              <td>Go/Rust runtime, staged retrieval, dashboard, local packages</td>
+              <td data-label="Tier"><strong>Free</strong></td>
+              <td data-label="Price (USD)">$0</td>
+              <td data-label="Best for">Solo builders, local development</td>
+              <td data-label="Included">Go/Rust runtime, staged retrieval, dashboard, local packages</td>
             </tr>
             <tr>
-              <td><strong>Starter</strong></td>
-              <td>$19/mo or $190/yr</td>
-              <td>Single operator paid usage</td>
-              <td>Everything in Free + entitlement-ready billing hooks</td>
+              <td data-label="Tier"><strong>Starter</strong></td>
+              <td data-label="Price (USD)">$19/mo or $190/yr</td>
+              <td data-label="Best for">Single operator paid usage</td>
+              <td data-label="Included">Everything in Free + entitlement-ready billing hooks</td>
             </tr>
             <tr>
-              <td><strong>Team</strong></td>
-              <td>$79/mo or $790/yr</td>
-              <td>Small teams shipping agents</td>
-              <td>Shared workspace controls, pro analytics access, plan-based enforcement</td>
+              <td data-label="Tier"><strong>Team</strong></td>
+              <td data-label="Price (USD)">$79/mo or $790/yr</td>
+              <td data-label="Best for">Small teams shipping agents</td>
+              <td data-label="Included">Shared workspace controls, pro analytics access, plan-based enforcement</td>
             </tr>
             <tr>
-              <td><strong>Enterprise</strong></td>
-              <td>$249/mo or $2490/yr</td>
-              <td>Compliance + high scale</td>
-              <td>SAML/SCIM readiness, custom retention policy packs, private network posture</td>
+              <td data-label="Tier"><strong>Enterprise</strong></td>
+              <td data-label="Price (USD)">$249/mo or $2490/yr</td>
+              <td data-label="Best for">Compliance + high scale</td>
+              <td data-label="Included">SAML/SCIM readiness, custom retention policy packs, private network posture</td>
             </tr>
           </tbody>
         </table>
@@ -91,7 +92,7 @@
       <article class="card">
         <div class="kicker">Free vs paid</div>
         <h3>Capability deltas</h3>
-        <table class="lane-table">
+        <table class="lane-table lane-table-stack">
           <thead>
             <tr>
               <th>Capability</th>
@@ -101,29 +102,29 @@
           </thead>
           <tbody>
             <tr>
-              <td>Core runtime</td>
-              <td>Go gateway + Rust lanes + Python fallback</td>
-              <td>Same, with strict entitlement gating paths available</td>
+              <td data-label="Capability">Core runtime</td>
+              <td data-label="Public free">Go gateway + Rust lanes + Python fallback</td>
+              <td data-label="Premium">Same core performance, plus premium access controls and policy packs</td>
             </tr>
             <tr>
-              <td>Billing providers</td>
-              <td>Optional self-host setup</td>
-              <td>Stripe + PayPal + Solana/Kraken flow with entitlement coupling</td>
+              <td data-label="Capability">Billing providers</td>
+              <td data-label="Public free">Optional self-host setup</td>
+              <td data-label="Premium">Hosted checkout and subscription lifecycle automation</td>
             </tr>
             <tr>
-              <td>Pro analytics</td>
-              <td>Baseline dashboard</td>
-              <td>Role/plan-gated analytics endpoints</td>
+              <td data-label="Capability">Pro analytics</td>
+              <td data-label="Public free">Baseline dashboard</td>
+              <td data-label="Premium">Role/plan-gated analytics endpoints</td>
             </tr>
             <tr>
-              <td>Launch gating</td>
-              <td>General release checks</td>
-              <td>Paid launch gate checklist with billing + compliance checks</td>
+              <td data-label="Capability">Launch gating</td>
+              <td data-label="Public free">General release checks</td>
+              <td data-label="Premium">Premium runbooks, staged rollout controls, and operator-grade guardrails</td>
             </tr>
             <tr>
-              <td>Hosted posture</td>
-              <td>Local/self-host</td>
-              <td>Designed for hosted control plane split (<code>api</code> + <code>app</code>)</td>
+              <td data-label="Capability">Hosted posture</td>
+              <td data-label="Public free">Local/self-host</td>
+              <td data-label="Premium">Managed premium deployment with dedicated app surface</td>
             </tr>
           </tbody>
         </table>
@@ -151,7 +152,7 @@
 
     <footer class="footer">
       <span>Need deployment help? Use the Installation and App pages to choose local or hosted setup.</span>
-      <span>Billing and entitlement unlock premium downloads automatically after successful payment verification.</span>
+      <span>Premium subscribers get immediate access to gated downloads after payment confirmation.</span>
     </footer>
   </main>
 </body>
