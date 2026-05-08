@@ -71,7 +71,6 @@ curl -fsS http://127.0.0.1:8075/health | jq
 | --- | --- | --- | --- |
 | Lite | `2-4` vCPU | `8-12 GB` | `25-80 GB` |
 | Full | `6-8` vCPU | `12-20 GB` | `100-180 GB` |
-| Full + spike-lab (optional) | `8-12` vCPU | `24-32 GB` | `180-300 GB` |
 
 ## Security and Privacy
 
