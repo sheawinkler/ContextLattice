@@ -26,6 +26,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Durable fanout across retrieval/storage lanes.
 - Staged retrieval (fast now, deep continuation when needed).
 - Go/Rust runtime ownership for the active application path.
+- Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
 - Local-first deployment with optional hosted surfaces.
 
 ## Public Runtime Stack (v3)
@@ -34,6 +35,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Core memory + retrieval lanes: Go + Rust services.
 - Degradation policy: fail-open retrieval with continuation lifecycle.
 - Tooling compatibility: MCP + HTTP clients.
+- Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
 
 ## Quickstart
 

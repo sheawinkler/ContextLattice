@@ -27,7 +27,7 @@ If Glama forces generated Dockerfile mode with a fixed `mcp-proxy --` prefix, us
   - `mcp-proxy`
   - `--`
   - `python`
-  - `services/orchestrator/mcp_stdio_server.py`
+  - `archive/services/orchestrator_legacy_python/mcp_stdio_server.py`
 
 In this mode the Python bridge is transport-only: it starts `gateway-go` and forwards MCP calls to `http://127.0.0.1:8075`.
 
@@ -49,7 +49,7 @@ CMD arguments:
   "mcp-proxy",
   "--",
   "python",
-  "services/orchestrator/mcp_stdio_server.py"
+  "archive/services/orchestrator_legacy_python/mcp_stdio_server.py"
 ]
 ```
 
@@ -213,7 +213,7 @@ Only use this if Go compilation is blocked in generated mode:
 - Build steps:
   - `python -m venv /opt/venv`
   - `/opt/venv/bin/pip install --upgrade pip setuptools wheel`
-  - `/opt/venv/bin/pip install --no-cache-dir -r services/orchestrator/requirements.txt`
+  - `/opt/venv/bin/pip install --no-cache-dir -r archive/services/orchestrator_legacy_python/requirements.txt`
 - Placeholder parameter override:
   - `"ORCH_INTERNAL_RUNTIME": "python-orchestrator"`
 

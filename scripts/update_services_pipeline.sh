@@ -99,8 +99,8 @@ if [[ "$RUN_UNIT_TESTS" == "1" ]]; then
   # shellcheck source=/dev/null
   source "$TEST_VENV_DIR/bin/activate"
   python -m pip install -q --upgrade pip
-  python -m pip install -q -r services/orchestrator/requirements.txt pytest pytest-asyncio
-  pytest -q services/orchestrator/tests/test_orchestrator_retrieval.py
+  python -m pip install -q -r archive/services/orchestrator_legacy_python/requirements.txt pytest pytest-asyncio
+  pytest -q archive/services/orchestrator_legacy_python/tests/test_orchestrator_retrieval.py
   deactivate
 fi
 
