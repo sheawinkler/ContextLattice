@@ -1,6 +1,6 @@
-# Hugging Face Docker Space (Lite)
+# Hugging Face Docker Space (Lite, Go-native)
 
-This guide deploys the single-container lite lane on Hugging Face Spaces with low drift risk and reproducible behavior.
+This guide deploys the single-container lite lane on Hugging Face Spaces using the Go gateway runtime.
 
 ## Resource profile (hf-lite lane)
 
@@ -11,14 +11,9 @@ This guide deploys the single-container lite lane on Hugging Face Spaces with lo
 
 ## What this repo now provides
 
-- `Dockerfile.hf-lite` with pinned runtime defaults for single-container operation.
-- pinned Python dependencies in `services/orchestrator/requirements.txt`.
-- root probe (`GET /`) and health probe (`GET /health`) in `services/orchestrator/app.py`.
+- `Dockerfile.hf-lite` builds `services/gateway-go` and runs it directly on port `7860`.
+- Runtime defaults for strict Go ownership and sqlite-safe lite mode.
 - `.dockerignore` to keep build context small and deterministic.
-
-## Why Python 3.12 here
-
-Glama generated builds can run on Python 3.14 when upstream wheels are available, but 3.12 is the safest baseline for reproducible Docker Space builds across registries and mirrors.
 
 ## Space setup (manual UI steps)
 
@@ -49,6 +44,8 @@ Default deterministic-lite profile (copy as regular variables):
 CONTEXTLATTICE_ENV=development
 ORCH_SECURITY_STRICT=false
 ORCH_PRODUCTION_REQUIRE_API_KEY=false
+GO_RUNTIME_STRICT_NO_PYTHON=true
+GO_PYTHON_HOT_PATH_OWNERSHIP_MODE=strict
 FANOUT_OUTBOX_BACKEND=sqlite
 MONGO_RAW_ENABLED=false
 MINDSDB_ENABLED=false

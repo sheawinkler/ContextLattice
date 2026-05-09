@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1092,7 +1093,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.continuationDurableEnabled = envBool("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", true)
 	policy.continuationDurableDir = strings.TrimSpace(resolveStoragePath(
 		"GO_RETRIEVAL_CONTINUATION_DURABLE_DIR",
-		"services/orchestrator/data/continuation_outbox",
+		filepath.Join(".data", "orchestrator", "continuation_outbox"),
 	))
 	if policy.continuationDurableDir == "" {
 		policy.continuationDurableEnabled = false
@@ -1201,7 +1202,7 @@ func newServer() *server {
 	trackedPaths := defaultTrackedPaths()
 	tradingHistoryPath := strings.TrimSpace(trackedPaths["trading_history"])
 	if tradingHistoryPath == "" {
-		tradingHistoryPath = "services/orchestrator/data/trading_metrics.ndjson"
+		tradingHistoryPath = filepath.Join(".data", "orchestrator", "trading_metrics.ndjson")
 	}
 	tradingHistoryLimit := envInt("TRADING_HISTORY_LIMIT", 256)
 	if tradingHistoryLimit < 1 {

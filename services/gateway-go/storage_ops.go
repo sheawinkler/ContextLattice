@@ -73,7 +73,7 @@ func resolveStoragePath(envName string, fallback string) string {
 }
 
 func defaultTrackedPaths() map[string]string {
-	dataDir := filepath.Join("services", "orchestrator", "data")
+	dataDir := filepath.Join(".data", "orchestrator")
 	return map[string]string{
 		"task_db":                   resolveStoragePath("TASK_DB_PATH", filepath.Join(dataDir, "agent_tasks.db")),
 		"topic_index":               resolveStoragePath("TOPIC_INDEX_PATH", filepath.Join(dataDir, "topic_index.json")),

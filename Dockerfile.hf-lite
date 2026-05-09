@@ -1,40 +1,25 @@
-FROM python:3.12-slim
+FROM golang:1.23-bookworm AS gateway-builder
+WORKDIR /src
+COPY services/gateway-go/go.mod services/gateway-go/go.sum ./services/gateway-go/
+RUN cd services/gateway-go && go mod download
+COPY services/gateway-go ./services/gateway-go
+RUN cd services/gateway-go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/contextlattice-gateway-go .
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=7860 \
-    CONTEXTLATTICE_ENV=development \
-    ORCH_SECURITY_STRICT=false \
-    ORCH_PRODUCTION_REQUIRE_API_KEY=false \
-    SECRETS_STORAGE_MODE=redact \
-    FANOUT_OUTBOX_BACKEND=sqlite \
-    MONGO_RAW_ENABLED=false \
-    MINDSDB_ENABLED=false \
-    ORCH_PGVECTOR_ENABLED=false \
-    ORCH_RETRIEVAL_DEFAULT_SOURCES=topic_rollups \
-    ORCH_RETRIEVAL_FAST_SOURCES=topic_rollups \
-    TOPIC_ROLLUP_SQLITE_ENABLED=true \
-    TOPIC_ROLLUP_SQLITE_FTS_ENABLED=true \
-    TOPIC_ROLLUP_SQLITE_VEC_ENABLED=true \
-    TOPIC_ROLLUP_SQLITE_PATH=/data/topic_rollups.sqlite3 \
-    TASK_DB_PATH=/data/agent_tasks.db \
-    FANOUT_OUTBOX_PAYLOAD_BLOB_DIR=/data/fanout_payload_blobs \
-    ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data \
-    ORCH_STORAGE_GOVERNANCE_RUN_ON_STARTUP=true \
-    ORCH_STORAGE_GOVERNANCE_ENABLED=true \
-    ORCH_STORAGE_GOVERNANCE_INTERVAL_SECS=900 \
-    SIGNAL_REFRESH_ENABLED=false \
-    OVERRIDE_REFRESH_ENABLED=false \
-    SINK_RETENTION_ENABLED=false
+FROM debian:bookworm-slim
+ENV PORT=7860
+ENV GO_RUNTIME_STRICT_NO_PYTHON=true GO_PYTHON_HOT_PATH_OWNERSHIP_MODE=strict
+ENV CONTEXTLATTICE_ENV=development ORCH_SECURITY_STRICT=false ORCH_PRODUCTION_REQUIRE_API_KEY=false SECRETS_STORAGE_MODE=redact
+ENV FANOUT_OUTBOX_BACKEND=sqlite MONGO_RAW_ENABLED=false MINDSDB_ENABLED=false ORCH_PGVECTOR_ENABLED=false
+ENV ORCH_RETRIEVAL_DEFAULT_SOURCES=topic_rollups ORCH_RETRIEVAL_FAST_SOURCES=topic_rollups
+ENV TOPIC_ROLLUP_SQLITE_ENABLED=true TOPIC_ROLLUP_SQLITE_FTS_ENABLED=true TOPIC_ROLLUP_SQLITE_VEC_ENABLED=true
+ENV TOPIC_ROLLUP_SQLITE_PATH=/data/topic_rollups.sqlite3 TASK_DB_PATH=/data/agent_tasks.db
+ENV FANOUT_OUTBOX_PAYLOAD_BLOB_DIR=/data/fanout_payload_blobs ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data
+ENV ORCH_STORAGE_GOVERNANCE_RUN_ON_STARTUP=true ORCH_STORAGE_GOVERNANCE_ENABLED=true ORCH_STORAGE_GOVERNANCE_INTERVAL_SECS=900
+ENV SIGNAL_REFRESH_ENABLED=false OVERRIDE_REFRESH_ENABLED=false SINK_RETENTION_ENABLED=false
+ENV ORCH_INTERNAL_RUNTIME=gateway-go ORCH_START_INTERNAL=false
 
 WORKDIR /app
-
-COPY services/orchestrator/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY services/orchestrator/app.py app.py
-COPY services/orchestrator/runtime ./runtime
-
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=gateway-builder /out/contextlattice-gateway-go /usr/local/bin/contextlattice-gateway-go
 EXPOSE 7860
-
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-7860}"]
+CMD ["/usr/local/bin/contextlattice-gateway-go"]

@@ -16,8 +16,8 @@ const (
 	defaultRecallEvalGateMinRecallAtK   = 0.75
 	defaultRecallEvalGateMinMRR         = 0.55
 	defaultRecallEvalGateMinNumeric     = 0.90
-	defaultRecallEvalCasesRelativePath  = "services/orchestrator/data/recall_eval_cases.json"
-	fallbackRecallEvalCasesRelativePath = "../orchestrator/data/recall_eval_cases.json"
+	defaultRecallEvalCasesRelativePath  = ".data/orchestrator/recall_eval_cases.json"
+	fallbackRecallEvalCasesRelativePath = "services/orchestrator/data/recall_eval_cases.json"
 )
 
 type recallEvalGate struct {
@@ -349,6 +349,7 @@ func resolveRecallEvalCasesPath() string {
 	candidates := []string{
 		filepath.Clean(defaultRecallEvalCasesRelativePath),
 		filepath.Clean(fallbackRecallEvalCasesRelativePath),
+		filepath.Clean("../orchestrator/data/recall_eval_cases.json"),
 		filepath.Clean(filepath.Join("data", "recall_eval_cases.json")),
 	}
 	for _, candidate := range candidates {

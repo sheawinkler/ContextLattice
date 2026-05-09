@@ -39,6 +39,7 @@ def _resolve_db_path(cli_value: str | None) -> Path:
     candidates.extend(
         [
             Path("/Volumes/wd_black/memmcp/orchestrator/agent_tasks.db"),
+            Path(".data/orchestrator/agent_tasks.db"),
             Path("services/orchestrator/data/agent_tasks.db"),
         ]
     )
@@ -48,7 +49,7 @@ def _resolve_db_path(cli_value: str | None) -> Path:
     # Fall back to first candidate for better error visibility.
     if candidates:
         return candidates[0]
-    return Path("services/orchestrator/data/agent_tasks.db")
+    return Path(".data/orchestrator/agent_tasks.db")
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
