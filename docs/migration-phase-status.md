@@ -27,37 +27,37 @@ Implemented in code:
 
 Scaffolded:
 
-- Rust crate: [`crates/context_codec`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/crates/context_codec)
+- Rust crate: [`crates/context_codec`](../crates/context_codec)
 - Python runtime bridge with fallback: `RustCodecBridge`
 
 ## Phase 3: Rust Memory Engine
 
 Scaffolded:
 
-- Rust crate: [`crates/context_engine`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/crates/context_engine)
+- Rust crate: [`crates/context_engine`](../crates/context_engine)
 - Python runtime proxy with fallback: `RustMemoryStoreProxy`
 
 ## Phase 4: Rust Retrieval Engine
 
 Scaffolded:
 
-- Rust crate: [`crates/context_retrieval`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/crates/context_retrieval)
+- Rust crate: [`crates/context_retrieval`](../crates/context_retrieval)
 - Python runtime proxy with fallback: `RustRetrieverProxy`
 
 ## Phase 5: Engine Service Layer
 
 Added:
 
-- Proto contract: [`proto/contextlattice_engine.proto`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/proto/contextlattice_engine.proto)
-- Service API doc: [`docs/engine-api.md`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/docs/engine-api.md)
+- Proto contract: [`proto/contextlattice_engine.proto`](../proto/contextlattice_engine.proto)
+- Service API doc: [`docs/engine-api.md`](engine-api.md)
 - Runtime endpoint: `/migration/runtime`
 
 ## Phase 6: Go Orchestration Layer
 
 Scaffolded:
 
-- Go scheduler service: [`services/orchestrator-go`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/services/orchestrator-go)
-- Go gateway service: [`services/gateway-go`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/services/gateway-go)
+- Go scheduler service: [`services/orchestrator-go`](../services/orchestrator-go)
+- Go gateway service: [`services/gateway-go`](../services/gateway-go)
 - Python proxy with fallback: `GoSchedulerProxy`
 
 ## Phase 7: Latency Reduction
