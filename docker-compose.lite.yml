@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
 
   mcp-qdrant:
-    build: { context: ., dockerfile: dockerfile }
+    build: { context: ., dockerfile: Dockerfile.qdrant-mcp }
     depends_on: [qdrant]
     environment:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}

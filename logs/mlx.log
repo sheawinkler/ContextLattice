@@ -1,3 +1,0 @@
-/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/.venv-mlx/lib/python3.12/site-packages/mlx_lm/server.py:973: UserWarning: mlx_lm.server is not recommended for production as it only implements basic security checks.
-  warnings.warn(
-2026-01-08 19:33:05,282 - INFO - Starting httpd at 127.0.0.1 on port 18087...
