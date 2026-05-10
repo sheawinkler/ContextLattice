@@ -17,7 +17,7 @@ gmake bench-qdrant-tuning
 Latest sample artifact:
 - `bench/results/qdrant_tuning_20260313T213430Z.json`
 - `bench/results/qdrant_tuning_20260314T093111Z.json`
-- `bench/results/qdrant_tuning_latest.json` (auto-refreshed by `bench/qdrant_tuning_matrix.py`)
+- `bench/results/qdrant_tuning_latest.json` (auto-refreshed by `tooling/python/bench/qdrant_tuning_matrix.py`)
 
 ## Tuning Matrix
 Evaluate one profile change at a time:

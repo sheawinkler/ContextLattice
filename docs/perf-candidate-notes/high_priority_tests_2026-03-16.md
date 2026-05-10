@@ -57,6 +57,6 @@ Artifacts:
 1. Keep seeded corpus validation enabled in benchmark matrix to prevent false sparse-hit regressions.
 2. Promote quickwit/tantivy direct-spike lane experiments first (best p95 among currently integrated spike backends).
 3. Wire at least one external candidate endpoint (`trieve` or `helixdb`) and rerun both:
-   - `bench/high_priority_candidate_probe.py`
-   - `bench/memory_bank_spike_direct_matrix.py --backends ...`
+   - `tooling/python/bench/high_priority_candidate_probe.py`
+   - `tooling/python/bench/memory_bank_spike_direct_matrix.py --backends ...`
 4. Promote an adapter lane only after it shows non-zero results with error-rate <= existing spike lanes and lower p95 under cache-busted runs.

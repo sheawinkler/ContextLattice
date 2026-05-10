@@ -54,7 +54,7 @@ def _build_cmd() -> list[str]:
 
     cmd = [
         "python3",
-        "/app/bench/perf_shortlist_matrix.py",
+        "/app/tooling/python/bench/perf_shortlist_matrix.py",
         "--base-url",
         base_url,
         "--project",

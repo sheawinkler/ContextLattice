@@ -62,13 +62,13 @@ These are operator/benchmark/manual tools and remain useful even if not fallback
 - Ops/audit scripts (retention, storage audit, service version audit, launch lock, submission preflight)
 - External runner shims under `scripts/agent_runners/`
 - Terminal/monitoring helpers (`scripts/terminal_dashboard.py`, `scripts/monitor_opus.py`)
-- Launch/copy generation tooling (`launch_service/generate_launch_docs.py`)
+- Launch/copy generation tooling (`tooling/python/launch/generate_launch_docs.py`)
 
 ## Unreferenced-in-repo Entry Scripts (Manual-use utilities)
 
 The following have low/no direct in-repo references but are valid operator entrypoints (manual invocation):
 
-- `launch_service/generate_launch_docs.py`
+- `tooling/python/launch/generate_launch_docs.py`
 - `scripts/gateway_autoreg.py`
 - `scripts/monitor_opus.py`
 - `scripts/seed_qdrant.py`

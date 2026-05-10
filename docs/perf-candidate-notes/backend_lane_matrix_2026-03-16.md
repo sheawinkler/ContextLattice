@@ -6,7 +6,7 @@ Artifact:
 Command:
 
 ```bash
-python3 bench/backend_lane_matrix.py \
+python3 tooling/python/bench/backend_lane_matrix.py \
   --base-url http://127.0.0.1:8075 \
   --api-key "$API_KEY" \
   --project contextlattice \
