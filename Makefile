@@ -77,15 +77,15 @@ test-py:
 
 bench-shortlist:
 > api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"; \
-> python3 bench/perf_shortlist_matrix.py --api-key "$$api_key"
+> python3 tooling/python/bench/perf_shortlist_matrix.py --api-key "$$api_key"
 
 bench-qdrant-tuning:
 > api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"; \
-> python3 bench/qdrant_tuning_matrix.py --api-key "$$api_key"
+> python3 tooling/python/bench/qdrant_tuning_matrix.py --api-key "$$api_key"
 
 bench-backend-lanes:
 > api_key="$${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}"; \
-> python3 bench/backend_lane_matrix.py --api-key "$$api_key"
+> python3 tooling/python/bench/backend_lane_matrix.py --api-key "$$api_key"
 
 # ---- One-shot launcher ----
 

@@ -62,7 +62,7 @@ MEMORY_BANK_SPIKE_RS_HELIXDB_API_KEY=
 
 ## Evaluation sequence
 
-1. `native` baseline: run `bench/perf_shortlist_matrix.py`.
+1. `native` baseline: run `tooling/python/bench/perf_shortlist_matrix.py`.
 2. Enable `meilisearch_spike` sidecar and rerun matrix.
 3. Enable `quickwit_spike` sidecar and rerun matrix.
 4. Enable `tantivy_spike` sidecar and rerun matrix.

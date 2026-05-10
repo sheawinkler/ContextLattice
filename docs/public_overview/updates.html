@@ -184,7 +184,7 @@
         <h3>Rust+Go runtime is now default; Python retained as legacy fallback</h3>
         <p class="spotlight">
           We ran a live A/B on the same <code>/memory/search</code> path before and after cutover.
-          Test profile: <code>bench/phase1_runtime_comparison.py</code>, <code>8</code> requests, <code>20s</code> timeout.
+          Test profile: <code>tooling/python/bench/phase1_runtime_comparison.py</code>, <code>8</code> requests, <code>20s</code> timeout.
         </p>
         <ul>
           <li>Cutover ON (Rust+Go): mean <code>3557ms</code>, p50 <code>2334ms</code>, p95 <code>8494ms</code>, p99 <code>9359ms</code>, errors <code>0/8</code>.</li>

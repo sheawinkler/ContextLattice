@@ -1,0 +1,3 @@
+# Keep archived legacy Python from dominating language stats.
+archive/services/orchestrator_legacy_python/** linguist-vendored
+EOF
