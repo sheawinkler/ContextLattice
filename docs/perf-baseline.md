@@ -6,19 +6,19 @@ Phase 0 baseline for the current Python implementation prior to Rust/Go migratio
 
 Date: `2026-03-04`  
 Run ID: `20260304T102535Z`  
-Harness: [tooling/python/bench/phase0_baseline.py](tooling/python/bench/phase0_baseline.py)  
-Raw results: [bench/results/phase0_baseline_20260304T102535Z.json](bench/results/phase0_baseline_20260304T102535Z.json)
+Harness: [tooling/python/bench/phase0_baseline.py](../tooling/python/bench/phase0_baseline.py)  
+Raw results: [bench/results/phase0_baseline_20260304T102535Z.json](../bench/results/phase0_baseline_20260304T102535Z.json)
 
 ## Python Architecture Inventory
 
 Python footprint in-repo:
 
 - Total Python files: `31`
-- Core hot path: [services/orchestrator/app.py](services/orchestrator/app.py) (`15,544` LOC)
+- Core hot path: [services/orchestrator/app.py](../services/orchestrator/app.py) (`15,544` LOC)
 - Agent/task scripts: `scripts/` + `scripts/agent_runners/`
 - Existing perf-related scripts:
-  - [scripts/load_test_memory_write.py](scripts/load_test_memory_write.py)
-  - [scripts/retrieval_soak_monitor.py](scripts/retrieval_soak_monitor.py)
+  - [scripts/load_test_memory_write.py](../scripts/load_test_memory_write.py)
+  - [scripts/retrieval_soak_monitor.py](../scripts/retrieval_soak_monitor.py)
 
 ## Workload Results
 
@@ -102,7 +102,7 @@ Representative docker stats (`docker stats --no-stream`) at run end:
 
 Phase 1 interface proposal is documented in:
 
-- [docs/migration-interfaces.md](docs/migration-interfaces.md)
+- [docs/migration-interfaces.md](migration-interfaces.md)
 
 Feature flags proposed:
 
