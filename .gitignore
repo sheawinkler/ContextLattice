@@ -15,6 +15,7 @@
 .yaml.err
 docker-compose.override.yml
 .backup/
+.ops/snapshots/*.tar.gz
 
 # local venvs & logs
 .venv-*
