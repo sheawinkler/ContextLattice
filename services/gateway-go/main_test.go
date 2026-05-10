@@ -394,6 +394,7 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
 
 	var calledPath string
+	var retrievalRequestBody string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calledPath = r.URL.Path
 		if r.URL.Path == "/health" {
@@ -405,6 +406,8 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		raw, _ := io.ReadAll(r.Body)
+		retrievalRequestBody = string(raw)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"alpha summary","score":0.93}],"warnings":[]}`))
@@ -415,7 +418,7 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"query":"alpha","limit":5,"include_grounding":true,"agent_id":"codex_gpt5"}`
+	reqBody := `{"query":"alpha","limit":5,"include_grounding":true,"agent_id":"codex_gpt5","objective":"ship premium launch","goal":"increase subscriber conversion","mission":"compound knowledge over time"}`
 	resp, err := http.Post(gateway.URL+"/memory/search", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -439,9 +442,29 @@ func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	if !anyToBool(payload["learning_enabled"]) {
 		t.Fatalf("expected learning_enabled=true")
 	}
+	objectiveContext, ok := payload["objective_context"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected objective_context payload, got %#v", payload["objective_context"])
+	}
+	if strings.TrimSpace(anyToString(objectiveContext["objective"])) != "ship premium launch" {
+		t.Fatalf("expected objective_context.objective to propagate request objective, got %#v", objectiveContext["objective"])
+	}
+	objectiveCapture, ok := payload["objective_context_capture"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected objective_context_capture payload, got %#v", payload["objective_context_capture"])
+	}
+	if strings.TrimSpace(anyToString(objectiveCapture["reason"])) != "memory_store_unavailable" {
+		t.Fatalf("expected objective context capture to explain skipped write in tests, got %#v", objectiveCapture)
+	}
 	grounding, ok := payload["grounding"].(map[string]any)
 	if !ok || !anyToBool(grounding["strict_numeric_copy"]) {
 		t.Fatalf("expected grounding.strict_numeric_copy=true, got %#v", payload["grounding"])
+	}
+	if !strings.Contains(retrievalRequestBody, `"objective_context"`) {
+		t.Fatalf("expected retrieval request to include objective_context, got %s", retrievalRequestBody)
+	}
+	if !strings.Contains(retrievalRequestBody, `"query_expansion"`) {
+		t.Fatalf("expected retrieval request to include query_expansion setting, got %s", retrievalRequestBody)
 	}
 	if calledPath != "/v1/retrieval/query" {
 		t.Fatalf("expected go staged path via /v1/retrieval/query, got %s", calledPath)
@@ -2297,6 +2320,8 @@ func TestTelemetryRingEvictsOldestLowValueFirst(t *testing.T) {
 func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	searchCalls := 0
 	contextPackCalls := 0
+	missionContextCalls := 0
+	const missionQuery = "mission objective goal cross-project synthesis longitudinal learning policy context package retrieval discipline"
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -2341,6 +2366,12 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":"missing agent_id"}`))
 				return
 			}
+			if strings.TrimSpace(anyToString(payload["query"])) == missionQuery {
+				missionContextCalls += 1
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"context_pack":{"facts":[{"text":"mission_f1"}],"results":[{"file":"_rollups/topics/mission.json"}]}}`))
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"context_pack":{"facts":[{"text":"f1"}],"results":[{"file":"_rollups/topics/a.json"}]}}`))
 			return
@@ -2378,8 +2409,11 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	if searchCalls != 2 {
 		t.Fatalf("expected two search calls (scoped+broad), got %d", searchCalls)
 	}
-	if contextPackCalls != 1 {
-		t.Fatalf("expected one context-pack call, got %d", contextPackCalls)
+	if contextPackCalls != 2 {
+		t.Fatalf("expected two context-pack calls (primary+mission), got %d", contextPackCalls)
+	}
+	if missionContextCalls != 1 {
+		t.Fatalf("expected one mission context-pack call, got %d", missionContextCalls)
 	}
 	if payload["broadened_search"] == nil {
 		t.Fatalf("expected broadened_search payload, got nil")
@@ -2387,11 +2421,19 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	if payload["context_pack"] == nil {
 		t.Fatalf("expected context_pack payload, got nil")
 	}
+	if payload["mission_context_pack"] == nil {
+		t.Fatalf("expected mission_context_pack payload, got nil")
+	}
+	if payload["policy_context_package"] == nil {
+		t.Fatalf("expected policy_context_package payload, got nil")
+	}
 }
 
 func TestAgentsPreflightUsesNamedProfileDefaults(t *testing.T) {
 	searchCalls := 0
 	contextPackCalls := 0
+	missionContextCalls := 0
+	const missionQuery = "mission objective goal cross-project synthesis longitudinal learning policy context package retrieval discipline"
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -2441,6 +2483,17 @@ func TestAgentsPreflightUsesNamedProfileDefaults(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":"missing claude agent_id"}`))
 				return
 			}
+			if strings.TrimSpace(anyToString(payload["query"])) == missionQuery {
+				missionContextCalls += 1
+				if strings.TrimSpace(anyToString(payload["topic_path"])) != "runbooks/context-policy" {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"unexpected mission topic path"}`))
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"context_pack":{"facts":[{"text":"mission_f1"}],"results":[{"file":"_rollups/topics/mission.json"}]}}`))
+				return
+			}
 			if strings.TrimSpace(anyToString(payload["topic_path"])) != "runbooks/claude-code-integration" {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"error":"unexpected context-pack topic path"}`))
@@ -2486,14 +2539,23 @@ func TestAgentsPreflightUsesNamedProfileDefaults(t *testing.T) {
 	if searchCalls != 2 {
 		t.Fatalf("expected two search calls (scoped+broad), got %d", searchCalls)
 	}
-	if contextPackCalls != 1 {
-		t.Fatalf("expected one context-pack call, got %d", contextPackCalls)
+	if contextPackCalls != 2 {
+		t.Fatalf("expected two context-pack calls (primary+mission), got %d", contextPackCalls)
+	}
+	if missionContextCalls != 1 {
+		t.Fatalf("expected one mission context-pack call, got %d", missionContextCalls)
 	}
 	if payload["broadened_search"] == nil {
 		t.Fatalf("expected broadened_search payload, got nil")
 	}
 	if payload["context_pack"] == nil {
 		t.Fatalf("expected context_pack payload, got nil")
+	}
+	if payload["mission_context_pack"] == nil {
+		t.Fatalf("expected mission_context_pack payload, got nil")
+	}
+	if payload["policy_context_package"] == nil {
+		t.Fatalf("expected policy_context_package payload, got nil")
 	}
 }
 

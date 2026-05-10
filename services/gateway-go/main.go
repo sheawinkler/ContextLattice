@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1093,7 +1092,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.continuationDurableEnabled = envBool("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", true)
 	policy.continuationDurableDir = strings.TrimSpace(resolveStoragePath(
 		"GO_RETRIEVAL_CONTINUATION_DURABLE_DIR",
-		filepath.Join(".data", "orchestrator", "continuation_outbox"),
+		"services/orchestrator/data/continuation_outbox",
 	))
 	if policy.continuationDurableDir == "" {
 		policy.continuationDurableEnabled = false
@@ -1202,7 +1201,7 @@ func newServer() *server {
 	trackedPaths := defaultTrackedPaths()
 	tradingHistoryPath := strings.TrimSpace(trackedPaths["trading_history"])
 	if tradingHistoryPath == "" {
-		tradingHistoryPath = filepath.Join(".data", "orchestrator", "trading_metrics.ndjson")
+		tradingHistoryPath = "services/orchestrator/data/trading_metrics.ndjson"
 	}
 	tradingHistoryLimit := envInt("TRADING_HISTORY_LIMIT", 256)
 	if tradingHistoryLimit < 1 {
@@ -2156,33 +2155,78 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		r.Header,
 		contextPackReq,
 	)
+	missionQuery := "mission objective goal cross-project synthesis longitudinal learning policy context package retrieval discipline"
+	missionTopicPath := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_POLICY_TOPIC_PATH"))
+	if missionTopicPath == "" {
+		missionTopicPath = "runbooks/context-policy"
+	}
+	missionPackReq := map[string]any{
+		"project":                 reqBody.Project,
+		"query":                   missionQuery,
+		"topic_path":              missionTopicPath,
+		"retrieval_mode":          reqBody.RetrievalMode,
+		"include_retrieval_debug": true,
+		"agent_id":                reqBody.AgentID,
+	}
+	missionPackPayload, missionPackStatus, missionPackErr := s.backendJSONRequest(
+		ctx,
+		http.MethodPost,
+		"/memory/context-pack",
+		r.Header,
+		missionPackReq,
+	)
+	if missionPackErr == nil && len(contextPackEvidence(missionPackPayload, 1)) == 0 {
+		delete(missionPackReq, "topic_path")
+		missionPackPayload, missionPackStatus, missionPackErr = s.backendJSONRequest(
+			ctx,
+			http.MethodPost,
+			"/memory/context-pack",
+			r.Header,
+			missionPackReq,
+		)
+	}
+	policyContextPackage := buildPolicyContextPackage(
+		profileKey,
+		reqBody.AgentID,
+		reqBody.Project,
+		reqBody.TopicPath,
+		reqBody.Query,
+		reqBody.RetrievalMode,
+		contextPackPayload,
+		missionPackPayload,
+		missionPackErr,
+	)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":               true,
-		"service":          "gateway-go",
-		"agent":            profileKey,
-		"agent_profile":    profile,
-		"agent_id":         reqBody.AgentID,
-		"project":          reqBody.Project,
-		"query":            reqBody.Query,
-		"topic_path":       reqBody.TopicPath,
-		"retrieval_mode":   reqBody.RetrievalMode,
-		"backend_url":      s.backendURL,
-		"health":           healthPayload,
-		"health_status":    healthStatus,
-		"health_error":     errString(healthErr),
-		"status":           statusPayload,
-		"status_status":    statusStatus,
-		"status_error":     errString(statusErr),
-		"scoped_search":    scopedPayload,
-		"scoped_status":    scopedStatus,
-		"scoped_error":     errString(scopedErr),
-		"broadened_search": broadenedPayload,
-		"broadened_status": broadenedStatus,
-		"broadened_error":  errString(broadenedErr),
-		"context_pack":     contextPackPayload,
-		"context_status":   contextPackStatus,
-		"context_error":    errString(contextPackErr),
+		"ok":                     true,
+		"service":                "gateway-go",
+		"agent":                  profileKey,
+		"agent_profile":          profile,
+		"agent_id":               reqBody.AgentID,
+		"project":                reqBody.Project,
+		"query":                  reqBody.Query,
+		"topic_path":             reqBody.TopicPath,
+		"retrieval_mode":         reqBody.RetrievalMode,
+		"backend_url":            s.backendURL,
+		"health":                 healthPayload,
+		"health_status":          healthStatus,
+		"health_error":           errString(healthErr),
+		"status":                 statusPayload,
+		"status_status":          statusStatus,
+		"status_error":           errString(statusErr),
+		"scoped_search":          scopedPayload,
+		"scoped_status":          scopedStatus,
+		"scoped_error":           errString(scopedErr),
+		"broadened_search":       broadenedPayload,
+		"broadened_status":       broadenedStatus,
+		"broadened_error":        errString(broadenedErr),
+		"context_pack":           contextPackPayload,
+		"context_status":         contextPackStatus,
+		"context_error":          errString(contextPackErr),
+		"mission_context_pack":   missionPackPayload,
+		"mission_context_status": missionPackStatus,
+		"mission_context_error":  errString(missionPackErr),
+		"policy_context_package": policyContextPackage,
 	})
 }
 
@@ -5319,6 +5363,13 @@ func (s *server) executeRetrieval(
 	if trafficClass == "" {
 		trafficClass = "user"
 	}
+	objectiveCtx := extractObjectiveContext(requestPayload)
+	if !objectiveCtx.empty() {
+		requestPayload["objective_context"] = objectiveCtx.toMap()
+		if _, present := requestPayload["query_expansion"]; !present {
+			requestPayload["query_expansion"] = true
+		}
+	}
 	rustBackendPolicy := resolveRustBackendPolicy(requestPayload["backend_policy"])
 	rustLaneGateApplied := false
 	rustBackendPolicy, rustLaneGateApplied = s.applyRustLanePromotionGate(rustBackendPolicy, trafficClass)
@@ -5352,6 +5403,19 @@ func (s *server) executeRetrieval(
 	fastSources, slowSources := classifySources(resolvedSources, fastSet, slowSet)
 
 	warnings := []string{}
+	objectiveCapture := map[string]any{
+		"enabled": objectiveContextCaptureEnabled(),
+		"status":  "skipped",
+	}
+	if !objectiveCtx.empty() {
+		capturePayload, captureErr := s.captureObjectiveContextDatapoint(requestPayload, objectiveCtx)
+		if capturePayload != nil {
+			objectiveCapture = capturePayload
+		}
+		if warning := objectiveContextWarning(objectiveCapture, captureErr); warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
 	sourceErrors := map[string]map[string]any{}
 	sourceOwners := map[string]string{}
 	sourceRows := map[string][]map[string]any{}
@@ -6147,6 +6211,10 @@ func (s *server) executeRetrieval(
 			"skipped_sources":                  skippedList,
 			"source_owners":                    sourceOwnerBySource,
 		},
+		"objective_context_capture": objectiveCapture,
+	}
+	if !objectiveCtx.empty() {
+		response["objective_context"] = objectiveCtx.toMap()
 	}
 	if len(continuationSources) > 0 && continuationToken != "" {
 		response["continuation_async"] = map[string]any{
