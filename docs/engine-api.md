@@ -4,7 +4,7 @@ This document defines the service boundary used when `CONTEXTLATTICE_ENGINE_MODE
 
 ## Protocol Contract
 
-- Proto file: [`proto/contextlattice_engine.proto`](/Users/sheawinkler/.mcp-servers/mem_mcp_lobehub/proto/contextlattice_engine.proto)
+- Proto file: [`proto/contextlattice_engine.proto`](../proto/contextlattice_engine.proto)
 - Service: `contextlattice.engine.v1.ContextEngineService`
 - RPCs:
   - `PutMemory`
