@@ -31,6 +31,8 @@ var (
 	nativePgvectorDBByDSN   = map[string]*sql.DB{}
 	nativePgvectorSchemaMu  sync.Mutex
 	nativePgvectorSchemaSet = map[string]struct{}{}
+	nativePgvectorColsMu    sync.Mutex
+	nativePgvectorColsByKey = map[string]map[string]struct{}{}
 
 	memoryBankSpikeBackendChoices = map[string]struct{}{
 		"native":            {},
@@ -694,6 +696,10 @@ func nativePgvectorSchemaCacheKey(dsn string, tableName string, dim int) string 
 	return strings.TrimSpace(dsn) + "|" + strings.TrimSpace(tableName) + "|" + strconv.Itoa(dim)
 }
 
+func nativePgvectorColumnCacheKey(dsn string, tableName string) string {
+	return strings.TrimSpace(dsn) + "|" + strings.TrimSpace(tableName)
+}
+
 func nativePgvectorEnsureStatements(tableName string, dim int, ivfLists int) []string {
 	if dim <= 0 {
 		dim = nativeDefaultEmbedDim()
@@ -755,6 +761,18 @@ func nativeEnsurePgvectorSchema(
 	}
 	ensureCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	qualified := "public." + tableName
+	var existing sql.NullString
+	if err := db.QueryRowContext(ensureCtx, "SELECT to_regclass($1);", qualified).Scan(&existing); err != nil {
+		return err
+	}
+	if existing.Valid && strings.TrimSpace(existing.String) != "" {
+		// Legacy table already exists; do not attempt shape mutations here.
+		nativePgvectorSchemaMu.Lock()
+		nativePgvectorSchemaSet[cacheKey] = struct{}{}
+		nativePgvectorSchemaMu.Unlock()
+		return nil
+	}
 	ivfLists := maxInt(1, envInt("ORCH_PGVECTOR_IVFFLAT_LISTS", 100))
 	for _, statement := range nativePgvectorEnsureStatements(tableName, dim, ivfLists) {
 		if _, err := db.ExecContext(ensureCtx, statement); err != nil {
@@ -765,6 +783,64 @@ func nativeEnsurePgvectorSchema(
 	nativePgvectorSchemaSet[cacheKey] = struct{}{}
 	nativePgvectorSchemaMu.Unlock()
 	return nil
+}
+
+func nativePgvectorTableColumns(
+	ctx context.Context,
+	db *sql.DB,
+	dsn string,
+	tableName string,
+) (map[string]struct{}, error) {
+	cacheKey := nativePgvectorColumnCacheKey(dsn, tableName)
+	nativePgvectorColsMu.Lock()
+	if cached, ok := nativePgvectorColsByKey[cacheKey]; ok && len(cached) > 0 {
+		copySet := make(map[string]struct{}, len(cached))
+		for key := range cached {
+			copySet[key] = struct{}{}
+		}
+		nativePgvectorColsMu.Unlock()
+		return copySet, nil
+	}
+	nativePgvectorColsMu.Unlock()
+
+	timeout := envDurationSeconds("ORCH_PGVECTOR_SCHEMA_TIMEOUT_SECS", 12)
+	if timeout < 2*time.Second {
+		timeout = 2 * time.Second
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	rows, err := db.QueryContext(
+		queryCtx,
+		"SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1;",
+		tableName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if scanErr := rows.Scan(&name); scanErr != nil {
+			continue
+		}
+		name = strings.TrimSpace(strings.ToLower(name))
+		if name == "" {
+			continue
+		}
+		columns[name] = struct{}{}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+	nativePgvectorColsMu.Lock()
+	nativePgvectorColsByKey[cacheKey] = columns
+	nativePgvectorColsMu.Unlock()
+	copySet := make(map[string]struct{}, len(columns))
+	for key := range columns {
+		copySet[key] = struct{}{}
+	}
+	return copySet, nil
 }
 
 func clipRunes(text string, maxRunes int) string {
@@ -796,6 +872,7 @@ func parseOptionalRFC3339(raw string, fallback time.Time) time.Time {
 func (s *server) upsertPgvectorFromWrite(
 	ctx context.Context,
 	item normalizedWrite,
+	eventID string,
 ) (string, error) {
 	if !nativeSourceAdapterEnabled(sourcePgvector, true) {
 		return "skipped_adapter_disabled", nil
@@ -823,22 +900,51 @@ func (s *server) upsertPgvectorFromWrite(
 	if err := nativeEnsurePgvectorSchema(ctx, db, dsn, tableName, len(vector)); err != nil {
 		return "failed_schema", err
 	}
+	columns, err := nativePgvectorTableColumns(ctx, db, dsn, tableName)
+	if err != nil {
+		return "failed_schema_introspect", err
+	}
 	summary := strings.TrimSpace(item.content)
 	if summary == "" {
 		summary = item.fileName
 	}
 	summary = clipRunes(summary, 1200)
 	createdAt := parseOptionalRFC3339(item.createdAt, time.Now().UTC())
-	_, err = db.ExecContext(
-		ctx,
-		"INSERT INTO "+tableName+" (project, file, summary, topic_path, created_at, embedding) VALUES ($1, $2, $3, $4, $5, $6::vector);",
-		strings.TrimSpace(item.project),
-		strings.TrimSpace(item.fileName),
-		summary,
-		strings.TrimSpace(item.topicPath),
-		createdAt,
-		nativePgvectorLiteral(vector),
-	)
+	if strings.TrimSpace(eventID) == "" {
+		sum := sha256.Sum256([]byte(item.project + "|" + item.fileName + "|" + item.topicPath + "|" + item.content + "|" + createdAt.Format(time.RFC3339Nano)))
+		eventID = "gw_" + fmt.Sprintf("%x", sum[:8])
+	}
+	insertColumns := []string{}
+	insertValues := []any{}
+	placeholders := []string{}
+	appendValue := func(column string, value any, isVector bool) {
+		insertColumns = append(insertColumns, column)
+		insertValues = append(insertValues, value)
+		placeholder := "$" + strconv.Itoa(len(insertValues))
+		if isVector {
+			placeholder += "::vector"
+		}
+		placeholders = append(placeholders, placeholder)
+	}
+	if _, ok := columns["event_id"]; ok {
+		appendValue("event_id", eventID, false)
+	}
+	appendValue("project", strings.TrimSpace(item.project), false)
+	appendValue("file", strings.TrimSpace(item.fileName), false)
+	appendValue("summary", summary, false)
+	if _, ok := columns["topic_path"]; ok {
+		appendValue("topic_path", strings.TrimSpace(item.topicPath), false)
+	}
+	if _, ok := columns["created_at"]; ok {
+		appendValue("created_at", createdAt, false)
+	}
+	if _, ok := columns["updated_at"]; ok {
+		appendValue("updated_at", createdAt, false)
+	}
+	appendValue("embedding", nativePgvectorLiteral(vector), true)
+
+	insertSQL := "INSERT INTO " + tableName + " (" + strings.Join(insertColumns, ", ") + ") VALUES (" + strings.Join(placeholders, ", ") + ");"
+	_, err = db.ExecContext(ctx, insertSQL, insertValues...)
 	if err != nil {
 		return "failed_insert", err
 	}

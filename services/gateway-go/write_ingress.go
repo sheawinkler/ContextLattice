@@ -80,7 +80,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		}
 		warnings := []string{}
 		fanoutCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Second)
-		fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item)
+		fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item, entry.EventID)
 		cancel()
 		if strings.TrimSpace(fanoutStatus) != "" {
 			fanout["postgres_pgvector"] = fanoutStatus
@@ -259,7 +259,7 @@ func (s *server) handleWriteBatchIngress(
 							}
 							warnings := []string{}
 							fanoutCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Second)
-							fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item)
+							fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item, entry.EventID)
 							cancel()
 							if strings.TrimSpace(fanoutStatus) != "" {
 								fanout["postgres_pgvector"] = fanoutStatus
