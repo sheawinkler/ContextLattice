@@ -5,6 +5,7 @@ Use this as a reusable skill block for agent frameworks that support skills or t
 ## ContextLattice Retrieval Skill
 
 ### Input Contract
+- `mission`: long-horizon purpose and system intent for the current agent run
 - `goal`: what the agent is trying to accomplish
 - `project`: project namespace (if known)
 - `topic_path`: topic namespace (if known)
@@ -18,13 +19,16 @@ Use this as a reusable skill block for agent frameworks that support skills or t
 3. Use profile defaults:
    - `GET /memory/profiles/{agent_id}`
    - Optional bootstrap: `POST /v1/agents/preflight`
+   - On preflight responses, ingest and forward `policy_context_package` (mission + objective + goal + policy contract) into downstream agent handoffs.
 4. During execution, checkpoint durable decisions:
    - `POST /memory/write`
 5. Submit explicit retrieval feedback for learning/rerank:
    - `POST /tools/feedback_submit` (include `idempotencyKey`)
-6. Before completion, run one recency retrieval pass:
+6. Before context compaction/summarization, persist objective continuity and read it back:
+   - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
+7. Before completion, run one recency retrieval pass:
    - `POST /memory/search` or `POST /memory/context-pack`
-7. Set caller timeout to match retrieval mode:
+8. Set caller timeout to match retrieval mode:
    - `fast`: `25s`
    - `balanced`: `60s`
    - `deep` (or explicit `letta` / `memory_bank`): `75s`

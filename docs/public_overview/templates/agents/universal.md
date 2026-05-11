@@ -20,6 +20,8 @@ Operating rules:
 10) Use profile-aware preflight via POST /v1/agents/preflight before major tasks.
 11) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
 12) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
+13) Before context compaction, run compaction handoff write+readback so objective state survives:
+    contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced
 
 If memory is degraded, continue execution, explicitly report degraded-memory mode, and provide continuation token/status when available.
 ```
@@ -39,4 +41,7 @@ contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integ
 # global retrieval/write helpers
 contextlattice_search -h
 contextlattice_write -h
+
+# compaction handoff helper (default before summary compaction)
+contextlattice_agent_orchestration compaction-handoff contextlattice "objective summary" runbooks/context-compaction-handoff balanced
 ```
