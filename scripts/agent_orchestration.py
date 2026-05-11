@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urljoin
@@ -25,7 +25,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
     )
 DEFAULT_AGENT_ID = (
     os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
-    or os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
+    or os.getenv("MEMMCP_AGENT_ID", "").strip()
     or "codex_gpt5"
 )
 DEFAULT_AGENT_PREFLIGHT_PROFILES: Dict[str, Dict[str, str]] = {
@@ -91,6 +91,32 @@ AGENT_PREFLIGHT_ALIASES = {
     "claude": "claude-web",
     "claude-web": "claude-web",
     "claude-desktop": "claude-desktop",
+}
+SKILLS_BASE_DIR = Path.home() / ".codex" / "skills"
+DEFAULT_CONTEXTLATTICE_MISSION = (
+    os.getenv("CONTEXTLATTICE_MISSION", "").strip()
+    or "Compound knowledge across projects into better agent outcomes with less repeated inference."
+)
+DEFAULT_CONTEXTLATTICE_OBJECTIVE = (
+    os.getenv("CONTEXTLATTICE_OBJECTIVE", "").strip()
+    or "Improve longitudinal recall, retrieval quality, and orchestration decisions over time."
+)
+DEFAULT_CONTEXTLATTICE_GOAL = (
+    os.getenv("CONTEXTLATTICE_GOAL", "").strip()
+    or "Maximize useful context per token while preserving correctness, provenance, and latency discipline."
+)
+DEFAULT_COMPACTION_TOPIC_PATH = (
+    os.getenv("CONTEXTLATTICE_COMPACTION_TOPIC_PATH", "").strip()
+    or "runbooks/context-compaction-handoff"
+)
+DEFAULT_COMPACTION_QUERY = (
+    os.getenv("CONTEXTLATTICE_COMPACTION_QUERY", "").strip()
+    or "context compaction handoff mission objective goal blockers next actions"
+)
+SKILL_AVAILABILITY = {
+    "objective": (SKILLS_BASE_DIR / "objective" / "SKILL.md").exists(),
+    "goal": (SKILLS_BASE_DIR / "goal" / "SKILL.md").exists(),
+    "mission": (SKILLS_BASE_DIR / "mission" / "SKILL.md").exists(),
 }
 
 
@@ -252,6 +278,128 @@ class ContextLatticeOrchestrator:
             "next_actions": list(lifecycle.get("next_actions") or []),
         }
 
+    @staticmethod
+    def _extract_fact_summaries(pack: Dict[str, Any], max_items: int = 10) -> List[Dict[str, Any]]:
+        """Normalize context-pack facts into compact summaries for policy handoff."""
+        if not isinstance(pack, dict):
+            return []
+        nested_pack = pack.get("context_pack") if isinstance(pack.get("context_pack"), dict) else {}
+        raw_facts = pack.get("facts")
+        if not isinstance(raw_facts, list):
+            raw_facts = nested_pack.get("facts")
+        raw_results = pack.get("results")
+        if not isinstance(raw_results, list):
+            raw_results = nested_pack.get("results")
+        if not isinstance(raw_facts, list):
+            raw_facts = []
+        normalized: List[Dict[str, Any]] = []
+        for item in raw_facts:
+            text = ""
+            source = None
+            topic = None
+            score = None
+            if isinstance(item, dict):
+                text = str(item.get("text") or item.get("fact") or item.get("content") or "").strip()
+                source = str(item.get("source") or item.get("file") or item.get("path") or "").strip() or None
+                topic = str(item.get("topic_path") or item.get("topic") or "").strip() or None
+                score = item.get("score")
+            elif isinstance(item, str):
+                text = item.strip()
+            if not text:
+                continue
+            normalized.append(
+                {
+                    "text": text,
+                    "source": source,
+                    "topic_path": topic,
+                    "score": score,
+                }
+            )
+            if len(normalized) >= max(1, int(max_items)):
+                break
+        if normalized:
+            return normalized
+        if not isinstance(raw_results, list):
+            return []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            summary = str(item.get("summary") or item.get("text") or item.get("content") or "").strip()
+            if not summary:
+                continue
+            normalized.append(
+                {
+                    "text": summary,
+                    "source": str(item.get("source") or item.get("file") or "").strip() or None,
+                    "topic_path": str(item.get("topic_path") or item.get("topic") or "").strip() or None,
+                    "score": item.get("score"),
+                }
+            )
+            if len(normalized) >= max(1, int(max_items)):
+                break
+        return normalized
+
+    @staticmethod
+    def _build_agent_policy_context_package(
+        *,
+        agent: str,
+        agent_id: str,
+        project: str,
+        topic_path: str,
+        retrieval_mode: str,
+        query: str,
+        primary_pack: Dict[str, Any],
+        mission_pack: Optional[Dict[str, Any]],
+        mission_pack_error: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build a portable objective/goal/mission package for downstream agents."""
+        mission = DEFAULT_CONTEXTLATTICE_MISSION
+        objective = DEFAULT_CONTEXTLATTICE_OBJECTIVE
+        goal = DEFAULT_CONTEXTLATTICE_GOAL
+        primary_facts = ContextLatticeOrchestrator._extract_fact_summaries(primary_pack, max_items=8)
+        mission_facts = ContextLatticeOrchestrator._extract_fact_summaries(
+            mission_pack if isinstance(mission_pack, dict) else {}, max_items=8
+        )
+        return {
+            "version": "2026-05-10",
+            "agent": agent,
+            "agent_id": agent_id,
+            "project": project,
+            "topic_path": topic_path,
+            "query": query,
+            "retrieval_mode": retrieval_mode,
+            "mission": mission,
+            "objective": objective,
+            "goal": goal,
+            "skills": {
+                "required": ["objective", "goal"],
+                "optional": ["mission"],
+                "availability": dict(SKILL_AVAILABILITY),
+            },
+            "policy_contract": {
+                "retrieve_before_inference": True,
+                "checkpoint_during_execution": True,
+                "final_recency_pass_required": True,
+                "include_grounding": True,
+                "include_retrieval_debug": True,
+                "broaden_scope_on_zero_or_degraded": True,
+            },
+            "handoff": {
+                "disperse_to_agents": True,
+                "handoff_prompt": (
+                    f"Mission: {mission}\n"
+                    f"Objective: {objective}\n"
+                    f"Goal: {goal}\n"
+                    "Policy: retrieve before inference, checkpoint key decisions, and run final recency retrieval."
+                ),
+            },
+            "evidence": {
+                "primary_facts": primary_facts,
+                "mission_facts": mission_facts,
+                "mission_pack_error": mission_pack_error,
+            },
+        }
+
     def search_with_lifecycle(
         self,
         query: str,
@@ -378,6 +526,186 @@ class ContextLatticeOrchestrator:
         resp.raise_for_status()
         return resp.json()
 
+    @staticmethod
+    def _safe_file_token(value: str) -> str:
+        token = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in (value or "agent"))
+        token = token.strip("_")
+        return token or "agent"
+
+    @staticmethod
+    def _render_compaction_handoff_markdown(
+        *,
+        generated_at: str,
+        agent_id: str,
+        project: str,
+        topic_path: str,
+        retrieval_mode: str,
+        summary: str,
+        mission: str,
+        objective: str,
+        goal: str,
+        facts: List[Dict[str, Any]],
+        warnings: List[str],
+    ) -> str:
+        lines: List[str] = [
+            "# Context Compaction Handoff",
+            "",
+            f"- generated_at: {generated_at}",
+            f"- agent_id: {agent_id}",
+            f"- project: {project}",
+            f"- topic_path: {topic_path}",
+            f"- retrieval_mode: {retrieval_mode}",
+            "",
+            "## Active Objective Summary",
+            summary.strip() or "_no explicit summary provided_",
+            "",
+            "## Mission / Objective / Goal",
+            f"- mission: {mission}",
+            f"- objective: {objective}",
+            f"- goal: {goal}",
+            "",
+            "## Retrieved High-Signal Facts",
+        ]
+        if facts:
+            for fact in facts:
+                text = str(fact.get("text") or "").strip()
+                if not text:
+                    continue
+                source = str(fact.get("source") or "").strip()
+                topic = str(fact.get("topic_path") or "").strip()
+                tag_parts = [item for item in [source, topic] if item]
+                tag = f" ({' | '.join(tag_parts)})" if tag_parts else ""
+                lines.append(f"- {text}{tag}")
+        else:
+            lines.append("- _no facts returned in context-pack for this scope_")
+        if warnings:
+            lines.extend(["", "## Retrieval Warnings"])
+            for warning in warnings:
+                lines.append(f"- {warning}")
+        lines.extend(
+            [
+                "",
+                "## Resume Contract (post-compaction)",
+                "- Re-run preflight for this agent profile.",
+                "- Read this handoff topic before executing new actions.",
+                "- Continue from the objective summary and next open execution step.",
+            ]
+        )
+        return "\n".join(lines).strip() + "\n"
+
+    def compaction_handoff(
+        self,
+        project: str,
+        summary: str,
+        topic_path: Optional[str] = None,
+        retrieval_mode: str = "balanced",
+        query: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Persist a detailed objective/mission handoff before compaction and
+        immediately read it back to seed post-compaction continuity.
+        """
+        effective_topic_path = str(topic_path or DEFAULT_COMPACTION_TOPIC_PATH).strip() or DEFAULT_COMPACTION_TOPIC_PATH
+        effective_query = str(query or DEFAULT_COMPACTION_QUERY).strip() or DEFAULT_COMPACTION_QUERY
+        mode = str(retrieval_mode or "balanced").strip().lower() or "balanced"
+        generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        primary_pack = self.context_pack(
+            query=effective_query,
+            project=project,
+            topic_path=effective_topic_path,
+            retrieval_mode=mode,
+            include_retrieval_debug=True,
+            agent_id=self.agent_id,
+            max_facts=24,
+        )
+        mission_pack = None
+        mission_pack_error = None
+        mission_query = (
+            "mission objective goal cross-project synthesis longitudinal learning "
+            "policy context package retrieval discipline"
+        )
+        mission_topic_path = (
+            str(os.getenv("CONTEXTLATTICE_POLICY_TOPIC_PATH", "")).strip() or "runbooks/context-policy"
+        )
+        try:
+            mission_pack = self.context_pack(
+                query=mission_query,
+                project=project,
+                topic_path=mission_topic_path,
+                retrieval_mode=mode,
+                include_retrieval_debug=True,
+                agent_id=self.agent_id,
+                max_facts=12,
+            )
+            mission_results = self._extract_fact_summaries(mission_pack, max_items=2)
+            if not mission_results:
+                mission_pack = self.context_pack(
+                    query=mission_query,
+                    project=project,
+                    topic_path=None,
+                    retrieval_mode=mode,
+                    include_retrieval_debug=True,
+                    agent_id=self.agent_id,
+                    max_facts=12,
+                )
+        except Exception as exc:  # pragma: no cover - defensive network path
+            mission_pack_error = str(exc)
+
+        policy_context_package = self._build_agent_policy_context_package(
+            agent="compaction-handoff",
+            agent_id=self.agent_id,
+            project=project,
+            topic_path=effective_topic_path,
+            retrieval_mode=mode,
+            query=effective_query,
+            primary_pack=primary_pack,
+            mission_pack=mission_pack,
+            mission_pack_error=mission_pack_error,
+        )
+        primary_facts = self._extract_fact_summaries(primary_pack, max_items=12)
+        warnings = primary_pack.get("warnings") if isinstance(primary_pack.get("warnings"), list) else []
+        markdown = self._render_compaction_handoff_markdown(
+            generated_at=generated_at,
+            agent_id=self.agent_id,
+            project=project,
+            topic_path=effective_topic_path,
+            retrieval_mode=mode,
+            summary=summary,
+            mission=policy_context_package.get("mission", DEFAULT_CONTEXTLATTICE_MISSION),
+            objective=policy_context_package.get("objective", DEFAULT_CONTEXTLATTICE_OBJECTIVE),
+            goal=policy_context_package.get("goal", DEFAULT_CONTEXTLATTICE_GOAL),
+            facts=primary_facts,
+            warnings=warnings,
+        )
+        file_name = f"notes/compaction/{generated_at.replace(':', '').replace('-', '')}_{self._safe_file_token(self.agent_id)}.md"
+        write_result = self.write(
+            project=project,
+            file_name=file_name,
+            content=markdown,
+            topic_path=effective_topic_path,
+        )
+        readback = self.search_with_lifecycle(
+            query=effective_query,
+            project=project,
+            topic_path=effective_topic_path,
+            retrieval_mode=mode,
+            include_grounding=True,
+            include_retrieval_debug=True,
+            wait_for_completion=False,
+            agent_id=self.agent_id,
+        )
+        return {
+            "ok": True,
+            "project": project,
+            "topic_path": effective_topic_path,
+            "retrieval_mode": mode,
+            "file": file_name,
+            "write": write_result,
+            "readback": readback,
+            "policy_context_package": policy_context_package,
+            "context_pack": primary_pack,
+        }
+
     def codex_preflight(
         self,
         project: str,
@@ -455,6 +783,50 @@ class ContextLatticeOrchestrator:
             include_retrieval_debug=True,
             agent_id=effective_agent_id,
         )
+        mission_query = (
+            "mission objective goal cross-project synthesis longitudinal learning "
+            "policy context package retrieval discipline"
+        )
+        mission_topic_path = (
+            str(os.getenv("CONTEXTLATTICE_POLICY_TOPIC_PATH", "")).strip() or "runbooks/context-policy"
+        )
+        mission_pack: Optional[Dict[str, Any]] = None
+        mission_pack_error: Optional[str] = None
+        try:
+            mission_pack = self.context_pack(
+                query=mission_query,
+                project=project,
+                topic_path=mission_topic_path,
+                retrieval_mode=effective_mode,
+                max_facts=12,
+                include_retrieval_debug=True,
+                agent_id=effective_agent_id,
+            )
+            mission_results = self._extract_fact_summaries(mission_pack, max_items=2)
+            if not mission_results:
+                mission_pack = self.context_pack(
+                    query=mission_query,
+                    project=project,
+                    topic_path=None,
+                    retrieval_mode=effective_mode,
+                    max_facts=12,
+                    include_retrieval_debug=True,
+                    agent_id=effective_agent_id,
+                )
+        except Exception as exc:
+            mission_pack_error = str(exc)
+
+        policy_context_package = self._build_agent_policy_context_package(
+            agent=profile_key,
+            agent_id=effective_agent_id,
+            project=project,
+            topic_path=effective_topic_path,
+            retrieval_mode=effective_mode,
+            query=effective_query,
+            primary_pack=pack,
+            mission_pack=mission_pack,
+            mission_pack_error=mission_pack_error,
+        )
 
         return {
             "ok": True,
@@ -467,6 +839,8 @@ class ContextLatticeOrchestrator:
             "scoped_search": scoped,
             "broadened_search": broadened,
             "context_pack": pack,
+            "mission_context_pack": mission_pack,
+            "policy_context_package": policy_context_package,
         }
 
     def status(self) -> Dict[str, Any]:
@@ -573,6 +947,7 @@ def main():
         print("  search <query> [project]")
         print("  search-lifecycle <query> [project] [mode] [wait]")
         print("  context-pack <query> [project] [mode] [topic_path]")
+        print("  compaction-handoff <project> <summary> [topic_path] [mode] [query]")
         print("  preflight [project] [topic_path] [query]")
         print("  preflight-agent <agent> [project] [topic_path] [query] [mode]")
         print("  status")
@@ -628,6 +1003,21 @@ def main():
             topic_path=topic_path,
             retrieval_mode=mode,
             include_retrieval_debug=True,
+        )
+        print(json.dumps(payload, indent=2))
+
+    elif cmd == "compaction-handoff":
+        project = sys.argv[2] if len(sys.argv) > 2 else os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice")
+        summary = sys.argv[3] if len(sys.argv) > 3 else "continue objective-aligned execution after context compaction"
+        topic_path = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_COMPACTION_TOPIC_PATH
+        retrieval_mode = sys.argv[5] if len(sys.argv) > 5 else "balanced"
+        query = sys.argv[6] if len(sys.argv) > 6 else DEFAULT_COMPACTION_QUERY
+        payload = orch.compaction_handoff(
+            project=project,
+            summary=summary,
+            topic_path=topic_path,
+            retrieval_mode=retrieval_mode,
+            query=query,
         )
         print(json.dumps(payload, indent=2))
 

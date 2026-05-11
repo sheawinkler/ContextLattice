@@ -12,6 +12,14 @@ This file is the canonical contract for external agents and LLM apps using Conte
   - `CONTEXTLATTICE_AGENT_ID=<stable_id>`
   - `MEMMCP_AGENT_ID=<stable_id>`
 
+## Local premium/dev env defaults
+
+- Canonical premium env overlay file:
+  - `CONTEXTLATTICE_PREMIUM_ENV_FILE=$HOME/.config/contextlattice/.env.premium`
+- Legacy alias (`~/.contextlattice-paid.env`) is compatibility-only.
+- Local dev profile defaults are permissive (`CONTEXTLATTICE_ENV=development`, API key requirement off).
+- Production/hosted profiles can enforce API key + strict posture.
+
 ## Preflight before major work
 
 - Profile-aware preflight: `POST /v1/agents/preflight`
@@ -34,6 +42,17 @@ This file is the canonical contract for external agents and LLM apps using Conte
 6. Graph-neighbor recall: `POST /v1/memory/neighbors` when relationship context is relevant.
 7. If `continuation_async` is present: return partial results now, then follow `GET /memory/search/continuations/{token}/events` (or short re-query).
 8. Treat copied numbers as verbatim facts; do not rewrite numeric values.
+
+## Context Compaction Handoff (Default)
+
+Before any context-compaction or summary handoff event, persist an explicit objective packet, then read it back immediately.
+
+- Canonical helper:
+  - `python3 scripts/agent_orchestration.py compaction-handoff contextlattice "<current objective summary>" runbooks/context-compaction-handoff balanced`
+- Equivalent wrappers:
+  - `./scripts/agent_orchestration.sh compaction-handoff contextlattice "<current objective summary>" runbooks/context-compaction-handoff balanced`
+  - `contextlattice_agent_orchestration compaction-handoff contextlattice "<current objective summary>" runbooks/context-compaction-handoff balanced`
+- This helper writes a detailed handoff note (mission/objective/goal + retrieved facts + warnings) and immediately executes a scoped readback so the next turn starts from durable context, not transient chat memory.
 
 ## Task + agent orchestration endpoints
 

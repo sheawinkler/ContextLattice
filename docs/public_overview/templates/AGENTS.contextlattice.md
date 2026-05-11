@@ -41,6 +41,8 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 - During long tasks, write concise checkpoints via `POST /memory/write`.
 - When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
 - Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
+- Before any context-compaction handoff, persist and read back objective state:
+  - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
 - If memory endpoints degrade, continue task execution but report degraded-memory mode.
 - Optional tool-call key split:
   - `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` for orchestrator/admin tasks.

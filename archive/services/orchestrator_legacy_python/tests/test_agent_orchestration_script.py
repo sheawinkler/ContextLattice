@@ -116,3 +116,30 @@ def test_agent_preflight_uses_profile_defaults(monkeypatch):
     assert pack_calls, "expected /memory/context-pack call"
     context_payload = pack_calls[0][2] or {}
     assert context_payload.get("agent_id") == "claude_code_agent"
+
+
+def test_compaction_handoff_writes_and_reads_back(monkeypatch):
+    dummy = _DummyClient()
+    monkeypatch.setattr(ao, "ContextLatticeClient", lambda *args, **kwargs: _DummyContextLatticeClient(dummy))
+    orch = ao.ContextLatticeOrchestrator("http://127.0.0.1:8075", agent_id="codex_gpt5_test")
+    payload = orch.compaction_handoff(
+        project="contextlattice",
+        summary="keep objective continuity after compaction",
+        topic_path="runbooks/context-compaction-handoff",
+        retrieval_mode="balanced",
+        query="context compaction handoff mission objective goal",
+    )
+    assert payload.get("ok") is True
+    assert str(payload.get("file") or "").startswith("notes/compaction/")
+
+    write_calls = [c for c in dummy.calls if c[0] == "post" and c[1].endswith("/memory/write")]
+    assert write_calls, "expected /memory/write call"
+    write_payload = write_calls[-1][2] or {}
+    assert write_payload.get("projectName") == "contextlattice"
+    assert write_payload.get("topicPath") == "runbooks/context-compaction-handoff"
+    content = str(write_payload.get("content") or "")
+    assert "Context Compaction Handoff" in content
+    assert "keep objective continuity after compaction" in content
+
+    search_calls = [c for c in dummy.calls if c[0] == "post" and c[1].endswith("/memory/search")]
+    assert search_calls, "expected /memory/search readback"
