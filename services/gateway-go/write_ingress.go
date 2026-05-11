@@ -74,20 +74,32 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			})
 			return
 		}
+		fanout := map[string]any{
+			"go_memory_store": "succeeded",
+			"python_backend":  "disabled",
+		}
+		warnings := []string{}
+		fanoutCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Second)
+		fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item)
+		cancel()
+		if strings.TrimSpace(fanoutStatus) != "" {
+			fanout["postgres_pgvector"] = fanoutStatus
+		}
+		if fanoutErr != nil {
+			warnings = append(warnings, "pgvector fanout "+fanoutStatus+": "+fanoutErr.Error())
+			log.Printf("pgvector fanout error project=%s file=%s status=%s err=%v", item.project, item.fileName, fanoutStatus, fanoutErr)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":                    true,
 			"event_id":              entry.EventID,
 			"source":                "go_memory_store",
 			"content_hash":          entry.ContentHash,
 			"content_ref":           entry.ContentRef,
-			"warnings":              []string{},
+			"warnings":              warnings,
 			"rollup_buffered":       true,
 			"deduped":               deduped,
 			"latest_hash_unchanged": deduped,
-			"fanout": map[string]any{
-				"go_memory_store": "succeeded",
-				"python_backend":  "disabled",
-			},
+			"fanout":                fanout,
 		})
 		return
 	}
@@ -241,6 +253,23 @@ func (s *server) handleWriteBatchIngress(
 								"latest_hash_unchanged": deduped,
 								"source":                "go_memory_store",
 							}
+							fanout := map[string]any{
+								"go_memory_store": "succeeded",
+								"python_backend":  "disabled",
+							}
+							warnings := []string{}
+							fanoutCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Second)
+							fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item)
+							cancel()
+							if strings.TrimSpace(fanoutStatus) != "" {
+								fanout["postgres_pgvector"] = fanoutStatus
+							}
+							if fanoutErr != nil {
+								warnings = append(warnings, "pgvector fanout "+fanoutStatus+": "+fanoutErr.Error())
+								log.Printf("pgvector fanout error project=%s file=%s status=%s err=%v", item.project, item.fileName, fanoutStatus, fanoutErr)
+							}
+							row["fanout"] = fanout
+							row["warnings"] = warnings
 							ok = true
 						}
 					} else {

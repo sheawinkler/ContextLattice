@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -19,15 +20,17 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 var (
 	nativeQdrantDimCacheMu sync.Mutex
 	nativeQdrantDimCache   = map[string]int{}
 
-	nativePgvectorDBMu    sync.Mutex
-	nativePgvectorDBByDSN = map[string]*sql.DB{}
+	nativePgvectorDBMu      sync.Mutex
+	nativePgvectorDBByDSN   = map[string]*sql.DB{}
+	nativePgvectorSchemaMu  sync.Mutex
+	nativePgvectorSchemaSet = map[string]struct{}{}
 
 	memoryBankSpikeBackendChoices = map[string]struct{}{
 		"native":            {},
@@ -597,6 +600,10 @@ func nativePgvectorEnabled() bool {
 	return envBool("ORCH_PGVECTOR_ENABLED", true)
 }
 
+func nativePgvectorFanoutEnabled() bool {
+	return envBool("ORCH_PGVECTOR_FANOUT_ENABLED", true)
+}
+
 func nativePgvectorDSN() string {
 	for _, key := range []string{"ORCH_PGVECTOR_DSN", "PGVECTOR_DSN"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
@@ -683,6 +690,161 @@ func nativePgvectorDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
+func nativePgvectorSchemaCacheKey(dsn string, tableName string, dim int) string {
+	return strings.TrimSpace(dsn) + "|" + strings.TrimSpace(tableName) + "|" + strconv.Itoa(dim)
+}
+
+func nativePgvectorEnsureStatements(tableName string, dim int, ivfLists int) []string {
+	if dim <= 0 {
+		dim = nativeDefaultEmbedDim()
+	}
+	if dim <= 0 {
+		dim = 768
+	}
+	if ivfLists < 1 {
+		ivfLists = 100
+	}
+	projectIdx := tableName + "_project_idx"
+	topicIdx := tableName + "_topic_idx"
+	createdIdx := tableName + "_created_idx"
+	embedIdx := tableName + "_embedding_ivfflat_idx"
+	return []string{
+		"CREATE EXTENSION IF NOT EXISTS vector;",
+		fmt.Sprintf(
+			"CREATE TABLE IF NOT EXISTS %s ("+
+				"id BIGSERIAL PRIMARY KEY,"+
+				"project TEXT NOT NULL,"+
+				"file TEXT NOT NULL,"+
+				"summary TEXT NOT NULL,"+
+				"topic_path TEXT NOT NULL DEFAULT '',"+
+				"created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"+
+				"embedding vector(%d) NOT NULL);",
+			tableName,
+			dim,
+		),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (project);", projectIdx, tableName),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (topic_path);", topicIdx, tableName),
+		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (created_at DESC);", createdIdx, tableName),
+		fmt.Sprintf(
+			"CREATE INDEX IF NOT EXISTS %s ON %s USING ivfflat (embedding vector_cosine_ops) WITH (lists=%d);",
+			embedIdx,
+			tableName,
+			ivfLists,
+		),
+	}
+}
+
+func nativeEnsurePgvectorSchema(
+	ctx context.Context,
+	db *sql.DB,
+	dsn string,
+	tableName string,
+	dim int,
+) error {
+	cacheKey := nativePgvectorSchemaCacheKey(dsn, tableName, dim)
+	nativePgvectorSchemaMu.Lock()
+	if _, ok := nativePgvectorSchemaSet[cacheKey]; ok {
+		nativePgvectorSchemaMu.Unlock()
+		return nil
+	}
+	nativePgvectorSchemaMu.Unlock()
+
+	timeout := envDurationSeconds("ORCH_PGVECTOR_SCHEMA_TIMEOUT_SECS", 12)
+	if timeout < 2*time.Second {
+		timeout = 2 * time.Second
+	}
+	ensureCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ivfLists := maxInt(1, envInt("ORCH_PGVECTOR_IVFFLAT_LISTS", 100))
+	for _, statement := range nativePgvectorEnsureStatements(tableName, dim, ivfLists) {
+		if _, err := db.ExecContext(ensureCtx, statement); err != nil {
+			return err
+		}
+	}
+	nativePgvectorSchemaMu.Lock()
+	nativePgvectorSchemaSet[cacheKey] = struct{}{}
+	nativePgvectorSchemaMu.Unlock()
+	return nil
+}
+
+func clipRunes(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes])
+}
+
+func parseOptionalRFC3339(raw string, fallback time.Time) time.Time {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return fallback
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, token)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, token)
+		if err != nil {
+			return fallback
+		}
+	}
+	return parsed.UTC()
+}
+
+func (s *server) upsertPgvectorFromWrite(
+	ctx context.Context,
+	item normalizedWrite,
+) (string, error) {
+	if !nativeSourceAdapterEnabled(sourcePgvector, true) {
+		return "skipped_adapter_disabled", nil
+	}
+	if !nativePgvectorEnabled() {
+		return "skipped_source_disabled", nil
+	}
+	if !nativePgvectorFanoutEnabled() {
+		return "skipped_fanout_disabled", nil
+	}
+	dsn := nativePgvectorDSN()
+	if dsn == "" {
+		return "skipped_unconfigured", nil
+	}
+	db, err := nativePgvectorDB(ctx, dsn)
+	if err != nil {
+		return "failed_connect", err
+	}
+	tableName := nativePgvectorTable()
+	embedDim := nativeDefaultEmbedDim()
+	vector, _, err := nativeEmbedQueryVector(ctx, s.client, item.content, embedDim)
+	if err != nil {
+		return "failed_embed", err
+	}
+	if err := nativeEnsurePgvectorSchema(ctx, db, dsn, tableName, len(vector)); err != nil {
+		return "failed_schema", err
+	}
+	summary := strings.TrimSpace(item.content)
+	if summary == "" {
+		summary = item.fileName
+	}
+	summary = clipRunes(summary, 1200)
+	createdAt := parseOptionalRFC3339(item.createdAt, time.Now().UTC())
+	_, err = db.ExecContext(
+		ctx,
+		"INSERT INTO "+tableName+" (project, file, summary, topic_path, created_at, embedding) VALUES ($1, $2, $3, $4, $5, $6::vector);",
+		strings.TrimSpace(item.project),
+		strings.TrimSpace(item.fileName),
+		summary,
+		strings.TrimSpace(item.topicPath),
+		createdAt,
+		nativePgvectorLiteral(vector),
+	)
+	if err != nil {
+		return "failed_insert", err
+	}
+	return "succeeded", nil
+}
+
 func nativePgvectorLiteral(vector []float64) string {
 	if len(vector) == 0 {
 		return "[]"
@@ -692,6 +854,18 @@ func nativePgvectorLiteral(vector []float64) string {
 		parts = append(parts, strconv.FormatFloat(value, 'f', 8, 64))
 	}
 	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func isPostgresUndefinedRelation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pq.Error
+	if errors.As(err, &pgErr) {
+		return string(pgErr.Code) == "42P01"
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "relation") && strings.Contains(lower, "does not exist")
 }
 
 func (s *server) queryPostgresPgvectorSource(
@@ -727,6 +901,9 @@ func (s *server) queryPostgresPgvectorSource(
 		return nil, warnings, err
 	}
 	tableName := nativePgvectorTable()
+	if ensureErr := nativeEnsurePgvectorSchema(ctx, db, dsn, tableName, len(vector)); ensureErr != nil {
+		return nil, warnings, ensureErr
+	}
 	sqlQuery := "SELECT project, file, summary, topic_path, created_at, (1 - (embedding <=> $1::vector)) AS similarity " +
 		"FROM " + tableName + " " +
 		"WHERE ($2::text = '' OR project = $2) " +
@@ -743,6 +920,13 @@ func (s *server) queryPostgresPgvectorSource(
 		scanLimit,
 	)
 	if err != nil {
+		if isPostgresUndefinedRelation(err) {
+			warnings = append(
+				warnings,
+				"postgres_pgvector relation "+tableName+" missing; returning empty lane (set ORCH_PGVECTOR_TABLE or provision pgvector schema)",
+			)
+			return []map[string]any{}, warnings, nil
+		}
 		return nil, warnings, err
 	}
 	defer rowsResult.Close()
