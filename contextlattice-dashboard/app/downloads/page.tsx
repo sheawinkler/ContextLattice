@@ -130,10 +130,16 @@ export default function DownloadsPage() {
       <section className="card">
         <h2 className="text-xl font-semibold">Premium Downloads</h2>
         <p className="text-sm text-slate-400 mt-1">
-          Buy plan on <a className="underline" href="/billing">Billing</a>, then download paid artifacts here.
+          Final step: after checkout on <a className="underline" href="/billing">Billing</a>, download paid artifacts here.
         </p>
+        <div className="mt-3 text-sm text-slate-300 space-y-1">
+          <p><strong>Step 4 of 4:</strong> pull artifacts and issue runtime key.</p>
+          <p>Use timed links for secure sharing with entitled users.</p>
+        </div>
         {!session?.user ? (
-          <p className="text-sm text-amber-300 mt-2">Sign in to access premium downloads.</p>
+          <p className="text-sm text-amber-300 mt-2">
+            <a className="underline" href="/auth/login">Sign in</a> to access premium downloads.
+          </p>
         ) : (
           <p className="text-sm text-emerald-300 mt-2">
             Signed in as {session.user.email}
@@ -150,7 +156,7 @@ export default function DownloadsPage() {
         <h3 className="text-lg font-semibold">Direct Downloads</h3>
         {!hasAssets ? (
           <p className="text-sm text-slate-400">
-            Premium artifacts are not available yet for this account/environment.
+            Premium artifacts are not available yet for this account/environment. Confirm active billing on <a className="underline" href="/billing">Billing</a>.
           </p>
         ) : (
           <div className="grid md:grid-cols-3 gap-3">
@@ -209,7 +215,7 @@ export default function DownloadsPage() {
       <section className="card space-y-3">
         <h3 className="text-lg font-semibold">Premium Runtime Key</h3>
         <p className="text-sm text-slate-400">
-          Issue a premium API key for authenticated paid-runtime usage.
+          Issue a premium API key for authenticated paid-runtime usage on private lanes.
         </p>
         <button
           className="rounded border border-slate-700 px-4 py-2"

@@ -227,9 +227,15 @@ function BillingPageContent() {
           Choose a plan, then pick a payment method. We recommend card checkout
           first, PayPal next, and crypto if you prefer on-chain settlement.
         </p>
+        <div className="mt-4 text-sm text-slate-300 space-y-1">
+          <p><strong>Step 1:</strong> confirm you are signed in.</p>
+          <p><strong>Step 2:</strong> choose monthly or annual.</p>
+          <p><strong>Step 3:</strong> complete checkout with any provider below.</p>
+          <p><strong>Step 4:</strong> after confirmation, open <a className="underline" href="/downloads">Downloads</a>.</p>
+        </div>
         {!session?.user ? (
           <p className="text-sm text-amber-300 mt-3">
-            You are not signed in. Sign in to attach billing to a user.
+            You are not signed in. <a className="underline" href="/auth/login">Sign in</a> to attach billing to your account.
           </p>
         ) : (
           <p className="text-sm text-emerald-300 mt-3">
@@ -312,9 +318,17 @@ function BillingPageContent() {
               </p>
             ) : null}
             {summary.downloadConfigured && summary.downloadEligible ? (
-              <p className="text-xs text-emerald-300">
-                Premium downloads are ready.
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-emerald-300">
+                  Premium downloads are ready.
+                </p>
+                <a
+                  className="inline-flex items-center rounded bg-emerald-500 text-emerald-950 px-3 py-1 text-xs font-semibold"
+                  href="/downloads"
+                >
+                  Open Downloads
+                </a>
+              </div>
             ) : summary.downloadConfigured ? (
               <p className="text-xs text-amber-300">
                 Premium artifacts are configured but locked until subscription becomes active.
@@ -355,10 +369,34 @@ function BillingPageContent() {
                 onClick={() => startStripe(plan.id)}
                 disabled={providers.stripe && !providers.stripe.enabled}
               >
-                Pay with card (Stripe)
+                Pay with card (Stripe Checkout)
               </button>
               {providers.stripe && !providers.stripe.enabled && providers.stripe.reason ? (
                 <p className="text-xs text-amber-300">{providers.stripe.reason}</p>
+              ) : null}
+              <button
+                className="w-full rounded border border-slate-700 py-2"
+                onClick={() => startStripe(plan.id)}
+                disabled={providers["apple-pay"] && !providers["apple-pay"].enabled}
+              >
+                Pay with Apple Pay (via Stripe)
+              </button>
+              {providers["apple-pay"] &&
+              !providers["apple-pay"].enabled &&
+              providers["apple-pay"].reason ? (
+                <p className="text-xs text-amber-300">{providers["apple-pay"].reason}</p>
+              ) : null}
+              <button
+                className="w-full rounded border border-slate-700 py-2"
+                onClick={() => startStripe(plan.id)}
+                disabled={providers["google-pay"] && !providers["google-pay"].enabled}
+              >
+                Pay with Google Pay (via Stripe)
+              </button>
+              {providers["google-pay"] &&
+              !providers["google-pay"].enabled &&
+              providers["google-pay"].reason ? (
+                <p className="text-xs text-amber-300">{providers["google-pay"].reason}</p>
               ) : null}
               <button
                 className="w-full rounded border border-slate-700 py-2"
@@ -389,7 +427,7 @@ function BillingPageContent() {
                 onClick={() => startKrak(plan.id)}
                 disabled={providers.kraken && !providers.kraken.enabled}
               >
-                Pay with Krak / Kraken
+                Pay with Kraken
               </button>
               {providers.kraken && !providers.kraken.enabled && providers.kraken.reason ? (
                 <p className="text-xs text-amber-300">{providers.kraken.reason}</p>
@@ -528,6 +566,9 @@ function BillingPageContent() {
         <section className="card">
           <h3 className="text-lg font-semibold">Status</h3>
           <p className="text-sm text-slate-300">{message}</p>
+          <p className="text-xs text-slate-400 mt-2">
+            If payment just completed, refresh after webhook settlement and then continue to Downloads.
+          </p>
         </section>
       ) : null}
     </div>

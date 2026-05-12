@@ -9,6 +9,11 @@ export default function PricingPage() {
           Plans scale from solo builders to enterprise teams. Stripe handles card
           billing; PayPal and crypto options are available when configured. Annual plans include a discount.
         </p>
+        <div className="mt-4 text-sm text-slate-300 space-y-1">
+          <p><strong>Step 1:</strong> pick a plan below.</p>
+          <p><strong>Step 2:</strong> continue to Billing and choose payment method.</p>
+          <p><strong>Step 3:</strong> after confirmation, pull artifacts from Downloads.</p>
+        </div>
       </section>
 
       <section className="grid md:grid-cols-3 gap-4">
@@ -30,7 +35,7 @@ export default function PricingPage() {
               className="inline-flex items-center justify-center rounded bg-emerald-500 text-emerald-950 px-4 py-2 font-semibold"
               href="/billing"
             >
-              Choose {plan.name}
+              Continue with {plan.name}
             </a>
           </div>
         ))}
