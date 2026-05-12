@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import "./globals.css";
 import { AuthProvider } from "@/components/SessionProvider";
+import { ShellNav } from "@/components/ShellNav";
 
 export const metadata = {
   title: "ContextLattice Console",
@@ -20,35 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   Live window into the memory bank, orchestrator, and MCP stack
                 </p>
               </div>
-              <nav className="shell-nav">
-                <a className="shell-nav-link" href="/">
-                  Console
-                </a>
-                <a className="shell-nav-link" href="/mindmap">
-                  Mindmap
-                </a>
-                <a className="shell-nav-link" href="/status">
-                  Status
-                </a>
-                <a className="shell-nav-link" href="/setup">
-                  Setup
-                </a>
-                <a className="shell-nav-link" href="/pricing">
-                  Pricing
-                </a>
-                <a className="shell-nav-link" href="/billing">
-                  Billing
-                </a>
-                <a className="shell-nav-link" href="/downloads">
-                  Downloads
-                </a>
-                <a className="shell-nav-link" href="/settings">
-                  Settings
-                </a>
-                <a className="shell-nav-link" href="/auth/login">
-                  Sign in
-                </a>
-              </nav>
+              <ShellNav />
             </div>
           </header>
           <main className="shell-main">{children}</main>
