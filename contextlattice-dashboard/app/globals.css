@@ -102,6 +102,41 @@ body {
   transform: translateY(-1px);
 }
 
+.shell-nav-link-primary {
+  border-color: rgba(214, 189, 134, 0.72);
+  background: linear-gradient(140deg, rgba(214, 189, 134, 0.2), rgba(214, 189, 134, 0.08));
+  color: #f4e9d3;
+}
+
+.shell-nav-link-primary:hover {
+  color: #fff1cf;
+  border-color: rgba(240, 220, 177, 0.95);
+}
+
+.shell-nav-link-action {
+  border-color: rgba(131, 206, 203, 0.58);
+  color: #d9f5f3;
+}
+
+.shell-account-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.36rem 0.66rem;
+  border: 1px solid rgba(131, 206, 203, 0.4);
+  background: rgba(11, 24, 24, 0.62);
+  color: #d7f5f2;
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "Space Mono", monospace;
+  max-width: 16ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .shell-main {
   max-width: 1180px;
   margin: 0 auto;
