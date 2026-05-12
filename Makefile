@@ -324,6 +324,7 @@ launch-lock-public:
 export OPENAI_API_BASE ?= $(shell grep -E '^OPENAI_API_BASE=' $(ENV_FILE) | tail -1 | cut -d= -f2)
 export OPENAI_API_KEY  ?= $(shell grep -E '^OPENAI_API_KEY='  $(ENV_FILE) | tail -1 | cut -d= -f2)
 export MLX_API_BASE    ?= $(shell grep -E '^MLX_API_BASE='    $(ENV_FILE) | tail -1 | cut -d= -f2)
+export MLX_MODEL_PATH  ?= $(shell grep -E '^MLX_MODEL_PATH='  $(ENV_FILE) | tail -1 | cut -d= -f2)
 export LETTA_PORT      ?= $(shell grep -E '^LETTA_PORT='      $(ENV_FILE) | tail -1 | cut -d= -f2)
 
 .PHONY: env-print env-check
@@ -331,6 +332,7 @@ env-print:
 > @echo "OPENAI_API_BASE=$(OPENAI_API_BASE)"
 > @echo "OPENAI_API_KEY=$(OPENAI_API_KEY)"
 > @echo "MLX_API_BASE=$(MLX_API_BASE)"
+> @echo "MLX_MODEL_PATH=$(MLX_MODEL_PATH)"
 > @echo "LETTA_PORT=$(LETTA_PORT)"
 
 env-check:
@@ -351,9 +353,11 @@ ENV_FILE ?= .env
 mlx-up:
 > test -d .venv-mlx || (uv venv .venv-mlx && . .venv-mlx/bin/activate && uv pip install -U mlx-lm)
 > pgrep -f "mlx_lm.server" >/dev/null 2>&1 && echo "mlx already running" || \
-> (. .venv-mlx/bin/activate; \
+> (MODEL_PATH="$(MLX_MODEL_PATH)"; \
+>  [ -n "$$MODEL_PATH" ] || { echo "ERROR: set MLX_MODEL_PATH in $(ENV_FILE)"; exit 1; }; \
+>  . .venv-mlx/bin/activate; \
 >  python -m mlx_lm.server \
->    --model "/Volumes/wd_black/lmstudio_models/Eldadalbajob/Qwen3-42B-A3B-2507-Thinking-Abliterated-uncensored-TOTAL-RECALL-v2-Medium-MASTER-CODER-mlx-4Bit" \
+>    --model "$$MODEL_PATH" \
 >    --host 127.0.0.1 --port 18087 >logs/mlx.log 2>&1 & echo $$! > .mlx.pid; \
 >  echo "mlx: http://127.0.0.1:18087/v1 (pid $$(cat .mlx.pid))")
 
