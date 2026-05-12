@@ -38,7 +38,7 @@ def _resolve_db_path(cli_value: str | None) -> Path:
         candidates.append(Path(orch_data_dir) / "agent_tasks.db")
     candidates.extend(
         [
-            Path("/Volumes/wd_black/memmcp/orchestrator/agent_tasks.db"),
+            Path.home() / ".contextlattice" / "orchestrator" / "agent_tasks.db",
             Path(".data/orchestrator/agent_tasks.db"),
             Path("services/orchestrator/data/agent_tasks.db"),
         ]
