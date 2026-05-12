@@ -29,7 +29,7 @@ services:
     ports:
       - "53126:9090"
     volumes:
-      - ../../.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+      - ../../.contextlattice.config/mcp-hub/config.json:/config/config.json:ro
     depends_on:
       memorymcp-http:
         condition: service_healthy

@@ -39,12 +39,12 @@ services:
   memorybank-gateway:
     command: ["/main", "--config", "/config/config.json"]
     volumes:
-      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+      - ./.contextlattice.config/mcp-hub/config.json:/config/config.json:ro
   memorybank-gateway:
     command: ["/main", "--config", "/config/config.json"]
     volumes:
-      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+      - ./.contextlattice.config/mcp-hub/config.json:/config/config.json:ro
   memorybank-gateway:
     command: ["/main", "--config", "/config/config.json"]
     volumes:
-      - ./.mcp-servers/mem_mcp_lobehub/config.json:/config/config.json:ro
+      - ./.contextlattice.config/mcp-hub/config.json:/config/config.json:ro

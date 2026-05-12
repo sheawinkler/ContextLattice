@@ -14,4 +14,4 @@ services:
 networks:
   memmcp:
     external: true
-    name: mem_mcp_lobehub_default
+    name: contextlattice_default
