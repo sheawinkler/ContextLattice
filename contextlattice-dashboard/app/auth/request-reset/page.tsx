@@ -21,31 +21,32 @@ export default function RequestResetPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto mt-10 card">
-      <h2 className="text-xl font-semibold">Reset your password</h2>
-      <p className="text-sm text-slate-400 mt-1">
-        We will email a reset link if your account exists.
-      </p>
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <div className="space-y-1">
-          <label className="text-sm text-slate-300">Email</label>
-          <input
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-        {message ? <p className="text-sm text-amber-300">{message}</p> : null}
-        <button
-          type="submit"
-          className="w-full rounded bg-emerald-500 text-emerald-950 py-2 font-semibold"
-          disabled={loading}
-        >
-          {loading ? "Sending..." : "Send reset link"}
-        </button>
-      </form>
-    </div>
+    <section className="auth-shell">
+      <div className="auth-panel">
+        <header className="auth-header">
+          <p className="auth-kicker">Account recovery</p>
+          <h2 className="auth-title">Reset your password</h2>
+          <p className="auth-subtitle">
+            We will email a reset link if your account exists.
+          </p>
+        </header>
+        <form onSubmit={handleSubmit} className="auth-form">
+          <label className="auth-field">
+            <span className="auth-label">Email</span>
+            <input
+              className="auth-input"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </label>
+          {message ? <p className="auth-inline-warning">{message}</p> : null}
+          <button type="submit" className="auth-submit" disabled={loading}>
+            {loading ? "Sending..." : "Send reset link"}
+          </button>
+        </form>
+      </div>
+    </section>
   );
 }
