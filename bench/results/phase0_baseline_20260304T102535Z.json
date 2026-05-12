@@ -135,7 +135,7 @@
           "block_io": "367MB / 16MB"
         },
         {
-          "name": "mem_mcp_lobehub-contextlattice-dashboard-1",
+          "name": "contextlattice-contextlattice-dashboard-1",
           "cpu": "0.00%",
           "mem": "480.3MiB / 54.58GiB",
           "mem_perc": "0.86%",
@@ -143,7 +143,7 @@
           "block_io": "227MB / 63MB"
         },
         {
-          "name": "mem_mcp_lobehub-contextlattice-orchestrator-1",
+          "name": "contextlattice-contextlattice-orchestrator-1",
           "cpu": "8.59%",
           "mem": "331.5MiB / 54.58GiB",
           "mem_perc": "0.59%",
@@ -151,7 +151,7 @@
           "block_io": "0B / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-langfuse-1",
+          "name": "contextlattice-langfuse-1",
           "cpu": "0.00%",
           "mem": "488.8MiB / 54.58GiB",
           "mem_perc": "0.87%",
@@ -159,7 +159,7 @@
           "block_io": "104MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-langfuse-worker-1",
+          "name": "contextlattice-langfuse-worker-1",
           "cpu": "1.21%",
           "mem": "284MiB / 54.58GiB",
           "mem_perc": "0.51%",
@@ -167,7 +167,7 @@
           "block_io": "149MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-lf-clickhouse-1",
+          "name": "contextlattice-lf-clickhouse-1",
           "cpu": "5.41%",
           "mem": "1.884GiB / 54.58GiB",
           "mem_perc": "3.45%",
@@ -175,7 +175,7 @@
           "block_io": "197MB / 13.7MB"
         },
         {
-          "name": "mem_mcp_lobehub-lf-minio-1",
+          "name": "contextlattice-lf-minio-1",
           "cpu": "0.13%",
           "mem": "177.4MiB / 54.58GiB",
           "mem_perc": "0.32%",
@@ -183,7 +183,7 @@
           "block_io": "139MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-lf-postgres-1",
+          "name": "contextlattice-lf-postgres-1",
           "cpu": "9.05%",
           "mem": "58.31MiB / 54.58GiB",
           "mem_perc": "0.10%",
@@ -191,7 +191,7 @@
           "block_io": "28.7MB / 4.1kB"
         },
         {
-          "name": "mem_mcp_lobehub-lf-redis-1",
+          "name": "contextlattice-lf-redis-1",
           "cpu": "0.58%",
           "mem": "26.7MiB / 54.58GiB",
           "mem_perc": "0.05%",
@@ -199,7 +199,7 @@
           "block_io": "15.6MB / 3.83MB"
         },
         {
-          "name": "mem_mcp_lobehub-mcp-hub-1",
+          "name": "contextlattice-mcp-hub-1",
           "cpu": "0.00%",
           "mem": "20.37MiB / 54.58GiB",
           "mem_perc": "0.04%",
@@ -207,7 +207,7 @@
           "block_io": "12.7MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-mcp-qdrant-1",
+          "name": "contextlattice-mcp-qdrant-1",
           "cpu": "0.14%",
           "mem": "309.9MiB / 54.58GiB",
           "mem_perc": "0.55%",
@@ -215,7 +215,7 @@
           "block_io": "200MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-memorymcp-http-1",
+          "name": "contextlattice-memorymcp-http-1",
           "cpu": "0.68%",
           "mem": "119.4MiB / 54.58GiB",
           "mem_perc": "0.21%",
@@ -223,7 +223,7 @@
           "block_io": "0B / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-mindsdb-1",
+          "name": "contextlattice-mindsdb-1",
           "cpu": "105.37%",
           "mem": "1.044GiB / 54.58GiB",
           "mem_perc": "1.91%",
@@ -231,7 +231,7 @@
           "block_io": "321MB / 940MB"
         },
         {
-          "name": "mem_mcp_lobehub-mindsdb-http-proxy-1",
+          "name": "contextlattice-mindsdb-http-proxy-1",
           "cpu": "0.13%",
           "mem": "95.24MiB / 54.58GiB",
           "mem_perc": "0.17%",
@@ -239,7 +239,7 @@
           "block_io": "41MB / 4.1kB"
         },
         {
-          "name": "mem_mcp_lobehub-mongo-1",
+          "name": "contextlattice-mongo-1",
           "cpu": "0.39%",
           "mem": "3.297GiB / 54.58GiB",
           "mem_perc": "6.04%",
@@ -247,7 +247,7 @@
           "block_io": "97.3MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-promptfoo-1",
+          "name": "contextlattice-promptfoo-1",
           "cpu": "0.00%",
           "mem": "152.5MiB / 54.58GiB",
           "mem_perc": "0.27%",
@@ -255,7 +255,7 @@
           "block_io": "65MB / 45.1kB"
         },
         {
-          "name": "mem_mcp_lobehub-qdrant-1",
+          "name": "contextlattice-qdrant-1",
           "cpu": "0.35%",
           "mem": "548.4MiB / 54.58GiB",
           "mem_perc": "0.98%",
@@ -298,7 +298,7 @@
           "block_io": "367MB / 18.2MB"
         },
         {
-          "name": "mem_mcp_lobehub-contextlattice-dashboard-1",
+          "name": "contextlattice-contextlattice-dashboard-1",
           "cpu": "0.03%",
           "mem": "480.3MiB / 54.58GiB",
           "mem_perc": "0.86%",
@@ -306,7 +306,7 @@
           "block_io": "227MB / 63MB"
         },
         {
-          "name": "mem_mcp_lobehub-contextlattice-orchestrator-1",
+          "name": "contextlattice-contextlattice-orchestrator-1",
           "cpu": "3.81%",
           "mem": "322.3MiB / 54.58GiB",
           "mem_perc": "0.58%",
@@ -314,7 +314,7 @@
           "block_io": "0B / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-langfuse-1",
+          "name": "contextlattice-langfuse-1",
           "cpu": "0.01%",
           "mem": "488.8MiB / 54.58GiB",
           "mem_perc": "0.87%",
@@ -322,7 +322,7 @@
           "block_io": "104MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-langfuse-worker-1",
+          "name": "contextlattice-langfuse-worker-1",
           "cpu": "0.34%",
           "mem": "284MiB / 54.58GiB",
           "mem_perc": "0.51%",
@@ -330,7 +330,7 @@
           "block_io": "149MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-lf-clickhouse-1",
+          "name": "contextlattice-lf-clickhouse-1",
           "cpu": "34.02%",
           "mem": "1.848GiB / 54.58GiB",
           "mem_perc": "3.39%",
@@ -338,7 +338,7 @@
           "block_io": "197MB / 13.9MB"
         },
         {
-          "name": "mem_mcp_lobehub-lf-minio-1",
+          "name": "contextlattice-lf-minio-1",
           "cpu": "3.91%",
           "mem": "187.8MiB / 54.58GiB",
           "mem_perc": "0.34%",
@@ -346,7 +346,7 @@
           "block_io": "139MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-lf-postgres-1",
+          "name": "contextlattice-lf-postgres-1",
           "cpu": "0.00%",
           "mem": "58.31MiB / 54.58GiB",
           "mem_perc": "0.10%",
@@ -354,7 +354,7 @@
           "block_io": "28.7MB / 4.1kB"
         },
         {
-          "name": "mem_mcp_lobehub-lf-redis-1",
+          "name": "contextlattice-lf-redis-1",
           "cpu": "2.34%",
           "mem": "26.71MiB / 54.58GiB",
           "mem_perc": "0.05%",
@@ -362,7 +362,7 @@
           "block_io": "15.6MB / 3.83MB"
         },
         {
-          "name": "mem_mcp_lobehub-mcp-hub-1",
+          "name": "contextlattice-mcp-hub-1",
           "cpu": "0.00%",
           "mem": "20.36MiB / 54.58GiB",
           "mem_perc": "0.04%",
@@ -370,7 +370,7 @@
           "block_io": "12.7MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-mcp-qdrant-1",
+          "name": "contextlattice-mcp-qdrant-1",
           "cpu": "0.16%",
           "mem": "309.9MiB / 54.58GiB",
           "mem_perc": "0.55%",
@@ -378,7 +378,7 @@
           "block_io": "200MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-memorymcp-http-1",
+          "name": "contextlattice-memorymcp-http-1",
           "cpu": "0.19%",
           "mem": "135.6MiB / 54.58GiB",
           "mem_perc": "0.24%",
@@ -386,7 +386,7 @@
           "block_io": "0B / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-mindsdb-1",
+          "name": "contextlattice-mindsdb-1",
           "cpu": "43.93%",
           "mem": "1.045GiB / 54.58GiB",
           "mem_perc": "1.92%",
@@ -394,7 +394,7 @@
           "block_io": "321MB / 955MB"
         },
         {
-          "name": "mem_mcp_lobehub-mindsdb-http-proxy-1",
+          "name": "contextlattice-mindsdb-http-proxy-1",
           "cpu": "0.25%",
           "mem": "95.24MiB / 54.58GiB",
           "mem_perc": "0.17%",
@@ -402,7 +402,7 @@
           "block_io": "41MB / 4.1kB"
         },
         {
-          "name": "mem_mcp_lobehub-mongo-1",
+          "name": "contextlattice-mongo-1",
           "cpu": "0.50%",
           "mem": "3.289GiB / 54.58GiB",
           "mem_perc": "6.03%",
@@ -410,7 +410,7 @@
           "block_io": "97.3MB / 0B"
         },
         {
-          "name": "mem_mcp_lobehub-promptfoo-1",
+          "name": "contextlattice-promptfoo-1",
           "cpu": "0.00%",
           "mem": "152.5MiB / 54.58GiB",
           "mem_perc": "0.27%",
@@ -418,7 +418,7 @@
           "block_io": "65MB / 45.1kB"
         },
         {
-          "name": "mem_mcp_lobehub-qdrant-1",
+          "name": "contextlattice-qdrant-1",
           "cpu": "0.14%",
           "mem": "569.3MiB / 54.58GiB",
           "mem_perc": "1.02%",

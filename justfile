@@ -1,13 +1,14 @@
 set shell := ["bash", "-c"]
+repo_root := justfile_directory()
 
 default:
 	@just --list
 
 orch-up:
-    cd ~/.mcp-servers/mem_mcp_lobehub && ${DOCKER_API_VERSION:+DOCKER_API_VERSION=$DOCKER_API_VERSION }docker compose up -d contextlattice-orchestrator
+    cd {{repo_root}} && ${DOCKER_API_VERSION:+DOCKER_API_VERSION=$DOCKER_API_VERSION }docker compose up -d contextlattice-orchestrator
 
 orch-down:
-    cd ~/.mcp-servers/mem_mcp_lobehub && ${DOCKER_API_VERSION:+DOCKER_API_VERSION=$DOCKER_API_VERSION }docker compose down contextlattice-orchestrator || true
+    cd {{repo_root}} && ${DOCKER_API_VERSION:+DOCKER_API_VERSION=$DOCKER_API_VERSION }docker compose down contextlattice-orchestrator || true
 
 sidecar-up:
     cd ~/Documents/Projects/crypto_trader_post_training_needs_godmode_and_finalization && nohup poetry run uvicorn project.src.api.fastapi_server:app --host 0.0.0.0 --port 8288 > /tmp/devnet_sidecar.log 2>&1 & echo $! > /tmp/devnet_sidecar.pid

@@ -1,6 +1,6 @@
 services:
   mcp-qdrant:
-    image: ${MCP_QDRANT_IMAGE:-mem_mcp_lobehub_mcp-qdrant}
+    image: ${MCP_QDRANT_IMAGE:-contextlattice_mcp-qdrant}
     command: ["mcp-server-qdrant", "--transport", "streamable-http"]
     environment:
       # HTTP transport will listen on this port inside the container
