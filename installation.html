@@ -20,9 +20,8 @@
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
         <a class="active" href="installation.html">Installation</a>
+        <a href="cli.html">CLI</a>
         <a href="integration.html">Integrations</a>
-        <a href="premium.html">Premium</a>
-        <a href="app.html">App</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
         <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
@@ -63,7 +62,6 @@
         <a href="#install-download">Downloads</a>
         <a href="#install-monitoring">Monitoring</a>
         <a href="#install-requirements">Requirements</a>
-        <a href="#install-resource-checker">Resource Checker</a>
         <a href="#install-modes">Modes</a>
         <a href="#install-storage">Storage</a>
         <a href="#install-verify">Verify</a>
@@ -166,34 +164,6 @@ gmake monitor-check</code></pre>
           <li><strong>Public-paid / private <code>v4</code> local premium:</strong> <code>8-12</code> vCPU, <code>24-48 GB</code> RAM, <code>250 GB-1 TB</code> SSD/NVMe</li>
           <li><strong>Private <code>v4</code> hosted baseline:</strong> <code>16+</code> vCPU host, <code>64+ GB</code> RAM, GPU lane, <code>1-2 TB</code> NVMe for retrieval indexes/snapshots</li>
         </ul>
-      </article>
-    </section>
-
-    <section class="section" id="install-resource-checker">
-      <article class="card">
-        <div class="kicker">Machine fit</div>
-        <h3>Resource checker</h3>
-        <p class="muted-note">Enter available resources on your machine to get a recommended lane. If none match, the checker warns clearly.</p>
-        <div class="resource-checker-grid">
-          <label class="resource-checker-field">
-            <span>Available CPU threads</span>
-            <input id="resource-cpu" type="number" min="1" step="1" value="8" />
-          </label>
-          <label class="resource-checker-field">
-            <span>Available RAM (GB)</span>
-            <input id="resource-ram" type="number" min="1" step="1" value="16" />
-          </label>
-          <label class="resource-checker-field">
-            <span>Available storage (GB)</span>
-            <input id="resource-storage" type="number" min="10" step="10" value="120" />
-          </label>
-        </div>
-        <div class="resource-checker-actions">
-          <button id="resource-check-run" class="cta primary" type="button">Check best lane</button>
-        </div>
-        <div id="resource-check-output" class="resource-check-output" aria-live="polite">
-          Enter values and run the checker.
-        </div>
       </article>
     </section>
 
@@ -350,99 +320,5 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention 
       <span>Use Troubleshooting for install and runtime service recovery.</span>
     </footer>
   </main>
-  <script>
-    (() => {
-      const lanes = [
-        {
-          id: "hf-glama-lite",
-          label: "Hugging Face / Glama Lite",
-          cpu: 2,
-          ram: 4,
-          storage: 20,
-          note: "single-container compatibility lane",
-        },
-        {
-          id: "local-lite",
-          label: "Local Lite",
-          cpu: 2,
-          ram: 8,
-          storage: 25,
-          note: "lowest-footprint local compose lane",
-        },
-        {
-          id: "local-full",
-          label: "Local Full (no spike-lab)",
-          cpu: 6,
-          ram: 12,
-          storage: 100,
-          note: "full retrieval stack with observability",
-        },
-        {
-          id: "local-full-spike-lab",
-          label: "Local Full + spike-lab",
-          cpu: 8,
-          ram: 24,
-          storage: 180,
-          note: "full stack plus active adapter testing",
-        },
-        {
-          id: "premium-v4",
-          label: "Premium/private v4 local",
-          cpu: 8,
-          ram: 24,
-          storage: 250,
-          note: "paid lane with entitlement + billing surfaces",
-        },
-      ];
-
-      const cpuEl = document.getElementById("resource-cpu");
-      const ramEl = document.getElementById("resource-ram");
-      const storageEl = document.getElementById("resource-storage");
-      const outputEl = document.getElementById("resource-check-output");
-      const runEl = document.getElementById("resource-check-run");
-
-      if (!cpuEl || !ramEl || !storageEl || !outputEl || !runEl) {
-        return;
-      }
-
-      function toNumber(el) {
-        const value = Number(el.value);
-        return Number.isFinite(value) && value > 0 ? value : 0;
-      }
-
-      function renderResult() {
-        const available = {
-          cpu: toNumber(cpuEl),
-          ram: toNumber(ramEl),
-          storage: toNumber(storageEl),
-        };
-
-        const eligible = lanes.filter((lane) =>
-          available.cpu >= lane.cpu &&
-          available.ram >= lane.ram &&
-          available.storage >= lane.storage
-        );
-
-        if (!eligible.length) {
-          outputEl.innerHTML = `
-            <strong class="resource-state resource-state-warn">No supported lane fits current resources.</strong>
-            <p>Minimum local target is <code>2 CPU / 4 GB RAM / 20 GB storage</code> for HF/Glama Lite. Consider freeing resources or using a larger host.</p>
-          `;
-          return;
-        }
-
-        const best = eligible[eligible.length - 1];
-        const allLabels = eligible.map((lane) => lane.label).join(", ");
-        outputEl.innerHTML = `
-          <strong class="resource-state resource-state-ok">Recommended: ${best.label}</strong>
-          <p>${best.note}</p>
-          <p><strong>Also supported:</strong> ${allLabels}</p>
-        `;
-      }
-
-      runEl.addEventListener("click", renderResult);
-      renderResult();
-    })();
-  </script>
 </body>
 </html>

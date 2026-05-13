@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CLI Quickstart | Context Lattice</title>
+  <meta name="description" content="Context Lattice CLI quickstart for install, launch, monitoring, write/search validation, and agent preflight." />
+  <link rel="stylesheet" href="styles-gray.css?v=20260513a" />
+</head>
+<body class="home">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="wiki.html">Wiki</a>
+        <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
+        <a href="installation.html">Installation</a>
+        <a class="active" href="cli.html">CLI</a>
+        <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a href="app.html">App</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <span class="badge">CLI</span>
+      <h1>Install, launch, and validate Context Lattice from terminal in minutes.</h1>
+      <p class="sub">Use these commands as the canonical local flow for public and premium lanes.</p>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Install</div>
+        <h3>Clone + bootstrap</h3>
+<pre><code>git clone https://github.com/sheawinkler/ContextLattice.git
+cd ContextLattice
+BOOTSTRAP=1 scripts/first_run.sh</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Launch</div>
+        <h3>Guided quickstart</h3>
+<pre><code>gmake quickstart</code></pre>
+        <p class="muted-note">`quickstart` now shows resource guidance and lets users choose the best profile for their machine.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Monitor</div>
+        <h3>Health and dashboard checks</h3>
+<pre><code>gmake monitor-open
+# or terminal-only checks
+gmake monitor-check</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Write/search smoke</div>
+        <h3>Verify memory path end-to-end</h3>
+<pre><code>ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
+
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"projectName":"_global","fileName":"smoke/cli_check.md","content":"cli smoke ok"}' \
+  http://127.0.0.1:8075/memory/write | jq
+
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"query":"cli smoke ok","limit":3}' \
+  http://127.0.0.1:8075/memory/search | jq</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Global helpers</div>
+        <h3>Installed wrappers for agents/operators</h3>
+<pre><code>contextlattice_search -h
+contextlattice_write -h
+contextlattice_search --query "release readiness" --project contextlattice
+contextlattice_write --project contextlattice --file notes/checkpoint.md --content "checkpoint saved"</code></pre>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>For deeper contracts and templates, continue to Integrations + Wiki.</span>
+      <span>For paid setup, continue to Premium + App.</span>
+    </footer>
+  </main>
+</body>
+</html>
