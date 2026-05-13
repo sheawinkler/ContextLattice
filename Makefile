@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := archive/services/orchestrator_legacy_python/tests/test_orchestrator_retrieval.py archive/services/orchestrator_legacy_python/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings             mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily storage-ledger-capture storage-ledger-prune storage-ledger-install storage-ledger-uninstall storage-ledger-status weekly-lineage-rollup weekly-lineage-install weekly-lineage-uninstall weekly-lineage-status            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings disk-clean-safe            mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel paid-launch-checklist backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply sentrux-check sentrux-gate sentrux-gate-save
 
 help:
 > echo "Targets:"
@@ -49,6 +49,10 @@ help:
 > echo "  linux-bundle-build: build ContextLattice Linux bootstrap tarball in ./dist"
 > echo "  fanout-status|fanout-deadletters|fanout-rehydrate: durability + replay ops"
 > echo "  cold-snapshot-pack|cold-snapshot-tier|cold-snapshot-restore: compact + tier + restore cold snapshots"
+> echo "  storage-ledger-capture|storage-ledger-prune: append/prune metadata-only storage growth ledger"
+> echo "  storage-ledger-install|storage-ledger-status: install hourly ledger runner (launchd)"
+> echo "  weekly-lineage-rollup: generate weekly per-project lineage + global synergy rollups"
+> echo "  weekly-lineage-install|weekly-lineage-status: install weekly lineage runner (launchd)"
 > echo "  qdrant-cutover: set QDRANT_COLLECTION and rehydrate vectors"
 > echo "  service-version-audit|service-version-apply: check/apply stable image tag bumps"
 > echo "  service-update-pipeline: audit -> validate -> redeploy -> tests -> health checks"
@@ -272,6 +276,51 @@ retention-uninstall:
 
 retention-status:
 > bash scripts/install_retention_runner.sh status
+
+storage-ledger-capture:
+> python3 scripts/storage_ledger_capture.py \
+>   --orchestrator-url "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}" \
+>   --out "$${ORCH_STORAGE_LEDGER_PATH:-./.data/orchestrator/storage_ledger.ndjson}" \
+>   --keep-days "$${ORCH_STORAGE_LEDGER_KEEP_DAYS:-180}" \
+>   --max-bytes "$${ORCH_STORAGE_LEDGER_MAX_BYTES:-134217728}" \
+>   --tracked-top-limit "$${ORCH_STORAGE_LEDGER_TRACKED_TOP_LIMIT:-24}" \
+>   --timeout-secs "$${ORCH_STORAGE_LEDGER_TIMEOUT_SECS:-20}"
+
+storage-ledger-prune:
+> python3 scripts/storage_ledger_capture.py \
+>   --out "$${ORCH_STORAGE_LEDGER_PATH:-./.data/orchestrator/storage_ledger.ndjson}" \
+>   --keep-days "$${ORCH_STORAGE_LEDGER_KEEP_DAYS:-180}" \
+>   --max-bytes "$${ORCH_STORAGE_LEDGER_MAX_BYTES:-134217728}" \
+>   --prune-only
+
+storage-ledger-install:
+> bash scripts/install_storage_ledger_runner.sh install
+
+storage-ledger-uninstall:
+> bash scripts/install_storage_ledger_runner.sh uninstall
+
+storage-ledger-status:
+> bash scripts/install_storage_ledger_runner.sh status
+
+weekly-lineage-rollup:
+> python3 scripts/weekly_lineage_rollup.py \
+>   --orchestrator-url "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}" \
+>   --memory-root "$${GO_MEMORY_STORE_ROOT:-$${MEMORY_BANK_ROOT:-/tmp/contextlattice-memory-bank}}" \
+>   --out-root "$${CONTEXTLATTICE_LINEAGE_ROOT:-./.data/cold/lineage}" \
+>   --min-count "$${CONTEXTLATTICE_LINEAGE_MIN_COUNT:-1}" \
+>   --top-topic-limit "$${CONTEXTLATTICE_LINEAGE_TOP_TOPIC_LIMIT:-60}" \
+>   --synergy-min-projects "$${CONTEXTLATTICE_LINEAGE_SYNERGY_MIN_PROJECTS:-2}" \
+>   --keep-weeks "$${CONTEXTLATTICE_LINEAGE_KEEP_WEEKS:-104}" \
+>   --emit-synergy
+
+weekly-lineage-install:
+> bash scripts/install_weekly_lineage_runner.sh install
+
+weekly-lineage-uninstall:
+> bash scripts/install_weekly_lineage_runner.sh uninstall
+
+weekly-lineage-status:
+> bash scripts/install_weekly_lineage_runner.sh status
 
 docker-fs-watchdog-run:
 > bash scripts/docker_fs_watchdog.sh
