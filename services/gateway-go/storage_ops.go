@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -235,6 +238,79 @@ func humanizeBytes(value int64) string {
 	return fmt.Sprintf("%.2f %s", size, units[unit])
 }
 
+func defaultStorageLedgerPath() string {
+	explicit := strings.TrimSpace(os.Getenv("ORCH_STORAGE_LEDGER_PATH"))
+	if explicit != "" {
+		return filepath.Clean(explicit)
+	}
+	goRoot := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
+	if goRoot != "" {
+		return filepath.Clean(filepath.Join(goRoot, "_contextlattice", "storage_ledger.ndjson"))
+	}
+	return filepath.Clean(filepath.Join(".data", "orchestrator", "storage_ledger.ndjson"))
+}
+
+func parseStorageLedgerTime(raw string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
+		return ts.UTC(), true
+	}
+	if ts, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return ts.UTC(), true
+	}
+	return time.Time{}, false
+}
+
+func readStorageLedgerEntries(path string, limit int, since *time.Time, maxLineBytes int) ([]map[string]any, int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer file.Close()
+
+	rows := make([]map[string]any, 0, limit)
+	parseErrors := 0
+	scanner := bufio.NewScanner(file)
+	if maxLineBytes < 64*1024 {
+		maxLineBytes = 64 * 1024
+	}
+	scanner.Buffer(make([]byte, 0, 128*1024), maxLineBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		row := map[string]any{}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			parseErrors += 1
+			continue
+		}
+		if since != nil {
+			capturedRaw := anyToString(row["captured_at"])
+			if capturedRaw == "" {
+				capturedRaw = anyToString(row["timestamp"])
+			}
+			capturedAt, ok := parseStorageLedgerTime(capturedRaw)
+			if !ok || capturedAt.Before(*since) {
+				continue
+			}
+		}
+		if len(rows) < limit {
+			rows = append(rows, row)
+			continue
+		}
+		copy(rows, rows[1:])
+		rows[len(rows)-1] = row
+	}
+	if err := scanner.Err(); err != nil {
+		return rows, parseErrors, err
+	}
+	return rows, parseErrors, nil
+}
+
 func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -310,6 +386,82 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 		"trackedArtifacts": tracked,
 		"telemetrySink":    telemetrySummary,
 	})
+}
+
+func (s *server) storageTelemetryLedger(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+
+	ledgerPath := defaultStorageLedgerPath()
+	defaultLimit := clampInt(envInt("ORCH_STORAGE_LEDGER_READ_LIMIT_DEFAULT", 168), 1, 5000)
+	maxLimit := envInt("ORCH_STORAGE_LEDGER_READ_LIMIT_MAX", 5000)
+	if maxLimit < 1 {
+		maxLimit = 5000
+	}
+	maxLimit = clampInt(maxLimit, 1, 20000)
+	maxLineBytes := envInt("ORCH_STORAGE_LEDGER_LINE_MAX_BYTES", 2*1024*1024)
+
+	limit := defaultLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid limit query param"})
+			return
+		}
+		limit = parsed
+	}
+	limit = clampInt(limit, 1, maxLimit)
+
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	var since *time.Time
+	if sinceRaw != "" {
+		parsed, ok := parseStorageLedgerTime(sinceRaw)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid since query param; expected RFC3339 timestamp"})
+			return
+		}
+		since = &parsed
+	}
+
+	rows, parseErrors, err := readStorageLedgerEntries(ledgerPath, limit, since, maxLineBytes)
+	exists := true
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			exists = false
+			rows = []map[string]any{}
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":         false,
+				"capturedAt": time.Now().UTC().Format(time.RFC3339),
+				"path":       ledgerPath,
+				"exists":     true,
+				"error":      err.Error(),
+				"count":      0,
+				"rows":       []map[string]any{},
+			})
+			return
+		}
+	}
+
+	payload := map[string]any{
+		"ok":         true,
+		"capturedAt": time.Now().UTC().Format(time.RFC3339),
+		"path":       ledgerPath,
+		"exists":     exists,
+		"count":      len(rows),
+		"limit":      limit,
+		"since":      sinceRaw,
+		"rows":       rows,
+	}
+	if parseErrors > 0 {
+		payload["parseErrors"] = parseErrors
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *server) storageMaintenanceRun(w http.ResponseWriter, r *http.Request) {
