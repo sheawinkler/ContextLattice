@@ -45,15 +45,20 @@ if [[ -d "$PUBLIC_SOURCE_DIR" ]]; then
   cp "$PUBLIC_SOURCE_DIR/updates.html" "$PUBLIC_DIR/updates.html"
   cp "$PUBLIC_SOURCE_DIR/roadmap.html" "$PUBLIC_DIR/roadmap.html"
   cp "$PUBLIC_SOURCE_DIR/installation.html" "$PUBLIC_DIR/installation.html"
+  cp "$PUBLIC_SOURCE_DIR/cli.html" "$PUBLIC_DIR/cli.html"
   cp "$PUBLIC_SOURCE_DIR/integration.html" "$PUBLIC_DIR/integration.html"
   cp "$PUBLIC_SOURCE_DIR/troubleshooting.html" "$PUBLIC_DIR/troubleshooting.html"
   cp "$PUBLIC_SOURCE_DIR/contact.html" "$PUBLIC_DIR/contact.html"
+  cp "$PUBLIC_SOURCE_DIR/llms.txt" "$PUBLIC_DIR/llms.txt"
   cp "$PUBLIC_SOURCE_DIR/styles.css" "$PUBLIC_DIR/styles.css"
   if [[ -f "$PUBLIC_SOURCE_DIR/CNAME" ]]; then
     cp "$PUBLIC_SOURCE_DIR/CNAME" "$PUBLIC_DIR/CNAME"
   fi
   if [[ -f "$PUBLIC_SOURCE_DIR/styles-gray.css" ]]; then
     cp "$PUBLIC_SOURCE_DIR/styles-gray.css" "$PUBLIC_DIR/styles-gray.css"
+  fi
+  if [[ -f "$PUBLIC_SOURCE_DIR/styles-fracture.css" ]]; then
+    cp "$PUBLIC_SOURCE_DIR/styles-fracture.css" "$PUBLIC_DIR/styles-fracture.css"
   fi
   if [[ -f "$PUBLIC_SOURCE_DIR/.nojekyll" ]]; then
     cp "$PUBLIC_SOURCE_DIR/.nojekyll" "$PUBLIC_DIR/.nojekyll"

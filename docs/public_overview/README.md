@@ -9,13 +9,16 @@ This folder is the source for the public ContextLattice overview web pages.
 - `updates.html` - chronological updates page
 - `roadmap.html` - V3 integration and efficacy roadmap
 - `installation.html` - install and launch command guide
+- `cli.html` - copy-ready CLI quickstart and validation commands
 - `integration.html` - client integration playbook
 - `premium.html` - paid tiers and free-vs-paid capability matrix
-- `app.html` - `app.contextlattice.io` public app-surface overview
+- `app.html` - high-level premium app surface for account/billing/download/key lifecycle
 - `troubleshooting.html` - install/runtime recovery guide
 - `contact.html` - contact page
+- `llms.txt` - crawler/assistant guidance for safe public-site usage
 - `styles.css` - shared styles
 - `styles-gray.css` - grayscale/brutalist theme
+- `styles-fracture.css` - fracture-ledger visual treatment
 - `assets/` - listing/social graphics (`contextlattice-og-1200x630.png`, `contextlattice-icon-512.png`)
 - `templates/` - copy-ready agent instruction templates (`AGENTS.contextlattice.md`, `SKILLS.contextlattice.md`)
 - `templates/agents/` - agent-profile templates (`codex`, `claude-code`, `opencode`, `hermes-agent`, `chatgpt`, `claude`)
@@ -49,13 +52,16 @@ This syncs:
 - `updates.html`
 - `roadmap.html`
 - `installation.html`
+- `cli.html`
 - `integration.html`
 - `premium.html`
 - `app.html`
 - `troubleshooting.html`
 - `contact.html`
+- `llms.txt`
 - `styles.css`
 - `styles-gray.css`
+- `styles-fracture.css`
 - `assets/`
 - `.well-known/glama.json`
 - `.nojekyll`
