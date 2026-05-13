@@ -3710,6 +3710,93 @@ func TestStagedRetrievalTopicRollupsTimeoutIsNonDegradable(t *testing.T) {
 	}
 }
 
+func TestStagedRetrievalTopicRollupsNoLexicalMatchDoesNotFallback(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_TOPIC_ROLLUP_TIMEOUT_SECS", "2")
+	t.Setenv("GO_RETRIEVAL_NON_DEGRADABLE_SOURCES", "topic_rollups")
+	t.Setenv("GO_RETRIEVAL_PROTECTED_SOURCES", "topic_rollups")
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:9")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/v1/retrieval/query" {
+			backendCalls++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	writeBody := `{"projectName":"alpha","fileName":"notes/rollup-smoke.md","content":"profitability baseline ladder tuning","topicPath":"runbooks/profitability"}`
+	writeResp, err := http.Post(gateway.URL+"/memory/write", "application/json", strings.NewReader(writeBody))
+	if err != nil {
+		t.Fatalf("write request failed: %v", err)
+	}
+	defer writeResp.Body.Close()
+	if writeResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(writeResp.Body)
+		t.Fatalf("expected write status 200, got %d body=%s", writeResp.StatusCode, string(body))
+	}
+
+	queryBody := `{"request":{"query":"unrelated lexical needle","limit":5,"retrieval_mode":"fast","sources":["topic_rollups"]}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(queryBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend fallback calls on topic_rollups lexical miss, got %d", backendCalls)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) != 0 {
+		t.Fatalf("expected empty results on lexical miss, got %#v", rows)
+	}
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if strings.Contains(warnings, "topic_rollups go-adapter fallback to backend retrieval lane") {
+		t.Fatalf("unexpected topic_rollups fallback warning: %v", payload["warnings"])
+	}
+	if strings.Contains(warnings, "python backend fallback disabled for source topic_rollups") {
+		t.Fatalf("unexpected python fallback warning on lexical miss: %v", payload["warnings"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	errorsMap, _ := debug["source_errors"].(map[string]any)
+	if _, exists := errorsMap["topic_rollups"]; exists {
+		t.Fatalf("expected no source_errors.topic_rollups on lexical miss, got %#v", errorsMap["topic_rollups"])
+	}
+}
+
 func TestStagedRetrievalCoverageRescueQueryVariant(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("GO_RETRIEVAL_COVERAGE_RESCUE_ENABLED", "true")

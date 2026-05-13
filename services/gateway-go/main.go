@@ -50,6 +50,8 @@ var defaultAllSources = []string{
 	sourceMemoryBank,
 }
 
+var errTopicRollupsNoMatch = errors.New("topic rollups did not match query")
+
 type retrievalPolicy struct {
 	enabled                           bool
 	defaultSources                    []string
@@ -4391,7 +4393,7 @@ func (s *server) queryTopicRollupsSource(
 		return parseScore(rows[i]) > parseScore(rows[j])
 	})
 	if len(rows) == 0 {
-		return nil, nil, errors.New("topic rollups did not match query")
+		return nil, nil, errTopicRollupsNoMatch
 	}
 	if len(rows) > limit {
 		rows = rows[:limit]
@@ -4474,6 +4476,10 @@ func (s *server) callBackendSourceQuery(
 		rows, warnings, err := s.queryTopicRollupsSource(ctx, incomingHeaders, baseRequest)
 		if err == nil {
 			return rows, warnings, nil, sourceOwnerGoNative, nil
+		}
+		if errors.Is(err, errTopicRollupsNoMatch) {
+			// A lexical miss in topic rollups is a valid empty-result outcome.
+			return []map[string]any{}, warnings, nil, sourceOwnerGoNative, nil
 		}
 		fallbackWarnings = append(
 			fallbackWarnings,
