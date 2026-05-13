@@ -321,11 +321,11 @@ launch-lock-public:
 
 # ---- env wiring (append-only) ----
 
-export OPENAI_API_BASE ?= $(shell grep -E '^OPENAI_API_BASE=' $(ENV_FILE) | tail -1 | cut -d= -f2)
-export OPENAI_API_KEY  ?= $(shell grep -E '^OPENAI_API_KEY='  $(ENV_FILE) | tail -1 | cut -d= -f2)
-export MLX_API_BASE    ?= $(shell grep -E '^MLX_API_BASE='    $(ENV_FILE) | tail -1 | cut -d= -f2)
-export MLX_MODEL_PATH  ?= $(shell grep -E '^MLX_MODEL_PATH='  $(ENV_FILE) | tail -1 | cut -d= -f2)
-export LETTA_PORT      ?= $(shell grep -E '^LETTA_PORT='      $(ENV_FILE) | tail -1 | cut -d= -f2)
+export OPENAI_API_BASE ?= $(if $(wildcard $(ENV_FILE)),$(shell grep -E '^OPENAI_API_BASE=' $(ENV_FILE) 2>/dev/null | tail -1 | cut -d= -f2),)
+export OPENAI_API_KEY  ?= $(if $(wildcard $(ENV_FILE)),$(shell grep -E '^OPENAI_API_KEY='  $(ENV_FILE) 2>/dev/null | tail -1 | cut -d= -f2),)
+export MLX_API_BASE    ?= $(if $(wildcard $(ENV_FILE)),$(shell grep -E '^MLX_API_BASE='    $(ENV_FILE) 2>/dev/null | tail -1 | cut -d= -f2),)
+export MLX_MODEL_PATH  ?= $(if $(wildcard $(ENV_FILE)),$(shell grep -E '^MLX_MODEL_PATH='  $(ENV_FILE) 2>/dev/null | tail -1 | cut -d= -f2),)
+export LETTA_PORT      ?= $(if $(wildcard $(ENV_FILE)),$(shell grep -E '^LETTA_PORT='      $(ENV_FILE) 2>/dev/null | tail -1 | cut -d= -f2),)
 
 .PHONY: env-print env-check
 env-print:
