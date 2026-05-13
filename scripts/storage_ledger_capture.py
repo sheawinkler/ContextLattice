@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import tempfile
 import urllib.error
 import urllib.parse
@@ -52,6 +53,43 @@ def _coerce_float(value: Any, fallback: float = 0.0) -> float:
         return float(value)
     except Exception:
         return fallback
+
+
+def _default_ledger_path() -> str:
+    explicit = os.getenv("ORCH_STORAGE_LEDGER_PATH", "").strip()
+    if explicit:
+        return explicit
+    go_root = os.getenv("GO_MEMORY_STORE_ROOT", "").strip()
+    if go_root:
+        return str(Path(go_root) / "_contextlattice" / "storage_ledger.ndjson")
+    memory_bank_data = os.getenv("MEMORY_BANK_DATA", "").strip()
+    if memory_bank_data:
+        return str(Path(memory_bank_data) / "memory-bank" / "_contextlattice" / "storage_ledger.ndjson")
+    cold_root = os.getenv("CONTEXTLATTICE_COLD_ROOT", "").strip()
+    if cold_root:
+        return str(Path(cold_root) / "storage" / "storage_ledger.ndjson")
+    return "./.data/orchestrator/storage_ledger.ndjson"
+
+
+def _load_local_dotenv() -> None:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists() or not env_path.is_file():
+        return
+    key_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key_re.match(key):
+            continue
+        if key in os.environ:
+            continue
+        if len(value) >= 2 and ((value[0] == value[-1]) and value[0] in {'"', "'"}):
+            value = value[1:-1]
+        os.environ[key] = value
 
 
 @dataclass
@@ -226,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--out",
-        default=os.getenv("ORCH_STORAGE_LEDGER_PATH", "./.data/orchestrator/storage_ledger.ndjson"),
+        default=_default_ledger_path(),
     )
     parser.add_argument("--timeout-secs", type=float, default=float(os.getenv("ORCH_STORAGE_LEDGER_TIMEOUT_SECS", "20")))
     parser.add_argument("--keep-days", type=int, default=int(os.getenv("ORCH_STORAGE_LEDGER_KEEP_DAYS", "180")))
@@ -238,6 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    _load_local_dotenv()
     args = build_parser().parse_args()
     out_path = Path(args.out).expanduser()
 

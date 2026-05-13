@@ -30,7 +30,7 @@ Env:
 - `GO_RETRIEVAL_CONTINUATION_SHEDDING_PENDING_HIGH` (default `max(2, continuation_max_inflight-1)`)
 - `GO_RETRIEVAL_CONTINUATION_SHEDDING_SOURCES` (default `letta,memory_bank,mongo_raw,mindsdb`)
 - `GO_RETRIEVAL_TIMEOUT_CONTRACT_GRACE_SECS` (default `0.075`)
-- `ORCH_STORAGE_LEDGER_PATH` (default `./.data/orchestrator/storage_ledger.ndjson`)
+- `ORCH_STORAGE_LEDGER_PATH` (optional explicit path; default resolves from `GO_MEMORY_STORE_ROOT/_contextlattice/storage_ledger.ndjson`)
 - `ORCH_STORAGE_LEDGER_READ_LIMIT_DEFAULT` (default `168`)
 - `ORCH_STORAGE_LEDGER_READ_LIMIT_MAX` (default `5000`)
 

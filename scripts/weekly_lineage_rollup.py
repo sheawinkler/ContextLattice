@@ -107,6 +107,52 @@ def coerce_int(value: Any, fallback: int = 0) -> int:
         return fallback
 
 
+def default_memory_root() -> str:
+    candidates = [
+        os.getenv("GO_MEMORY_STORE_ROOT", "").strip(),
+        os.getenv("MEMORY_BANK_ROOT", "").strip(),
+    ]
+    memory_bank_data = os.getenv("MEMORY_BANK_DATA", "").strip()
+    if memory_bank_data:
+        candidates.append(str(Path(memory_bank_data) / "memory-bank"))
+    candidates.append(os.getenv("CONTEXTLATTICE_MEMORY_ROOT", "").strip())
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return "/tmp/contextlattice-memory-bank"
+
+
+def default_lineage_root() -> str:
+    explicit = os.getenv("CONTEXTLATTICE_LINEAGE_ROOT", "").strip()
+    if explicit:
+        return explicit
+    cold_root = os.getenv("CONTEXTLATTICE_COLD_ROOT", "").strip()
+    if cold_root:
+        return str(Path(cold_root) / "lineage")
+    return "./.data/cold/lineage"
+
+
+def load_local_dotenv() -> None:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists() or not env_path.is_file():
+        return
+    key_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key_re.match(key):
+            continue
+        if key in os.environ:
+            continue
+        if len(value) >= 2 and ((value[0] == value[-1]) and value[0] in {'"', "'"}):
+            value = value[1:-1]
+        os.environ[key] = value
+
+
 @dataclass
 class HTTPClient:
     base_url: str
@@ -461,14 +507,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--memory-root",
-        default=os.getenv(
-            "GO_MEMORY_STORE_ROOT",
-            os.getenv("MEMORY_BANK_ROOT", os.getenv("CONTEXTLATTICE_MEMORY_ROOT", "/tmp/contextlattice-memory-bank")),
-        ),
+        default=default_memory_root(),
     )
     parser.add_argument(
         "--out-root",
-        default=os.getenv("CONTEXTLATTICE_LINEAGE_ROOT", "./.data/cold/lineage"),
+        default=default_lineage_root(),
     )
     parser.add_argument("--week-id", default=current_week_id())
     parser.add_argument("--project", action="append", default=[])
@@ -485,6 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    load_local_dotenv()
     args = build_parser().parse_args()
     try:
         parse_week_id(args.week_id)

@@ -280,7 +280,6 @@ retention-status:
 storage-ledger-capture:
 > python3 scripts/storage_ledger_capture.py \
 >   --orchestrator-url "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}" \
->   --out "$${ORCH_STORAGE_LEDGER_PATH:-./.data/orchestrator/storage_ledger.ndjson}" \
 >   --keep-days "$${ORCH_STORAGE_LEDGER_KEEP_DAYS:-180}" \
 >   --max-bytes "$${ORCH_STORAGE_LEDGER_MAX_BYTES:-134217728}" \
 >   --tracked-top-limit "$${ORCH_STORAGE_LEDGER_TRACKED_TOP_LIMIT:-24}" \
@@ -288,7 +287,6 @@ storage-ledger-capture:
 
 storage-ledger-prune:
 > python3 scripts/storage_ledger_capture.py \
->   --out "$${ORCH_STORAGE_LEDGER_PATH:-./.data/orchestrator/storage_ledger.ndjson}" \
 >   --keep-days "$${ORCH_STORAGE_LEDGER_KEEP_DAYS:-180}" \
 >   --max-bytes "$${ORCH_STORAGE_LEDGER_MAX_BYTES:-134217728}" \
 >   --prune-only
@@ -305,8 +303,6 @@ storage-ledger-status:
 weekly-lineage-rollup:
 > python3 scripts/weekly_lineage_rollup.py \
 >   --orchestrator-url "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}" \
->   --memory-root "$${GO_MEMORY_STORE_ROOT:-$${MEMORY_BANK_ROOT:-/tmp/contextlattice-memory-bank}}" \
->   --out-root "$${CONTEXTLATTICE_LINEAGE_ROOT:-./.data/cold/lineage}" \
 >   --min-count "$${CONTEXTLATTICE_LINEAGE_MIN_COUNT:-1}" \
 >   --top-topic-limit "$${CONTEXTLATTICE_LINEAGE_TOP_TOPIC_LIMIT:-60}" \
 >   --synergy-min-projects "$${CONTEXTLATTICE_LINEAGE_SYNERGY_MIN_PROJECTS:-2}" \

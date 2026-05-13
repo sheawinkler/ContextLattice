@@ -238,6 +238,18 @@ func humanizeBytes(value int64) string {
 	return fmt.Sprintf("%.2f %s", size, units[unit])
 }
 
+func defaultStorageLedgerPath() string {
+	explicit := strings.TrimSpace(os.Getenv("ORCH_STORAGE_LEDGER_PATH"))
+	if explicit != "" {
+		return filepath.Clean(explicit)
+	}
+	goRoot := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ROOT"))
+	if goRoot != "" {
+		return filepath.Clean(filepath.Join(goRoot, "_contextlattice", "storage_ledger.ndjson"))
+	}
+	return filepath.Clean(filepath.Join(".data", "orchestrator", "storage_ledger.ndjson"))
+}
+
 func parseStorageLedgerTime(raw string) (time.Time, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -385,7 +397,7 @@ func (s *server) storageTelemetryLedger(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ledgerPath := resolveStoragePath("ORCH_STORAGE_LEDGER_PATH", filepath.Join(".data", "orchestrator", "storage_ledger.ndjson"))
+	ledgerPath := defaultStorageLedgerPath()
 	defaultLimit := clampInt(envInt("ORCH_STORAGE_LEDGER_READ_LIMIT_DEFAULT", 168), 1, 5000)
 	maxLimit := envInt("ORCH_STORAGE_LEDGER_READ_LIMIT_MAX", 5000)
 	if maxLimit < 1 {
