@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>App Surface | Context Lattice</title>
-  <meta name="description" content="app.contextlattice.io routing and hosted split for premium operations." />
-  <link rel="stylesheet" href="styles-gray.css?v=20260427a" />
+  <meta name="description" content="Context Lattice app surface for account, billing, downloads, and authenticated runtime access." />
+  <link rel="stylesheet" href="styles-gray.css?v=20260513a" />
 </head>
 <body class="home">
   <main class="container">
@@ -21,6 +21,7 @@
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
         <a href="installation.html">Installation</a>
+        <a href="cli.html">CLI</a>
         <a href="integration.html">Integrations</a>
         <a href="premium.html">Premium</a>
         <a class="active" href="app.html">App</a>
@@ -31,69 +32,59 @@
     </header>
 
     <section class="hero">
-      <span class="badge">Hosted app surface</span>
-      <h1><code>app.contextlattice.io</code> is the premium control plane entrypoint.</h1>
+      <span class="badge">Premium app surface</span>
+      <h1>Use the app to purchase, activate, and operate Context Lattice Premium.</h1>
       <p class="sub">
-        Keep public docs on <code>contextlattice.io</code> and route paid app traffic to
-        <code>app.contextlattice.io</code>. Internal service topology stays private.
+        The app surface is the customer-facing control plane for account access, billing,
+        entitlement activation, downloads, and runtime key lifecycle.
       </p>
       <div class="cta-row">
-        <a class="cta primary" href="https://app.contextlattice.io/billing" target="_blank" rel="noreferrer">Open Billing</a>
-        <a class="cta secondary" href="https://app.contextlattice.io/downloads" target="_blank" rel="noreferrer">Open Downloads</a>
-        <a class="cta secondary" href="https://app.contextlattice.io/console" target="_blank" rel="noreferrer">Open Console</a>
+        <a class="cta primary" href="premium.html">View plans</a>
+        <a class="cta secondary" href="https://app.contextlattice.io/auth/register" target="_blank" rel="noreferrer">Create account</a>
+        <a class="cta secondary" href="https://app.contextlattice.io/auth/login" target="_blank" rel="noreferrer">Sign in</a>
       </div>
-    </section>
-
-    <section class="section">
-      <article class="card mermaid-card">
-        <div class="kicker">Traffic split</div>
-        <h3>Recommended domain topology</h3>
-        <div class="mermaid">
-flowchart LR
-  A[contextlattice.io] --> B[Public docs + downloads]
-  C[app.contextlattice.io] --> D[Dashboard + Auth + Billing]
-  D --> E[Private runtime services]
-        </div>
-      </article>
-    </section>
-
-    <section class="section">
-      <article class="card">
-        <div class="kicker">Billing operations</div>
-        <h3>Billing infrastructure is managed privately</h3>
-        <p class="muted-note">
-          Public pages intentionally do not publish internal billing route maps, verification controls,
-          or reconciliation internals. Those stay in private operator config.
-        </p>
-      </article>
     </section>
 
     <section class="section">
       <div class="grid">
         <article class="card">
-          <div class="kicker">Domain strategy</div>
-          <h3>Public routing (high-level)</h3>
-          <ul class="spec-list">
-            <li><code>contextlattice.io</code> -> public site and documentation.</li>
-            <li><code>app.contextlattice.io</code> -> premium app, auth, and billing experience.</li>
-            <li>Internal routing, callback handlers, and service lanes are private operator config.</li>
-          </ul>
+          <div class="kicker">Account flow</div>
+          <h3>From signup to active runtime</h3>
+          <ol class="step-list">
+            <li>Create account or sign in.</li>
+            <li>Complete payment for selected plan.</li>
+            <li>Download your package from the downloads surface.</li>
+            <li>Issue a runtime key and launch premium lanes.</li>
+          </ol>
         </article>
         <article class="card">
-          <div class="kicker">Launch posture</div>
-          <h3>Near-term vs later</h3>
+          <div class="kicker">User surfaces</div>
+          <h3>What customers use day-to-day</h3>
           <ul class="spec-list">
-            <li><strong>Now:</strong> app domain handles auth, billing, entitlement state, and paid console.</li>
-            <li><strong>Later:</strong> optionally serve the lightweight app/lite runtime surface from the same domain.</li>
-            <li><strong>Always:</strong> keep premium operations on app-domain infrastructure only.</li>
+            <li>Billing and subscription management</li>
+            <li>Premium artifact downloads</li>
+            <li>Runtime key issuance and rotation</li>
+            <li>Workspace/account settings</li>
           </ul>
         </article>
       </div>
     </section>
 
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Security posture</div>
+        <h3>Public docs stay high-level by design</h3>
+        <p>
+          Operational callback routes, DNS wiring, and internal deployment controls are intentionally
+          maintained in private operator runbooks. Public documentation focuses on customer outcomes,
+          install paths, and usage guidance.
+        </p>
+      </article>
+    </section>
+
     <footer class="footer">
-      <span>App domain split reduces ops confusion during paid launch.</span>
-      <span>Use premium launch gates before enabling production entitlements.</span>
+      <span>Need setup details? Use Installation + CLI pages.</span>
+      <span>Need paid access? Start with Premium and the app account flow.</span>
     </footer>
   </main>
 </body>

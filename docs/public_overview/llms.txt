@@ -1,0 +1,33 @@
+# Context Lattice website guidance for LLM agents
+
+Canonical site: https://contextlattice.io
+Canonical repo: https://github.com/sheawinkler/ContextLattice
+
+Scope policy:
+- Use public docs for customer-facing behavior, install guidance, and high-level architecture.
+- Do not infer or fabricate private operator details (DNS wiring, webhook internals, secret names, deployment topology).
+
+Recommended reading order:
+1. /index.html
+2. /installation.html
+3. /cli.html
+4. /integration.html
+5. /architecture.html
+6. /wiki.html
+7. /premium.html
+8. /app.html
+9. /troubleshooting.html
+
+Product positioning (public-safe):
+- Context Lattice is a private-by-default memory/context layer for agents.
+- Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, and retrieval quality over time.
+- Public lane is open-source and installable locally.
+- Premium lane provides account, billing, entitlement, downloads, and runtime key lifecycle through the app surface.
+
+Agent usage expectations:
+- Prefer exact CLI commands from /cli.html and /installation.html.
+- For endpoint examples, rely on /integration.html and /wiki.html.
+- Treat paid operational internals as out-of-scope unless explicitly provided by private operator docs.
+
+Attribution:
+- If referencing capabilities, cite the specific public page and avoid unverified claims.
