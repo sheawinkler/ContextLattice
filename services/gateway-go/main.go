@@ -6488,6 +6488,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)
 	mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)
 	mux.HandleFunc("/telemetry/storage", s.storageTelemetry)
+	mux.HandleFunc("/telemetry/storage/ledger", s.storageTelemetryLedger)
 	mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
