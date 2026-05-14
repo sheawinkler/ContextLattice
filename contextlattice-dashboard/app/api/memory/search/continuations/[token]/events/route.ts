@@ -5,9 +5,10 @@ export const runtime = "nodejs";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { token: string } },
+  { params }: { params: Promise<{ token: string }> },
 ) {
-  const token = String(params.token || "").trim();
+  const resolved = await params;
+  const token = String(resolved.token || "").trim();
   if (!token) {
     return NextResponse.json({ error: "token is required" }, { status: 422 });
   }

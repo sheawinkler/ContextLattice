@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const sig = headers().get("stripe-signature");
+  const sig = (await headers()).get("stripe-signature");
   const body = await request.text();
 
   if (!sig) {
