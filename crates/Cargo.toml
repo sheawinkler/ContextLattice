@@ -4,6 +4,7 @@ members = [
   "context_codec",
   "context_engine",
   "context_retrieval",
+  "context_storage_ops",
 ]
 
 [workspace.package]

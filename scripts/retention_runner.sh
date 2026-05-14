@@ -55,7 +55,7 @@ if [[ "${COLD_SNAPSHOT_PACK_ENABLED:-1}" == "1" ]]; then
   if [[ -n "${COLD_SNAPSHOT_PACK_MAX_FILES:-}" ]]; then
     PACK_ARGS+=(--max-files "${COLD_SNAPSHOT_PACK_MAX_FILES}")
   fi
-  if ! python3 scripts/cold_snapshot_pack.py "${PACK_ARGS[@]}"; then
+  if ! scripts/context_storage_ops.sh cold-pack "${PACK_ARGS[@]}"; then
     echo "!! cold snapshot pack failed; continuing retention run" >&2
   fi
 fi
@@ -72,7 +72,7 @@ if [[ "${COLD_SNAPSHOT_TIER_ENABLED:-1}" == "1" ]]; then
   if [[ "${COLD_SNAPSHOT_TIER_APPLY:-1}" == "1" ]]; then
     TIER_ARGS+=(--apply)
   fi
-  if ! python3 scripts/cold_snapshot_tiering.py "${TIER_ARGS[@]}"; then
+  if ! scripts/context_storage_ops.sh cold-tier "${TIER_ARGS[@]}"; then
     echo "!! cold snapshot tiering failed; continuing retention run" >&2
   fi
 fi
@@ -111,7 +111,7 @@ if [[ "${FANOUT_OUTBOX_GC_ENABLED:-1}" == "1" ]]; then
   if [[ "${FANOUT_OUTBOX_GC_DRY_RUN:-0}" == "1" ]]; then
     GC_ARGS+=(--dry-run)
   fi
-  if ! python3 scripts/fanout_outbox_gc.py "${GC_ARGS[@]}"; then
+  if ! scripts/context_storage_ops.sh fanout-gc "${GC_ARGS[@]}"; then
     echo "!! fanout outbox gc failed; continuing retention run" >&2
   fi
 fi
