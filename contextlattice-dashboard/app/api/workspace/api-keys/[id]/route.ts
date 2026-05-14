@@ -6,16 +6,17 @@ import { recordAuditLog } from "@/lib/audit";
 
 export async function DELETE(
   _request: Request,
-  context: { params: { id: string } },
+  context: { params: Promise<{ id: string }> },
 ) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  const { id } = await context.params;
   const workspaceId = await requireUserWorkspaceId(session.user.id);
   const key = await prisma.apiKey.findFirst({
-    where: { id: context.params.id, workspaceId },
+    where: { id, workspaceId },
   });
   if (!key) {
     return Response.json({ ok: false, error: "Key not found" }, { status: 404 });
