@@ -5,16 +5,21 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use blake3::Hasher;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use reqwest::blocking::Client;
+use jwalk::WalkDir;
+use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
+use reqwest::Client;
+use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
+use reqwest_retry::policies::ExponentialBackoff;
+use reqwest_retry::RetryTransientMiddleware;
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use walkdir::WalkDir;
+use tokio::runtime::Runtime;
 
 #[derive(Parser)]
 #[command(name = "context_storage_ops")]
@@ -162,6 +167,48 @@ struct FanoutGcArgs {
     dry_run: bool,
 }
 
+struct HttpRuntimeClient {
+    runtime: Runtime,
+    client: ClientWithMiddleware,
+}
+
+impl HttpRuntimeClient {
+    fn new(api_key: &str, timeout_secs: f64) -> Result<Self> {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        if !api_key.trim().is_empty() {
+            headers.insert("x-api-key", HeaderValue::from_str(api_key.trim())?);
+        }
+
+        let base_client = Client::builder()
+            .timeout(Duration::from_secs_f64(timeout_secs.max(2.0)))
+            .default_headers(headers)
+            .build()?;
+        let retry_policy = ExponentialBackoff::builder()
+            .retry_bounds(Duration::from_millis(125), Duration::from_secs(2))
+            .build_with_max_retries(default_http_retry_count());
+        let retry_middleware = RetryTransientMiddleware::new_with_policy(retry_policy);
+        let client = MiddlewareClientBuilder::new(base_client)
+            .with(retry_middleware)
+            .build();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        Ok(Self { runtime, client })
+    }
+
+    fn get_json(&self, url: &str) -> Result<Value> {
+        let payload = self.runtime.block_on(async {
+            let response = self.client.get(url).send().await?;
+            let response = response.error_for_status()?;
+            let bytes = response.bytes().await?;
+            parse_json_bytes_fast(bytes.as_ref())
+                .ok_or_else(|| anyhow!("failed to parse json response from {}", url))
+        })?;
+        Ok(payload)
+    }
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!(
@@ -199,6 +246,44 @@ fn default_orchestrator_api_key() -> String {
         .ok()
         .or_else(|| std::env::var("MEMMCP_ORCHESTRATOR_API_KEY").ok())
         .unwrap_or_default()
+}
+
+fn default_http_retry_count() -> u32 {
+    std::env::var("CONTEXT_STORAGE_OPS_HTTP_MAX_RETRIES")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(2)
+}
+
+fn default_parallel_workers() -> usize {
+    std::env::var("CONTEXT_STORAGE_OPS_PARALLELISM")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        })
+        .clamp(1, 8)
+}
+
+fn build_rayon_pool() -> Result<rayon::ThreadPool> {
+    Ok(rayon::ThreadPoolBuilder::new()
+        .num_threads(default_parallel_workers())
+        .build()?)
+}
+
+fn parse_json_bytes_fast(bytes: &[u8]) -> Option<Value> {
+    let mut owned = bytes.to_vec();
+    if let Ok(parsed) = simd_json::to_owned_value(&mut owned) {
+        return serde_json::to_value(parsed).ok();
+    }
+    serde_json::from_slice(bytes).ok()
+}
+
+fn parse_json_str_fast(raw: &str) -> Option<Value> {
+    parse_json_bytes_fast(raw.as_bytes())
 }
 
 fn default_memory_root() -> String {
@@ -400,8 +485,8 @@ fn prune_ndjson(path: &Path, keep_days: i64, max_bytes: usize) -> Result<Value> 
         if trimmed.is_empty() {
             continue;
         }
-        let keep = match serde_json::from_str::<Value>(trimmed) {
-            Ok(v) => {
+        let keep = match parse_json_str_fast(trimmed) {
+            Some(v) => {
                 let ts = v
                     .get("captured_at")
                     .or_else(|| v.get("timestamp"))
@@ -412,7 +497,7 @@ fn prune_ndjson(path: &Path, keep_days: i64, max_bytes: usize) -> Result<Value> 
                     None => true,
                 }
             }
-            Err(_) => false,
+            None => false,
         };
         if keep {
             kept.push(trimmed.to_string());
@@ -446,19 +531,6 @@ fn prune_ndjson(path: &Path, keep_days: i64, max_bytes: usize) -> Result<Value> 
     }))
 }
 
-fn http_client(api_key: &str, timeout_secs: f64) -> Result<Client> {
-    let mut headers = HeaderMap::new();
-    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    if !api_key.trim().is_empty() {
-        headers.insert("x-api-key", HeaderValue::from_str(api_key.trim())?);
-    }
-    let client = Client::builder()
-        .timeout(Duration::from_secs_f64(timeout_secs.max(2.0)))
-        .default_headers(headers)
-        .build()?;
-    Ok(client)
-}
-
 fn run_ledger(args: LedgerArgs) -> Result<()> {
     let out_path = PathBuf::from(args.out.trim());
     let api_key = if args.api_key.trim().is_empty() {
@@ -474,18 +546,10 @@ fn run_ledger(args: LedgerArgs) -> Result<()> {
         );
     }
 
-    let client = http_client(&api_key, args.timeout_secs)?;
+    let client = HttpRuntimeClient::new(&api_key, args.timeout_secs)?;
     let base = args.orchestrator_url.trim_end_matches('/');
-    let storage_payload: Value = client
-        .get(format!("{}/telemetry/storage", base))
-        .send()?
-        .error_for_status()?
-        .json()?;
-    let status_payload: Value = client
-        .get(format!("{}/status", base))
-        .send()?
-        .error_for_status()?
-        .json()?;
+    let storage_payload: Value = client.get_json(&format!("{}/telemetry/storage", base))?;
+    let status_payload: Value = client.get_json(&format!("{}/status", base))?;
 
     let disk = storage_payload
         .get("disk")
@@ -647,7 +711,7 @@ fn discover_projects_from_root(memory_root: &Path) -> Vec<String> {
 }
 
 fn discover_projects_from_api(
-    client: &Client,
+    client: &HttpRuntimeClient,
     base_url: &str,
     limit: usize,
     max_pages: usize,
@@ -665,7 +729,7 @@ fn discover_projects_from_api(
             limit.clamp(1, 5000),
             offset
         );
-        let payload: Value = client.get(url).send()?.error_for_status()?.json()?;
+        let payload: Value = client.get_json(&url)?;
         let topics = payload
             .get("topics")
             .and_then(|v| v.as_array())
@@ -695,7 +759,7 @@ fn discover_projects_from_api(
 }
 
 fn fetch_topic_rollups(
-    client: &Client,
+    client: &HttpRuntimeClient,
     base_url: &str,
     project: &str,
     min_count: usize,
@@ -712,7 +776,7 @@ fn fetch_topic_rollups(
             limit.clamp(1, 2000),
             offset
         );
-        let payload: Value = client.get(url).send()?.error_for_status()?.json()?;
+        let payload: Value = client.get_json(&url)?;
         let topics = payload
             .get("topics")
             .and_then(|v| v.as_array())
@@ -765,15 +829,15 @@ fn fetch_topic_rollups(
 fn hash_counts(counts: &BTreeMap<String, i64>) -> String {
     let compact: Vec<Value> = counts.iter().map(|(k, v)| json!([k, v])).collect();
     let encoded = serde_json::to_vec(&compact).unwrap_or_default();
-    let mut hasher = Sha256::new();
-    hasher.update(encoded);
-    format!("{:x}", hasher.finalize())
+    let mut hasher = Hasher::new();
+    hasher.update(&encoded);
+    hasher.finalize().to_hex().to_string()
 }
 
 fn read_json(path: &Path) -> Option<Value> {
     fs::read_to_string(path)
         .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|raw| parse_json_str_fast(&raw))
 }
 
 fn write_json_atomic(path: &Path, payload: &Value) -> Result<()> {
@@ -1077,7 +1141,10 @@ fn prune_old_weeks(root: &Path, keep_weeks: usize) {
         return;
     }
     let mut by_parent: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    for entry in WalkDir::new(root).into_iter().flatten() {
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -1113,7 +1180,7 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
         args.api_key.clone()
     };
 
-    let client = http_client(&api_key, args.timeout_secs)?;
+    let client = HttpRuntimeClient::new(&api_key, args.timeout_secs)?;
     let base = args.orchestrator_url.trim_end_matches('/');
     let memory_root = PathBuf::from(args.memory_root.trim());
     let out_root = PathBuf::from(args.out_root.trim());
@@ -1335,7 +1402,10 @@ fn parse_timestamp_from_name(name: &str) -> Option<DateTime<Utc>> {
 
 fn list_cold_entries(root: &Path) -> Vec<SnapshotEntry> {
     let mut out = Vec::new();
-    for entry in WalkDir::new(root).into_iter().flatten() {
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -1372,8 +1442,8 @@ fn safe_under(path: &Path, root: &Path) -> bool {
     }
 }
 
-fn sha256_file(path: &Path) -> Result<String> {
-    let mut hasher = Sha256::new();
+fn blake3_file(path: &Path) -> Result<String> {
+    let mut hasher = Hasher::new();
     let mut file = File::open(path)?;
     let mut buf = vec![0u8; 1024 * 1024];
     loop {
@@ -1383,7 +1453,136 @@ fn sha256_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+struct PackOutcome {
+    source_path: String,
+    row: Value,
+    packed: usize,
+    skipped: usize,
+    deleted: usize,
+    source_bytes: u64,
+    target_bytes: u64,
+}
+
+fn process_cold_pack_snapshot(
+    src: &Path,
+    cold_root: &Path,
+    apply: bool,
+    keep_original: bool,
+    verify_enabled: bool,
+    level: i32,
+) -> Result<PackOutcome> {
+    let dst = PathBuf::from(format!("{}.zst", src.to_string_lossy()));
+    let source_bytes = src.metadata().map(|m| m.len()).unwrap_or(0);
+
+    if dst.exists() && dst.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
+        let row = json!({
+            "recorded_at": Utc::now().to_rfc3339().replace("+00:00", "Z"),
+            "source": src,
+            "target": dst,
+            "source_bytes": source_bytes,
+            "target_bytes": dst.metadata().map(|m| m.len()).unwrap_or(0),
+            "verified": false,
+            "removed_source": false,
+            "skipped": true,
+            "reason": "compressed_exists",
+        });
+        return Ok(PackOutcome {
+            source_path: src.to_string_lossy().to_string(),
+            row,
+            packed: 0,
+            skipped: 1,
+            deleted: 0,
+            source_bytes,
+            target_bytes: 0,
+        });
+    }
+
+    if !apply {
+        let row = json!({
+            "recorded_at": Utc::now().to_rfc3339().replace("+00:00", "Z"),
+            "source": src,
+            "target": dst,
+            "source_bytes": source_bytes,
+            "target_bytes": 0,
+            "savings_bytes": source_bytes,
+            "content_hash": "",
+            "hash_algo": "blake3",
+            "verified": false,
+            "removed_source": false,
+            "skipped": true,
+            "reason": "dry_run",
+        });
+        return Ok(PackOutcome {
+            source_path: src.to_string_lossy().to_string(),
+            row,
+            packed: 0,
+            skipped: 1,
+            deleted: 0,
+            source_bytes,
+            target_bytes: 0,
+        });
+    }
+
+    let content_hash = blake3_file(src)?;
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut in_file = File::open(src)?;
+    let mut out_file = File::create(&dst)?;
+    zstd::stream::copy_encode(&mut in_file, &mut out_file, level)?;
+    out_file.flush()?;
+    let target_bytes = dst.metadata().map(|m| m.len()).unwrap_or(0);
+    let verified;
+    let mut removed = false;
+
+    if verify_enabled {
+        let mut decoded_hasher = Hasher::new();
+        let out = zstd::stream::decode_all(File::open(&dst)?)?;
+        decoded_hasher.update(&out);
+        verified = decoded_hasher.finalize().to_hex().to_string() == content_hash;
+        if !verified {
+            return Err(anyhow!("hash verify failed for {}", src.display()));
+        }
+    } else {
+        verified = true;
+    }
+    if !keep_original {
+        if !safe_under(src, cold_root) {
+            return Err(anyhow!(
+                "refusing delete outside cold root: {}",
+                src.display()
+            ));
+        }
+        fs::remove_file(src)?;
+        removed = true;
+    }
+
+    let row = json!({
+        "recorded_at": Utc::now().to_rfc3339().replace("+00:00", "Z"),
+        "source": src,
+        "target": dst,
+        "source_bytes": source_bytes,
+        "target_bytes": target_bytes,
+        "savings_bytes": source_bytes.saturating_sub(target_bytes),
+        "content_hash": content_hash,
+        "hash_algo": "blake3",
+        "verified": verified,
+        "removed_source": removed,
+        "skipped": false,
+        "reason": "",
+    });
+    Ok(PackOutcome {
+        source_path: src.to_string_lossy().to_string(),
+        row,
+        packed: 1,
+        skipped: 0,
+        deleted: usize::from(removed),
+        source_bytes,
+        target_bytes,
+    })
 }
 
 fn run_cold_pack(args: ColdPackArgs) -> Result<()> {
@@ -1394,7 +1593,7 @@ fn run_cold_pack(args: ColdPackArgs) -> Result<()> {
 
     let mut snapshots: Vec<PathBuf> = WalkDir::new(&cold_root)
         .into_iter()
-        .flatten()
+        .filter_map(|entry| entry.ok())
         .filter(|e| e.path().is_file())
         .map(|e| e.path().to_path_buf())
         .filter(|p| {
@@ -1425,96 +1624,53 @@ fn run_cold_pack(args: ColdPackArgs) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let mut packed = 0usize;
-    let mut skipped = 0usize;
-    let mut deleted = 0usize;
-    let mut source_total = 0u64;
-    let mut target_total = 0u64;
     let verify_enabled = args.verify && !args.no_verify;
+    let pool = build_rayon_pool()?;
+    let mut outcomes = pool.install(|| {
+        snapshots
+            .par_iter()
+            .map(|src| {
+                process_cold_pack_snapshot(
+                    src,
+                    &cold_root,
+                    args.apply,
+                    args.keep_original,
+                    verify_enabled,
+                    args.level,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    outcomes.sort_by(|a, b| {
+        let a_key = a
+            .as_ref()
+            .map(|o| o.source_path.clone())
+            .unwrap_or_default();
+        let b_key = b
+            .as_ref()
+            .map(|o| o.source_path.clone())
+            .unwrap_or_default();
+        a_key.cmp(&b_key)
+    });
 
     let mut catalog = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&catalog_path)?;
 
-    for src in snapshots {
-        let dst = PathBuf::from(format!("{}.zst", src.to_string_lossy()));
-        let source_bytes = src.metadata().map(|m| m.len()).unwrap_or(0);
-        source_total += source_bytes;
-
-        if dst.exists() && dst.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
-            skipped += 1;
-            let row = json!({
-                "recorded_at": Utc::now().to_rfc3339().replace("+00:00", "Z"),
-                "source": src,
-                "target": dst,
-                "source_bytes": source_bytes,
-                "target_bytes": dst.metadata().map(|m| m.len()).unwrap_or(0),
-                "verified": false,
-                "removed_source": false,
-                "skipped": true,
-                "reason": "compressed_exists",
-            });
-            writeln!(catalog, "{}", serde_json::to_string(&row)?)?;
-            continue;
-        }
-
-        let sha = sha256_file(&src)?;
-        let mut target_bytes = 0u64;
-        let mut verified = false;
-        let mut removed = false;
-
-        if args.apply {
-            if let Some(parent) = dst.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut in_file = File::open(&src)?;
-            let mut out_file = File::create(&dst)?;
-            zstd::stream::copy_encode(&mut in_file, &mut out_file, args.level)?;
-            out_file.flush()?;
-            target_bytes = dst.metadata().map(|m| m.len()).unwrap_or(0);
-            if verify_enabled {
-                let mut decoded_hasher = Sha256::new();
-                let out = zstd::stream::decode_all(File::open(&dst)?)?;
-                decoded_hasher.update(&out);
-                verified = format!("{:x}", decoded_hasher.finalize()) == sha;
-                if !verified {
-                    return Err(anyhow!("hash verify failed for {}", src.display()));
-                }
-            } else {
-                verified = true;
-            }
-            if !args.keep_original {
-                if !safe_under(&src, &cold_root) {
-                    return Err(anyhow!(
-                        "refusing delete outside cold root: {}",
-                        src.display()
-                    ));
-                }
-                fs::remove_file(&src)?;
-                removed = true;
-                deleted += 1;
-            }
-            packed += 1;
-        } else {
-            skipped += 1;
-        }
-
-        target_total += target_bytes;
-        let row = json!({
-            "recorded_at": Utc::now().to_rfc3339().replace("+00:00", "Z"),
-            "source": src,
-            "target": dst,
-            "source_bytes": source_bytes,
-            "target_bytes": target_bytes,
-            "savings_bytes": source_bytes.saturating_sub(target_bytes),
-            "sha256": sha,
-            "verified": verified,
-            "removed_source": removed,
-            "skipped": !args.apply,
-            "reason": if args.apply { "" } else { "dry_run" },
-        });
-        writeln!(catalog, "{}", serde_json::to_string(&row)?)?;
+    let mut packed = 0usize;
+    let mut skipped = 0usize;
+    let mut deleted = 0usize;
+    let mut source_total = 0u64;
+    let mut target_total = 0u64;
+    for result in outcomes {
+        let outcome = result?;
+        packed += outcome.packed;
+        skipped += outcome.skipped;
+        deleted += outcome.deleted;
+        source_total += outcome.source_bytes;
+        target_total += outcome.target_bytes;
+        writeln!(catalog, "{}", serde_json::to_string(&outcome.row)?)?;
     }
 
     let payload = json!({
@@ -1677,9 +1833,9 @@ fn archive_single_file(
         if trimmed.is_empty() {
             continue;
         }
-        let parsed: Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(_) => {
+        let parsed: Value = match parse_json_str_fast(trimmed) {
+            Some(v) => v,
+            None => {
                 kept.push(raw);
                 continue;
             }
