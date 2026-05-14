@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -86,15 +87,45 @@ def ensure_dataset(data_dir: Path) -> tuple[Path, Path]:
     return cold_root, base_ndjson
 
 
+def resolve_repo_root(arg_repo_root: str | None) -> Path:
+    if arg_repo_root:
+        return Path(arg_repo_root).expanduser().resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+def resolve_suite_root(arg_suite_root: str | None, repo_root: Path) -> Path:
+    if arg_suite_root:
+        return Path(arg_suite_root).expanduser().resolve()
+    env_root = os.getenv("CONTEXT_STORAGE_OPS_PERF_SUITE_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+    return (repo_root / "tmp" / "storage_ops_perf_suite").resolve()
+
+
+def default_memory_root(repo_root: Path) -> Path:
+    for key in ("GO_MEMORY_STORE_ROOT", "MEMORY_BANK_ROOT"):
+        raw = os.getenv(key, "").strip()
+        if raw:
+            return Path(raw).expanduser().resolve()
+    return (repo_root / "services" / "orchestrator" / "data" / "memory-bank").resolve()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo-root", default="/Users/sheawinkler/Documents/Projects/context-lattice-private")
-    parser.add_argument("--suite-root", default="/Volumes/wd_black/contextlattice/tmp/storage_ops_perf_suite")
+    parser.add_argument("--repo-root", default=None, help="repo root (default: inferred from this script location)")
+    parser.add_argument(
+        "--suite-root",
+        default=None,
+        help="perf suite output root (default: $CONTEXT_STORAGE_OPS_PERF_SUITE_ROOT or repo/tmp/storage_ops_perf_suite)",
+    )
     parser.add_argument("--label", default="run")
+    parser.add_argument("--orchestrator-url", default="http://127.0.0.1:8075")
+    parser.add_argument("--memory-root", default=None, help="memory bank root path for weekly-lineage source files")
     args = parser.parse_args()
 
-    root = Path(args.repo_root)
-    suite_root = Path(args.suite_root)
+    root = resolve_repo_root(args.repo_root)
+    suite_root = resolve_suite_root(args.suite_root, root)
+    memory_root = Path(args.memory_root).expanduser().resolve() if args.memory_root else default_memory_root(root)
     data_dir = suite_root / "data"
     results_dir = suite_root / "results"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +133,9 @@ def main() -> int:
 
     cold_root, base_ndjson = ensure_dataset(data_dir)
     telemetry_work = data_dir / "telemetry_work.ndjson"
+    ledger_out = data_dir / "ledger.ndjson"
+    lineage_out = data_dir / "lineage_out"
+    cold_archive = data_dir / "cold_archive"
 
     def prep_telemetry(_):
         shutil.copy2(base_ndjson, telemetry_work)
@@ -111,7 +145,7 @@ def main() -> int:
         run_case(
             root,
             "ledger",
-            "./scripts/context_storage_ops.sh ledger --orchestrator-url http://127.0.0.1:8075 --out /Volumes/wd_black/contextlattice/tmp/storage_ops_perf_suite/data/ledger.ndjson --timeout-secs 20 --keep-days 180 --max-bytes 134217728 --tracked-top-limit 24",
+            f"./scripts/context_storage_ops.sh ledger --orchestrator-url {args.orchestrator_url} --out {ledger_out} --timeout-secs 20 --keep-days 180 --max-bytes 134217728 --tracked-top-limit 24",
             repeat=5,
         )
     )
@@ -119,7 +153,7 @@ def main() -> int:
         run_case(
             root,
             "weekly_lineage_dry",
-            "./scripts/context_storage_ops.sh weekly-lineage --orchestrator-url http://127.0.0.1:8075 --memory-root /Volumes/wd_black/contextlattice/docker-data/memory_bank_data/memory-bank --out-root /Volumes/wd_black/contextlattice/tmp/storage_ops_perf_suite/data/lineage_out --project contextlattice --min-count 1 --page-limit 500 --top-topic-limit 40 --synergy-min-projects 2 --keep-weeks 104 --emit-synergy --dry-run --timeout-secs 25",
+            f"./scripts/context_storage_ops.sh weekly-lineage --orchestrator-url {args.orchestrator_url} --memory-root {memory_root} --out-root {lineage_out} --project contextlattice --min-count 1 --page-limit 500 --top-topic-limit 40 --synergy-min-projects 2 --keep-weeks 104 --emit-synergy --dry-run --timeout-secs 25",
             repeat=3,
         )
     )
@@ -143,7 +177,7 @@ def main() -> int:
         run_case(
             root,
             "archive_ndjson",
-            f"./scripts/context_storage_ops.sh archive-ndjson --file {telemetry_work} --retention-hours 24 --cold-dir /Volumes/wd_black/contextlattice/tmp/storage_ops_perf_suite/data/cold_archive --timestamp-field timestamp",
+            f"./scripts/context_storage_ops.sh archive-ndjson --file {telemetry_work} --retention-hours 24 --cold-dir {cold_archive} --timestamp-field timestamp",
             repeat=5,
             prep=prep_telemetry,
         )
