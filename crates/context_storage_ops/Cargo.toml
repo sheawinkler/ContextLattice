@@ -18,6 +18,11 @@ tokio = { version = "1.48", features = ["rt", "time"] }
 jwalk = "0.8"
 rayon = "1.10"
 simd-json = "0.17"
+memmap2 = "0.9"
+lz4_flex = { version = "0.13", features = ["frame"] }
+rkyv = "0.8"
+ahash = "0.8"
+crossbeam-channel = "0.5"
 flate2 = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 zstd = "0.13"

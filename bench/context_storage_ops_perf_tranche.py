@@ -176,8 +176,17 @@ def main() -> int:
     runs.append(
         run_case(
             root,
-            "archive_ndjson",
-            f"./scripts/context_storage_ops.sh archive-ndjson --file {telemetry_work} --retention-hours 24 --cold-dir {cold_archive} --timestamp-field timestamp",
+            "archive_ndjson_gzip",
+            f"./scripts/context_storage_ops.sh archive-ndjson --file {telemetry_work} --retention-hours 24 --cold-dir {cold_archive} --timestamp-field timestamp --codec gzip --use-mmap true",
+            repeat=5,
+            prep=prep_telemetry,
+        )
+    )
+    runs.append(
+        run_case(
+            root,
+            "archive_ndjson_lz4",
+            f"./scripts/context_storage_ops.sh archive-ndjson --file {telemetry_work} --retention-hours 24 --cold-dir {cold_archive} --timestamp-field timestamp --codec lz4 --use-mmap true",
             repeat=5,
             prep=prep_telemetry,
         )

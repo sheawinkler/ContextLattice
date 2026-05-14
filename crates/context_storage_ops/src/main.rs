@@ -1,22 +1,27 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use blake3::Hasher;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
 use clap::{Args, Parser, Subcommand};
+use crossbeam_channel::unbounded;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use jwalk::WalkDir;
+use lz4_flex::frame::FrameEncoder;
+use memmap2::MmapOptions;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
 use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use reqwest_retry::policies::ExponentialBackoff;
 use reqwest_retry::RetryTransientMiddleware;
+use rkyv::{from_bytes, rancor::Error as RkyvError, to_bytes, Archive, Deserialize, Serialize};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use tokio::runtime::Runtime;
@@ -143,6 +148,10 @@ struct ArchiveNdjsonArgs {
     cold_dir: String,
     #[arg(long, default_value_t = String::from("timestamp"))]
     timestamp_field: String,
+    #[arg(long, default_value_t = default_archive_codec())]
+    codec: String,
+    #[arg(long, default_value_t = default_archive_use_mmap())]
+    use_mmap: bool,
 }
 
 #[derive(Args)]
@@ -349,6 +358,33 @@ fn default_cold_telemetry_root() -> String {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| "./.data/cold/telemetry".to_string())
+}
+
+fn default_archive_codec() -> String {
+    std::env::var("CONTEXT_STORAGE_OPS_ARCHIVE_CODEC")
+        .ok()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| v == "gzip" || v == "gz" || v == "lz4")
+        .unwrap_or_else(|| "gzip".to_string())
+}
+
+fn env_truthy(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
+fn default_archive_use_mmap() -> bool {
+    env_truthy("CONTEXT_STORAGE_OPS_ARCHIVE_USE_MMAP", true)
+}
+
+fn lineage_rkyv_enabled() -> bool {
+    env_truthy("CONTEXT_STORAGE_OPS_LINEAGE_RKYV_CACHE", true)
 }
 
 fn default_ledger_path() -> String {
@@ -853,7 +889,68 @@ fn write_json_atomic(path: &Path, payload: &Value) -> Result<()> {
     Ok(())
 }
 
+#[derive(Archive, Serialize, Deserialize, Debug)]
+struct LineageCountsRkyv {
+    schema_version: u32,
+    project: String,
+    week_id: String,
+    generated_at: String,
+    fingerprint: String,
+    counts: Vec<(String, i64)>,
+}
+
+fn rkyv_counts_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.rkyv", path.to_string_lossy()))
+}
+
+fn read_counts_ref_rkyv(path: &Path) -> Option<BTreeMap<String, i64>> {
+    let bytes = fs::read(path).ok()?;
+    let parsed: LineageCountsRkyv = from_bytes::<LineageCountsRkyv, RkyvError>(&bytes).ok()?;
+    let mut out = BTreeMap::new();
+    for (topic, count) in parsed.counts {
+        let trimmed = topic.trim();
+        if !trimmed.is_empty() {
+            out.insert(trimmed.to_string(), count);
+        }
+    }
+    Some(out)
+}
+
+fn write_counts_ref_rkyv(
+    path: &Path,
+    project: &str,
+    week_id: &str,
+    generated_at: &str,
+    fingerprint: &str,
+    counts: &BTreeMap<String, i64>,
+) -> Result<()> {
+    let payload = LineageCountsRkyv {
+        schema_version: 1,
+        project: project.to_string(),
+        week_id: week_id.to_string(),
+        generated_at: generated_at.to_string(),
+        fingerprint: fingerprint.to_string(),
+        counts: counts.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+    };
+    let bytes = to_bytes::<RkyvError>(&payload)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, bytes.as_slice())?;
+    Ok(())
+}
+
 fn read_counts_ref(path: &Path) -> BTreeMap<String, i64> {
+    if lineage_rkyv_enabled() {
+        let fast_path = rkyv_counts_path(path);
+        if fast_path.exists() {
+            if let Some(parsed) = read_counts_ref_rkyv(&fast_path) {
+                if !parsed.is_empty() {
+                    return parsed;
+                }
+            }
+        }
+    }
     let mut out = BTreeMap::new();
     let Some(payload) = read_json(path) else {
         return out;
@@ -877,8 +974,8 @@ fn read_counts_ref(path: &Path) -> BTreeMap<String, i64> {
 }
 
 fn compute_delta(curr: &BTreeMap<String, i64>, prev: &BTreeMap<String, i64>) -> Value {
-    let curr_keys: HashSet<_> = curr.keys().cloned().collect();
-    let prev_keys: HashSet<_> = prev.keys().cloned().collect();
+    let curr_keys: AHashSet<_> = curr.keys().cloned().collect();
+    let prev_keys: AHashSet<_> = prev.keys().cloned().collect();
     let mut changes = Vec::new();
     for key in curr_keys.intersection(&prev_keys) {
         let c = *curr.get(key).unwrap_or(&0);
@@ -899,7 +996,7 @@ fn compute_delta(curr: &BTreeMap<String, i64>, prev: &BTreeMap<String, i64>) -> 
     })
 }
 
-fn tokenize_topic(path: &str) -> HashSet<String> {
+fn tokenize_topic(path: &str) -> AHashSet<String> {
     const STOPWORDS: &[&str] = &[
         "root",
         "notes",
@@ -922,8 +1019,8 @@ fn tokenize_topic(path: &str) -> HashSet<String> {
         "log",
         "logs",
     ];
-    let stop: HashSet<&str> = STOPWORDS.iter().copied().collect();
-    let mut out = HashSet::new();
+    let stop: AHashSet<&str> = STOPWORDS.iter().copied().collect();
+    let mut out = AHashSet::new();
     for token in path
         .to_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -1035,15 +1132,16 @@ fn build_synergy(week_id: &str, summaries: &[Value]) -> Value {
         for j in (i + 1)..project_names.len() {
             let left = &project_names[i];
             let right = &project_names[j];
-            let mut left_tokens = HashSet::new();
-            let mut right_tokens = HashSet::new();
+            let mut left_tokens = AHashSet::new();
+            let mut right_tokens = AHashSet::new();
             for topic in per_project.get(left).into_iter().flat_map(|m| m.keys()) {
                 left_tokens.extend(tokenize_topic(topic));
             }
             for topic in per_project.get(right).into_iter().flat_map(|m| m.keys()) {
                 right_tokens.extend(tokenize_topic(topic));
             }
-            let inter: HashSet<String> = left_tokens.intersection(&right_tokens).cloned().collect();
+            let inter: AHashSet<String> =
+                left_tokens.intersection(&right_tokens).cloned().collect();
             let union_count = left_tokens.union(&right_tokens).count();
             if inter.is_empty() || union_count == 0 {
                 continue;
@@ -1140,7 +1238,7 @@ fn prune_old_weeks(root: &Path, keep_weeks: usize) {
     if keep_weeks == 0 || !root.exists() {
         return;
     }
-    let mut by_parent: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    let mut by_parent: AHashMap<PathBuf, Vec<PathBuf>> = AHashMap::new();
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_map(|entry| entry.ok())
@@ -1260,17 +1358,29 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
                 counts_reused = true;
             }
         } else if !args.dry_run {
+            let generated_at = Utc::now().to_rfc3339().replace("+00:00", "Z");
             write_json_atomic(
                 &counts_path,
                 &json!({
                     "schema_version": 1,
                     "project": project,
                     "week_id": args.week_id,
-                    "generated_at": Utc::now().to_rfc3339().replace("+00:00", "Z"),
+                    "generated_at": generated_at,
                     "fingerprint": fingerprint,
                     "counts": compact_counts,
                 }),
             )?;
+            if lineage_rkyv_enabled() {
+                let counts_path_rkyv = rkyv_counts_path(&counts_path);
+                write_counts_ref_rkyv(
+                    &counts_path_rkyv,
+                    &project,
+                    &args.week_id,
+                    &generated_at,
+                    &fingerprint,
+                    &counts,
+                )?;
+            }
         }
 
         let delta = if prev_counts.is_empty() {
@@ -1626,21 +1736,22 @@ fn run_cold_pack(args: ColdPackArgs) -> Result<()> {
 
     let verify_enabled = args.verify && !args.no_verify;
     let pool = build_rayon_pool()?;
-    let mut outcomes = pool.install(|| {
-        snapshots
-            .par_iter()
-            .map(|src| {
-                process_cold_pack_snapshot(
-                    src,
-                    &cold_root,
-                    args.apply,
-                    args.keep_original,
-                    verify_enabled,
-                    args.level,
-                )
-            })
-            .collect::<Vec<_>>()
+    let (tx, rx) = unbounded::<Result<PackOutcome>>();
+    pool.install(|| {
+        snapshots.par_iter().for_each(|src| {
+            let outcome = process_cold_pack_snapshot(
+                src,
+                &cold_root,
+                args.apply,
+                args.keep_original,
+                verify_enabled,
+                args.level,
+            );
+            let _ = tx.send(outcome);
+        });
     });
+    drop(tx);
+    let mut outcomes: Vec<Result<PackOutcome>> = rx.into_iter().collect();
     outcomes.sort_by(|a, b| {
         let a_key = a
             .as_ref()
@@ -1708,14 +1819,14 @@ fn run_cold_tier(args: ColdTierArgs) -> Result<()> {
     let weekly_cutoff =
         now - ChronoDuration::weeks((args.keep_daily / 7).max(0) + args.keep_weekly as i64);
 
-    let mut keep: HashSet<PathBuf> = HashSet::new();
+    let mut keep: AHashSet<PathBuf> = AHashSet::new();
     for item in entries.iter().take(args.keep_latest) {
         keep.insert(item.path.clone());
     }
 
-    let mut daily_keys: HashSet<(String, String)> = HashSet::new();
-    let mut weekly_keys: HashSet<(String, String)> = HashSet::new();
-    let mut monthly_keys: HashSet<(String, String)> = HashSet::new();
+    let mut daily_keys: AHashSet<(String, String)> = AHashSet::new();
+    let mut weekly_keys: AHashSet<(String, String)> = AHashSet::new();
+    let mut monthly_keys: AHashSet<(String, String)> = AHashSet::new();
 
     for item in &entries {
         if keep.contains(&item.path) {
@@ -1809,6 +1920,32 @@ fn run_cold_tier(args: ColdTierArgs) -> Result<()> {
     print_json(&payload, false)
 }
 
+#[derive(Clone, Copy)]
+enum TelemetryArchiveCodec {
+    Gzip,
+    Lz4,
+}
+
+impl TelemetryArchiveCodec {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "gzip" | "gz" => Ok(Self::Gzip),
+            "lz4" => Ok(Self::Lz4),
+            other => Err(anyhow!(
+                "unsupported archive codec '{}'; expected one of: gzip, lz4",
+                other
+            )),
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Gzip => "gz",
+            Self::Lz4 => "lz4",
+        }
+    }
+}
+
 fn parse_iso_from_value(v: &Value) -> Option<DateTime<Utc>> {
     let s = v.as_str()?;
     parse_iso_utc(s)
@@ -1819,25 +1956,24 @@ fn archive_single_file(
     cold_dir: &Path,
     retention_hours: i64,
     timestamp_field: &str,
+    codec: TelemetryArchiveCodec,
+    use_mmap: bool,
 ) -> Result<(usize, usize)> {
     let cutoff = Utc::now() - ChronoDuration::hours(retention_hours);
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
     let mut kept: Vec<String> = Vec::new();
     let mut buckets: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut moved_count = 0usize;
 
-    for line in reader.lines() {
-        let raw = line?;
+    let mut process_line = |raw: &str| {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            continue;
+            return;
         }
         let parsed: Value = match parse_json_str_fast(trimmed) {
             Some(v) => v,
             None => {
-                kept.push(raw);
-                continue;
+                kept.push(trimmed.to_string());
+                return;
             }
         };
         let ts = parsed.get(timestamp_field).and_then(parse_iso_from_value);
@@ -1849,10 +1985,52 @@ fn archive_single_file(
                     .or_default()
                     .push(format!("{}\n", trimmed));
                 moved_count += 1;
-                continue;
+                return;
             }
         }
-        kept.push(format!("{}\n", trimmed));
+        kept.push(trimmed.to_string());
+    };
+
+    if use_mmap {
+        let file = File::open(path)?;
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if len > 0 {
+            // SAFETY: mapping a read-only file descriptor for immutable line scanning.
+            if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
+                for line in mmap.split(|b| *b == b'\n') {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let line = if line.last() == Some(&b'\r') {
+                        &line[..line.len().saturating_sub(1)]
+                    } else {
+                        line
+                    };
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(raw) = std::str::from_utf8(line) {
+                        process_line(raw);
+                    } else {
+                        let raw = String::from_utf8_lossy(line);
+                        process_line(raw.as_ref());
+                    }
+                }
+            } else {
+                let reader = BufReader::new(file);
+                for line in reader.lines() {
+                    let raw = line?;
+                    process_line(&raw);
+                }
+            }
+        }
+    } else {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let raw = line?;
+            process_line(&raw);
+        }
     }
 
     let base = path
@@ -1863,30 +2041,41 @@ fn archive_single_file(
     for (date_key, lines) in buckets {
         let out_dir = cold_dir.join(&base);
         fs::create_dir_all(&out_dir)?;
-        let out_path = out_dir.join(format!("{}.{}.ndjson.gz", base, date_key));
+        let out_path = out_dir.join(format!(
+            "{}.{}.ndjson.{}",
+            base,
+            date_key,
+            codec.extension()
+        ));
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(out_path)?;
-        let mut encoder = GzEncoder::new(file, Compression::default());
-        for line in lines {
-            encoder.write_all(line.as_bytes())?;
+        match codec {
+            TelemetryArchiveCodec::Gzip => {
+                let mut encoder = GzEncoder::new(file, Compression::default());
+                for line in lines {
+                    encoder.write_all(line.as_bytes())?;
+                }
+                let _ = encoder.finish()?;
+            }
+            TelemetryArchiveCodec::Lz4 => {
+                let mut encoder = FrameEncoder::new(file);
+                for line in lines {
+                    encoder.write_all(line.as_bytes())?;
+                }
+                let _ = encoder.finish()?;
+            }
         }
-        let _ = encoder.finish()?;
     }
 
-    atomic_write_lines(
-        path,
-        &kept
-            .iter()
-            .map(|s| s.trim_end_matches('\n').to_string())
-            .collect::<Vec<_>>(),
-    )?;
+    atomic_write_lines(path, &kept)?;
     Ok((moved_count, kept.len()))
 }
 
 fn run_archive_ndjson(args: ArchiveNdjsonArgs) -> Result<()> {
     let cold_dir = PathBuf::from(args.cold_dir.trim());
+    let codec = TelemetryArchiveCodec::parse(&args.codec)?;
     let mut file_paths: Vec<PathBuf> = args.files.iter().map(PathBuf::from).collect();
 
     if !args.data_dir.trim().is_empty() {
@@ -1916,8 +2105,14 @@ fn run_archive_ndjson(args: ArchiveNdjsonArgs) -> Result<()> {
     }
 
     for path in &file_paths {
-        let (moved, kept) =
-            archive_single_file(path, &cold_dir, args.retention_hours, &args.timestamp_field)?;
+        let (moved, kept) = archive_single_file(
+            path,
+            &cold_dir,
+            args.retention_hours,
+            &args.timestamp_field,
+            codec,
+            args.use_mmap,
+        )?;
         println!("{}: moved={} kept={}", path.display(), moved, kept);
     }
     Ok(())
