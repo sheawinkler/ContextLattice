@@ -218,7 +218,7 @@ qdrant-snapshot-prune:
 >   $$([ "$${QDRANT_SKIP_PRUNE:-0}" = "1" ] && echo --skip-prune)
 
 cold-snapshot-pack:
-> python3 scripts/cold_snapshot_pack.py \
+> scripts/context_storage_ops.sh cold-pack \
 >   --cold-root "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}" \
 >   --level "$${COLD_SNAPSHOT_ZSTD_LEVEL:-3}" \
 >   $$([ "$${COLD_SNAPSHOT_PACK_APPLY:-1}" = "1" ] && echo --apply) \
@@ -227,7 +227,7 @@ cold-snapshot-pack:
 >   $$([ -n "$${COLD_SNAPSHOT_PACK_MAX_FILES:-}" ] && echo --max-files "$${COLD_SNAPSHOT_PACK_MAX_FILES}")
 
 cold-snapshot-tier:
-> python3 scripts/cold_snapshot_tiering.py \
+> scripts/context_storage_ops.sh cold-tier \
 >   --cold-root "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold}" \
 >   --keep-latest "$${COLD_SNAPSHOT_KEEP_LATEST:-6}" \
 >   --keep-daily "$${COLD_SNAPSHOT_KEEP_DAILY:-21}" \
@@ -251,7 +251,7 @@ qdrant-cutover:
 > TARGET_COLLECTION="$${TARGET_COLLECTION:?set TARGET_COLLECTION=<new_collection>}" LIMIT="$${LIMIT:-2000}" PROJECT="$${PROJECT:-}" scripts/qdrant_collection_cutover.sh --target "$$TARGET_COLLECTION" --limit "$$LIMIT" $${PROJECT:+--project "$$PROJECT"}
 
 telemetry-archive:
-> python3 scripts/archive_ndjson_by_time.py \
+> scripts/context_storage_ops.sh archive-ndjson \
 >   --data-dir "$${ORCHESTRATOR_DATA_DIR:-./.data/orchestrator}" \
 >   --retention-hours "$${TELEMETRY_HOT_HOURS:-48}" \
 >   --cold-dir "$${CONTEXTLATTICE_COLD_ROOT:-./.data/cold/telemetry}"
@@ -278,7 +278,7 @@ retention-status:
 > bash scripts/install_retention_runner.sh status
 
 storage-ledger-capture:
-> python3 scripts/storage_ledger_capture.py \
+> scripts/context_storage_ops.sh ledger \
 >   --orchestrator-url "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}" \
 >   --keep-days "$${ORCH_STORAGE_LEDGER_KEEP_DAYS:-180}" \
 >   --max-bytes "$${ORCH_STORAGE_LEDGER_MAX_BYTES:-134217728}" \
@@ -286,7 +286,7 @@ storage-ledger-capture:
 >   --timeout-secs "$${ORCH_STORAGE_LEDGER_TIMEOUT_SECS:-20}"
 
 storage-ledger-prune:
-> python3 scripts/storage_ledger_capture.py \
+> scripts/context_storage_ops.sh ledger \
 >   --keep-days "$${ORCH_STORAGE_LEDGER_KEEP_DAYS:-180}" \
 >   --max-bytes "$${ORCH_STORAGE_LEDGER_MAX_BYTES:-134217728}" \
 >   --prune-only
@@ -301,7 +301,7 @@ storage-ledger-status:
 > bash scripts/install_storage_ledger_runner.sh status
 
 weekly-lineage-rollup:
-> python3 scripts/weekly_lineage_rollup.py \
+> scripts/context_storage_ops.sh weekly-lineage \
 >   --orchestrator-url "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}" \
 >   --min-count "$${CONTEXTLATTICE_LINEAGE_MIN_COUNT:-1}" \
 >   --top-topic-limit "$${CONTEXTLATTICE_LINEAGE_TOP_TOPIC_LIMIT:-60}" \
