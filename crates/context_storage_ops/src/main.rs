@@ -2,10 +2,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::UNIX_EPOCH;
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
+use arrow2::array::{Int64Array, Utf8Array};
+use arrow2::chunk::Chunk;
+use arrow2::datatypes::{DataType, Field, Schema};
+use arrow2::io::parquet::write::{
+    transverse, CompressionOptions, Encoding, FileWriter as ParquetFileWriter, RowGroupIterator,
+    Version, WriteOptions,
+};
 use blake3::Hasher;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
 use clap::{Args, Parser, Subcommand};
@@ -15,6 +24,7 @@ use flate2::Compression;
 use jwalk::WalkDir;
 use lz4_flex::frame::FrameEncoder;
 use memmap2::MmapOptions;
+use parquet2::metadata::KeyValue;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
@@ -25,6 +35,10 @@ use rkyv::{from_bytes, rancor::Error as RkyvError, to_bytes, Archive, Deserializ
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use tokio::runtime::Runtime;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Parser)]
 #[command(name = "context_storage_ops")]
@@ -37,6 +51,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Ledger(LedgerArgs),
+    LedgerTail(LedgerTailArgs),
     WeeklyLineage(WeeklyLineageArgs),
     ColdPack(ColdPackArgs),
     ColdTier(ColdTierArgs),
@@ -64,6 +79,20 @@ struct LedgerArgs {
     prune_only: bool,
     #[arg(long, default_value_t = false)]
     pretty: bool,
+}
+
+#[derive(Args)]
+struct LedgerTailArgs {
+    #[arg(long, default_value_t = default_ledger_path())]
+    path: String,
+    #[arg(long, default_value_t = 168)]
+    limit: usize,
+    #[arg(long, default_value_t = String::new())]
+    since: String,
+    #[arg(long, default_value_t = 2 * 1024 * 1024)]
+    max_line_bytes: usize,
+    #[arg(long, default_value_t = false)]
+    no_mmap: bool,
 }
 
 #[derive(Args)]
@@ -234,6 +263,7 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Ledger(args) => run_ledger(args),
+        Commands::LedgerTail(args) => run_ledger_tail(args),
         Commands::WeeklyLineage(args) => run_weekly_lineage(args),
         Commands::ColdPack(args) => run_cold_pack(args),
         Commands::ColdTier(args) => run_cold_tier(args),
@@ -283,12 +313,65 @@ fn build_rayon_pool() -> Result<rayon::ThreadPool> {
         .build()?)
 }
 
-fn parse_json_bytes_fast(bytes: &[u8]) -> Option<Value> {
-    let mut owned = bytes.to_vec();
-    if let Ok(parsed) = simd_json::to_owned_value(&mut owned) {
-        return serde_json::to_value(parsed).ok();
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JsonParserMode {
+    Auto,
+    SimdFirst,
+    SonicFirst,
+    SerdeOnly,
+}
+
+fn json_parser_mode() -> JsonParserMode {
+    static MODE: OnceLock<JsonParserMode> = OnceLock::new();
+    *MODE.get_or_init(|| {
+        let raw = std::env::var("CONTEXT_STORAGE_OPS_JSON_PARSER")
+            .unwrap_or_else(|_| "auto".to_string())
+            .trim()
+            .to_ascii_lowercase();
+        match raw.as_str() {
+            "simd" | "simd-first" => JsonParserMode::SimdFirst,
+            "sonic" | "sonic-first" => JsonParserMode::SonicFirst,
+            "serde" | "serde-only" => JsonParserMode::SerdeOnly,
+            _ => JsonParserMode::Auto,
+        }
+    })
+}
+
+fn parse_json_bytes_serde(bytes: &[u8]) -> Option<Value> {
     serde_json::from_slice(bytes).ok()
+}
+
+fn parse_json_bytes_sonic(bytes: &[u8]) -> Option<Value> {
+    sonic_rs::from_slice::<Value>(bytes).ok()
+}
+
+fn parse_json_bytes_simd(bytes: &[u8]) -> Option<Value> {
+    let mut owned = bytes.to_vec();
+    let parsed = simd_json::to_owned_value(&mut owned).ok()?;
+    serde_json::to_value(parsed).ok()
+}
+
+fn parse_json_bytes_fast(bytes: &[u8]) -> Option<Value> {
+    match json_parser_mode() {
+        JsonParserMode::SerdeOnly => parse_json_bytes_serde(bytes),
+        JsonParserMode::SimdFirst => parse_json_bytes_simd(bytes)
+            .or_else(|| parse_json_bytes_sonic(bytes))
+            .or_else(|| parse_json_bytes_serde(bytes)),
+        JsonParserMode::SonicFirst => parse_json_bytes_sonic(bytes)
+            .or_else(|| parse_json_bytes_simd(bytes))
+            .or_else(|| parse_json_bytes_serde(bytes)),
+        JsonParserMode::Auto => {
+            if bytes.len() >= 4096 {
+                parse_json_bytes_simd(bytes)
+                    .or_else(|| parse_json_bytes_sonic(bytes))
+                    .or_else(|| parse_json_bytes_serde(bytes))
+            } else {
+                parse_json_bytes_sonic(bytes)
+                    .or_else(|| parse_json_bytes_simd(bytes))
+                    .or_else(|| parse_json_bytes_serde(bytes))
+            }
+        }
+    }
 }
 
 fn parse_json_str_fast(raw: &str) -> Option<Value> {
@@ -385,6 +468,30 @@ fn default_archive_use_mmap() -> bool {
 
 fn lineage_rkyv_enabled() -> bool {
     env_truthy("CONTEXT_STORAGE_OPS_LINEAGE_RKYV_CACHE", true)
+}
+
+fn lineage_parquet_enabled() -> bool {
+    env_truthy("CONTEXT_STORAGE_OPS_LINEAGE_PARQUET_EXPORT", true)
+}
+
+fn mmap_min_bytes() -> u64 {
+    std::env::var("CONTEXT_STORAGE_OPS_MMAP_MIN_BYTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(256 * 1024)
+}
+
+fn mmap_advise_enabled() -> bool {
+    env_truthy("CONTEXT_STORAGE_OPS_MMAP_ADVISE_SEQUENTIAL", true)
+}
+
+fn map_file_readonly(file: &File, file_len: u64) -> Result<memmap2::Mmap> {
+    let mmap = unsafe { MmapOptions::new().map(file)? };
+    #[cfg(not(target_os = "windows"))]
+    if mmap_advise_enabled() && file_len >= mmap_min_bytes() {
+        let _ = mmap.advise(memmap2::Advice::Sequential);
+    }
+    Ok(mmap)
 }
 
 fn default_ledger_path() -> String {
@@ -565,6 +672,255 @@ fn prune_ndjson(path: &Path, keep_days: i64, max_bytes: usize) -> Result<Value> 
         "pruned": true,
         "lines": kept.len(),
     }))
+}
+
+fn parse_ledger_since(raw: &str) -> Option<DateTime<Utc>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    parse_iso_utc(trimmed)
+}
+
+fn ledger_line_passes_since(value: &Value, since: Option<&DateTime<Utc>>) -> bool {
+    let Some(since_ts) = since else {
+        return true;
+    };
+    let captured = value
+        .get("captured_at")
+        .or_else(|| value.get("timestamp"))
+        .and_then(|v| v.as_str())
+        .and_then(parse_iso_utc);
+    match captured {
+        Some(ts) => ts >= *since_ts,
+        None => false,
+    }
+}
+
+fn read_ledger_tail_cache(
+    path: &Path,
+    limit: usize,
+    max_line_bytes: usize,
+) -> Option<(Vec<Value>, usize)> {
+    if !ledger_tail_rkyv_enabled() || limit == 0 {
+        return None;
+    }
+    let (source_len, source_mtime_secs, source_mtime_nanos) = source_signature(path)?;
+    let cache_path = ledger_tail_cache_path(path);
+    let bytes = fs::read(cache_path).ok()?;
+    let cache: LedgerTailRkyvCache = from_bytes::<LedgerTailRkyvCache, RkyvError>(&bytes).ok()?;
+    if cache.schema_version != 1
+        || cache.source_len != source_len
+        || cache.source_mtime_secs != source_mtime_secs
+        || cache.source_mtime_nanos != source_mtime_nanos
+        || cache.max_line_bytes != max_line_bytes
+    {
+        return None;
+    }
+    let mut rows = Vec::with_capacity(limit);
+    let mut parse_errors = cache.parse_errors;
+    for row in cache.rows.iter().rev().take(limit).rev() {
+        match parse_json_str_fast(row) {
+            Some(value) => rows.push(value),
+            None => parse_errors += 1,
+        }
+    }
+    Some((rows, parse_errors))
+}
+
+fn write_ledger_tail_cache(
+    path: &Path,
+    rows: &[Value],
+    parse_errors: usize,
+    max_line_bytes: usize,
+) -> Result<()> {
+    if !ledger_tail_rkyv_enabled() {
+        return Ok(());
+    }
+    let (source_len, source_mtime_secs, source_mtime_nanos) = match source_signature(path) {
+        Some(sig) => sig,
+        None => return Ok(()),
+    };
+    let max_rows = ledger_tail_cache_max_rows();
+    let serialized_rows: Vec<String> = rows
+        .iter()
+        .rev()
+        .take(max_rows)
+        .rev()
+        .filter_map(|row| serde_json::to_string(row).ok())
+        .collect();
+    let cache = LedgerTailRkyvCache {
+        schema_version: 1,
+        source_len,
+        source_mtime_secs,
+        source_mtime_nanos,
+        parse_errors,
+        max_line_bytes,
+        rows: serialized_rows,
+    };
+    let bytes = to_bytes::<RkyvError>(&cache)?;
+    let cache_path = ledger_tail_cache_path(path);
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(cache_path, bytes.as_slice())?;
+    Ok(())
+}
+
+fn read_ledger_tail_rows(
+    path: &Path,
+    limit: usize,
+    since: Option<&DateTime<Utc>>,
+    max_line_bytes: usize,
+    use_mmap: bool,
+) -> Result<(Vec<Value>, usize)> {
+    if since.is_none() {
+        if let Some((cached_rows, cached_errors)) =
+            read_ledger_tail_cache(path, limit, max_line_bytes)
+        {
+            return Ok((cached_rows, cached_errors));
+        }
+    }
+
+    let mut parse_errors = 0usize;
+    let mut rows: Vec<Value> = Vec::with_capacity(limit);
+    let line_limit = max_line_bytes.max(64 * 1024);
+
+    if use_mmap {
+        let file = File::open(path)?;
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_len < mmap_min_bytes() {
+            return read_ledger_tail_rows(path, limit, since, max_line_bytes, false);
+        }
+        let mmap = map_file_readonly(&file, file_len)?;
+        let bytes = &mmap[..];
+        let mut cursor = bytes.len();
+        while cursor > 0 && rows.len() < limit {
+            let line_end = cursor;
+            while cursor > 0 && bytes[cursor - 1] != b'\n' {
+                cursor -= 1;
+            }
+            let line_start = cursor;
+            if cursor > 0 && bytes[cursor - 1] == b'\n' {
+                cursor -= 1;
+            }
+            let raw = &bytes[line_start..line_end];
+            let trimmed = trim_ascii_whitespace(raw);
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.len() > line_limit {
+                parse_errors += 1;
+                continue;
+            }
+            match parse_json_bytes_fast(trimmed) {
+                Some(value) => {
+                    if !ledger_line_passes_since(&value, since) {
+                        if since.is_some() {
+                            // append-only ledger: once older than since while scanning backwards, stop.
+                            break;
+                        }
+                        continue;
+                    }
+                    rows.push(value);
+                }
+                None => {
+                    parse_errors += 1;
+                }
+            }
+        }
+        rows.reverse();
+        if since.is_none() {
+            let _ = write_ledger_tail_cache(path, &rows, parse_errors, max_line_bytes);
+        }
+        return Ok((rows, parse_errors));
+    }
+
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.len() > line_limit {
+            parse_errors += 1;
+            continue;
+        }
+        match parse_json_str_fast(trimmed) {
+            Some(value) => {
+                if ledger_line_passes_since(&value, since) {
+                    rows.push(value);
+                }
+            }
+            None => parse_errors += 1,
+        }
+    }
+    if rows.len() > limit {
+        let drain = rows.len().saturating_sub(limit);
+        rows.drain(0..drain);
+    }
+    if since.is_none() {
+        let _ = write_ledger_tail_cache(path, &rows, parse_errors, max_line_bytes);
+    }
+    Ok((rows, parse_errors))
+}
+
+fn run_ledger_tail(args: LedgerTailArgs) -> Result<()> {
+    let path = PathBuf::from(args.path.trim());
+    let limit = usize::max(1, args.limit);
+    let since = parse_ledger_since(&args.since);
+    let max_line_bytes = args.max_line_bytes.max(64 * 1024);
+
+    if !path.exists() {
+        return print_json(
+            &json!({
+                "ok": true,
+                "capturedAt": Utc::now().to_rfc3339().replace("+00:00", "Z"),
+                "path": path,
+                "exists": false,
+                "count": 0,
+                "limit": limit,
+                "since": args.since,
+                "rows": [],
+            }),
+            false,
+        );
+    }
+
+    let (rows, parse_errors) =
+        read_ledger_tail_rows(&path, limit, since.as_ref(), max_line_bytes, !args.no_mmap)?;
+    let count = rows.len();
+    let mut payload = json!({
+        "ok": true,
+        "capturedAt": Utc::now().to_rfc3339().replace("+00:00", "Z"),
+        "path": path,
+        "exists": true,
+        "count": count,
+        "limit": limit,
+        "since": args.since,
+        "rows": rows,
+    });
+    if parse_errors > 0 {
+        payload["parseErrors"] = json!(parse_errors);
+    }
+    print_json(&payload, false)
+}
+
+fn trim_ascii_whitespace(input: &[u8]) -> &[u8] {
+    if input.is_empty() {
+        return input;
+    }
+    let mut start = 0usize;
+    let mut end = input.len();
+    while start < end && input[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    while end > start && input[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    &input[start..end]
 }
 
 fn run_ledger(args: LedgerArgs) -> Result<()> {
@@ -899,8 +1255,42 @@ struct LineageCountsRkyv {
     counts: Vec<(String, i64)>,
 }
 
+#[derive(Archive, Serialize, Deserialize, Debug)]
+struct LedgerTailRkyvCache {
+    schema_version: u32,
+    source_len: u64,
+    source_mtime_secs: i64,
+    source_mtime_nanos: u32,
+    parse_errors: usize,
+    max_line_bytes: usize,
+    rows: Vec<String>,
+}
+
 fn rkyv_counts_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.rkyv", path.to_string_lossy()))
+}
+
+fn ledger_tail_cache_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.tail.rkyv", path.to_string_lossy()))
+}
+
+fn ledger_tail_rkyv_enabled() -> bool {
+    env_truthy("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", true)
+}
+
+fn ledger_tail_cache_max_rows() -> usize {
+    std::env::var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_CACHE_MAX_ROWS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(4096)
+}
+
+fn source_signature(path: &Path) -> Option<(u64, i64, u32)> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let elapsed = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some((meta.len(), elapsed.as_secs() as i64, elapsed.subsec_nanos()))
 }
 
 fn read_counts_ref_rkyv(path: &Path) -> Option<BTreeMap<String, i64>> {
@@ -1210,6 +1600,106 @@ fn build_synergy(week_id: &str, summaries: &[Value]) -> Value {
     })
 }
 
+fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value]) -> Result<()> {
+    if summaries.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut week_ids: Vec<&str> = Vec::with_capacity(summaries.len());
+    let mut projects: Vec<String> = Vec::with_capacity(summaries.len());
+    let mut fingerprints: Vec<String> = Vec::with_capacity(summaries.len());
+    let mut summary_refs: Vec<String> = Vec::with_capacity(summaries.len());
+    let mut counts_refs: Vec<String> = Vec::with_capacity(summaries.len());
+    let mut topic_counts: Vec<i64> = Vec::with_capacity(summaries.len());
+    let mut total_event_counts: Vec<i64> = Vec::with_capacity(summaries.len());
+
+    for row in summaries {
+        week_ids.push(week_id);
+        projects.push(
+            row.get("project")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
+        fingerprints.push(
+            row.get("fingerprint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
+        summary_refs.push(
+            row.get("summary_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
+        counts_refs.push(
+            row.get("counts_ref")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
+        topic_counts.push(row.get("topic_count").and_then(|v| v.as_i64()).unwrap_or(0));
+        total_event_counts.push(
+            row.get("total_event_count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+        );
+    }
+
+    let project_refs: Vec<&str> = projects.iter().map(|s| s.as_str()).collect();
+    let fingerprint_refs: Vec<&str> = fingerprints.iter().map(|s| s.as_str()).collect();
+    let summary_path_refs: Vec<&str> = summary_refs.iter().map(|s| s.as_str()).collect();
+    let counts_ref_refs: Vec<&str> = counts_refs.iter().map(|s| s.as_str()).collect();
+
+    let schema = Schema::from(vec![
+        Field::new("week_id", DataType::Utf8, false),
+        Field::new("project", DataType::Utf8, false),
+        Field::new("fingerprint", DataType::Utf8, false),
+        Field::new("summary_path", DataType::Utf8, false),
+        Field::new("counts_ref", DataType::Utf8, false),
+        Field::new("topic_count", DataType::Int64, false),
+        Field::new("total_event_count", DataType::Int64, false),
+    ]);
+    let chunk = Chunk::new(vec![
+        Utf8Array::<i32>::from_slice(week_ids).boxed(),
+        Utf8Array::<i32>::from_slice(project_refs).boxed(),
+        Utf8Array::<i32>::from_slice(fingerprint_refs).boxed(),
+        Utf8Array::<i32>::from_slice(summary_path_refs).boxed(),
+        Utf8Array::<i32>::from_slice(counts_ref_refs).boxed(),
+        Int64Array::from_slice(topic_counts).boxed(),
+        Int64Array::from_slice(total_event_counts).boxed(),
+    ]);
+
+    let options = WriteOptions {
+        write_statistics: true,
+        compression: CompressionOptions::Zstd(None),
+        version: Version::V2,
+        data_pagesize_limit: None,
+    };
+    let encodings: Vec<Vec<Encoding>> = schema
+        .fields
+        .iter()
+        .map(|f| transverse(&f.data_type, |_| Encoding::Plain))
+        .collect();
+    let row_groups =
+        RowGroupIterator::try_new(vec![Ok(chunk)].into_iter(), &schema, options, encodings)?;
+    let file = File::create(path)?;
+    let mut writer = ParquetFileWriter::try_new(file, schema, options)?;
+    for group in row_groups {
+        writer.write(group?)?;
+    }
+    let metadata = Some(vec![KeyValue {
+        key: "contextlattice_weekly_lineage".to_string(),
+        value: Some(week_id.to_string()),
+    }]);
+    let _ = writer.end(metadata)?;
+    Ok(())
+}
+
 fn find_previous_summary(project_dir: &Path, week_id: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(read) = fs::read_dir(project_dir) {
@@ -1250,7 +1740,7 @@ fn prune_old_weeks(root: &Path, keep_weeks: usize) {
         let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
             continue;
         };
-        if name.starts_with("week-") && name.ends_with(".json") {
+        if name.starts_with("week-") && (name.ends_with(".json") || name.ends_with(".parquet")) {
             by_parent
                 .entry(path.parent().unwrap_or(root).to_path_buf())
                 .or_default()
@@ -1456,11 +1946,19 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
     let synergy_path = out_root
         .join("global")
         .join(format!("week-{}.json", args.week_id));
+    let lineage_parquet_path = out_root
+        .join("global")
+        .join(format!("week-{}.parquet", args.week_id));
+    let parquet_enabled = lineage_parquet_enabled();
+
     if args.emit_synergy {
         let synergy = build_synergy(&args.week_id, &weekly_summaries);
         if !args.dry_run {
             write_json_atomic(&synergy_path, &synergy)?;
         }
+    }
+    if parquet_enabled && !args.dry_run {
+        write_weekly_lineage_parquet(&lineage_parquet_path, &args.week_id, &weekly_summaries)?;
     }
 
     if !args.dry_run {
@@ -1473,6 +1971,8 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
         "projects": weekly_summaries,
         "synergy_emitted": args.emit_synergy,
         "synergy_path": if args.emit_synergy { Some(synergy_path.to_string_lossy().to_string()) } else { None::<String> },
+        "lineage_parquet_emitted": parquet_enabled && !args.dry_run,
+        "lineage_parquet_path": if parquet_enabled && !args.dry_run { Some(lineage_parquet_path.to_string_lossy().to_string()) } else { None::<String> },
         "out_root": out_root,
         "dry_run": args.dry_run,
     });
@@ -1994,9 +2494,8 @@ fn archive_single_file(
     if use_mmap {
         let file = File::open(path)?;
         let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-        if len > 0 {
-            // SAFETY: mapping a read-only file descriptor for immutable line scanning.
-            if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
+        if len >= mmap_min_bytes() {
+            if let Ok(mmap) = map_file_readonly(&file, len) {
                 for line in mmap.split(|b| *b == b'\n') {
                     if line.is_empty() {
                         continue;
@@ -2022,6 +2521,12 @@ fn archive_single_file(
                     let raw = line?;
                     process_line(&raw);
                 }
+            }
+        } else if len > 0 {
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                let raw = line?;
+                process_line(&raw);
             }
         }
     } else {
@@ -2364,6 +2869,10 @@ fn run_fanout_gc(args: FanoutGcArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn parse_week_roundtrip() {
@@ -2378,5 +2887,97 @@ mod tests {
         assert!(tokens.contains("vector"));
         assert!(!tokens.contains("root"));
         assert!(!tokens.contains("notes"));
+    }
+
+    #[test]
+    fn ledger_since_filter_respects_captured_at() {
+        let since = parse_ledger_since("2026-05-14T12:00:00Z").expect("since");
+        let fresh = json!({"captured_at":"2026-05-14T12:30:00Z","v":2});
+        let stale = json!({"captured_at":"2026-05-14T10:00:00Z","v":1});
+        assert!(ledger_line_passes_since(&fresh, Some(&since)));
+        assert!(!ledger_line_passes_since(&stale, Some(&since)));
+    }
+
+    #[test]
+    fn trim_ascii_whitespace_returns_inner_slice() {
+        let raw = b"  \n\t{\"ok\":true}\r\n ";
+        let trimmed = trim_ascii_whitespace(raw);
+        assert_eq!(trimmed, b"{\"ok\":true}");
+    }
+
+    #[test]
+    fn ledger_since_empty_is_none() {
+        assert!(parse_ledger_since("").is_none());
+        assert!(parse_ledger_since("   ").is_none());
+        assert!(parse_ledger_since("invalid-ts").is_none());
+        assert!(parse_ledger_since(&Utc::now().to_rfc3339()).is_some());
+    }
+
+    #[test]
+    fn ledger_tail_handles_malformed_lines_and_since_filter_mmap() {
+        let mut tmp = NamedTempFile::new().expect("temp ledger");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T09:00:00Z\",\"v\":1}}").expect("write");
+        writeln!(tmp, "not-json").expect("write malformed");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T10:00:00Z\",\"v\":2}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T11:00:00Z\",\"v\":3}}").expect("write");
+
+        let since = parse_ledger_since("2026-05-14T10:00:00Z").expect("since");
+        let (rows, parse_errors) =
+            read_ledger_tail_rows(tmp.path(), 3, Some(&since), 1024 * 1024, true).expect("tail");
+        assert_eq!(
+            parse_errors, 1,
+            "malformed lines encountered in scanned window are counted"
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get("v").and_then(|v| v.as_i64()), Some(2));
+        assert_eq!(rows[1].get("v").and_then(|v| v.as_i64()), Some(3));
+    }
+
+    #[test]
+    fn ledger_tail_handles_malformed_lines_and_limit_forward_scan() {
+        let mut tmp = NamedTempFile::new().expect("temp ledger");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T09:00:00Z\",\"v\":1}}").expect("write");
+        writeln!(tmp, "not-json").expect("write malformed");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T10:00:00Z\",\"v\":2}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T11:00:00Z\",\"v\":3}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T12:00:00Z\",\"v\":4}}").expect("write");
+
+        let since = parse_ledger_since("2026-05-14T09:30:00Z").expect("since");
+        let (rows, parse_errors) =
+            read_ledger_tail_rows(tmp.path(), 2, Some(&since), 1024 * 1024, false).expect("tail");
+        assert_eq!(parse_errors, 1);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get("v").and_then(|v| v.as_i64()), Some(3));
+        assert_eq!(rows[1].get("v").and_then(|v| v.as_i64()), Some(4));
+    }
+
+    #[test]
+    fn ledger_tail_writes_and_reads_rkyv_cache() {
+        std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", "true");
+        std::env::set_var("CONTEXT_STORAGE_OPS_MMAP_MIN_BYTES", "1048576");
+        let mut tmp = NamedTempFile::new().expect("temp ledger");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T09:00:00Z\",\"v\":1}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T10:00:00Z\",\"v\":2}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T11:00:00Z\",\"v\":3}}").expect("write");
+
+        let (rows_first, _) =
+            read_ledger_tail_rows(tmp.path(), 2, None, 1024 * 1024, false).expect("first tail");
+        assert_eq!(rows_first.len(), 2);
+        let cache_path = ledger_tail_cache_path(tmp.path());
+        assert!(cache_path.exists(), "tail cache should be materialized");
+
+        let (rows_second, _) =
+            read_ledger_tail_rows(tmp.path(), 2, None, 1024 * 1024, true).expect("second tail");
+        assert_eq!(rows_second.len(), 2);
+        assert_eq!(
+            rows_first
+                .iter()
+                .map(|v| v.get("v").and_then(|x| x.as_i64()).unwrap_or_default())
+                .collect::<Vec<_>>(),
+            rows_second
+                .iter()
+                .map(|v| v.get("v").and_then(|x| x.as_i64()).unwrap_or_default())
+                .collect::<Vec<_>>()
+        );
     }
 }

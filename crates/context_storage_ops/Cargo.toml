@@ -18,6 +18,7 @@ tokio = { version = "1.48", features = ["rt", "time"] }
 jwalk = "0.8"
 rayon = "1.10"
 simd-json = "0.17"
+sonic-rs = "0.5"
 memmap2 = "0.9"
 lz4_flex = { version = "0.13", features = ["frame"] }
 rkyv = "0.8"
@@ -28,6 +29,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 zstd = "0.13"
 urlencoding = "2.1"
 blake3.workspace = true
+arrow2 = { version = "0.18", features = ["io_parquet"] }
+parquet2 = "0.17"
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.12"

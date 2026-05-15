@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -14,6 +14,9 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::TryStreamExt;
+use mongodb::bson::{Bson, Document};
+use mongodb::Client as MongoClient;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tantivy::collector::TopDocs;
@@ -25,10 +28,57 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 use walkdir::WalkDir;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotSourceMode {
+    File,
+    Mongo,
+    MongoFirst,
+    Hybrid,
+}
+
+impl SnapshotSourceMode {
+    fn from_env(raw: &str) -> Self {
+        match raw.trim().to_lowercase().as_str() {
+            "file" | "filesystem" => Self::File,
+            "mongo" | "mongo_only" => Self::Mongo,
+            "mongo_first" => Self::MongoFirst,
+            "hybrid" | "file_fallback" => Self::Hybrid,
+            _ => Self::Hybrid,
+        }
+    }
+
+    fn use_mongo(self) -> bool {
+        matches!(self, Self::Mongo | Self::MongoFirst | Self::Hybrid)
+    }
+
+    fn is_mongo_first(self) -> bool {
+        matches!(self, Self::MongoFirst)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Mongo => "mongo",
+            Self::MongoFirst => "mongo_first",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Config {
     port: u16,
     data_root: PathBuf,
+    source_mode: SnapshotSourceMode,
+    mongo_uri: String,
+    mongo_db: String,
+    mongo_events_collection: String,
+    mongo_query_timeout_secs: u64,
+    mongo_scan_multiplier: usize,
     refresh_secs: u64,
     max_docs: usize,
     max_content_chars: usize,
@@ -66,6 +116,20 @@ impl Config {
     fn from_env() -> Self {
         let port = env_u16("PORT", 8096);
         let data_root = PathBuf::from(env_string("MB_SPIKE_DATA_ROOT", "/data/memory-bank"));
+        let source_mode =
+            SnapshotSourceMode::from_env(&env_string("MB_SPIKE_SOURCE_MODE", "hybrid"));
+        let mongo_uri = env::var("MB_SPIKE_MONGO_URI")
+            .or_else(|_| env::var("MONGODB_URI"))
+            .unwrap_or_else(|_| "mongodb://mongo:27017".to_string());
+        let mongo_db = env::var("MB_SPIKE_MONGO_DB")
+            .or_else(|_| env::var("GO_TELEMETRY_DB"))
+            .or_else(|_| env::var("ORCH_TELEMETRY_DB"))
+            .unwrap_or_else(|_| "contextlattice_raw".to_string());
+        let mongo_events_collection = env::var("MB_SPIKE_MONGO_EVENTS_COLLECTION")
+            .or_else(|_| env::var("GO_TELEMETRY_EVENTS_COLLECTION"))
+            .unwrap_or_else(|_| "memory_write_telemetry".to_string());
+        let mongo_query_timeout_secs = env_u64("MB_SPIKE_MONGO_QUERY_TIMEOUT_SECS", 6);
+        let mongo_scan_multiplier = env_usize("MB_SPIKE_MONGO_SCAN_MULTIPLIER", 12).max(1);
         let refresh_secs = env_u64("MB_SPIKE_REFRESH_SECS", 120);
         let max_docs = env_usize("MB_SPIKE_MAX_DOCS", 50_000);
         let max_content_chars = env_usize("MB_SPIKE_MAX_CONTENT_CHARS", 4096);
@@ -104,6 +168,12 @@ impl Config {
         Self {
             port,
             data_root,
+            source_mode,
+            mongo_uri: mongo_uri.trim().to_string(),
+            mongo_db: mongo_db.trim().to_string(),
+            mongo_events_collection: mongo_events_collection.trim().to_string(),
+            mongo_query_timeout_secs: mongo_query_timeout_secs.max(1),
+            mongo_scan_multiplier,
             refresh_secs,
             max_docs,
             max_content_chars,
@@ -246,6 +316,7 @@ struct AppState {
     cfg: Config,
     docs: Arc<RwLock<DocSnapshot>>,
     snapshot_build_lock: Arc<Mutex<()>>,
+    mongo_client: Option<MongoClient>,
     tantivy: Arc<RwLock<TantivyCache>>,
     tantivy_build_lock: Arc<Mutex<()>>,
     quickwit: Arc<RwLock<QuickwitCompatCache>>,
@@ -259,6 +330,7 @@ struct AppState {
 struct HealthResponse {
     ok: bool,
     backend_modes: Vec<&'static str>,
+    source_mode: String,
     docs_loaded: usize,
     fingerprint: u64,
     refreshed_at_unix_secs: u64,
@@ -292,9 +364,29 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::from_env();
+    let mongo_client = if cfg.source_mode.use_mongo() {
+        match MongoClient::with_uri_str(cfg.mongo_uri.clone()).await {
+            Ok(client) => Some(client),
+            Err(err) => {
+                if cfg.source_mode == SnapshotSourceMode::Mongo {
+                    return Err(err).context("connect mongo snapshot source");
+                }
+                warn!(
+                    error = %err,
+                    "mongo snapshot source unavailable; continuing with file snapshot mode"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     info!(
         port = cfg.port,
         data_root = %cfg.data_root.display(),
+        source_mode = cfg.source_mode.as_str(),
+        mongo_db = %cfg.mongo_db,
+        mongo_collection = %cfg.mongo_events_collection,
         refresh_secs = cfg.refresh_secs,
         max_docs = cfg.max_docs,
         "starting memory-bank spike rust sidecar"
@@ -304,6 +396,7 @@ async fn main() -> Result<()> {
         cfg,
         docs: Arc::new(RwLock::new(DocSnapshot::default())),
         snapshot_build_lock: Arc::new(Mutex::new(())),
+        mongo_client,
         tantivy: Arc::new(RwLock::new(TantivyCache::default())),
         tantivy_build_lock: Arc::new(Mutex::new(())),
         quickwit: Arc::new(RwLock::new(QuickwitCompatCache::default())),
@@ -373,6 +466,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
             "memvid_spike",
             "surrealdb_spike",
         ],
+        source_mode: state.cfg.source_mode.as_str().to_string(),
         docs_loaded: snapshot.docs.len(),
         fingerprint: snapshot.fingerprint,
         refreshed_at_unix_secs: snapshot.refreshed_at_unix_secs,
@@ -518,10 +612,7 @@ async fn ensure_snapshot(state: &AppState) -> Result<DocSnapshot> {
         }
     }
 
-    let cfg = state.cfg.clone();
-    let loaded = tokio::task::spawn_blocking(move || load_docs_snapshot(&cfg))
-        .await
-        .context("join document loader")??;
+    let loaded = build_docs_snapshot(state).await?;
 
     {
         let mut current = state.docs.write().await;
@@ -530,10 +621,106 @@ async fn ensure_snapshot(state: &AppState) -> Result<DocSnapshot> {
     Ok(loaded)
 }
 
-fn load_docs_snapshot(cfg: &Config) -> Result<DocSnapshot> {
+async fn build_docs_snapshot(state: &AppState) -> Result<DocSnapshot> {
+    let cfg = state.cfg.clone();
+    let mut docs: Vec<MemoryDoc> = Vec::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut latest_mtime: u64 = 0;
+    let mut total_bytes: u64 = 0;
+    let mut scanned: usize = 0;
+    let mut mongo_loaded = false;
+    let mut mongo_doc_count = 0usize;
+
+    if cfg.source_mode.use_mongo() {
+        match load_docs_snapshot_mongo(state).await {
+            Ok((mongo_docs, mongo_scanned, mongo_bytes, mongo_latest)) => {
+                mongo_loaded = true;
+                mongo_doc_count = mongo_docs.len();
+                for row in mongo_docs {
+                    seen_ids.insert(row.id.clone());
+                    docs.push(row);
+                }
+                scanned = scanned.saturating_add(mongo_scanned);
+                total_bytes = total_bytes.saturating_add(mongo_bytes);
+                latest_mtime = latest_mtime.max(mongo_latest);
+            }
+            Err(err) => {
+                if cfg.source_mode == SnapshotSourceMode::Mongo {
+                    return Err(err).context("load docs from mongo snapshot source");
+                }
+                warn!(
+                    error = %err,
+                    "mongo snapshot load failed; falling back to file source"
+                );
+            }
+        }
+    }
+
+    let should_load_files = if cfg.source_mode == SnapshotSourceMode::File {
+        true
+    } else if cfg.source_mode == SnapshotSourceMode::Hybrid {
+        true
+    } else if cfg.source_mode.is_mongo_first() {
+        !mongo_loaded || mongo_doc_count == 0
+    } else {
+        false
+    };
+
+    if should_load_files {
+        let cfg_for_files = cfg.clone();
+        let (file_docs, file_scanned, file_total_bytes, file_latest_mtime) =
+            tokio::task::spawn_blocking(move || load_docs_snapshot_files(&cfg_for_files))
+                .await
+                .context("join file document loader")??;
+        for row in file_docs {
+            if seen_ids.insert(row.id.clone()) {
+                docs.push(row);
+            }
+        }
+        scanned = scanned.saturating_add(file_scanned);
+        total_bytes = total_bytes.saturating_add(file_total_bytes);
+        latest_mtime = latest_mtime.max(file_latest_mtime);
+    }
+
+    if docs.len() > cfg.max_docs {
+        docs.truncate(cfg.max_docs);
+    }
+
+    let mut fingerprint = 1469598103934665603u64; // FNV offset basis
+    fingerprint ^= docs.len() as u64;
+    fingerprint = fingerprint.wrapping_mul(1099511628211);
+    fingerprint ^= latest_mtime;
+    fingerprint = fingerprint.wrapping_mul(1099511628211);
+    fingerprint ^= total_bytes;
+    fingerprint = fingerprint.wrapping_mul(1099511628211);
+
+    let refreshed_at_unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    info!(
+        docs = docs.len(),
+        scanned,
+        total_bytes,
+        latest_mtime,
+        fingerprint,
+        source_mode = cfg.source_mode.as_str(),
+        "memory-bank snapshot loaded"
+    );
+
+    Ok(DocSnapshot {
+        docs: Arc::new(docs),
+        fingerprint,
+        refreshed_at: Instant::now(),
+        refreshed_at_unix_secs,
+    })
+}
+
+fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64, u64)> {
     let root = cfg.data_root.clone();
     if !root.exists() {
-        return Ok(DocSnapshot::default());
+        return Ok((Vec::new(), 0, 0, 0));
     }
 
     let mut docs: Vec<MemoryDoc> = Vec::new();
@@ -606,30 +793,155 @@ fn load_docs_snapshot(cfg: &Config) -> Result<DocSnapshot> {
         });
     }
 
-    let mut fingerprint = 1469598103934665603u64; // FNV offset basis
-    fingerprint ^= docs.len() as u64;
-    fingerprint = fingerprint.wrapping_mul(1099511628211);
-    fingerprint ^= latest_mtime;
-    fingerprint = fingerprint.wrapping_mul(1099511628211);
-    fingerprint ^= total_bytes;
-    fingerprint = fingerprint.wrapping_mul(1099511628211);
+    Ok((docs, scanned, total_bytes, latest_mtime))
+}
 
-    let refreshed_at_unix_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+async fn load_docs_snapshot_mongo(state: &AppState) -> Result<(Vec<MemoryDoc>, usize, u64, u64)> {
+    let cfg = &state.cfg;
+    let client = state
+        .mongo_client
+        .as_ref()
+        .context("mongo client unavailable for snapshot source")?;
+    let collection = client
+        .database(cfg.mongo_db.trim())
+        .collection::<Document>(cfg.mongo_events_collection.trim());
+    let scan_limit = cfg
+        .max_docs
+        .saturating_mul(cfg.mongo_scan_multiplier)
+        .max(cfg.max_docs)
+        .min(500_000);
+    let timeout = Duration::from_secs(cfg.mongo_query_timeout_secs.max(1));
 
-    info!(
-        docs = docs.len(),
-        scanned, total_bytes, latest_mtime, fingerprint, "memory-bank snapshot loaded"
-    );
+    tokio::time::timeout(timeout, async {
+        let mut cursor = collection
+            .find(Document::new())
+            .sort(mongodb::bson::doc! {"created_at": -1_i32})
+            .limit(scan_limit as i64)
+            .projection(mongodb::bson::doc! {
+                "project": 1_i32,
+                "file": 1_i32,
+                "file_name": 1_i32,
+                "topic_path": 1_i32,
+                "summary": 1_i32,
+                "content_inline": 1_i32,
+                "created_at": 1_i32,
+            })
+            .await
+            .context("mongo find for memory-bank snapshot")?;
 
-    Ok(DocSnapshot {
-        docs: Arc::new(docs),
-        fingerprint,
-        refreshed_at: Instant::now(),
-        refreshed_at_unix_secs,
+        let mut docs: Vec<MemoryDoc> = Vec::new();
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut scanned: usize = 0;
+        let mut total_bytes: u64 = 0;
+        let mut latest_mtime: u64 = 0;
+
+        while let Some(doc) = cursor.try_next().await.context("mongo cursor next")? {
+            scanned = scanned.saturating_add(1);
+            if docs.len() >= cfg.max_docs {
+                break;
+            }
+
+            let project = first_doc_string(&doc, &["project"]);
+            if project.is_empty() {
+                continue;
+            }
+
+            let file = first_doc_string(&doc, &["file", "file_name"]);
+            if file.is_empty() {
+                continue;
+            }
+
+            let mut summary = first_doc_string(&doc, &["summary", "content_inline"]);
+            if summary.is_empty() {
+                continue;
+            }
+            if summary.len() > cfg.max_content_chars {
+                summary.truncate(cfg.max_content_chars);
+            }
+            summary = normalize_text(&summary);
+            if summary.is_empty() {
+                continue;
+            }
+            total_bytes = total_bytes.saturating_add(summary.len() as u64);
+
+            let mut topic_path = first_doc_string(&doc, &["topic_path"]);
+            if topic_path.is_empty() {
+                topic_path = derive_topic_path(&file);
+            }
+            let id = format!("{project}::{file}");
+            if !seen_ids.insert(id.clone()) {
+                continue;
+            }
+            latest_mtime = latest_mtime.max(doc_time_unix_secs(&doc, "created_at"));
+
+            docs.push(MemoryDoc {
+                id,
+                project,
+                file,
+                topic_path,
+                summary,
+            });
+        }
+
+        info!(
+            docs = docs.len(),
+            scanned,
+            total_bytes,
+            latest_mtime,
+            db = %cfg.mongo_db,
+            collection = %cfg.mongo_events_collection,
+            "mongo snapshot load complete"
+        );
+
+        Ok((docs, scanned, total_bytes, latest_mtime))
     })
+    .await
+    .context("mongo snapshot load timed out")?
+}
+
+fn first_doc_string(doc: &Document, keys: &[&str]) -> String {
+    for key in keys {
+        if let Some(value) = doc.get(*key) {
+            let text = bson_to_string(value);
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+    String::new()
+}
+
+fn bson_to_string(value: &Bson) -> String {
+    match value {
+        Bson::String(v) => v.trim().to_string(),
+        Bson::ObjectId(v) => v.to_hex(),
+        Bson::Int32(v) => v.to_string(),
+        Bson::Int64(v) => v.to_string(),
+        Bson::Double(v) => v.to_string(),
+        Bson::Boolean(v) => v.to_string(),
+        Bson::DateTime(v) => v.timestamp_millis().to_string(),
+        _ => String::new(),
+    }
+}
+
+fn doc_time_unix_secs(doc: &Document, key: &str) -> u64 {
+    let Some(value) = doc.get(key) else {
+        return 0;
+    };
+    match value {
+        Bson::DateTime(v) => {
+            if v.timestamp_millis() < 0 {
+                0
+            } else {
+                (v.timestamp_millis() as u64) / 1000
+            }
+        }
+        Bson::Timestamp(v) => v.time as u64,
+        Bson::Int64(v) => (*v).max(0) as u64,
+        Bson::Int32(v) => (*v).max(0) as u64,
+        Bson::String(v) => v.parse::<u64>().unwrap_or(0),
+        _ => 0,
+    }
 }
 
 async fn tantivy_search(
