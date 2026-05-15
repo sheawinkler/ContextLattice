@@ -247,20 +247,147 @@ pub mod qdrant_remote {
 
 #[cfg(feature = "usearch_ann")]
 pub mod usearch_ann {
-    #[allow(unused_imports)]
-    use usearch as _usearch_dep;
+    use std::collections::HashMap;
 
-    pub struct UsearchAnnAdapter;
+    use anyhow::{anyhow, Context, Result};
+    use serde::{Deserialize, Serialize};
+    use usearch::{Index, IndexOptions, Key, MetricKind, ScalarKind};
 
-    impl Default for UsearchAnnAdapter {
-        fn default() -> Self {
-            Self
-        }
+    #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+    pub struct UsearchMatch {
+        pub id: String,
+        pub distance: f32,
+    }
+
+    pub struct UsearchAnnAdapter {
+        index: Index,
+        dimensions: usize,
+        next_key: Key,
+        key_by_id: HashMap<String, Key>,
+        id_by_key: HashMap<Key, String>,
     }
 
     impl UsearchAnnAdapter {
+        pub fn new(dimensions: usize) -> Result<Self> {
+            if dimensions == 0 {
+                return Err(anyhow!("dimensions must be > 0"));
+            }
+            let mut options = IndexOptions::default();
+            options.dimensions = dimensions;
+            options.metric = MetricKind::Cos;
+            options.quantization = ScalarKind::F32;
+            options.multi = false;
+            let index = Index::new(&options).context("create usearch index")?;
+            Ok(Self {
+                index,
+                dimensions,
+                next_key: 1,
+                key_by_id: HashMap::new(),
+                id_by_key: HashMap::new(),
+            })
+        }
+
         pub fn backend_name(&self) -> &'static str {
             "usearch"
+        }
+
+        pub fn dimensions(&self) -> usize {
+            self.dimensions
+        }
+
+        pub fn len(&self) -> usize {
+            self.index.size()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
+        }
+
+        pub fn reserve(&self, capacity: usize) -> Result<()> {
+            self.index
+                .reserve(capacity)
+                .context("reserve usearch capacity")
+        }
+
+        pub fn upsert(&mut self, id: impl Into<String>, vector: &[f32]) -> Result<()> {
+            if vector.len() != self.dimensions {
+                return Err(anyhow!(
+                    "vector dimensions mismatch: expected {}, got {}",
+                    self.dimensions,
+                    vector.len()
+                ));
+            }
+            let id = id.into();
+            let key = if let Some(existing) = self.key_by_id.get(&id).copied() {
+                let _ = self.index.remove(existing);
+                existing
+            } else {
+                let next = self.next_key;
+                self.next_key = self.next_key.saturating_add(1);
+                self.key_by_id.insert(id.clone(), next);
+                self.id_by_key.insert(next, id.clone());
+                next
+            };
+            self.index
+                .add(key, vector)
+                .with_context(|| format!("insert vector for id {}", id))
+        }
+
+        pub fn remove(&mut self, id: &str) -> Result<bool> {
+            let Some(key) = self.key_by_id.remove(id) else {
+                return Ok(false);
+            };
+            self.id_by_key.remove(&key);
+            let removed = self
+                .index
+                .remove(key)
+                .with_context(|| format!("remove vector for id {}", id))?;
+            Ok(removed > 0)
+        }
+
+        pub fn clear(&mut self) {
+            self.key_by_id.clear();
+            self.id_by_key.clear();
+            self.next_key = 1;
+            if let Ok(rebuilt) = Self::new(self.dimensions) {
+                self.index = rebuilt.index;
+            }
+        }
+
+        pub fn query(&self, vector: &[f32], limit: usize) -> Result<Vec<UsearchMatch>> {
+            if vector.len() != self.dimensions {
+                return Err(anyhow!(
+                    "query dimensions mismatch: expected {}, got {}",
+                    self.dimensions,
+                    vector.len()
+                ));
+            }
+            if limit == 0 {
+                return Ok(Vec::new());
+            }
+            let matches = self
+                .index
+                .search(vector, limit)
+                .context("usearch query failed")?;
+            let mut out = Vec::with_capacity(matches.keys.len());
+            for (idx, key) in matches.keys.iter().enumerate() {
+                let Some(id) = self.id_by_key.get(key) else {
+                    continue;
+                };
+                let distance = *matches.distances.get(idx).unwrap_or(&f32::MAX);
+                out.push(UsearchMatch {
+                    id: id.clone(),
+                    distance,
+                });
+            }
+            Ok(out)
+        }
+    }
+
+    impl Default for UsearchAnnAdapter {
+        fn default() -> Self {
+            // This path should only fail for invalid static configuration.
+            Self::new(384).expect("usearch default dimensions should construct")
         }
     }
 }
@@ -395,5 +522,30 @@ mod tests {
         assert_eq!(fused.len(), 1);
         assert!((fused[0].score - 0.60).abs() < 0.0001);
         assert_eq!(fused[0].sources.len(), 2);
+    }
+
+    #[cfg(feature = "usearch_ann")]
+    #[test]
+    #[ignore = "native usearch runtime can segfault on some hosts; compile coverage enforced via cargo check --features usearch_ann"]
+    fn usearch_ann_upsert_query_remove_roundtrip() {
+        let mut ann = usearch_ann::UsearchAnnAdapter::new(3).expect("build usearch");
+        ann.upsert("doc-a", &[0.9, 0.1, 0.0]).expect("insert a");
+        ann.upsert("doc-b", &[0.1, 0.9, 0.0]).expect("insert b");
+        ann.upsert("doc-c", &[0.1, 0.0, 0.9]).expect("insert c");
+        let rows = ann.query(&[0.95, 0.05, 0.0], 2).expect("query");
+        assert!(!rows.is_empty());
+        assert_eq!(rows[0].id, "doc-a");
+        assert!(ann.remove("doc-a").expect("remove"));
+        let rows_after = ann.query(&[0.95, 0.05, 0.0], 2).expect("query 2");
+        assert!(rows_after.iter().all(|row| row.id != "doc-a"));
+    }
+
+    #[cfg(feature = "usearch_ann")]
+    #[test]
+    #[ignore = "native usearch runtime can segfault on some hosts; compile coverage enforced via cargo check --features usearch_ann"]
+    fn usearch_ann_rejects_dimension_mismatch() {
+        let mut ann = usearch_ann::UsearchAnnAdapter::new(4).expect("build usearch");
+        assert!(ann.upsert("bad", &[0.1, 0.2]).is_err());
+        assert!(ann.query(&[0.1, 0.2], 1).is_err());
     }
 }
