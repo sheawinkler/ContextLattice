@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := archive/services/orchestrator_legacy_python/tests/test_orchestrator_retrieval.py archive/services/orchestrator_legacy_python/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily storage-ledger-capture storage-ledger-prune storage-ledger-install storage-ledger-uninstall storage-ledger-status weekly-lineage-rollup weekly-lineage-install weekly-lineage-uninstall weekly-lineage-status            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings disk-clean-safe            mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel paid-launch-checklist backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply sentrux-check sentrux-gate sentrux-gate-save
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily storage-ledger-capture storage-ledger-prune storage-ledger-install storage-ledger-uninstall storage-ledger-status weekly-lineage-rollup weekly-lineage-install weekly-lineage-uninstall weekly-lineage-status            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings disk-clean-safe docker-runtime-ready            mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel paid-launch-checklist backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply sentrux-check sentrux-gate sentrux-gate-save
 
 help:
 > echo "Targets:"
@@ -98,10 +98,14 @@ all: launch
 
 # ---- Compose lifecycle ----
 up:
+> $(MAKE) docker-runtime-ready
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > if [ -n "$(PROFILES)" ]; then echo ">> compose up (build) [profiles: $(PROFILES)] with $(ENV_FILE)"; else echo ">> compose up (build) with $(ENV_FILE)"; fi
 > $(DC) $(PROFILE_ARGS) up -d --build
 > PROFILES="$(PROFILES)" ENV_FILE="$(ENV_FILE)" scripts/ensure_langfuse_running.sh
+
+docker-runtime-ready:
+> bash scripts/ensure_docker_runtime.sh
 
 up-core:
 > $(MAKE) up PROFILES="core"
@@ -564,6 +568,7 @@ mem-ps:
 > PROFILES="$(MEM_PROFILES)" $(MAKE) ps
 
 quickstart:
+> $(MAKE) docker-runtime-ready
 > if [ ! -f "$(ENV_FILE)" ]; then \
 >   cp .env.example "$(ENV_FILE)"; \
 >   echo ">> created $(ENV_FILE) from .env.example"; \
@@ -599,24 +604,30 @@ observability-up:
 > ENV_FILE="$(ENV_FILE)" scripts/compose_v4_balanced.sh --env-file "$(ENV_FILE)" --with-observability
 
 observability-down:
+> $(MAKE) docker-runtime-ready
 > docker compose --env-file "$(ENV_FILE)" stop langfuse langfuse-worker lf-postgres lf-clickhouse lf-minio || true
 
 .PHONY: mem-up-lite mem-down-lite mem-ps-lite
 mem-up-lite:
+> $(MAKE) docker-runtime-ready
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > docker compose -f docker-compose.lite.yml up -d --build
 
 mem-down-lite:
+> $(MAKE) docker-runtime-ready
 > docker compose -f docker-compose.lite.yml down
 
 mem-ps-lite:
+> $(MAKE) docker-runtime-ready
 > docker compose -f docker-compose.lite.yml ps
 
 mem-up-release:
+> $(MAKE) docker-runtime-ready
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > docker compose -f docker-compose.yml -f docker-compose.release.lock.yml up -d --build
 
 mem-up-lite-release:
+> $(MAKE) docker-runtime-ready
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 > docker compose -f docker-compose.lite.yml -f docker-compose.release.lock.yml up -d --build
 
