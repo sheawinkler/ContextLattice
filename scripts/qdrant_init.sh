@@ -22,30 +22,46 @@ done
 echo "ok"
 
 # 1) Create collection if missing
-curl -fsS -X PUT "${BASE}/collections/${COLL}"       -H 'Content-Type: application/json'       -d @- <<JSON >/dev/null || true
+create_code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${BASE}/collections/${COLL}"       -H 'Content-Type: application/json'       -d @- <<JSON || true
 {
   "vectors": { "size": ${DIM}, "distance": "Cosine" },
   "hnsw_config": { "m": ${HNSW_M}, "ef_construct": ${HNSW_EF_CONSTRUCT}, "ef": ${HNSW_EF_SEARCH} }
 }
 JSON
+)"
+if [[ "$create_code" != "200" && "$create_code" != "201" && "$create_code" != "202" && "$create_code" != "409" ]]; then
+  echo "[qdrant-init] warn: collection create returned HTTP ${create_code}" >&2
+fi
 
-# 2) Tune HNSW
-curl -fsS -X PATCH "${BASE}/collections/${COLL}/hnsw"       -H 'Content-Type: application/json'       -d @- <<JSON >/dev/null || true
-{ "m": ${HNSW_M}, "ef_construct": ${HNSW_EF_CONSTRUCT}, "ef": ${HNSW_EF_SEARCH} }
+# 2) Tune HNSW via collection update API
+patch_code="$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "${BASE}/collections/${COLL}"       -H 'Content-Type: application/json'       -d @- <<JSON || true
+{ "hnsw_config": { "m": ${HNSW_M}, "ef_construct": ${HNSW_EF_CONSTRUCT} } }
 JSON
+)"
+if [[ "$patch_code" != "200" && "$patch_code" != "202" ]]; then
+  echo "[qdrant-init] warn: hnsw patch returned HTTP ${patch_code}" >&2
+fi
 
 # 3) Optional: optimizer full_scan_threshold
 if [ -n "${FULL_SCAN_THRESHOLD}" ] && [ "${FULL_SCAN_THRESHOLD}" != "0" ]; then
-  curl -fsS -X PATCH "${BASE}/collections/${COLL}"         -H 'Content-Type: application/json'         -d @- <<JSON >/dev/null || true
+  optimizer_code="$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "${BASE}/collections/${COLL}"         -H 'Content-Type: application/json'         -d @- <<JSON || true
 { "optimizers_config": { "full_scan_threshold": ${FULL_SCAN_THRESHOLD} } }
 JSON
+)"
+  if [[ "$optimizer_code" != "200" && "$optimizer_code" != "202" ]]; then
+    echo "[qdrant-init] warn: optimizer patch returned HTTP ${optimizer_code}" >&2
+  fi
 fi
 
 # 4) Optional: Product Quantization
 if [ "${ENABLE_PQ}" = "true" ]; then
-  curl -fsS -X POST "${BASE}/collections/${COLL}/quantization"         -H 'Content-Type: application/json'         -d @- <<JSON >/dev/null || true
+  pq_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/collections/${COLL}/quantization"         -H 'Content-Type: application/json'         -d @- <<JSON || true
 { "product": { "compression": { "type": "x8" }, "always_ram": true, "codebook_size": ${PQ_CODEBOOK_SIZE} } }
 JSON
+)"
+  if [[ "$pq_code" != "200" && "$pq_code" != "202" && "$pq_code" != "409" ]]; then
+    echo "[qdrant-init] warn: quantization enable returned HTTP ${pq_code}" >&2
+  fi
 fi
 
 echo "[qdrant-init] done."
