@@ -1,3 +1,8 @@
+use ahash::AHashMap;
+use aho_corasick::AhoCorasick;
+use fst::{automaton::Str, Automaton, IntoStreamer, Set, Streamer};
+use regex_automata::meta::Regex;
+use roaring::RoaringBitmap;
 use serde::{Deserialize, Serialize};
 use simsimd::SpatialSimilarity;
 use std::collections::{BTreeSet, HashMap};
@@ -186,9 +191,11 @@ pub fn fuse_source_candidates(
     struct MergeState {
         best_score: f32,
         best_summary: String,
-        sources: HashSet<String>,
+        source_bitmap: RoaringBitmap,
     }
 
+    let mut source_ids: AHashMap<String, u32> = AHashMap::new();
+    let mut source_rev: Vec<String> = Vec::new();
     let mut merged: HashMap<String, MergeState> = HashMap::new();
     for candidate in candidates {
         let id = candidate.id.trim();
@@ -203,8 +210,16 @@ pub fn fuse_source_candidates(
                 normalized
             }
         };
+        let source_id = if let Some(existing) = source_ids.get(&source).copied() {
+            existing
+        } else {
+            let next = source_rev.len() as u32;
+            source_ids.insert(source.clone(), next);
+            source_rev.push(source);
+            next
+        };
         if let Some(existing) = merged.get_mut(id) {
-            existing.sources.insert(source);
+            existing.source_bitmap.insert(source_id);
             if candidate.score > existing.best_score {
                 existing.best_score = candidate.score;
                 existing.best_summary = candidate.summary.clone();
@@ -215,14 +230,14 @@ pub fn fuse_source_candidates(
             }
             continue;
         }
-        let mut sources = HashSet::new();
-        sources.insert(source);
+        let mut source_bitmap = RoaringBitmap::new();
+        source_bitmap.insert(source_id);
         merged.insert(
             id.to_string(),
             MergeState {
                 best_score: candidate.score,
                 best_summary: candidate.summary.clone(),
-                sources,
+                source_bitmap,
             },
         );
     }
@@ -230,9 +245,13 @@ pub fn fuse_source_candidates(
     let mut rows: Vec<FusedRetrievalCandidate> = merged
         .into_iter()
         .map(|(id, state)| {
-            let mut sources: Vec<String> = state.sources.into_iter().collect();
+            let mut sources: Vec<String> = state
+                .source_bitmap
+                .iter()
+                .filter_map(|idx| source_rev.get(idx as usize).cloned())
+                .collect();
             sources.sort();
-            let consensus = usize::saturating_sub(sources.len(), 1) as f32;
+            let consensus = usize::saturating_sub(state.source_bitmap.len() as usize, 1) as f32;
             FusedRetrievalCandidate {
                 id,
                 score: state.best_score + consensus * consensus_boost.max(0.0),
@@ -359,7 +378,7 @@ impl HybridRetrievalIndex {
                     if matched {
                         merged.push(RetrievalCandidate {
                             id: row.id.clone(),
-                            score: row.score,
+                            score: simd_blend_score(row.score, phrase_boost),
                             summary: row.text.clone(),
                         });
                     }
