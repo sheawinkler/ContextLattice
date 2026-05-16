@@ -1,5 +1,159 @@
+use ahash::AHashMap;
+use aho_corasick::AhoCorasick;
+use fst::{automaton::Str, Automaton, IntoStreamer, Set, Streamer};
+use regex_automata::meta::Regex;
+use roaring::RoaringBitmap;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use simsimd::SpatialSimilarity;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::OnceLock;
+
+const LEXICAL_TOKEN_PATTERN: &str = r"[A-Za-z0-9]{3,}";
+const LEXICAL_PREFIX_MAX_EXPANSIONS_DEFAULT: usize = 24;
+const LEXICAL_SCAN_THRESHOLD_DEFAULT: usize = 64;
+
+fn lexical_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(LEXICAL_TOKEN_PATTERN).expect("valid lexical token regex"))
+}
+
+fn lexical_prefix_max_expansions() -> usize {
+    static VALUE: OnceLock<usize> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("CONTEXT_RETRIEVAL_LEXICAL_PREFIX_MAX_EXPANSIONS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(LEXICAL_PREFIX_MAX_EXPANSIONS_DEFAULT)
+    })
+}
+
+fn lexical_scan_threshold() -> usize {
+    static VALUE: OnceLock<usize> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("CONTEXT_RETRIEVAL_LEXICAL_SCAN_THRESHOLD")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(LEXICAL_SCAN_THRESHOLD_DEFAULT)
+    })
+}
+
+fn lexical_tokens(input: &str) -> Vec<String> {
+    let lower = input.to_ascii_lowercase();
+    let mut out = Vec::new();
+    for m in lexical_regex().find_iter(lower.as_bytes()) {
+        let token = lower[m.start()..m.end()].trim();
+        if token.is_empty() || matches!(token, "root" | "notes" | "tasks" | "task" | "tmp") {
+            continue;
+        }
+        out.push(token.to_string());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn lexical_phrase_match_score(needle: &str, text: &str) -> f32 {
+    let n = needle.trim();
+    if n.is_empty() {
+        return 0.0;
+    }
+    let mut pattern = String::with_capacity(n.len());
+    pattern.push_str(n);
+    let Ok(ac) = AhoCorasick::new([pattern.as_str()]) else {
+        return 0.0;
+    };
+    let count = ac.find_iter(text).count();
+    if count == 0 {
+        return 0.0;
+    }
+    let len_boost = (n.len() as f32 / 64.0).min(1.0);
+    (count as f32).min(4.0) * (0.15 + len_boost * 0.35)
+}
+
+fn simd_blend_score(vector_score: f32, lexical_score: f32) -> f32 {
+    let signal = [vector_score.max(0.0), lexical_score.max(0.0)];
+    let weights = [0.85f32, 1.0f32];
+    if let Some(dot) = <f32 as SpatialSimilarity>::dot(&signal, &weights) {
+        return dot as f32;
+    }
+    vector_score + lexical_score
+}
+
+#[derive(Default)]
+struct LexicalPostingIndex {
+    postings: AHashMap<String, RoaringBitmap>,
+    vocab: Option<Set<Vec<u8>>>,
+}
+
+impl LexicalPostingIndex {
+    fn from_rows(rows: &[LexicalCandidate]) -> Self {
+        let mut postings: AHashMap<String, RoaringBitmap> = AHashMap::new();
+        let mut terms: BTreeSet<String> = BTreeSet::new();
+        for (idx, row) in rows.iter().enumerate() {
+            let row_id = idx as u32;
+            for token in lexical_tokens(&row.text) {
+                terms.insert(token.clone());
+                postings.entry(token).or_default().insert(row_id);
+            }
+        }
+        let vocab = if terms.is_empty() {
+            None
+        } else {
+            Set::from_iter(terms.iter().map(|term| term.as_str())).ok()
+        };
+        Self { postings, vocab }
+    }
+
+    fn lookup_prefix_union(&self, token: &str) -> RoaringBitmap {
+        let mut out = RoaringBitmap::new();
+        let Some(vocab) = self.vocab.as_ref() else {
+            return out;
+        };
+        let mut expansions = 0usize;
+        let automaton = Str::new(token).starts_with();
+        let mut stream = vocab.search(automaton).into_stream();
+        while let Some(term_bytes) = stream.next() {
+            let Ok(term) = std::str::from_utf8(term_bytes) else {
+                continue;
+            };
+            if let Some(bitmap) = self.postings.get(term) {
+                out |= bitmap;
+                expansions += 1;
+                if expansions >= lexical_prefix_max_expansions() {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    fn candidate_rows(&self, query_tokens: &[String], row_count: usize) -> RoaringBitmap {
+        if row_count == 0 {
+            return RoaringBitmap::new();
+        }
+        if query_tokens.is_empty() {
+            return RoaringBitmap::from_iter(0..row_count as u32);
+        }
+        let mut aggregate: Option<RoaringBitmap> = None;
+        for token in query_tokens {
+            let token_hits = if let Some(bitmap) = self.postings.get(token) {
+                bitmap.clone()
+            } else {
+                self.lookup_prefix_union(token)
+            };
+            if token_hits.is_empty() {
+                return RoaringBitmap::new();
+            }
+            aggregate = match aggregate.take() {
+                Some(current) => Some(current & token_hits),
+                None => Some(token_hits),
+            };
+        }
+        aggregate.unwrap_or_default()
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RetrievalCandidate {
@@ -37,9 +191,11 @@ pub fn fuse_source_candidates(
     struct MergeState {
         best_score: f32,
         best_summary: String,
-        sources: HashSet<String>,
+        source_bitmap: RoaringBitmap,
     }
 
+    let mut source_ids: AHashMap<String, u32> = AHashMap::new();
+    let mut source_rev: Vec<String> = Vec::new();
     let mut merged: HashMap<String, MergeState> = HashMap::new();
     for candidate in candidates {
         let id = candidate.id.trim();
@@ -54,8 +210,16 @@ pub fn fuse_source_candidates(
                 normalized
             }
         };
+        let source_id = if let Some(existing) = source_ids.get(&source).copied() {
+            existing
+        } else {
+            let next = source_rev.len() as u32;
+            source_ids.insert(source.clone(), next);
+            source_rev.push(source);
+            next
+        };
         if let Some(existing) = merged.get_mut(id) {
-            existing.sources.insert(source);
+            existing.source_bitmap.insert(source_id);
             if candidate.score > existing.best_score {
                 existing.best_score = candidate.score;
                 existing.best_summary = candidate.summary.clone();
@@ -66,14 +230,14 @@ pub fn fuse_source_candidates(
             }
             continue;
         }
-        let mut sources = HashSet::new();
-        sources.insert(source);
+        let mut source_bitmap = RoaringBitmap::new();
+        source_bitmap.insert(source_id);
         merged.insert(
             id.to_string(),
             MergeState {
                 best_score: candidate.score,
                 best_summary: candidate.summary.clone(),
-                sources,
+                source_bitmap,
             },
         );
     }
@@ -81,9 +245,13 @@ pub fn fuse_source_candidates(
     let mut rows: Vec<FusedRetrievalCandidate> = merged
         .into_iter()
         .map(|(id, state)| {
-            let mut sources: Vec<String> = state.sources.into_iter().collect();
+            let mut sources: Vec<String> = state
+                .source_bitmap
+                .iter()
+                .filter_map(|idx| source_rev.get(idx as usize).cloned())
+                .collect();
             sources.sort();
-            let consensus = usize::saturating_sub(sources.len(), 1) as f32;
+            let consensus = usize::saturating_sub(state.source_bitmap.len() as usize, 1) as f32;
             FusedRetrievalCandidate {
                 id,
                 score: state.best_score + consensus * consensus_boost.max(0.0),
@@ -185,11 +353,32 @@ impl HybridRetrievalIndex {
         if let Some(text_query) = query.text_query.as_ref() {
             let needle = text_query.trim().to_lowercase();
             if !needle.is_empty() {
-                for row in &self.lexical {
-                    if row.text.to_lowercase().contains(&needle) {
+                let index = LexicalPostingIndex::from_rows(&self.lexical);
+                let tokens = lexical_tokens(&needle);
+                let candidate_bitmap = if self.lexical.len() >= lexical_scan_threshold() {
+                    index.candidate_rows(&tokens, self.lexical.len())
+                } else {
+                    RoaringBitmap::from_iter(0..self.lexical.len() as u32)
+                };
+                let iter: Box<dyn Iterator<Item = u32>> = if candidate_bitmap.is_empty() {
+                    Box::new((0..self.lexical.len() as u32).into_iter())
+                } else {
+                    Box::new(candidate_bitmap.iter())
+                };
+                for row_idx in iter {
+                    let Some(row) = self.lexical.get(row_idx as usize) else {
+                        continue;
+                    };
+                    let row_lc = row.text.to_lowercase();
+                    let phrase_boost = lexical_phrase_match_score(&needle, &row_lc);
+                    let mut matched = phrase_boost > 0.0;
+                    if !matched && !tokens.is_empty() {
+                        matched = tokens.iter().all(|t| row_lc.contains(t));
+                    }
+                    if matched {
                         merged.push(RetrievalCandidate {
                             id: row.id.clone(),
-                            score: row.score,
+                            score: simd_blend_score(row.score, phrase_boost),
                             summary: row.text.clone(),
                         });
                     }

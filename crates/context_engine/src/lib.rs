@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod blob_refs;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MemoryNode {
     pub id: String,
@@ -15,6 +17,7 @@ pub struct MemoryNode {
 #[derive(Default)]
 pub struct ContextEngine {
     nodes: HashMap<String, MemoryNode>,
+    blobs: blob_refs::BlobStore,
 }
 
 impl ContextEngine {
@@ -42,8 +45,7 @@ impl ContextEngine {
             Some(node) => node,
             None => return Vec::new(),
         };
-        self
-            .nodes
+        self.nodes
             .values()
             .filter(|node| {
                 node.id != root.id
@@ -56,7 +58,30 @@ impl ContextEngine {
     }
 
     pub fn batch_insert(&mut self, nodes: Vec<MemoryNode>) -> Vec<String> {
-        nodes.into_iter().map(|node| self.add_memory(node)).collect()
+        nodes
+            .into_iter()
+            .map(|node| self.add_memory(node))
+            .collect()
+    }
+
+    pub fn put_blob(&mut self, content: &[u8]) -> Result<blob_refs::BlobRef> {
+        self.blobs.put(content)
+    }
+
+    pub fn get_blob(&self, reference: &blob_refs::BlobRef) -> Result<Vec<u8>> {
+        self.blobs.materialize(reference)
+    }
+
+    pub fn release_blob(&mut self, hash: &str) -> bool {
+        self.blobs.release(hash)
+    }
+
+    pub fn compact_blob_orphans(&mut self, live_refs: &[String], now_ms: u64) -> Vec<String> {
+        self.blobs.compact_orphans(live_refs, now_ms)
+    }
+
+    pub fn blob_metrics(&self) -> blob_refs::BlobStoreMetrics {
+        self.blobs.metrics()
     }
 }
 
