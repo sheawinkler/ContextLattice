@@ -449,7 +449,7 @@ fn default_archive_codec() -> String {
         .ok()
         .map(|v| v.trim().to_lowercase())
         .filter(|v| v == "gzip" || v == "gz" || v == "lz4" || v == "zstd" || v == "zst")
-        .unwrap_or_else(|| "gzip".to_string())
+        .unwrap_or_else(|| "zstd".to_string())
 }
 
 fn archive_zstd_level() -> i32 {
@@ -1331,7 +1331,7 @@ fn ledger_tail_cache_codec() -> String {
         .ok()
         .map(|v| v.trim().to_ascii_lowercase())
         .filter(|v| v == "rkyv" || v == "lz4")
-        .unwrap_or_else(|| "rkyv".to_string())
+        .unwrap_or_else(|| "lz4".to_string())
 }
 
 fn ledger_tail_cache_max_rows() -> usize {
