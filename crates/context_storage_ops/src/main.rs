@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -22,9 +22,10 @@ use crossbeam_channel::unbounded;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use jwalk::WalkDir;
-use lz4_flex::frame::FrameEncoder;
+use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 use memmap2::MmapOptions;
 use parquet2::metadata::KeyValue;
+use q_compress::auto_compress;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
@@ -447,8 +448,16 @@ fn default_archive_codec() -> String {
     std::env::var("CONTEXT_STORAGE_OPS_ARCHIVE_CODEC")
         .ok()
         .map(|v| v.trim().to_lowercase())
-        .filter(|v| v == "gzip" || v == "gz" || v == "lz4")
+        .filter(|v| v == "gzip" || v == "gz" || v == "lz4" || v == "zstd" || v == "zst")
         .unwrap_or_else(|| "gzip".to_string())
+}
+
+fn archive_zstd_level() -> i32 {
+    std::env::var("CONTEXT_STORAGE_OPS_ARCHIVE_ZSTD_LEVEL")
+        .ok()
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .map(|v| v.clamp(1, 19))
+        .unwrap_or(3)
 }
 
 fn env_truthy(key: &str, default: bool) -> bool {
@@ -472,6 +481,18 @@ fn lineage_rkyv_enabled() -> bool {
 
 fn lineage_parquet_enabled() -> bool {
     env_truthy("CONTEXT_STORAGE_OPS_LINEAGE_PARQUET_EXPORT", true)
+}
+
+fn lineage_qcompress_enabled() -> bool {
+    env_truthy("CONTEXT_STORAGE_OPS_LINEAGE_QCOMPRESS_EXPORT", true)
+}
+
+fn lineage_qcompress_level() -> usize {
+    std::env::var("CONTEXT_STORAGE_OPS_LINEAGE_QCOMPRESS_LEVEL")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|v| v.clamp(1, 12))
+        .unwrap_or(6)
 }
 
 fn mmap_min_bytes() -> u64 {
@@ -708,7 +729,8 @@ fn read_ledger_tail_cache(
     let (source_len, source_mtime_secs, source_mtime_nanos) = source_signature(path)?;
     let cache_path = ledger_tail_cache_path(path);
     let bytes = fs::read(cache_path).ok()?;
-    let cache: LedgerTailRkyvCache = from_bytes::<LedgerTailRkyvCache, RkyvError>(&bytes).ok()?;
+    let decoded = decode_ledger_tail_cache_bytes(&bytes).ok()?;
+    let cache: LedgerTailRkyvCache = from_bytes::<LedgerTailRkyvCache, RkyvError>(&decoded).ok()?;
     if cache.schema_version != 1
         || cache.source_len != source_len
         || cache.source_mtime_secs != source_mtime_secs
@@ -759,11 +781,12 @@ fn write_ledger_tail_cache(
         rows: serialized_rows,
     };
     let bytes = to_bytes::<RkyvError>(&cache)?;
+    let encoded = encode_ledger_tail_cache_bytes(bytes.as_slice())?;
     let cache_path = ledger_tail_cache_path(path);
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(cache_path, bytes.as_slice())?;
+    fs::write(cache_path, encoded)?;
     Ok(())
 }
 
@@ -1266,6 +1289,8 @@ struct LedgerTailRkyvCache {
     rows: Vec<String>,
 }
 
+const LEDGER_TAIL_CACHE_LZ4_MAGIC: &[u8; 8] = b"CLTL4V01";
+
 fn rkyv_counts_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.rkyv", path.to_string_lossy()))
 }
@@ -1274,8 +1299,39 @@ fn ledger_tail_cache_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.tail.rkyv", path.to_string_lossy()))
 }
 
+fn encode_ledger_tail_cache_bytes(raw: &[u8]) -> Result<Vec<u8>> {
+    if ledger_tail_cache_codec() != "lz4" {
+        return Ok(raw.to_vec());
+    }
+    let mut encoder = FrameEncoder::new(Vec::new());
+    encoder.write_all(raw)?;
+    let mut compressed = encoder.finish()?;
+    let mut out = Vec::with_capacity(LEDGER_TAIL_CACHE_LZ4_MAGIC.len() + compressed.len());
+    out.extend_from_slice(LEDGER_TAIL_CACHE_LZ4_MAGIC);
+    out.append(&mut compressed);
+    Ok(out)
+}
+
+fn decode_ledger_tail_cache_bytes(raw: &[u8]) -> Result<Vec<u8>> {
+    if raw.starts_with(LEDGER_TAIL_CACHE_LZ4_MAGIC) {
+        let mut decoder = FrameDecoder::new(Cursor::new(&raw[LEDGER_TAIL_CACHE_LZ4_MAGIC.len()..]));
+        let mut out = Vec::new();
+        decoder.read_to_end(&mut out)?;
+        return Ok(out);
+    }
+    Ok(raw.to_vec())
+}
+
 fn ledger_tail_rkyv_enabled() -> bool {
     env_truthy("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", true)
+}
+
+fn ledger_tail_cache_codec() -> String {
+    std::env::var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_CACHE_CODEC")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| v == "rkyv" || v == "lz4")
+        .unwrap_or_else(|| "rkyv".to_string())
 }
 
 fn ledger_tail_cache_max_rows() -> usize {
@@ -1700,6 +1756,54 @@ fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value])
     Ok(())
 }
 
+fn write_weekly_lineage_qcompress(path: &Path, week_id: &str, summaries: &[Value]) -> Result<()> {
+    if summaries.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut projects: Vec<String> = Vec::with_capacity(summaries.len());
+    let mut topic_counts: Vec<i64> = Vec::with_capacity(summaries.len());
+    let mut total_event_counts: Vec<i64> = Vec::with_capacity(summaries.len());
+    for row in summaries {
+        projects.push(
+            row.get("project")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
+        topic_counts.push(row.get("topic_count").and_then(|v| v.as_i64()).unwrap_or(0));
+        total_event_counts.push(
+            row.get("total_event_count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+        );
+    }
+
+    let project_blob = serde_json::to_vec(&json!({
+        "schema_version": 1,
+        "week_id": week_id,
+        "projects": projects,
+    }))?;
+    let compression_level = lineage_qcompress_level();
+    let topic_blob = auto_compress(topic_counts.as_slice(), compression_level);
+    let total_blob = auto_compress(total_event_counts.as_slice(), compression_level);
+
+    let mut out =
+        Vec::with_capacity(8 + 4 * 3 + project_blob.len() + topic_blob.len() + total_blob.len());
+    out.extend_from_slice(b"CLQHIST1");
+    out.extend_from_slice(&(project_blob.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(topic_blob.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(total_blob.len() as u32).to_le_bytes());
+    out.extend_from_slice(project_blob.as_slice());
+    out.extend_from_slice(topic_blob.as_slice());
+    out.extend_from_slice(total_blob.as_slice());
+    fs::write(path, out)?;
+    Ok(())
+}
+
 fn find_previous_summary(project_dir: &Path, week_id: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(read) = fs::read_dir(project_dir) {
@@ -1740,7 +1844,9 @@ fn prune_old_weeks(root: &Path, keep_weeks: usize) {
         let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
             continue;
         };
-        if name.starts_with("week-") && (name.ends_with(".json") || name.ends_with(".parquet")) {
+        if name.starts_with("week-")
+            && (name.ends_with(".json") || name.ends_with(".parquet") || name.ends_with(".qco"))
+        {
             by_parent
                 .entry(path.parent().unwrap_or(root).to_path_buf())
                 .or_default()
@@ -1949,7 +2055,11 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
     let lineage_parquet_path = out_root
         .join("global")
         .join(format!("week-{}.parquet", args.week_id));
+    let lineage_qcompress_path = out_root
+        .join("global")
+        .join(format!("week-{}.qco", args.week_id));
     let parquet_enabled = lineage_parquet_enabled();
+    let qcompress_enabled = lineage_qcompress_enabled();
 
     if args.emit_synergy {
         let synergy = build_synergy(&args.week_id, &weekly_summaries);
@@ -1959,6 +2069,9 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
     }
     if parquet_enabled && !args.dry_run {
         write_weekly_lineage_parquet(&lineage_parquet_path, &args.week_id, &weekly_summaries)?;
+    }
+    if qcompress_enabled && !args.dry_run {
+        write_weekly_lineage_qcompress(&lineage_qcompress_path, &args.week_id, &weekly_summaries)?;
     }
 
     if !args.dry_run {
@@ -1973,6 +2086,8 @@ fn run_weekly_lineage(args: WeeklyLineageArgs) -> Result<()> {
         "synergy_path": if args.emit_synergy { Some(synergy_path.to_string_lossy().to_string()) } else { None::<String> },
         "lineage_parquet_emitted": parquet_enabled && !args.dry_run,
         "lineage_parquet_path": if parquet_enabled && !args.dry_run { Some(lineage_parquet_path.to_string_lossy().to_string()) } else { None::<String> },
+        "lineage_qcompress_emitted": qcompress_enabled && !args.dry_run,
+        "lineage_qcompress_path": if qcompress_enabled && !args.dry_run { Some(lineage_qcompress_path.to_string_lossy().to_string()) } else { None::<String> },
         "out_root": out_root,
         "dry_run": args.dry_run,
     });
@@ -2424,6 +2539,7 @@ fn run_cold_tier(args: ColdTierArgs) -> Result<()> {
 enum TelemetryArchiveCodec {
     Gzip,
     Lz4,
+    Zstd,
 }
 
 impl TelemetryArchiveCodec {
@@ -2431,8 +2547,9 @@ impl TelemetryArchiveCodec {
         match raw.trim().to_ascii_lowercase().as_str() {
             "gzip" | "gz" => Ok(Self::Gzip),
             "lz4" => Ok(Self::Lz4),
+            "zstd" | "zst" => Ok(Self::Zstd),
             other => Err(anyhow!(
-                "unsupported archive codec '{}'; expected one of: gzip, lz4",
+                "unsupported archive codec '{}'; expected one of: gzip, lz4, zstd",
                 other
             )),
         }
@@ -2442,6 +2559,7 @@ impl TelemetryArchiveCodec {
         match self {
             Self::Gzip => "gz",
             Self::Lz4 => "lz4",
+            Self::Zstd => "zst",
         }
     }
 }
@@ -2566,6 +2684,13 @@ fn archive_single_file(
             }
             TelemetryArchiveCodec::Lz4 => {
                 let mut encoder = FrameEncoder::new(file);
+                for line in lines {
+                    encoder.write_all(line.as_bytes())?;
+                }
+                let _ = encoder.finish()?;
+            }
+            TelemetryArchiveCodec::Zstd => {
+                let mut encoder = zstd::stream::Encoder::new(file, archive_zstd_level())?;
                 for line in lines {
                     encoder.write_all(line.as_bytes())?;
                 }
@@ -2954,6 +3079,7 @@ mod tests {
     #[test]
     fn ledger_tail_writes_and_reads_rkyv_cache() {
         std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", "true");
+        std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_CACHE_CODEC", "rkyv");
         std::env::set_var("CONTEXT_STORAGE_OPS_MMAP_MIN_BYTES", "1048576");
         let mut tmp = NamedTempFile::new().expect("temp ledger");
         writeln!(tmp, "{{\"captured_at\":\"2026-05-14T09:00:00Z\",\"v\":1}}").expect("write");
@@ -2979,5 +3105,38 @@ mod tests {
                 .map(|v| v.get("v").and_then(|x| x.as_i64()).unwrap_or_default())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn ledger_tail_lz4_cache_has_magic_header() {
+        std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", "true");
+        std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_CACHE_CODEC", "lz4");
+        std::env::set_var("CONTEXT_STORAGE_OPS_MMAP_MIN_BYTES", "1048576");
+        let mut tmp = NamedTempFile::new().expect("temp ledger");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T09:00:00Z\",\"v\":1}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T10:00:00Z\",\"v\":2}}").expect("write");
+        writeln!(tmp, "{{\"captured_at\":\"2026-05-14T11:00:00Z\",\"v\":3}}").expect("write");
+
+        let _ = read_ledger_tail_rows(tmp.path(), 2, None, 1024 * 1024, false).expect("tail");
+        let cache_path = ledger_tail_cache_path(tmp.path());
+        let bytes = fs::read(cache_path).expect("cache bytes");
+        assert!(
+            bytes.starts_with(LEDGER_TAIL_CACHE_LZ4_MAGIC),
+            "lz4 mode should prefix cache with magic header"
+        );
+    }
+
+    #[test]
+    fn weekly_lineage_qcompress_has_expected_container_header() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("week-2026-W20.qco");
+        let summaries = vec![
+            json!({"project":"alpha","topic_count":12,"total_event_count":220}),
+            json!({"project":"beta","topic_count":9,"total_event_count":175}),
+        ];
+        write_weekly_lineage_qcompress(&out, "2026-W20", &summaries).expect("qcompress");
+        let bytes = fs::read(out).expect("read qcompress file");
+        assert!(bytes.starts_with(b"CLQHIST1"));
+        assert!(bytes.len() > 32);
     }
 }

@@ -20,13 +20,14 @@ rayon = "1.10"
 simd-json = "0.17"
 sonic-rs = "0.5"
 memmap2 = "0.9"
-lz4_flex = { version = "0.13", features = ["frame"] }
+lz4_flex = { version = "0.13.1", features = ["frame"] }
 rkyv = "0.8"
 ahash = "0.8"
 crossbeam-channel = "0.5"
 flate2 = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
-zstd = "0.13"
+zstd = "0.13.3"
+q_compress = "0.11.7"
 urlencoding = "2.1"
 blake3.workspace = true
 arrow2 = { version = "0.18", features = ["io_parquet"] }
