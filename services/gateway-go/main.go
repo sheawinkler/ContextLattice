@@ -53,85 +53,86 @@ var defaultAllSources = []string{
 var errTopicRollupsNoMatch = errors.New("topic rollups did not match query")
 
 type retrievalPolicy struct {
-	enabled                           bool
-	defaultSources                    []string
-	fastSources                       []string
-	slowSources                       []string
-	nonDegradableSources              map[string]struct{}
-	protectedSources                  map[string]struct{}
-	syncFallbackSources               []string
-	rustQualityFallbackEnabled        bool
-	rustQualityFallbackSources        []string
-	rustQualityFallbackMode           string
-	minFastResults                    int
-	minFastResultsByMode              map[string]int
-	disableSyncSlowFallback           bool
-	slowSyncTimeoutCap                time.Duration
-	rustLanePromotionEnabled          bool
-	topicPrefilterEnabled             bool
-	coverageRescueEnabled             bool
-	coverageRescueMinTokens           int
-	lexicalGuardEnabled               bool
-	lexicalGuardMinCoverage           float64
-	lexicalGuardMinResults            int
-	deepBlocking                      bool
-	qdrantSyncTimeoutCap              time.Duration
-	qdrantSyncTimeoutCapByMode        map[string]time.Duration
-	lettaTopKFactor                   float64
-	lettaTopKCap                      int
-	lettaTopKFactorByMode             map[string]float64
-	lettaTopKCapByMode                map[string]int
-	failOpenContinuationEnabled       bool
-	failOpenContinuationSources       map[string]struct{}
-	timeoutAdaptiveSkipEnabled        bool
-	timeoutAdaptiveSkipSources        map[string]struct{}
-	sourceTimeouts                    map[string]time.Duration
-	topicRollupSyncTimeoutFloor       time.Duration
-	topicRollupSyncTimeoutFloorByMode map[string]time.Duration
-	topicRollupSearchTopN             int
-	continuationTimeoutDefault        time.Duration
-	continuationTimeoutBySource       map[string]time.Duration
-	continuationMaxInflight           int
-	continuationMaxInflightPerSource  int
-	continuationMaxInflightOverrides  map[string]int
-	continuationSourceCooldown        time.Duration
-	continuationSourceCooldownBySrc   map[string]time.Duration
-	continuationSheddingEnabled       bool
-	continuationSheddingQueueRatio    float64
-	continuationSheddingPendingHigh   int
-	continuationSheddingSources       map[string]struct{}
-	syncSourceConcurrencyDefault      int
-	syncSourceConcurrencyOverrides    map[string]int
-	syncQueueAgeWarnSecs              float64
-	syncQueueAgeHighSecs              float64
-	timeoutContractGrace              time.Duration
-	subcallDisableExpansion           bool
-	subcallDisableAutoEscalate        bool
-	telemetryBatchEnabled             bool
-	telemetryBatchFlushInterval       time.Duration
-	telemetryBatchSize                int
-	telemetryBatchDropLogEvery        uint64
-	adaptiveTimeoutEnabled            bool
-	adaptiveTimeoutMinRequests        int
-	adaptiveTimeoutWindow             int
-	adaptiveTimeoutP95Factor          float64
-	adaptiveTimeoutMinScale           float64
-	adaptiveTimeoutMaxScale           float64
-	adaptiveTimeoutBacklogWeight      float64
-	adaptiveTimeoutBacklogCap         int
-	continuationEventHistory          int
-	continuationEventTTL              time.Duration
-	continuationSSEHeartbeat          time.Duration
-	continuationDurableEnabled        bool
-	continuationDurableDir            string
-	continuationDurableMaxPending     int
-	continuationDurableDrainBatch     int
-	continuationDurablePollInterval   time.Duration
-	continuationDurableRetryBase      time.Duration
-	continuationDurableRetryMax       time.Duration
-	continuationDurableMaxAttempts    int
-	sourceOwnershipMode               string
-	sourceOwnershipStrictFastAllowPy  map[string]struct{}
+	enabled                            bool
+	defaultSources                     []string
+	fastSources                        []string
+	slowSources                        []string
+	nonDegradableSources               map[string]struct{}
+	protectedSources                   map[string]struct{}
+	syncFallbackSources                []string
+	rustQualityFallbackEnabled         bool
+	rustQualityFallbackSources         []string
+	rustQualityFallbackMode            string
+	minFastResults                     int
+	minFastResultsByMode               map[string]int
+	disableSyncSlowFallback            bool
+	slowSyncTimeoutCap                 time.Duration
+	rustLanePromotionEnabled           bool
+	topicPrefilterEnabled              bool
+	coverageRescueEnabled              bool
+	coverageRescueMinTokens            int
+	lexicalGuardEnabled                bool
+	lexicalGuardMinCoverage            float64
+	lexicalGuardMinResults             int
+	deepBlocking                       bool
+	qdrantSyncTimeoutCap               time.Duration
+	qdrantSyncTimeoutCapByMode         map[string]time.Duration
+	lettaTopKFactor                    float64
+	lettaTopKCap                       int
+	lettaTopKFactorByMode              map[string]float64
+	lettaTopKCapByMode                 map[string]int
+	failOpenContinuationEnabled        bool
+	failOpenContinuationSources        map[string]struct{}
+	timeoutAdaptiveSkipEnabled         bool
+	timeoutAdaptiveSkipSources         map[string]struct{}
+	sourceTimeouts                     map[string]time.Duration
+	topicRollupSyncTimeoutFloor        time.Duration
+	topicRollupSyncTimeoutFloorByMode  map[string]time.Duration
+	topicRollupSearchTopN              int
+	continuationTimeoutDefault         time.Duration
+	continuationTimeoutBySource        map[string]time.Duration
+	continuationMaxInflight            int
+	continuationMaxInflightPerSource   int
+	continuationMaxInflightOverrides   map[string]int
+	continuationSourceCooldown         time.Duration
+	continuationSourceCooldownBySrc    map[string]time.Duration
+	continuationSheddingEnabled        bool
+	continuationSheddingQueueRatio     float64
+	continuationSheddingPendingHigh    int
+	continuationSheddingSources        map[string]struct{}
+	syncSourceConcurrencyDefault       int
+	syncSourceConcurrencyOverrides     map[string]int
+	syncQueueAgeWarnSecs               float64
+	syncQueueAgeHighSecs               float64
+	timeoutContractGrace               time.Duration
+	subcallDisableExpansion            bool
+	subcallDisableAutoEscalate         bool
+	telemetryBatchEnabled              bool
+	telemetryBatchFlushInterval        time.Duration
+	telemetryBatchSize                 int
+	telemetryBatchDropLogEvery         uint64
+	adaptiveTimeoutEnabled             bool
+	adaptiveTimeoutMinRequests         int
+	adaptiveTimeoutWindow              int
+	adaptiveTimeoutP95Factor           float64
+	adaptiveTimeoutMinScale            float64
+	adaptiveTimeoutMaxScale            float64
+	adaptiveTimeoutBacklogWeight       float64
+	adaptiveTimeoutBacklogCap          int
+	continuationEventHistory           int
+	continuationEventTTL               time.Duration
+	continuationSSEHeartbeat           time.Duration
+	continuationDurableEnabled         bool
+	continuationDurableDir             string
+	continuationDurableMaxPending      int
+	continuationDurableMaxPendingBySrc int
+	continuationDurableDrainBatch      int
+	continuationDurablePollInterval    time.Duration
+	continuationDurableRetryBase       time.Duration
+	continuationDurableRetryMax        time.Duration
+	continuationDurableMaxAttempts     int
+	sourceOwnershipMode                string
+	sourceOwnershipStrictFastAllowPy   map[string]struct{}
 }
 
 type retrievalEvent struct {
@@ -337,6 +338,7 @@ type server struct {
 	continuationHistory             map[string][]map[string]any
 	continuationExpiry              map[string]time.Time
 	continuationDurable             *continuationDurableQueue
+	pgvectorWriteFanoutSem          chan struct{}
 	timeoutContractViolations       atomic.Uint64
 	timeoutContractMu               sync.Mutex
 	timeoutContractBySource         map[string]uint64
@@ -1103,6 +1105,10 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if policy.continuationDurableMaxPending < 64 {
 		policy.continuationDurableMaxPending = 64
 	}
+	policy.continuationDurableMaxPendingBySrc = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_MAX_PENDING_PER_SOURCE", 2)
+	if policy.continuationDurableMaxPendingBySrc < 1 {
+		policy.continuationDurableMaxPendingBySrc = 1
+	}
 	policy.continuationDurableDrainBatch = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_DRAIN_BATCH", 32)
 	if policy.continuationDurableDrainBatch < 1 {
 		policy.continuationDurableDrainBatch = 1
@@ -1260,6 +1266,7 @@ func newServer() *server {
 		continuationHistory:             make(map[string][]map[string]any),
 		continuationExpiry:              make(map[string]time.Time),
 		continuationDurable:             continuationDurable,
+		pgvectorWriteFanoutSem:          make(chan struct{}, pgvectorWriteFanoutAsyncMaxInflight()),
 		timeoutContractBySource:         make(map[string]uint64),
 		timeoutContractLast:             make(map[string]any),
 		driftByClass:                    make(map[string]uint64),
@@ -2594,7 +2601,18 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		warnings := []string{
 			"Python backend forwarding is disabled by strict runtime policy; all active lanes run through Go/Rust services.",
 		}
-		if continuation.OldestAgeSecs >= s.retrieval.syncQueueAgeWarnSecs && continuation.OldestAgeSecs > 0 {
+		continuationAgeHighSecs := s.retrieval.continuationTimeoutDefault.Seconds() * 2
+		if continuationAgeHighSecs < s.retrieval.syncQueueAgeHighSecs {
+			continuationAgeHighSecs = s.retrieval.syncQueueAgeHighSecs
+		}
+		if continuationAgeHighSecs < 30 {
+			continuationAgeHighSecs = 30
+		}
+		continuationBacklogHigh := queueDepthTotal >= s.retrieval.continuationSheddingPendingHigh
+		continuationRatioHigh := queueRatio >= s.retrieval.continuationSheddingQueueRatio
+		continuationAgeHigh := (continuation.OldestAgeSecs >= continuationAgeHighSecs && continuation.Pending > 0) ||
+			(continuation.DurableOldest >= continuationAgeHighSecs && continuation.DurablePending > 0)
+		if continuationBacklogHigh || continuationRatioHigh || continuationAgeHigh {
 			warnings = append(
 				warnings,
 				"Continuation queue age is elevated; staged async warming is under pressure.",
@@ -2658,13 +2676,14 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 				"durableOldestAgeSecs":  continuation.DurableOldest,
 				"syncLane":              syncQueue,
 				"policy": map[string]any{
-					"syncSourceConcurrencyDefault":    s.retrieval.syncSourceConcurrencyDefault,
-					"syncSourceConcurrencyOverrides":  cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
-					"syncQueueAgeWarnSecs":            s.retrieval.syncQueueAgeWarnSecs,
-					"syncQueueAgeHighSecs":            s.retrieval.syncQueueAgeHighSecs,
-					"continuationSheddingEnabled":     s.retrieval.continuationSheddingEnabled,
-					"continuationSheddingQueueRatio":  s.retrieval.continuationSheddingQueueRatio,
-					"continuationSheddingPendingHigh": s.retrieval.continuationSheddingPendingHigh,
+					"syncSourceConcurrencyDefault":           s.retrieval.syncSourceConcurrencyDefault,
+					"syncSourceConcurrencyOverrides":         cloneIntMap(s.retrieval.syncSourceConcurrencyOverrides),
+					"syncQueueAgeWarnSecs":                   s.retrieval.syncQueueAgeWarnSecs,
+					"syncQueueAgeHighSecs":                   s.retrieval.syncQueueAgeHighSecs,
+					"continuationSheddingEnabled":            s.retrieval.continuationSheddingEnabled,
+					"continuationSheddingQueueRatio":         s.retrieval.continuationSheddingQueueRatio,
+					"continuationSheddingPendingHigh":        s.retrieval.continuationSheddingPendingHigh,
+					"continuationDurableMaxPendingPerSource": s.retrieval.continuationDurableMaxPendingBySrc,
 				},
 			},
 			"timeoutContract": s.timeoutContractSnapshot(),
@@ -6114,16 +6133,17 @@ func (s *server) executeRetrieval(
 			"continuation_source_cooldown_by_source_secs": durationMapToSeconds(
 				s.retrieval.continuationSourceCooldownBySrc,
 			),
-			"continuation_source_cooldown_active": s.continuationSourceCooldownSnapshot(),
-			"continuation_shedding_enabled":       s.retrieval.continuationSheddingEnabled,
-			"continuation_shedding_queue_ratio":   s.retrieval.continuationSheddingQueueRatio,
-			"continuation_shedding_pending_high":  s.retrieval.continuationSheddingPendingHigh,
-			"continuation_shedding_sources":       mapKeysSorted(s.retrieval.continuationSheddingSources),
-			"continuation_durable_enabled":        s.retrieval.continuationDurableEnabled,
-			"continuation_durable_dir":            s.retrieval.continuationDurableDir,
-			"continuation_durable_max_pending":    s.retrieval.continuationDurableMaxPending,
-			"continuation_durable_drain_batch":    s.retrieval.continuationDurableDrainBatch,
-			"continuation_durable_poll_secs":      roundFloat(s.retrieval.continuationDurablePollInterval.Seconds(), 3),
+			"continuation_source_cooldown_active":         s.continuationSourceCooldownSnapshot(),
+			"continuation_shedding_enabled":               s.retrieval.continuationSheddingEnabled,
+			"continuation_shedding_queue_ratio":           s.retrieval.continuationSheddingQueueRatio,
+			"continuation_shedding_pending_high":          s.retrieval.continuationSheddingPendingHigh,
+			"continuation_shedding_sources":               mapKeysSorted(s.retrieval.continuationSheddingSources),
+			"continuation_durable_enabled":                s.retrieval.continuationDurableEnabled,
+			"continuation_durable_dir":                    s.retrieval.continuationDurableDir,
+			"continuation_durable_max_pending":            s.retrieval.continuationDurableMaxPending,
+			"continuation_durable_max_pending_per_source": s.retrieval.continuationDurableMaxPendingBySrc,
+			"continuation_durable_drain_batch":            s.retrieval.continuationDurableDrainBatch,
+			"continuation_durable_poll_secs":              roundFloat(s.retrieval.continuationDurablePollInterval.Seconds(), 3),
 			"continuation_durable_retry_base_secs": roundFloat(
 				s.retrieval.continuationDurableRetryBase.Seconds(),
 				3,

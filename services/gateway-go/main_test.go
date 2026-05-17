@@ -185,6 +185,92 @@ func TestStatusOverlaysGatewayHotPathOwnership(t *testing.T) {
 	}
 }
 
+func TestStrictRuntimeStatusDoesNotWarnOnHealthyAsyncContinuationAge(t *testing.T) {
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_TIMEOUT_SECS", "45")
+	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
+		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	}
+	s := newServer()
+	s.continuationMu.Lock()
+	s.continuationInFlight[sourceLetta] = 1
+	s.continuationInFlightStarted[sourceLetta] = []time.Time{time.Now().UTC().Add(-10 * time.Second)}
+	s.continuationMu.Unlock()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/status")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status payload: %v", err)
+	}
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if strings.Contains(warnings, "continuation queue age is elevated") {
+		t.Fatalf("did not expect async continuation age warning below backlog/stale thresholds, got %v", payload["warnings"])
+	}
+}
+
+func TestMemoryWriteQueuesPgvectorFanoutAsync(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("GO_WRITE_PGVECTOR_FANOUT_MODE", "async")
+	t.Setenv("GO_WRITE_PGVECTOR_FANOUT_TIMEOUT_SECS", "1")
+	t.Setenv("ORCH_PGVECTOR_ENABLED", "true")
+	t.Setenv("ORCH_PGVECTOR_FANOUT_ENABLED", "true")
+	t.Setenv("ORCH_PGVECTOR_DSN", "postgresql://postgres:postgres@127.0.0.1:1/contextlattice?sslmode=disable")
+	t.Setenv("ORCH_PGVECTOR_CONNECT_TIMEOUT_SECS", "1")
+	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
+		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	}
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/memory/write",
+		"application/json",
+		strings.NewReader(`{"projectName":"alpha","fileName":"notes/async-pgvector.md","content":"hello async pgvector","topicPath":"runbooks/testing"}`),
+	)
+	if err != nil {
+		t.Fatalf("memory/write request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode write payload: %v", err)
+	}
+	fanout, ok := payload["fanout"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fanout payload, got %#v", payload["fanout"])
+	}
+	if got := anyToString(fanout["postgres_pgvector"]); got != "queued_async" {
+		t.Fatalf("expected postgres_pgvector queued_async, got %q payload=%#v", got, payload)
+	}
+}
+
 func TestProxyForwardsQueryParams(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedRawQuery string
