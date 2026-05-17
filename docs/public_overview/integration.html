@@ -197,10 +197,13 @@ python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
 python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
 
 # auto-installed global CLI wrappers (~/.contextlattice/bin)
+contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice --topic-path runbooks/codex-integration
 contextlattice_write --project contextlattice --file notes/codex/checkpoint.md --content "checkpoint saved" --topic-path runbooks/codex-integration
+printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/codex-integration --file notes/codex/checkpoint.md --stdin
 contextlattice_search -h
-contextlattice_write -h</code></pre>
+contextlattice_write -h
+contextlattice_checkpoint -h</code></pre>
         <ul class="spec-list">
           <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
           <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>
