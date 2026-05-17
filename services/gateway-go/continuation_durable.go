@@ -39,27 +39,29 @@ type continuationDurableJob struct {
 }
 
 type continuationDurableSnapshot struct {
-	Enabled       bool
-	Dir           string
-	Pending       int
-	BySource      map[string]int
-	OldestAgeSecs float64
-	MaxPending    int
-	MaxAttempts   int
-	LastEnqueueAt string
-	LastDrainAt   string
-	LastError     string
+	Enabled            bool
+	Dir                string
+	Pending            int
+	BySource           map[string]int
+	OldestAgeSecs      float64
+	MaxPending         int
+	MaxPendingBySource int
+	MaxAttempts        int
+	LastEnqueueAt      string
+	LastDrainAt        string
+	LastError          string
 }
 
 type continuationDurableQueue struct {
-	enabled      bool
-	dir          string
-	maxPending   int
-	maxAttempts  int
-	drainBatch   int
-	pollInterval time.Duration
-	retryBase    time.Duration
-	retryMax     time.Duration
+	enabled            bool
+	dir                string
+	maxPending         int
+	maxPendingBySource int
+	maxAttempts        int
+	drainBatch         int
+	pollInterval       time.Duration
+	retryBase          time.Duration
+	retryMax           time.Duration
 
 	mu               sync.Mutex
 	jobs             map[string]*continuationDurableJob
@@ -71,16 +73,17 @@ type continuationDurableQueue struct {
 
 func newContinuationDurableQueue(policy retrievalPolicy) *continuationDurableQueue {
 	queue := &continuationDurableQueue{
-		enabled:          policy.continuationDurableEnabled,
-		dir:              strings.TrimSpace(policy.continuationDurableDir),
-		maxPending:       policy.continuationDurableMaxPending,
-		maxAttempts:      policy.continuationDurableMaxAttempts,
-		drainBatch:       policy.continuationDurableDrainBatch,
-		pollInterval:     policy.continuationDurablePollInterval,
-		retryBase:        policy.continuationDurableRetryBase,
-		retryMax:         policy.continuationDurableRetryMax,
-		jobs:             map[string]*continuationDurableJob{},
-		fingerprintIndex: map[string]string{},
+		enabled:            policy.continuationDurableEnabled,
+		dir:                strings.TrimSpace(policy.continuationDurableDir),
+		maxPending:         policy.continuationDurableMaxPending,
+		maxPendingBySource: policy.continuationDurableMaxPendingBySrc,
+		maxAttempts:        policy.continuationDurableMaxAttempts,
+		drainBatch:         policy.continuationDurableDrainBatch,
+		pollInterval:       policy.continuationDurablePollInterval,
+		retryBase:          policy.continuationDurableRetryBase,
+		retryMax:           policy.continuationDurableRetryMax,
+		jobs:               map[string]*continuationDurableJob{},
+		fingerprintIndex:   map[string]string{},
 	}
 	if !queue.enabled {
 		return queue
@@ -196,6 +199,33 @@ func (q *continuationDurableQueue) normalizeJobLocked(job *continuationDurableJo
 }
 
 func (q *continuationDurableQueue) trimExcessLocked() {
+	if q.maxPendingBySource > 0 {
+		bySource := map[string][]*continuationDurableJob{}
+		for _, job := range q.jobs {
+			if job == nil {
+				continue
+			}
+			source := strings.TrimSpace(strings.ToLower(job.Source))
+			if source == "" {
+				source = "unknown"
+			}
+			bySource[source] = append(bySource[source], job)
+		}
+		for _, items := range bySource {
+			if len(items) <= q.maxPendingBySource {
+				continue
+			}
+			sort.Slice(items, func(i, j int) bool {
+				if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+					return items[i].CreatedAt.After(items[j].CreatedAt)
+				}
+				return items[i].UpdatedAt.After(items[j].UpdatedAt)
+			})
+			for _, job := range items[q.maxPendingBySource:] {
+				_ = q.deleteJobLocked(job.ID)
+			}
+		}
+	}
 	if q.maxPending < 1 || len(q.jobs) <= q.maxPending {
 		return
 	}
@@ -336,6 +366,22 @@ func (q *continuationDurableQueue) enqueue(
 			return existing.ID, true, nil
 		}
 		delete(q.fingerprintIndex, fingerprint)
+	}
+	if q.maxPendingBySource > 0 {
+		sourcePending := 0
+		for _, job := range q.jobs {
+			if job == nil {
+				continue
+			}
+			if strings.TrimSpace(strings.ToLower(job.Source)) == normalizedSource {
+				sourcePending++
+			}
+		}
+		if sourcePending >= q.maxPendingBySource {
+			err := fmt.Errorf("continuation durable queue source %s is full", normalizedSource)
+			q.lastError = err.Error()
+			return "", false, err
+		}
 	}
 	if q.maxPending > 0 && len(q.jobs) >= q.maxPending {
 		err := errors.New("continuation durable queue is full")
@@ -519,6 +565,7 @@ func (q *continuationDurableQueue) snapshot() continuationDurableSnapshot {
 	snapshot.Enabled = q.enabled
 	snapshot.Dir = q.dir
 	snapshot.MaxPending = q.maxPending
+	snapshot.MaxPendingBySource = q.maxPendingBySource
 	snapshot.MaxAttempts = q.maxAttempts
 	snapshot.LastEnqueueAt = q.lastEnqueueAt
 	snapshot.LastDrainAt = q.lastDrainAt
@@ -585,16 +632,17 @@ func (s *server) continuationDurableSnapshot() map[string]any {
 		snapshot = s.continuationDurable.snapshot()
 	}
 	return map[string]any{
-		"enabled":         snapshot.Enabled,
-		"dir":             snapshot.Dir,
-		"pending":         snapshot.Pending,
-		"by_source":       snapshot.BySource,
-		"oldest_age_secs": snapshot.OldestAgeSecs,
-		"max_pending":     snapshot.MaxPending,
-		"max_attempts":    snapshot.MaxAttempts,
-		"last_enqueue_at": snapshot.LastEnqueueAt,
-		"last_drain_at":   snapshot.LastDrainAt,
-		"last_error":      snapshot.LastError,
+		"enabled":                snapshot.Enabled,
+		"dir":                    snapshot.Dir,
+		"pending":                snapshot.Pending,
+		"by_source":              snapshot.BySource,
+		"oldest_age_secs":        snapshot.OldestAgeSecs,
+		"max_pending":            snapshot.MaxPending,
+		"max_pending_per_source": snapshot.MaxPendingBySource,
+		"max_attempts":           snapshot.MaxAttempts,
+		"last_enqueue_at":        snapshot.LastEnqueueAt,
+		"last_drain_at":          snapshot.LastDrainAt,
+		"last_error":             snapshot.LastError,
 	}
 }
 

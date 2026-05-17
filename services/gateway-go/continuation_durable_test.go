@@ -17,18 +17,19 @@ func newContinuationDurableTestServer(t *testing.T) *server {
 		continuationMaxInflightOverrides: map[string]int{
 			sourceLetta: 1,
 		},
-		continuationSourceCooldown:      0,
-		continuationSourceCooldownBySrc: map[string]time.Duration{},
-		continuationTimeoutDefault:      2 * time.Second,
-		continuationSheddingEnabled:     false,
-		continuationDurableEnabled:      true,
-		continuationDurableDir:          t.TempDir(),
-		continuationDurableMaxPending:   64,
-		continuationDurableDrainBatch:   8,
-		continuationDurablePollInterval: 250 * time.Millisecond,
-		continuationDurableRetryBase:    500 * time.Millisecond,
-		continuationDurableRetryMax:     5 * time.Second,
-		continuationDurableMaxAttempts:  4,
+		continuationSourceCooldown:         0,
+		continuationSourceCooldownBySrc:    map[string]time.Duration{},
+		continuationTimeoutDefault:         2 * time.Second,
+		continuationSheddingEnabled:        false,
+		continuationDurableEnabled:         true,
+		continuationDurableDir:             t.TempDir(),
+		continuationDurableMaxPending:      64,
+		continuationDurableMaxPendingBySrc: 2,
+		continuationDurableDrainBatch:      8,
+		continuationDurablePollInterval:    250 * time.Millisecond,
+		continuationDurableRetryBase:       500 * time.Millisecond,
+		continuationDurableRetryMax:        5 * time.Second,
+		continuationDurableMaxAttempts:     4,
 	}
 	s := &server{
 		retrieval:                       policy,
@@ -87,6 +88,33 @@ func TestScheduleOrDeferContinuationQueuesDurablyUnderPressure(t *testing.T) {
 	last := events[len(events)-1]
 	if strings.TrimSpace(strings.ToLower(anyToString(last["status"]))) != "durable_queued" {
 		t.Fatalf("expected durable_queued continuation event, got %#v", last)
+	}
+}
+
+func TestContinuationDurableQueueCapsPendingPerSource(t *testing.T) {
+	s := newContinuationDurableTestServer(t)
+	s.continuationSem <- struct{}{}
+	for i := 0; i < 5; i++ {
+		state, _, _ := s.scheduleOrDeferContinuation(
+			http.Header{},
+			map[string]any{
+				"project": "algotraderv2_rust",
+				"query":   "letta warm request " + string(rune('a'+i)),
+			},
+			sourceLetta,
+			"timeout",
+			"durable-token-cap",
+		)
+		if i < 2 && state != "deferred" {
+			t.Fatalf("expected first two jobs to defer, i=%d state=%q", i, state)
+		}
+	}
+	durable := s.continuationDurable.snapshot()
+	if durable.BySource[sourceLetta] != 2 {
+		t.Fatalf("expected per-source cap of 2 durable Letta jobs, got %#v", durable)
+	}
+	if durable.Pending != 2 {
+		t.Fatalf("expected total pending capped at 2, got %#v", durable)
 	}
 }
 

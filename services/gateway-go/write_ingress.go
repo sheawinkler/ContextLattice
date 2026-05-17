@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -78,16 +79,9 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			"go_memory_store": "succeeded",
 			"python_backend":  "disabled",
 		}
-		warnings := []string{}
-		fanoutCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Second)
-		fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item, entry.EventID)
-		cancel()
+		fanoutStatus, warnings := s.handlePgvectorWriteFanout(item, entry.EventID)
 		if strings.TrimSpace(fanoutStatus) != "" {
 			fanout["postgres_pgvector"] = fanoutStatus
-		}
-		if fanoutErr != nil {
-			warnings = append(warnings, "pgvector fanout "+fanoutStatus+": "+fanoutErr.Error())
-			log.Printf("pgvector fanout error project=%s file=%s status=%s err=%v", item.project, item.fileName, fanoutStatus, fanoutErr)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":                    true,
@@ -257,16 +251,9 @@ func (s *server) handleWriteBatchIngress(
 								"go_memory_store": "succeeded",
 								"python_backend":  "disabled",
 							}
-							warnings := []string{}
-							fanoutCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Second)
-							fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item, entry.EventID)
-							cancel()
+							fanoutStatus, warnings := s.handlePgvectorWriteFanout(item, entry.EventID)
 							if strings.TrimSpace(fanoutStatus) != "" {
 								fanout["postgres_pgvector"] = fanoutStatus
-							}
-							if fanoutErr != nil {
-								warnings = append(warnings, "pgvector fanout "+fanoutStatus+": "+fanoutErr.Error())
-								log.Printf("pgvector fanout error project=%s file=%s status=%s err=%v", item.project, item.fileName, fanoutStatus, fanoutErr)
 							}
 							row["fanout"] = fanout
 							row["warnings"] = warnings
@@ -418,6 +405,110 @@ func mergeForwardPayload(
 		return forward
 	}
 	return buildForwardPayload(path, item, fanoutExcludeTargets)
+}
+
+func writePgvectorFanoutMode() string {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_WRITE_PGVECTOR_FANOUT_MODE")))
+	switch mode {
+	case "sync", "synchronous":
+		return "sync"
+	case "disabled", "off", "false":
+		return "disabled"
+	default:
+		return "async"
+	}
+}
+
+func writePgvectorFanoutTimeout() time.Duration {
+	timeout := envDurationSeconds("GO_WRITE_PGVECTOR_FANOUT_TIMEOUT_SECS", 30)
+	if timeout < time.Second {
+		return time.Second
+	}
+	return timeout
+}
+
+func pgvectorWriteFanoutAsyncMaxInflight() int {
+	limit := envInt("GO_WRITE_PGVECTOR_FANOUT_ASYNC_MAX_INFLIGHT", 2)
+	if limit < 1 {
+		return 1
+	}
+	if limit > 16 {
+		return 16
+	}
+	return limit
+}
+
+func pgvectorWriteFanoutPreflightStatus() (string, bool) {
+	if !nativeSourceAdapterEnabled(sourcePgvector, true) {
+		return "skipped_adapter_disabled", false
+	}
+	if !nativePgvectorEnabled() {
+		return "skipped_source_disabled", false
+	}
+	if !nativePgvectorFanoutEnabled() {
+		return "skipped_fanout_disabled", false
+	}
+	if nativePgvectorDSN() == "" {
+		return "skipped_unconfigured", false
+	}
+	return "", true
+}
+
+func cloneNormalizedWriteForAsync(item normalizedWrite) normalizedWrite {
+	copyItem := item
+	if item.tags != nil {
+		copyItem.tags = append([]string{}, item.tags...)
+	}
+	copyItem.raw = nil
+	return copyItem
+}
+
+func (s *server) handlePgvectorWriteFanout(item normalizedWrite, eventID string) (string, []string) {
+	if status, enabled := pgvectorWriteFanoutPreflightStatus(); !enabled {
+		return status, []string{}
+	}
+	mode := writePgvectorFanoutMode()
+	if mode == "disabled" {
+		return "skipped_write_fanout_mode_disabled", []string{}
+	}
+	timeout := writePgvectorFanoutTimeout()
+	if mode == "sync" {
+		fanoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		fanoutStatus, fanoutErr := s.upsertPgvectorFromWrite(fanoutCtx, item, eventID)
+		cancel()
+		if fanoutErr != nil {
+			log.Printf("pgvector fanout error project=%s file=%s status=%s err=%v", item.project, item.fileName, fanoutStatus, fanoutErr)
+			return fanoutStatus, []string{"pgvector fanout " + fanoutStatus + ": " + fanoutErr.Error()}
+		}
+		return fanoutStatus, []string{}
+	}
+	if s.pgvectorWriteFanoutSem == nil {
+		s.pgvectorWriteFanoutSem = make(chan struct{}, pgvectorWriteFanoutAsyncMaxInflight())
+	}
+	select {
+	case s.pgvectorWriteFanoutSem <- struct{}{}:
+	default:
+		warning := "pgvector fanout skipped_async_backpressure: async fanout workers are saturated"
+		log.Printf("pgvector fanout backpressure project=%s file=%s", item.project, item.fileName)
+		return "skipped_async_backpressure", []string{warning}
+	}
+	copyItem := cloneNormalizedWriteForAsync(item)
+	go func() {
+		defer func() {
+			<-s.pgvectorWriteFanoutSem
+		}()
+		fanoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		status, err := s.upsertPgvectorFromWrite(fanoutCtx, copyItem, eventID)
+		if err != nil {
+			log.Printf("pgvector async fanout error project=%s file=%s status=%s err=%v", copyItem.project, copyItem.fileName, status, err)
+			return
+		}
+		if envBool("GO_WRITE_PGVECTOR_FANOUT_LOG_SUCCESS", false) {
+			log.Printf("pgvector async fanout complete project=%s file=%s status=%s", copyItem.project, copyItem.fileName, status)
+		}
+	}()
+	return "queued_async", []string{}
 }
 
 func (s *server) routeTelemetryWrite(
