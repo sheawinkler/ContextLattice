@@ -7,6 +7,7 @@ GLOBAL_SCRIPTS_DIR="${GLOBAL_HOME}/scripts"
 GLOBAL_BIN_DIR="${GLOBAL_HOME}/bin"
 GLOBAL_VENV_DIR="${GLOBAL_HOME}/venv-agent-tools"
 UPDATE_SHELL_PROFILE=1
+INSTALL_CODEX_HOOKS=0
 SKIP_VENV=0
 QUIET=0
 
@@ -18,10 +19,14 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_search
   contextlattice_write
   contextlattice_agent_orchestration
+  contextlattice_agent_start
+  contextlattice_checkpoint
+  contextlattice_*_guard wrappers
 
 Options:
   --global-home <path>    Override installation root (default: ~/.contextlattice)
   --no-shell-profile      Do not modify shell startup files
+  --install-codex-hooks   Install Codex SessionStart hooks into ~/.codex/hooks.json
   --skip-venv             Skip Python venv/httpx setup (wrappers expect existing venv)
   --quiet                 Reduce output noise
   -h, --help              Show this help
@@ -45,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-shell-profile)
       UPDATE_SHELL_PROFILE=0
+      shift
+      ;;
+    --install-codex-hooks)
+      INSTALL_CODEX_HOOKS=1
       shift
       ;;
     --skip-venv)
@@ -84,6 +93,11 @@ copy_script "${ROOT_DIR}/scripts/agent_orchestration.py" "${GLOBAL_SCRIPTS_DIR}/
 copy_script "${ROOT_DIR}/scripts/contextlattice_client.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_client.py"
 copy_script "${ROOT_DIR}/scripts/contextlattice_search.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_search.py"
 copy_script "${ROOT_DIR}/scripts/contextlattice_write.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_write.py"
+rm -rf "${GLOBAL_SCRIPTS_DIR}/agent_hooks"
+mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent_hooks"
+for hook_script in "${ROOT_DIR}"/scripts/agent_hooks/*.sh; do
+  copy_script "$hook_script" "${GLOBAL_SCRIPTS_DIR}/agent_hooks/$(basename "$hook_script")"
+done
 
 if [[ "$SKIP_VENV" != "1" ]]; then
   if ! command -v python3 >/dev/null 2>&1; then
@@ -143,6 +157,43 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_write" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 
+write_hook_wrapper() {
+  local command_name="$1"
+  local script_name="$2"
+  cat > "${GLOBAL_BIN_DIR}/${command_name}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="\${CONTEXTLATTICE_GLOBAL_HOME:-\$HOME/.contextlattice}"
+SCRIPT_PATH="\${TOOL_HOME}/scripts/agent_hooks/${script_name}"
+for env_file in "\${TOOL_HOME}/agent_hooks.env" "\$HOME/.codex/contextlattice_hooks.env"; do
+  if [[ -f "\$env_file" ]]; then
+    # shellcheck source=/dev/null
+    source "\$env_file"
+  fi
+done
+if [[ ! -x "\${SCRIPT_PATH}" ]]; then
+  echo "Missing \${SCRIPT_PATH}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "\${SCRIPT_PATH}" "\$@"
+EOF
+  chmod +x "${GLOBAL_BIN_DIR}/${command_name}"
+}
+
+write_hook_wrapper contextlattice_agent_start agent_start.sh
+write_hook_wrapper contextlattice_preflight_hook contextlattice_preflight.sh
+write_hook_wrapper contextlattice_checkpoint contextlattice_checkpoint.sh
+write_hook_wrapper contextlattice_git_lane_guard git_lane_guard.sh
+write_hook_wrapper contextlattice_branch_lane_guard branch_lane_guard.sh
+write_hook_wrapper contextlattice_rust_rebuild_gate rust_rebuild_gate.sh
+write_hook_wrapper contextlattice_runtime_env_guard runtime_env_guard.sh
+write_hook_wrapper contextlattice_recall_quality_gate recall_quality_gate.sh
+write_hook_wrapper contextlattice_resource_pressure_guard resource_pressure_guard.sh
+write_hook_wrapper contextlattice_orbstack_forward_guard orbstack_forward_guard.sh
+write_hook_wrapper contextlattice_public_leak_guard public_leak_guard.sh
+write_hook_wrapper contextlattice_agent_policy_pack agent_policy_pack.sh
+write_hook_wrapper contextlattice_command_output_budget command_output_budget.sh
+
 ensure_path_entry() {
   local rc_file="$1"
   local export_line='export PATH="$HOME/.contextlattice/bin:$PATH"'
@@ -167,11 +218,62 @@ if [[ "$UPDATE_SHELL_PROFILE" == "1" ]]; then
   ensure_path_entry "$HOME/.bashrc"
 fi
 
+if [[ "$INSTALL_CODEX_HOOKS" == "1" ]]; then
+  mkdir -p "$HOME/.codex/hooks"
+  copy_script "${ROOT_DIR}/config/codex/contextlattice_agent_start.sh" "$HOME/.codex/hooks/contextlattice_agent_start.sh"
+  if [[ ! -f "$HOME/.codex/hooks/caveman_mode.sh" ]]; then
+    cat > "$HOME/.codex/hooks/caveman_mode.sh" <<'EOF'
+#!/usr/bin/env bash
+echo 'CAVEMAN MODE: terse facts. Drop filler/pleasantries/hedging. Preserve code/paths/numbers.'
+EOF
+    chmod +x "$HOME/.codex/hooks/caveman_mode.sh"
+  fi
+  python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/caveman_mode.sh" "$HOME/.codex/hooks/contextlattice_agent_start.sh" <<'PY'
+import json
+import pathlib
+import sys
+
+hooks_path = pathlib.Path(sys.argv[1])
+caveman = sys.argv[2]
+agent_start = sys.argv[3]
+try:
+    payload = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
+except Exception:
+    payload = {}
+root = payload.setdefault("hooks", {})
+session = root.setdefault("SessionStart", [])
+entry = None
+for item in session:
+    if isinstance(item, dict) and item.get("matcher") == "startup|resume":
+        entry = item
+        break
+if entry is None:
+    entry = {"matcher": "startup|resume", "hooks": []}
+    session.append(entry)
+hooks = entry.setdefault("hooks", [])
+
+def upsert(command, timeout, status):
+    for hook in hooks:
+        if isinstance(hook, dict) and hook.get("command") == command:
+            hook.update({"type": "command", "timeout": timeout, "statusMessage": status})
+            return
+    hooks.append({"type": "command", "command": command, "timeout": timeout, "statusMessage": status})
+
+upsert(caveman, 5, "Loading caveman mode")
+upsert(agent_start, 25, "Running ContextLattice agent start hooks")
+hooks_path.write_text(json.dumps(payload, indent=2) + "\n")
+PY
+  log "Installed Codex SessionStart hooks in $HOME/.codex/hooks.json"
+fi
+
 log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
 log "  contextlattice_write -h"
+log "  contextlattice_agent_start -h"

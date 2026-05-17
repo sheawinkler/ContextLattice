@@ -19,6 +19,16 @@ Use this source of truth:
 
 ## 3) Preflight (profile-aware)
 
+Preferred hook-first startup:
+
+```bash
+contextlattice_agent_start --soft --compact
+```
+
+This is the lowest-friction path for agents. It checks local pressure, git lane
+state, host-forward health, and retrieves a compact mission/objective/goal
+policy package.
+
 ```bash
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
   -d '{"agent":"codex","project":"contextlattice"}' \
@@ -39,13 +49,18 @@ Supported profiles:
 2. Broaden once if scoped read is empty/degraded.
 3. For broad tasks: `POST /memory/context-pack`.
 4. During execution: `POST /memory/write` checkpoints.
-5. Before context compaction/summarization: run compaction handoff write+readback:
+5. Prefer scripted checkpoint+readback:
+   - `contextlattice_checkpoint --project contextlattice --topic-path runbooks/codex-integration --file notes/<agent>/checkpoint.md --stdin`
+6. Before context compaction/summarization: run compaction handoff write+readback:
    - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
-6. Before final output: one recency retrieval (`/memory/search` or `/memory/context-pack`).
-7. For graph relationships: `POST /v1/memory/neighbors`.
-8. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`) or alias `GET|POST /v1/skills/index/search`.
-9. For async continuation: use `continuation_async` token and stream `GET /memory/search/continuations/{token}/events`.
-10. For queued orchestration: `/v1/tasks/submit`, `/v1/tasks/claim`, `/v1/tasks/status`, `/v1/tasks/metrics`.
+7. Before final output: one recency retrieval (`/memory/search` or `/memory/context-pack`).
+8. For graph relationships: `POST /v1/memory/neighbors`.
+9. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`) or alias `GET|POST /v1/skills/index/search`.
+10. For async continuation: use `continuation_async` token and stream `GET /memory/search/continuations/{token}/events`.
+11. For queued orchestration: `/v1/tasks/submit`, `/v1/tasks/claim`, `/v1/tasks/status`, `/v1/tasks/metrics`.
+
+Hook docs:
+- `docs/agent-hooks.md`
 
 Notes for quarantined skills:
 - Discovery only by default; do not auto-load quarantined skills from search results.

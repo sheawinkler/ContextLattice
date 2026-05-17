@@ -17,3 +17,11 @@ Global helper CLI tools are auto-installed by `gmake quickstart` and installer f
 - `~/.contextlattice/bin/contextlattice_agent_orchestration`
 - `~/.contextlattice/bin/contextlattice_search`
 - `~/.contextlattice/bin/contextlattice_write`
+- `~/.contextlattice/bin/contextlattice_agent_start`
+- `~/.contextlattice/bin/contextlattice_checkpoint`
+
+Preferred startup:
+
+```bash
+contextlattice_agent_start --soft --compact
+```

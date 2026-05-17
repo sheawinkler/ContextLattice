@@ -33,12 +33,20 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `codex`, `claude-code`, `opencode`, `hermes-agent`
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 - Global helper CLIs (auto-installed by quickstart/installers):
+  - `contextlattice_agent_start` (hook-first startup guard)
   - `contextlattice_agent_orchestration` (preflight/task helpers)
   - `contextlattice_search` (lifecycle-aware search helper)
   - `contextlattice_write` (checkpoint write helper)
+  - `contextlattice_checkpoint` (write + verified readback helper)
+
+Hook-first default:
+```bash
+contextlattice_agent_start --soft --compact
+```
 
 ## 3) Checkpoints and Final Recency Pass
 - During long tasks, write concise checkpoints via `POST /memory/write`.
+- Prefer `contextlattice_checkpoint` so every checkpoint also proves readback.
 - When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
 - Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
 - Before any context-compaction handoff, persist and read back objective state:

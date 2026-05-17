@@ -61,6 +61,21 @@ gmake quickstart
 curl -fsS http://127.0.0.1:8075/health | jq
 ```
 
+## Agent CLI
+
+Installer and quickstart paths install agent helpers under `~/.contextlattice/bin`.
+
+```bash
+contextlattice_agent_start --soft --compact
+contextlattice_search -h
+contextlattice_write -h
+contextlattice_checkpoint -h
+```
+
+- `contextlattice_agent_start` runs the lightweight startup guard for agents.
+- `contextlattice_checkpoint` writes a checkpoint and verifies readback.
+- Hook pack details: `docs/agent-hooks.md`.
+
 ## Download Installers
 
 - macOS DMG: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg`

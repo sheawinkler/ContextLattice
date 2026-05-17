@@ -15,6 +15,7 @@ export MEMMCP_AGENT_ID=codex_gpt5
 
 Preflight:
 ```bash
+contextlattice_agent_start --soft --compact
 ./scripts/agent_orchestration.sh preflight contextlattice runbooks/codex-integration
 # Or from any working directory:
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -25,3 +26,5 @@ contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integ
 
 Behavior contract:
 - Paste `docs/public_overview/templates/agents/universal.md` into system instructions.
+- Codex SessionStart hook template: `config/codex/contextlattice_agent_start.sh`
+- Install Codex hooks: `scripts/install_global_agent_tools.sh --install-codex-hooks`

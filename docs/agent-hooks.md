@@ -1,0 +1,106 @@
+# ContextLattice Agent Hooks
+
+ContextLattice ships deterministic agent hooks so agents spend fewer tokens
+remembering mechanical rules and more tokens reasoning about the task.
+
+## Rule
+
+Use hooks for stable pass/fail mechanics. Keep judgment in `AGENTS.md`.
+
+Good hook targets:
+- environment setup
+- health checks
+- git branch/status gates
+- rebuild-required markers
+- secret/path leak checks
+- resource pressure checks
+- checkpoint/write/readback verification
+
+Bad hook targets:
+- ambiguous product judgment
+- subjective design critique
+- trading or launch decisions without evidence review
+- anything that needs human approval
+
+## Global install
+
+```bash
+scripts/install_global_agent_tools.sh --install-codex-hooks
+```
+
+Optional machine-local hook policy belongs outside git:
+
+```bash
+cat > ~/.contextlattice/agent_hooks.env <<'EOF'
+export CONTEXTLATTICE_EXTERNAL_DATA_ROOT="/Volumes/<external-data-volume>"
+export CONTEXTLATTICE_PUBLIC_FORBIDDEN_PATH_RE='(/Volumes/<external-data-volume>|/Users/<local-user>|<private-repo-name>)'
+EOF
+chmod 600 ~/.contextlattice/agent_hooks.env
+```
+
+Installed commands:
+
+| Command | Purpose |
+| --- | --- |
+| `contextlattice_agent_start` | Compact startup guard for agents. |
+| `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
+| `contextlattice_checkpoint` | Write checkpoint and verify readback. |
+| `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |
+| `contextlattice_branch_lane_guard` | Private/public/public-paid lane hygiene. |
+| `contextlattice_rust_rebuild_gate` | Detect Rust changes and enforce full rebuild. |
+| `contextlattice_runtime_env_guard` | Detect stale/conflicting env override drift. |
+| `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
+| `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
+| `contextlattice_orbstack_forward_guard` | Docker/OrbStack and 8075 host-forward repair guard. |
+| `contextlattice_public_leak_guard` | Secret, private path, and machine-local path scanner. |
+| `contextlattice_agent_policy_pack` | Compact mission/objective/goal + retrieval package. |
+| `contextlattice_command_output_budget` | Bounded command output with full artifact capture. |
+
+## Recommended startup sequence
+
+```bash
+contextlattice_agent_start --soft --compact
+```
+
+This runs:
+1. resource pressure sampler
+2. git lane guard
+3. OrbStack/host-forward guard
+4. agent policy/context pack retrieval
+
+`--soft` is intentional for session startup: agents should learn current state
+without blocking if the local app is restarting.
+
+## Strict release sequence
+
+```bash
+contextlattice_git_lane_guard --branch main --upstream origin/main --require-clean --require-synced
+contextlattice_runtime_env_guard --strict
+contextlattice_rust_rebuild_gate --check
+contextlattice_recall_quality_gate
+contextlattice_public_leak_guard --mode changed --base origin/main --public
+```
+
+If any strict gate fails, stop and fix the underlying condition. Do not explain
+past the gate unless the user asks for triage.
+
+## Checkpoint pattern
+
+```bash
+printf '%s\n' 'short factual checkpoint' | \
+  contextlattice_checkpoint \
+    --project contextlattice \
+    --topic-path runbooks/codex-integration \
+    --file notes/codex/checkpoint.md \
+    --stdin
+```
+
+## Codex hook config
+
+`--install-codex-hooks` installs:
+- `~/.codex/hooks/contextlattice_agent_start.sh`
+- a `SessionStart` entry in `~/.codex/hooks.json`
+
+The Codex startup hook runs the same `contextlattice_agent_start --soft --compact`
+path. This makes Codex session start consistent with the public ContextLattice
+agent hook pack.

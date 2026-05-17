@@ -22,6 +22,9 @@ This file is the canonical contract for external agents and LLM apps using Conte
 
 ## Preflight before major work
 
+- Preferred hook-first path:
+  - `contextlattice_agent_start --soft --compact`
+  - repo-local equivalent: `scripts/agent_hooks/agent_start.sh --soft --compact`
 - Profile-aware preflight: `POST /v1/agents/preflight`
 - Compatibility alias: `POST /v1/codex/preflight`
 - CLI preflight helper (from repo root):
@@ -31,6 +34,8 @@ This file is the canonical contract for external agents and LLM apps using Conte
   - `python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration`
 - Shell wrapper equivalent:
   - `./scripts/agent_orchestration.sh preflight contextlattice runbooks/codex-integration`
+- Hook docs:
+  - `docs/agent-hooks.md`
 
 ## Required operating loop (before/during/after)
 
@@ -38,10 +43,18 @@ This file is the canonical contract for external agents and LLM apps using Conte
 2. If scoped search is empty/degraded: run one broader search in the same project.
 3. Broad or multi-file tasks: `POST /memory/context-pack`.
 4. During execution: write checkpoints with `POST /memory/write`.
-5. Before final output: run one recency retrieval (`/memory/search` or `/memory/context-pack`).
-6. Graph-neighbor recall: `POST /v1/memory/neighbors` when relationship context is relevant.
-7. If `continuation_async` is present: return partial results now, then follow `GET /memory/search/continuations/{token}/events` (or short re-query).
-8. Treat copied numbers as verbatim facts; do not rewrite numeric values.
+5. Prefer scripted checkpoint+readback when available:
+   - `contextlattice_checkpoint --project <project> --topic-path <topic_path> --file notes/<agent>/checkpoint.md --stdin`
+6. Before final output: run one recency retrieval (`/memory/search` or `/memory/context-pack`).
+7. Graph-neighbor recall: `POST /v1/memory/neighbors` when relationship context is relevant.
+8. If `continuation_async` is present: return partial results now, then follow `GET /memory/search/continuations/{token}/events` (or short re-query).
+9. Treat copied numbers as verbatim facts; do not rewrite numeric values.
+
+## Hook-first rule
+
+- Use hooks for deterministic mechanics: preflight, git sync, env drift, rebuild markers, leak scans, resource pressure, recall quality gates, and checkpoint readback.
+- Keep AGENTS.md for judgment: evidence standards, escalation, tradeoffs, and when to stop.
+- Use `contextlattice_agent_policy_pack` to hand mission/objective/goal context to downstream agents instead of pasting long instruction blocks.
 
 ## Context Compaction Handoff (Default)
 

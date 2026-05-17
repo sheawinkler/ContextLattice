@@ -26,6 +26,8 @@ Product positioning (public-safe):
 
 Agent usage expectations:
 - Prefer exact CLI commands from /cli.html and /installation.html.
+- Prefer hook-first startup when local CLI tools are installed: `contextlattice_agent_start --soft --compact`.
+- Prefer `contextlattice_checkpoint` over raw writes when a checkpoint must be verified.
 - For endpoint examples, rely on /integration.html and /wiki.html.
 - Treat paid operational internals as out-of-scope unless explicitly provided by private operator docs.
 
