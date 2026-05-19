@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
@@ -25,7 +25,7 @@
     "bignumber.js": "^9.1.2",
     "next": "16.2.6",
     "next-auth": "^4.24.7",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^7.0.12",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "stripe": "^14.21.0",
@@ -34,7 +34,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "20.11.30",
-    "@types/nodemailer": "^8.0.0",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "prisma": "^5.20.0",

@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { sanitizeCallbackUrl } from "@/lib/callback-url";
 
 function GithubMark() {
   return (
@@ -36,7 +37,7 @@ function LoginPageContent() {
   >([]);
   const router = useRouter();
   const params = useSearchParams();
-  const callbackUrl = params.get("callbackUrl") || "/billing";
+  const callbackUrl = sanitizeCallbackUrl(params.get("callbackUrl"));
   const providerHint = (params.get("provider") || "").toLowerCase();
   const providerAutoLaunchRef = useRef(false);
   const fallbackProviders = [

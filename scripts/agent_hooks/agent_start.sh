@@ -12,7 +12,9 @@ Runs low-cost deterministic startup hooks for agents:
   1. resource pressure sampler
   2. git lane guard
   3. OrbStack/host-forward guard
-  4. ContextLattice policy pack retrieval
+  4. native endpoint smoke
+  5. recall monitor seed
+  6. ContextLattice policy pack retrieval
 
 This does not commit, launch, or mutate project data.
 USAGE
@@ -65,6 +67,8 @@ soft_arg=()
 results+=("$(run_hook resource_pressure "${SCRIPT_DIR}/resource_pressure_guard.sh" "${soft_arg[@]}")")
 results+=("$(run_hook git_lane "${SCRIPT_DIR}/git_lane_guard.sh")")
 results+=("$(run_hook orbstack_forward "${SCRIPT_DIR}/orbstack_forward_guard.sh")")
+results+=("$(run_hook native_smoke "${SCRIPT_DIR}/native_endpoint_smoke.sh" --project "$PROJECT" "${soft_arg[@]}")")
+results+=("$(run_hook recall_seed "${SCRIPT_DIR}/recall_monitor_seed.sh" "${soft_arg[@]}")")
 results+=("$(run_hook policy_pack "${SCRIPT_DIR}/agent_policy_pack.sh" --agent "$AGENT" --project "$PROJECT" --topic-path "$TOPIC")")
 
 python3 - "$COMPACT" "$SOFT" "${results[@]}" <<'PY'

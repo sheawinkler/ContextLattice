@@ -1,0 +1,24 @@
+name: Agent Context Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "AGENTS.md"
+      - "scripts/agent/**"
+      - "scripts/agent_hooks/**"
+      - ".github/workflows/agent-context-gate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  agent-context-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run agent context gate
+        run: scripts/agent/audit-agent-context

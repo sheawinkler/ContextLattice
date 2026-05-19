@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Detect known high-risk instruction conflicts."""
+
+from __future__ import annotations
+
+import argparse
+import re
+
+from _common import DEFAULT_SCAN_FILES, emit, read_text, skill_files
+
+PATTERNS = [
+    ("global_caveman_hook", re.compile(r"caveman_mode\.sh")),
+    ("mandatory_subagent", re.compile(r"\b(MUST|Always|always)\s+spawn|MUST spawn|must spawn", re.I)),
+    ("plan_vs_execute", re.compile(r"do not return plan-only|execute one concrete action", re.I)),
+    ("broad_always_use", re.compile(r"\balways use\b|\buse .* every\b|\bmandatory\b", re.I)),
+    ("forbidden_git_destructive", re.compile(r"reset --hard|git clean|branch -D")),
+]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    findings = []
+    for path in [p for p in DEFAULT_SCAN_FILES if p.exists()] + skill_files():
+        for line_no, line in enumerate(read_text(path).splitlines(), start=1):
+            for reason, pattern in PATTERNS:
+                if pattern.search(line):
+                    findings.append({"path": str(path), "line": line_no, "reason": reason, "text": line.strip()[:240]})
+
+    emit({"ok": True, "findings": findings}, args.pretty)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestWritePolicyTelemetryByTopic(t *testing.T) {
 	policy := writeIngressPolicy{
@@ -126,6 +129,34 @@ func TestNormalizeWritePayloadCanonicalMetadata(t *testing.T) {
 	}
 	if item.createdAt != "2026-04-01T00:00:00Z" {
 		t.Fatalf("expected canonical created_at, got %q", item.createdAt)
+	}
+}
+
+func TestNormalizeWritePayloadDefaultsCanonicalMetadata(t *testing.T) {
+	t.Setenv("GO_WRITE_DEFAULT_AGENT_ID", "gateway-test-agent")
+	t.Setenv("GO_WRITE_DEFAULT_SESSION_ID", "gateway-test-session")
+	t.Setenv("GO_WRITE_DEFAULT_TAGS", "source:gateway-go,kind:test")
+
+	item, err := normalizeWritePayload("/memory/write", map[string]any{
+		"projectName": "contextlattice",
+		"fileName":    "notes/a.md",
+		"content":     "alpha",
+		"topicPath":   "runbooks/testing",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if item.agentID != "gateway-test-agent" {
+		t.Fatalf("expected default agent_id, got %q", item.agentID)
+	}
+	if item.sessionID != "gateway-test-session" {
+		t.Fatalf("expected default session_id, got %q", item.sessionID)
+	}
+	if len(item.tags) != 2 {
+		t.Fatalf("expected default tags, got %#v", item.tags)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, item.createdAt); err != nil {
+		t.Fatalf("expected generated RFC3339 created_at, got %q: %v", item.createdAt, err)
 	}
 }
 

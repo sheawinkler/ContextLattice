@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Report always-loaded and skill context sizes."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from _common import DEFAULT_SCAN_FILES, HOME, approx_tokens, emit, read_text, skill_files
+
+
+def active_user_skill(path: Path) -> bool:
+    text = str(path)
+    return (
+        (
+            text.startswith(str(HOME / ".agents" / "skills"))
+            or text.startswith(str(HOME / ".codex" / "skills"))
+        )
+        and "/.system/" not in text
+        and "/skills_quarantine/" not in text
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--scope", choices=["active-user", "all"], default="active-user")
+    parser.add_argument("--include-plugin-cache", action="store_true")
+    parser.add_argument("--agents-budget-chars", type=int, default=3200)
+    parser.add_argument("--skill-budget-chars", type=int, default=2000)
+    args = parser.parse_args()
+
+    paths = [p for p in DEFAULT_SCAN_FILES if p.exists()]
+    skills = skill_files()
+    if args.scope == "active-user":
+        skills = [path for path in skills if active_user_skill(path)]
+    if args.include_plugin_cache:
+        cache = Path.home() / ".codex-pro-2" / ".tmp" / "plugins" / "plugins"
+        if cache.exists():
+            skills.extend(sorted(cache.rglob("SKILL.md")))
+
+    items = []
+    for path in paths:
+        chars = len(read_text(path))
+        budget = args.agents_budget_chars if path.name == "AGENTS.md" else 2500
+        items.append(
+            {
+                "path": str(path),
+                "type": "always_or_hook_config",
+                "chars": chars,
+                "approx_tokens": approx_tokens(chars),
+                "budget_chars": budget,
+                "status": "ok" if chars <= budget else "over_budget",
+            }
+        )
+
+    for path in skills:
+        chars = path.stat().st_size
+        items.append(
+            {
+                "path": str(path),
+                "type": "skill_body",
+                "chars": chars,
+                "approx_tokens": approx_tokens(chars),
+                "budget_chars": args.skill_budget_chars,
+                "status": "ok" if chars <= args.skill_budget_chars else "over_budget",
+            }
+        )
+
+    over = [item for item in items if item["status"] != "ok"]
+    emit({"ok": not over, "count": len(items), "over_budget": over, "items": items}, args.pretty)
+    return 1 if over else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

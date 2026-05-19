@@ -60,6 +60,16 @@ contextlattice_env() {
   export MEMMCP_ORCHESTRATOR_URL="${MEMMCP_ORCHESTRATOR_URL:-$CONTEXTLATTICE_ORCHESTRATOR_URL}"
   export CONTEXTLATTICE_AGENT_ID="${CONTEXTLATTICE_AGENT_ID:-codex_gpt5}"
   export MEMMCP_AGENT_ID="${MEMMCP_AGENT_ID:-$CONTEXTLATTICE_AGENT_ID}"
+  if [[ -z "${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}" ]]; then
+    local repo_env key_value
+    repo_env="$(repo_root)/.env"
+    if [[ -f "$repo_env" ]]; then
+      key_value="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1); exit}' "$repo_env")"
+      if [[ -n "$key_value" ]]; then
+        export CONTEXTLATTICE_ORCHESTRATOR_API_KEY="$key_value"
+      fi
+    fi
+  fi
 }
 
 curl_json() {
@@ -67,9 +77,13 @@ curl_json() {
   local url="$2"
   local data="${3:-}"
   local timeout="${4:-20}"
+  local auth_args=()
+  if [[ -n "${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}" ]]; then
+    auth_args=(-H "x-api-key: ${CONTEXTLATTICE_ORCHESTRATOR_API_KEY}")
+  fi
   if [[ -n "$data" ]]; then
-    curl -fsS -m "$timeout" -X "$method" "$url" -H 'Content-Type: application/json' --data-binary "$data"
+    curl -fsS -m "$timeout" -X "$method" "$url" -H 'Content-Type: application/json' "${auth_args[@]}" --data-binary "$data"
   else
-    curl -fsS -m "$timeout" -X "$method" "$url"
+    curl -fsS -m "$timeout" -X "$method" "$url" "${auth_args[@]}"
   fi
 }

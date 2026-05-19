@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Validate SKILL.md frontmatter and routing descriptions."""
+
+from __future__ import annotations
+
+import argparse
+import re
+
+from _common import emit, parse_frontmatter, read_text, skill_files
+
+try:
+    import yaml  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - optional local dependency
+    yaml = None
+
+BROAD = re.compile(r"\b(always|any|all tasks|every task|mandatory|must use|required for)\b", re.I)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--max-description-chars", type=int, default=420)
+    args = parser.parse_args()
+
+    findings = []
+    for path in skill_files():
+        text = read_text(path)
+        yaml_meta = None
+        if text.startswith("---\n"):
+            end = text.find("\n---", 4)
+            if end >= 0:
+                frontmatter = text[4:end]
+                if yaml is not None:
+                    try:
+                        loaded = yaml.safe_load(frontmatter) or {}
+                        if not isinstance(loaded, dict):
+                            findings.append(
+                                {
+                                    "path": str(path),
+                                    "severity": "error",
+                                    "reason": "frontmatter_not_mapping",
+                                }
+                            )
+                        else:
+                            yaml_meta = {str(k): "" if v is None else str(v) for k, v in loaded.items()}
+                    except Exception as exc:
+                        findings.append(
+                            {
+                                "path": str(path),
+                                "severity": "error",
+                                "reason": "invalid_yaml",
+                                "detail": str(exc).splitlines()[0][:240],
+                            }
+                        )
+                for line_no, line in enumerate(text[4:end].splitlines(), start=2):
+                    if ":" not in line or line.startswith((" ", "\t")):
+                        continue
+                    _, raw_value = line.split(":", 1)
+                    value = raw_value.strip()
+                    if not value or value[0] in {"'", '"', "|", ">", "[", "{"}:
+                        continue
+                    if ": " in value:
+                        findings.append(
+                            {
+                                "path": str(path),
+                                "line": line_no,
+                                "severity": "error",
+                                "reason": "invalid_unquoted_colon_in_frontmatter_value",
+                            }
+                        )
+        parsed_meta, _ = parse_frontmatter(text)
+        meta = yaml_meta if yaml_meta is not None else parsed_meta
+        desc = meta.get("description", "")
+        if not meta.get("name"):
+            findings.append({"path": str(path), "severity": "error", "reason": "missing_name"})
+        if not desc:
+            findings.append({"path": str(path), "severity": "error", "reason": "missing_description"})
+        if len(desc) > args.max_description_chars:
+            findings.append(
+                {
+                    "path": str(path),
+                    "severity": "warn",
+                    "reason": "description_over_budget",
+                    "chars": len(desc),
+                }
+            )
+        if BROAD.search(desc):
+            findings.append({"path": str(path), "severity": "warn", "reason": "broad_activation_language"})
+
+    errors = [f for f in findings if f["severity"] == "error"]
+    emit({"ok": not errors, "findings": findings}, args.pretty)
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

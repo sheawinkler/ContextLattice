@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Write durable agent learning to ContextLattice."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+from _common import emit, now_iso, read_text, request_json
+
+
+KINDS = {"decision", "failure", "command", "assumption", "checkpoint", "runbook"}
+
+
+def first_env(*names: str, fallback: str = "") -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return fallback
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--topic-path", required=True)
+    parser.add_argument("--file", required=True)
+    parser.add_argument("--kind", choices=sorted(KINDS), default="checkpoint")
+    parser.add_argument("--content", default="")
+    parser.add_argument("--content-file", default="")
+    parser.add_argument("--stdin", action="store_true")
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    content = args.content
+    if args.content_file:
+        content = read_text(Path(args.content_file))
+    elif args.stdin:
+        content = sys.stdin.read()
+    content = content.strip()
+    if len(content) < 12:
+        emit({"ok": False, "error": "content_too_short_for_durable_write"}, args.pretty)
+        return 2
+
+    body = {
+        "projectName": args.project,
+        "fileName": args.file,
+        "topicPath": args.topic_path,
+        "content": content,
+        "agent_id": first_env("GO_WRITE_DEFAULT_AGENT_ID", "CONTEXTLATTICE_AGENT_ID", "MEMMCP_AGENT_ID", fallback="codex_gpt5"),
+        "session_id": first_env(
+            "GO_WRITE_DEFAULT_SESSION_ID",
+            "CONTEXTLATTICE_SESSION_ID",
+            "MEMMCP_SESSION_ID",
+            "LETTA_AUTO_SESSION_ID",
+            fallback="codex-default",
+        ),
+        "created_at": now_iso(),
+        "tags": ["agent-writeback", args.kind],
+    }
+    result = request_json("POST", "/memory/write", body, args.timeout)
+    emit({"ok": bool(result.get("ok", True)), "kind": args.kind, "file": args.file, "write": result}, args.pretty)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -22,6 +22,8 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_agent_start
   contextlattice_checkpoint
   contextlattice_*_guard wrappers
+  contextlattice_pre_compaction_write
+  contextlattice_post_compaction_read
 
 Options:
   --global-home <path>    Override installation root (default: ~/.contextlattice)
@@ -190,9 +192,13 @@ write_hook_wrapper contextlattice_runtime_env_guard runtime_env_guard.sh
 write_hook_wrapper contextlattice_recall_quality_gate recall_quality_gate.sh
 write_hook_wrapper contextlattice_resource_pressure_guard resource_pressure_guard.sh
 write_hook_wrapper contextlattice_orbstack_forward_guard orbstack_forward_guard.sh
+write_hook_wrapper contextlattice_native_endpoint_smoke native_endpoint_smoke.sh
+write_hook_wrapper contextlattice_recall_monitor_seed recall_monitor_seed.sh
 write_hook_wrapper contextlattice_public_leak_guard public_leak_guard.sh
 write_hook_wrapper contextlattice_agent_policy_pack agent_policy_pack.sh
 write_hook_wrapper contextlattice_command_output_budget command_output_budget.sh
+write_hook_wrapper contextlattice_pre_compaction_write contextlattice_pre_compaction_write.sh
+write_hook_wrapper contextlattice_post_compaction_read contextlattice_post_compaction_read.sh
 
 ensure_path_entry() {
   local rc_file="$1"
@@ -221,21 +227,13 @@ fi
 if [[ "$INSTALL_CODEX_HOOKS" == "1" ]]; then
   mkdir -p "$HOME/.codex/hooks"
   copy_script "${ROOT_DIR}/config/codex/contextlattice_agent_start.sh" "$HOME/.codex/hooks/contextlattice_agent_start.sh"
-  if [[ ! -f "$HOME/.codex/hooks/caveman_mode.sh" ]]; then
-    cat > "$HOME/.codex/hooks/caveman_mode.sh" <<'EOF'
-#!/usr/bin/env bash
-echo 'CAVEMAN MODE: terse facts. Drop filler/pleasantries/hedging. Preserve code/paths/numbers.'
-EOF
-    chmod +x "$HOME/.codex/hooks/caveman_mode.sh"
-  fi
-  python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/caveman_mode.sh" "$HOME/.codex/hooks/contextlattice_agent_start.sh" <<'PY'
+  python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/contextlattice_agent_start.sh" <<'PY'
 import json
 import pathlib
 import sys
 
 hooks_path = pathlib.Path(sys.argv[1])
-caveman = sys.argv[2]
-agent_start = sys.argv[3]
+agent_start = sys.argv[2]
 try:
     payload = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
 except Exception:
@@ -251,6 +249,10 @@ if entry is None:
     entry = {"matcher": "startup|resume", "hooks": []}
     session.append(entry)
 hooks = entry.setdefault("hooks", [])
+hooks[:] = [
+    hook for hook in hooks
+    if not (isinstance(hook, dict) and str(hook.get("command", "")).endswith("/caveman_mode.sh"))
+]
 
 def upsert(command, timeout, status):
     for hook in hooks:
@@ -259,8 +261,7 @@ def upsert(command, timeout, status):
             return
     hooks.append({"type": "command", "command": command, "timeout": timeout, "statusMessage": status})
 
-upsert(caveman, 5, "Loading caveman mode")
-upsert(agent_start, 25, "Running ContextLattice agent start hooks")
+upsert(agent_start, 90, "Running ContextLattice agent start hooks")
 hooks_path.write_text(json.dumps(payload, indent=2) + "\n")
 PY
   log "Installed Codex SessionStart hooks in $HOME/.codex/hooks.json"
@@ -272,6 +273,8 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_pre_compaction_write"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_post_compaction_read"
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
