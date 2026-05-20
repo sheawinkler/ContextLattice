@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Fetch a budgeted task context pack from ContextLattice."""
+
+from __future__ import annotations
+
+import argparse
+
+from _common import emit, request_json
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("query")
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--topic-path", default="")
+    parser.add_argument("--mode", default="balanced")
+    parser.add_argument("--budget-chars", type=int, default=10000)
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    payload = {
+        "query": args.query,
+        "project": args.project,
+        "projectName": args.project,
+        "topic_path": args.topic_path or None,
+        "topicPath": args.topic_path or None,
+        "retrieval_mode": args.mode,
+        "include_grounding": True,
+        "include_retrieval_debug": True,
+    }
+    raw = request_json("POST", "/memory/context-pack", payload, args.timeout)
+    facts = raw.get("facts") or raw.get("results") or []
+    text = str(raw)
+    clipped = len(text) > args.budget_chars
+    emit(
+        {
+            "ok": True,
+            "task_summary": args.query[:240],
+            "context_budget_chars": args.budget_chars,
+            "clipped": clipped,
+            "fact_count": len(facts) if isinstance(facts, list) else 0,
+            "context_pack": raw if not clipped else {"warning": "raw pack exceeded budget; rerun with larger --budget-chars", "keys": sorted(raw.keys())},
+            "writeback_required": True,
+        },
+        args.pretty,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

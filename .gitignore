@@ -21,20 +21,36 @@ docker-compose.override.yml
 .venv-*
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 logs/
+*.log
 
 # pidfiles
 *.pid
 
 # Node / Next.js
+node_modules/
 memmcp-dashboard/node_modules/
 memmcp-dashboard/.next/
 contextlattice-dashboard/node_modules/
 contextlattice-dashboard/.next/
+*.tsbuildinfo
+.turbo/
+.vercel/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
 # local runs / artifacts
 .data/
 services/orchestrator/data/
+target/
 crates/target/
 services/memory_bank_spike_rs/target/
 memmcp-dashboard/prisma/dev.db

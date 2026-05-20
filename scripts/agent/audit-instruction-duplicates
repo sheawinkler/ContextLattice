@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Find likely repeated instruction lines across AGENTS.md and skills."""
+
+from __future__ import annotations
+
+import argparse
+from collections import defaultdict
+
+from _common import DEFAULT_SCAN_FILES, emit, normalize_rule, read_text, skill_files
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--min-chars", type=int, default=48)
+    args = parser.parse_args()
+
+    sources = [p for p in DEFAULT_SCAN_FILES if p.exists()] + skill_files()
+    hits: dict[str, list[str]] = defaultdict(list)
+    for path in sources:
+        for line in read_text(path).splitlines():
+            norm = normalize_rule(line)
+            if len(norm) >= args.min_chars and any(w in norm for w in ("contextlattice", "never", "always", "must", "do not", "run", "write", "test")):
+                hits[norm].append(str(path))
+
+    duplicates = [
+        {"rule": rule, "count": len(set(paths)), "paths": sorted(set(paths))}
+        for rule, paths in hits.items()
+        if len(set(paths)) > 1
+    ]
+    duplicates.sort(key=lambda item: (-item["count"], item["rule"]))
+    emit({"ok": True, "duplicates": duplicates[:200], "total_duplicates": len(duplicates)}, args.pretty)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

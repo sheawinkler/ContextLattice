@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Run the agent context audit gate."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def run_json(name: str, argv: list[str]) -> dict[str, Any]:
+    proc = subprocess.run(argv, check=False, capture_output=True, text=True)
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"ok": False, "error": "invalid_json_output", "stdout": proc.stdout[:2000]}
+    payload.setdefault("ok", proc.returncode == 0)
+    return {"name": name, "returncode": proc.returncode, "payload": payload}
+
+
+def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, Any]:
+    name = str(check["name"])
+    payload = check["payload"]
+    summary: dict[str, Any] = {
+        "name": name,
+        "returncode": check["returncode"],
+        "ok": bool(payload.get("ok", False)),
+    }
+    if name == "context_size":
+        over_budget = payload.get("over_budget") or []
+        summary.update(
+            {
+                "count": payload.get("count", 0),
+                "over_budget_count": len(over_budget),
+                "over_budget": over_budget[:10],
+            }
+        )
+    elif name == "skill_frontmatter":
+        findings = payload.get("findings") or []
+        errors = [item for item in findings if item.get("severity") == "error"]
+        warnings = [item for item in findings if item.get("severity") != "error"]
+        summary.update(
+            {
+                "error_count": len(errors),
+                "warning_count": len(warnings),
+                "errors": errors[:10],
+                "warnings": warnings[:10],
+            }
+        )
+    elif name == "instruction_conflicts":
+        findings = payload.get("findings") or []
+        summary.update({"finding_count": len(findings), "top_findings": findings[:10]})
+    elif name == "instruction_duplicates":
+        duplicates = payload.get("duplicates") or []
+        summary.update(
+            {
+                "total_duplicates": payload.get("total_duplicates", len(duplicates)),
+                "top_duplicates": duplicates[:10],
+            }
+        )
+    if include_details:
+        summary["details"] = payload
+    return summary
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--scope", choices=["active-user", "all"], default="active-user")
+    parser.add_argument(
+        "--strict-findings",
+        action="store_true",
+        help="Fail on conflict or duplicate findings in addition to hard validation errors.",
+    )
+    parser.add_argument("--include-details", action="store_true")
+    args = parser.parse_args()
+
+    checks = [
+        run_json("context_size", [str(SCRIPT_DIR / "audit-context-size"), "--scope", args.scope]),
+        run_json("skill_frontmatter", [str(SCRIPT_DIR / "audit-skill-frontmatter")]),
+        run_json("instruction_conflicts", [str(SCRIPT_DIR / "audit-conflicts")]),
+        run_json("instruction_duplicates", [str(SCRIPT_DIR / "audit-instruction-duplicates")]),
+    ]
+
+    hard_failures = [
+        check
+        for check in checks[:2]
+        if check["returncode"] != 0 or not bool(check["payload"].get("ok", False))
+    ]
+    if args.strict_findings:
+        for check in checks[2:]:
+            payload = check["payload"]
+            if payload.get("findings") or payload.get("duplicates"):
+                hard_failures.append(check)
+
+    summary = {
+        "ok": not hard_failures,
+        "scope": args.scope,
+        "hard_failures": [check["name"] for check in hard_failures],
+        "checks": [summarize_check(check, args.include_details) for check in checks],
+    }
+    emit(summary, args.pretty)
+    return 1 if hard_failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

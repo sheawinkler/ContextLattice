@@ -892,7 +892,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	policy.failOpenContinuationEnabled = envBool("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", true)
 	policy.failOpenContinuationSources = toSourceSet(csvListEnv(
 		"ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES",
-		"letta,memory_bank",
+		"letta,memory_bank,mindsdb,mongo_raw,qdrant",
 	))
 	policy.timeoutAdaptiveSkipEnabled = envBool("ORCH_RECALL_TIMEOUT_ADAPTIVE_SOURCE_SKIP_ENABLED", true)
 	policy.timeoutAdaptiveSkipSources = toSourceSet(csvListEnv(
@@ -1105,7 +1105,7 @@ func loadRetrievalPolicy() retrievalPolicy {
 	if policy.continuationDurableMaxPending < 64 {
 		policy.continuationDurableMaxPending = 64
 	}
-	policy.continuationDurableMaxPendingBySrc = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_MAX_PENDING_PER_SOURCE", 2)
+	policy.continuationDurableMaxPendingBySrc = envInt("GO_RETRIEVAL_CONTINUATION_DURABLE_MAX_PENDING_PER_SOURCE", 24)
 	if policy.continuationDurableMaxPendingBySrc < 1 {
 		policy.continuationDurableMaxPendingBySrc = 1
 	}

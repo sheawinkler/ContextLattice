@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -18,6 +19,7 @@ type metadataContractTracker struct {
 	missingAgentID           atomic.Uint64
 	missingSessionID         atomic.Uint64
 	missingTags              atomic.Uint64
+	missingCreatedAt         atomic.Uint64
 	missingCreatedAtProvided atomic.Uint64
 }
 
@@ -74,6 +76,33 @@ func normalizeTagList(values ...any) []string {
 	return out
 }
 
+func defaultMetadataAgentID() string {
+	return firstNonEmptyStrings(
+		os.Getenv("GO_WRITE_DEFAULT_AGENT_ID"),
+		os.Getenv("CONTEXTLATTICE_AGENT_ID"),
+		os.Getenv("MEMMCP_AGENT_ID"),
+		"gateway-go",
+	)
+}
+
+func defaultMetadataSessionID() string {
+	return firstNonEmptyStrings(
+		os.Getenv("GO_WRITE_DEFAULT_SESSION_ID"),
+		os.Getenv("CONTEXTLATTICE_SESSION_ID"),
+		os.Getenv("MEMMCP_SESSION_ID"),
+		os.Getenv("LETTA_AUTO_SESSION_ID"),
+		"gateway-go",
+	)
+}
+
+func defaultMetadataTags() []string {
+	tags := normalizeTagList(os.Getenv("GO_WRITE_DEFAULT_TAGS"))
+	if len(tags) == 0 {
+		return []string{"source:gateway-go"}
+	}
+	return tags
+}
+
 func normalizeWriteMetadata(raw map[string]any) canonicalMetadata {
 	metaMap, _ := raw["metadata"].(map[string]any)
 	agentID := firstNonEmptyStrings(
@@ -85,6 +114,9 @@ func normalizeWriteMetadata(raw map[string]any) canonicalMetadata {
 		anyToString(metaMap["agentId"]),
 		anyToString(metaMap["agent"]),
 	)
+	if agentID == "" {
+		agentID = defaultMetadataAgentID()
+	}
 	sessionID := firstNonEmptyStrings(
 		anyToString(raw["session_id"]),
 		anyToString(raw["sessionId"]),
@@ -93,6 +125,9 @@ func normalizeWriteMetadata(raw map[string]any) canonicalMetadata {
 		anyToString(metaMap["sessionId"]),
 		anyToString(metaMap["session"]),
 	)
+	if sessionID == "" {
+		sessionID = defaultMetadataSessionID()
+	}
 	createdAt := firstNonEmptyStrings(
 		anyToString(raw["created_at"]),
 		anyToString(raw["createdAt"]),
@@ -110,12 +145,28 @@ func normalizeWriteMetadata(raw map[string]any) canonicalMetadata {
 		metaMap["tags"],
 		metaMap["labels"],
 	)
+	if len(tags) == 0 {
+		tags = defaultMetadataTags()
+	}
 	return canonicalMetadata{
 		agentID:   agentID,
 		sessionID: sessionID,
 		tags:      tags,
 		createdAt: createdAt,
 	}
+}
+
+func hasWriteMetadataValue(raw map[string]any, keys ...string) bool {
+	metaMap, _ := raw["metadata"].(map[string]any)
+	for _, key := range keys {
+		if strings.TrimSpace(anyToString(raw[key])) != "" {
+			return true
+		}
+		if strings.TrimSpace(anyToString(metaMap[key])) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func recordMetadataContractObservation(item normalizedWrite) {
@@ -129,9 +180,10 @@ func recordMetadataContractObservation(item normalizedWrite) {
 	if len(item.tags) == 0 {
 		contractTracker.missingTags.Add(1)
 	}
-	if strings.TrimSpace(anyToString(item.raw["created_at"])) == "" &&
-		strings.TrimSpace(anyToString(item.raw["createdAt"])) == "" &&
-		strings.TrimSpace(anyToString(item.raw["timestamp"])) == "" {
+	if strings.TrimSpace(item.createdAt) == "" {
+		contractTracker.missingCreatedAt.Add(1)
+	}
+	if !hasWriteMetadataValue(item.raw, "created_at", "createdAt", "timestamp") {
 		contractTracker.missingCreatedAtProvided.Add(1)
 	}
 }
@@ -141,7 +193,8 @@ func metadataContractSnapshot() map[string]any {
 	agentMissing := contractTracker.missingAgentID.Load()
 	sessionMissing := contractTracker.missingSessionID.Load()
 	tagMissing := contractTracker.missingTags.Load()
-	createdAtMissing := contractTracker.missingCreatedAtProvided.Load()
+	createdAtMissing := contractTracker.missingCreatedAt.Load()
+	createdAtProvidedMissing := contractTracker.missingCreatedAtProvided.Load()
 	coverage := func(missing uint64) float64 {
 		if total == 0 {
 			return 1
@@ -161,13 +214,15 @@ func metadataContractSnapshot() map[string]any {
 			"agent_id":            agentMissing,
 			"session_id":          sessionMissing,
 			"tags":                tagMissing,
-			"created_at_provided": createdAtMissing,
+			"created_at":          createdAtMissing,
+			"created_at_provided": createdAtProvidedMissing,
 		},
 		"coverage": map[string]any{
 			"agent_id":            coverage(agentMissing),
 			"session_id":          coverage(sessionMissing),
 			"tags":                coverage(tagMissing),
-			"created_at_provided": coverage(createdAtMissing),
+			"created_at":          coverage(createdAtMissing),
+			"created_at_provided": coverage(createdAtProvidedMissing),
 		},
 		"contract": []string{
 			"project",

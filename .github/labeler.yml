@@ -1,0 +1,55 @@
+agent-context:
+  - AGENTS.md
+  - config/codex/**
+  - scripts/agent/**
+  - scripts/agent_hooks/**
+
+ci:
+  - .github/**
+  - Makefile
+
+dashboard:
+  - contextlattice-dashboard/**
+
+dependencies:
+  - '**/Cargo.lock'
+  - '**/go.sum'
+  - '**/package-lock.json'
+  - '**/package.json'
+
+docker:
+  - Dockerfile*
+  - docker-compose*.yml
+  - '**/Dockerfile*'
+
+documentation:
+  - '**/*.md'
+
+go:
+  - '**/*.go'
+  - '**/go.mod'
+  - '**/go.sum'
+
+javascript:
+  - contextlattice-dashboard/**
+  - '**/*.js'
+  - '**/*.jsx'
+  - '**/*.ts'
+  - '**/*.tsx'
+
+runtime:
+  - .env.example
+  - config/env/**
+  - docker-compose*.yml
+  - services/gateway-go/**
+
+rust:
+  - '**/*.rs'
+  - '**/Cargo.toml'
+  - '**/Cargo.lock'
+
+security:
+  - contextlattice-dashboard/lib/auth/**
+  - contextlattice-dashboard/lib/callback-url.ts
+  - contextlattice-dashboard/proxy.ts
+  - scripts/agent_hooks/public_leak_guard.sh
