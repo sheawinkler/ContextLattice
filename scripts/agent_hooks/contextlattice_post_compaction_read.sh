@@ -8,7 +8,39 @@ source "${SCRIPT_DIR}/common.sh"
 contextlattice_env
 project="${CONTEXTLATTICE_PROJECT:-contextlattice}"
 topic="${CONTEXTLATTICE_COMPACTION_TOPIC_PATH:-runbooks/context-compaction-handoff}"
-query="${CONTEXTLATTICE_COMPACTION_QUERY:-context compaction handoff mission objective goal blockers next actions}"
+query="${CONTEXTLATTICE_COMPACTION_QUERY:-}"
+stdin_payload=""
+if [[ ! -t 0 ]]; then
+  stdin_payload="$(cat || true)"
+fi
+if [[ -z "${query}" && -n "${stdin_payload}" ]]; then
+  query="$(python3 - "${stdin_payload}" <<'PY'
+import json, sys
+raw = sys.argv[1]
+try:
+    payload = json.loads(raw)
+except Exception:
+    print(raw[:500])
+    raise SystemExit(0)
+terms = []
+def walk(value):
+    if isinstance(value, str):
+        terms.append(value)
+    elif isinstance(value, dict):
+        for key in ("summary", "task_summary", "objective", "goal", "prompt", "message", "reason"):
+            if isinstance(value.get(key), str):
+                terms.append(value[key])
+        for item in value.values():
+            walk(item)
+    elif isinstance(value, list):
+        for item in value:
+            walk(item)
+walk(payload)
+print(" ".join(" ".join(terms).split())[:500])
+PY
+)"
+fi
+query="${query:-context compaction handoff mission objective goal blockers next actions}"
 timeout="${CONTEXTLATTICE_HOOK_TIMEOUT_SECS:-30}"
 base="${CONTEXTLATTICE_ORCHESTRATOR_URL%/}"
 

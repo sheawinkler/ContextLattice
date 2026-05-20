@@ -52,9 +52,13 @@ Installed commands:
 | `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
 | `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
 | `contextlattice_orbstack_forward_guard` | Docker/OrbStack and 8075 host-forward repair guard. |
+| `contextlattice_native_endpoint_smoke` | Fast smoke for critical go-native routes after restart/redeploy. |
+| `contextlattice_recall_monitor_seed` | Seed recall monitor snapshot when cold so tuning has live samples. |
 | `contextlattice_public_leak_guard` | Secret, private path, and machine-local path scanner. |
 | `contextlattice_agent_policy_pack` | Compact mission/objective/goal + retrieval package. |
 | `contextlattice_command_output_budget` | Bounded command output with full artifact capture. |
+| `contextlattice_pre_compaction_write` | Persist objective state before compaction/handoff. |
+| `contextlattice_post_compaction_read` | Read objective state after compaction/resume. |
 
 ## Recommended startup sequence
 
@@ -66,7 +70,9 @@ This runs:
 1. resource pressure sampler
 2. git lane guard
 3. OrbStack/host-forward guard
-4. agent policy/context pack retrieval
+4. native endpoint smoke
+5. recall monitor seed
+6. agent policy/context pack retrieval
 
 `--soft` is intentional for session startup: agents should learn current state
 without blocking if the local app is restarting.
@@ -99,8 +105,30 @@ printf '%s\n' 'short factual checkpoint' | \
 
 `--install-codex-hooks` installs:
 - `~/.codex/hooks/contextlattice_agent_start.sh`
+- `~/.codex/hooks/contextlattice_pre_compaction_write.sh`
+- `~/.codex/hooks/contextlattice_post_compaction_read.sh`
 - a `SessionStart` entry in `~/.codex/hooks.json`
+- `PreCompact` and `PostCompact` entries in `~/.codex/hooks.json`
 
 The Codex startup hook runs the same `contextlattice_agent_start --soft --compact`
 path. This makes Codex session start consistent with the public ContextLattice
 agent hook pack.
+The installed Codex hook timeout is 90s so OrbStack/container startup does not
+false-fail during normal warmup.
+
+`caveman_mode.sh` is intentionally not installed as a startup hook. Use the
+`caveman` skill only when the user asks for terse/low-token output.
+
+## Context compaction
+
+Codex 0.130.0 exposes `PreCompact` and `PostCompact` hook events. The installer
+wires those events to ContextLattice wrappers, and
+`scripts/agent/audit-compaction-hooks` verifies both the repo template and live
+`~/.codex/hooks.json`. The installer also refreshes the matching
+`~/.codex/config.toml` hook trust hashes so new sessions do not need repeated
+manual hook review when commands are unchanged.
+
+```bash
+contextlattice_pre_compaction_write "current objective, blockers, next actions"
+contextlattice_post_compaction_read
+```

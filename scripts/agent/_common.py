@@ -25,6 +25,7 @@ DEFAULT_SKILL_ROOTS = [
 ]
 
 DEFAULT_SCAN_FILES = [
+    HOME / ".codex" / "AGENTS.md",
     REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "private_docs" / "AGENTS.md",
     HOME / ".codex" / "hooks.json",

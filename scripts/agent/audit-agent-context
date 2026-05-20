@@ -54,6 +54,8 @@ def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, A
                 "warnings": warnings[:10],
             }
         )
+    elif name == "compaction_hooks":
+        summary.update({"results": payload.get("results", [])})
     elif name == "instruction_conflicts":
         findings = payload.get("findings") or []
         summary.update({"finding_count": len(findings), "top_findings": findings[:10]})
@@ -85,13 +87,14 @@ def main() -> int:
     checks = [
         run_json("context_size", [str(SCRIPT_DIR / "audit-context-size"), "--scope", args.scope]),
         run_json("skill_frontmatter", [str(SCRIPT_DIR / "audit-skill-frontmatter")]),
+        run_json("compaction_hooks", [str(SCRIPT_DIR / "audit-compaction-hooks")]),
         run_json("instruction_conflicts", [str(SCRIPT_DIR / "audit-conflicts")]),
         run_json("instruction_duplicates", [str(SCRIPT_DIR / "audit-instruction-duplicates")]),
     ]
 
     hard_failures = [
         check
-        for check in checks[:2]
+        for check in checks[:3]
         if check["returncode"] != 0 or not bool(check["payload"].get("ok", False))
     ]
     if args.strict_findings:

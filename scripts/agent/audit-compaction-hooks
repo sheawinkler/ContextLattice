@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Validate ContextLattice Codex hook wiring and trust state."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback.
+    tomllib = None
+
+from _common import emit
+
+
+REQUIRED = {
+    "SessionStart": "contextlattice_agent_start.sh",
+    "PreCompact": "contextlattice_pre_compaction_write.sh",
+    "PostCompact": "contextlattice_post_compaction_read.sh",
+}
+EVENT_LABELS = {
+    "SessionStart": "session_start",
+    "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
+}
+
+
+def commands_for(payload: dict[str, Any], event: str) -> list[str]:
+    out: list[str] = []
+    for group in ((payload.get("hooks") or {}).get(event) or []):
+        if not isinstance(group, dict):
+            continue
+        for hook in group.get("hooks") or []:
+            if isinstance(hook, dict) and hook.get("type") == "command":
+                out.append(str(hook.get("command") or ""))
+    return out
+
+
+def expand(command: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(command)))
+
+
+def hook_hash(event: str, matcher: str | None, hook: dict[str, Any]) -> str:
+    normalized = {
+        "type": "command",
+        "command": str(hook.get("command") or ""),
+        "timeout": max(1, int(hook.get("timeout") or 600)),
+        "async": bool(hook.get("async", False)),
+    }
+    if hook.get("statusMessage") is not None:
+        normalized["statusMessage"] = str(hook.get("statusMessage"))
+    identity: dict[str, Any] = {"event_name": EVENT_LABELS[event], "hooks": [normalized]}
+    if matcher is not None:
+        identity["matcher"] = matcher
+    raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def command_hooks_for(payload: dict[str, Any], event: str) -> list[tuple[int, int, str | None, dict[str, Any]]]:
+    out = []
+    for group_index, group in enumerate((payload.get("hooks") or {}).get(event) or []):
+        if not isinstance(group, dict):
+            continue
+        matcher = group.get("matcher")
+        matcher = str(matcher) if matcher is not None else None
+        for hook_index, hook in enumerate(group.get("hooks") or []):
+            if isinstance(hook, dict) and hook.get("type") == "command":
+                out.append((group_index, hook_index, matcher, hook))
+    return out
+
+
+def trusted_state() -> dict[str, str]:
+    if tomllib is None:
+        return {}
+    path = Path.home() / ".codex" / "config.toml"
+    if not path.exists():
+        return {}
+    try:
+        payload = tomllib.loads(path.read_text())
+    except Exception:
+        return {}
+    state = ((payload.get("hooks") or {}).get("state") or {})
+    return {
+        str(key): str(value.get("trusted_hash") or "")
+        for key, value in state.items()
+        if isinstance(value, dict)
+    }
+
+
+def check(path: Path) -> dict[str, Any]:
+    live_hooks = Path.home() / ".codex" / "hooks.json"
+    if not path.exists():
+        if path == live_hooks:
+            return {
+                "path": str(path),
+                "ok": True,
+                "skipped": True,
+                "reason": "live_hooks_config_missing",
+            }
+        return {"path": str(path), "ok": False, "reason": "missing_hooks_config"}
+    try:
+        payload = json.loads(path.read_text())
+    except Exception as exc:
+        return {"path": str(path), "ok": False, "reason": "invalid_json", "detail": str(exc)}
+
+    findings = []
+    is_live = path == live_hooks
+    state = trusted_state() if is_live else {}
+    for event, expected_tail in REQUIRED.items():
+        commands = commands_for(payload, event)
+        matching = [cmd for cmd in commands if cmd.endswith(expected_tail)]
+        if not matching:
+            findings.append({"event": event, "reason": "missing_hook", "expected_tail": expected_tail})
+            continue
+        if is_live:
+            for command in matching:
+                target = expand(command)
+                if not target.exists():
+                    findings.append({"event": event, "reason": "missing_command", "command": command})
+                elif not os.access(target, os.X_OK):
+                    findings.append({"event": event, "reason": "command_not_executable", "command": command})
+        if state:
+            for group_index, hook_index, _matcher, hook in command_hooks_for(payload, event):
+                command = str(hook.get("command") or "")
+                if not command.endswith(expected_tail):
+                    continue
+                key = f"{path}:{EVENT_LABELS[event]}:{group_index}:{hook_index}"
+                current_hash = hook_hash(event, _matcher, hook)
+                if state.get(key) != current_hash:
+                    findings.append(
+                        {
+                            "event": event,
+                            "reason": "untrusted_or_modified",
+                            "key": key,
+                            "expected_hash": current_hash,
+                            "trusted_hash": state.get(key),
+                        }
+                    )
+    return {"path": str(path), "ok": not findings, "findings": findings}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument(
+        "--hooks-json",
+        action="append",
+        default=[],
+        help="Hook config to validate; repeatable. Defaults to repo template and ~/.codex/hooks.json.",
+    )
+    args = parser.parse_args()
+
+    paths = [Path(item) for item in args.hooks_json] or [
+        Path.home() / ".codex" / "hooks.json",
+        Path(__file__).resolve().parents[2] / "config" / "codex" / "hooks.json",
+    ]
+    results = [check(path) for path in paths]
+    ok = all(item["ok"] for item in results)
+    emit({"ok": ok, "results": results}, args.pretty)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
