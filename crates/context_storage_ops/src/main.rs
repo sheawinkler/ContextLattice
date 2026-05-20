@@ -2,14 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
-use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
-use arrow_schema::{DataType, Field, Schema};
 use blake3::Hasher;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
 use clap::{Args, Parser, Subcommand};
@@ -19,10 +17,18 @@ use flate2::Compression;
 use jwalk::WalkDir;
 use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 use memmap2::MmapOptions;
-use parquet::arrow::ArrowWriter;
-use parquet::basic::{Compression as ParquetCompression, ZstdLevel};
-use parquet::file::metadata::KeyValue;
-use parquet::file::properties::WriterProperties;
+use parquet2::compression::CompressionOptions as ParquetCompressionOptions;
+use parquet2::encoding::{hybrid_rle::encode_bool, Encoding as ParquetEncoding};
+use parquet2::metadata::{
+    Descriptor as ParquetDescriptor, KeyValue as ParquetKeyValue, SchemaDescriptor as ParquetSchema,
+};
+use parquet2::page::{CompressedPage, DataPage, DataPageHeader, DataPageHeaderV1, Page};
+use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveLogicalType};
+use parquet2::schema::Repetition;
+use parquet2::write::{
+    Compressor, DynIter, DynStreamingIterator, FileWriter as ParquetFileWriter,
+    Version as ParquetVersion, WriteOptions as ParquetWriteOptions,
+};
 use q_compress::auto_compress;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
@@ -1662,7 +1668,7 @@ fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value])
         fs::create_dir_all(parent)?;
     }
 
-    let mut week_ids: Vec<&str> = Vec::with_capacity(summaries.len());
+    let mut week_ids: Vec<String> = Vec::with_capacity(summaries.len());
     let mut projects: Vec<String> = Vec::with_capacity(summaries.len());
     let mut fingerprints: Vec<String> = Vec::with_capacity(summaries.len());
     let mut summary_refs: Vec<String> = Vec::with_capacity(summaries.len());
@@ -1671,7 +1677,7 @@ fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value])
     let mut total_event_counts: Vec<i64> = Vec::with_capacity(summaries.len());
 
     for row in summaries {
-        week_ids.push(week_id);
+        week_ids.push(week_id.to_string());
         projects.push(
             row.get("project")
                 .and_then(|v| v.as_str())
@@ -1704,44 +1710,157 @@ fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value])
         );
     }
 
-    let project_refs: Vec<&str> = projects.iter().map(|s| s.as_str()).collect();
-    let fingerprint_refs: Vec<&str> = fingerprints.iter().map(|s| s.as_str()).collect();
-    let summary_path_refs: Vec<&str> = summary_refs.iter().map(|s| s.as_str()).collect();
-    let counts_ref_refs: Vec<&str> = counts_refs.iter().map(|s| s.as_str()).collect();
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("week_id", DataType::Utf8, false),
-        Field::new("project", DataType::Utf8, false),
-        Field::new("fingerprint", DataType::Utf8, false),
-        Field::new("summary_path", DataType::Utf8, false),
-        Field::new("counts_ref", DataType::Utf8, false),
-        Field::new("topic_count", DataType::Int64, false),
-        Field::new("total_event_count", DataType::Int64, false),
-    ]));
-    let batch = RecordBatch::try_new(
-        Arc::clone(&schema),
-        vec![
-            Arc::new(StringArray::from(week_ids)) as ArrayRef,
-            Arc::new(StringArray::from(project_refs)) as ArrayRef,
-            Arc::new(StringArray::from(fingerprint_refs)) as ArrayRef,
-            Arc::new(StringArray::from(summary_path_refs)) as ArrayRef,
-            Arc::new(StringArray::from(counts_ref_refs)) as ArrayRef,
-            Arc::new(Int64Array::from(topic_counts)) as ArrayRef,
-            Arc::new(Int64Array::from(total_event_counts)) as ArrayRef,
-        ],
-    )?;
-    let props = WriterProperties::builder()
-        .set_compression(ParquetCompression::ZSTD(ZstdLevel::default()))
-        .set_key_value_metadata(Some(vec![KeyValue {
-            key: "contextlattice_weekly_lineage".to_string(),
-            value: Some(week_id.to_string()),
-        }]))
-        .build();
     let file = File::create(path)?;
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
-    writer.write(&batch)?;
-    writer.close()?;
+    let options = ParquetWriteOptions {
+        write_statistics: false,
+        version: ParquetVersion::V1,
+    };
+    let schema = ParquetSchema::new(
+        "contextlattice_weekly_lineage".to_string(),
+        vec![
+            parquet_utf8_field("week_id")?,
+            parquet_utf8_field("project")?,
+            parquet_utf8_field("fingerprint")?,
+            parquet_utf8_field("summary_path")?,
+            parquet_utf8_field("counts_ref")?,
+            parquet_i64_field("topic_count"),
+            parquet_i64_field("total_event_count"),
+        ],
+    );
+    let descriptors = schema.columns();
+    let compression = ParquetCompressionOptions::Zstd(None);
+    let columns = vec![
+        parquet_column(
+            parquet_utf8_page(&week_ids, &options, &descriptors[0].descriptor),
+            compression,
+        ),
+        parquet_column(
+            parquet_utf8_page(&projects, &options, &descriptors[1].descriptor),
+            compression,
+        ),
+        parquet_column(
+            parquet_utf8_page(&fingerprints, &options, &descriptors[2].descriptor),
+            compression,
+        ),
+        parquet_column(
+            parquet_utf8_page(&summary_refs, &options, &descriptors[3].descriptor),
+            compression,
+        ),
+        parquet_column(
+            parquet_utf8_page(&counts_refs, &options, &descriptors[4].descriptor),
+            compression,
+        ),
+        parquet_column(
+            parquet_i64_page(&topic_counts, &options, &descriptors[5].descriptor),
+            compression,
+        ),
+        parquet_column(
+            parquet_i64_page(&total_event_counts, &options, &descriptors[6].descriptor),
+            compression,
+        ),
+    ];
+    let mut writer = ParquetFileWriter::new(
+        file,
+        schema,
+        options,
+        Some("context_storage_ops".to_string()),
+    );
+    writer.write(DynIter::new(columns.into_iter()))?;
+    writer.end(Some(vec![ParquetKeyValue {
+        key: "contextlattice_weekly_lineage".to_string(),
+        value: Some(week_id.to_string()),
+    }]))?;
     Ok(())
+}
+
+fn parquet_utf8_field(name: &str) -> parquet2::error::Result<ParquetType> {
+    ParquetType::try_from_primitive(
+        name.to_string(),
+        PhysicalType::ByteArray,
+        Repetition::Optional,
+        None,
+        Some(PrimitiveLogicalType::String),
+        None,
+    )
+}
+
+fn parquet_i64_field(name: &str) -> ParquetType {
+    ParquetType::from_physical(name.to_string(), PhysicalType::Int64)
+}
+
+fn parquet_column(
+    page: parquet2::error::Result<Page>,
+    compression: ParquetCompressionOptions,
+) -> parquet2::error::Result<DynStreamingIterator<'static, CompressedPage, parquet2::error::Error>>
+{
+    Ok(DynStreamingIterator::new(Compressor::new_from_vec(
+        DynIter::new(std::iter::once(page)),
+        compression,
+        vec![],
+    )))
+}
+
+fn parquet_definition_levels(len: usize) -> parquet2::error::Result<Vec<u8>> {
+    let mut levels = Cursor::new(vec![0; 4]);
+    levels.set_position(4);
+    encode_bool(&mut levels, std::iter::repeat(true).take(len))?;
+
+    let mut levels = levels.into_inner();
+    let byte_len = (levels.len() - 4) as u32;
+    levels[..4].copy_from_slice(&byte_len.to_le_bytes());
+    Ok(levels)
+}
+
+fn parquet_utf8_page(
+    values: &[String],
+    options: &ParquetWriteOptions,
+    descriptor: &ParquetDescriptor,
+) -> parquet2::error::Result<Page> {
+    let mut buffer = parquet_definition_levels(values.len())?;
+    for value in values {
+        let bytes = value.as_bytes();
+        if bytes.len() > i32::MAX as usize {
+            return Err(parquet2::error::Error::InvalidParameter(
+                "string value too large for parquet byte array".to_string(),
+            ));
+        }
+        buffer.extend_from_slice(&(bytes.len() as i32).to_le_bytes());
+        buffer.extend_from_slice(bytes);
+    }
+    parquet_data_page(buffer, values.len(), options, descriptor)
+}
+
+fn parquet_i64_page(
+    values: &[i64],
+    options: &ParquetWriteOptions,
+    descriptor: &ParquetDescriptor,
+) -> parquet2::error::Result<Page> {
+    let mut buffer = parquet_definition_levels(values.len())?;
+    for value in values {
+        buffer.extend_from_slice(&value.to_le_bytes());
+    }
+    parquet_data_page(buffer, values.len(), options, descriptor)
+}
+
+fn parquet_data_page(
+    buffer: Vec<u8>,
+    row_count: usize,
+    _options: &ParquetWriteOptions,
+    descriptor: &ParquetDescriptor,
+) -> parquet2::error::Result<Page> {
+    let header = DataPageHeaderV1 {
+        num_values: row_count as i32,
+        encoding: ParquetEncoding::Plain.into(),
+        definition_level_encoding: ParquetEncoding::Rle.into(),
+        repetition_level_encoding: ParquetEncoding::Rle.into(),
+        statistics: None,
+    };
+    Ok(Page::Data(DataPage::new(
+        DataPageHeader::V1(header),
+        buffer,
+        descriptor.clone(),
+        Some(row_count),
+    )))
 }
 
 fn write_weekly_lineage_qcompress(path: &Path, week_id: &str, summaries: &[Value]) -> Result<()> {
@@ -3130,6 +3249,21 @@ mod tests {
         write_weekly_lineage_qcompress(&out, "2026-W20", &summaries).expect("qcompress");
         let bytes = fs::read(out).expect("read qcompress file");
         assert!(bytes.starts_with(b"CLQHIST1"));
+        assert!(bytes.len() > 32);
+    }
+
+    #[test]
+    fn weekly_lineage_parquet_has_expected_magic_header() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("week-2026-W20.parquet");
+        let summaries = vec![
+            json!({"project":"alpha","summary_path":"alpha.json","counts_ref":"alpha.counts","fingerprint":"abc","topic_count":12,"total_event_count":220}),
+            json!({"project":"beta","summary_path":"beta.json","counts_ref":"beta.counts","fingerprint":"def","topic_count":9,"total_event_count":175}),
+        ];
+        write_weekly_lineage_parquet(&out, "2026-W20", &summaries).expect("parquet");
+        let bytes = fs::read(out).expect("read parquet file");
+        assert!(bytes.starts_with(b"PAR1"));
+        assert!(bytes.ends_with(b"PAR1"));
         assert!(bytes.len() > 32);
     }
 }
