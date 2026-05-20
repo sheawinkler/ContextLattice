@@ -32,10 +32,7 @@ use parquet2::write::{
 use q_compress::auto_compress;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
-use reqwest::Client;
-use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
-use reqwest_retry::policies::ExponentialBackoff;
-use reqwest_retry::RetryTransientMiddleware;
+use reqwest::{Client, Error as ReqwestError, StatusCode};
 use rkyv::{from_bytes, rancor::Error as RkyvError, to_bytes, Archive, Deserialize, Serialize};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -212,7 +209,7 @@ struct FanoutGcArgs {
 
 struct HttpRuntimeClient {
     runtime: Runtime,
-    client: ClientWithMiddleware,
+    client: Client,
 }
 
 impl HttpRuntimeClient {
@@ -227,29 +224,59 @@ impl HttpRuntimeClient {
             .timeout(Duration::from_secs_f64(timeout_secs.max(2.0)))
             .default_headers(headers)
             .build()?;
-        let retry_policy = ExponentialBackoff::builder()
-            .retry_bounds(Duration::from_millis(125), Duration::from_secs(2))
-            .build_with_max_retries(default_http_retry_count());
-        let retry_middleware = RetryTransientMiddleware::new_with_policy(retry_policy);
-        let client = MiddlewareClientBuilder::new(base_client)
-            .with(retry_middleware)
-            .build();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        Ok(Self { runtime, client })
+        Ok(Self {
+            runtime,
+            client: base_client,
+        })
     }
 
     fn get_json(&self, url: &str) -> Result<Value> {
         let payload = self.runtime.block_on(async {
-            let response = self.client.get(url).send().await?;
-            let response = response.error_for_status()?;
-            let bytes = response.bytes().await?;
-            parse_json_bytes_fast(bytes.as_ref())
-                .ok_or_else(|| anyhow!("failed to parse json response from {}", url))
+            let max_retries = default_http_retry_count();
+            let mut attempt = 0;
+            loop {
+                let response = match self.client.get(url).send().await {
+                    Ok(response) => response,
+                    Err(err) if attempt < max_retries && is_retryable_http_error(&err) => {
+                        attempt += 1;
+                        tokio::time::sleep(http_retry_delay(attempt)).await;
+                        continue;
+                    }
+                    Err(err) => return Err(err.into()),
+                };
+                let status = response.status();
+                if is_retryable_http_status(status) && attempt < max_retries {
+                    attempt += 1;
+                    tokio::time::sleep(http_retry_delay(attempt)).await;
+                    continue;
+                }
+                let response = response.error_for_status()?;
+                let bytes = response.bytes().await?;
+                return parse_json_bytes_fast(bytes.as_ref())
+                    .ok_or_else(|| anyhow!("failed to parse json response from {}", url));
+            }
         })?;
         Ok(payload)
     }
+}
+
+fn is_retryable_http_error(err: &ReqwestError) -> bool {
+    err.is_timeout() || err.is_connect()
+}
+
+fn is_retryable_http_status(status: StatusCode) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+fn http_retry_delay(attempt: u32) -> Duration {
+    let shift = attempt.saturating_sub(1).min(4);
+    let millis = 125u64.saturating_mul(1u64 << shift).min(2_000);
+    Duration::from_millis(millis)
 }
 
 fn main() {
