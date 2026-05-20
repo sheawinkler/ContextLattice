@@ -8,8 +8,9 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 WORKDIR /app
 COPY services/fastembed_sidecar_rs/Cargo.toml ./Cargo.toml
+COPY services/fastembed_sidecar_rs/Cargo.lock ./Cargo.lock
 COPY services/fastembed_sidecar_rs/src ./src
-RUN cargo build --release
+RUN cargo build --release --locked
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive

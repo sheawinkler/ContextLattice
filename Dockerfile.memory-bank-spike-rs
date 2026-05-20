@@ -2,8 +2,9 @@ FROM rust:1-bookworm AS builder
 
 WORKDIR /app
 COPY services/memory_bank_spike_rs/Cargo.toml ./Cargo.toml
+COPY services/memory_bank_spike_rs/Cargo.lock ./Cargo.lock
 COPY services/memory_bank_spike_rs/src ./src
-RUN cargo build --release
+RUN cargo build --release --locked
 
 FROM python:3.12-slim
 
