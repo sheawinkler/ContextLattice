@@ -1,10 +1,29 @@
-import { encodeURL } from "@solana/pay";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import BigNumber from "bignumber.js";
 import { PLANS } from "@/lib/billing/plans";
 import { recordPaymentIntent } from "@/lib/billing/reconcile";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+
+function buildSolanaPayUrl(fields: {
+  recipient: PublicKey;
+  amount: number;
+  splToken?: PublicKey;
+  reference: PublicKey;
+  label: string;
+  message: string;
+  memo: string;
+}): URL {
+  const url = new URL(`solana:${fields.recipient.toBase58()}`);
+  url.searchParams.set("amount", String(fields.amount));
+  if (fields.splToken) {
+    url.searchParams.set("spl-token", fields.splToken.toBase58());
+  }
+  url.searchParams.set("reference", fields.reference.toBase58());
+  url.searchParams.set("label", fields.label);
+  url.searchParams.set("message", fields.message);
+  url.searchParams.set("memo", fields.memo);
+  return url;
+}
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -30,9 +49,9 @@ export async function POST(request: Request) {
   const reference = Keypair.generate().publicKey;
   const splToken = process.env.SOLPAY_SPL_TOKEN;
 
-  const url = encodeURL({
+  const url = buildSolanaPayUrl({
     recipient: new PublicKey(recipient),
-    amount: new BigNumber(amount),
+    amount,
     splToken: splToken ? new PublicKey(splToken) : undefined,
     reference,
     label: process.env.SOLPAY_LABEL || "ContextLattice",
