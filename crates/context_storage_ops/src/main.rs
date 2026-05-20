@@ -2,19 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
-use arrow2::array::{Int64Array, Utf8Array};
-use arrow2::chunk::Chunk;
-use arrow2::datatypes::{DataType, Field, Schema};
-use arrow2::io::parquet::write::{
-    transverse, CompressionOptions, Encoding, FileWriter as ParquetFileWriter, RowGroupIterator,
-    Version, WriteOptions,
-};
+use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema};
 use blake3::Hasher;
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Utc};
 use clap::{Args, Parser, Subcommand};
@@ -24,7 +19,10 @@ use flate2::Compression;
 use jwalk::WalkDir;
 use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 use memmap2::MmapOptions;
-use parquet2::metadata::KeyValue;
+use parquet::arrow::ArrowWriter;
+use parquet::basic::{Compression as ParquetCompression, ZstdLevel};
+use parquet::file::metadata::KeyValue;
+use parquet::file::properties::WriterProperties;
 use q_compress::auto_compress;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
@@ -1711,7 +1709,7 @@ fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value])
     let summary_path_refs: Vec<&str> = summary_refs.iter().map(|s| s.as_str()).collect();
     let counts_ref_refs: Vec<&str> = counts_refs.iter().map(|s| s.as_str()).collect();
 
-    let schema = Schema::from(vec![
+    let schema = Arc::new(Schema::new(vec![
         Field::new("week_id", DataType::Utf8, false),
         Field::new("project", DataType::Utf8, false),
         Field::new("fingerprint", DataType::Utf8, false),
@@ -1719,40 +1717,30 @@ fn write_weekly_lineage_parquet(path: &Path, week_id: &str, summaries: &[Value])
         Field::new("counts_ref", DataType::Utf8, false),
         Field::new("topic_count", DataType::Int64, false),
         Field::new("total_event_count", DataType::Int64, false),
-    ]);
-    let chunk = Chunk::new(vec![
-        Utf8Array::<i32>::from_slice(week_ids).boxed(),
-        Utf8Array::<i32>::from_slice(project_refs).boxed(),
-        Utf8Array::<i32>::from_slice(fingerprint_refs).boxed(),
-        Utf8Array::<i32>::from_slice(summary_path_refs).boxed(),
-        Utf8Array::<i32>::from_slice(counts_ref_refs).boxed(),
-        Int64Array::from_slice(topic_counts).boxed(),
-        Int64Array::from_slice(total_event_counts).boxed(),
-    ]);
-
-    let options = WriteOptions {
-        write_statistics: true,
-        compression: CompressionOptions::Zstd(None),
-        version: Version::V2,
-        data_pagesize_limit: None,
-    };
-    let encodings: Vec<Vec<Encoding>> = schema
-        .fields
-        .iter()
-        .map(|f| transverse(&f.data_type, |_| Encoding::Plain))
-        .collect();
-    let row_groups =
-        RowGroupIterator::try_new(vec![Ok(chunk)].into_iter(), &schema, options, encodings)?;
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(StringArray::from(week_ids)) as ArrayRef,
+            Arc::new(StringArray::from(project_refs)) as ArrayRef,
+            Arc::new(StringArray::from(fingerprint_refs)) as ArrayRef,
+            Arc::new(StringArray::from(summary_path_refs)) as ArrayRef,
+            Arc::new(StringArray::from(counts_ref_refs)) as ArrayRef,
+            Arc::new(Int64Array::from(topic_counts)) as ArrayRef,
+            Arc::new(Int64Array::from(total_event_counts)) as ArrayRef,
+        ],
+    )?;
+    let props = WriterProperties::builder()
+        .set_compression(ParquetCompression::ZSTD(ZstdLevel::default()))
+        .set_key_value_metadata(Some(vec![KeyValue {
+            key: "contextlattice_weekly_lineage".to_string(),
+            value: Some(week_id.to_string()),
+        }]))
+        .build();
     let file = File::create(path)?;
-    let mut writer = ParquetFileWriter::try_new(file, schema, options)?;
-    for group in row_groups {
-        writer.write(group?)?;
-    }
-    let metadata = Some(vec![KeyValue {
-        key: "contextlattice_weekly_lineage".to_string(),
-        value: Some(week_id.to_string()),
-    }]);
-    let _ = writer.end(metadata)?;
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
+    writer.write(&batch)?;
+    writer.close()?;
     Ok(())
 }
 
@@ -2997,7 +2985,10 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use std::io::Write;
+    use std::sync::Mutex;
     use tempfile::NamedTempFile;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_week_roundtrip() {
@@ -3078,6 +3069,7 @@ mod tests {
 
     #[test]
     fn ledger_tail_writes_and_reads_rkyv_cache() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", "true");
         std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_CACHE_CODEC", "rkyv");
         std::env::set_var("CONTEXT_STORAGE_OPS_MMAP_MIN_BYTES", "1048576");
@@ -3109,6 +3101,7 @@ mod tests {
 
     #[test]
     fn ledger_tail_lz4_cache_has_magic_header() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_RKYV_CACHE", "true");
         std::env::set_var("CONTEXT_STORAGE_OPS_LEDGER_TAIL_CACHE_CODEC", "lz4");
         std::env::set_var("CONTEXT_STORAGE_OPS_MMAP_MIN_BYTES", "1048576");

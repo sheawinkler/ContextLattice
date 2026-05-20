@@ -30,8 +30,9 @@ zstd = "0.13.3"
 q_compress = "0.11.7"
 urlencoding = "2.1"
 blake3.workspace = true
-arrow2 = { version = "0.18", features = ["io_parquet"] }
-parquet2 = "0.17"
+arrow-array = "57"
+arrow-schema = "57"
+parquet = { version = "57", features = ["arrow", "zstd"] }
 mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
