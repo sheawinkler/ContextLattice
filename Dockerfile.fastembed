@@ -16,7 +16,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 wget \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/fastembed-sidecar-rs /usr/local/bin/fastembed-sidecar-rs
 EXPOSE 8080
