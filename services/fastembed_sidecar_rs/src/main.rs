@@ -131,10 +131,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-async fn embed(
-    State(state): State<AppState>,
-    Json(req): Json<EmbedRequest>,
-) -> impl IntoResponse {
+async fn embed(State(state): State<AppState>, Json(req): Json<EmbedRequest>) -> impl IntoResponse {
     match embed_impl(state, req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => (
@@ -155,7 +152,9 @@ async fn embed_impl(state: AppState, req: EmbedRequest) -> Result<EmbedResponse>
     let docs = inputs.clone();
     let vectors = tokio::task::spawn_blocking(move || {
         let mut guard = shared.lock().expect("model lock");
-        guard.embed(docs, None).map_err(|err| anyhow!(err.to_string()))
+        guard
+            .embed(docs, None)
+            .map_err(|err| anyhow!(err.to_string()))
     })
     .await
     .context("join embedding worker")??;

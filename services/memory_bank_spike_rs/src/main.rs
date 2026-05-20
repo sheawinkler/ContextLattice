@@ -1072,7 +1072,7 @@ fn run_tantivy_query(
     };
     let top_n = limit.saturating_mul(12).max(64);
     let docs = searcher
-        .search(&query_obj, &TopDocs::with_limit(top_n))
+        .search(&query_obj, &TopDocs::with_limit(top_n).order_by_score())
         .context("run tantivy query")?;
     let mut out: Vec<SearchResult> = Vec::new();
     for (score, addr) in docs {
