@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 from _common import emit, now_iso, read_text, request_json
@@ -22,6 +23,34 @@ def first_env(*names: str, fallback: str = "") -> str:
     return fallback
 
 
+def degraded_payload(kind: str, file_name: str, error: str, attempts: int) -> dict[str, object]:
+    return {
+        "ok": False,
+        "kind": kind,
+        "file": file_name,
+        "status": "failed_after_retries",
+        "persisted": False,
+        "degraded": True,
+        "attempts": attempts,
+        "error": error[:1000],
+    }
+
+
+def write_with_retries(body: dict[str, object], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, object] | None, str, int]:
+    attempts = max(1, retries + 1)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            return request_json("POST", "/memory/write", body, timeout), "", attempt
+        except SystemExit as exc:
+            last_error = str(exc.code)
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < attempts:
+            time.sleep(max(0.0, retry_delay) * attempt)
+    return None, last_error, attempts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default="contextlattice")
@@ -32,7 +61,10 @@ def main() -> int:
     parser.add_argument("--content-file", default="")
     parser.add_argument("--stdin", action="store_true")
     parser.add_argument("--timeout", type=float, default=30)
-    parser.add_argument("--strict", action="store_true", help="Exit non-zero when ContextLattice writeback is unavailable.")
+    parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
+    parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retry-delay", type=float, default=1.0)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
@@ -62,32 +94,10 @@ def main() -> int:
         "created_at": now_iso(),
         "tags": ["agent-writeback", args.kind],
     }
-    try:
-        result = request_json("POST", "/memory/write", body, args.timeout)
-    except SystemExit as exc:
-        emit(
-            {
-                "ok": False,
-                "kind": args.kind,
-                "file": args.file,
-                "degraded": True,
-                "error": str(exc.code)[:1000],
-            },
-            args.pretty,
-        )
-        return 1 if args.strict else 0
-    except Exception as exc:
-        emit(
-            {
-                "ok": False,
-                "kind": args.kind,
-                "file": args.file,
-                "degraded": True,
-                "error": str(exc)[:1000],
-            },
-            args.pretty,
-        )
-        return 1 if args.strict else 0
+    result, error, attempts = write_with_retries(body, args.timeout, max(0, args.retries), args.retry_delay)
+    if result is None:
+        emit(degraded_payload(args.kind, args.file, error, attempts), args.pretty)
+        return 0 if args.soft else 1
     emit({"ok": bool(result.get("ok", True)), "kind": args.kind, "file": args.file, "write": result}, args.pretty)
     return 0
 

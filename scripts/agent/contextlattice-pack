@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from typing import Any
 
 from _common import emit, request_json
@@ -89,6 +90,40 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     return payload
 
 
+def degraded_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "task_summary": query[:240],
+        "context_budget_chars": budget_chars,
+        "status": "failed_after_retries",
+        "degraded": True,
+        "attempts": attempts,
+        "error": error[:1000],
+        "context_pack": {
+            "query": query,
+            "facts": [],
+            "results": [],
+            "source_coverage": {"configured": [], "returned": [], "complete": False},
+        },
+        "writeback_required": True,
+    }
+
+
+def request_with_retries(path: str, payload: dict[str, Any], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, Any] | None, str, int]:
+    attempts = max(1, retries + 1)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            return request_json("POST", path, payload, timeout), "", attempt
+        except SystemExit as exc:
+            last_error = str(exc.code)
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < attempts:
+            time.sleep(max(0.0, retry_delay) * attempt)
+    return None, last_error, attempts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("query")
@@ -99,7 +134,10 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--max-facts", type=int, default=24)
     parser.add_argument("--nonblocking", action="store_true", help="Do not wait for slow sources in /memory/context-pack.")
-    parser.add_argument("--strict", action="store_true", help="Exit non-zero when ContextLattice is unavailable.")
+    parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
+    parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
+    parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument("--retry-delay", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
@@ -119,46 +157,16 @@ def main() -> int:
         "limit": args.limit,
         "max_facts": args.max_facts,
     }
-    try:
-        raw = request_json("POST", "/memory/context-pack", payload, args.timeout)
-    except SystemExit as exc:
-        emit(
-            {
-                "ok": False,
-                "task_summary": args.query[:240],
-                "context_budget_chars": args.budget_chars,
-                "degraded": True,
-                "error": str(exc.code)[:1000],
-                "context_pack": {
-                    "query": args.query,
-                    "facts": [],
-                    "results": [],
-                    "source_coverage": {"configured": [], "returned": [], "complete": False},
-                },
-                "writeback_required": True,
-            },
-            args.pretty,
-        )
-        return 1 if args.strict else 0
-    except Exception as exc:
-        emit(
-            {
-                "ok": False,
-                "task_summary": args.query[:240],
-                "context_budget_chars": args.budget_chars,
-                "degraded": True,
-                "error": str(exc)[:1000],
-                "context_pack": {
-                    "query": args.query,
-                    "facts": [],
-                    "results": [],
-                    "source_coverage": {"configured": [], "returned": [], "complete": False},
-                },
-                "writeback_required": True,
-            },
-            args.pretty,
-        )
-        return 1 if args.strict else 0
+    raw, error, attempts = request_with_retries(
+        "/memory/context-pack",
+        payload,
+        args.timeout,
+        max(0, args.retries),
+        args.retry_delay,
+    )
+    if raw is None:
+        emit(degraded_payload(args.query, args.budget_chars, error, attempts), args.pretty)
+        return 0 if args.soft else 1
     emit(compact_context_pack(raw, args.query, args.budget_chars), args.pretty)
     return 0
 
