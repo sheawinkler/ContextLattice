@@ -88,6 +88,30 @@ func nativeFastembedRoute() string {
 	return route
 }
 
+func nativeEmbeddingProvider() string {
+	provider := _inferenceNormalizeProvider(os.Getenv("ORCH_EMBED_PROVIDER"))
+	if provider == "" || provider == "auto" {
+		return "fastembed-rs"
+	}
+	switch provider {
+	case "fastembed", "fastembed-rs", "fastembed_rs":
+		return "fastembed-rs"
+	case "cheap", "cheap-embed", "cheap-embed-v1":
+		return "cheap"
+	default:
+		return provider
+	}
+}
+
+func nativeEmbeddingProviderUsesFastembed(provider string) bool {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "", "auto", "fastembed", "fastembed-rs", "fastembed_rs":
+		return true
+	default:
+		return false
+	}
+}
+
 func nativeDefaultEmbedDim() int {
 	return maxInt(8, envInt("ORCH_PGVECTOR_EMBED_DIM", 768))
 }
@@ -155,6 +179,16 @@ func nativeEmbedQueryVector(
 	targetDim int,
 ) ([]float64, []string, error) {
 	warnings := []string{}
+	provider := nativeEmbeddingProvider()
+	if provider == "cheap" {
+		vector := nativeCheapEmbedding(query, targetDim)
+		return vector, warnings, nil
+	}
+	if !nativeEmbeddingProviderUsesFastembed(provider) {
+		vector := nativeCheapEmbedding(query, targetDim)
+		warnings = append(warnings, "embedding provider "+provider+" is not implemented in go-native path; using cheap embedding fallback")
+		return vector, warnings, nil
+	}
 	if !nativeSourceAdapterEnabled("fastembed", true) {
 		vector := nativeCheapEmbedding(query, targetDim)
 		return vector, warnings, nil

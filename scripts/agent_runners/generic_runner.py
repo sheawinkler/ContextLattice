@@ -16,24 +16,12 @@ try:
         resolve_orchestrator_api_key,
     )
     from scripts.context_expansion_runtime import ContextExpansionRuntime
-    from scripts.inference_router import (
-        InferenceRoute,
-        call_chat_completion,
-        format_route_label,
-        resolve_inference_route,
-    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from contextlattice_client import (  # type: ignore[no-redef]
         build_orchestrator_headers,
         resolve_orchestrator_api_key,
     )
     from context_expansion_runtime import ContextExpansionRuntime
-    from inference_router import (  # type: ignore[no-redef]
-        InferenceRoute,
-        call_chat_completion,
-        format_route_label,
-        resolve_inference_route,
-    )
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None) -> dict[str, Any]:
@@ -44,12 +32,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, st
     return json.loads(body)
 
 
-def _run_llm_task(
-    route: InferenceRoute,
-    model: str,
-    task: dict[str, Any],
-    context_prompt: str | None = None,
-) -> str:
+def _task_messages(task: dict[str, Any], context_prompt: str | None = None) -> list[dict[str, str]]:
     prompt = task.get("title", "Task")
     payload = task.get("payload") or {}
     body = f"{prompt}\n\nPayload:\n{json.dumps(payload, indent=2)}"
@@ -65,7 +48,43 @@ def _run_llm_task(
     if context_prompt:
         messages.append({"role": "system", "content": context_prompt})
     messages.append({"role": "user", "content": body})
-    return call_chat_completion(route, model, messages)
+    return messages
+
+
+def _run_llm_task_via_gateway(
+    orchestrator_url: str,
+    provider: str,
+    model: str,
+    task: dict[str, Any],
+    context_prompt: str | None,
+    *,
+    base_url_override: str | None,
+    api_key: str | None,
+) -> tuple[str, dict[str, Any]]:
+    url = f"{orchestrator_url.rstrip('/')}/v1/inference/chat"
+    payload: dict[str, Any] = {
+        "provider": provider,
+        "model": model,
+        "messages": _task_messages(task, context_prompt),
+    }
+    if base_url_override:
+        payload["base_url"] = base_url_override
+    if api_key:
+        payload["api_key"] = api_key
+    headers = {"content-type": "application/json", **build_orchestrator_headers(resolve_orchestrator_api_key(role="worker"))}
+    response = _post_json(url, payload, headers=headers)
+    content = str(response.get("content") or "")
+    if not content.strip():
+        raise RuntimeError("gateway-go returned empty inference content")
+    route = response.get("route") if isinstance(response.get("route"), dict) else {}
+    return content, route
+
+
+def _format_route_label(route: dict[str, Any]) -> str:
+    provider = str(route.get("provider") or "").strip().lower()
+    if provider == "ollama_coreml":
+        return "ollama/coreml"
+    return provider or "gateway"
 
 
 def _write_memory(orchestrator_url: str, project: str, file_name: str, content: str) -> None:
@@ -154,21 +173,14 @@ def main(agent_label: Optional[str] = None) -> int:
             context_prompt = "Context expansion unavailable; proceed fail-open."
 
     try:
-        route = resolve_inference_route(
+        output, route = _run_llm_task_via_gateway(
+            orchestrator_url,
             provider,
-            base_url_override=base_url_override,
-            api_key=api_key,
-        )
-    except Exception as exc:
-        print(f"[agent-runner] inference route failed: {exc}", file=sys.stderr)
-        return 1
-
-    try:
-        output = _run_llm_task(
-            route,
             model,
             task,
             context_prompt=context_prompt,
+            base_url_override=base_url_override,
+            api_key=api_key,
         )
         file_name = f"task_runs/{task['id']}.md"
         _write_memory(orchestrator_url, task_project or "_global", file_name, _format_result(task, output, agent))
@@ -177,7 +189,7 @@ def main(agent_label: Optional[str] = None) -> int:
                 task=task,
                 bundle=context_bundle,
                 output=output,
-                provider=format_route_label(route),
+                provider=_format_route_label(route),
                 model=model,
                 status="succeeded",
             )
@@ -187,7 +199,7 @@ def main(agent_label: Optional[str] = None) -> int:
                 task=task,
                 bundle=context_bundle,
                 output=f"[agent-runner] failed: {exc}",
-                provider=format_route_label(route),
+                provider="gateway",
                 model=model,
                 status="failed",
             )
