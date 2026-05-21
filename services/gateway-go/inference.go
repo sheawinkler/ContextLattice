@@ -1235,12 +1235,13 @@ func (s *server) inferenceRuntimePolicyPayload() map[string]any {
 		})
 	}
 	payload := map[string]any{
-		"ok":               err == nil,
-		"hardware":         hardware,
-		"priority":         priority,
-		"autoProbe":        _inferenceAutoProbeEnabled(),
-		"autoProbeTTL":     _inferenceAutoProbeTTL().Seconds(),
-		"autoProbeTimeout": _inferenceAutoProbeTimeout().Seconds(),
+		"ok":                  err == nil,
+		"hardware":            hardware,
+		"priority":            priority,
+		"autoProbe":           _inferenceAutoProbeEnabled(),
+		"autoProbeTTL":        _inferenceAutoProbeTTL().Seconds(),
+		"autoProbeTimeout":    _inferenceAutoProbeTimeout().Seconds(),
+		"singleActiveBackend": envBool("CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND", true),
 		"manualAdvancedProviders": []string{
 			"vllm",
 			"vllm-metal",

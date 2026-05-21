@@ -397,9 +397,10 @@ env-lock-apply:
 # ===== Local sidecars: MLX/vLLM endpoints; Go gateway owns routing =====
 ENV_FILE ?= .env
 
-.PHONY: mlx-up mlx-down router-up router-down sidecars-up sidecars-down runtime-policy
+.PHONY: mlx-up mlx-down router-up router-down sidecars-up sidecars-down runtime-policy inference-backend-status inference-backend-assert-one
 
 mlx-up:
+> scripts/inference_backend_guard.sh prepare mlx
 > test -d .venv-mlx || (uv venv .venv-mlx && . .venv-mlx/bin/activate && uv pip install -U mlx-lm)
 > pgrep -f "mlx_lm.server" >/dev/null 2>&1 && echo "mlx already running" || \
 > (MODEL_PATH="$(MLX_MODEL_PATH)"; \
@@ -427,6 +428,12 @@ sidecars-down: router-down mlx-down
 runtime-policy:
 > scripts/inference_runtime_policy.sh
 
+inference-backend-status:
+> scripts/inference_backend_guard.sh status
+
+inference-backend-assert-one:
+> scripts/inference_backend_guard.sh assert-one
+
 # Wire sidecars into your one-shot launcher
 
 # ---- OLLAMA bring-up & health (host install or Homebrew), plus wait ----
@@ -436,6 +443,7 @@ ENV_FILE ?= .env
 .PHONY: ollama-up ollama-down ollama-wait
 
 ollama-up:
+> scripts/inference_backend_guard.sh prepare ollama
 > OAI_BASE="$$(grep -E '^OLLAMA_API_BASE=' $(ENV_FILE) | tail -1 | cut -d= -f2)"
 > [ -z "$$OAI_BASE" ] && OAI_BASE="http://127.0.0.1:11434/v1"
 > echo "Checking Ollama at $$OAI_BASE ..."
@@ -481,6 +489,7 @@ router-restart: router-down router-up router-status
 launch:
 > $(MAKE) up
 > $(MAKE) mcp-proxy-up
+> scripts/inference_backend_guard.sh assert-one
 > scripts/inference_runtime_policy.sh || true
 > $(MAKE) init
 > echo ">> launch complete - inference policy above, Ollama only starts when selected by profile/config"

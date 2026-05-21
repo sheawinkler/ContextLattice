@@ -69,6 +69,7 @@ Task inference defaults to `ORCH_INFER_PROVIDER=auto`. `gateway-go` detects the 
 - CUDA/ROCm priority: `vllm`, `openai-compatible`, `llama-cpp`, `lmstudio`, `ollama`.
 - CPU priority: `openai-compatible`, `llama-cpp`, `lmstudio`, `ollama`.
 - Supported provider ids: `vllm`, `vllm-metal`, `mlx`, `mtplx`, `openai-compatible`, `lmstudio`, `llama-cpp`, `ane_sidecar`, `ollama`.
+- Local helpers enforce one active LLM backend by default (`CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND=true`).
 
 Inspect live routing and benchmark configured backends:
 

@@ -330,6 +330,9 @@ func TestInferenceRuntimePolicyEndpoint(t *testing.T) {
 	if candidates, ok := payload["candidates"].([]any); !ok || len(candidates) == 0 {
 		t.Fatalf("expected runtime candidates, got %#v", payload["candidates"])
 	}
+	if !anyToBool(payload["singleActiveBackend"]) {
+		t.Fatalf("expected single-active backend policy to default true, payload=%#v", payload)
+	}
 }
 
 func TestInferenceMSeriesDetectionHonorsHostProfileOverride(t *testing.T) {
