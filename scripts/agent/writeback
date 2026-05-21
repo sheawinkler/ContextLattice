@@ -32,6 +32,7 @@ def main() -> int:
     parser.add_argument("--content-file", default="")
     parser.add_argument("--stdin", action="store_true")
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--strict", action="store_true", help="Exit non-zero when ContextLattice writeback is unavailable.")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
@@ -61,7 +62,32 @@ def main() -> int:
         "created_at": now_iso(),
         "tags": ["agent-writeback", args.kind],
     }
-    result = request_json("POST", "/memory/write", body, args.timeout)
+    try:
+        result = request_json("POST", "/memory/write", body, args.timeout)
+    except SystemExit as exc:
+        emit(
+            {
+                "ok": False,
+                "kind": args.kind,
+                "file": args.file,
+                "degraded": True,
+                "error": str(exc.code)[:1000],
+            },
+            args.pretty,
+        )
+        return 1 if args.strict else 0
+    except Exception as exc:
+        emit(
+            {
+                "ok": False,
+                "kind": args.kind,
+                "file": args.file,
+                "degraded": True,
+                "error": str(exc)[:1000],
+            },
+            args.pretty,
+        )
+        return 1 if args.strict else 0
     emit({"ok": bool(result.get("ok", True)), "kind": args.kind, "file": args.file, "write": result}, args.pretty)
     return 0
 
