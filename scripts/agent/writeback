@@ -26,14 +26,14 @@ def first_env(*names: str, fallback: str = "") -> str:
     return fallback
 
 
-def degraded_payload(kind: str, file_name: str, error: str, attempts: int) -> dict[str, object]:
+def failure_payload(kind: str, file_name: str, error: str, attempts: int) -> dict[str, object]:
     return {
         "ok": False,
         "kind": kind,
         "file": file_name,
         "status": "failed_after_retries",
         "persisted": False,
-        "degraded": True,
+        "structured_failure": True,
         "attempts": attempts,
         "error": error[:1000],
     }
@@ -142,7 +142,7 @@ def main() -> int:
     if result is None:
         queue_file = enqueue_local_writeback(body, args.kind, error)
         trigger_self_heal("writeback-failure")
-        payload = degraded_payload(args.kind, args.file, error, attempts)
+        payload = failure_payload(args.kind, args.file, error, attempts)
         payload["queued_local"] = True
         payload["queue_file"] = str(queue_file)
         emit(payload, args.pretty)

@@ -92,13 +92,13 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     return payload
 
 
-def degraded_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
+def failure_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
     return {
         "ok": False,
         "task_summary": query[:240],
         "context_budget_chars": budget_chars,
         "status": "failed_after_retries",
-        "degraded": True,
+        "structured_failure": True,
         "attempts": attempts,
         "error": error[:1000],
         "context_pack": {
@@ -186,7 +186,7 @@ def main() -> int:
     )
     if raw is None:
         trigger_self_heal("context-pack-failure")
-        emit(degraded_payload(args.query, args.budget_chars, error, attempts), args.pretty)
+        emit(failure_payload(args.query, args.budget_chars, error, attempts), args.pretty)
         return 0 if args.soft else 1
     emit(compact_context_pack(raw, args.query, args.budget_chars), args.pretty)
     return 0
