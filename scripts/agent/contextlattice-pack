@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import time
 from typing import Any
 
-from _common import emit, request_json
+from _common import REPO_ROOT, emit, request_json
 
 
 CAMEL_TO_SNAKE = {
@@ -124,6 +126,24 @@ def request_with_retries(path: str, payload: dict[str, Any], timeout: float, ret
     return None, last_error, attempts
 
 
+def trigger_self_heal(event: str) -> None:
+    if os.getenv("CONTEXTLATTICE_TRIGGER_SELF_HEAL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    script = REPO_ROOT / "scripts" / "orbstack_self_heal.sh"
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ["bash", str(script), "run-once", "--event", event],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        return
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("query")
@@ -165,6 +185,7 @@ def main() -> int:
         args.retry_delay,
     )
     if raw is None:
+        trigger_self_heal("context-pack-failure")
         emit(degraded_payload(args.query, args.budget_chars, error, attempts), args.pretty)
         return 0 if args.soft else 1
     emit(compact_context_pack(raw, args.query, args.budget_chars), args.pretty)

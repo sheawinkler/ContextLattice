@@ -158,3 +158,23 @@ writes cannot complete. A compact JSON failure replaces Python tracebacks, but
 it is still a failure. Use context-pack `--soft` only for non-critical startup
 orientation, not durable writes or required context retrieval. Writeback has no
 soft success path.
+
+If agent writeback cannot reach ContextLattice after retries, the wrapper writes
+the exact payload to a host-local durable queue under
+`~/.contextlattice/writeback_queue`, returns `persisted: false`, and exits
+non-zero. Drain it after recovery with:
+
+```bash
+scripts/agent/drain-writeback-queue
+```
+
+OrbStack repair has two layers:
+
+```bash
+scripts/orbstack_self_heal.sh run-once --event manual
+scripts/install_orbstack_self_heal_runner.sh
+```
+
+Agent read/write failures trigger `orbstack_self_heal.sh run-once` in the
+background. The launchd runner is the periodic fallback for cases where no agent
+operation happens while the VM is wedged.
