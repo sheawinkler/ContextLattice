@@ -119,6 +119,13 @@ false-fail during normal warmup.
 `caveman_mode.sh` is intentionally not installed as a startup hook. Use the
 `caveman` skill only when the user asks for terse/low-token output.
 
+Hook trust is deterministic. Run this after changing Codex hook JSON or managed
+hook commands:
+
+```bash
+scripts/agent/audit-codex-hook-trust --repair
+```
+
 ## Context compaction
 
 Codex 0.130.0 exposes `PreCompact` and `PostCompact` hook events. The installer
@@ -131,4 +138,17 @@ manual hook review when commands are unchanged.
 ```bash
 contextlattice_pre_compaction_write "current objective, blockers, next actions"
 contextlattice_post_compaction_read
+```
+
+The pre/post compaction hooks derive a compact handoff payload with
+`scripts/agent/compaction-handoff-payload`. The payload records session id, cwd,
+branch, changed files, commands, blockers, and next action when the hook input
+contains them. Post-compaction reads use those terms first so resume context is
+scoped to the interrupted session instead of broad historical notes.
+
+Context-pack shape is guarded by:
+
+```bash
+scripts/agent/audit-context-pack-schema
+scripts/agent/eval-skill-policy
 ```

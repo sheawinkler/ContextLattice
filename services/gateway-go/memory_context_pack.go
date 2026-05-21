@@ -76,6 +76,13 @@ func (s *server) buildContextPackResponse(
 	if value, present := requestPayload["query_expansion"]; present {
 		searchRequest["query_expansion"] = value
 	}
+	combinedSources := anyToBoolOrDefault(requestPayload["combined_sources"], true)
+	if _, present := requestPayload["wait_for_slow_sources"]; !present && combinedSources {
+		searchRequest["wait_for_slow_sources"] = true
+	}
+	if _, present := requestPayload["sync_slow_sources"]; !present && combinedSources {
+		searchRequest["sync_slow_sources"] = true
+	}
 
 	searchResponse, status, execErr := s.executeRetrieval(ctx, incomingHeaders, searchRequest, true)
 	if execErr != nil {
@@ -99,6 +106,9 @@ func (s *server) buildContextPackResponse(
 	}
 
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
+	sourceCoverage := contextPackSourceCoverage(searchResponse)
+	contextPack["sourceCoverage"] = sourceCoverage
+	contextPack["combinedSources"] = combinedSources
 	response := map[string]any{
 		"query":            query,
 		"context_pack":     contextPack,
@@ -107,6 +117,7 @@ func (s *server) buildContextPackResponse(
 		"retrieval_intent": searchResponse["retrieval_intent"],
 		"traffic_class":    searchResponse["traffic_class"],
 		"agent_id":         searchResponse["agent_id"],
+		"source_coverage":  sourceCoverage,
 	}
 	if includeRetrievalDebug {
 		if retrievalDebug, ok := searchResponse["retrieval_debug"]; ok {
@@ -168,21 +179,206 @@ func buildContextPackPayload(
 		}
 		resultRows = append(resultRows, rendered)
 	}
+	sections := contextPackAgentSections(factsAny, resultRows)
 
 	return map[string]any{
-		"query":             query,
-		"generatedAt":       nowUTCISO(),
-		"factualOnly":       true,
-		"strictNumericCopy": anyToBoolOrDefault(grounding["strict_numeric_copy"], true),
-		"facts":             factsAny,
-		"numericFacts":      numericFactsAny,
-		"citations":         citations,
-		"results":           resultRows,
-		"warnings":          parseWarnings(searchResponse["warnings"]),
-		"retrievalMode":     searchResponse["retrieval_mode"],
-		"retrievalIntent":   searchResponse["retrieval_intent"],
-		"agentId":           searchResponse["agent_id"],
+		"query":              query,
+		"generatedAt":        nowUTCISO(),
+		"factualOnly":        true,
+		"strictNumericCopy":  anyToBoolOrDefault(grounding["strict_numeric_copy"], true),
+		"facts":              factsAny,
+		"numericFacts":       numericFactsAny,
+		"citations":          citations,
+		"results":            resultRows,
+		"relevantDecisions":  sections["relevantDecisions"],
+		"filesToRead":        sections["filesToRead"],
+		"filesToAvoid":       sections["filesToAvoid"],
+		"capabilitiesToUse":  sections["capabilitiesToUse"],
+		"runbooks":           sections["runbooks"],
+		"knownFailureModes":  sections["knownFailureModes"],
+		"commands":           sections["commands"],
+		"acceptanceCriteria": sections["acceptanceCriteria"],
+		"warnings":           parseWarnings(searchResponse["warnings"]),
+		"retrievalMode":      searchResponse["retrieval_mode"],
+		"retrievalIntent":    searchResponse["retrieval_intent"],
+		"agentId":            searchResponse["agent_id"],
 	}
+}
+
+func contextPackSourceCoverage(searchResponse map[string]any) map[string]any {
+	summary := anyMap(searchResponse["source_summary"])
+	debug := anyMap(searchResponse["retrieval_debug"])
+	staged := anyMap(debug["staged_fetch"])
+	sourceCounts := anyMap(debug["source_counts"])
+	sourceOwners := anyMap(summary["source_owners"])
+	if len(sourceOwners) == 0 {
+		sourceOwners = anyMap(debug["source_owners"])
+	}
+	configured := anyToStringList(summary["sources"], 100)
+	if len(configured) == 0 {
+		configured = anyToStringList(debug["sources"], 100)
+	}
+	returned := anyToStringList(summary["returned_now"], 100)
+	pending := anyToStringList(summary["pending_sources"], 100)
+	warming := anyToStringList(summary["warming_sources"], 100)
+	timedOut := anyToStringList(summary["timed_out_sources"], 100)
+	failed := anyToStringList(summary["failed_sources"], 100)
+	budgetExceeded := anyToStringList(summary["budget_exceeded_sources"], 100)
+	skipped := anyToStringList(summary["skipped_sources"], 100)
+	unavailable := anyToStringList(summary["continuation_unavailable_sources"], 100)
+	queriedSet := map[string]struct{}{}
+	for _, list := range [][]string{configured, returned, pending, warming, timedOut, failed, budgetExceeded, skipped, unavailable} {
+		for _, source := range list {
+			queriedSet[source] = struct{}{}
+		}
+	}
+	rowCounts := map[string]int{}
+	for source, count := range sourceCounts {
+		normalized := strings.TrimSpace(strings.ToLower(source))
+		if normalized == "" {
+			continue
+		}
+		rowCounts[normalized] = anyToInt(count, 0)
+		queriedSet[normalized] = struct{}{}
+	}
+	complete := len(pending) == 0 && len(warming) == 0 && len(timedOut) == 0 && len(failed) == 0 && len(budgetExceeded) == 0 && len(skipped) == 0 && len(unavailable) == 0
+	return map[string]any{
+		"configured":                     configured,
+		"queried":                        mapKeysSorted(queriedSet),
+		"returned":                       returned,
+		"pending":                        pending,
+		"warming":                        warming,
+		"timed_out":                      timedOut,
+		"failed":                         failed,
+		"budget_exceeded":                budgetExceeded,
+		"skipped":                        skipped,
+		"continuation_unavailable":       unavailable,
+		"row_counts":                     rowCounts,
+		"source_owners":                  sourceOwners,
+		"complete":                       complete,
+		"blocking_slow_sources":          anyToBool(anyMap(debug["source_policy"])["blocking_slow_sources"]),
+		"sync_fallback_slow_sources":     anyToStringList(staged["sync_fallback_slow_sources"], 100),
+		"async_warm_slow_sources":        anyToStringList(staged["async_warm_slow_sources"], 100),
+		"fail_open_continuation_sources": anyToStringList(staged["fail_open_continuation_sources"], 100),
+		"effective_timeout_secs":         anyMap(staged["effective_timeout_secs"]),
+		"continuation_durable":           summary["continuation_durable"],
+		"retrieval_lifecycle":            searchResponse["retrieval_lifecycle"],
+	}
+}
+
+func contextPackAgentSections(facts []any, results []map[string]any) map[string]any {
+	sections := map[string][]any{
+		"relevantDecisions":  {},
+		"filesToRead":        {},
+		"filesToAvoid":       {},
+		"capabilitiesToUse":  {},
+		"runbooks":           {},
+		"knownFailureModes":  {},
+		"commands":           {},
+		"acceptanceCriteria": {},
+	}
+	seenFiles := map[string]struct{}{}
+	addFile := func(fileName string) {
+		fileName = strings.TrimSpace(fileName)
+		if fileName == "" {
+			return
+		}
+		if _, ok := seenFiles[fileName]; ok {
+			return
+		}
+		seenFiles[fileName] = struct{}{}
+		sections["filesToRead"] = append(sections["filesToRead"], fileName)
+	}
+	addText := func(section string, text string, source map[string]any) {
+		text = clipText(strings.TrimSpace(text), 360)
+		if text == "" {
+			return
+		}
+		item := map[string]any{"text": text}
+		for _, key := range []string{"project", "file", "source", "topic_path", "timestamp"} {
+			if value, ok := source[key]; ok && strings.TrimSpace(anyToString(value)) != "" {
+				item[key] = value
+			}
+		}
+		sections[section] = append(sections[section], item)
+	}
+	classify := func(text string, source map[string]any) {
+		lower := strings.ToLower(text)
+		fileName := strings.TrimSpace(anyToString(source["file"]))
+		topicPath := strings.TrimSpace(strings.ToLower(anyToString(source["topic_path"])))
+		addFile(fileName)
+		if strings.Contains(topicPath, "runbook") || strings.Contains(strings.ToLower(fileName), "runbook") {
+			addText("runbooks", text, source)
+		}
+		if containsAny(lower, []string{"decision", "decided", "choose", "chosen", "policy", "contract"}) {
+			addText("relevantDecisions", text, source)
+		}
+		if containsAny(lower, []string{"fail", "failure", "timeout", "blocked", "blocker", "regression", "risk", "vulnerab"}) {
+			addText("knownFailureModes", text, source)
+		}
+		if containsAny(lower, []string{"verify", "test", "check", "acceptance", "must pass", "criteria"}) {
+			addText("acceptanceCriteria", text, source)
+		}
+		if containsAny(lower, []string{"script", "hook", "contextlattice", "capability", "skill"}) {
+			addText("capabilitiesToUse", text, source)
+		}
+		for _, command := range extractBacktickCommands(text, 6) {
+			addText("commands", command, source)
+		}
+	}
+	for _, factAny := range facts {
+		fact, ok := factAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		classify(anyToString(fact["text"]), fact)
+	}
+	for _, row := range results {
+		classify(anyToString(row["summary"]), row)
+	}
+	for key, values := range sections {
+		if len(values) > 20 {
+			values = values[:20]
+		}
+		sections[key] = values
+	}
+	return map[string]any{
+		"relevantDecisions":  sections["relevantDecisions"],
+		"filesToRead":        sections["filesToRead"],
+		"filesToAvoid":       sections["filesToAvoid"],
+		"capabilitiesToUse":  sections["capabilitiesToUse"],
+		"runbooks":           sections["runbooks"],
+		"knownFailureModes":  sections["knownFailureModes"],
+		"commands":           sections["commands"],
+		"acceptanceCriteria": sections["acceptanceCriteria"],
+	}
+}
+
+func containsAny(text string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractBacktickCommands(text string, limit int) []string {
+	out := []string{}
+	parts := strings.Split(text, "`")
+	for idx := 1; idx < len(parts); idx += 2 {
+		candidate := strings.TrimSpace(parts[idx])
+		if candidate == "" {
+			continue
+		}
+		if strings.Contains(candidate, " ") || strings.Contains(candidate, "/") || strings.Contains(candidate, "-") {
+			out = append(out, candidate)
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func contextPackTopicRollup(topicRollup map[string]any) map[string]any {

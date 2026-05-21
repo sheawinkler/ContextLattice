@@ -1110,7 +1110,7 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 		case "/v1/retrieval/query":
 			retrievalCalls += 1
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/a.md","source":"qdrant","score":0.88,"summary":"context pack fact","topic_path":"runbooks/codex-integration","timestamp":"2026-03-30T00:00:00Z"}],"warnings":[]}`))
+			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/a.md","source":"qdrant","score":0.88,"summary":"decision: run ` + "`scripts/agent/audit-agent-context`" + ` and verify acceptance criteria","topic_path":"runbooks/codex-integration","timestamp":"2026-03-30T00:00:00Z"}],"warnings":[]}`))
 			return
 		case "/memory/context-pack":
 			proxyPathCalls += 1
@@ -1149,11 +1149,98 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	if strings.TrimSpace(anyToString(contextPack["query"])) != "gateway native context pack" {
 		t.Fatalf("unexpected context pack query: %#v", contextPack["query"])
 	}
+	if coverage, ok := payload["source_coverage"].(map[string]any); !ok || len(anyToStringList(coverage["returned"], 20)) == 0 {
+		t.Fatalf("expected source_coverage returned sources, got %#v", payload["source_coverage"])
+	}
+	if files := anyToStringList(contextPack["filesToRead"], 20); len(files) == 0 || files[0] != "notes/a.md" {
+		t.Fatalf("expected filesToRead to include notes/a.md, got %#v", contextPack["filesToRead"])
+	}
+	if commands, ok := contextPack["commands"].([]any); !ok || len(commands) == 0 {
+		t.Fatalf("expected extracted commands in context pack, got %#v", contextPack["commands"])
+	}
 	if retrievalCalls < 1 {
 		t.Fatalf("expected at least one retrieval backend call, got %d", retrievalCalls)
 	}
 	if proxyPathCalls != 0 {
 		t.Fatalf("expected zero backend /memory/context-pack proxy calls, got %d", proxyPathCalls)
+	}
+}
+
+func TestMemoryContextPackBlocksForConfiguredSlowSourcesByDefault(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant,mindsdb")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "mindsdb")
+	t.Setenv("GO_RETRIEVAL_DISABLE_SYNC_SLOW_FALLBACK", "false")
+	t.Setenv("MINDSDB_ENABLED", "false")
+
+	var mu sync.Mutex
+	calledSources := []string{}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		sources, _ := request["sources"].([]any)
+		source := ""
+		if len(sources) > 0 {
+			source = strings.TrimSpace(strings.ToLower(anyToString(sources[0])))
+		}
+		mu.Lock()
+		calledSources = append(calledSources, source)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		switch source {
+		case "qdrant":
+			_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"fast.md","summary":"fast source fact","score":0.9,"source":"qdrant"}],"warnings":[]}`))
+		case "mindsdb":
+			_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"slow.md","summary":"slow source runbook fact","score":0.8,"source":"mindsdb","topic_path":"runbooks/slow"}],"warnings":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"alpha","query":"combined context pack","retrieval_mode":"balanced","limit":5,"include_retrieval_debug":true}`
+	resp, err := http.Post(gateway.URL+"/memory/context-pack", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("context-pack request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode context-pack payload: %v", err)
+	}
+	mu.Lock()
+	sort.Strings(calledSources)
+	observed := strings.Join(calledSources, ",")
+	mu.Unlock()
+	if observed != "mindsdb,qdrant" {
+		t.Fatalf("expected context-pack to synchronously query fast and slow sources, got %s", observed)
+	}
+	coverage, _ := payload["source_coverage"].(map[string]any)
+	returned := anyToStringList(coverage["returned"], 20)
+	sort.Strings(returned)
+	if strings.Join(returned, ",") != "mindsdb,qdrant" {
+		t.Fatalf("expected coverage returned mindsdb,qdrant, got %#v", coverage)
+	}
+	if complete, _ := coverage["complete"].(bool); !complete {
+		t.Fatalf("expected complete source coverage, got %#v", coverage)
 	}
 }
 

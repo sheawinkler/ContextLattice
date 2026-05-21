@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Fixture-backed eval for skill/rule/script/hook policy."""
+
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
+from typing import Any
+
+from _common import emit, parse_frontmatter, read_text
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+FIXTURE_ROOT = SCRIPT_DIR / "fixtures" / "skill-policy"
+BROAD = re.compile(r"\b(always|every task|all tasks|required for|mandatory)\b", re.I)
+REPEATABLE = re.compile(r"\b(manually|on every turn|each time|copy and paste|repeat)\b", re.I)
+HOOKABLE = re.compile(r"\b(validate|check|audit|lint|size|frontmatter|trust|budget)\b", re.I)
+
+
+def evaluate_skill(path: Path) -> list[str]:
+    text = read_text(path)
+    meta, body = parse_frontmatter(text)
+    findings: list[str] = []
+    if not meta.get("name"):
+        findings.append("missing_name")
+    if not meta.get("description"):
+        findings.append("missing_description")
+    description = meta.get("description", "")
+    if BROAD.search(description):
+        findings.append("broad_activation_language")
+    if len(body) > 1800:
+        findings.append("skill_body_over_budget")
+    if "caveman" in text.lower() and BROAD.search(text):
+        findings.append("global_caveman_rule")
+    if REPEATABLE.search(text) and HOOKABLE.search(text):
+        findings.append("repeatable_instruction_should_be_script_or_hook")
+    return sorted(set(findings))
+
+
+def load_expected(path: Path) -> list[str]:
+    expected_path = path.with_suffix(".expected")
+    if not expected_path.exists():
+        return []
+    return sorted(line.strip() for line in expected_path.read_text().splitlines() if line.strip())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--fixtures", default=str(FIXTURE_ROOT))
+    args = parser.parse_args()
+
+    fixture_root = Path(args.fixtures)
+    cases: list[dict[str, Any]] = []
+    ok = True
+    for path in sorted(fixture_root.rglob("SKILL.md")):
+        observed = evaluate_skill(path)
+        expected = load_expected(path)
+        passed = observed == expected
+        ok = ok and passed
+        cases.append(
+            {
+                "path": str(path),
+                "ok": passed,
+                "expected": expected,
+                "observed": observed,
+            }
+        )
+    if not cases:
+        ok = False
+        cases.append({"ok": False, "reason": "no_fixtures", "path": str(fixture_root)})
+    emit({"ok": ok, "case_count": len(cases), "cases": cases}, args.pretty)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Build a compact, session-keyed ContextLattice compaction handoff payload."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from _common import emit, now_iso
+
+
+TEXT_KEYS = (
+    "summary",
+    "task_summary",
+    "objective",
+    "goal",
+    "prompt",
+    "message",
+    "reason",
+)
+SESSION_KEYS = ("session_id", "sessionId", "conversation_id", "conversationId", "id")
+
+
+def compact_text(value: str, limit: int = 1200) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def load_payload() -> Any:
+    raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"raw": raw[:1600]}
+
+
+def first_string(value: Any, keys: tuple[str, ...], accept_bare: bool = False) -> str:
+    if isinstance(value, str):
+        return compact_text(value) if accept_bare else ""
+    if isinstance(value, dict):
+        for key in keys:
+            if isinstance(value.get(key), str) and value[key].strip():
+                return compact_text(value[key])
+        for item in value.values():
+            found = first_string(item, keys, False)
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = first_string(item, keys, False)
+            if found:
+                return found
+    return ""
+
+
+def all_strings(value: Any, keys: tuple[str, ...], limit: int = 8) -> list[str]:
+    out: list[str] = []
+
+    def collect(item: Any) -> None:
+        if len(out) >= limit:
+            return
+        if isinstance(item, str):
+            text = compact_text(item, 360)
+            if text:
+                out.append(text)
+        elif isinstance(item, dict):
+            for nested in item.values():
+                collect(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                collect(nested)
+
+    def walk(item: Any) -> None:
+        if len(out) >= limit:
+            return
+        if isinstance(item, dict):
+            for key in keys:
+                if len(out) >= limit:
+                    return
+                if key in item:
+                    collect(item[key])
+            for nested in item.values():
+                walk(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                walk(nested)
+
+    walk(value)
+    seen = set()
+    deduped = []
+    for item in out:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped[:limit]
+
+
+def find_session_id(payload: Any) -> str:
+    env_value = os.getenv("CODEX_SESSION_ID") or os.getenv("CONTEXTLATTICE_SESSION_ID") or ""
+    if env_value.strip():
+        return compact_text(env_value, 160)
+    return first_string(payload, SESSION_KEYS)[:160]
+
+
+def git_branch(cwd: Path) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(cwd),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def git_changed_files(cwd: Path, limit: int = 40) -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=str(cwd),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    rows = []
+    for raw in proc.stdout.splitlines():
+        value = raw[3:].strip() if len(raw) > 3 else raw.strip()
+        if value:
+            rows.append(value)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def commands_from_payload(payload: Any, limit: int = 12) -> list[str]:
+    commands: list[str] = []
+
+    def walk(value: Any) -> None:
+        if len(commands) >= limit:
+            return
+        if isinstance(value, dict):
+            for key in ("command", "cmd", "shell_command"):
+                if isinstance(value.get(key), str) and value[key].strip():
+                    commands.append(compact_text(value[key], 240))
+            for key in ("commands", "commands_run", "command_history"):
+                if key in value:
+                    walk(value[key])
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+        elif isinstance(value, str):
+            text = compact_text(value, 240)
+            if text and any(token in text for token in (" ", "/", "-", "go test", "pytest", "npm ")):
+                commands.append(text)
+
+    walk(payload)
+    seen = set()
+    out = []
+    for command in commands:
+        if command in seen:
+            continue
+        seen.add(command)
+        out.append(command)
+    return out[:limit]
+
+
+def build_query(payload: dict[str, Any]) -> str:
+    terms = [
+        "context compaction handoff",
+        str(payload.get("project") or ""),
+        str(payload.get("session_id") or ""),
+        str(payload.get("branch") or ""),
+        Path(str(payload.get("cwd") or "")).name,
+        str(payload.get("summary") or ""),
+        str(payload.get("objective") or ""),
+        str(payload.get("next_action") or ""),
+    ]
+    return compact_text(" ".join(item for item in terms if item), 700)
+
+
+def build_payload(raw_payload: Any, fallback_summary: str) -> dict[str, Any]:
+    cwd = Path(os.getenv("PWD") or os.getcwd()).resolve()
+    project = os.getenv("CONTEXTLATTICE_PROJECT") or os.getenv("CONTEXTLATTICE_HOOK_PROJECT") or "contextlattice"
+    summary = first_string(raw_payload, TEXT_KEYS, accept_bare=True) or compact_text(fallback_summary)
+    if not summary:
+        summary = "continue objective-aligned execution after context compaction"
+    objective = first_string(raw_payload, ("objective", "goal", "task", "mission"))
+    next_action = first_string(raw_payload, ("next_action", "nextAction", "todo", "plan"))
+    blockers = all_strings(raw_payload, ("blocker", "blockers", "blocked", "failure", "error"), limit=8)
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "generated_at": now_iso(),
+        "event": first_string(raw_payload, ("event", "event_name", "hook_event")) or "context_compaction",
+        "session_id": find_session_id(raw_payload),
+        "project": project,
+        "cwd": str(cwd),
+        "branch": git_branch(cwd),
+        "summary": summary,
+        "objective": objective,
+        "next_action": next_action,
+        "blockers": blockers,
+        "changed_files": git_changed_files(cwd),
+        "commands_run": commands_from_payload(raw_payload),
+    }
+    payload["query_terms"] = build_query(payload)
+    return payload
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--fallback-summary", default="")
+    parser.add_argument("--summary", action="store_true", help="Emit compact JSON for storage as the handoff summary.")
+    parser.add_argument("--query", action="store_true", help="Emit only query terms for post-compaction readback.")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    payload = build_payload(load_payload(), args.fallback_summary)
+    if args.query:
+        print(payload["query_terms"])
+        return 0
+    if args.summary:
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return 0
+    emit(payload, args.pretty)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
