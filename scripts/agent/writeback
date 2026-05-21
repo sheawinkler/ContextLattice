@@ -61,7 +61,6 @@ def main() -> int:
     parser.add_argument("--content-file", default="")
     parser.add_argument("--stdin", action="store_true")
     parser.add_argument("--timeout", type=float, default=30)
-    parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
     parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--retry-delay", type=float, default=1.0)
@@ -97,7 +96,7 @@ def main() -> int:
     result, error, attempts = write_with_retries(body, args.timeout, max(0, args.retries), args.retry_delay)
     if result is None:
         emit(degraded_payload(args.kind, args.file, error, attempts), args.pretty)
-        return 0 if args.soft else 1
+        return 1
     emit({"ok": bool(result.get("ok", True)), "kind": args.kind, "file": args.file, "write": result}, args.pretty)
     return 0
 

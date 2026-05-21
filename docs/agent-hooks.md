@@ -155,5 +155,6 @@ scripts/agent/eval-skill-policy
 
 Agent ContextLattice wrappers retry and fail non-zero by default when reads or
 writes cannot complete. A compact JSON failure replaces Python tracebacks, but
-it is still a failure. Use `--soft` only for non-critical startup orientation,
-not durable writes or required context retrieval.
+it is still a failure. Use context-pack `--soft` only for non-critical startup
+orientation, not durable writes or required context retrieval. Writeback has no
+soft success path.
