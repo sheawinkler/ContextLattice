@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Audit or repair Codex hook trust hashes for ContextLattice-managed hooks."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+from audit_compaction_hooks_import import command_hooks_for, hook_hash
+
+
+EVENT_LABELS = {
+    "SessionStart": "session_start",
+    "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
+}
+MANAGED_TAILS = {
+    "contextlattice_agent_start.sh",
+    "contextlattice_pre_compaction_write.sh",
+    "contextlattice_post_compaction_read.sh",
+}
+
+
+def parse_trusted_hashes(config_path: Path) -> dict[str, str]:
+    if not config_path.exists():
+        return {}
+    state: dict[str, str] = {}
+    current = ""
+    for raw in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if line.startswith('[hooks.state."') and line.endswith('"]'):
+            current = line[len('[hooks.state."') : -2]
+            continue
+        if current and line.startswith("trusted_hash"):
+            _, value = line.split("=", 1)
+            state[current] = value.strip().strip('"')
+    return state
+
+
+def expected_entries(hooks_path: Path) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    payload = json.loads(hooks_path.read_text(encoding="utf-8")) if hooks_path.exists() else {}
+    entries: dict[str, str] = {}
+    findings: list[dict[str, Any]] = []
+    for event, label in EVENT_LABELS.items():
+        for group_index, hook_index, matcher, hook in command_hooks_for(payload, event):
+            command = str(hook.get("command") or "")
+            if not any(command.endswith(tail) for tail in MANAGED_TAILS):
+                continue
+            key = f"{hooks_path}:{label}:{group_index}:{hook_index}"
+            entries[key] = hook_hash(event, matcher, hook)
+    if not entries:
+        findings.append({"severity": "warn", "reason": "no_managed_hooks_found", "path": str(hooks_path)})
+    return entries, findings
+
+
+def repair_config(config_path: Path, hooks_path: Path, entries: dict[str, str]) -> None:
+    text = config_path.read_text(encoding="utf-8", errors="replace") if config_path.exists() else ""
+    managed_prefixes = tuple(f"{hooks_path}:{label}:" for label in EVENT_LABELS.values())
+    lines = text.splitlines()
+    kept: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if line.startswith('[hooks.state."') and line.endswith('"]'):
+            key = line[len('[hooks.state."') : -2]
+            if any(key.startswith(prefix) for prefix in managed_prefixes):
+                idx += 1
+                while idx < len(lines) and not lines[idx].startswith("["):
+                    idx += 1
+                continue
+        kept.append(line)
+        idx += 1
+    text = "\n".join(kept).rstrip() + "\n"
+    if "[hooks.state]" not in text:
+        text += "\n[hooks.state]\n"
+    for key, value in sorted(entries.items()):
+        text += f'\n[hooks.state."{key}"]\ntrusted_hash = "{value}"\n'
+    config_path.write_text(text, encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hooks-json", default=str(Path.home() / ".codex" / "hooks.json"))
+    parser.add_argument("--config", default=str(Path.home() / ".codex" / "config.toml"))
+    parser.add_argument("--repair", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    hooks_path = Path(args.hooks_json).expanduser()
+    config_path = Path(args.config).expanduser()
+    if not hooks_path.exists():
+        emit({"ok": True, "skipped": True, "reason": "hooks_json_missing", "path": str(hooks_path)}, args.pretty)
+        return 0
+    entries, findings = expected_entries(hooks_path)
+    trusted = parse_trusted_hashes(config_path)
+    mismatches = []
+    for key, expected in entries.items():
+        actual = trusted.get(key)
+        if actual != expected:
+            mismatches.append({"key": key, "expected_hash": expected, "trusted_hash": actual})
+    if mismatches and args.repair:
+        repair_config(config_path, hooks_path, entries)
+        trusted = parse_trusted_hashes(config_path)
+        mismatches = [
+            {"key": key, "expected_hash": expected, "trusted_hash": trusted.get(key)}
+            for key, expected in entries.items()
+            if trusted.get(key) != expected
+        ]
+    ok = not mismatches
+    emit(
+        {
+            "ok": ok,
+            "hooks_json": str(hooks_path),
+            "config": str(config_path),
+            "managed_hook_count": len(entries),
+            "mismatches": mismatches,
+            "findings": findings,
+            "repaired": bool(args.repair and ok),
+        },
+        args.pretty,
+    )
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

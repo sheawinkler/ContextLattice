@@ -61,6 +61,25 @@ gmake quickstart
 curl -fsS http://127.0.0.1:8075/health | jq
 ```
 
+## Model Runtime
+
+Task inference defaults to `ORCH_INFER_PROVIDER=auto`. `gateway-go` detects the host profile and probes local backends before selecting a route.
+
+- Apple Silicon priority: `vllm-metal`, `mlx`, `ane_sidecar`, `llama-cpp`, `ollama`.
+- CUDA/ROCm priority: `vllm`, `openai-compatible`, `llama-cpp`, `lmstudio`, `ollama`.
+- CPU priority: `openai-compatible`, `llama-cpp`, `lmstudio`, `ollama`.
+- Supported provider ids: `vllm`, `vllm-metal`, `mlx`, `mtplx`, `openai-compatible`, `lmstudio`, `llama-cpp`, `ane_sidecar`, `ollama`.
+- Local helpers enforce one active LLM backend by default (`CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND=true`).
+
+Inspect live routing and benchmark configured backends:
+
+```bash
+scripts/inference_runtime_policy.sh
+scripts/benchmark_inference_backends.sh
+```
+
+Embedding defaults to the Rust `fastembed-rs` sidecar. Ollama stays available as an explicit compatibility fallback, not the preferred embedding path.
+
 ## Agent CLI
 
 Installer and quickstart paths install agent helpers under `~/.contextlattice/bin`.

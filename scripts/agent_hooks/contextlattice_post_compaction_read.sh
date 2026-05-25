@@ -8,7 +8,15 @@ source "${SCRIPT_DIR}/common.sh"
 contextlattice_env
 project="${CONTEXTLATTICE_PROJECT:-contextlattice}"
 topic="${CONTEXTLATTICE_COMPACTION_TOPIC_PATH:-runbooks/context-compaction-handoff}"
-query="${CONTEXTLATTICE_COMPACTION_QUERY:-context compaction handoff mission objective goal blockers next actions}"
+query="${CONTEXTLATTICE_COMPACTION_QUERY:-}"
+stdin_payload=""
+if [[ ! -t 0 ]]; then
+  stdin_payload="$(cat || true)"
+fi
+if [[ -z "${query}" && -n "${stdin_payload}" ]]; then
+  query="$(printf '%s' "${stdin_payload}" | python3 "${SCRIPT_DIR}/../agent/compaction-handoff-payload" --query)"
+fi
+query="${query:-context compaction handoff mission objective goal blockers next actions}"
 timeout="${CONTEXTLATTICE_HOOK_TIMEOUT_SECS:-30}"
 base="${CONTEXTLATTICE_ORCHESTRATOR_URL%/}"
 

@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Replay locally spooled agent writebacks into ContextLattice."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from _common import HOME, emit, request_json
+
+
+def queue_dir() -> Path:
+    return Path(os.getenv("CONTEXTLATTICE_WRITEBACK_QUEUE_DIR") or HOME / ".contextlattice" / "writeback_queue")
+
+
+def pending_files(root: Path, limit: int) -> list[Path]:
+    if not root.exists():
+        return []
+    return [path for path in sorted(root.glob("*.json")) if path.is_file()][: max(1, limit)]
+
+
+def replay_file(path: Path, timeout: float, keep_done: bool) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        failed = path.parent / "failed" / path.name
+        failed.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(failed)
+        return {"ok": False, "file": str(path), "reason": "invalid_queue_json", "detail": str(exc)[:240]}
+    body = payload.get("body") if isinstance(payload, dict) else None
+    if not isinstance(body, dict):
+        failed = path.parent / "failed" / path.name
+        failed.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(failed)
+        return {"ok": False, "file": str(path), "reason": "missing_body"}
+    try:
+        result = request_json("POST", "/memory/write", body, timeout)
+    except Exception as exc:
+        payload["drain_attempts"] = int(payload.get("drain_attempts") or 0) + 1
+        payload["last_drain_error"] = str(exc)[:1000]
+        path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+        return {
+            "ok": False,
+            "file": str(path),
+            "reason": "write_failed",
+            "attempts": payload["drain_attempts"],
+            "detail": str(exc)[:240],
+        }
+    if keep_done:
+        done = path.parent / "done" / path.name
+        done.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(done)
+    else:
+        path.unlink()
+    return {"ok": bool(result.get("ok", True)), "file": str(path), "write": result}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--queue-dir", default="")
+    parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--keep-done", action="store_true")
+    parser.add_argument("--soft", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    root = Path(args.queue_dir).expanduser() if args.queue_dir else queue_dir()
+    results = [replay_file(path, args.timeout, args.keep_done) for path in pending_files(root, args.limit)]
+    failed = [item for item in results if not item.get("ok")]
+    payload = {
+        "ok": not failed,
+        "queue_dir": str(root),
+        "attempted": len(results),
+        "succeeded": len(results) - len(failed),
+        "failed": len(failed),
+        "results": results,
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] or args.soft else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

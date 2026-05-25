@@ -22,12 +22,6 @@ try:
         resolve_orchestrator_api_key,
     )
     from scripts.context_expansion_runtime import ContextExpansionRuntime
-    from scripts.inference_router import (
-        InferenceRoute,
-        call_chat_completion,
-        format_route_label,
-        resolve_inference_route,
-    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from contextlattice_client import (  # type: ignore[no-redef]
         ContextLatticeClient,
@@ -35,12 +29,6 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
         resolve_orchestrator_api_key,
     )
     from context_expansion_runtime import ContextExpansionRuntime
-    from inference_router import (  # type: ignore[no-redef]
-        InferenceRoute,
-        call_chat_completion,
-        format_route_label,
-        resolve_inference_route,
-    )
 
 DEFAULT_ORCH_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
@@ -67,7 +55,7 @@ def _gateway_inference_enabled() -> bool:
 
 
 def _gateway_inference_required() -> bool:
-    return _env_bool("TASK_INFERENCE_GATEWAY_REQUIRED", False)
+    return _env_bool("TASK_INFERENCE_GATEWAY_REQUIRED", True)
 
 
 def _build_task_messages(task: dict[str, Any], context_prompt: str | None = None) -> list[dict[str, str]]:
@@ -87,16 +75,6 @@ def _build_task_messages(task: dict[str, Any], context_prompt: str | None = None
         messages.append({"role": "system", "content": context_prompt})
     messages.append({"role": "user", "content": body})
     return messages
-
-
-def _run_llm_task(
-    route: InferenceRoute,
-    model: str,
-    task: dict[str, Any],
-    context_prompt: str | None = None,
-) -> str:
-    messages = _build_task_messages(task, context_prompt=context_prompt)
-    return call_chat_completion(route, model, messages)
 
 
 def _run_llm_task_via_gateway(
@@ -128,18 +106,14 @@ def _run_llm_task_via_gateway(
 
 def _format_route_label_from_payload(
     route_payload: dict[str, Any],
-    fallback: InferenceRoute | None = None,
 ) -> str:
-    fallback_provider = fallback.provider if fallback is not None else ""
-    provider = str(route_payload.get("provider") or fallback_provider).strip().lower()
+    provider = str(route_payload.get("provider") or "").strip().lower()
     if provider == "ollama_coreml":
         return "ollama/coreml"
     if provider == "ane_sidecar":
         return "ane_sidecar"
     if provider:
         return provider
-    if fallback is not None:
-        return format_route_label(fallback)
     return "unknown"
 
 
@@ -273,56 +247,45 @@ def _handle_task(
     control_plane_url = str(
         os.getenv("TASK_INFERENCE_CONTROL_PLANE_URL", DEFAULT_INFERENCE_CONTROL_PLANE_URL)
     ).strip() or orchestrator_url
-    fallback_route: InferenceRoute | None = None
     route_payload: dict[str, Any] = {}
 
-    if _gateway_inference_enabled():
-        try:
-            route_response = _post(
-                control_plane_url,
-                "/v1/inference/route",
-                {
-                    "provider": provider,
-                    "base_url": base_url_override,
-                    "api_key": api_key or "",
-                },
-                timeout=20.0,
-            )
-            route_candidate = route_response.get("route")
-            if isinstance(route_candidate, dict):
-                route_payload = dict(route_candidate)
-        except Exception as exc:
-            if _gateway_inference_required():
-                _post(
-                    orchestrator_url,
-                    f"/agents/tasks/{task['id']}/status",
-                    {"status": "failed", "message": f"Go inference route error: {exc}"},
-                )
-                return
+    if not _gateway_inference_enabled():
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {"status": "failed", "message": "Go inference gateway is disabled; Python inference router is archived"},
+        )
+        return
+
+    try:
+        route_response = _post(
+            control_plane_url,
+            "/v1/inference/route",
+            {
+                "provider": provider,
+                "base_url": base_url_override,
+                "api_key": api_key or "",
+            },
+            timeout=20.0,
+        )
+        route_candidate = route_response.get("route")
+        if isinstance(route_candidate, dict):
+            route_payload = dict(route_candidate)
+    except Exception as exc:
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {"status": "failed", "message": f"Go inference route error: {exc}"},
+        )
+        return
 
     if not route_payload:
-        try:
-            fallback_route = resolve_inference_route(
-                provider,
-                base_url_override=base_url_override,
-                api_key=api_key,
-            )
-        except Exception as exc:
-            _post(
-                orchestrator_url,
-                f"/agents/tasks/{task['id']}/status",
-                {"status": "failed", "message": f"Inference route error: {exc}"},
-            )
-            return
-        route_payload = {
-            "requested_provider": fallback_route.requested_provider,
-            "provider": fallback_route.provider,
-            "transport": fallback_route.transport,
-            "base_url": fallback_route.base_url,
-            "reason": fallback_route.reason,
-            "coreml_enabled": fallback_route.coreml_enabled,
-            "sidecar_enabled": fallback_route.sidecar_enabled,
-        }
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {"status": "failed", "message": "Go inference route returned no route payload"},
+        )
+        return
 
     task_payload = task.get("payload") or {}
     topic_path = task_payload.get("topic_path") or task_payload.get("topicPath")
@@ -359,13 +322,10 @@ def _handle_task(
         return
     agent_choice = (task.get("agent") or agent).lower()
     cmd = _runner_cmd_for_agent(agent_choice)
-    route_provider = str(route_payload.get("provider") or (fallback_route.provider if fallback_route else provider))
-    route_base_url = str(
-        route_payload.get("base_url")
-        or (fallback_route.base_url if fallback_route else (base_url_override or ""))
-    )
-    route_reason = str(route_payload.get("reason") or (fallback_route.reason if fallback_route else ""))
-    route_label = _format_route_label_from_payload(route_payload, fallback_route)
+    route_provider = str(route_payload.get("provider") or provider)
+    route_base_url = str(route_payload.get("base_url") or (base_url_override or ""))
+    route_reason = str(route_payload.get("reason") or "")
+    route_label = _format_route_label_from_payload(route_payload)
     env = os.environ.copy()
     env.update(
         {
@@ -379,7 +339,7 @@ def _handle_task(
             "TASK_BASE_URL": route_base_url,
             "TASK_API_KEY": str(api_key or ""),
             "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
-            "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
+            "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
             "TASK_CONTEXT_BUNDLE": _serialize_env_json(context_bundle),
             "TASK_CONTEXT_PROMPT": context_prompt,
             "TASK_TOOL_CONTEXT_SLICES": _serialize_env_json(
@@ -433,7 +393,6 @@ def _handle_task(
     try:
         output: str | None = None
         active_route_payload = dict(route_payload)
-        gateway_error: Exception | None = None
         if _gateway_inference_enabled():
             try:
                 output, gateway_route_payload = _run_llm_task_via_gateway(
@@ -448,42 +407,14 @@ def _handle_task(
                 if gateway_route_payload:
                     active_route_payload = dict(gateway_route_payload)
             except Exception as exc:
-                gateway_error = exc
                 if _gateway_inference_required():
                     raise RuntimeError(f"go inference control plane required but unavailable: {exc}") from exc
         if output is None:
-            if fallback_route is None:
-                fallback_route = resolve_inference_route(
-                    provider,
-                    base_url_override=base_url_override,
-                    api_key=api_key,
-                )
-            output = _run_llm_task(
-                fallback_route,
-                model,
-                task,
-                context_prompt=context_prompt,
-            )
-            if gateway_error is not None:
-                prior_reason = str(active_route_payload.get("reason") or "").strip()
-                active_route_payload["reason"] = (
-                    f"{prior_reason}; gateway fallback: {gateway_error}"
-                    if prior_reason
-                    else f"gateway fallback: {gateway_error}"
-                )
-        run_provider = str(
-            active_route_payload.get("provider")
-            or (fallback_route.provider if fallback_route else route_provider)
-        )
-        run_base_url = str(
-            active_route_payload.get("base_url")
-            or (fallback_route.base_url if fallback_route else route_base_url)
-        )
-        run_reason = str(
-            active_route_payload.get("reason")
-            or (fallback_route.reason if fallback_route else route_reason)
-        )
-        run_route_label = _format_route_label_from_payload(active_route_payload, fallback_route)
+            raise RuntimeError("Go inference control plane returned no output")
+        run_provider = str(active_route_payload.get("provider") or route_provider)
+        run_base_url = str(active_route_payload.get("base_url") or route_base_url)
+        run_reason = str(active_route_payload.get("reason") or route_reason)
+        run_route_label = _format_route_label_from_payload(active_route_payload)
         project = task.get("project") or "_global"
         file_name = f"task_runs/{task['id']}.md"
         _write_memory(orchestrator_url, project, file_name, _format_result(task, output), topic_path=topic_path)
@@ -530,7 +461,7 @@ def _handle_task(
             task=task,
             bundle=context_bundle,
             output=f"Runner error: {exc}",
-            provider=_format_route_label_from_payload(route_payload, fallback_route),
+            provider=_format_route_label_from_payload(route_payload),
             model=model,
             status="failed",
         )

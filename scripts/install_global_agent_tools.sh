@@ -227,44 +227,113 @@ fi
 if [[ "$INSTALL_CODEX_HOOKS" == "1" ]]; then
   mkdir -p "$HOME/.codex/hooks"
   copy_script "${ROOT_DIR}/config/codex/contextlattice_agent_start.sh" "$HOME/.codex/hooks/contextlattice_agent_start.sh"
-  python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/contextlattice_agent_start.sh" <<'PY'
+  copy_script "${ROOT_DIR}/config/codex/contextlattice_pre_compaction_write.sh" "$HOME/.codex/hooks/contextlattice_pre_compaction_write.sh"
+  copy_script "${ROOT_DIR}/config/codex/contextlattice_post_compaction_read.sh" "$HOME/.codex/hooks/contextlattice_post_compaction_read.sh"
+  python3 - "$HOME/.codex/hooks.json" \
+    "$HOME/.codex/hooks/contextlattice_agent_start.sh" \
+    "$HOME/.codex/hooks/contextlattice_pre_compaction_write.sh" \
+    "$HOME/.codex/hooks/contextlattice_post_compaction_read.sh" <<'PY'
 import json
+import hashlib
 import pathlib
 import sys
 
 hooks_path = pathlib.Path(sys.argv[1])
 agent_start = sys.argv[2]
+pre_compact = sys.argv[3]
+post_compact = sys.argv[4]
+config_path = hooks_path.with_name("config.toml")
+event_labels = {
+    "SessionStart": "session_start",
+    "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
+}
 try:
     payload = json.loads(hooks_path.read_text()) if hooks_path.exists() else {}
 except Exception:
     payload = {}
 root = payload.setdefault("hooks", {})
-session = root.setdefault("SessionStart", [])
-entry = None
-for item in session:
-    if isinstance(item, dict) and item.get("matcher") == "startup|resume":
-        entry = item
-        break
-if entry is None:
-    entry = {"matcher": "startup|resume", "hooks": []}
-    session.append(entry)
-hooks = entry.setdefault("hooks", [])
-hooks[:] = [
-    hook for hook in hooks
-    if not (isinstance(hook, dict) and str(hook.get("command", "")).endswith("/caveman_mode.sh"))
-]
 
-def upsert(command, timeout, status):
+def hook_group(event, matcher):
+    groups = root.setdefault(event, [])
+    for item in groups:
+        if isinstance(item, dict) and item.get("matcher") == matcher:
+            return item
+    item = {"matcher": matcher, "hooks": []}
+    groups.append(item)
+    return item
+
+def upsert(event, matcher, command, timeout, status):
+    hooks = hook_group(event, matcher).setdefault("hooks", [])
+    hooks[:] = [
+        hook for hook in hooks
+        if not (isinstance(hook, dict) and str(hook.get("command", "")).endswith("/caveman_mode.sh"))
+    ]
     for hook in hooks:
         if isinstance(hook, dict) and hook.get("command") == command:
             hook.update({"type": "command", "timeout": timeout, "statusMessage": status})
             return
     hooks.append({"type": "command", "command": command, "timeout": timeout, "statusMessage": status})
 
-upsert(agent_start, 90, "Running ContextLattice agent start hooks")
+upsert("SessionStart", "startup|resume", agent_start, 90, "Running ContextLattice agent start hooks")
+upsert("PreCompact", ".*", pre_compact, 30, "Writing ContextLattice compaction checkpoint")
+upsert("PostCompact", ".*", post_compact, 30, "Reading ContextLattice compaction checkpoint")
 hooks_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+def hook_hash(event, matcher, hook):
+    normalized = {
+        "type": "command",
+        "command": str(hook.get("command") or ""),
+        "timeout": max(1, int(hook.get("timeout") or 600)),
+        "async": bool(hook.get("async", False)),
+    }
+    if hook.get("statusMessage") is not None:
+        normalized["statusMessage"] = str(hook.get("statusMessage"))
+    identity = {"event_name": event_labels[event], "hooks": [normalized]}
+    if matcher is not None:
+        identity["matcher"] = matcher
+    raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+state_entries = {}
+for event in ("SessionStart", "PreCompact", "PostCompact"):
+    for group_index, group in enumerate(root.get(event) or []):
+        if not isinstance(group, dict):
+            continue
+        matcher = group.get("matcher")
+        matcher = str(matcher) if matcher is not None else None
+        for hook_index, hook in enumerate(group.get("hooks") or []):
+            if not isinstance(hook, dict) or hook.get("type") != "command":
+                continue
+            command = str(hook.get("command") or "")
+            if command in {agent_start, pre_compact, post_compact}:
+                key = f"{hooks_path}:{event_labels[event]}:{group_index}:{hook_index}"
+                state_entries[key] = hook_hash(event, matcher, hook)
+
+text = config_path.read_text() if config_path.exists() else ""
+managed_prefixes = tuple(f"{hooks_path}:{label}:" for label in event_labels.values())
+lines = text.splitlines()
+kept = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if line.startswith('[hooks.state."') and line.endswith('"]'):
+        key = line[len('[hooks.state."'):-2]
+        if any(key.startswith(prefix) for prefix in managed_prefixes):
+            i += 1
+            while i < len(lines) and not lines[i].startswith("["):
+                i += 1
+            continue
+    kept.append(line)
+    i += 1
+text = "\n".join(kept).rstrip() + "\n"
+if "[hooks.state]" not in text:
+    text += "\n[hooks.state]\n"
+for key, value in sorted(state_entries.items()):
+    text += f'\n[hooks.state."{key}"]\ntrusted_hash = "{value}"\n'
+config_path.write_text(text)
 PY
-  log "Installed Codex SessionStart hooks in $HOME/.codex/hooks.json"
+  log "Installed Codex SessionStart, PreCompact, and PostCompact hooks in $HOME/.codex/hooks.json"
 fi
 
 log "Installed global ContextLattice tools:"

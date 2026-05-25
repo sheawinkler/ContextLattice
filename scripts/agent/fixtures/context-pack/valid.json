@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "task_summary": "fixture",
+  "context_budget_chars": 2500,
+  "source_coverage": {
+    "configured": ["qdrant", "mindsdb"],
+    "queried": ["qdrant", "mindsdb"],
+    "returned": ["qdrant", "mindsdb"],
+    "pending": [],
+    "complete": true
+  },
+  "context_pack": {
+    "query": "fixture",
+    "retrieval_mode": "balanced",
+    "retrieval_intent": "decision",
+    "source_coverage": {
+      "configured": ["qdrant", "mindsdb"],
+      "returned": ["qdrant", "mindsdb"],
+      "complete": true
+    },
+    "facts": [],
+    "numeric_facts": [],
+    "citations": [],
+    "results": [],
+    "relevant_decisions": [],
+    "files_to_read": [],
+    "files_to_avoid": [],
+    "capabilities_to_use": [],
+    "runbooks": [],
+    "known_failure_modes": [],
+    "commands": [],
+    "acceptance_criteria": []
+  },
+  "writeback_required": true
+}

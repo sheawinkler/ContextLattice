@@ -1,8 +1,34 @@
 # OSS Runner + ANE Sidecar Implementation Plan
 
-Status: Draft for execution planning  
-Scope: Planning only (no runtime behavior changes in this document)  
+Status: Implemented for gateway-go runtime path (2026-03-22)
+Scope: Execution plan + completion notes
 Related issue: `#68` ([Backlog] OSS agent runners + ANE sidecar compute backend for Ollama)
+
+## Implementation Status (2026-03-22)
+
+Completed in repository:
+1. Inference provider routing now lives in `gateway-go`:
+   - `ORCH_INFER_PROVIDER=auto|vllm|vllm-metal|mlx|mtplx|openai-compatible|ollama|ane_sidecar`
+   - hardware-aware provider priority with health probes
+   - ANE sidecar health probe + retry + fallback path
+   - legacy Python routing helpers archived under `archive/scripts/`
+2. Task worker integration completed:
+   - `scripts/task_agent_worker.py`
+   - `scripts/agent_runners/generic_runner.py`
+3. Canary OSS runner integration expanded:
+   - Added runner command routing for `opencode`, `goose`, `eliza`
+   - Added wrappers in `scripts/agent_runners/{opencode_runner.py,goose_runner.py,eliza_runner.py}`
+4. Runtime/env wiring added:
+   - `config/env/strict_runtime.env`
+   - `.env.example`
+5. Verification:
+   - `services/gateway-go/inference_test.go`
+   - synthetic route benchmark artifact:
+     `bench/results/ane_sidecar_route_bench_20260322T2005Z.json`
+
+Notes:
+- The benchmark above is a synthetic transport-path benchmark using mock local endpoints; it validates routing overhead/fallback behavior, not true ANE model-compute gains.
+- Real ANE throughput/quality benchmarking remains an operational follow-up when a live ANE sidecar is available on target hardware.
 
 ## 1) Objective
 Implement a production-safe path to:
@@ -13,7 +39,7 @@ Implement a production-safe path to:
 4. Validate measurable performance gains before broader rollout.
 
 ## 2) Platform Constraint
-ANE acceleration applies only to macOS on Apple Silicon (M-series).  
+ANE acceleration applies only to macOS on Apple Silicon (M-series).
 Non-M-series systems remain on existing provider routes (Ollama/CPU/GPU) with no ANE dependency.
 
 ## 3) Non-goals
@@ -440,4 +466,3 @@ Go requires all of:
 5. telemetry coverage complete
 
 No-go if any gate fails; remain on existing stable provider path and iterate.
-

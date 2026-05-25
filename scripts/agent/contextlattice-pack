@@ -4,8 +4,144 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import subprocess
+import time
+from typing import Any
 
-from _common import emit, request_json
+from _common import REPO_ROOT, emit, request_json
+
+
+CAMEL_TO_SNAKE = {
+    "relevantDecisions": "relevant_decisions",
+    "filesToRead": "files_to_read",
+    "filesToAvoid": "files_to_avoid",
+    "capabilitiesToUse": "capabilities_to_use",
+    "runbooks": "runbooks",
+    "knownFailureModes": "known_failure_modes",
+    "commands": "commands",
+    "acceptanceCriteria": "acceptance_criteria",
+}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def compact_items(value: Any, limit: int) -> list[Any]:
+    out = []
+    for item in as_list(value)[:limit]:
+        if isinstance(item, dict):
+            compact = {}
+            for key in ("text", "file", "source", "topic_path", "project", "score", "summary", "timestamp"):
+                if key in item and item[key] not in ("", None):
+                    compact[key] = item[key]
+            out.append(compact or item)
+        else:
+            out.append(item)
+    return out
+
+
+def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> dict[str, Any]:
+    pack = raw.get("context_pack") if isinstance(raw.get("context_pack"), dict) else {}
+    source_coverage = raw.get("source_coverage") or pack.get("sourceCoverage") or {}
+    facts = compact_items(pack.get("facts"), 8)
+    numeric_facts = compact_items(pack.get("numericFacts"), 8)
+    results = compact_items(pack.get("results"), 10)
+    context_pack: dict[str, Any] = {
+        "query": pack.get("query") or raw.get("query") or query,
+        "retrieval_mode": raw.get("retrieval_mode") or pack.get("retrievalMode"),
+        "retrieval_intent": raw.get("retrieval_intent") or pack.get("retrievalIntent"),
+        "source_coverage": source_coverage,
+        "facts": facts,
+        "numeric_facts": numeric_facts,
+        "citations": compact_items(pack.get("citations"), 12),
+        "results": results,
+    }
+    for camel, snake in CAMEL_TO_SNAKE.items():
+        context_pack[snake] = compact_items(pack.get(camel), 12)
+    payload = {
+        "ok": True,
+        "task_summary": query[:240],
+        "context_budget_chars": budget_chars,
+        "clipped": False,
+        "fact_count": len(as_list(pack.get("facts"))),
+        "result_count": len(as_list(pack.get("results"))),
+        "source_coverage": source_coverage,
+        "warnings": as_list(raw.get("warnings"))[:10],
+        "context_pack": context_pack,
+        "writeback_required": True,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    if len(encoded) <= budget_chars:
+        return payload
+    payload["clipped"] = True
+    context_pack["facts"] = facts[:4]
+    context_pack["numeric_facts"] = numeric_facts[:4]
+    context_pack["citations"] = context_pack["citations"][:6]
+    context_pack["results"] = results[:5]
+    for snake in CAMEL_TO_SNAKE.values():
+        context_pack[snake] = context_pack[snake][:6]
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    if len(encoded) > budget_chars:
+        context_pack["results"] = []
+        context_pack["citations"] = []
+        context_pack["facts"] = context_pack["facts"][:2]
+        context_pack["numeric_facts"] = context_pack["numeric_facts"][:2]
+    return payload
+
+
+def failure_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "task_summary": query[:240],
+        "context_budget_chars": budget_chars,
+        "status": "failed_after_retries",
+        "structured_failure": True,
+        "attempts": attempts,
+        "error": error[:1000],
+        "context_pack": {
+            "query": query,
+            "facts": [],
+            "results": [],
+            "source_coverage": {"configured": [], "returned": [], "complete": False},
+        },
+        "writeback_required": True,
+    }
+
+
+def request_with_retries(path: str, payload: dict[str, Any], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, Any] | None, str, int]:
+    attempts = max(1, retries + 1)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            return request_json("POST", path, payload, timeout), "", attempt
+        except SystemExit as exc:
+            last_error = str(exc.code)
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < attempts:
+            time.sleep(max(0.0, retry_delay) * attempt)
+    return None, last_error, attempts
+
+
+def trigger_self_heal(event: str) -> None:
+    if os.getenv("CONTEXTLATTICE_TRIGGER_SELF_HEAL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    script = REPO_ROOT / "scripts" / "orbstack_self_heal.sh"
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ["bash", str(script), "run-once", "--event", event],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        return
 
 
 def main() -> int:
@@ -15,6 +151,13 @@ def main() -> int:
     parser.add_argument("--topic-path", default="")
     parser.add_argument("--mode", default="balanced")
     parser.add_argument("--budget-chars", type=int, default=10000)
+    parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--max-facts", type=int, default=24)
+    parser.add_argument("--nonblocking", action="store_true", help="Do not wait for slow sources in /memory/context-pack.")
+    parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
+    parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
+    parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument("--retry-delay", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
@@ -28,23 +171,24 @@ def main() -> int:
         "retrieval_mode": args.mode,
         "include_grounding": True,
         "include_retrieval_debug": True,
+        "combined_sources": not args.nonblocking,
+        "wait_for_slow_sources": not args.nonblocking,
+        "sync_slow_sources": not args.nonblocking,
+        "limit": args.limit,
+        "max_facts": args.max_facts,
     }
-    raw = request_json("POST", "/memory/context-pack", payload, args.timeout)
-    facts = raw.get("facts") or raw.get("results") or []
-    text = str(raw)
-    clipped = len(text) > args.budget_chars
-    emit(
-        {
-            "ok": True,
-            "task_summary": args.query[:240],
-            "context_budget_chars": args.budget_chars,
-            "clipped": clipped,
-            "fact_count": len(facts) if isinstance(facts, list) else 0,
-            "context_pack": raw if not clipped else {"warning": "raw pack exceeded budget; rerun with larger --budget-chars", "keys": sorted(raw.keys())},
-            "writeback_required": True,
-        },
-        args.pretty,
+    raw, error, attempts = request_with_retries(
+        "/memory/context-pack",
+        payload,
+        args.timeout,
+        max(0, args.retries),
+        args.retry_delay,
     )
+    if raw is None:
+        trigger_self_heal("context-pack-failure")
+        emit(failure_payload(args.query, args.budget_chars, error, attempts), args.pretty)
+        return 0 if args.soft else 1
+    emit(compact_context_pack(raw, args.query, args.budget_chars), args.pretty)
     return 0
 
 

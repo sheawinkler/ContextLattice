@@ -6478,6 +6478,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/agents/preflight", s.agentsPreflight)
 	mux.HandleFunc("/v1/inference/route", s.inferenceRouteHandler)
 	mux.HandleFunc("/v1/inference/chat", s.inferenceChatHandler)
+	mux.HandleFunc("/v1/inference/runtime-policy", s.inferenceRuntimePolicyHandler)
 	mux.HandleFunc("/v1/inference/embedding-policy", s.inferenceEmbeddingPolicyHandler)
 	// Retrieval + memory engine API (go-first ingress, python fallback backend).
 	mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)

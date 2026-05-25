@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Validate agent-facing ContextLattice context-pack shape."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+FIXTURE = SCRIPT_DIR / "fixtures" / "context-pack" / "valid.json"
+REQUIRED_PACK_LISTS = (
+    "facts",
+    "results",
+    "citations",
+    "relevant_decisions",
+    "files_to_read",
+    "files_to_avoid",
+    "capabilities_to_use",
+    "runbooks",
+    "known_failure_modes",
+    "commands",
+    "acceptance_criteria",
+)
+CAMEL_TO_SNAKE = {
+    "relevantDecisions": "relevant_decisions",
+    "filesToRead": "files_to_read",
+    "filesToAvoid": "files_to_avoid",
+    "capabilitiesToUse": "capabilities_to_use",
+    "knownFailureModes": "known_failure_modes",
+    "acceptanceCriteria": "acceptance_criteria",
+}
+
+
+def load_json(path: str | None) -> dict[str, Any]:
+    if path == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(path or FIXTURE).read_text(encoding="utf-8")
+    payload = json.loads(raw or "{}")
+    if not isinstance(payload, dict):
+        raise ValueError("payload_not_object")
+    return payload
+
+
+def pack_from(payload: dict[str, Any]) -> dict[str, Any]:
+    raw = payload.get("context_pack") or payload.get("contextPack") or payload
+    return raw if isinstance(raw, dict) else {}
+
+
+def normalize_pack_keys(pack: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(pack)
+    for camel, snake in CAMEL_TO_SNAKE.items():
+        if snake not in normalized and camel in normalized:
+            normalized[snake] = normalized[camel]
+    if "numeric_facts" not in normalized and "numericFacts" in normalized:
+        normalized["numeric_facts"] = normalized["numericFacts"]
+    if "source_coverage" not in normalized and "sourceCoverage" in normalized:
+        normalized["source_coverage"] = normalized["sourceCoverage"]
+    return normalized
+
+
+def validate(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    pack = normalize_pack_keys(pack_from(payload))
+    coverage = payload.get("source_coverage") or pack.get("source_coverage")
+    if not isinstance(pack, dict) or not pack:
+        findings.append({"severity": "error", "reason": "missing_context_pack"})
+        return findings
+    if not isinstance(coverage, dict):
+        findings.append({"severity": "error", "reason": "missing_source_coverage"})
+    else:
+        for key in ("configured", "returned"):
+            if key not in coverage or not isinstance(coverage.get(key), list):
+                findings.append({"severity": "error", "reason": "invalid_source_coverage_" + key})
+        if "complete" not in coverage or not isinstance(coverage.get("complete"), bool):
+            findings.append({"severity": "error", "reason": "invalid_source_coverage_complete"})
+    for key in REQUIRED_PACK_LISTS:
+        if key not in pack:
+            findings.append({"severity": "error", "reason": "missing_pack_field", "field": key})
+        elif not isinstance(pack[key], list):
+            findings.append({"severity": "error", "reason": "pack_field_not_list", "field": key})
+    if "writeback_required" in payload and not isinstance(payload["writeback_required"], bool):
+        findings.append({"severity": "warn", "reason": "writeback_required_not_bool"})
+    return findings
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file", default=str(FIXTURE), help="JSON file to validate, or '-' for stdin.")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        payload = load_json(args.file)
+        findings = validate(payload)
+    except Exception as exc:
+        findings = [{"severity": "error", "reason": "invalid_json", "detail": str(exc)[:240]}]
+    errors = [item for item in findings if item.get("severity") == "error"]
+    emit({"ok": not errors, "file": args.file, "findings": findings}, args.pretty)
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

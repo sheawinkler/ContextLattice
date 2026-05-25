@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
-from _common import emit, now_iso, read_text, request_json
+from _common import HOME, REPO_ROOT, emit, now_iso, read_text, request_json
 
 
 KINDS = {"decision", "failure", "command", "assumption", "checkpoint", "runbook"}
@@ -22,6 +26,76 @@ def first_env(*names: str, fallback: str = "") -> str:
     return fallback
 
 
+def failure_payload(kind: str, file_name: str, error: str, attempts: int) -> dict[str, object]:
+    return {
+        "ok": False,
+        "kind": kind,
+        "file": file_name,
+        "status": "failed_after_retries",
+        "persisted": False,
+        "structured_failure": True,
+        "attempts": attempts,
+        "error": error[:1000],
+    }
+
+
+def queue_dir() -> Path:
+    return Path(os.getenv("CONTEXTLATTICE_WRITEBACK_QUEUE_DIR") or HOME / ".contextlattice" / "writeback_queue")
+
+
+def enqueue_local_writeback(body: dict[str, object], kind: str, error: str) -> Path:
+    root = queue_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()[:16]
+    stamp = now_iso().replace(":", "").replace("-", "")
+    target = root / f"{stamp}_{digest}.json"
+    tmp = target.with_suffix(".tmp")
+    payload = {
+        "schema_version": 1,
+        "queued_at": now_iso(),
+        "kind": kind,
+        "last_error": error[:1000],
+        "body": body,
+    }
+    tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    tmp.replace(target)
+    return target
+
+
+def trigger_self_heal(event: str) -> None:
+    if os.getenv("CONTEXTLATTICE_TRIGGER_SELF_HEAL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    script = REPO_ROOT / "scripts" / "orbstack_self_heal.sh"
+    if not script.exists():
+        return
+    try:
+        subprocess.Popen(
+            ["bash", str(script), "run-once", "--event", event],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        return
+
+
+def write_with_retries(body: dict[str, object], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, object] | None, str, int]:
+    attempts = max(1, retries + 1)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            return request_json("POST", "/memory/write", body, timeout), "", attempt
+        except SystemExit as exc:
+            last_error = str(exc.code)
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < attempts:
+            time.sleep(max(0.0, retry_delay) * attempt)
+    return None, last_error, attempts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default="contextlattice")
@@ -32,6 +106,9 @@ def main() -> int:
     parser.add_argument("--content-file", default="")
     parser.add_argument("--stdin", action="store_true")
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retry-delay", type=float, default=1.0)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
@@ -61,7 +138,15 @@ def main() -> int:
         "created_at": now_iso(),
         "tags": ["agent-writeback", args.kind],
     }
-    result = request_json("POST", "/memory/write", body, args.timeout)
+    result, error, attempts = write_with_retries(body, args.timeout, max(0, args.retries), args.retry_delay)
+    if result is None:
+        queue_file = enqueue_local_writeback(body, args.kind, error)
+        trigger_self_heal("writeback-failure")
+        payload = failure_payload(args.kind, args.file, error, attempts)
+        payload["queued_local"] = True
+        payload["queue_file"] = str(queue_file)
+        emit(payload, args.pretty)
+        return 1
     emit({"ok": bool(result.get("ok", True)), "kind": args.kind, "file": args.file, "write": result}, args.pretty)
     return 0
 

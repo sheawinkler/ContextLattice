@@ -394,12 +394,13 @@ env-lock-check:
 env-lock-apply:
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
 
-# ===== Local sidecars: MLX server + OpenAI router (pidfile-managed) =====
+# ===== Local sidecars: MLX/vLLM endpoints; Go gateway owns routing =====
 ENV_FILE ?= .env
 
-.PHONY: mlx-up mlx-down router-up router-down sidecars-up sidecars-down
+.PHONY: mlx-up mlx-down router-up router-down sidecars-up sidecars-down runtime-policy inference-backend-status inference-backend-assert-one
 
 mlx-up:
+> scripts/inference_backend_guard.sh prepare mlx
 > test -d .venv-mlx || (uv venv .venv-mlx && . .venv-mlx/bin/activate && uv pip install -U mlx-lm)
 > pgrep -f "mlx_lm.server" >/dev/null 2>&1 && echo "mlx already running" || \
 > (MODEL_PATH="$(MLX_MODEL_PATH)"; \
@@ -415,6 +416,7 @@ mlx-down:
 > pkill -f "mlx_lm.server" 2>/dev/null || true
 
 router-up:
+> @echo "router-up is archived; gateway-go /v1/inference/* owns provider routing"
 
 router-down:
 > test -f .router.pid && kill "$$(cat .router.pid)" 2>/dev/null && rm -f .router.pid || true
@@ -422,6 +424,15 @@ router-down:
 
 sidecars-up: mlx-up
 sidecars-down: router-down mlx-down
+
+runtime-policy:
+> scripts/inference_runtime_policy.sh
+
+inference-backend-status:
+> scripts/inference_backend_guard.sh status
+
+inference-backend-assert-one:
+> scripts/inference_backend_guard.sh assert-one
 
 # Wire sidecars into your one-shot launcher
 
@@ -432,6 +443,7 @@ ENV_FILE ?= .env
 .PHONY: ollama-up ollama-down ollama-wait
 
 ollama-up:
+> scripts/inference_backend_guard.sh prepare ollama
 > OAI_BASE="$$(grep -E '^OLLAMA_API_BASE=' $(ENV_FILE) | tail -1 | cut -d= -f2)"
 > [ -z "$$OAI_BASE" ] && OAI_BASE="http://127.0.0.1:11434/v1"
 > echo "Checking Ollama at $$OAI_BASE ..."
@@ -460,53 +472,31 @@ ollama-wait:
 > [ -z "$$OAI_BASE" ] && OAI_BASE="http://127.0.0.1:11434/v1"
 > scripts/wait_for_http.sh "$$OAI_BASE/models" 90
 
-# Ensure launch verifies Ollama first
+# Ollama is a compatibility fallback, not a required launch precondition.
 
 # ---- Ordered launcher (strict sequence) ----
 .PHONY: launch
 
 .PHONY: router-status router-logs router-restart
 router-status:
-> ROUTER_BASE="$$(grep -E '^ROUTER_API_BASE=' .env | tail -1 | cut -d= -f2)"; \
-> [ -z "$$ROUTER_BASE" ] && ROUTER_BASE="http://127.0.0.1:18123/v1"; \
-> echo "GET $$ROUTER_BASE/models"; \
-> curl -fsS "$$ROUTER_BASE/models" | jq '.data[0:10]' || (echo "router NOT healthy"; exit 1)
+> scripts/inference_runtime_policy.sh
 
 router-logs:
 > [ -f logs/router.log ] && tail -n 200 logs/router.log || echo "no logs/router.log yet"
 
 router-restart: router-down router-up router-status
-router-up:
-> set -e
-> test -d .venv-router || (uv venv .venv-router && . .venv-router/bin/activate && uv pip install fastapi uvicorn httpx anyio)
-> OLLAMA_API_BASE="$$(grep '^OLLAMA_API_BASE=' .env | cut -d= -f2)"; \
-> MLX_API_BASE="$$(grep '^MLX_API_BASE=' .env | cut -d= -f2)"; \
-> : "$${OLLAMA_API_BASE:?OLLAMA_API_BASE missing in .env}"; \
-> : "$${MLX_API_BASE:?MLX_API_BASE missing in .env}"; \
-> if lsof -iTCP:18123 -sTCP:LISTEN >/dev/null 2>&1; then echo "router port 18123 already in use"; exit 1; fi
-> pgrep -f "openai_router:app" >/dev/null 2>&1 && echo "router already running" || \
-> (. .venv-router/bin/activate; \
->  OLLAMA_API_BASE="$$OLLAMA_API_BASE" MLX_API_BASE="$$MLX_API_BASE" \
->  python scripts/openai_router.py >logs/router.log 2>&1 & echo $$! > .router.pid; \
->  echo "router: http://127.0.0.1:18123/v1 (pid $$(cat .router.pid))")
 .PHONY: launch
 launch:
-> $(MAKE) ollama-up
-> $(MAKE) ollama-wait
 > $(MAKE) up
 > $(MAKE) mcp-proxy-up
-> $(MAKE) router-up
-> $(MAKE) router-wait
-> $(MAKE) sidecars-up       # (mlx only)
+> scripts/inference_backend_guard.sh assert-one
+> scripts/inference_runtime_policy.sh || true
 > $(MAKE) init
-> echo ">> launch complete — router=$$(grep '^ROUTER_API_BASE=' .env | cut -d= -f2), mlx=$$(grep '^MLX_API_BASE=' .env | cut -d= -f2)"
+> echo ">> launch complete - inference policy above, Ollama only starts when selected by profile/config"
 
 .PHONY: router-wait
 router-wait:
-> ROUTER_BASE="$$(grep -E '^ROUTER_API_BASE=' .env | tail -1 | cut -d= -f2)"; \
-> [ -z "$$ROUTER_BASE" ] && ROUTER_BASE="http://127.0.0.1:18123/v1"; \
-> echo "Waiting for router at $$ROUTER_BASE ..."; \
-> scripts/wait_for_http.sh "$$ROUTER_BASE/models" 60
+> scripts/wait_for_http.sh "$${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}/v1/inference/runtime-policy" 60
 
 # ----- Trae (runs from local source checkout) -----
 TRAE_DIR ?= $(HOME)/.trae_agent

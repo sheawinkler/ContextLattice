@@ -111,7 +111,7 @@ func (s *server) entitlementPathProtected(path string) bool {
 	}
 	protected := parseHTTPPathSet(
 		os.Getenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS"),
-		"/v1/inference/route,/v1/inference/chat,/v1/inference/embedding-policy,/maintenance/storage/run,/maintenance/telemetry/blob-gc,/migration/runtime",
+		"/v1/inference/route,/v1/inference/chat,/v1/inference/runtime-policy,/v1/inference/embedding-policy,/maintenance/storage/run,/maintenance/telemetry/blob-gc,/migration/runtime",
 	)
 	normalized := normalizeHTTPPath(path)
 	if normalized == "" {

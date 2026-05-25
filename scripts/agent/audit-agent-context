@@ -54,6 +54,24 @@ def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, A
                 "warnings": warnings[:10],
             }
         )
+    elif name == "compaction_hooks":
+        summary.update({"results": payload.get("results", [])})
+    elif name == "codex_hook_trust":
+        summary.update(
+            {
+                "managed_hook_count": payload.get("managed_hook_count", 0),
+                "mismatch_count": len(payload.get("mismatches") or []),
+                "mismatches": (payload.get("mismatches") or [])[:10],
+                "skipped": payload.get("skipped", False),
+            }
+        )
+    elif name == "context_pack_schema":
+        findings = payload.get("findings") or []
+        summary.update({"finding_count": len(findings), "findings": findings[:10]})
+    elif name == "skill_policy_eval":
+        cases = payload.get("cases") or []
+        failed = [item for item in cases if not item.get("ok")]
+        summary.update({"case_count": payload.get("case_count", len(cases)), "failed_cases": failed[:10]})
     elif name == "instruction_conflicts":
         findings = payload.get("findings") or []
         summary.update({"finding_count": len(findings), "top_findings": findings[:10]})
@@ -85,17 +103,21 @@ def main() -> int:
     checks = [
         run_json("context_size", [str(SCRIPT_DIR / "audit-context-size"), "--scope", args.scope]),
         run_json("skill_frontmatter", [str(SCRIPT_DIR / "audit-skill-frontmatter")]),
+        run_json("compaction_hooks", [str(SCRIPT_DIR / "audit-compaction-hooks")]),
+        run_json("codex_hook_trust", [str(SCRIPT_DIR / "audit-codex-hook-trust")]),
+        run_json("context_pack_schema", [str(SCRIPT_DIR / "audit-context-pack-schema")]),
+        run_json("skill_policy_eval", [str(SCRIPT_DIR / "eval-skill-policy")]),
         run_json("instruction_conflicts", [str(SCRIPT_DIR / "audit-conflicts")]),
         run_json("instruction_duplicates", [str(SCRIPT_DIR / "audit-instruction-duplicates")]),
     ]
 
     hard_failures = [
         check
-        for check in checks[:2]
+        for check in checks[:6]
         if check["returncode"] != 0 or not bool(check["payload"].get("ok", False))
     ]
     if args.strict_findings:
-        for check in checks[2:]:
+        for check in checks[6:]:
             payload = check["payload"]
             if payload.get("findings") or payload.get("duplicates"):
                 hard_failures.append(check)

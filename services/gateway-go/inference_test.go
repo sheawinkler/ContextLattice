@@ -18,6 +18,9 @@ func resetANEProbeCacheForTest() {
 	aneProbeCache.healthy = false
 	aneProbeCache.detail = "never checked"
 	aneProbeCache.mu.Unlock()
+	providerProbeCache.mu.Lock()
+	providerProbeCache.entries = map[string]inferenceProviderProbeResult{}
+	providerProbeCache.mu.Unlock()
 }
 
 func postJSON(t *testing.T, url string, payload string) (int, map[string]any) {
@@ -67,6 +70,9 @@ func TestInferenceRouteAutoUsesOllamaByDefault(t *testing.T) {
 	resetANEProbeCacheForTest()
 	t.Setenv("ORCH_ANE_SIDECAR_ENABLED", "false")
 	t.Setenv("ORCH_INFER_PROVIDER", "auto")
+	t.Setenv("ORCH_INFER_PROVIDER_PRIORITY", "vllm,ollama")
+	t.Setenv("ORCH_INFER_AUTO_PROBE_TIMEOUT_SECS", "0.05")
+	t.Setenv("VLLM_BASE_URL", "http://127.0.0.1:1")
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -86,6 +92,78 @@ func TestInferenceRouteAutoUsesOllamaByDefault(t *testing.T) {
 	provider := strings.TrimSpace(anyToString(route["provider"]))
 	if provider != "ollama" && provider != "ollama_coreml" {
 		t.Fatalf("expected ollama route, got %q", provider)
+	}
+}
+
+func TestInferenceRouteAutoSelectsHealthyVLLM(t *testing.T) {
+	resetANEProbeCacheForTest()
+	t.Setenv("ORCH_ANE_SIDECAR_ENABLED", "false")
+	t.Setenv("ORCH_INFER_PROVIDER", "auto")
+	t.Setenv("ORCH_INFER_PROVIDER_PRIORITY", "vllm,ollama")
+
+	vllm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer vllm.Close()
+	t.Setenv("VLLM_BASE_URL", vllm.URL)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, payload := postJSON(t, gateway.URL+"/v1/inference/route", `{"provider":"auto"}`)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	route, _ := payload["route"].(map[string]any)
+	if provider := strings.TrimSpace(anyToString(route["provider"])); provider != "vllm" {
+		t.Fatalf("expected vllm route, got %q payload=%#v", provider, payload)
+	}
+}
+
+func TestInferenceRouteAliasesMLXAndVLLMMetal(t *testing.T) {
+	resetANEProbeCacheForTest()
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, payload := postJSON(t, gateway.URL+"/v1/inference/route", `{"provider":"mtplx","base_url":"http://127.0.0.1:18087/v1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	route, _ := payload["route"].(map[string]any)
+	if provider := strings.TrimSpace(anyToString(route["provider"])); provider != "mlx" {
+		t.Fatalf("expected mtplx alias to resolve to mlx, got %q", provider)
+	}
+
+	t.Setenv("VLLM_METAL_BASE_URL", "http://127.0.0.1:28000")
+	status, payload = postJSON(t, gateway.URL+"/v1/inference/route", `{"provider":"vllm_metal"}`)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	route, _ = payload["route"].(map[string]any)
+	if provider := strings.TrimSpace(anyToString(route["provider"])); provider != "vllm-metal" {
+		t.Fatalf("expected vllm_metal alias to resolve to vllm-metal, got %q", provider)
+	}
+	if baseURL := strings.TrimSpace(anyToString(route["base_url"])); baseURL != "http://127.0.0.1:28000" {
+		t.Fatalf("expected vllm-metal base url, got %q", baseURL)
 	}
 }
 
@@ -220,5 +298,46 @@ func TestInferenceEmbeddingPolicyEndpoint(t *testing.T) {
 	gate, _ := fastembed["gate"].(map[string]any)
 	if !anyToBool(gate["available"]) {
 		t.Fatalf("expected gate available=true, gate=%#v", gate)
+	}
+	if strings.TrimSpace(anyToString(payload["selected"])) != "fastembed-rs" {
+		t.Fatalf("expected fastembed-rs selected, payload=%#v", payload)
+	}
+}
+
+func TestInferenceRuntimePolicyEndpoint(t *testing.T) {
+	resetANEProbeCacheForTest()
+	t.Setenv("ORCH_INFER_PROVIDER_PRIORITY", "vllm,ollama")
+	t.Setenv("ORCH_INFER_AUTO_PROBE_TIMEOUT_SECS", "0.05")
+	t.Setenv("VLLM_BASE_URL", "http://127.0.0.1:1")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, payload := getJSON(t, gateway.URL+"/v1/inference/runtime-policy")
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	if _, ok := payload["hardware"].(map[string]any); !ok {
+		t.Fatalf("expected hardware policy payload, got %#v", payload)
+	}
+	if candidates, ok := payload["candidates"].([]any); !ok || len(candidates) == 0 {
+		t.Fatalf("expected runtime candidates, got %#v", payload["candidates"])
+	}
+	if !anyToBool(payload["singleActiveBackend"]) {
+		t.Fatalf("expected single-active backend policy to default true, payload=%#v", payload)
+	}
+}
+
+func TestInferenceMSeriesDetectionHonorsHostProfileOverride(t *testing.T) {
+	t.Setenv("ORCH_HOST_HARDWARE_PROFILE", "apple_silicon")
+	if !_inferenceIsMSeriesMac() {
+		t.Fatal("expected Apple Silicon host override to satisfy M-series checks")
 	}
 }

@@ -16,8 +16,11 @@ import (
 
 const (
 	defaultInferenceOllamaBaseURL    = "http://127.0.0.1:11434"
+	defaultInferenceMLXBaseURL       = "http://127.0.0.1:18087/v1"
 	defaultInferenceLMStudioBaseURL  = "http://127.0.0.1:1234"
 	defaultInferenceOpenAICompatBase = "http://127.0.0.1:8000"
+	defaultInferenceVLLMBaseURL      = "http://127.0.0.1:8000"
+	defaultInferenceVLLMMetalBaseURL = "http://127.0.0.1:8000"
 	defaultInferenceLlamaCPPBaseURL  = "http://127.0.0.1:8080"
 	defaultInferenceANESidecarURL    = "http://127.0.0.1:9099"
 )
@@ -31,6 +34,8 @@ type inferenceRoute struct {
 	Reason            string `json:"reason"`
 	CoreMLEnabled     bool   `json:"coreml_enabled"`
 	SidecarEnabled    bool   `json:"sidecar_enabled"`
+	HardwareProfile   string `json:"hardware_profile,omitempty"`
+	SelectionMode     string `json:"selection_mode,omitempty"`
 }
 
 type inferenceRouteRequest struct {
@@ -67,11 +72,223 @@ type inferenceFastembedGateCache struct {
 	status            map[string]any
 }
 
+type inferenceProviderProbeCache struct {
+	mu      sync.Mutex
+	entries map[string]inferenceProviderProbeResult
+}
+
+type inferenceProviderProbeResult struct {
+	checkedAt time.Time
+	healthy   bool
+	detail    string
+}
+
 var aneProbeCache = inferenceANEProbeCache{
 	detail: "never checked",
 }
 
 var fastembedGateCache = inferenceFastembedGateCache{}
+var providerProbeCache = inferenceProviderProbeCache{entries: map[string]inferenceProviderProbeResult{}}
+
+func _inferenceNormalizeProvider(provider string) string {
+	token := strings.ToLower(strings.TrimSpace(provider))
+	token = strings.ReplaceAll(token, "_", "-")
+	switch token {
+	case "":
+		return ""
+	case "ollama-coreml":
+		return "ollama_coreml"
+	case "ane", "ane-sidecar":
+		return "ane_sidecar"
+	case "openai", "openai-compatible", "openai-compat", "openai_compatible":
+		return "openai-compatible"
+	case "llamacpp", "llama-cpp", "llama_cpp":
+		return "llama-cpp"
+	case "mlx", "mlx-lm", "mlx_lm", "mtplx":
+		return "mlx"
+	case "vllm-metal", "vllm-metal-mlx", "vllm-mlx", "vllm_metal", "vllm_mlx":
+		return "vllm-metal"
+	default:
+		return token
+	}
+}
+
+func _inferenceProviderTransport(provider string) string {
+	switch _inferenceNormalizeProvider(provider) {
+	case "ollama", "ollama_coreml":
+		return "ollama"
+	default:
+		return "openai"
+	}
+}
+
+func _inferenceProviderDisplayName(provider string) string {
+	switch _inferenceNormalizeProvider(provider) {
+	case "vllm-metal":
+		return "vLLM Metal"
+	case "vllm":
+		return "vLLM"
+	case "mlx":
+		return "MLX"
+	case "ollama_coreml":
+		return "Ollama CoreML"
+	case "ane_sidecar":
+		return "ANE sidecar"
+	case "llama-cpp":
+		return "llama.cpp"
+	case "lmstudio":
+		return "LM Studio"
+	case "openai-compatible":
+		return "OpenAI-compatible"
+	default:
+		return provider
+	}
+}
+
+func _inferenceHostHardwareProfile() map[string]any {
+	override := strings.TrimSpace(firstNonEmptyEnv("ORCH_HOST_HARDWARE_PROFILE", "CONTEXTLATTICE_HOST_HARDWARE_PROFILE"))
+	if override != "" {
+		override = strings.ToLower(strings.ReplaceAll(override, "-", "_"))
+	}
+	hostOS := strings.TrimSpace(firstNonEmptyEnv("ORCH_HOST_OS", "CONTEXTLATTICE_HOST_OS"))
+	hostArch := strings.TrimSpace(firstNonEmptyEnv("ORCH_HOST_ARCH", "CONTEXTLATTICE_HOST_ARCH"))
+	if hostOS == "" {
+		hostOS = runtime.GOOS
+	}
+	if hostArch == "" {
+		hostArch = runtime.GOARCH
+	}
+	kernelVersion := ""
+	if raw, err := os.ReadFile("/proc/version"); err == nil {
+		kernelVersion = strings.ToLower(string(raw))
+	}
+	orbStackAppleContainer := runtime.GOOS == "linux" && runtime.GOARCH == "arm64" && strings.Contains(kernelVersion, "orbstack")
+	dockerDesktopAppleContainer := runtime.GOOS == "linux" && runtime.GOARCH == "arm64" && strings.Contains(kernelVersion, "linuxkit")
+	if (orbStackAppleContainer || dockerDesktopAppleContainer) && firstNonEmptyEnv("ORCH_HOST_OS", "CONTEXTLATTICE_HOST_OS") == "" {
+		hostOS = "darwin"
+		hostArch = "arm64"
+	}
+	appleSilicon := (strings.ToLower(hostOS) == "darwin" && (hostArch == "arm64" || hostArch == "aarch64")) ||
+		(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") ||
+		orbStackAppleContainer ||
+		dockerDesktopAppleContainer
+	cudaSignals := []string{
+		os.Getenv("NVIDIA_VISIBLE_DEVICES"),
+		os.Getenv("CUDA_VISIBLE_DEVICES"),
+		os.Getenv("NVIDIA_DRIVER_CAPABILITIES"),
+	}
+	rocmSignals := []string{
+		os.Getenv("ROCR_VISIBLE_DEVICES"),
+		os.Getenv("HIP_VISIBLE_DEVICES"),
+		os.Getenv("HSA_VISIBLE_DEVICES"),
+	}
+	hasCUDA := false
+	for _, value := range cudaSignals {
+		token := strings.TrimSpace(strings.ToLower(value))
+		if token != "" && token != "none" && token != "void" {
+			hasCUDA = true
+			break
+		}
+	}
+	if !hasCUDA {
+		if _, err := os.Stat("/proc/driver/nvidia/version"); err == nil {
+			hasCUDA = true
+		} else if _, err := os.Stat("/dev/nvidia0"); err == nil {
+			hasCUDA = true
+		}
+	}
+	hasROCm := false
+	for _, value := range rocmSignals {
+		token := strings.TrimSpace(strings.ToLower(value))
+		if token != "" && token != "none" && token != "void" {
+			hasROCm = true
+			break
+		}
+	}
+	if !hasROCm {
+		if _, err := os.Stat("/dev/kfd"); err == nil {
+			hasROCm = true
+		}
+	}
+	profile := "generic_cpu"
+	if override != "" {
+		profile = override
+	} else if appleSilicon {
+		profile = "apple_silicon"
+	} else if hasCUDA {
+		profile = "nvidia_cuda"
+	} else if hasROCm {
+		profile = "amd_rocm"
+	}
+	return map[string]any{
+		"profile":       profile,
+		"goos":          runtime.GOOS,
+		"goarch":        runtime.GOARCH,
+		"hostOS":        hostOS,
+		"hostArch":      hostArch,
+		"appleSilicon":  appleSilicon,
+		"cudaDetected":  hasCUDA,
+		"rocmDetected":  hasROCm,
+		"metalDetected": appleSilicon,
+		"containerRuntime": map[string]any{
+			"orbstackKernel":      orbStackAppleContainer,
+			"dockerDesktopKernel": dockerDesktopAppleContainer,
+		},
+	}
+}
+
+func _inferenceDefaultProviderPriorityForHardware(profile string) []string {
+	switch profile {
+	case "apple_silicon":
+		return []string{"vllm-metal", "mlx", "ane_sidecar", "llama-cpp", "ollama"}
+	case "nvidia_cuda", "amd_rocm":
+		return []string{"vllm", "openai-compatible", "llama-cpp", "lmstudio", "ollama"}
+	default:
+		return []string{"openai-compatible", "llama-cpp", "lmstudio", "ollama"}
+	}
+}
+
+func _inferenceProviderPriority() []string {
+	raw := strings.TrimSpace(os.Getenv("ORCH_INFER_PROVIDER_PRIORITY"))
+	if raw == "" {
+		hardware := _inferenceHostHardwareProfile()
+		profile := anyToString(hardware["profile"])
+		priority := _inferenceDefaultProviderPriorityForHardware(profile)
+		if _inferenceAutoPreferMLX() {
+			priority = append([]string{"mlx"}, priority...)
+		}
+		return dedupeStringSlice(priority)
+	}
+	out := []string{}
+	for _, item := range strings.Split(raw, ",") {
+		provider := _inferenceNormalizeProvider(item)
+		if provider != "" {
+			out = append(out, provider)
+		}
+	}
+	if len(out) == 0 {
+		hardware := _inferenceHostHardwareProfile()
+		return _inferenceDefaultProviderPriorityForHardware(anyToString(hardware["profile"]))
+	}
+	return dedupeStringSlice(out)
+}
+
+func dedupeStringSlice(values []string) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, value := range values {
+		token := strings.TrimSpace(value)
+		if token == "" {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		out = append(out, token)
+	}
+	return out
+}
 
 func _inferenceNormalizeOpenAIBase(baseURL string) string {
 	cleaned := strings.TrimSpace(strings.TrimRight(baseURL, "/"))
@@ -88,20 +305,38 @@ func _inferenceBaseURLFromProvider(provider string, override string) string {
 	if strings.TrimSpace(override) != "" {
 		return strings.TrimRight(strings.TrimSpace(override), "/")
 	}
-	switch strings.ToLower(strings.TrimSpace(provider)) {
+	switch _inferenceNormalizeProvider(provider) {
 	case "ollama", "ollama_coreml":
 		value := strings.TrimSpace(strings.TrimRight(os.Getenv("OLLAMA_BASE_URL"), "/"))
 		if value != "" {
 			return value
 		}
 		return defaultInferenceOllamaBaseURL
+	case "mlx":
+		value := strings.TrimSpace(strings.TrimRight(os.Getenv("MLX_API_BASE"), "/"))
+		if value != "" {
+			return value
+		}
+		return defaultInferenceMLXBaseURL
 	case "lmstudio":
-		value := strings.TrimSpace(strings.TrimRight(os.Getenv("LMSTUDIO_BASE_URL"), "/"))
+		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("LMSTUDIO_BASE_URL", "LM_STUDIO_BASE_URL"), "/"))
 		if value != "" {
 			return value
 		}
 		return defaultInferenceLMStudioBaseURL
-	case "openai-compatible", "openai_compatible", "vllm":
+	case "vllm":
+		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("VLLM_BASE_URL", "OPENAI_API_BASE"), "/"))
+		if value != "" {
+			return value
+		}
+		return defaultInferenceVLLMBaseURL
+	case "vllm-metal":
+		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("VLLM_METAL_BASE_URL", "VLLM_BASE_URL", "OPENAI_API_BASE"), "/"))
+		if value != "" {
+			return value
+		}
+		return defaultInferenceVLLMMetalBaseURL
+	case "openai-compatible":
 		value := strings.TrimSpace(strings.TrimRight(os.Getenv("OPENAI_API_BASE"), "/"))
 		if value != "" {
 			return value
@@ -128,8 +363,22 @@ func _inferenceBaseURLFromProvider(provider string, override string) string {
 	}
 }
 
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func _inferenceIsMSeriesMac() bool {
-	return runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
+	hardware := _inferenceHostHardwareProfile()
+	if appleSilicon, ok := hardware["appleSilicon"].(bool); ok && appleSilicon {
+		return true
+	}
+	return anyToString(hardware["profile"]) == "apple_silicon"
 }
 
 func _inferenceCoreMLDefaultEnabled() bool {
@@ -146,6 +395,85 @@ func _inferenceANESidecarRequireMSeries() bool {
 
 func _inferenceANESidecarFallbackEnabled() bool {
 	return envBool("ORCH_ANE_SIDECAR_FALLBACK_ENABLED", true)
+}
+
+func _inferenceAutoPreferMLX() bool {
+	return envBool("ORCH_INFER_AUTO_PREFER_MLX", false)
+}
+
+func _inferenceAutoProbeEnabled() bool {
+	return envBool("ORCH_INFER_AUTO_PROBE_ENABLED", true)
+}
+
+func _inferenceAutoProbeTimeout() time.Duration {
+	timeout := envDurationSeconds("ORCH_INFER_AUTO_PROBE_TIMEOUT_SECS", 0.45)
+	if timeout < 50*time.Millisecond {
+		return 50 * time.Millisecond
+	}
+	return timeout
+}
+
+func _inferenceAutoProbeTTL() time.Duration {
+	ttl := envDurationSeconds("ORCH_INFER_AUTO_PROBE_TTL_SECS", 10.0)
+	if ttl < time.Second {
+		return time.Second
+	}
+	return ttl
+}
+
+func _inferenceProbeProvider(provider string, baseURL string, transport string) (bool, string) {
+	provider = _inferenceNormalizeProvider(provider)
+	if !_inferenceAutoProbeEnabled() {
+		return true, "probe disabled"
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return false, "base url not configured"
+	}
+	key := provider + "|" + transport + "|" + baseURL
+	now := time.Now()
+	ttl := _inferenceAutoProbeTTL()
+	providerProbeCache.mu.Lock()
+	if cached, ok := providerProbeCache.entries[key]; ok && now.Sub(cached.checkedAt) <= ttl {
+		providerProbeCache.mu.Unlock()
+		return cached.healthy, cached.detail
+	}
+	providerProbeCache.mu.Unlock()
+
+	urls := []string{}
+	if transport == "ollama" {
+		urls = append(urls, baseURL+"/api/tags")
+		urls = append(urls, _inferenceNormalizeOpenAIBase(baseURL)+"/models")
+	} else {
+		urls = append(urls, _inferenceNormalizeOpenAIBase(baseURL)+"/models")
+	}
+	client := _inferenceHTTPClient(_inferenceAutoProbeTimeout(), _inferenceAutoProbeTimeout())
+	healthy := false
+	detail := "unreachable"
+	for _, probeURL := range urls {
+		req, err := http.NewRequest(http.MethodGet, probeURL, nil)
+		if err != nil {
+			detail = err.Error()
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			detail = err.Error()
+			continue
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		if resp.StatusCode < 400 {
+			healthy = true
+			detail = "healthy via " + probeURL
+			break
+		}
+		detail = fmt.Sprintf("%s status %d", probeURL, resp.StatusCode)
+	}
+	providerProbeCache.mu.Lock()
+	providerProbeCache.entries[key] = inferenceProviderProbeResult{checkedAt: now, healthy: healthy, detail: detail}
+	providerProbeCache.mu.Unlock()
+	return healthy, detail
 }
 
 func _inferenceANESidecarURL() string {
@@ -455,16 +783,21 @@ func (s *server) inferenceANESidecarProbe(force bool) (bool, string) {
 }
 
 func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride string, apiKey string) (inferenceRoute, error) {
-	requested := strings.ToLower(strings.TrimSpace(requestedProvider))
-	providerMode := strings.ToLower(strings.TrimSpace(os.Getenv("ORCH_INFER_PROVIDER")))
+	requested := _inferenceNormalizeProvider(requestedProvider)
+	providerMode := _inferenceNormalizeProvider(os.Getenv("ORCH_INFER_PROVIDER"))
 	if providerMode == "" {
 		providerMode = "auto"
 	}
-	if requested == "" || requested == "auto" {
+	if requested == "" || requested == "auto" || requested == "hardware-auto" {
 		requested = providerMode
 	}
+	if requested == "hardware-auto" {
+		requested = "auto"
+	}
+	hardware := _inferenceHostHardwareProfile()
+	hardwareProfile := anyToString(hardware["profile"])
 
-	resolveOllama := func(reason string) inferenceRoute {
+	resolveOllama := func(reason string, selectionMode string) inferenceRoute {
 		coremlEnabled := _inferenceCoreMLDefaultEnabled() && _inferenceIsMSeriesMac()
 		provider := "ollama"
 		if coremlEnabled {
@@ -479,10 +812,34 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 			Reason:            reason,
 			CoreMLEnabled:     coremlEnabled,
 			SidecarEnabled:    false,
+			HardwareProfile:   hardwareProfile,
+			SelectionMode:     selectionMode,
 		}
 	}
 
-	resolveANERoute := func() (inferenceRoute, bool) {
+	resolveOpenAIProvider := func(provider string, reason string, selectionMode string) inferenceRoute {
+		provider = _inferenceNormalizeProvider(provider)
+		providerAPIKey := strings.TrimSpace(apiKey)
+		if provider == "mlx" {
+			if mlxAPIKey := strings.TrimSpace(os.Getenv("MLX_API_KEY")); mlxAPIKey != "" {
+				providerAPIKey = mlxAPIKey
+			}
+		}
+		return inferenceRoute{
+			RequestedProvider: requested,
+			Provider:          provider,
+			Transport:         "openai",
+			BaseURL:           _inferenceBaseURLFromProvider(provider, baseURLOverride),
+			APIKey:            providerAPIKey,
+			Reason:            reason,
+			CoreMLEnabled:     false,
+			SidecarEnabled:    false,
+			HardwareProfile:   hardwareProfile,
+			SelectionMode:     selectionMode,
+		}
+	}
+
+	resolveANERoute := func(selectionMode string) (inferenceRoute, bool) {
 		if !_inferenceANESidecarEnabled() {
 			return inferenceRoute{}, false
 		}
@@ -506,47 +863,76 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 			Reason:            fmt.Sprintf("ane sidecar healthy (%s)", detail),
 			CoreMLEnabled:     false,
 			SidecarEnabled:    true,
+			HardwareProfile:   hardwareProfile,
+			SelectionMode:     selectionMode,
 		}, true
 	}
 
 	switch requested {
 	case "ane", "ane_sidecar":
-		if route, ok := resolveANERoute(); ok {
+		if route, ok := resolveANERoute("explicit"); ok {
 			return route, nil
 		}
 		if !_inferenceANESidecarFallbackEnabled() {
 			return inferenceRoute{}, fmt.Errorf("ane sidecar requested but unavailable and fallback disabled")
 		}
-		return resolveOllama("ane sidecar unavailable; fell back to ollama"), nil
+		return resolveOllama("ane sidecar unavailable; fell back to ollama", "explicit-fallback"), nil
 	case "auto":
-		if route, ok := resolveANERoute(); ok {
-			return route, nil
+		probeNotes := []string{}
+		priority := _inferenceProviderPriority()
+		for _, candidate := range priority {
+			provider := _inferenceNormalizeProvider(candidate)
+			if provider == "" {
+				continue
+			}
+			if provider == "ane_sidecar" {
+				if route, ok := resolveANERoute("auto"); ok {
+					return route, nil
+				}
+				probeNotes = append(probeNotes, "ane_sidecar unavailable")
+				continue
+			}
+			var route inferenceRoute
+			if provider == "ollama" || provider == "ollama_coreml" {
+				route = resolveOllama("", "auto")
+			} else {
+				route = resolveOpenAIProvider(provider, "", "auto")
+			}
+			healthy, detail := _inferenceProbeProvider(route.Provider, route.BaseURL, route.Transport)
+			if healthy {
+				route.Reason = fmt.Sprintf("auto selected %s for %s (%s)", route.Provider, hardwareProfile, detail)
+				return route, nil
+			}
+			probeNotes = append(probeNotes, route.Provider+" "+detail)
 		}
-		return resolveOllama("auto provider selected ollama"), nil
+		fallbackProvider := _inferenceNormalizeProvider(os.Getenv("ORCH_INFER_AUTO_FALLBACK_PROVIDER"))
+		if fallbackProvider == "" {
+			fallbackProvider = "ollama"
+		}
+		reason := "auto found no healthy preferred provider"
+		if len(probeNotes) > 0 {
+			reason += ": " + strings.Join(probeNotes, "; ")
+		}
+		reason += "; fallback to " + fallbackProvider
+		if fallbackProvider == "ane_sidecar" {
+			if route, ok := resolveANERoute("auto-fallback"); ok {
+				route.Reason = reason
+				return route, nil
+			}
+			fallbackProvider = "ollama"
+		}
+		if fallbackProvider == "ollama" || fallbackProvider == "ollama_coreml" {
+			return resolveOllama(reason, "auto-fallback"), nil
+		}
+		return resolveOpenAIProvider(fallbackProvider, reason, "auto-fallback"), nil
 	case "ollama", "ollama_coreml":
-		return resolveOllama("explicit ollama provider"), nil
-	case "lmstudio", "openai-compatible", "openai_compatible", "vllm", "llama-cpp", "llama_cpp":
-		return inferenceRoute{
-			RequestedProvider: requested,
-			Provider:          requested,
-			Transport:         "openai",
-			BaseURL:           _inferenceBaseURLFromProvider(requested, baseURLOverride),
-			APIKey:            apiKey,
-			Reason:            "explicit provider",
-			CoreMLEnabled:     false,
-			SidecarEnabled:    false,
-		}, nil
+		return resolveOllama("explicit ollama provider", "explicit"), nil
+	case "mlx":
+		return resolveOpenAIProvider("mlx", "explicit mlx provider", "explicit"), nil
+	case "lmstudio", "openai-compatible", "vllm", "vllm-metal", "llama-cpp":
+		return resolveOpenAIProvider(requested, "explicit provider", "explicit"), nil
 	default:
-		return inferenceRoute{
-			RequestedProvider: requested,
-			Provider:          "openai-compatible",
-			Transport:         "openai",
-			BaseURL:           _inferenceBaseURLFromProvider("openai-compatible", baseURLOverride),
-			APIKey:            apiKey,
-			Reason:            fmt.Sprintf("unknown provider '%s'; defaulted to openai-compatible", requested),
-			CoreMLEnabled:     false,
-			SidecarEnabled:    false,
-		}, nil
+		return resolveOpenAIProvider("openai-compatible", fmt.Sprintf("unknown provider '%s'; defaulted to openai-compatible", requested), "explicit-fallback"), nil
 	}
 }
 
@@ -795,6 +1181,98 @@ func (s *server) inferenceChatHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func _inferenceProviderUseCase(provider string) string {
+	switch _inferenceNormalizeProvider(provider) {
+	case "vllm":
+		return "automatic on CUDA/ROCm hosts; manual advanced elsewhere"
+	case "vllm-metal":
+		return "automatic on Apple Silicon when healthy"
+	case "mlx":
+		return "automatic on Apple Silicon when healthy; mtplx alias supported"
+	case "ane_sidecar":
+		return "automatic only when explicitly enabled and healthy"
+	case "ollama":
+		return "fallback and compatibility lane"
+	case "llama-cpp", "lmstudio", "openai-compatible":
+		return "manual advanced or configured fallback"
+	default:
+		return "manual advanced"
+	}
+}
+
+func (s *server) inferenceRuntimePolicyPayload() map[string]any {
+	hardware := _inferenceHostHardwareProfile()
+	priority := _inferenceProviderPriority()
+	selected, err := s.resolveInferenceRoute("auto", "", "")
+	candidates := []map[string]any{}
+	for _, provider := range priority {
+		provider = _inferenceNormalizeProvider(provider)
+		if provider == "" {
+			continue
+		}
+		transport := _inferenceProviderTransport(provider)
+		baseURL := _inferenceBaseURLFromProvider(provider, "")
+		healthy := false
+		detail := "not probed"
+		if provider == "ane_sidecar" {
+			if _inferenceANESidecarEnabled() {
+				healthy, detail = s.inferenceANESidecarProbe(false)
+			} else {
+				detail = "disabled"
+			}
+		} else {
+			healthy, detail = _inferenceProbeProvider(provider, baseURL, transport)
+		}
+		candidates = append(candidates, map[string]any{
+			"provider":       provider,
+			"displayName":    _inferenceProviderDisplayName(provider),
+			"transport":      transport,
+			"baseURL":        baseURL,
+			"healthy":        healthy,
+			"detail":         detail,
+			"useCase":        _inferenceProviderUseCase(provider),
+			"manualAdvanced": provider == "openai-compatible" || provider == "lmstudio" || provider == "llama-cpp",
+		})
+	}
+	payload := map[string]any{
+		"ok":                  err == nil,
+		"hardware":            hardware,
+		"priority":            priority,
+		"autoProbe":           _inferenceAutoProbeEnabled(),
+		"autoProbeTTL":        _inferenceAutoProbeTTL().Seconds(),
+		"autoProbeTimeout":    _inferenceAutoProbeTimeout().Seconds(),
+		"singleActiveBackend": envBool("CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND", true),
+		"manualAdvancedProviders": []string{
+			"vllm",
+			"vllm-metal",
+			"mlx",
+			"mtplx",
+			"openai-compatible",
+			"lmstudio",
+			"llama-cpp",
+			"ollama",
+		},
+		"candidates": candidates,
+	}
+	if err != nil {
+		payload["error"] = err.Error()
+	} else {
+		payload["selected"] = selected
+	}
+	return payload
+}
+
+func (s *server) inferenceRuntimePolicyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.inferenceRuntimePolicyPayload())
+}
+
 func (s *server) inferenceEmbeddingPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -806,8 +1284,16 @@ func (s *server) inferenceEmbeddingPolicyHandler(w http.ResponseWriter, r *http.
 	gate := _inferenceFastembedGateStatus()
 	enabledByFlag := _inferenceFastembedAdapterEnabledByFlag()
 	enabled := _inferenceFastembedAdapterEnabled()
+	provider := nativeEmbeddingProvider()
+	selected := "cheap"
+	if enabled && nativeEmbeddingProviderUsesFastembed(provider) {
+		selected = "fastembed-rs"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
+		"ok":       true,
+		"provider": provider,
+		"selected": selected,
+		"note":     "fastembed-rs is preferred for local embeddings; Ollama is compatibility fallback only.",
 		"fastembedRs": map[string]any{
 			"enabled":       enabled,
 			"enabledByFlag": enabledByFlag,

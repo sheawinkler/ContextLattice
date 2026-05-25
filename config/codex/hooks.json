@@ -12,6 +12,32 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.codex/hooks/contextlattice_pre_compaction_write.sh",
+            "timeout": 30,
+            "statusMessage": "Writing ContextLattice compaction checkpoint"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.codex/hooks/contextlattice_post_compaction_read.sh",
+            "timeout": 30,
+            "statusMessage": "Reading ContextLattice compaction checkpoint"
+          }
+        ]
+      }
     ]
   }
 }

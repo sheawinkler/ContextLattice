@@ -544,9 +544,11 @@ class ContextLatticeOrchestrator:
         mission: str,
         objective: str,
         goal: str,
+        handoff_metadata: Optional[Dict[str, Any]],
         facts: List[Dict[str, Any]],
         warnings: List[str],
     ) -> str:
+        metadata = handoff_metadata or {}
         lines: List[str] = [
             "# Context Compaction Handoff",
             "",
@@ -555,17 +557,45 @@ class ContextLatticeOrchestrator:
             f"- project: {project}",
             f"- topic_path: {topic_path}",
             f"- retrieval_mode: {retrieval_mode}",
-            "",
-            "## Active Objective Summary",
-            summary.strip() or "_no explicit summary provided_",
-            "",
-            "## Mission / Objective / Goal",
-            f"- mission: {mission}",
-            f"- objective: {objective}",
-            f"- goal: {goal}",
-            "",
-            "## Retrieved High-Signal Facts",
         ]
+        for key in ("session_id", "cwd", "branch"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                lines.append(f"- {key}: {value}")
+        lines.extend(
+            [
+                "",
+                "## Active Objective Summary",
+                summary.strip() or "_no explicit summary provided_",
+                "",
+            ]
+        )
+        if metadata:
+            lines.append("## Session State")
+            for key in ("objective", "next_action"):
+                value = str(metadata.get(key) or "").strip()
+                if value:
+                    lines.append(f"- {key}: {value}")
+            for key, label in (
+                ("blockers", "blockers"),
+                ("changed_files", "changed_files"),
+                ("commands_run", "commands_run"),
+            ):
+                values = metadata.get(key) if isinstance(metadata.get(key), list) else []
+                if values:
+                    rendered = ", ".join(str(item) for item in values[:12])
+                    lines.append(f"- {label}: {rendered}")
+            lines.append("")
+        lines.extend(
+            [
+                "## Mission / Objective / Goal",
+                f"- mission: {mission}",
+                f"- objective: {objective}",
+                f"- goal: {goal}",
+                "",
+                "## Retrieved High-Signal Facts",
+            ]
+        )
         if facts:
             for fact in facts:
                 text = str(fact.get("text") or "").strip()
@@ -609,6 +639,15 @@ class ContextLatticeOrchestrator:
         effective_query = str(query or DEFAULT_COMPACTION_QUERY).strip() or DEFAULT_COMPACTION_QUERY
         mode = str(retrieval_mode or "balanced").strip().lower() or "balanced"
         generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        handoff_metadata: Dict[str, Any] = {}
+        summary_text = str(summary or "").strip()
+        try:
+            parsed_summary = json.loads(summary_text)
+            if isinstance(parsed_summary, dict) and parsed_summary.get("schema_version"):
+                handoff_metadata = parsed_summary
+                summary_text = str(parsed_summary.get("summary") or summary_text).strip()
+        except Exception:
+            pass
         primary_pack = self.context_pack(
             query=effective_query,
             project=project,
@@ -670,14 +709,16 @@ class ContextLatticeOrchestrator:
             project=project,
             topic_path=effective_topic_path,
             retrieval_mode=mode,
-            summary=summary,
+            summary=summary_text,
             mission=policy_context_package.get("mission", DEFAULT_CONTEXTLATTICE_MISSION),
             objective=policy_context_package.get("objective", DEFAULT_CONTEXTLATTICE_OBJECTIVE),
             goal=policy_context_package.get("goal", DEFAULT_CONTEXTLATTICE_GOAL),
+            handoff_metadata=handoff_metadata,
             facts=primary_facts,
             warnings=warnings,
         )
-        file_name = f"notes/compaction/{generated_at.replace(':', '').replace('-', '')}_{self._safe_file_token(self.agent_id)}.md"
+        file_token = self._safe_file_token(str(handoff_metadata.get("session_id") or self.agent_id))
+        file_name = f"notes/compaction/{generated_at.replace(':', '').replace('-', '')}_{file_token}.md"
         write_result = self.write(
             project=project,
             file_name=file_name,
@@ -704,6 +745,7 @@ class ContextLatticeOrchestrator:
             "readback": readback,
             "policy_context_package": policy_context_package,
             "context_pack": primary_pack,
+            "handoff_metadata": handoff_metadata,
         }
 
     def codex_preflight(
