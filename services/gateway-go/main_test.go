@@ -2490,6 +2490,51 @@ func TestTelemetryRingEvictsOldestLowValueFirst(t *testing.T) {
 	}
 }
 
+func assertPolicyContextIncludesAntiScheming(t *testing.T, raw any) {
+	t.Helper()
+	policy, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected policy_context_package object, got %#v", raw)
+	}
+	contract, ok := policy["policy_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected policy_contract object, got %#v", policy["policy_contract"])
+	}
+	if !anyToBool(contract["anti_scheming_required"]) {
+		t.Fatalf("expected anti_scheming_required=true, got %#v", contract["anti_scheming_required"])
+	}
+	protocol, ok := policy["anti_scheming_protocol"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected anti_scheming_protocol object, got %#v", policy["anti_scheming_protocol"])
+	}
+	law := strings.TrimSpace(anyToString(protocol["law"]))
+	if !strings.Contains(law, "Change conclusions to match evidence") {
+		t.Fatalf("unexpected anti-scheming law: %q", law)
+	}
+	steps, ok := protocol["required_steps"].([]any)
+	if !ok || len(steps) == 0 {
+		t.Fatalf("expected anti-scheming required_steps, got %#v", protocol["required_steps"])
+	}
+	handoff, ok := policy["handoff"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected handoff object, got %#v", policy["handoff"])
+	}
+	if !strings.Contains(anyToString(handoff["handoff_prompt"]), "change conclusions to match evidence") {
+		t.Fatalf("handoff prompt missing anti-scheming instruction: %#v", handoff["handoff_prompt"])
+	}
+	format, ok := policy["format_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected format_contract object, got %#v", policy["format_contract"])
+	}
+	if strings.TrimSpace(anyToString(format["schema_id"])) != policyContextPackageContractID {
+		t.Fatalf("unexpected policy format contract schema_id: %#v", format["schema_id"])
+	}
+	validation, ok := format["validation"].(map[string]any)
+	if !ok || strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected policy format validation passed, got %#v", format["validation"])
+	}
+}
+
 func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	searchCalls := 0
 	contextPackCalls := 0
@@ -2599,6 +2644,15 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	}
 	if payload["policy_context_package"] == nil {
 		t.Fatalf("expected policy_context_package payload, got nil")
+	}
+	assertPolicyContextIncludesAntiScheming(t, payload["policy_context_package"])
+	contracts, ok := payload["format_contracts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected format_contracts object, got %#v", payload["format_contracts"])
+	}
+	validation, _ := contracts["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected preflight format validation passed, got %#v", validation)
 	}
 }
 
@@ -2729,6 +2783,15 @@ func TestAgentsPreflightUsesNamedProfileDefaults(t *testing.T) {
 	}
 	if payload["policy_context_package"] == nil {
 		t.Fatalf("expected policy_context_package payload, got nil")
+	}
+	assertPolicyContextIncludesAntiScheming(t, payload["policy_context_package"])
+	contracts, ok := payload["format_contracts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected format_contracts object, got %#v", payload["format_contracts"])
+	}
+	validation, _ := contracts["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected preflight format validation passed, got %#v", validation)
 	}
 }
 

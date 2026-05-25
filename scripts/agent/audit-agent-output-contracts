@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Audit shared agent-output contracts and boundary validators."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from agent_contracts import (  # noqa: E402
+    anti_scheming_protocol,
+    contract_metadata,
+    load_agent_contracts_registry,
+    preflight_contracts_summary,
+    stamp_validation,
+    validate_agent_contract_payload,
+)
+from _common import emit  # noqa: E402
+
+REQUIRED_CONTRACTS = (
+    "anti_scheming_protocol.v1",
+    "policy_context_package.v1",
+    "agent_preflight_response.v1",
+    "context_pack_response.v1",
+    "writeback_result.v1",
+    "codex_compact_hook_stdout.v1",
+)
+
+
+def sample_context_pack() -> dict[str, Any]:
+    pack = {
+        "facts": [],
+        "results": [],
+        "citations": [],
+        "relevant_decisions": [],
+        "files_to_read": [],
+        "files_to_avoid": [],
+        "capabilities_to_use": [],
+        "runbooks": [],
+        "known_failure_modes": [],
+        "commands": [],
+        "acceptance_criteria": [],
+    }
+    coverage = {"configured": ["postgres_pgvector"], "returned": ["postgres_pgvector"], "complete": True}
+    return {"ok": True, "context_pack": pack, "source_coverage": coverage, "writeback_required": True}
+
+
+def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
+    protocol = anti_scheming_protocol(registry)
+    metadata = contract_metadata("policy_context_package.v1", registry)
+    policy = {
+        "version": "2026-05-10",
+        "agent": "codex",
+        "agent_id": "codex_gpt5_test",
+        "project": "contextlattice",
+        "topic_path": "runbooks/codex-integration",
+        "query": "agent output contract audit",
+        "retrieval_mode": "fast",
+        "mission": "Compound knowledge across projects into better agent outcomes with less repeated inference.",
+        "objective": "Improve longitudinal recall, retrieval quality, and orchestration decisions over time.",
+        "goal": "Maximize useful context per token while preserving correctness, provenance, and latency discipline.",
+        "skills": {
+            "required": ["objective", "goal"],
+            "optional": ["mission"],
+            "availability": {"objective": True, "goal": True, "mission": False},
+        },
+        "policy_contract": {
+            "retrieve_before_inference": True,
+            "anti_scheming_required": True,
+            "checkpoint_during_execution": True,
+            "final_recency_pass_required": True,
+            "include_grounding": True,
+            "include_retrieval_debug": True,
+            "broaden_scope_on_zero_or_degraded": True,
+            "format_validation_required": True,
+            "contract_boundary_validated": True,
+            "fail_closed_on_contract_violation": True,
+        },
+        "anti_scheming_protocol": protocol,
+        "handoff": {
+            "disperse_to_agents": True,
+            "handoff_prompt": "Mission: m\nObjective: o\nGoal: g\nPolicy: retrieve before inference and change conclusions to match evidence.",
+        },
+        "evidence": {"primary_facts": [], "mission_facts": [], "mission_pack_error": None},
+        "format_contract": metadata,
+    }
+    findings = validate_agent_contract_payload("anti_scheming_protocol.v1", protocol, registry)
+    findings.extend(validate_agent_contract_payload("policy_context_package.v1", policy, registry))
+    policy["format_contract"] = stamp_validation(metadata, findings)
+    return policy
+
+
+def validate_expected_failure(contract_id: str, payload: dict[str, Any], reason: str) -> dict[str, Any] | None:
+    findings = validate_agent_contract_payload(contract_id, payload)
+    if not findings:
+        return {"severity": "error", "reason": "expected_failure_passed", "contract_id": contract_id}
+    reasons = {str(item.get("reason") or "") for item in findings}
+    if reason not in reasons:
+        return {
+            "severity": "error",
+            "reason": "expected_failure_reason_missing",
+            "contract_id": contract_id,
+            "expected": reason,
+            "findings": findings[:5],
+        }
+    return None
+
+
+def run_audit() -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    try:
+        registry = load_agent_contracts_registry()
+    except Exception as exc:
+        return [{"severity": "error", "reason": "registry_load_failed", "detail": str(exc)[:240]}]
+
+    contracts = registry.get("contracts") if isinstance(registry.get("contracts"), dict) else {}
+    for contract_id in REQUIRED_CONTRACTS:
+        if contract_id not in contracts:
+            findings.append({"severity": "error", "reason": "missing_required_contract", "contract_id": contract_id})
+
+    protocol = anti_scheming_protocol(registry)
+    for item in validate_agent_contract_payload("anti_scheming_protocol.v1", protocol, registry):
+        findings.append({"severity": "error", **item})
+
+    context_pack = sample_context_pack()
+    for item in validate_agent_contract_payload("context_pack_response.v1", context_pack, registry):
+        findings.append({"severity": "error", **item})
+
+    policy = sample_policy_package(registry)
+    for item in validate_agent_contract_payload("policy_context_package.v1", policy, registry):
+        findings.append({"severity": "error", **item})
+    validation = ((policy.get("format_contract") or {}).get("validation") or {}) if isinstance(policy, dict) else {}
+    if validation.get("status") != "passed":
+        findings.append({"severity": "error", "reason": "sample_policy_validation_not_passed", "validation": validation})
+
+    preflight = {
+        "ok": True,
+        "service": "gateway-go",
+        "agent": "codex",
+        "agent_id": "codex_gpt5_test",
+        "project": "contextlattice",
+        "query": "agent output contract audit",
+        "topic_path": "runbooks/codex-integration",
+        "retrieval_mode": "fast",
+        "context_pack": context_pack,
+        "policy_context_package": policy,
+        "format_contracts": preflight_contracts_summary(),
+    }
+    preflight_errors = validate_agent_contract_payload("agent_preflight_response.v1", preflight, registry)
+    preflight["format_contracts"] = preflight_contracts_summary(preflight_errors)
+    for item in preflight_errors:
+        findings.append({"severity": "error", **item})
+
+    compact_stdout = {"continue": True, "suppressOutput": False, "systemMessage": "ContextLattice checkpoint ok."}
+    for item in validate_agent_contract_payload("codex_compact_hook_stdout.v1", compact_stdout, registry):
+        findings.append({"severity": "error", **item})
+
+    bad_policy = dict(policy)
+    bad_policy.pop("format_contract", None)
+    bad_policy["hookSpecificOutput"] = {"bad": True}
+    failure = validate_expected_failure("policy_context_package.v1", bad_policy, "missing_required_field")
+    if failure:
+        findings.append(failure)
+    failure = validate_expected_failure("policy_context_package.v1", bad_policy, "forbidden_field_present")
+    if failure:
+        findings.append(failure)
+
+    bad_compact = {"continue": True, "ok": True, "hookSpecificOutput": {"bad": True}}
+    failure = validate_expected_failure("codex_compact_hook_stdout.v1", bad_compact, "unexpected_field")
+    if failure:
+        findings.append(failure)
+    failure = validate_expected_failure("codex_compact_hook_stdout.v1", bad_compact, "forbidden_field_present")
+    if failure:
+        findings.append(failure)
+
+    return findings
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+    findings = run_audit()
+    errors = [item for item in findings if item.get("severity") == "error"]
+    emit(
+        {
+            "ok": not errors,
+            "registry": str(REPO_ROOT / "config" / "agent_contracts" / "agent_output_contracts.json"),
+            "required_contracts": list(REQUIRED_CONTRACTS),
+            "findings": findings,
+        },
+        args.pretty,
+    )
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

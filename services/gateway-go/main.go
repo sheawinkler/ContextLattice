@@ -2206,7 +2206,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		missionPackErr,
 	)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"ok":                     true,
 		"service":                "gateway-go",
 		"agent":                  profileKey,
@@ -2236,7 +2236,9 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"mission_context_status": missionPackStatus,
 		"mission_context_error":  errString(missionPackErr),
 		"policy_context_package": policyContextPackage,
-	})
+	}
+	response = attachAgentPreflightFormatContracts(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func errString(err error) any {

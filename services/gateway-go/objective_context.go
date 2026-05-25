@@ -298,6 +298,7 @@ func buildPolicyContextPackage(
 	mission := defaultContextLatticeMission()
 	objective := defaultContextLatticeObjective()
 	goal := defaultContextLatticeGoal()
+	formatContract := contractMetadata(policyContextPackageContractID)
 	policy := map[string]any{
 		"version":        "2026-05-10",
 		"agent":          agent,
@@ -320,29 +321,39 @@ func buildPolicyContextPackage(
 		},
 		"policy_contract": map[string]any{
 			"retrieve_before_inference":         true,
+			"anti_scheming_required":            true,
 			"checkpoint_during_execution":       true,
 			"final_recency_pass_required":       true,
 			"include_grounding":                 true,
 			"include_retrieval_debug":           true,
 			"broaden_scope_on_zero_or_degraded": true,
+			"format_validation_required":        true,
+			"contract_boundary_validated":       true,
+			"fail_closed_on_contract_violation": true,
 		},
+		"anti_scheming_protocol": antiSchemingProtocol(),
 		"handoff": map[string]any{
 			"disperse_to_agents": true,
 			"handoff_prompt": strings.TrimSpace(
 				"Mission: " + mission + "\n" +
 					"Objective: " + objective + "\n" +
 					"Goal: " + goal + "\n" +
-					"Policy: retrieve before inference, checkpoint key decisions, and run final recency retrieval.",
+					"Policy: retrieve before inference, checkpoint key decisions, run final recency retrieval, and change conclusions to match evidence.",
 			),
 		},
 		"evidence": map[string]any{
-			"primary_facts": contextPackEvidence(primaryPack, 8),
-			"mission_facts": contextPackEvidence(missionPack, 8),
+			"primary_facts":      contextPackEvidence(primaryPack, 8),
+			"mission_facts":      contextPackEvidence(missionPack, 8),
+			"mission_pack_error": nil,
 		},
+		"format_contract": formatContract,
 	}
 	if missionPackError != nil {
 		policyEvidence, _ := policy["evidence"].(map[string]any)
 		policyEvidence["mission_pack_error"] = missionPackError.Error()
 	}
+	findings := validateAgentContractPayload(antiSchemingContractID, policy["anti_scheming_protocol"])
+	findings = append(findings, validateAgentContractPayload(policyContextPackageContractID, policy)...)
+	policy["format_contract"] = stampContractValidation(formatContract, findings)
 	return policy
 }
