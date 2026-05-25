@@ -21,6 +21,7 @@ try:
         build_orchestrator_headers,
         resolve_orchestrator_api_key,
     )
+    from scripts.agent_contracts import attach_format_contract
     from scripts.context_expansion_runtime import ContextExpansionRuntime
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from contextlattice_client import (  # type: ignore[no-redef]
@@ -28,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
         build_orchestrator_headers,
         resolve_orchestrator_api_key,
     )
+    from agent_contracts import attach_format_contract  # type: ignore[no-redef]
     from context_expansion_runtime import ContextExpansionRuntime
 
 DEFAULT_ORCH_URL = os.getenv(
@@ -225,7 +227,19 @@ def _post_feedback(orchestrator_url: str, payload: dict[str, Any]) -> None:
 def _format_result(task: dict[str, Any], output: str) -> str:
     payload = task.get("payload")
     payload_block = json.dumps(payload, indent=2) if payload else "{}"
-    return f"""# Task Result\n\n## Task\n- id: {task.get('id')}\n- title: {task.get('title')}\n- project: {task.get('project')}\n- agent: {task.get('agent')}\n\n## Payload\n```\n{payload_block}\n```\n\n## Output\n{output}\n"""
+    contract_payload = attach_format_contract(
+        "agent_task_result.v1",
+        {
+            "ok": True,
+            "task_id": str(task.get("id") or ""),
+            "project": str(task.get("project") or "_global"),
+            "agent": str(task.get("agent") or DEFAULT_AGENT),
+            "status": "succeeded",
+            "output": output[:119000],
+        },
+    )
+    contract_block = json.dumps(contract_payload, indent=2, sort_keys=True)
+    return f"""# Task Result\n\n```json contextlattice_contract\n{contract_block}\n```\n\n## Task\n- id: {task.get('id')}\n- title: {task.get('title')}\n- project: {task.get('project')}\n- agent: {task.get('agent')}\n\n## Payload\n```\n{payload_block}\n```\n\n## Output\n{output}\n"""
 
 
 def _serialize_env_json(payload: dict[str, Any], max_chars: int = 65000) -> str:

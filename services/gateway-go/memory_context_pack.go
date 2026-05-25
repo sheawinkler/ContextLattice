@@ -110,21 +110,23 @@ func (s *server) buildContextPackResponse(
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
 	response := map[string]any{
-		"query":            query,
-		"context_pack":     contextPack,
-		"warnings":         parseWarnings(searchResponse["warnings"]),
-		"retrieval_mode":   searchResponse["retrieval_mode"],
-		"retrieval_intent": searchResponse["retrieval_intent"],
-		"traffic_class":    searchResponse["traffic_class"],
-		"agent_id":         searchResponse["agent_id"],
-		"source_coverage":  sourceCoverage,
+		"ok":                 true,
+		"query":              query,
+		"context_pack":       contextPack,
+		"warnings":           parseWarnings(searchResponse["warnings"]),
+		"retrieval_mode":     searchResponse["retrieval_mode"],
+		"retrieval_intent":   searchResponse["retrieval_intent"],
+		"traffic_class":      searchResponse["traffic_class"],
+		"agent_id":           searchResponse["agent_id"],
+		"source_coverage":    sourceCoverage,
+		"writeback_required": true,
 	}
 	if includeRetrievalDebug {
 		if retrievalDebug, ok := searchResponse["retrieval_debug"]; ok {
 			response["retrieval"] = retrievalDebug
 		}
 	}
-	return response, status, nil
+	return attachContextPackFormatContract(response), status, nil
 }
 
 func buildContextPackPayload(
@@ -180,28 +182,42 @@ func buildContextPackPayload(
 		resultRows = append(resultRows, rendered)
 	}
 	sections := contextPackAgentSections(factsAny, resultRows)
+	generatedAt := nowUTCISO()
 
 	return map[string]any{
-		"query":              query,
-		"generatedAt":        nowUTCISO(),
-		"factualOnly":        true,
-		"strictNumericCopy":  anyToBoolOrDefault(grounding["strict_numeric_copy"], true),
-		"facts":              factsAny,
-		"numericFacts":       numericFactsAny,
-		"citations":          citations,
-		"results":            resultRows,
-		"relevantDecisions":  sections["relevantDecisions"],
-		"filesToRead":        sections["filesToRead"],
-		"filesToAvoid":       sections["filesToAvoid"],
-		"capabilitiesToUse":  sections["capabilitiesToUse"],
-		"runbooks":           sections["runbooks"],
-		"knownFailureModes":  sections["knownFailureModes"],
-		"commands":           sections["commands"],
-		"acceptanceCriteria": sections["acceptanceCriteria"],
-		"warnings":           parseWarnings(searchResponse["warnings"]),
-		"retrievalMode":      searchResponse["retrieval_mode"],
-		"retrievalIntent":    searchResponse["retrieval_intent"],
-		"agentId":            searchResponse["agent_id"],
+		"query":               query,
+		"generatedAt":         generatedAt,
+		"generated_at":        generatedAt,
+		"factualOnly":         true,
+		"factual_only":        true,
+		"strictNumericCopy":   anyToBoolOrDefault(grounding["strict_numeric_copy"], true),
+		"strict_numeric_copy": anyToBoolOrDefault(grounding["strict_numeric_copy"], true),
+		"facts":               factsAny,
+		"numericFacts":        numericFactsAny,
+		"numeric_facts":       numericFactsAny,
+		"citations":           citations,
+		"results":             resultRows,
+		"relevantDecisions":   sections["relevantDecisions"],
+		"relevant_decisions":  sections["relevantDecisions"],
+		"filesToRead":         sections["filesToRead"],
+		"files_to_read":       sections["filesToRead"],
+		"filesToAvoid":        sections["filesToAvoid"],
+		"files_to_avoid":      sections["filesToAvoid"],
+		"capabilitiesToUse":   sections["capabilitiesToUse"],
+		"capabilities_to_use": sections["capabilitiesToUse"],
+		"runbooks":            sections["runbooks"],
+		"knownFailureModes":   sections["knownFailureModes"],
+		"known_failure_modes": sections["knownFailureModes"],
+		"commands":            sections["commands"],
+		"acceptanceCriteria":  sections["acceptanceCriteria"],
+		"acceptance_criteria": sections["acceptanceCriteria"],
+		"warnings":            parseWarnings(searchResponse["warnings"]),
+		"retrievalMode":       searchResponse["retrieval_mode"],
+		"retrieval_mode":      searchResponse["retrieval_mode"],
+		"retrievalIntent":     searchResponse["retrieval_intent"],
+		"retrieval_intent":    searchResponse["retrieval_intent"],
+		"agentId":             searchResponse["agent_id"],
+		"agent_id":            searchResponse["agent_id"],
 	}
 }
 

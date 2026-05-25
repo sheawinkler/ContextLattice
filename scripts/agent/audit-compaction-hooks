@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +16,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback.
     tomllib = None
 
-from _common import emit
+from _common import REPO_ROOT, emit
 from audit_compaction_hooks_import import command_hooks_for, hook_hash
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import validate_agent_contract_payload  # noqa: E402
 
 
 REQUIRED = {
@@ -23,6 +28,15 @@ REQUIRED = {
     "PreCompact": "contextlattice_pre_compaction_write.sh",
     "PostCompact": "contextlattice_post_compaction_read.sh",
 }
+MIN_TIMEOUT_SECS = 200
+SCHEMA_SMOKE_TIMEOUT_SECS = 15
+MAX_COMPACT_OUTPUT_BYTES = 4096
+MAX_COMPACTION_SUMMARY_BYTES = 12_000
+OVERSIZE_INPUT_ARRAY_ITEMS = 17_000
+MODEL_COMPATIBILITY_CONTRACT_PATH = REPO_ROOT / "config" / "model_compat" / "compaction_prompt_contract.json"
+GLOBAL_HOME = Path(os.environ.get("CONTEXTLATTICE_GLOBAL_HOME") or Path.home() / ".contextlattice").expanduser()
+COMPACTION_HELPER = GLOBAL_HOME / "scripts" / "agent" / "compaction-handoff-payload"
+REPO_COMPACTION_HELPER = REPO_ROOT / "scripts" / "agent" / "compaction-handoff-payload"
 EVENT_LABELS = {
     "SessionStart": "session_start",
     "PreCompact": "pre_compact",
@@ -63,6 +77,432 @@ def trusted_state() -> dict[str, str]:
     }
 
 
+def validate_compact_output(payload: Any, event: str) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return [{"reason": "invalid_compact_output_schema", "detail": "output_not_object"}]
+
+    findings: list[dict[str, Any]] = []
+    allowed_root = {"continue", "stopReason", "suppressOutput", "systemMessage"}
+    extra = sorted(set(payload) - allowed_root)
+    if extra:
+        findings.append(
+            {
+                "reason": "invalid_compact_output_schema",
+                "detail": "unexpected_top_level_keys",
+                "event": event,
+                "keys": extra,
+            }
+        )
+
+    if "continue" in payload and not isinstance(payload.get("continue"), bool):
+        findings.append(
+            {
+                "reason": "invalid_compact_output_schema",
+                "detail": "continue_not_boolean",
+                "event": event,
+            }
+        )
+    if "suppressOutput" in payload and not isinstance(payload.get("suppressOutput"), bool):
+        findings.append(
+            {
+                "reason": "invalid_compact_output_schema",
+                "detail": "suppressOutput_not_boolean",
+                "event": event,
+            }
+        )
+    if "systemMessage" in payload and not isinstance(payload.get("systemMessage"), str):
+        findings.append(
+            {
+                "reason": "invalid_compact_output_schema",
+                "detail": "systemMessage_not_string",
+                "event": event,
+            }
+        )
+    if "stopReason" in payload and not isinstance(payload.get("stopReason"), str):
+        findings.append(
+            {
+                "reason": "invalid_compact_output_schema",
+                "detail": "stopReason_not_string",
+                "event": event,
+            }
+        )
+    for finding in validate_agent_contract_payload("codex_compact_hook_stdout.v1", payload):
+        findings.append(
+            {
+                "reason": "compact_output_contract_violation",
+                "detail": finding.get("reason"),
+                "event": event,
+                "contract_id": "codex_compact_hook_stdout.v1",
+                "finding": finding,
+            }
+        )
+    return findings
+
+
+def compact_schema_smoke(command: str, event: str) -> list[dict[str, Any]]:
+    target = expand(command)
+    if not target.exists() or not os.access(target, os.X_OK):
+        return []
+    env = os.environ.copy()
+    if event == "PreCompact":
+        env["CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE"] = "1"
+        budget_var = "CONTEXTLATTICE_PRECOMPACT_OUTPUT_MAX_BYTES"
+    else:
+        env["CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE"] = "1"
+        budget_var = "CONTEXTLATTICE_POSTCOMPACT_OUTPUT_MAX_BYTES"
+    env["CONTEXTLATTICE_HOOK_TIMEOUT_SECS"] = "5"
+    env["CONTEXTLATTICE_CLIENT_TIMEOUT_SECS"] = "5"
+    env[budget_var] = str(MAX_COMPACT_OUTPUT_BYTES)
+    try:
+        proc = subprocess.run(
+            [str(target)],
+            input='{"transcript":"schema smoke"}',
+            capture_output=True,
+            text=True,
+            timeout=SCHEMA_SMOKE_TIMEOUT_SECS,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [
+            {
+                "reason": "compact_schema_smoke_timeout",
+                "command": command,
+                "event": event,
+                "timeout": SCHEMA_SMOKE_TIMEOUT_SECS,
+            }
+        ]
+    if proc.returncode != 0:
+        return [
+            {
+                "reason": "compact_schema_smoke_failed",
+                "command": command,
+                "event": event,
+                "returncode": proc.returncode,
+                "stderr": proc.stderr.strip()[:500],
+            }
+        ]
+    stdout_bytes = len(proc.stdout.encode("utf-8"))
+    if stdout_bytes > MAX_COMPACT_OUTPUT_BYTES:
+        return [
+            {
+                "reason": "compact_output_too_large",
+                "command": command,
+                "event": event,
+                "bytes": stdout_bytes,
+                "max_bytes": MAX_COMPACT_OUTPUT_BYTES,
+            }
+        ]
+    try:
+        payload = json.loads(proc.stdout)
+    except Exception as exc:
+        return [
+            {
+                "reason": "invalid_compact_output_json",
+                "command": command,
+                "event": event,
+                "detail": str(exc),
+                "stdout": proc.stdout.strip()[:500],
+                "stderr": proc.stderr.strip()[:500],
+            }
+        ]
+    findings = [
+        {"command": command, **finding}
+        for finding in validate_compact_output(payload, event)
+    ]
+    if findings:
+        return findings
+
+    malformed_env = env.copy()
+    malformed_env[budget_var] = "not-an-int"
+    try:
+        malformed_proc = subprocess.run(
+            [str(target)],
+            input='{"transcript":"schema smoke malformed output budget"}',
+            capture_output=True,
+            text=True,
+            timeout=SCHEMA_SMOKE_TIMEOUT_SECS,
+            env=malformed_env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [
+            {
+                "reason": "compact_malformed_output_budget_smoke_timeout",
+                "command": command,
+                "event": event,
+                "timeout": SCHEMA_SMOKE_TIMEOUT_SECS,
+            }
+        ]
+    if malformed_proc.returncode != 0:
+        return [
+            {
+                "reason": "compact_malformed_output_budget_smoke_failed",
+                "command": command,
+                "event": event,
+                "returncode": malformed_proc.returncode,
+                "stderr": malformed_proc.stderr.strip()[:500],
+            }
+        ]
+    try:
+        malformed_payload = json.loads(malformed_proc.stdout)
+    except Exception as exc:
+        return [
+            {
+                "reason": "invalid_compact_malformed_output_budget_json",
+                "command": command,
+                "event": event,
+                "detail": str(exc),
+                "stdout": malformed_proc.stdout.strip()[:500],
+                "stderr": malformed_proc.stderr.strip()[:500],
+            }
+        ]
+    return [
+        {"command": command, **finding}
+        for finding in validate_compact_output(malformed_payload, event)
+    ]
+
+
+def compaction_payload_budget_smoke(compaction_helper: Path) -> list[dict[str, Any]]:
+    if not compaction_helper.exists() or not os.access(compaction_helper, os.X_OK):
+        return []
+    env = os.environ.copy()
+    env["CONTEXTLATTICE_COMPACTION_SUMMARY_MAX_BYTES"] = str(MAX_COMPACTION_SUMMARY_BYTES)
+    oversized = '{"input":[' + ",".join('"x"' for _ in range(OVERSIZE_INPUT_ARRAY_ITEMS)) + ']}'
+    try:
+        proc = subprocess.run(
+            [str(compaction_helper), "--fallback-summary", "budget smoke", "--summary"],
+            input=oversized,
+            capture_output=True,
+            text=True,
+            timeout=SCHEMA_SMOKE_TIMEOUT_SECS,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_budget_smoke_timeout",
+                "path": str(compaction_helper),
+                "timeout": SCHEMA_SMOKE_TIMEOUT_SECS,
+            }
+        ]
+    if proc.returncode != 0:
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_budget_smoke_failed",
+                "path": str(compaction_helper),
+                "returncode": proc.returncode,
+                "stderr": proc.stderr.strip()[:500],
+            }
+        ]
+    stdout_bytes = len(proc.stdout.encode("utf-8"))
+    if stdout_bytes > MAX_COMPACTION_SUMMARY_BYTES:
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_summary_too_large",
+                "path": str(compaction_helper),
+                "bytes": stdout_bytes,
+                "max_bytes": MAX_COMPACTION_SUMMARY_BYTES,
+            }
+        ]
+    try:
+        payload = json.loads(proc.stdout)
+    except Exception as exc:
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "invalid_compaction_payload_json",
+                "path": str(compaction_helper),
+                "detail": str(exc),
+                "stdout": proc.stdout.strip()[:500],
+            }
+        ]
+    if isinstance(payload.get("input"), list) and len(payload["input"]) > 0:
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_leaked_input_array",
+                "path": str(compaction_helper),
+                "items": len(payload["input"]),
+            }
+        ]
+    compatibility_findings = validate_model_compatibility(payload)
+    if compatibility_findings:
+        return compatibility_findings
+    return []
+
+
+def load_model_compatibility_contract() -> dict[str, Any]:
+    try:
+        payload = json.loads(MODEL_COMPATIBILITY_CONTRACT_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "_contract_error": str(exc),
+            "_contract_path": str(MODEL_COMPATIBILITY_CONTRACT_PATH),
+        }
+    return payload if isinstance(payload, dict) else {"_contract_error": "contract_not_object"}
+
+
+def list_values(payload: dict[str, Any], key: str) -> set[str]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return set()
+    return {str(item) for item in value}
+
+
+def validate_model_compatibility(payload: Any) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    expected_contract = load_model_compatibility_contract()
+    if expected_contract.get("_contract_error"):
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "compaction_prompt_contract_invalid",
+                "detail": expected_contract.get("_contract_error"),
+                "path": expected_contract.get("_contract_path"),
+            }
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_model_compatibility_missing",
+                "detail": "payload_not_object",
+            }
+        ]
+
+    required_fields = [str(item) for item in expected_contract.get("required_payload_fields") or []]
+    missing_fields = sorted(field for field in required_fields if field not in payload)
+    if missing_fields:
+        findings.append(
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_model_compatibility_missing",
+                "detail": "missing_required_payload_fields",
+                "missing": missing_fields,
+            }
+        )
+
+    contract = payload.get("model_compatibility")
+    if not isinstance(contract, dict):
+        findings.append(
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_model_compatibility_missing",
+                "detail": "missing_contract",
+            }
+        )
+    else:
+        if contract.get("contract_version") != expected_contract.get("contract_version"):
+            findings.append(
+                {
+                    "event": "PreCompact",
+                    "reason": "compaction_payload_model_compatibility_invalid",
+                    "detail": "contract_version_mismatch",
+                    "value": contract.get("contract_version"),
+                    "expected": expected_contract.get("contract_version"),
+                }
+            )
+        if contract.get("prompt_format") != expected_contract.get("prompt_format"):
+            findings.append(
+                {
+                    "event": "PreCompact",
+                    "reason": "compaction_payload_model_compatibility_invalid",
+                    "detail": "prompt_format_not_provider_neutral",
+                    "value": contract.get("prompt_format"),
+                }
+            )
+        if contract != expected_contract:
+            findings.append(
+                {
+                    "event": "PreCompact",
+                    "reason": "compaction_payload_model_compatibility_invalid",
+                    "detail": "contract_not_loaded_from_repo_source",
+                }
+            )
+        gates = contract.get("compatibility_gates") if isinstance(contract.get("compatibility_gates"), dict) else {}
+        gate_checks = (
+            ("required_delivery_modes", "delivery_modes"),
+            ("required_online_model_families", "online_model_families"),
+            ("required_local_runtimes", "local_runtimes"),
+            ("required_constraints", "portable_prompt_constraints"),
+        )
+        for required_key, actual_key in gate_checks:
+            required = {str(item) for item in gates.get(required_key) or []}
+            actual = list_values(contract, actual_key)
+            missing = sorted(required - actual)
+            if missing:
+                findings.append(
+                    {
+                        "event": "PreCompact",
+                        "reason": "compaction_payload_model_compatibility_invalid",
+                        "detail": "contract_gate_missing_values",
+                        "gate": required_key,
+                        "field": actual_key,
+                        "missing": missing,
+                    }
+                )
+        if "utf" not in str(contract.get("encoding") or "").lower():
+            findings.append(
+                {
+                    "event": "PreCompact",
+                    "reason": "compaction_payload_model_compatibility_invalid",
+                    "detail": "encoding_not_utf",
+                    "value": contract.get("encoding"),
+                }
+            )
+
+    prompt = payload.get("portable_prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        findings.append(
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_model_compatibility_missing",
+                "detail": "missing_portable_prompt",
+            }
+        )
+        return findings
+    prompt_probe = "\n" + prompt
+    for token in expected_contract.get("forbidden_control_tokens") or []:
+        if token in prompt:
+            findings.append(
+                {
+                    "event": "PreCompact",
+                    "reason": "compaction_payload_model_compatibility_invalid",
+                    "detail": "provider_control_token_present",
+                    "token": token,
+                }
+            )
+    for prefix in expected_contract.get("forbidden_role_prefixes") or []:
+        probe = "\n" + str(prefix)
+        if probe in prompt_probe:
+            findings.append(
+                {
+                    "event": "PreCompact",
+                    "reason": "compaction_payload_model_compatibility_invalid",
+                    "detail": "chat_role_prefix_present",
+                    "prefix": str(prefix).strip(),
+                }
+            )
+    max_prompt_bytes = int(expected_contract.get("max_portable_prompt_bytes") or 4096)
+    if len(prompt.encode("utf-8")) > max_prompt_bytes:
+        findings.append(
+            {
+                "event": "PreCompact",
+                "reason": "compaction_payload_model_compatibility_invalid",
+                "detail": "portable_prompt_too_large",
+                "bytes": len(prompt.encode("utf-8")),
+                "max_bytes": max_prompt_bytes,
+            }
+        )
+    return findings
+
+
 def check(path: Path) -> dict[str, Any]:
     live_hooks = Path.home() / ".codex" / "hooks.json"
     if not path.exists():
@@ -81,6 +521,7 @@ def check(path: Path) -> dict[str, Any]:
 
     findings = []
     is_live = path == live_hooks
+    compaction_helper = COMPACTION_HELPER if is_live else REPO_COMPACTION_HELPER
     state = trusted_state() if is_live else {}
     for event, expected_tail in REQUIRED.items():
         commands = commands_for(payload, event)
@@ -95,6 +536,47 @@ def check(path: Path) -> dict[str, Any]:
                     findings.append({"event": event, "reason": "missing_command", "command": command})
                 elif not os.access(target, os.X_OK):
                     findings.append({"event": event, "reason": "command_not_executable", "command": command})
+            if event in {"PreCompact", "PostCompact"}:
+                if not compaction_helper.exists():
+                    findings.append(
+                        {
+                            "event": event,
+                            "reason": "missing_compaction_payload_helper",
+                            "path": str(compaction_helper),
+                        }
+                    )
+                elif not os.access(compaction_helper, os.X_OK):
+                    findings.append(
+                        {
+                            "event": event,
+                            "reason": "compaction_payload_helper_not_executable",
+                            "path": str(compaction_helper),
+                        }
+                    )
+        for _group_index, _hook_index, _matcher, hook in command_hooks_for(payload, event):
+            command = str(hook.get("command") or "")
+            if not command.endswith(expected_tail):
+                continue
+            try:
+                timeout = int(hook.get("timeout") or 0)
+            except (TypeError, ValueError):
+                timeout = 0
+            if timeout < MIN_TIMEOUT_SECS:
+                findings.append(
+                    {
+                        "event": event,
+                        "reason": "timeout_too_low",
+                        "command": command,
+                        "timeout": timeout,
+                        "min_timeout": MIN_TIMEOUT_SECS,
+                    }
+                )
+            if event in {"PreCompact", "PostCompact"}:
+                for finding in compact_schema_smoke(command, event):
+                    finding["event"] = event
+                    findings.append(finding)
+            if event == "PreCompact":
+                findings.extend(compaction_payload_budget_smoke(compaction_helper))
         if state:
             for group_index, hook_index, _matcher, hook in command_hooks_for(payload, event):
                 command = str(hook.get("command") or "")

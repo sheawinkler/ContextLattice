@@ -20,6 +20,7 @@ Use this as a reusable skill block for agent frameworks that support skills or t
    - `GET /memory/profiles/{agent_id}`
    - Optional bootstrap: `POST /v1/agents/preflight`
    - On preflight responses, ingest and forward `policy_context_package` (mission + objective + goal + policy contract) into downstream agent handoffs.
+   - Preserve any returned `format_contract` or `format_contracts` metadata; contract violations are product signals, not wording suggestions.
 4. During execution, checkpoint durable decisions:
    - `POST /memory/write`
 5. Submit explicit retrieval feedback for learning/rerank:
@@ -49,6 +50,8 @@ Use this as a reusable skill block for agent frameworks that support skills or t
   - `GET /telemetry/recall`
   - `GET /telemetry/recall/monitor`
   - `GET /telemetry/recall/tuning`
+- Track boundary contract health:
+  - `GET /telemetry/agent-contracts`
 
 ### Timeout Troubleshooting
 - If a read times out, check the client/tool timeout first.

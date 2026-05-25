@@ -15,12 +15,14 @@ try:
         build_orchestrator_headers,
         resolve_orchestrator_api_key,
     )
+    from scripts.agent_contracts import attach_format_contract
     from scripts.context_expansion_runtime import ContextExpansionRuntime
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from contextlattice_client import (  # type: ignore[no-redef]
         build_orchestrator_headers,
         resolve_orchestrator_api_key,
     )
+    from agent_contracts import attach_format_contract  # type: ignore[no-redef]
     from context_expansion_runtime import ContextExpansionRuntime
 
 
@@ -98,8 +100,22 @@ def _write_memory(orchestrator_url: str, project: str, file_name: str, content: 
 def _format_result(task: dict[str, Any], output: str, agent_label: str) -> str:
     payload = task.get("payload")
     payload_block = json.dumps(payload, indent=2) if payload else "{}"
+    contract_payload = attach_format_contract(
+        "agent_task_result.v1",
+        {
+            "ok": True,
+            "task_id": str(task.get("id") or ""),
+            "project": str(task.get("project") or "_global"),
+            "agent": agent_label,
+            "status": "succeeded",
+            "output": output[:119000],
+        },
+    )
+    contract_block = json.dumps(contract_payload, indent=2, sort_keys=True)
     return (
         "# Task Result\n\n"
+        "```json contextlattice_contract\n"
+        f"{contract_block}\n```\n\n"
         f"## Task\n- id: {task.get('id')}\n- title: {task.get('title')}\n- project: {task.get('project')}\n"
         f"- agent: {agent_label}\n\n"
         "## Payload\n```json\n"

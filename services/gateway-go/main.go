@@ -6522,6 +6522,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
 	mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)
+	mux.HandleFunc("/telemetry/agent-contracts", s.agentContractTelemetryRoute)
 	mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)
 	mux.HandleFunc("/telemetry/recall/monitor", s.telemetryRecallMonitorRoute)
 	mux.HandleFunc("/telemetry/tools/invocations", s.telemetryToolsInvocationsRoute)

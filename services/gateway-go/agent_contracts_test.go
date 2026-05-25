@@ -1,6 +1,8 @@
 package main
 
 import (
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -22,6 +24,29 @@ func TestAgentContractsRegistryLoadsSharedProtocol(t *testing.T) {
 	}
 	if findings := validateAgentContractPayload(antiSchemingContractID, protocol); len(findings) != 0 {
 		t.Fatalf("anti-scheming protocol should validate: %#v", findings)
+	}
+}
+
+func TestGeneratedAgentContractsMatchRegistry(t *testing.T) {
+	registry, err := loadAgentContractsRegistry()
+	if err != nil {
+		t.Fatalf("load agent contracts registry: %v", err)
+	}
+	if GeneratedAgentContractRegistryID != registry.RegistryID {
+		t.Fatalf("generated registry id drift: %q != %q", GeneratedAgentContractRegistryID, registry.RegistryID)
+	}
+	if GeneratedAgentContractRegistryVersion != registry.RegistryVersion {
+		t.Fatalf("generated registry version drift: %d != %d", GeneratedAgentContractRegistryVersion, registry.RegistryVersion)
+	}
+	ids := make([]string, 0, len(registry.Contracts))
+	for id := range registry.Contracts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	generated := append([]string{}, GeneratedAgentContractIDs...)
+	sort.Strings(generated)
+	if !reflect.DeepEqual(generated, ids) {
+		t.Fatalf("generated contract ids drift:\ngenerated=%#v\nregistry=%#v", generated, ids)
 	}
 }
 
@@ -103,5 +128,56 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 	findings := validateAgentContractPayload(agentPreflightResponseContractID, bad)
 	if len(findings) == 0 {
 		t.Fatalf("expected malformed preflight response to fail validation")
+	}
+}
+
+func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
+	pack := map[string]any{
+		"facts":               []any{},
+		"results":             []any{},
+		"citations":           []any{},
+		"relevant_decisions":  []any{},
+		"files_to_read":       []any{},
+		"files_to_avoid":      []any{},
+		"capabilities_to_use": []any{},
+		"runbooks":            []any{},
+		"known_failure_modes": []any{},
+		"commands":            []any{},
+		"acceptance_criteria": []any{},
+	}
+	coverage := map[string]any{"configured": []any{"postgres_pgvector"}, "returned": []any{"postgres_pgvector"}, "complete": true}
+	contextResponse := attachContextPackFormatContract(map[string]any{
+		"ok":                 true,
+		"agent_id":           "codex_gpt5_test",
+		"context_pack":       pack,
+		"source_coverage":    coverage,
+		"writeback_required": true,
+	})
+	contextFormat, _ := contextResponse["format_contract"].(map[string]any)
+	contextValidation, _ := contextFormat["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(contextValidation["status"])) != "passed" {
+		t.Fatalf("expected context-pack validation passed, got %#v", contextValidation)
+	}
+
+	writeback := attachWritebackFormatContract(
+		map[string]any{"ok": true, "event_id": "evt_test"},
+		normalizedWrite{project: "contextlattice", fileName: "notes/test.md", topicPath: "runbooks/codex-integration", agentID: "codex_gpt5_test"},
+		"/memory/write",
+		200,
+	)
+	writebackFormat, _ := writeback["format_contract"].(map[string]any)
+	writebackValidation, _ := writebackFormat["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(writebackValidation["status"])) != "passed" {
+		t.Fatalf("expected writeback validation passed, got %#v", writebackValidation)
+	}
+}
+
+func TestAgentContractTelemetryRecordsValidationReasons(t *testing.T) {
+	before := anyToInt(agentContractTelemetrySnapshot()["total"], 0)
+	recordAgentContractBoundary("codex_gpt5_test", writebackResultContractID, "writeback", "/memory/write", []map[string]any{{"reason": "missing_required_field"}})
+	snapshot := agentContractTelemetrySnapshot()
+	after := anyToInt(snapshot["total"], 0)
+	if after <= before {
+		t.Fatalf("expected telemetry total to increase, before=%d after=%d snapshot=%#v", before, after, snapshot)
 	}
 }

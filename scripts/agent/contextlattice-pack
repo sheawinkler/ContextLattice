@@ -7,10 +7,14 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from typing import Any
 
 from _common import REPO_ROOT, emit, request_json
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import attach_format_contract  # noqa: E402
 
 
 CAMEL_TO_SNAKE = {
@@ -73,6 +77,7 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "context_pack": context_pack,
         "writeback_required": True,
     }
+    payload = attach_format_contract("context_pack_response.v1", payload)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     if len(encoded) <= budget_chars:
         return payload
@@ -89,11 +94,11 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         context_pack["citations"] = []
         context_pack["facts"] = context_pack["facts"][:2]
         context_pack["numeric_facts"] = context_pack["numeric_facts"][:2]
-    return payload
+    return attach_format_contract("context_pack_response.v1", payload)
 
 
 def failure_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
-    return {
+    payload = {
         "ok": False,
         "task_summary": query[:240],
         "context_budget_chars": budget_chars,
@@ -103,12 +108,26 @@ def failure_payload(query: str, budget_chars: int, error: str, attempts: int) ->
         "error": error[:1000],
         "context_pack": {
             "query": query,
-            "facts": [],
-            "results": [],
+            "retrieval_mode": "",
+            "retrieval_intent": "",
             "source_coverage": {"configured": [], "returned": [], "complete": False},
+            "facts": [],
+            "numeric_facts": [],
+            "citations": [],
+            "results": [],
+            "relevant_decisions": [],
+            "files_to_read": [],
+            "files_to_avoid": [],
+            "capabilities_to_use": [],
+            "runbooks": [],
+            "known_failure_modes": [],
+            "commands": [],
+            "acceptance_criteria": [],
         },
+        "source_coverage": {"configured": [], "returned": [], "complete": False},
         "writeback_required": True,
     }
+    return attach_format_contract("context_pack_response.v1", payload)
 
 
 def request_with_retries(path: str, payload: dict[str, Any], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, Any] | None, str, int]:

@@ -21,7 +21,8 @@ Operating rules:
 11) Use profile-aware preflight via POST /v1/agents/preflight before major tasks.
 12) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
 13) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
-14) Before context compaction, run compaction handoff write+readback so objective state survives:
+14) Preserve ContextLattice format_contract / format_contracts fields in agent handoffs; do not strip or fabricate contract metadata.
+15) Before context compaction, run compaction handoff write+readback so objective state survives:
     contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced
 
 If memory is degraded, continue execution, explicitly report degraded-memory mode, and provide continuation token/status when available.
@@ -47,4 +48,7 @@ contextlattice_checkpoint -h
 
 # compaction handoff helper (default before summary compaction)
 contextlattice_agent_orchestration compaction-handoff contextlattice "objective summary" runbooks/context-compaction-handoff balanced
+
+# boundary contract telemetry
+curl -fsS http://127.0.0.1:8075/telemetry/agent-contracts
 ```

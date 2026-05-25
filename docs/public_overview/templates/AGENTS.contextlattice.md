@@ -47,6 +47,7 @@ contextlattice_agent_start --soft --compact
 ## 3) Checkpoints and Final Recency Pass
 - During long tasks, write concise checkpoints via `POST /memory/write`.
 - Prefer `contextlattice_checkpoint` so every checkpoint also proves readback.
+- Preserve `format_contract`, `format_contracts`, and `policy_context_package` fields returned by ContextLattice in downstream handoffs; do not invent or strip contract metadata.
 - When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
 - Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
 - Before any context-compaction handoff, persist and read back objective state:
@@ -63,6 +64,8 @@ contextlattice_agent_start --soft --compact
   - `GET /telemetry/recall`
   - `GET /telemetry/recall/monitor`
   - `GET /telemetry/recall/tuning`
+- Inspect agent-boundary validation counters when debugging handoff failures:
+  - `GET /telemetry/agent-contracts`
 
 ## 5) Read Timeout Troubleshooting
 - If reads time out, verify the agent/tool timeout is not lower than ContextLattice runtime budget.
