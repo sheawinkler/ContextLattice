@@ -1,0 +1,270 @@
+{
+  "registry_id": "contextlattice_agent_output_contracts",
+  "registry_version": 1,
+  "updated_at": "2026-05-24",
+  "default_validator": "contextlattice.boundary.v1",
+  "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
+  "shared_fragments": {
+    "anti_scheming_protocol": {
+      "version": "2026-05-24",
+      "law": "Change conclusions to match evidence; never change evidence to support conclusions.",
+      "required_steps": [
+        "state_objective_constraints_and_evidence",
+        "separate_observed_facts_from_inference",
+        "choose_smallest_useful_action_plan",
+        "verify_with_matching_checks_or_explicit_inspection",
+        "surface_material_failures_uncertainty_and_missing_checks"
+      ],
+      "red_flags": [
+        "claiming_passed_checks_without_running_or_inspecting_them",
+        "editing_artifacts_to_make_review_easier_rather_than_truer",
+        "replacing_the_user_goal_with_a_convenient_proxy",
+        "overstating_confidence_from_thin_evidence"
+      ],
+      "delivery": [
+        "findings_before_reassurance",
+        "exact_verification_state",
+        "explicit_blockers_and_residual_risk"
+      ]
+    }
+  },
+  "contracts": {
+    "anti_scheming_protocol.v1": {
+      "contract_version": 1,
+      "payload_kind": "policy_fragment",
+      "required_output_mode": "json_object",
+      "required_fields": ["version", "law", "required_steps", "red_flags", "delivery"],
+      "field_types": {
+        "version": "string",
+        "law": "string",
+        "required_steps": "list[string]",
+        "red_flags": "list[string]",
+        "delivery": "list[string]"
+      },
+      "required_string_contains": {
+        "law": "Change conclusions to match evidence"
+      },
+      "min_items": {
+        "required_steps": 5,
+        "red_flags": 4,
+        "delivery": 3
+      }
+    },
+    "policy_context_package.v1": {
+      "contract_version": 1,
+      "payload_kind": "agent_policy_context_package",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_json_contract_violation_envelope_without_raw_payload",
+      "required_fields": [
+        "version",
+        "agent",
+        "agent_id",
+        "project",
+        "topic_path",
+        "query",
+        "retrieval_mode",
+        "mission",
+        "objective",
+        "goal",
+        "skills",
+        "policy_contract",
+        "anti_scheming_protocol",
+        "handoff",
+        "evidence",
+        "format_contract"
+      ],
+      "field_types": {
+        "version": "string",
+        "agent": "string",
+        "agent_id": "string",
+        "project": "string",
+        "topic_path": "string",
+        "query": "string",
+        "retrieval_mode": "string",
+        "mission": "string",
+        "objective": "string",
+        "goal": "string",
+        "skills": "object",
+        "policy_contract": "object",
+        "anti_scheming_protocol": "object",
+        "handoff": "object",
+        "evidence": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "policy_contract": [
+          "retrieve_before_inference",
+          "anti_scheming_required",
+          "checkpoint_during_execution",
+          "final_recency_pass_required",
+          "include_grounding",
+          "include_retrieval_debug",
+          "broaden_scope_on_zero_or_degraded",
+          "format_validation_required",
+          "contract_boundary_validated",
+          "fail_closed_on_contract_violation"
+        ],
+        "anti_scheming_protocol": ["version", "law", "required_steps", "red_flags", "delivery"],
+        "handoff": ["disperse_to_agents", "handoff_prompt"],
+        "evidence": ["primary_facts", "mission_facts", "mission_pack_error"],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "forbidden_fields",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "policy_contract.retrieve_before_inference",
+        "policy_contract.anti_scheming_required",
+        "policy_contract.checkpoint_during_execution",
+        "policy_contract.final_recency_pass_required",
+        "policy_contract.include_grounding",
+        "policy_contract.include_retrieval_debug",
+        "policy_contract.broaden_scope_on_zero_or_degraded",
+        "policy_contract.format_validation_required",
+        "policy_contract.contract_boundary_validated",
+        "policy_contract.fail_closed_on_contract_violation",
+        "handoff.disperse_to_agents"
+      ],
+      "required_string_contains": {
+        "anti_scheming_protocol.law": "Change conclusions to match evidence",
+        "handoff.handoff_prompt": "change conclusions to match evidence",
+        "format_contract.schema_id": "policy_context_package.v1"
+      },
+      "min_items": {
+        "anti_scheming_protocol.required_steps": 5,
+        "anti_scheming_protocol.red_flags": 4,
+        "anti_scheming_protocol.delivery": 3
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "raw_contextlattice_json",
+        "raw_prompt",
+        "secret",
+        "secrets"
+      ]
+    },
+    "agent_preflight_response.v1": {
+      "contract_version": 1,
+      "payload_kind": "agent_preflight_response",
+      "required_output_mode": "json_object",
+      "required_fields": [
+        "ok",
+        "service",
+        "agent",
+        "agent_id",
+        "project",
+        "query",
+        "topic_path",
+        "retrieval_mode",
+        "context_pack",
+        "policy_context_package",
+        "format_contracts"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "service": "string",
+        "agent": "string",
+        "agent_id": "string",
+        "project": "string",
+        "query": "string",
+        "topic_path": "string",
+        "retrieval_mode": "string",
+        "context_pack": "object",
+        "policy_context_package": "object",
+        "format_contracts": "object"
+      },
+      "required_fields_by_path": {
+        "format_contracts": ["registry_id", "registry_version", "contracts", "validation"]
+      },
+      "required_string_contains": {
+        "policy_context_package.format_contract.schema_id": "policy_context_package.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "raw_contextlattice_json",
+        "raw_prompt",
+        "secret",
+        "secrets"
+      ],
+      "forbidden_scope": "root"
+    },
+    "context_pack_response.v1": {
+      "contract_version": 1,
+      "payload_kind": "context_pack_response",
+      "required_output_mode": "json_object",
+      "required_fields": ["context_pack", "source_coverage", "ok", "writeback_required"],
+      "field_types": {
+        "context_pack": "object",
+        "source_coverage": "object",
+        "ok": "bool",
+        "writeback_required": "bool"
+      },
+      "required_fields_by_path": {
+        "context_pack": [
+          "facts",
+          "results",
+          "citations",
+          "relevant_decisions",
+          "files_to_read",
+          "files_to_avoid",
+          "capabilities_to_use",
+          "runbooks",
+          "known_failure_modes",
+          "commands",
+          "acceptance_criteria"
+        ],
+        "source_coverage": ["configured", "returned", "complete"]
+      },
+      "forbidden_fields": ["hookSpecificOutput", "secret", "secrets"],
+      "forbidden_scope": "root"
+    },
+    "writeback_result.v1": {
+      "contract_version": 1,
+      "payload_kind": "writeback_result",
+      "required_output_mode": "json_object",
+      "required_fields": ["ok", "project", "file", "topic_path"],
+      "field_types": {
+        "ok": "bool",
+        "project": "string",
+        "file": "string",
+        "topic_path": "string"
+      },
+      "forbidden_fields": ["secret", "secrets", "raw_prompt"],
+      "forbidden_scope": "root"
+    },
+    "codex_compact_hook_stdout.v1": {
+      "contract_version": 1,
+      "payload_kind": "codex_compact_hook_stdout",
+      "required_output_mode": "json_object",
+      "allowed_fields": ["continue", "suppressOutput", "systemMessage", "stopReason"],
+      "field_types": {
+        "continue": "bool",
+        "suppressOutput": "bool",
+        "systemMessage": "string",
+        "stopReason": "string"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "ok",
+        "hook",
+        "context_pack",
+        "policy_context_package",
+        "raw_contextlattice_json"
+      ],
+      "forbidden_scope": "root",
+      "max_bytes_by_path": {
+        "systemMessage": 4000,
+        "stopReason": 512
+      }
+    }
+  }
+}

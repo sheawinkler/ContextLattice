@@ -128,7 +128,7 @@ scripts/agent/audit-codex-hook-trust --repair
 
 ## Context compaction
 
-Codex 0.130.0 exposes `PreCompact` and `PostCompact` hook events. The installer
+Codex 0.130.0+ exposes `PreCompact` and `PostCompact` hook events. The installer
 wires those events to ContextLattice wrappers, and
 `scripts/agent/audit-compaction-hooks` verifies both the repo template and live
 `~/.codex/hooks.json`. The installer also refreshes the matching
@@ -140,18 +140,47 @@ contextlattice_pre_compaction_write "current objective, blockers, next actions"
 contextlattice_post_compaction_read
 ```
 
+Codex compact hook stdout is intentionally stricter than SessionStart or tool
+hooks. `PreCompact` and `PostCompact` command output must be universal hook
+fields only: `continue`, `suppressOutput`, `systemMessage`, and `stopReason`.
+Do not emit `hookSpecificOutput`, `ok`, `hook`, raw ContextLattice read/write
+JSON, or any env-file stdout on these compact hooks. The wrappers keep the rich
+handoff payload in ContextLattice and return only the bounded Codex-compatible
+envelope to stdout.
+
 The pre/post compaction hooks derive a compact handoff payload with
 `scripts/agent/compaction-handoff-payload`. The payload records session id, cwd,
 branch, changed files, commands, blockers, and next action when the hook input
 contains them. Post-compaction reads use those terms first so resume context is
 scoped to the interrupted session instead of broad historical notes.
 
+Compaction handoff prompts must stay model-provider neutral. The source of truth
+is `config/model_compat/compaction_prompt_contract.json`, not any Python hook
+wrapper. The contract requires plain UTF-8 text that is safe as ordinary chat
+message content or as a single completion prompt, with no vendor-specific chat
+template tokens, role-channel envelope assumptions, tool/function-call envelope
+requirements, or markdown-fence dependency. The compatibility gate covers the
+online model families tracked in the contract plus local runtimes such as
+OpenAI-compatible endpoints, Ollama, llama.cpp, vLLM, LM Studio, and MLX. Go and
+Rust tests load the same contract so provider/runtime compatibility is not
+defined solely by the Codex hook script.
+
 Context-pack shape is guarded by:
 
 ```bash
+scripts/agent/audit-agent-output-contracts
 scripts/agent/audit-context-pack-schema
 scripts/agent/eval-skill-policy
+scripts/agent/audit-compaction-hooks
 ```
+
+Agent-facing boundary payloads use the shared registry at
+`config/agent_contracts/agent_output_contracts.json`. Preflight responses include
+the active contract IDs in `format_contracts`, and each `policy_context_package`
+includes `format_contract.schema_id=policy_context_package.v1` plus validation
+status. Go and Python loaders read the same registry so agents receive the
+contract ContextLattice expects them to satisfy rather than relying on prompt
+memory.
 
 Agent ContextLattice wrappers retry and fail non-zero by default when reads or
 writes cannot complete. A compact JSON failure replaces Python tracebacks, but

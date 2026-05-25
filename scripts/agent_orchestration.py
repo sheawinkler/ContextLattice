@@ -18,10 +18,26 @@ try:
         DEFAULT_ORCHESTRATOR_URL,
         ContextLatticeClient,
     )
+    from scripts.agent_contracts import (
+        anti_scheming_protocol,
+        contract_metadata,
+        load_agent_contracts_registry,
+        preflight_contracts_summary,
+        stamp_validation,
+        validate_agent_contract_payload,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts/ root
     from contextlattice_client import (  # type: ignore[no-redef]
         DEFAULT_ORCHESTRATOR_URL,
         ContextLatticeClient,
+    )
+    from agent_contracts import (  # type: ignore[no-redef]
+        anti_scheming_protocol,
+        contract_metadata,
+        load_agent_contracts_registry,
+        preflight_contracts_summary,
+        stamp_validation,
+        validate_agent_contract_payload,
     )
 DEFAULT_AGENT_ID = (
     os.getenv("CONTEXTLATTICE_AGENT_ID", "").strip()
@@ -360,7 +376,10 @@ class ContextLatticeOrchestrator:
         mission_facts = ContextLatticeOrchestrator._extract_fact_summaries(
             mission_pack if isinstance(mission_pack, dict) else {}, max_items=8
         )
-        return {
+        registry = load_agent_contracts_registry()
+        protocol = anti_scheming_protocol(registry)
+        format_contract = contract_metadata("policy_context_package.v1", registry)
+        package = {
             "version": "2026-05-10",
             "agent": agent,
             "agent_id": agent_id,
@@ -378,19 +397,25 @@ class ContextLatticeOrchestrator:
             },
             "policy_contract": {
                 "retrieve_before_inference": True,
+                "anti_scheming_required": True,
                 "checkpoint_during_execution": True,
                 "final_recency_pass_required": True,
                 "include_grounding": True,
                 "include_retrieval_debug": True,
                 "broaden_scope_on_zero_or_degraded": True,
+                "format_validation_required": True,
+                "contract_boundary_validated": True,
+                "fail_closed_on_contract_violation": True,
             },
+            "anti_scheming_protocol": protocol,
             "handoff": {
                 "disperse_to_agents": True,
                 "handoff_prompt": (
                     f"Mission: {mission}\n"
                     f"Objective: {objective}\n"
                     f"Goal: {goal}\n"
-                    "Policy: retrieve before inference, checkpoint key decisions, and run final recency retrieval."
+                    "Policy: retrieve before inference, checkpoint key decisions, run final recency retrieval, "
+                    "and change conclusions to match evidence."
                 ),
             },
             "evidence": {
@@ -398,7 +423,12 @@ class ContextLatticeOrchestrator:
                 "mission_facts": mission_facts,
                 "mission_pack_error": mission_pack_error,
             },
+            "format_contract": format_contract,
         }
+        contract_findings = validate_agent_contract_payload("anti_scheming_protocol.v1", protocol, registry)
+        contract_findings.extend(validate_agent_contract_payload("policy_context_package.v1", package, registry))
+        package["format_contract"] = stamp_validation(format_contract, contract_findings)
+        return package
 
     def search_with_lifecycle(
         self,
@@ -870,11 +900,16 @@ class ContextLatticeOrchestrator:
             mission_pack_error=mission_pack_error,
         )
 
-        return {
+        response = {
             "ok": True,
+            "service": "python-agent-orchestration",
             "agent": profile_key,
             "agent_profile": profile,
             "agent_id": effective_agent_id,
+            "project": project,
+            "query": effective_query,
+            "topic_path": effective_topic_path,
+            "retrieval_mode": effective_mode,
             "orchestrator_url": self.base_url,
             "health": health_json,
             "status": status_json,
@@ -883,7 +918,11 @@ class ContextLatticeOrchestrator:
             "context_pack": pack,
             "mission_context_pack": mission_pack,
             "policy_context_package": policy_context_package,
+            "format_contracts": preflight_contracts_summary(),
         }
+        preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
+        response["format_contracts"] = preflight_contracts_summary(preflight_findings)
+        return response
 
     def status(self) -> Dict[str, Any]:
         """Get orchestrator + service status."""

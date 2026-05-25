@@ -9,5 +9,6 @@ FROM alpine:3.20
 WORKDIR /app
 RUN apk add --no-cache ca-certificates ruby && update-ca-certificates
 COPY --from=build /out/gateway-go /usr/local/bin/gateway-go
+COPY config/agent_contracts ./config/agent_contracts
 EXPOSE 8091
 CMD ["gateway-go"]
