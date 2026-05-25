@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from agent_contracts import (  # noqa: E402
     anti_scheming_protocol,
+    attach_format_contract,
     contract_metadata,
     load_agent_contracts_registry,
     preflight_contracts_summary,
@@ -28,8 +30,13 @@ REQUIRED_CONTRACTS = (
     "anti_scheming_protocol.v1",
     "policy_context_package.v1",
     "agent_preflight_response.v1",
+    "agent_task_result.v1",
+    "a2a_readiness_profile.v1",
     "context_pack_response.v1",
+    "contract_acknowledgement.v1",
     "writeback_result.v1",
+    "agent_span.v1",
+    "agent_flight_recorder_event.v1",
     "codex_compact_hook_stdout.v1",
 )
 
@@ -49,7 +56,102 @@ def sample_context_pack() -> dict[str, Any]:
         "acceptance_criteria": [],
     }
     coverage = {"configured": ["postgres_pgvector"], "returned": ["postgres_pgvector"], "complete": True}
-    return {"ok": True, "context_pack": pack, "source_coverage": coverage, "writeback_required": True}
+    return attach_format_contract(
+        "context_pack_response.v1",
+        {"ok": True, "context_pack": pack, "source_coverage": coverage, "writeback_required": True},
+    )
+
+
+def sample_writeback_result() -> dict[str, Any]:
+    return attach_format_contract(
+        "writeback_result.v1",
+        {
+            "ok": True,
+            "project": "contextlattice",
+            "file": "notes/codex/audit.md",
+            "topic_path": "runbooks/codex-integration",
+            "event_id": "evt_audit",
+        },
+    )
+
+
+def sample_task_result() -> dict[str, Any]:
+    return attach_format_contract(
+        "agent_task_result.v1",
+        {
+            "ok": True,
+            "task_id": "task_audit",
+            "project": "contextlattice",
+            "agent": "codex",
+            "status": "succeeded",
+            "output": "Audit output contract sample.",
+        },
+    )
+
+
+def sample_contract_ack() -> dict[str, Any]:
+    registry = load_agent_contracts_registry()
+    return attach_format_contract(
+        "contract_acknowledgement.v1",
+        {
+            "ok": True,
+            "agent_id": "codex_gpt5_test",
+            "schema_id": "policy_context_package.v1",
+            "registry_id": str(registry.get("registry_id")),
+            "registry_version": int(registry.get("registry_version") or 0),
+            "accepted": True,
+        },
+        registry,
+    )
+
+
+def sample_agent_span() -> dict[str, Any]:
+    return attach_format_contract(
+        "agent_span.v1",
+        {
+            "ok": True,
+            "span_id": "span_audit",
+            "trace_id": "trace_audit",
+            "agent_id": "codex_gpt5_test",
+            "project": "contextlattice",
+            "lane": "context_pack",
+            "started_at": "2026-05-25T00:00:00Z",
+            "ended_at": "2026-05-25T00:00:01Z",
+            "status": "passed",
+        },
+    )
+
+
+def sample_flight_event() -> dict[str, Any]:
+    return attach_format_contract(
+        "agent_flight_recorder_event.v1",
+        {
+            "ok": True,
+            "event_id": "event_audit",
+            "trace_id": "trace_audit",
+            "agent_id": "codex_gpt5_test",
+            "project": "contextlattice",
+            "event_type": "boundary_validation",
+            "recorded_at": "2026-05-25T00:00:01Z",
+            "summary": "ContextLattice boundary validation completed.",
+        },
+    )
+
+
+def sample_a2a_readiness() -> dict[str, Any]:
+    return attach_format_contract(
+        "a2a_readiness_profile.v1",
+        {
+            "ok": True,
+            "protocol": "A2A",
+            "profile_version": "2026-05-25",
+            "agent_card_ready": True,
+            "task_lifecycle_ready": True,
+            "streaming_ready": False,
+            "push_ready": False,
+            "opaque_agent_boundary": True,
+        },
+    )
 
 
 def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +226,19 @@ def run_audit() -> list[dict[str, Any]]:
     for contract_id in REQUIRED_CONTRACTS:
         if contract_id not in contracts:
             findings.append({"severity": "error", "reason": "missing_required_contract", "contract_id": contract_id})
+    generated = subprocess.run(
+        [str(SCRIPT_DIR / "generate-agent-contract-types"), "--check"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if generated.returncode != 0:
+        detail: Any
+        try:
+            detail = json.loads(generated.stdout or "{}")
+        except json.JSONDecodeError:
+            detail = {"stdout": generated.stdout[:1000], "stderr": generated.stderr[:1000]}
+        findings.append({"severity": "error", "reason": "generated_contract_types_stale", "detail": detail})
 
     protocol = anti_scheming_protocol(registry)
     for item in validate_agent_contract_payload("anti_scheming_protocol.v1", protocol, registry):
@@ -132,6 +247,20 @@ def run_audit() -> list[dict[str, Any]]:
     context_pack = sample_context_pack()
     for item in validate_agent_contract_payload("context_pack_response.v1", context_pack, registry):
         findings.append({"severity": "error", **item})
+
+    for contract_id, payload in (
+        ("writeback_result.v1", sample_writeback_result()),
+        ("agent_task_result.v1", sample_task_result()),
+        ("contract_acknowledgement.v1", sample_contract_ack()),
+        ("agent_span.v1", sample_agent_span()),
+        ("agent_flight_recorder_event.v1", sample_flight_event()),
+        ("a2a_readiness_profile.v1", sample_a2a_readiness()),
+    ):
+        for item in validate_agent_contract_payload(contract_id, payload, registry):
+            findings.append({"severity": "error", **item})
+        validation = ((payload.get("format_contract") or {}).get("validation") or {}) if isinstance(payload, dict) else {}
+        if validation.get("status") != "passed":
+            findings.append({"severity": "error", "reason": "sample_validation_not_passed", "contract_id": contract_id, "validation": validation})
 
     policy = sample_policy_package(registry)
     for item in validate_agent_contract_payload("policy_context_package.v1", policy, registry):

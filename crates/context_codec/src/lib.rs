@@ -3,6 +3,8 @@ use blake3::Hasher;
 use serde::Serialize;
 use serde_json::Value;
 
+pub mod agent_contracts_generated;
+
 pub fn encode_state<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(value)?)
 }

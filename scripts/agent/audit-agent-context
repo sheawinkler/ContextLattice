@@ -68,6 +68,17 @@ def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, A
     elif name == "context_pack_schema":
         findings = payload.get("findings") or []
         summary.update({"finding_count": len(findings), "findings": findings[:10]})
+    elif name == "agent_output_contracts":
+        findings = payload.get("findings") or []
+        errors = [item for item in findings if item.get("severity") == "error"]
+        summary.update(
+            {
+                "registry": payload.get("registry"),
+                "required_contract_count": len(payload.get("required_contracts") or []),
+                "error_count": len(errors),
+                "errors": errors[:10],
+            }
+        )
     elif name == "skill_policy_eval":
         cases = payload.get("cases") or []
         failed = [item for item in cases if not item.get("ok")]
@@ -106,6 +117,7 @@ def main() -> int:
         run_json("compaction_hooks", [str(SCRIPT_DIR / "audit-compaction-hooks")]),
         run_json("codex_hook_trust", [str(SCRIPT_DIR / "audit-codex-hook-trust")]),
         run_json("context_pack_schema", [str(SCRIPT_DIR / "audit-context-pack-schema")]),
+        run_json("agent_output_contracts", [str(SCRIPT_DIR / "audit-agent-output-contracts")]),
         run_json("skill_policy_eval", [str(SCRIPT_DIR / "eval-skill-policy")]),
         run_json("instruction_conflicts", [str(SCRIPT_DIR / "audit-conflicts")]),
         run_json("instruction_duplicates", [str(SCRIPT_DIR / "audit-instruction-duplicates")]),
@@ -113,11 +125,11 @@ def main() -> int:
 
     hard_failures = [
         check
-        for check in checks[:6]
+        for check in checks[:7]
         if check["returncode"] != 0 or not bool(check["payload"].get("ok", False))
     ]
     if args.strict_findings:
-        for check in checks[6:]:
+        for check in checks[7:]:
             payload = check["payload"]
             if payload.get("findings") or payload.get("duplicates"):
                 hard_failures.append(check)

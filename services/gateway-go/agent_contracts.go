@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,14 @@ const agentContractsRegistryEnv = "CONTEXTLATTICE_AGENT_CONTRACTS_PATH"
 const policyContextPackageContractID = "policy_context_package.v1"
 const antiSchemingContractID = "anti_scheming_protocol.v1"
 const agentPreflightResponseContractID = "agent_preflight_response.v1"
+const contextPackResponseContractID = "context_pack_response.v1"
+const writebackResultContractID = "writeback_result.v1"
+const codexCompactHookStdoutContractID = "codex_compact_hook_stdout.v1"
+const agentTaskResultContractID = "agent_task_result.v1"
+const contractAcknowledgementContractID = "contract_acknowledgement.v1"
+const agentSpanContractID = "agent_span.v1"
+const agentFlightRecorderEventContractID = "agent_flight_recorder_event.v1"
+const a2aReadinessProfileContractID = "a2a_readiness_profile.v1"
 
 type agentContractsRegistry struct {
 	RegistryID       string                    `json:"registry_id"`
@@ -26,6 +35,19 @@ type agentContractsRegistry struct {
 var agentContractsOnce sync.Once
 var agentContractsCache agentContractsRegistry
 var agentContractsErr error
+
+type agentContractTelemetryCounter struct {
+	AgentID  string `json:"agent_id"`
+	SchemaID string `json:"schema_id"`
+	Lane     string `json:"lane"`
+	Endpoint string `json:"endpoint"`
+	Reason   string `json:"reason"`
+	Count    int    `json:"count"`
+	LastAt   string `json:"last_at"`
+}
+
+var agentContractTelemetryMu sync.Mutex
+var agentContractTelemetryCounters = map[string]agentContractTelemetryCounter{}
 
 func loadAgentContractsRegistry() (agentContractsRegistry, error) {
 	agentContractsOnce.Do(func() {
@@ -203,9 +225,31 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 	registry, err := loadAgentContractsRegistry()
 	registryID := "contextlattice_agent_output_contracts"
 	registryVersion := 0
+	contractIDs := []any{
+		agentPreflightResponseContractID,
+		policyContextPackageContractID,
+		antiSchemingContractID,
+		contextPackResponseContractID,
+		writebackResultContractID,
+		codexCompactHookStdoutContractID,
+		agentTaskResultContractID,
+		contractAcknowledgementContractID,
+		agentSpanContractID,
+		agentFlightRecorderEventContractID,
+		a2aReadinessProfileContractID,
+	}
 	if err == nil {
 		registryID = registry.RegistryID
 		registryVersion = registry.RegistryVersion
+		contractIDs = make([]any, 0, len(registry.Contracts))
+		keys := make([]string, 0, len(registry.Contracts))
+		for key := range registry.Contracts {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			contractIDs = append(contractIDs, key)
+		}
 	}
 	status := "passed"
 	if err != nil || len(findings) > 0 {
@@ -224,14 +268,7 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 	return map[string]any{
 		"registry_id":      registryID,
 		"registry_version": registryVersion,
-		"contracts": []any{
-			agentPreflightResponseContractID,
-			policyContextPackageContractID,
-			antiSchemingContractID,
-			"context_pack_response.v1",
-			"writeback_result.v1",
-			"codex_compact_hook_stdout.v1",
-		},
+		"contracts":        contractIDs,
 		"validation": map[string]any{
 			"status": status,
 			"errors": errors,
@@ -239,11 +276,127 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 	}
 }
 
+func attachPayloadFormatContract(contractID string, payload map[string]any, agentID string, lane string, endpoint string) map[string]any {
+	payload["format_contract"] = contractMetadata(contractID)
+	findings := validateAgentContractPayload(contractID, payload)
+	payload["format_contract"] = stampContractValidation(contractMetadata(contractID), findings)
+	recordAgentContractBoundary(agentID, contractID, lane, endpoint, findings)
+	return payload
+}
+
+func attachContextPackFormatContract(payload map[string]any) map[string]any {
+	return attachPayloadFormatContract(
+		contextPackResponseContractID,
+		payload,
+		anyToString(payload["agent_id"]),
+		"context_pack",
+		"/memory/context-pack",
+	)
+}
+
+func attachWritebackFormatContract(payload map[string]any, item normalizedWrite, endpoint string, status int) map[string]any {
+	if _, exists := payload["ok"]; !exists {
+		payload["ok"] = status >= 200 && status < 300
+	}
+	payload["project"] = item.project
+	payload["file"] = item.fileName
+	payload["topic_path"] = item.topicPath
+	return attachPayloadFormatContract(writebackResultContractID, payload, item.agentID, "writeback", endpoint)
+}
+
 func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any {
 	payload["format_contracts"] = preflightContractsSummary(nil)
 	findings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
 	payload["format_contracts"] = preflightContractsSummary(findings)
+	recordAgentContractBoundary(anyToString(payload["agent_id"]), agentPreflightResponseContractID, "preflight", "/v1/agents/preflight", findings)
 	return payload
+}
+
+func recordAgentContractBoundary(agentID string, schemaID string, lane string, endpoint string, findings []map[string]any) {
+	if strings.TrimSpace(agentID) == "" {
+		agentID = "unknown"
+	}
+	if strings.TrimSpace(schemaID) == "" {
+		schemaID = "unknown"
+	}
+	if strings.TrimSpace(lane) == "" {
+		lane = "unknown"
+	}
+	if strings.TrimSpace(endpoint) == "" {
+		endpoint = "unknown"
+	}
+	reasons := []string{"passed"}
+	if len(findings) > 0 {
+		reasons = make([]string, 0, len(findings))
+		for _, finding := range findings {
+			reason := strings.TrimSpace(anyToString(finding["reason"]))
+			if reason == "" {
+				reason = "contract_violation"
+			}
+			reasons = append(reasons, reason)
+		}
+	}
+	agentContractTelemetryMu.Lock()
+	defer agentContractTelemetryMu.Unlock()
+	for _, reason := range reasons {
+		key := strings.Join([]string{agentID, schemaID, lane, endpoint, reason}, "\x1f")
+		counter := agentContractTelemetryCounters[key]
+		counter.AgentID = agentID
+		counter.SchemaID = schemaID
+		counter.Lane = lane
+		counter.Endpoint = endpoint
+		counter.Reason = reason
+		counter.Count++
+		counter.LastAt = nowUTCISO()
+		agentContractTelemetryCounters[key] = counter
+	}
+}
+
+func agentContractTelemetrySnapshot() map[string]any {
+	agentContractTelemetryMu.Lock()
+	defer agentContractTelemetryMu.Unlock()
+	counters := make([]agentContractTelemetryCounter, 0, len(agentContractTelemetryCounters))
+	for _, counter := range agentContractTelemetryCounters {
+		counters = append(counters, counter)
+	}
+	sort.Slice(counters, func(i, j int) bool {
+		left := counters[i]
+		right := counters[j]
+		if left.AgentID != right.AgentID {
+			return left.AgentID < right.AgentID
+		}
+		if left.SchemaID != right.SchemaID {
+			return left.SchemaID < right.SchemaID
+		}
+		if left.Lane != right.Lane {
+			return left.Lane < right.Lane
+		}
+		if left.Endpoint != right.Endpoint {
+			return left.Endpoint < right.Endpoint
+		}
+		return left.Reason < right.Reason
+	})
+	total := 0
+	for _, counter := range counters {
+		total += counter.Count
+	}
+	return map[string]any{
+		"ok":             true,
+		"schema_version": 1,
+		"total":          total,
+		"counters":       counters,
+	}
+}
+
+func (s *server) agentContractTelemetryRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, agentContractTelemetrySnapshot())
 }
 
 func validateAgentContractPayload(contractID string, payload any) []map[string]any {

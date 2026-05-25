@@ -246,20 +246,33 @@ def stamp_validation(metadata: dict[str, Any], findings: list[dict[str, Any]]) -
     return stamped
 
 
+def agent_contract_ids(registry: dict[str, Any] | None = None) -> list[str]:
+    registry = registry or load_agent_contracts_registry()
+    contracts = registry.get("contracts") if isinstance(registry, dict) else {}
+    return sorted(str(contract_id) for contract_id in contracts.keys())
+
+
+def attach_format_contract(
+    contract_id: str,
+    payload: dict[str, Any],
+    registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    registry = registry or load_agent_contracts_registry()
+    stamped = dict(payload)
+    metadata = contract_metadata(contract_id, registry)
+    stamped["format_contract"] = metadata
+    findings = validate_agent_contract_payload(contract_id, stamped, registry)
+    stamped["format_contract"] = stamp_validation(metadata, findings)
+    return stamped
+
+
 def preflight_contracts_summary(findings: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     registry = load_agent_contracts_registry()
     errors = findings or []
     return {
         "registry_id": str(registry.get("registry_id") or "contextlattice_agent_output_contracts"),
         "registry_version": int(registry.get("registry_version") or 0),
-        "contracts": [
-            "agent_preflight_response.v1",
-            "policy_context_package.v1",
-            "anti_scheming_protocol.v1",
-            "context_pack_response.v1",
-            "writeback_result.v1",
-            "codex_compact_hook_stdout.v1",
-        ],
+        "contracts": agent_contract_ids(registry),
         "validation": {
             "status": "failed" if errors else "passed",
             "errors": errors[:12],

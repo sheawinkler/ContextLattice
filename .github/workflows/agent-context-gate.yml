@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths:
       - "AGENTS.md"
+      - "config/agent_contracts/**"
+      - "crates/context_codec/**"
+      - "scripts/agent_contracts.py"
       - "scripts/agent/**"
       - "scripts/agent_hooks/**"
       - ".github/workflows/agent-context-gate.yml"
@@ -22,3 +25,6 @@ jobs:
 
       - name: Run agent context gate
         run: scripts/agent/audit-agent-context
+
+      - name: Run agent output contract gate
+        run: scripts/agent/audit-agent-output-contracts

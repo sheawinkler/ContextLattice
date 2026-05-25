@@ -24,6 +24,13 @@ func (s *server) memoryPut(w http.ResponseWriter, r *http.Request) {
 	s.handleWriteIngress(w, r, "/v1/memory/put")
 }
 
+func maybeAttachWritebackContract(path string, payload map[string]any, item normalizedWrite, status int) map[string]any {
+	if path != "/memory/write" {
+		return payload
+	}
+	return attachWritebackFormatContract(payload, item, path, status)
+}
+
 func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path string) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -50,29 +57,31 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 	}
 	recordMetadataContractObservation(item)
 	if err := s.writePolicy.validateWrite(item); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusUnprocessableEntity, maybeAttachWritebackContract(path, map[string]any{"ok": false, "error": err.Error()}, item, http.StatusUnprocessableEntity))
 		return
 	}
 
 	if s.writePolicy.isTelemetryLike(item) {
 		response, status, ingestErr := s.routeTelemetryWrite(r.Context(), item, path)
 		if ingestErr != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{
+			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
+				"ok":     false,
 				"error":  "telemetry ingest failed",
 				"detail": ingestErr.Error(),
-			})
+			}, item, http.StatusBadGateway))
 			return
 		}
-		writeJSON(w, status, response)
+		writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
 		return
 	}
 	if s.memoryStore != nil && s.memoryStore.policy.enabled {
 		entry, deduped, storeErr := s.memoryStore.put(item)
 		if storeErr != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{
+			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
+				"ok":     false,
 				"error":  "memory store write failed",
 				"detail": storeErr.Error(),
-			})
+			}, item, http.StatusBadGateway))
 			return
 		}
 		fanout := map[string]any{
@@ -83,7 +92,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		if strings.TrimSpace(fanoutStatus) != "" {
 			fanout["postgres_pgvector"] = fanoutStatus
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, map[string]any{
 			"ok":                    true,
 			"event_id":              entry.EventID,
 			"source":                "go_memory_store",
@@ -94,7 +103,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			"deduped":               deduped,
 			"latest_hash_unchanged": deduped,
 			"fanout":                fanout,
-		})
+		}, item, http.StatusOK))
 		return
 	}
 	if s.strictNoPythonRuntime {
@@ -106,14 +115,15 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 	forwardPayload := mergeForwardPayload(path, payload, item, s.writePolicy.fanoutExcludeTargets)
 	response, status, backendErr := s.callBackendJSON(r.Context(), incomingHeaders, http.MethodPost, path, forwardPayload)
 	if backendErr != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
+		writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
+			"ok":         false,
 			"error":      "backend unavailable",
 			"detail":     backendErr.Error(),
 			"backendUrl": s.backendURL,
-		})
+		}, item, http.StatusBadGateway))
 		return
 	}
-	writeJSON(w, status, response)
+	writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
 }
 
 func (s *server) memoryWriteBatch(w http.ResponseWriter, r *http.Request) {

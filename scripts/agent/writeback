@@ -14,6 +14,9 @@ from pathlib import Path
 
 from _common import HOME, REPO_ROOT, emit, now_iso, read_text, request_json
 
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import attach_format_contract  # noqa: E402
+
 
 KINDS = {"decision", "failure", "command", "assumption", "checkpoint", "runbook"}
 
@@ -26,17 +29,30 @@ def first_env(*names: str, fallback: str = "") -> str:
     return fallback
 
 
-def failure_payload(kind: str, file_name: str, error: str, attempts: int) -> dict[str, object]:
-    return {
+def contract_writeback_payload(payload: dict[str, object]) -> dict[str, object]:
+    return attach_format_contract("writeback_result.v1", payload)
+
+
+def failure_payload(
+    kind: str,
+    project: str,
+    topic_path: str,
+    file_name: str,
+    error: str,
+    attempts: int,
+) -> dict[str, object]:
+    return contract_writeback_payload({
         "ok": False,
         "kind": kind,
+        "project": project,
         "file": file_name,
+        "topic_path": topic_path,
         "status": "failed_after_retries",
         "persisted": False,
         "structured_failure": True,
         "attempts": attempts,
         "error": error[:1000],
-    }
+    })
 
 
 def queue_dir() -> Path:
@@ -142,12 +158,25 @@ def main() -> int:
     if result is None:
         queue_file = enqueue_local_writeback(body, args.kind, error)
         trigger_self_heal("writeback-failure")
-        payload = failure_payload(args.kind, args.file, error, attempts)
+        payload = failure_payload(args.kind, args.project, args.topic_path, args.file, error, attempts)
         payload["queued_local"] = True
         payload["queue_file"] = str(queue_file)
+        payload = contract_writeback_payload(payload)
         emit(payload, args.pretty)
         return 1
-    emit({"ok": bool(result.get("ok", True)), "kind": args.kind, "file": args.file, "write": result}, args.pretty)
+    emit(
+        contract_writeback_payload(
+            {
+                "ok": bool(result.get("ok", True)),
+                "kind": args.kind,
+                "project": args.project,
+                "file": args.file,
+                "topic_path": args.topic_path,
+                "write": result,
+            }
+        ),
+        args.pretty,
+    )
     return 0
 
 
