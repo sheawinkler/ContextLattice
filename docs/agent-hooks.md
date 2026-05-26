@@ -81,14 +81,42 @@ without blocking if the local app is restarting.
 
 ```bash
 contextlattice_git_lane_guard --branch main --upstream origin/main --require-clean --require-synced
+contextlattice_branch_lane_guard --lane public --ref refs/remotes/public/main
+contextlattice_branch_lane_guard --lane public-paid --ref refs/remotes/public-paid/main
 contextlattice_runtime_env_guard --strict
 contextlattice_rust_rebuild_gate --check
 contextlattice_recall_quality_gate
-contextlattice_public_leak_guard --mode changed --base origin/main --public
+contextlattice_public_leak_guard --mode all --ref refs/remotes/public/main --public
+contextlattice_public_leak_guard --mode all --ref refs/remotes/public-paid/main
 ```
 
 If any strict gate fails, stop and fix the underlying condition. Do not explain
 past the gate unless the user asks for triage.
+
+Canonical production branch labels:
+- `origin/main`: premium-premium / sigma development and testing.
+- `public/main`: public production, from remote `public` branch `main`.
+- `public-paid/main`: paid production, from remote `public-paid` branch `main`.
+
+Do not report `origin/public/main` or `origin/public-paid/main` as production
+branches. Those names are local fetch-namespace aliases when `origin` fetches
+every remote branch from the private repository.
+
+Recommended local fetch namespace:
+
+```bash
+git config --unset-all remote.origin.fetch
+git config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git config --add remote.origin.fetch '^refs/heads/public/main'
+git config --add remote.origin.fetch '^refs/heads/public-paid/main'
+
+git config --unset-all remote.public.fetch
+git config --add remote.public.fetch '+refs/heads/*:refs/remotes/public/*'
+git config --add remote.public.fetch '^refs/heads/public/main'
+
+git config --unset-all remote.public-paid.fetch
+git config --add remote.public-paid.fetch '+refs/heads/public-paid/main:refs/remotes/public-paid/main'
+```
 
 ## Checkpoint pattern
 
