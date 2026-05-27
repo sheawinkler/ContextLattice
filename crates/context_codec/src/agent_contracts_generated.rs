@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 1;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 2;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -18,6 +18,7 @@ pub const AGENT_SPAN_V1: &str = "agent_span.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
 pub const ANTI_SCHEMING_PROTOCOL_V1: &str = "anti_scheming_protocol.v1";
 pub const CODEX_COMPACT_HOOK_STDOUT_V1: &str = "codex_compact_hook_stdout.v1";
+pub const CONTEXT_OVERFLOW_RECOVERY_V1: &str = "context_overflow_recovery.v1";
 pub const CONTEXT_PACK_RESPONSE_V1: &str = "context_pack_response.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
@@ -31,6 +32,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_TASK_RESULT_V1,
     ANTI_SCHEMING_PROTOCOL_V1,
     CODEX_COMPACT_HOOK_STDOUT_V1,
+    CONTEXT_OVERFLOW_RECOVERY_V1,
     CONTEXT_PACK_RESPONSE_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
     POLICY_CONTEXT_PACKAGE_V1,
@@ -81,6 +83,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: CONTEXT_OVERFLOW_RECOVERY_V1,
+        payload_kind: "context_overflow_recovery",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: CONTEXT_PACK_RESPONSE_V1,
         payload_kind: "context_pack_response",
         contract_version: 1,
@@ -119,5 +127,6 @@ mod tests {
         assert_eq!(AGENT_CONTRACT_IDS.len(), AGENT_CONTRACTS.len());
         assert!(AGENT_CONTRACT_IDS.contains(&POLICY_CONTEXT_PACKAGE_V1));
         assert!(AGENT_CONTRACT_IDS.contains(&A2A_READINESS_PROFILE_V1));
+        assert!(AGENT_CONTRACT_IDS.contains(&CONTEXT_OVERFLOW_RECOVERY_V1));
     }
 }
