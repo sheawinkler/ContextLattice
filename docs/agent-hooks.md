@@ -198,6 +198,7 @@ Context-pack shape is guarded by:
 ```bash
 scripts/agent/audit-agent-output-contracts
 scripts/agent/audit-context-pack-schema
+scripts/agent/audit-context-overflow-recovery
 scripts/agent/eval-skill-policy
 scripts/agent/audit-compaction-hooks
 ```
@@ -209,6 +210,16 @@ includes `format_contract.schema_id=policy_context_package.v1` plus validation
 status. Go and Python loaders read the same registry so agents receive the
 contract ContextLattice expects them to satisfy rather than relying on prompt
 memory.
+
+Provider/context overflow errors must be treated as recoverable before they are
+shown to a user. Use `scripts/agent/context-overflow-recovery` to classify
+provider-style context failures, deterministically reduce oversized input
+arrays, preserve function/tool call-output invariants, and emit
+`context_overflow_recovery.v1` with `status=auto_compacted`,
+`recovered_from=context_overflow`, and `user_visible_error=false`. The audit gate
+uses provider-style error fixtures and oversized Responses-style input arrays so
+raw errors such as `array_above_max_length` or context-length failures do not
+become the user-facing contract.
 
 Agent ContextLattice wrappers retry and fail non-zero by default when reads or
 writes cannot complete. A compact JSON failure replaces Python tracebacks, but

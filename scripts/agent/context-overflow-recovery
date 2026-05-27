@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""Classify and recover oversized agent/provider inputs before users see raw errors."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import attach_format_contract  # noqa: E402
+
+CONTRACT_ID = "context_overflow_recovery.v1"
+DEFAULT_BUDGET_ITEMS = 16_000
+DEFAULT_BUDGET_CHARS = 96_000
+DEFAULT_PREFIX_ITEMS = 24
+DEFAULT_MIN_SUFFIX_ITEMS = 64
+MAX_STRING_BYTES = 4_000
+RECOVERABLE_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("array_above_max_length", r"array_above_max_length"),
+    ("context_length_exceeded", r"context[_ -]?length[^\n]{0,80}(exceeded|too large|maximum)"),
+    ("max_input_tokens", r"max(?:imum)?[ _-]?(?:input[ _-]?)?tokens"),
+    ("input_too_large", r"input[^\n]{0,80}(too large|exceeds|over.*budget)"),
+    ("request_too_large", r"request[^\n]{0,80}(too large|entity too large|payload too large)"),
+    ("too_many_items", r"too many (?:input )?(?:items|messages|array elements)"),
+    ("model_context_window", r"model[^\n]{0,80}context window"),
+    ("provider_token_limit", r"(?:token|context)[^\n]{0,80}(limit|budget)"),
+)
+CALL_TYPES = {"function_call", "tool_call"}
+OUTPUT_TYPES = {"function_call_output", "tool_result", "tool_output"}
+
+
+def compact_text(value: str, limit: int = MAX_STRING_BYTES) -> tuple[str, bool]:
+    text = str(value or "")
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text, False
+    marker = "...[contextlattice-truncated]"
+    keep = max(0, limit - len(marker.encode("utf-8")))
+    truncated = encoded[:keep].decode("utf-8", errors="ignore") + marker
+    return truncated, True
+
+
+def bounded_value(value: Any, string_limit: int = MAX_STRING_BYTES) -> tuple[Any, int]:
+    truncated = 0
+    if isinstance(value, str):
+        out, did = compact_text(value, string_limit)
+        return out, int(did)
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            bounded, count = bounded_value(item, string_limit)
+            truncated += count
+            out.append(bounded)
+        return out, truncated
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            bounded, count = bounded_value(item, string_limit)
+            truncated += count
+            out[str(key)] = bounded
+        return out, truncated
+    return value, 0
+
+
+def json_size(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def read_payload(path: str | None) -> Any:
+    if path and path != "-":
+        raw = Path(path).read_text(encoding="utf-8")
+    else:
+        raw = sys.stdin.read()
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"raw_error": raw}
+
+
+def payload_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return str(value)
+
+
+def classify(value: Any) -> dict[str, Any]:
+    text = payload_text(value).lower()
+    matches: list[str] = []
+    for name, pattern in RECOVERABLE_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            matches.append(name)
+    recoverable = bool(matches)
+    return {
+        "recoverable": recoverable,
+        "classification": "context_overflow_recoverable" if recoverable else "not_context_overflow",
+        "matched_patterns": matches,
+        "reason": matches[0] if matches else "no_recoverable_context_overflow_pattern",
+    }
+
+
+def input_array_from(payload: Any) -> tuple[list[Any] | None, tuple[Any, str] | None]:
+    if isinstance(payload, list):
+        return payload, (None, "")
+    if isinstance(payload, dict):
+        value = payload.get("input")
+        if isinstance(value, list):
+            return value, (payload, "input")
+        request = payload.get("request")
+        if isinstance(request, dict) and isinstance(request.get("input"), list):
+            return request["input"], (request, "input")
+    return None, None
+
+
+def call_id_for(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("call_id", "tool_call_id", "id"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def item_type(item: Any) -> str:
+    return str(item.get("type") or item.get("kind") or "") if isinstance(item, dict) else ""
+
+
+def is_call(item: Any) -> bool:
+    return item_type(item) in CALL_TYPES and bool(call_id_for(item))
+
+
+def is_output(item: Any) -> bool:
+    return item_type(item) in OUTPUT_TYPES and bool(call_id_for(item))
+
+
+def protected_prefix_index(item: Any, index: int, prefix_items: int) -> bool:
+    if index < prefix_items:
+        return True
+    if not isinstance(item, dict):
+        return False
+    return str(item.get("role") or "") in {"system", "developer"}
+
+
+def build_selected_indices(items: list[Any], budget_items: int, prefix_items: int, min_suffix_items: int) -> set[int]:
+    total = len(items)
+    keep: set[int] = set(range(min(total, max(0, prefix_items))))
+    suffix_target = min(total, max(0, min_suffix_items))
+    for idx in range(max(0, total - suffix_target), total):
+        keep.add(idx)
+    idx = total - suffix_target - 1
+    while len(keep) < max(1, budget_items) and idx >= prefix_items:
+        keep.add(idx)
+        idx -= 1
+    return keep
+
+
+def enforce_tool_pairs(items: list[Any], selected: set[int]) -> tuple[set[int], dict[str, int]]:
+    call_index_by_id = {call_id_for(item): idx for idx, item in enumerate(items) if is_call(item)}
+    stats = {"inserted_missing_calls": 0, "dropped_orphan_outputs": 0}
+    for idx in sorted(list(selected)):
+        item = items[idx]
+        if not is_output(item):
+            continue
+        call_id = call_id_for(item)
+        call_idx = call_index_by_id.get(call_id)
+        if call_idx is None:
+            selected.discard(idx)
+            stats["dropped_orphan_outputs"] += 1
+            continue
+        if call_idx not in selected:
+            selected.add(call_idx)
+            stats["inserted_missing_calls"] += 1
+    return selected, stats
+
+
+def output_call_ids_are_valid(items: list[Any]) -> bool:
+    seen_calls: set[str] = set()
+    for item in items:
+        if is_call(item):
+            seen_calls.add(call_id_for(item))
+        if is_output(item) and call_id_for(item) not in seen_calls:
+            return False
+    return True
+
+
+def reduce_items(
+    raw_items: list[Any],
+    *,
+    budget_items: int,
+    budget_chars: int,
+    prefix_items: int,
+    min_suffix_items: int,
+    string_limit: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    bounded_items: list[Any] = []
+    truncated_strings = 0
+    for item in raw_items:
+        bounded, count = bounded_value(item, string_limit)
+        truncated_strings += count
+        bounded_items.append(bounded)
+
+    selected = build_selected_indices(bounded_items, budget_items, prefix_items, min_suffix_items)
+    selected, pair_stats = enforce_tool_pairs(bounded_items, selected)
+
+    def selected_items() -> list[Any]:
+        return [bounded_items[idx] for idx in sorted(selected)]
+
+    protected = {idx for idx in selected if protected_prefix_index(bounded_items[idx], idx, prefix_items)}
+    while (len(selected) > budget_items or json_size(selected_items()) > budget_chars) and selected - protected:
+        call_index_by_id = {call_id_for(item): idx for idx, item in enumerate(bounded_items) if is_call(item)}
+        required_calls = {
+            call_index_by_id[call_id_for(bounded_items[idx])]
+            for idx in selected
+            if is_output(bounded_items[idx]) and call_id_for(bounded_items[idx]) in call_index_by_id
+        }
+        removable = sorted(selected - protected - required_calls)
+        if not removable:
+            # All remaining non-protected items are calls required by retained outputs.
+            # Drop the oldest retained output, then the next iteration may drop its call.
+            removable = [idx for idx in sorted(selected - protected) if is_output(bounded_items[idx])]
+        if not removable:
+            break
+        selected.discard(removable[0])
+        selected, extra_pair_stats = enforce_tool_pairs(bounded_items, selected)
+        pair_stats["inserted_missing_calls"] += extra_pair_stats["inserted_missing_calls"]
+        pair_stats["dropped_orphan_outputs"] += extra_pair_stats["dropped_orphan_outputs"]
+        # If removing a call orphaned a retained output, drop that output.
+        calls = {call_id_for(bounded_items[idx]) for idx in selected if is_call(bounded_items[idx])}
+        for idx in sorted(list(selected)):
+            if is_output(bounded_items[idx]) and call_id_for(bounded_items[idx]) not in calls:
+                selected.discard(idx)
+                pair_stats["dropped_orphan_outputs"] += 1
+
+    reduced = selected_items()
+    # Final fail-safe: never keep function/tool outputs without preceding calls.
+    if not output_call_ids_are_valid(reduced):
+        valid: list[Any] = []
+        seen_calls: set[str] = set()
+        dropped = 0
+        for item in reduced:
+            if is_call(item):
+                seen_calls.add(call_id_for(item))
+                valid.append(item)
+            elif is_output(item):
+                if call_id_for(item) in seen_calls:
+                    valid.append(item)
+                else:
+                    dropped += 1
+            else:
+                valid.append(item)
+        reduced = valid
+        pair_stats["dropped_orphan_outputs"] += dropped
+
+    return reduced, {
+        "original_items": len(raw_items),
+        "reduced_items": len(reduced),
+        "omitted_items": max(0, len(raw_items) - len(reduced)),
+        "original_estimated_chars": json_size(raw_items),
+        "reduced_estimated_chars": json_size(reduced),
+        "budget_items": budget_items,
+        "budget_chars": budget_chars,
+        "truncated_strings": truncated_strings,
+        "tool_pair_invariant_ok": output_call_ids_are_valid(reduced),
+        **pair_stats,
+    }
+
+
+def reduced_payload(payload: Any, reduced_items: list[Any]) -> Any:
+    if isinstance(payload, list):
+        return reduced_items
+    out = deepcopy(payload) if isinstance(payload, dict) else {}
+    items, holder = input_array_from(out)
+    if holder is None:
+        out["input"] = reduced_items
+    else:
+        target, key = holder
+        if target is None:
+            return reduced_items
+        target[key] = reduced_items
+    return out
+
+
+def recover_payload(
+    payload: Any,
+    error: Any,
+    *,
+    budget_items: int,
+    budget_chars: int,
+    prefix_items: int,
+    min_suffix_items: int,
+    string_limit: int,
+    checkpoint_ref: str,
+) -> dict[str, Any]:
+    classification = classify(error if error not in ({}, None, "") else payload)
+    items, _holder = input_array_from(payload)
+    if items is None:
+        reduced = deepcopy(payload)
+        stats = {
+            "original_items": 0,
+            "reduced_items": 0,
+            "omitted_items": 0,
+            "original_estimated_chars": json_size(payload),
+            "reduced_estimated_chars": json_size(payload),
+            "budget_items": budget_items,
+            "budget_chars": budget_chars,
+            "truncated_strings": 0,
+            "tool_pair_invariant_ok": True,
+            "inserted_missing_calls": 0,
+            "dropped_orphan_outputs": 0,
+        }
+    else:
+        reduced_items, stats = reduce_items(
+            items,
+            budget_items=budget_items,
+            budget_chars=budget_chars,
+            prefix_items=prefix_items,
+            min_suffix_items=min_suffix_items,
+            string_limit=string_limit,
+        )
+        reduced = reduced_payload(payload, reduced_items)
+    payload_out = {
+        "ok": bool(classification["recoverable"] and stats["tool_pair_invariant_ok"]),
+        "status": "auto_compacted" if classification["recoverable"] else "not_recoverable",
+        "classification": classification["classification"],
+        "recovered_from": "context_overflow" if classification["recoverable"] else "none",
+        "user_visible_error": False if classification["recoverable"] else True,
+        "retry_recommended": bool(classification["recoverable"]),
+        "checkpoint_ref": str(checkpoint_ref or ""),
+        "matched_patterns": classification["matched_patterns"],
+        "input_reduction": stats,
+        "reduced_payload": reduced,
+    }
+    return attach_format_contract(CONTRACT_ID, payload_out)
+
+
+def emit(payload: Any, pretty: bool) -> None:
+    print(json.dumps(payload, indent=2 if pretty else None, sort_keys=pretty, separators=None if pretty else (",", ":")))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    classify_p = sub.add_parser("classify")
+    classify_p.add_argument("--error", default="")
+    classify_p.add_argument("--file", default="-")
+    classify_p.add_argument("--pretty", action="store_true")
+
+    recover_p = sub.add_parser("recover")
+    recover_p.add_argument("--file", default="-")
+    recover_p.add_argument("--error-file", default="")
+    recover_p.add_argument("--error", default="")
+    recover_p.add_argument("--budget-items", type=int, default=DEFAULT_BUDGET_ITEMS)
+    recover_p.add_argument("--budget-chars", type=int, default=DEFAULT_BUDGET_CHARS)
+    recover_p.add_argument("--prefix-items", type=int, default=DEFAULT_PREFIX_ITEMS)
+    recover_p.add_argument("--min-suffix-items", type=int, default=DEFAULT_MIN_SUFFIX_ITEMS)
+    recover_p.add_argument("--max-string-bytes", type=int, default=MAX_STRING_BYTES)
+    recover_p.add_argument("--checkpoint-ref", default="")
+    recover_p.add_argument("--pretty", action="store_true")
+    recover_p.add_argument("--reduced-only", action="store_true")
+
+    args = parser.parse_args()
+    if args.command == "classify":
+        source = args.error if args.error else read_payload(args.file)
+        payload = classify(source)
+        emit(payload, args.pretty)
+        return 0 if payload["recoverable"] else 1
+
+    payload = read_payload(args.file)
+    if args.error:
+        error: Any = args.error
+    elif args.error_file:
+        error = read_payload(args.error_file)
+    else:
+        error = payload.get("error") if isinstance(payload, dict) else payload
+    recovered = recover_payload(
+        payload,
+        error,
+        budget_items=max(1, args.budget_items),
+        budget_chars=max(512, args.budget_chars),
+        prefix_items=max(0, args.prefix_items),
+        min_suffix_items=max(0, args.min_suffix_items),
+        string_limit=max(256, args.max_string_bytes),
+        checkpoint_ref=args.checkpoint_ref,
+    )
+    emit(recovered["reduced_payload"] if args.reduced_only else recovered, args.pretty)
+    return 0 if recovered.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

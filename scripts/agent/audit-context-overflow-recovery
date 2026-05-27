@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Regression gate for context-overflow auto-recovery UX contract."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from _common import REPO_ROOT, emit
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import validate_agent_contract_payload  # noqa: E402
+
+SCRIPT = REPO_ROOT / "scripts" / "agent" / "context-overflow-recovery"
+
+
+def run_json(argv: list[str], stdin: Any | None = None) -> tuple[int, dict[str, Any], str]:
+    text = json.dumps(stdin) if stdin is not None else None
+    proc = subprocess.run(argv, input=text, capture_output=True, text=True, check=False)
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception:
+        payload = {"ok": False, "parse_error": True, "stdout": proc.stdout[:1000]}
+    return proc.returncode, payload, proc.stderr[:1000]
+
+
+def make_oversized_request() -> dict[str, Any]:
+    items: list[dict[str, Any]] = [
+        {"role": "system", "content": "system rules stay"},
+        {"role": "developer", "content": "developer rules stay"},
+    ]
+    for i in range(42):
+        items.append({"role": "user", "content": f"old user message {i} " + ("x" * 80)})
+        if i == 4:
+            items.append({"type": "function_call", "call_id": "call_keep", "name": "read_file", "arguments": "{}"})
+        if i == 8:
+            items.append({"type": "function_call_output", "call_id": "call_keep", "output": "tool output that requires retained call"})
+        if i == 9:
+            items.append({"type": "function_call_output", "call_id": "orphan_call", "output": "must be dropped"})
+    items.append({"type": "function_call_output", "call_id": "call_keep", "output": "late output that requires reinserting old call"})
+    items.append({"type": "function_call", "call_id": "recent_call", "name": "exec", "arguments": "{}"})
+    items.append({"type": "function_call_output", "call_id": "recent_call", "output": "y" * 12000})
+    items.append({"role": "user", "content": "current user asks to proceed"})
+    return {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "array_above_max_length",
+            "message": "Invalid 'input': array_above_max_length and context length exceeded",
+        },
+        "input": items,
+    }
+
+
+def assert_condition(findings: list[dict[str, Any]], condition: bool, reason: str, **extra: Any) -> None:
+    if not condition:
+        findings.append({"reason": reason, **extra})
+
+
+def validate_recovery_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return validate_agent_contract_payload("context_overflow_recovery.v1", payload)
+
+
+def output_call_ids_valid(items: list[Any]) -> bool:
+    calls: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        typ = item.get("type")
+        call_id = item.get("call_id") or item.get("tool_call_id") or item.get("id")
+        if typ in {"function_call", "tool_call"} and call_id:
+            calls.add(str(call_id))
+        if typ in {"function_call_output", "tool_result", "tool_output"} and str(call_id) not in calls:
+            return False
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    findings: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+
+    for label, error, expected_recoverable in [
+        ("array_above_max_length", "400 invalid_request_error: array_above_max_length for input", True),
+        ("context_length", "This model's maximum context length was exceeded by the input tokens", True),
+        ("ordinary_error", "network connection reset by peer", False),
+    ]:
+        rc, payload, stderr = run_json([str(SCRIPT), "classify", "--error", error])
+        cases.append({"name": f"classify_{label}", "returncode": rc, "payload": payload})
+        assert_condition(findings, bool(payload.get("recoverable")) is expected_recoverable, f"classification_mismatch_{label}", payload=payload, stderr=stderr)
+
+    request = make_oversized_request()
+    rc, recovered, stderr = run_json(
+        [
+            str(SCRIPT),
+            "recover",
+            "--budget-items",
+            "20",
+            "--budget-chars",
+            "9000",
+            "--prefix-items",
+            "2",
+            "--min-suffix-items",
+            "8",
+            "--max-string-bytes",
+            "900",
+            "--checkpoint-ref",
+            "sha256:test-checkpoint",
+        ],
+        request,
+    )
+    cases.append({"name": "recover_oversized_responses_input", "returncode": rc, "payload": {k: recovered.get(k) for k in ("ok", "status", "classification", "user_visible_error", "input_reduction")}})
+    assert_condition(findings, rc == 0, "recovery_command_failed", stderr=stderr, payload=recovered)
+    assert_condition(findings, recovered.get("ok") is True, "recovery_payload_not_ok", payload=recovered)
+    assert_condition(findings, recovered.get("status") == "auto_compacted", "status_not_auto_compacted", payload=recovered)
+    assert_condition(findings, recovered.get("user_visible_error") is False, "user_visible_error_not_hidden", payload=recovered)
+    assert_condition(findings, recovered.get("retry_recommended") is True, "retry_not_recommended", payload=recovered)
+    contract_findings = validate_recovery_payload(recovered)
+    assert_condition(findings, not contract_findings, "contract_validation_failed", contract_findings=contract_findings)
+
+    reduced = recovered.get("reduced_payload") if isinstance(recovered.get("reduced_payload"), dict) else {}
+    reduced_items = reduced.get("input") if isinstance(reduced.get("input"), list) else []
+    stats = recovered.get("input_reduction") if isinstance(recovered.get("input_reduction"), dict) else {}
+    assert_condition(findings, len(reduced_items) <= 20, "reduced_items_over_budget", count=len(reduced_items))
+    assert_condition(findings, stats.get("reduced_estimated_chars", 0) <= 9000, "reduced_chars_over_budget", stats=stats)
+    assert_condition(findings, stats.get("omitted_items", 0) > 0, "no_items_omitted", stats=stats)
+    assert_condition(findings, stats.get("truncated_strings", 0) > 0, "giant_output_not_truncated", stats=stats)
+    assert_condition(findings, stats.get("inserted_missing_calls", 0) > 0, "missing_call_not_reinserted", stats=stats)
+    assert_condition(findings, stats.get("tool_pair_invariant_ok") is True, "tool_pair_invariant_false", stats=stats)
+    assert_condition(findings, output_call_ids_valid(reduced_items), "orphan_tool_output_survived", reduced_items=reduced_items)
+    assert_condition(findings, all(item.get("call_id") != "orphan_call" for item in reduced_items if isinstance(item, dict)), "known_orphan_call_survived")
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(request, fh)
+        path = fh.name
+    try:
+        rc, reduced_only, stderr = run_json(
+            [
+                str(SCRIPT),
+                "recover",
+                "--file",
+                path,
+                "--budget-items",
+                "20",
+                "--budget-chars",
+                "9000",
+                "--prefix-items",
+                "2",
+                "--min-suffix-items",
+                "8",
+                "--max-string-bytes",
+                "900",
+                "--reduced-only",
+            ]
+        )
+        cases.append({"name": "reduced_only_file_mode", "returncode": rc, "input_count": len(reduced_only.get("input", [])) if isinstance(reduced_only, dict) else 0})
+        assert_condition(findings, rc == 0 and isinstance(reduced_only.get("input"), list), "reduced_only_mode_failed", stderr=stderr, payload=reduced_only)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+    payload = {"ok": not findings, "case_count": len(cases), "cases": cases, "findings": findings}
+    emit(payload, args.pretty)
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

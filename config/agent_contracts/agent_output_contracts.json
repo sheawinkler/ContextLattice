@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 1,
-  "updated_at": "2026-05-25",
+  "registry_version": 2,
+  "updated_at": "2026-05-27T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -592,6 +592,79 @@
         "internal_tools"
       ],
       "forbidden_scope": "root"
+    },
+    "context_overflow_recovery.v1": {
+      "payload_kind": "context_overflow_recovery",
+      "contract_version": 1,
+      "required_output_mode": "json_object",
+      "required_fields": [
+        "ok",
+        "status",
+        "classification",
+        "recovered_from",
+        "user_visible_error",
+        "retry_recommended",
+        "checkpoint_ref",
+        "matched_patterns",
+        "input_reduction",
+        "reduced_payload",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "status": "string",
+        "classification": "string",
+        "recovered_from": "string",
+        "user_visible_error": "bool",
+        "retry_recommended": "bool",
+        "checkpoint_ref": "string",
+        "matched_patterns": "list[string]",
+        "input_reduction": "object",
+        "format_contract": "object",
+        "input_reduction.original_items": "int",
+        "input_reduction.reduced_items": "int",
+        "input_reduction.omitted_items": "int",
+        "input_reduction.original_estimated_chars": "int",
+        "input_reduction.reduced_estimated_chars": "int",
+        "input_reduction.budget_items": "int",
+        "input_reduction.budget_chars": "int",
+        "input_reduction.truncated_strings": "int",
+        "input_reduction.tool_pair_invariant_ok": "bool",
+        "input_reduction.inserted_missing_calls": "int",
+        "input_reduction.dropped_orphan_outputs": "int"
+      },
+      "required_fields_by_path": {
+        "input_reduction": [
+          "original_items",
+          "reduced_items",
+          "omitted_items",
+          "original_estimated_chars",
+          "reduced_estimated_chars",
+          "budget_items",
+          "budget_chars",
+          "truncated_strings",
+          "tool_pair_invariant_ok",
+          "inserted_missing_calls",
+          "dropped_orphan_outputs"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "retry_recommended",
+        "input_reduction.tool_pair_invariant_ok"
+      ],
+      "required_string_contains": {
+        "classification": "context_overflow_recoverable",
+        "status": "auto_compacted"
+      }
     }
   }
 }

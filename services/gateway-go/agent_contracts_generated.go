@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 1
+const GeneratedAgentContractRegistryVersion = 2
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -19,6 +19,7 @@ const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
+const GeneratedAgentContractContextOverflowRecoveryV1 = "context_overflow_recovery.v1"
 const GeneratedAgentContractContextPackResponseV1 = "context_pack_response.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
@@ -32,6 +33,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentTaskResultV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
 	GeneratedAgentContractCodexCompactHookStdoutV1,
+	GeneratedAgentContractContextOverflowRecoveryV1,
 	GeneratedAgentContractContextPackResponseV1,
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractPolicyContextPackageV1,
@@ -78,6 +80,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractCodexCompactHookStdoutV1,
 		PayloadKind:        "codex_compact_hook_stdout",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextOverflowRecoveryV1,
+		PayloadKind:        "context_overflow_recovery",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

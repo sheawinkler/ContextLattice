@@ -38,6 +38,7 @@ REQUIRED_CONTRACTS = (
     "agent_span.v1",
     "agent_flight_recorder_event.v1",
     "codex_compact_hook_stdout.v1",
+    "context_overflow_recovery.v1",
 )
 
 
@@ -154,6 +155,36 @@ def sample_a2a_readiness() -> dict[str, Any]:
     )
 
 
+def sample_context_overflow_recovery() -> dict[str, Any]:
+    return attach_format_contract(
+        "context_overflow_recovery.v1",
+        {
+            "ok": True,
+            "status": "auto_compacted",
+            "classification": "context_overflow_recoverable",
+            "recovered_from": "context_overflow",
+            "user_visible_error": False,
+            "retry_recommended": True,
+            "checkpoint_ref": "sha256:audit",
+            "matched_patterns": ["array_above_max_length"],
+            "input_reduction": {
+                "original_items": 20000,
+                "reduced_items": 16000,
+                "omitted_items": 4000,
+                "original_estimated_chars": 160000,
+                "reduced_estimated_chars": 96000,
+                "budget_items": 16000,
+                "budget_chars": 96000,
+                "truncated_strings": 2,
+                "tool_pair_invariant_ok": True,
+                "inserted_missing_calls": 1,
+                "dropped_orphan_outputs": 1,
+            },
+            "reduced_payload": {"input": []},
+        },
+    )
+
+
 def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
     protocol = anti_scheming_protocol(registry)
     metadata = contract_metadata("policy_context_package.v1", registry)
@@ -255,6 +286,7 @@ def run_audit() -> list[dict[str, Any]]:
         ("agent_span.v1", sample_agent_span()),
         ("agent_flight_recorder_event.v1", sample_flight_event()),
         ("a2a_readiness_profile.v1", sample_a2a_readiness()),
+        ("context_overflow_recovery.v1", sample_context_overflow_recovery()),
     ):
         for item in validate_agent_contract_payload(contract_id, payload, registry):
             findings.append({"severity": "error", **item})
