@@ -247,6 +247,105 @@ func TestMemoryEdgesBackfillDryRunWriteAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestMemoryEdgesBackfillInferredScoringBounded(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	writes := []normalizedWrite{
+		{
+			project:   "alpha",
+			fileName:  "notes/a.md",
+			content:   "qdrant vector recall latency memory graph shared context scoring qdrant",
+			topicPath: "runbooks/graph",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/b.md",
+			content:   "qdrant vector recall latency memory graph shared context scoring",
+			topicPath: "runbooks/graph",
+			agentID:   "agent-b",
+			sessionID: "session-2",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/d.md",
+			content:   "qdrant vector recall latency memory graph shared context scoring rerank",
+			topicPath: "runbooks/graph",
+			agentID:   "agent-c",
+			sessionID: "session-3",
+		},
+		{
+			project:   "alpha",
+			fileName:  "billing/invoice.md",
+			content:   "billing invoice entitlement provider route pricing plan",
+			topicPath: "billing",
+			agentID:   "agent-b",
+			sessionID: "session-4",
+		},
+	}
+	for _, write := range writes {
+		if _, _, err := s.memoryStore.put(write); err != nil {
+			t.Fatalf("seed memory write %s: %v", write.fileName, err)
+		}
+	}
+
+	capped := postEdgeBackfillForTest(t, gateway.URL, `{"project":"alpha","relations":["inferred_related"],"include_inferred":true,"max_candidates":1,"inferred_peer_limit":2,"inferred_min_score":0.9,"inferred_min_shared_terms":3,"sample_limit":20}`)
+	if !anyToBool(capped["truncated"]) {
+		t.Fatalf("expected max_candidates cap to truncate inferred scoring, got %#v", capped)
+	}
+	if got := backfillRelationStatInt(capped, "inferred_related", "generated"); got < 2 {
+		t.Fatalf("expected multiple inferred candidates before truncation, got %#v", capped["relations"])
+	}
+
+	dryRun := postEdgeBackfillForTest(t, gateway.URL, `{"project":"alpha","relations":["inferred_related"],"include_inferred":true,"min_confidence":0.9,"inferred_peer_limit":1,"inferred_min_score":0.9,"inferred_min_shared_terms":3,"sample_limit":20}`)
+	if !anyToBool(dryRun["dry_run"]) || !anyToBool(dryRun["include_inferred"]) {
+		t.Fatalf("expected inferred dry-run response, got %#v", dryRun)
+	}
+	if got := backfillRelationStatInt(dryRun, "inferred_related", "eligible"); got == 0 {
+		t.Fatalf("expected eligible inferred candidates, got %#v", dryRun["relations"])
+	}
+	if anyToInt(dryRun["written"], -1) != 0 {
+		t.Fatalf("dry run must not write inferred edges, got %#v", dryRun)
+	}
+	if edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{Relation: "inferred_related", Limit: 100}); err != nil || len(edges) != 0 {
+		t.Fatalf("dry-run should leave inferred edge store empty, edges=%#v err=%v", edges, err)
+	}
+
+	writeRun := postEdgeBackfillForTest(t, gateway.URL, `{"dry_run":false,"project":"alpha","relations":["inferred_related"],"include_inferred":true,"min_confidence":0.9,"inferred_peer_limit":1,"inferred_min_score":0.9,"inferred_min_shared_terms":3,"sample_limit":20}`)
+	written := anyToInt(writeRun["written"], 0)
+	if written == 0 || written > 2 {
+		t.Fatalf("expected bounded inferred writes, got %#v", writeRun)
+	}
+	edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{Relation: "inferred_related", Limit: 100})
+	if err != nil {
+		t.Fatalf("list inferred edges: %v", err)
+	}
+	if len(edges) != written {
+		t.Fatalf("expected %d inferred edges, got %#v", written, edges)
+	}
+	for _, edge := range edges {
+		if anyToString(edge.Provenance["kind"]) != "inferred_memory_edge_scoring" {
+			t.Fatalf("expected inferred provenance, got %#v", edge.Provenance)
+		}
+		if !anyToBool(edge.Metadata["inferred"]) {
+			t.Fatalf("expected inferred metadata, got %#v", edge.Metadata)
+		}
+		if edge.Confidence < 0.9 {
+			t.Fatalf("expected persisted inferred confidence >= 0.9, got %#v", edge)
+		}
+	}
+
+	repeatRun := postEdgeBackfillForTest(t, gateway.URL, `{"dry_run":false,"project":"alpha","relations":["inferred_related"],"include_inferred":true,"min_confidence":0.9,"inferred_peer_limit":1,"inferred_min_score":0.9,"inferred_min_shared_terms":3,"sample_limit":20}`)
+	if anyToInt(repeatRun["written"], -1) != 0 {
+		t.Fatalf("repeat inferred backfill should be idempotent, got %#v", repeatRun)
+	}
+	if anyToInt(repeatRun["existing"], 0) == 0 {
+		t.Fatalf("repeat inferred backfill should report existing edges, got %#v", repeatRun)
+	}
+}
+
 func postEdgeBackfillForTest(t *testing.T, baseURL string, body string) map[string]any {
 	t.Helper()
 	resp, err := http.Post(baseURL+"/v1/memory/edges/backfill", "application/json", strings.NewReader(body))

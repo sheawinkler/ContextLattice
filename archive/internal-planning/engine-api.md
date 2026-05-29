@@ -30,6 +30,22 @@ The Python migration proxies currently use HTTP while gRPC is rolled out.
 - `POST /v1/retrieval/batch-query`
 - `GET /v1/retrieval/health`
 
+### Memory Edge Backfill
+
+`POST /v1/memory/edges/backfill` is dry-run by default. It supports deterministic explicit backfill relations (`same_topic`, `references`, `same_session`, low-confidence `same_agent` audit rows) and opt-in bounded inferred scoring.
+
+Key optional fields:
+
+- `dry_run` (default `true`): set `false` to persist eligible edges.
+- `relations`: restrict generated relations, e.g. `["inferred_related"]`.
+- `min_confidence` (default `0.95`): write threshold for all generated edges.
+- `include_inferred` (default `false`): enables bounded same-project `inferred_related` scoring.
+- `inferred_peer_limit` (default `2`): maximum inferred peers considered per source memory.
+- `inferred_scan_limit` (default `5000`): maximum docs scanned for inferred scoring.
+- `inferred_min_score` (default `0.90`): minimum inferred score to report.
+- `inferred_min_shared_terms` (default `3`): minimum lexical overlap before scoring.
+- `inferred_max_token_postings` (default `64`): skips overly-common terms to bound fanout.
+
 ## Runtime Flags
 
 - `USE_RUST_CODEC`

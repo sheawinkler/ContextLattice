@@ -116,11 +116,12 @@ contextlattice_checkpoint -h
 ## Memory Graph
 
 - `GET|POST /v1/memory/edges` persists explicit typed relationships.
-- `POST /v1/memory/edges/backfill` audits or applies deterministic retroactive edges. It is dry-run by default.
-- `POST /v1/memory/neighbors` returns explicit edge neighbors merged with semantic/topic neighbors.
+- `POST /v1/memory/edges/backfill` audits or applies deterministic retroactive edges and opt-in same-project `inferred_related` scoring. It is dry-run by default.
+- `POST /v1/memory/neighbors` returns explicit/inferred edge neighbors merged with semantic/topic neighbors.
 
 ```bash
 ./scripts/agent/memory-edge-backfill
+./scripts/agent/memory-edge-backfill --include-inferred --min-confidence 0.90
 ./scripts/agent/memory-edge-backfill --write
 ```
 
