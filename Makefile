@@ -36,6 +36,8 @@ help:
 > echo "    (set PROFILES=core,llm to limit docker compose)"
 > echo "  up-core: helper for PROFILES=core docker compose up"
 > echo "  mem-mode-show|mem-mode-core|mem-mode-balanced|mem-mode-full: toggle persistent COMPOSE_PROFILES in .env"
+> echo "  mem-up-lite: local lite core (topic_rollups + qdrant, no adapter lab)"
+> echo "  mem-up-lite-advanced: local lite plus memory-bank spike/adapters"
 > echo "  mem-up-balanced: bounded v4 launcher (single active spike lane, observability off by default)"
 > echo "  observability-up|observability-down: on-demand Langfuse stack controls"
 > echo "  models-pull: pull local Ollama models (optional)"
@@ -595,9 +597,26 @@ observability-up:
 observability-down:
 > docker compose --env-file "$(ENV_FILE)" stop langfuse langfuse-worker lf-postgres lf-clickhouse lf-minio || true
 
-.PHONY: mem-up-lite mem-down-lite mem-ps-lite
+.PHONY: mem-up-lite mem-up-lite-advanced mem-down-lite mem-ps-lite mem-ps-lite-advanced
 mem-up-lite:
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
+> COMPOSE_PROFILES= \
+> ORCH_LITE_RETRIEVAL_SOURCES=qdrant,mongo_raw,topic_rollups \
+> ORCH_LITE_RETRIEVAL_SLOW_SOURCES=mongo_raw \
+> ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES=qdrant,mongo_raw \
+> ORCH_LITE_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=false \
+> ORCH_LITE_MEMORY_BANK_SEARCH_BACKEND=disabled \
+> docker compose -f docker-compose.lite.yml up -d --build --remove-orphans
+> ENV_FILE="$(ENV_FILE)" COMPOSE_PROJECT_NAME="$${COMPOSE_PROJECT_NAME:-contextlattice}" scripts/verify_storage_mounts.sh
+
+mem-up-lite-advanced:
+> ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
+> COMPOSE_PROFILES=advanced \
+> ORCH_LITE_RETRIEVAL_SOURCES=qdrant,mongo_raw,topic_rollups,memory_bank \
+> ORCH_LITE_RETRIEVAL_SLOW_SOURCES=mongo_raw,memory_bank \
+> ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES=qdrant,memory_bank,mongo_raw \
+> ORCH_LITE_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED=true \
+> ORCH_LITE_MEMORY_BANK_SEARCH_BACKEND=shodh_spike \
 > docker compose -f docker-compose.lite.yml up -d --build --remove-orphans
 
 mem-down-lite:
@@ -605,6 +624,9 @@ mem-down-lite:
 
 mem-ps-lite:
 > docker compose -f docker-compose.lite.yml ps
+
+mem-ps-lite-advanced:
+> COMPOSE_PROFILES=advanced docker compose -f docker-compose.lite.yml ps
 
 mem-up-release:
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply

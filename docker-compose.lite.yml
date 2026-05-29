@@ -75,6 +75,7 @@ services:
     restart: unless-stopped
 
   meilisearch:
+    profiles: ["advanced"]
     image: getmeili/meilisearch:v1.12
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-contextlattice_meili_dev_key}
@@ -90,6 +91,7 @@ services:
     restart: unless-stopped
 
   lancedb-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.lancedb-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -115,6 +117,7 @@ services:
     restart: unless-stopped
 
   trieve-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -139,6 +142,7 @@ services:
     restart: unless-stopped
 
   helixdb-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -163,6 +167,7 @@ services:
     restart: unless-stopped
 
   icm-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -187,6 +192,7 @@ services:
     restart: unless-stopped
 
   shodh-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -211,6 +217,7 @@ services:
     restart: unless-stopped
 
   memvid-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -235,6 +242,7 @@ services:
     restart: unless-stopped
 
   surrealdb-spike-adapter:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.external-spike-adapter }
     depends_on:
       memorymcp-http:
@@ -259,6 +267,7 @@ services:
     restart: unless-stopped
 
   memory-bank-spike-rs:
+    profiles: ["advanced"]
     build: { context: ., dockerfile: Dockerfile.memory-bank-spike-rs }
     depends_on:
       meilisearch:
@@ -340,8 +349,6 @@ services:
         condition: service_started
       fastembed-sidecar:
         condition: service_started
-      memory-bank-spike-rs:
-        condition: service_started
     environment:
       CONTEXTLATTICE_HTTP_URL: ${CONTEXTLATTICE_HTTP_URL:-http://memorymcp-http:59081/mcp}
       CONTEXTLATTICE_ENV: ${CONTEXTLATTICE_ENV:-production}
@@ -371,11 +378,11 @@ services:
       GO_RETRIEVAL_NATIVE_QDRANT_ENABLED: ${GO_LITE_RETRIEVAL_NATIVE_QDRANT_ENABLED:-true}
       GO_WRITE_QDRANT_FANOUT_MODE: ${GO_LITE_WRITE_QDRANT_FANOUT_MODE:-async}
       GO_WRITE_PGVECTOR_FANOUT_MODE: ${GO_LITE_WRITE_PGVECTOR_FANOUT_MODE:-disabled}
-      ORCH_RETRIEVAL_SOURCES: ${ORCH_LITE_RETRIEVAL_SOURCES:-qdrant,mongo_raw,topic_rollups,memory_bank}
+      ORCH_RETRIEVAL_SOURCES: ${ORCH_LITE_RETRIEVAL_SOURCES:-qdrant,mongo_raw,topic_rollups}
       ORCH_RETRIEVAL_FAST_SOURCES: ${ORCH_LITE_RETRIEVAL_FAST_SOURCES:-topic_rollups,qdrant}
-      ORCH_RETRIEVAL_SLOW_SOURCES: ${ORCH_LITE_RETRIEVAL_SLOW_SOURCES:-mongo_raw,memory_bank}
+      ORCH_RETRIEVAL_SLOW_SOURCES: ${ORCH_LITE_RETRIEVAL_SLOW_SOURCES:-mongo_raw}
       ORCH_RUST_RETRIEVAL_VECTOR_BACKEND: ${ORCH_LITE_RUST_RETRIEVAL_VECTOR_BACKEND:-qdrant_remote}
-      ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES: ${ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:-qdrant,memory_bank,mongo_raw}
+      ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES: ${ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:-qdrant,mongo_raw}
       GO_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES: ${GO_LITE_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES:-qdrant,topic_rollups}
       ORCH_ADAPTER_FASTEMBED_RS_ENABLED: ${ORCH_ADAPTER_FASTEMBED_RS_ENABLED:-true}
       ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE: ${ORCH_ADAPTER_FASTEMBED_RS_REQUIRE_GATE:-false}
@@ -428,7 +435,7 @@ services:
       HOT_MEMORY_FILE_PATTERNS: ${HOT_MEMORY_FILE_PATTERNS:-index__*.json,*_agg-latest.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json}
       FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC: ${FANOUT_LANGFUSE_RATE_LIMIT_PER_SEC:-20}
       MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR: ${MINDSDB_FAIL_OPEN_ON_PERMANENT_ERROR:-true}
-      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-shodh_spike}
+      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_LITE_MEMORY_BANK_SEARCH_BACKEND:-disabled}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND:-surrealdb_spike}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:-surrealdb_spike,memvid_spike,icm_spike,quickwit_spike}
       ORCH_MEMORY_BANK_SPIKE_HTTP_URL: ${ORCH_MEMORY_BANK_SPIKE_HTTP_URL:-http://memory-bank-spike-rs:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}}
@@ -572,11 +579,11 @@ services:
       GO_RETRIEVAL_NATIVE_QDRANT_ENABLED: ${GO_LITE_RETRIEVAL_NATIVE_QDRANT_ENABLED:-true}
       GO_WRITE_QDRANT_FANOUT_MODE: ${GO_LITE_WRITE_QDRANT_FANOUT_MODE:-async}
       GO_WRITE_PGVECTOR_FANOUT_MODE: ${GO_LITE_WRITE_PGVECTOR_FANOUT_MODE:-disabled}
-      ORCH_RETRIEVAL_SOURCES: ${ORCH_LITE_RETRIEVAL_SOURCES:-qdrant,mongo_raw,topic_rollups,memory_bank}
+      ORCH_RETRIEVAL_SOURCES: ${ORCH_LITE_RETRIEVAL_SOURCES:-qdrant,mongo_raw,topic_rollups}
       ORCH_RETRIEVAL_FAST_SOURCES: ${ORCH_LITE_RETRIEVAL_FAST_SOURCES:-topic_rollups,qdrant}
-      ORCH_RETRIEVAL_SLOW_SOURCES: ${ORCH_LITE_RETRIEVAL_SLOW_SOURCES:-mongo_raw,memory_bank}
-      ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED: ${ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED:-true}
-      ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES: ${ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES:-mindsdb,mongo_raw}
+      ORCH_RETRIEVAL_SLOW_SOURCES: ${ORCH_LITE_RETRIEVAL_SLOW_SOURCES:-mongo_raw}
+      ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED: ${ORCH_LITE_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED:-false}
+      ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES: ${ORCH_RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES:-mongo_raw}
       ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS: ${ORCH_RETRIEVAL_SYNC_ASYNC_MIN_FAST_RESULTS:-2}
       ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING: ${ORCH_RETRIEVAL_SYNC_ASYNC_DEEP_BLOCKING:-false}
       ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS: ${ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS:-8}
@@ -598,7 +605,7 @@ services:
       ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED: ${ORCH_RETRIEVAL_LETTA_TOP_K_CAP_BALANCED:-18}
       ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP: ${ORCH_RETRIEVAL_LETTA_TOP_K_CAP_DEEP:-24}
       ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS: ${ORCH_RETRIEVAL_MEMORY_TIMEOUT_SECS:-3}
-      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_MEMORY_BANK_SEARCH_BACKEND:-shodh_spike}
+      ORCH_MEMORY_BANK_SEARCH_BACKEND: ${ORCH_LITE_MEMORY_BANK_SEARCH_BACKEND:-disabled}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKEND:-surrealdb_spike}
       ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS: ${ORCH_MEMORY_BANK_SPIKE_FALLBACK_BACKENDS:-surrealdb_spike,memvid_spike,icm_spike,quickwit_spike}
       ORCH_MEMORY_BANK_SPIKE_HTTP_URL: ${ORCH_MEMORY_BANK_SPIKE_HTTP_URL:-http://memory-bank-spike-rs:${MEMORY_BANK_SPIKE_RS_PORT_INTERNAL:-8096}}
@@ -613,7 +620,7 @@ services:
       ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND: ${ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND:-tantivy_lexical}
       ORCH_RUST_RETRIEVAL_BACKEND_STRICT: ${ORCH_RUST_RETRIEVAL_BACKEND_STRICT:-false}
       ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED: ${ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED:-true}
-      ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES: ${ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:-qdrant,memory_bank,mongo_raw}
+      ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES: ${ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES:-qdrant,mongo_raw}
       GO_RETRIEVAL_STAGED_ENABLED: ${GO_RETRIEVAL_STAGED_ENABLED:-true}
       GO_PYTHON_HOT_PATH_OWNERSHIP_MODE: ${GO_PYTHON_HOT_PATH_OWNERSHIP_MODE:-warn}
       GO_RUNTIME_STRICT_NO_PYTHON: ${GO_RUNTIME_STRICT_NO_PYTHON:-true}

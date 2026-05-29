@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Audit local lite compose boundaries.
+
+The default lite lane must stay core-only. The advanced adapter lab is opt-in
+through the Compose `advanced` profile plus matching retrieval env overrides.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+COMPOSE_FILE = ROOT / "docker-compose.lite.yml"
+
+CORE_REQUIRED = {
+    "mongo",
+    "memorymcp-http",
+    "mcp-hub",
+    "qdrant",
+    "fastembed-sidecar",
+    "gateway-go",
+    "orchestrator-go",
+    "contextlattice-orchestrator",
+    "fastembed-gate-refresh",
+}
+
+ADVANCED_SERVICES = {
+    "meilisearch",
+    "memory-bank-spike-rs",
+    "lancedb-spike-adapter",
+    "trieve-spike-adapter",
+    "helixdb-spike-adapter",
+    "icm-spike-adapter",
+    "shodh-spike-adapter",
+    "memvid-spike-adapter",
+    "surrealdb-spike-adapter",
+}
+
+
+def run_compose(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    cmd = [
+        "docker",
+        "compose",
+        "-f",
+        str(COMPOSE_FILE),
+        *args,
+    ]
+    return subprocess.run(
+        cmd,
+        cwd=ROOT,
+        env=merged_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def service_set(env: dict[str, str] | None = None) -> set[str]:
+    result = run_compose(["config", "--services"], env)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def config_text(env: dict[str, str] | None = None) -> str:
+    result = run_compose(["config"], env)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return result.stdout
+
+
+def main() -> int:
+    findings: list[dict[str, object]] = []
+    ok = True
+
+    try:
+        core_env = {
+            "COMPOSE_PROFILES": "",
+            "ORCH_LITE_RETRIEVAL_SOURCES": "qdrant,mongo_raw,topic_rollups",
+            "ORCH_LITE_RETRIEVAL_SLOW_SOURCES": "mongo_raw",
+            "ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES": "qdrant,mongo_raw",
+            "ORCH_LITE_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED": "false",
+            "ORCH_LITE_MEMORY_BANK_SEARCH_BACKEND": "disabled",
+        }
+        core_services = service_set(core_env)
+        core_config = config_text(core_env)
+        advanced_env = {
+            "COMPOSE_PROFILES": "advanced",
+            "ORCH_LITE_RETRIEVAL_SOURCES": "qdrant,mongo_raw,topic_rollups,memory_bank",
+            "ORCH_LITE_RETRIEVAL_SLOW_SOURCES": "mongo_raw,memory_bank",
+            "ORCH_LITE_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES": "qdrant,memory_bank,mongo_raw",
+            "ORCH_LITE_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED": "true",
+            "ORCH_LITE_MEMORY_BANK_SEARCH_BACKEND": "shodh_spike",
+        }
+        advanced_services = service_set(advanced_env)
+        advanced_config = config_text(advanced_env)
+    except Exception as exc:  # pragma: no cover - exercised by shell smoke.
+        payload = {"ok": False, "error": str(exc)}
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 1
+
+    missing_core = sorted(CORE_REQUIRED - core_services)
+    if missing_core:
+        ok = False
+        findings.append({"severity": "error", "reason": "core_missing_required_services", "services": missing_core})
+
+    leaked_advanced = sorted(ADVANCED_SERVICES & core_services)
+    if leaked_advanced:
+        ok = False
+        findings.append({"severity": "error", "reason": "advanced_services_in_core_lite", "services": leaked_advanced})
+
+    missing_advanced = sorted(ADVANCED_SERVICES - advanced_services)
+    if missing_advanced:
+        ok = False
+        findings.append({"severity": "error", "reason": "advanced_missing_services", "services": missing_advanced})
+
+    if "ORCH_RETRIEVAL_SOURCES: qdrant,mongo_raw,topic_rollups\n" not in core_config:
+        ok = False
+        findings.append({"severity": "error", "reason": "core_lite_retrieval_sources_not_bounded"})
+    if "ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED: \"false\"\n" not in core_config:
+        ok = False
+        findings.append({"severity": "error", "reason": "core_lite_memory_bank_not_disabled"})
+    if "ORCH_RETRIEVAL_SOURCES: qdrant,mongo_raw,topic_rollups,memory_bank\n" not in advanced_config:
+        ok = False
+        findings.append({"severity": "error", "reason": "advanced_lite_memory_bank_not_enabled"})
+    if "ORCH_MEMORY_BANK_SEARCH_BACKEND: shodh_spike\n" not in advanced_config:
+        ok = False
+        findings.append({"severity": "error", "reason": "advanced_lite_shodh_not_enabled"})
+
+    payload = {
+        "ok": ok,
+        "core_service_count": len(core_services),
+        "advanced_service_count": len(advanced_services),
+        "core_services": sorted(core_services),
+        "advanced_services": sorted(advanced_services),
+        "findings": findings,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
