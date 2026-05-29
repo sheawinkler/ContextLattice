@@ -36,6 +36,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Degradation policy: fail-open retrieval with continuation lifecycle.
 - Tooling compatibility: MCP + HTTP clients.
 - Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
+- Public local lite vector default: `topic_rollups + postgres_pgvector`; Qdrant is not started by default and remains optional for full/operator stacks.
 
 ## Quickstart
 

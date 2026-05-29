@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Audit public lite vector-store defaults from resolved compose config."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from _common import REPO_ROOT, emit
+
+
+def run_compose(args: list[str], env_file: Path, docker_context: str, compose_files: list[str]) -> str:
+    file_args: list[str] = []
+    for compose_file in compose_files:
+        file_args.extend(["-f", compose_file])
+    cmd = [
+        "docker",
+        "--context",
+        docker_context,
+        "compose",
+        "--env-file",
+        str(env_file),
+        *file_args,
+        *args,
+    ]
+    completed = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "USER": os.environ.get("USER", ""),
+            "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+            "COMPOSE_PROJECT_NAME": "contextlattice_lite_audit",
+        },
+    )
+    return completed.stdout
+
+
+def service_set(raw: str) -> set[str]:
+    return {line.strip() for line in raw.splitlines() if line.strip()}
+
+
+def assert_env(config: str, key: str, expected: str) -> dict[str, Any]:
+    needle = f"{key}: {expected}"
+    quoted = f'{key}: "{expected}"'
+    ok = needle in config or quoted in config
+    return {"key": key, "expected": expected, "ok": ok}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--docker-context", default=os.getenv("DOCKER_CONTEXT", "orbstack"))
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    with tempfile.NamedTemporaryFile("w", prefix="contextlattice-lite-audit.", suffix=".env") as env_file:
+        env_file.flush()
+        profiles = {}
+        for label, compose_files in {
+            "lite": ["docker-compose.lite.yml"],
+            "lite_release": ["docker-compose.lite.yml", "docker-compose.lite.release.lock.yml"],
+        }.items():
+            services = service_set(
+                run_compose(["config", "--services"], Path(env_file.name), args.docker_context, compose_files)
+            )
+            config = run_compose(["config"], Path(env_file.name), args.docker_context, compose_files)
+            service_checks = {
+                "pgvector_db_present": "pgvector-db" in services,
+                "qdrant_absent": "qdrant" not in services,
+                "mcp_qdrant_absent": "mcp-qdrant" not in services,
+            }
+            env_checks = [
+                assert_env(config, "ORCH_RETRIEVAL_SOURCES", "postgres_pgvector,mongo_raw,topic_rollups,memory_bank"),
+                assert_env(config, "ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,postgres_pgvector"),
+                assert_env(config, "ORCH_RETRIEVAL_SLOW_SOURCES", "mongo_raw,memory_bank"),
+                assert_env(config, "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false"),
+                assert_env(config, "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND", "auto"),
+                assert_env(config, "GO_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES", "postgres_pgvector,topic_rollups"),
+            ]
+            forbidden_env = ["QDRANT_URL:", "QDRANT_LOCAL_URL:", "QDRANT_API_KEY:"]
+            forbidden_checks = {key.rstrip(":"): key not in config for key in forbidden_env}
+            profiles[label] = {
+                "ok": all(service_checks.values())
+                and all(check["ok"] for check in env_checks)
+                and all(forbidden_checks.values()),
+                "services": sorted(services),
+                "service_checks": service_checks,
+                "env_checks": env_checks,
+                "forbidden_checks": forbidden_checks,
+            }
+    payload = {
+        "ok": all(profile["ok"] for profile in profiles.values()),
+        "profiles": profiles,
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

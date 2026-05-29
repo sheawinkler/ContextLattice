@@ -598,10 +598,10 @@ observability-down:
 .PHONY: mem-up-lite mem-down-lite mem-ps-lite
 mem-up-lite:
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
-> docker compose -f docker-compose.lite.yml up -d --build
+> docker compose -f docker-compose.lite.yml up -d --build --remove-orphans
 
 mem-down-lite:
-> docker compose -f docker-compose.lite.yml down
+> docker compose -f docker-compose.lite.yml down --remove-orphans
 
 mem-ps-lite:
 > docker compose -f docker-compose.lite.yml ps
@@ -612,11 +612,11 @@ mem-up-release:
 
 mem-up-lite-release:
 > ENV_FILE="$(ENV_FILE)" scripts/enforce_strict_env.sh --apply
-> docker compose -f docker-compose.lite.yml -f docker-compose.release.lock.yml up -d --build
+> docker compose -f docker-compose.lite.yml -f docker-compose.lite.release.lock.yml up -d --build --remove-orphans
 
 release-lock-verify:
 > docker compose -f docker-compose.yml -f docker-compose.release.lock.yml config --services >/dev/null
-> docker compose -f docker-compose.lite.yml -f docker-compose.release.lock.yml config --services >/dev/null
+> docker compose -f docker-compose.lite.yml -f docker-compose.lite.release.lock.yml config --services >/dev/null
 > echo "release lock compose config: OK"
 
 launch-readiness-gate:

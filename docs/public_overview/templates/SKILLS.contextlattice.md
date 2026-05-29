@@ -35,7 +35,7 @@ Use this as a reusable skill block for agent frameworks that support skills or t
    - `deep` (or explicit `letta` / `memory_bank`): `75s`
 
 ### Source Policy
-- Default to mixed retrieval across available stores (for example `qdrant`, `topic_rollups`, `mindsdb`, `letta`, `memory_bank`).
+- Default to mixed retrieval across available stores (for example `topic_rollups`, `postgres_pgvector`, `mindsdb`, `letta`, `memory_bank`; Qdrant may be present in full/operator stacks).
 - Use staged fetch to control latency; allow escalation to slower sources when confidence is low.
 - Keep factual numbers as exact copies from retrieved records.
 - Expect first deep reads to be slower; repeated equivalent reads should speed up as caches warm.
