@@ -79,7 +79,7 @@
         </p>
         <ul>
           <li><strong>Lite architecture:</strong> <code>topic_rollups</code> + sqlite outbox + sqlite rollup index (WAL + FTS5 BM25).</li>
-          <li><strong>Full architecture:</strong> staged fast lane <code>topic_rollups + qdrant + postgres_pgvector</code> plus deep async continuation <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li><strong>Full architecture:</strong> staged fast lane <code>topic_rollups + postgres_pgvector</code> by default, optional Qdrant in full/operator stacks, plus deep async continuation <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
           <li><strong>Optional vector lane:</strong> <code>sqlite-vec</code> capability is auto-detected and remains fail-open when unavailable.</li>
           <li><strong>Correctness guardrail:</strong> sqlite rollup search is only used when sqlite generation marker matches the active in-memory rollup snapshot.</li>
           <li><strong>A/B snapshot:</strong> topic rollup lookup average <code>85.065ms → 50.225ms</code> (<code>1.694x</code> faster) in single-container benchmark artifact <code>bench/results/glama_lite_topic_rollup_sqlite_ab_20260324.json</code>.</li>
@@ -99,7 +99,7 @@
         </div>
         <ul>
           <li>Installation mode summaries now call out Gateway-Go frontdoor ownership.</li>
-          <li>Lite mode now explicitly lists the fast staged lane: <code>topic_rollups + qdrant + postgres_pgvector</code>.</li>
+          <li>Lite mode now explicitly lists the fast staged lane: <code>topic_rollups + postgres_pgvector</code>.</li>
           <li>Full mode now explicitly lists deep async continuation lane sources: <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
           <li>Release assets include DMG (macOS), MSI (Windows), and Linux bootstrap tarball.</li>
         </ul>
@@ -113,7 +113,7 @@
         </p>
         <ul>
           <li>Updated shared SVG architecture panels used by both README and website.</li>
-          <li>Reflected current staged retrieval lanes: fast <code>topic_rollups + qdrant + postgres_pgvector</code>, deep async <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li>Reflected current staged retrieval lanes: fast <code>topic_rollups + postgres_pgvector</code> by default, optional Qdrant for full/operator stacks, deep async <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
           <li>Updated runtime ownership copy to show Go ingress on <code>:8075</code>, Rust hot path, and Python fallback on <code>:18075</code>.</li>
           <li>Bumped architecture asset cache keys so updated diagrams render immediately.</li>
         </ul>

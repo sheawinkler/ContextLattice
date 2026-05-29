@@ -117,9 +117,14 @@ Environment variables JSON schema:
       "description": "Disable pgvector lane in Glama single-container mode.",
       "type": "string"
     },
+    "ORCH_RETRIEVAL_SOURCES": {
+      "default": "topic_rollups",
+      "description": "Canonical retrieval lane list for the Go gateway.",
+      "type": "string"
+    },
     "ORCH_RETRIEVAL_DEFAULT_SOURCES": {
       "default": "topic_rollups",
-      "description": "Default retrieval lane list.",
+      "description": "Legacy retrieval lane alias kept for older launchers.",
       "type": "string"
     },
     "ORCH_RETRIEVAL_FAST_SOURCES": {
@@ -163,6 +168,7 @@ Placeholder parameters (dev-safe):
   "MONGO_RAW_ENABLED": "false",
   "MINDSDB_ENABLED": "false",
   "ORCH_PGVECTOR_ENABLED": "false",
+  "ORCH_RETRIEVAL_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_DEFAULT_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_FAST_SOURCES": "topic_rollups",
   "SIGNAL_REFRESH_ENABLED": "false",
@@ -187,6 +193,7 @@ Placeholder parameters (production strict with key):
   "MONGO_RAW_ENABLED": "false",
   "MINDSDB_ENABLED": "false",
   "ORCH_PGVECTOR_ENABLED": "false",
+  "ORCH_RETRIEVAL_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_DEFAULT_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_FAST_SOURCES": "topic_rollups",
   "SIGNAL_REFRESH_ENABLED": "false",

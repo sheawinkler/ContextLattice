@@ -14,10 +14,6 @@
     "memorymcp": {
       "url": "http://memorymcp-http:59081/mcp",
       "transportType": "streamable-http"
-    },
-    "qdrant": {
-      "url": "http://mcp-qdrant:8000/mcp",
-      "transportType": "streamable-http"
     }
   }
 }

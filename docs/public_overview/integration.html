@@ -119,7 +119,7 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq</code></
         <ul class="spec-list">
           <li><strong>Orchestrator API:</strong> <code>http://127.0.0.1:8075</code></li>
           <li><strong>MCP hub memory endpoint:</strong> <code>http://127.0.0.1:53130/memorymcp/mcp</code></li>
-          <li><strong>MCP hub qdrant endpoint:</strong> <code>http://127.0.0.1:53130/qdrant/mcp</code></li>
+          <li><strong>MCP hub qdrant endpoint:</strong> optional in full/operator stacks at <code>http://127.0.0.1:53130/qdrant/mcp</code></li>
         </ul>
       </article>
     </section>
@@ -305,7 +305,7 @@ export CONTEXTLATTICE_ORCHESTRATOR_API_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTR
           <article class="card component-card">
             <h3>Operational defaults</h3>
             <ul class="spec-list">
-              <li>Keep Qdrant local-first with gRPC preferred.</li>
+              <li>Use Postgres pgvector as the public local default; keep Qdrant opt-in for full/operator vector deployments.</li>
               <li>Use BYO cloud keys only when explicitly enabled.</li>
               <li>Preserve orchestrator fanout/backpressure defaults before aggressive tuning.</li>
               <li>Strict security mode redacts and blocks suspected secrets on OpenClaw/ZeroClaw/IronClaw routes.</li>
