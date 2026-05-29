@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""Score memory graph quality and run bounded project repairs."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import urllib.parse
+from datetime import datetime, timezone
+from typing import Any
+
+from _common import emit, request_json
+
+
+PROFILE_PRESETS: dict[str, dict[str, float | int]] = {
+    "strict": {
+        "min_confidence": 0.90,
+        "inferred_peer_limit": 1,
+        "inferred_min_score": 0.90,
+        "inferred_min_shared_terms": 3,
+        "inferred_max_token_postings": 64,
+    },
+    "balanced": {
+        "min_confidence": 0.85,
+        "inferred_peer_limit": 3,
+        "inferred_min_score": 0.85,
+        "inferred_min_shared_terms": 3,
+        "inferred_max_token_postings": 128,
+    },
+    "exploratory": {
+        "min_confidence": 0.80,
+        "inferred_peer_limit": 5,
+        "inferred_min_score": 0.80,
+        "inferred_min_shared_terms": 3,
+        "inferred_max_token_postings": 256,
+    },
+}
+
+
+def as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def fetch_graph(project: str, limit: int, stale_days: int, include_ephemeral: bool, timeout: float) -> dict[str, Any]:
+    query = {"limit": str(max(1, min(limit, 50))), "stale_inferred_days": str(max(1, stale_days))}
+    if project:
+        query["project"] = project
+    if include_ephemeral:
+        query["include_ephemeral"] = "true"
+    return request_json("GET", "/telemetry/memory/graph?" + urllib.parse.urlencode(query), None, timeout)
+
+
+def project_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    return [row for row in snapshot.get("projects") or [] if isinstance(row, dict)]
+
+
+def project_sort_key(row: dict[str, Any]) -> tuple[int, int, int, str]:
+    needs = 1 if row.get("needs_backfill") else 0
+    isolated = as_int(row.get("isolated_docs"))
+    edges = as_int(row.get("edges"))
+    return (-needs, -isolated, -edges, str(row.get("project") or ""))
+
+
+def relation_stats(body: dict[str, Any], relation: str) -> dict[str, Any]:
+    relations = body.get("relations")
+    if not isinstance(relations, dict):
+        return {}
+    stat = relations.get(relation)
+    return stat if isinstance(stat, dict) else {}
+
+
+def edge_store_age_hours(edge_store: dict[str, Any]) -> float | None:
+    updated = parse_timestamp(edge_store.get("updated_at"))
+    if updated is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - updated).total_seconds() / 3600)
+
+
+def anchor_threshold(docs: int, ratio: float, minimum: int) -> int:
+    if docs <= 0:
+        return minimum
+    threshold = math.ceil(docs * ratio)
+    if docs < 20:
+        threshold = max(threshold, docs * 4)
+    return max(minimum, threshold)
+
+
+def overconnected_anchors(detail: dict[str, Any], project: str, docs: int, args: argparse.Namespace) -> list[dict[str, Any]]:
+    threshold = anchor_threshold(docs, args.anchor_degree_ratio, args.anchor_degree_min)
+    rows = []
+    for node in detail.get("top_nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        if project and str(node.get("project") or "").lower() != project.lower():
+            continue
+        degree = as_int(node.get("degree"))
+        if degree >= threshold:
+            rows.append(
+                {
+                    "memory_id": node.get("memory_id"),
+                    "degree": degree,
+                    "inbound": as_int(node.get("inbound")),
+                    "outbound": as_int(node.get("outbound")),
+                    "threshold": threshold,
+                }
+            )
+    return rows
+
+
+def compact_backfill_summary(stage: str, body: dict[str, Any]) -> dict[str, Any]:
+    inferred = relation_stats(body, "inferred_related")
+    return {
+        "stage": stage,
+        "ok": bool(body.get("ok", False)),
+        "dry_run": bool(body.get("dry_run", False)),
+        "corpus": body.get("corpus"),
+        "scanned_docs": as_int(body.get("scanned_docs")),
+        "generated": as_int(body.get("generated")),
+        "eligible": as_int(body.get("eligible")),
+        "would_write": as_int(body.get("would_write")),
+        "written": as_int(body.get("written")),
+        "existing": as_int(body.get("existing")),
+        "truncated": bool(body.get("truncated", False)),
+        "inferred_generated": as_int(inferred.get("generated")),
+        "inferred_eligible": as_int(inferred.get("eligible")),
+        "inferred_written": as_int(inferred.get("written")),
+        "errors": body.get("errors") if isinstance(body.get("errors"), list) else [],
+    }
+
+
+def backfill_payload(project: str, corpus: str, args: argparse.Namespace, dry_run: bool) -> dict[str, Any]:
+    preset = PROFILE_PRESETS[args.profile]
+    return {
+        "dry_run": dry_run,
+        "project": project,
+        "corpus": corpus,
+        "relations": ["same_topic", "references", "same_session", "inferred_related"],
+        "include_inferred": True,
+        "include_low_confidence_audit": False,
+        "min_confidence": preset["min_confidence"],
+        "max_candidates": args.max_candidates,
+        "max_history_lines": args.max_history_lines,
+        "topic_peer_limit": args.topic_peer_limit,
+        "sample_limit": args.sample_limit,
+        "inferred_relation": "inferred_related",
+        "inferred_peer_limit": preset["inferred_peer_limit"],
+        "inferred_scan_limit": args.inferred_scan_limit,
+        "inferred_min_score": preset["inferred_min_score"],
+        "inferred_min_shared_terms": preset["inferred_min_shared_terms"],
+        "inferred_max_token_postings": preset["inferred_max_token_postings"],
+    }
+
+
+def choose_corpus(row: dict[str, Any], args: argparse.Namespace) -> str:
+    if args.corpus != "auto":
+        return args.corpus
+    recommended = str(row.get("recommended_backfill_corpus") or "history_index")
+    if recommended == "disk" and args.allow_disk:
+        return "disk"
+    return "history_index"
+
+
+def write_allowed(args: argparse.Namespace) -> bool:
+    if not args.write:
+        return False
+    expected = "ALL_PROJECTS" if args.all_projects else args.project
+    return args.confirm_repair == expected
+
+
+def evaluate_project(row: dict[str, Any], detail: dict[str, Any], args: argparse.Namespace, global_edge_age: float | None) -> dict[str, Any]:
+    project = str(row.get("project") or "").strip()
+    docs = as_int(row.get("docs"))
+    isolated = as_int(row.get("isolated_docs"))
+    density = as_float(row.get("density_edges_per_doc"))
+    isolation_ratio = as_float(row.get("isolation_ratio"), isolated / docs if docs else 0.0)
+    stale_inferred = as_int(row.get("stale_inferred_edges"))
+    reasons = [str(item) for item in row.get("quality_reasons") or [] if str(item).strip()]
+    computed_score = 100
+    anchors = overconnected_anchors(detail, project, docs, args)
+    if anchors and "overconnected_anchor_nodes" not in reasons:
+        reasons.append("overconnected_anchor_nodes")
+        computed_score -= min(20, len(anchors) * 5)
+    if global_edge_age is not None and global_edge_age >= args.stale_edge_hours and stale_inferred > 0:
+        if "stale_edge_store_with_stale_inferred_edges" not in reasons:
+            reasons.append("stale_edge_store_with_stale_inferred_edges")
+        computed_score -= 10
+    needs_backfill = bool(row.get("needs_backfill"))
+    if docs < args.min_docs:
+        needs_backfill = False
+        if docs > 0:
+            reasons.append("below_min_docs_for_repair")
+    if isolation_ratio >= args.isolated_ratio_threshold and isolated > 0 and docs >= args.min_docs:
+        needs_backfill = True
+        if "high_isolated_doc_coverage" not in reasons:
+            reasons.append("high_isolated_doc_coverage")
+        computed_score -= min(35, max(8, int(isolation_ratio * 80)))
+    elif isolated > 0:
+        computed_score -= 5
+    if density < args.min_density and docs >= args.min_docs:
+        needs_backfill = True
+        if "low_edge_density" not in reasons:
+            reasons.append("low_edge_density")
+        computed_score -= 10 if density >= 0.50 else 25
+    if as_int(row.get("inferred_edges")) == 0 and docs >= args.min_docs:
+        needs_backfill = True
+        if "missing_inferred_edges" not in reasons:
+            reasons.append("missing_inferred_edges")
+        computed_score -= 20
+    computed_score = max(0, min(100, computed_score))
+    quality_score = as_int(row.get("quality_score"), computed_score)
+    quality_status = str(row.get("quality_status") or "").strip()
+    if not quality_status or quality_status == "unknown":
+        quality_status = "repair_recommended" if needs_backfill else ("watch" if reasons or quality_score < 85 else "healthy")
+    return {
+        "project": project,
+        "docs": docs,
+        "edges": as_int(row.get("edges")),
+        "isolated_docs": isolated,
+        "isolation_ratio": round(isolation_ratio, 4),
+        "density_edges_per_doc": round(density, 4),
+        "inferred_edges": as_int(row.get("inferred_edges")),
+        "stale_inferred_edges": stale_inferred,
+        "quality_score": quality_score,
+        "quality_status": quality_status,
+        "quality_reasons": sorted(set(reasons)),
+        "needs_backfill": needs_backfill,
+        "recommended_backfill_corpus": choose_corpus(row, args),
+        "overconnected_anchors": anchors[: args.anchor_sample_limit],
+    }
+
+
+def repair_project(project: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    if not project["needs_backfill"]:
+        return {"action": "none", "reason": "quality_acceptance_met"}
+    if not project["project"]:
+        return {"action": "skipped", "reason": "missing_project"}
+    corpus = str(project["recommended_backfill_corpus"] or "history_index")
+    preflight = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, True), args.timeout)
+    preflight_summary = compact_backfill_summary("dry_run_preflight", preflight)
+    if not preflight.get("ok", False):
+        return {"action": "preflight_failed", "preflight": preflight_summary}
+    if preflight.get("truncated") and not args.allow_truncated:
+        return {"action": "write_blocked", "reason": "preflight_truncated", "preflight": preflight_summary}
+    would_write = as_int(preflight.get("would_write"))
+    if would_write > args.max_write_edges:
+        return {
+            "action": "write_blocked",
+            "reason": "would_write_exceeds_cap",
+            "max_write_edges": args.max_write_edges,
+            "preflight": preflight_summary,
+        }
+    if not args.write:
+        return {"action": "preflight_only", "preflight": preflight_summary}
+    if not write_allowed(args):
+        return {
+            "action": "write_blocked",
+            "reason": "confirm_repair_token_mismatch",
+            "expected": "ALL_PROJECTS" if args.all_projects else args.project,
+            "preflight": preflight_summary,
+        }
+    if would_write <= 0:
+        return {"action": "no_op", "preflight": preflight_summary}
+    write = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, False), args.timeout)
+    write_summary = compact_backfill_summary("write", write)
+    result: dict[str, Any] = {"action": "wrote" if write.get("ok", False) else "write_failed", "preflight": preflight_summary, "write": write_summary}
+    if write.get("ok", False) and not args.skip_verify:
+        verify = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, True), args.timeout)
+        result["verify"] = compact_backfill_summary("post_write_dry_run", verify)
+    return result
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--project", default="", help="Project to score and optionally repair.")
+    scope.add_argument("--all-projects", action="store_true", help="Score projects surfaced by graph telemetry.")
+    parser.add_argument("--write", action="store_true", help="Persist bounded repairs after clean dry-run preflight.")
+    parser.add_argument("--confirm-repair", default="", help="Required with --write. Must match project, or ALL_PROJECTS with --all-projects.")
+    parser.add_argument("--profile", choices=sorted(PROFILE_PRESETS), default="balanced")
+    parser.add_argument("--corpus", choices=("auto", "history_index", "disk"), default="auto")
+    parser.add_argument("--allow-disk", action="store_true", help="Allow auto mode to choose disk corpus for high-isolation projects.")
+    parser.add_argument("--include-ephemeral", action="store_true")
+    parser.add_argument("--max-projects", type=int, default=12)
+    parser.add_argument("--min-docs", type=int, default=2)
+    parser.add_argument("--min-density", type=float, default=1.0)
+    parser.add_argument("--isolated-ratio-threshold", type=float, default=0.10)
+    parser.add_argument("--stale-inferred-days", type=int, default=30)
+    parser.add_argument("--stale-edge-hours", type=float, default=72)
+    parser.add_argument("--anchor-degree-ratio", type=float, default=0.25)
+    parser.add_argument("--anchor-degree-min", type=int, default=12)
+    parser.add_argument("--anchor-sample-limit", type=int, default=5)
+    parser.add_argument("--max-candidates", type=int, default=20000)
+    parser.add_argument("--max-history-lines", type=int, default=2000)
+    parser.add_argument("--topic-peer-limit", type=int, default=2)
+    parser.add_argument("--inferred-scan-limit", type=int, default=5000)
+    parser.add_argument("--sample-limit", type=int, default=12)
+    parser.add_argument("--max-write-edges", type=int, default=500)
+    parser.add_argument("--allow-truncated", action="store_true")
+    parser.add_argument("--skip-verify", action="store_true")
+    parser.add_argument("--fail-on-repair-needed", action="store_true")
+    parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--pretty", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    snapshot = fetch_graph(args.project, 50, args.stale_inferred_days, args.include_ephemeral, args.timeout)
+    edge_store = snapshot.get("edge_store") if isinstance(snapshot.get("edge_store"), dict) else {}
+    edge_age = edge_store_age_hours(edge_store)
+    rows = project_rows(snapshot)
+    if args.project:
+        rows = [row for row in rows if str(row.get("project") or "").lower() == args.project.lower()]
+    rows = sorted(rows, key=project_sort_key)[: max(1, args.max_projects)]
+    projects: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for row in rows:
+        project = str(row.get("project") or "")
+        detail = fetch_graph(project, 25, args.stale_inferred_days, args.include_ephemeral, args.timeout) if project else snapshot
+        detailed_rows = project_rows(detail)
+        detailed_row = detailed_rows[0] if detailed_rows else row
+        evaluation = evaluate_project(detailed_row, detail, args, edge_age)
+        repair = repair_project(evaluation, args)
+        evaluation["repair"] = repair
+        if str(repair.get("action") or "").endswith("failed"):
+            errors.append({"project": project, "repair": repair})
+        projects.append(evaluation)
+    repair_needed = [project for project in projects if project.get("needs_backfill")]
+    blocked = [project for project in projects if str((project.get("repair") or {}).get("action")) == "write_blocked"]
+    ok = not errors and not (args.write and blocked)
+    if args.fail_on_repair_needed and repair_needed:
+        ok = False
+    emit(
+        {
+            "ok": ok,
+            "mode": "write" if args.write else "dry_run",
+            "profile": args.profile,
+            "source_status": snapshot.get("status"),
+            "quality_status": snapshot.get("quality_status"),
+            "quality_score": snapshot.get("quality_score"),
+            "edge_store_age_hours": round(edge_age, 2) if edge_age is not None else None,
+            "project_count": len(projects),
+            "repair_needed_count": len(repair_needed),
+            "blocked_count": len(blocked),
+            "projects": projects,
+            "errors": errors,
+        },
+        args.pretty,
+    )
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

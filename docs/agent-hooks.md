@@ -242,6 +242,21 @@ Memory graph observability is available from the gateway at
 scripts/agent/memory-graph-observe
 ```
 
+Graph quality repair is a bounded maintenance lane over that telemetry:
+
+```bash
+scripts/agent/memory-graph-quality --all-projects --pretty
+scripts/agent/memory-graph-quality --project context-lattice-private --write --confirm-repair context-lattice-private --pretty
+make memory-graph-quality-install
+```
+
+The job scores isolated docs, stale inferred edges, sparse density, and
+over-connected anchors. It always runs a dry-run preflight before writes, caps
+candidate and write counts, and only writes when explicit confirmation is
+provided. The launchd runner defaults to dry-run mode; set
+`CONTEXTLATTICE_GRAPH_QUALITY_WRITE=1` before install to enable scheduled
+bounded repairs.
+
 Project bootstrap for a new repo should stay bounded and curated. Use:
 
 ```bash

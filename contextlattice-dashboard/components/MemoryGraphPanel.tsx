@@ -12,8 +12,16 @@ type ProjectRow = {
   isolated_docs?: number;
   edges?: number;
   inferred_edges?: number;
+  stale_inferred_edges?: number;
   explicit_edges?: number;
   density_edges_per_doc?: number;
+  isolation_ratio?: number;
+  max_node_degree?: number;
+  overconnected_anchor_count?: number;
+  quality_score?: number;
+  quality_status?: string;
+  quality_reasons?: string[];
+  needs_backfill?: boolean;
   top_relations?: CountRow[];
 };
 
@@ -34,7 +42,11 @@ export type MemoryGraphPayload = {
   isolated_doc_count?: number;
   inferred_edge_count?: number;
   explicit_edge_count?: number;
+  stale_inferred_edge_count?: number;
   density_edges_per_doc?: number;
+  quality_status?: string;
+  quality_score?: number;
+  repair_project_count?: number;
   projects?: ProjectRow[];
   relations?: CountRow[];
   top_nodes?: NodeRow[];
@@ -77,6 +89,16 @@ function Metric({
   );
 }
 
+function statusTone(status: string) {
+  if (status === "repair_recommended" || status === "sparse" || status === "no_edges") {
+    return "bg-amber-500 text-amber-950";
+  }
+  if (status === "watch") {
+    return "bg-cyan-500 text-cyan-950";
+  }
+  return "bg-emerald-500 text-emerald-950";
+}
+
 export function MemoryGraphPanel({ graph }: { graph: MemoryGraphPayload | null }) {
   if (!graph) {
     return (
@@ -93,7 +115,7 @@ export function MemoryGraphPanel({ graph }: { graph: MemoryGraphPayload | null }
   const maxProjectEdges = Math.max(1, ...projects.map((item) => numberValue(item.edges)));
   const maxRelationCount = Math.max(1, ...relations.map((item) => numberValue(item.count)));
   const status = String(graph.status || "unknown");
-  const sparse = status === "sparse" || status === "no_edges";
+  const qualityStatus = String(graph.quality_status || status);
 
   return (
     <section className="card space-y-5">
@@ -105,20 +127,19 @@ export function MemoryGraphPanel({ graph }: { graph: MemoryGraphPayload | null }
           </p>
         </div>
         <span
-          className={`text-xs px-2 py-1 rounded ${
-            sparse ? "bg-amber-500 text-amber-950" : "bg-emerald-500 text-emerald-950"
-          }`}
+          className={`text-xs px-2 py-1 rounded ${statusTone(qualityStatus)}`}
         >
-          {status}
+          {qualityStatus}
         </span>
       </div>
 
-      <div className="grid md:grid-cols-5 gap-3 text-sm">
+      <div className="grid md:grid-cols-6 gap-3 text-sm">
         <Metric label="Docs" value={numberValue(graph.doc_count)} />
         <Metric label="Edges" value={numberValue(graph.edge_count)} tone={numberValue(graph.edge_count) > 0 ? "good" : "warn"} />
         <Metric label="Inferred" value={numberValue(graph.inferred_edge_count)} />
         <Metric label="Isolated" value={numberValue(graph.isolated_doc_count)} tone={numberValue(graph.isolated_doc_count) > 0 ? "warn" : "good"} />
         <Metric label="Density" value={numberValue(graph.density_edges_per_doc).toFixed(2)} />
+        <Metric label="Quality" value={numberValue(graph.quality_score) || "-"} tone={qualityStatus === "repair_recommended" ? "warn" : "good"} />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-5">
@@ -133,9 +154,16 @@ export function MemoryGraphPanel({ graph }: { graph: MemoryGraphPayload | null }
                     <div className="min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate text-slate-300">{item.project || "unknown"}</span>
-                        <span className="text-slate-500">{numberValue(item.docs)} docs</span>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 ${statusTone(String(item.quality_status || "healthy"))}`}>
+                          {numberValue(item.quality_score) || 0}
+                        </span>
                       </div>
                       <MiniBar value={edges} max={maxProjectEdges} />
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
+                        <span>{numberValue(item.docs)} docs</span>
+                        <span>{numberValue(item.isolated_docs)} isolated</span>
+                        <span>{numberValue(item.overconnected_anchor_count)} anchors</span>
+                      </div>
                     </div>
                     <div className="text-right text-slate-300">{edges.toLocaleString()}</div>
                   </div>

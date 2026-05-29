@@ -41,7 +41,10 @@ def print_counts(title: str, rows: list[dict[str, Any]], value_key: str = "count
     for row in rows[:limit]:
         name = count_name(row)
         value = count_value(row, value_key)
-        print(f"  {name[:34]:34} {value:6d}  {bar(value, maximum)}")
+        suffix = ""
+        if value_key == "edges":
+            suffix = f"  q:{count_value(row, 'quality_score'):3d} iso:{count_value(row, 'isolated_docs'):4d}"
+        print(f"  {name[:34]:34} {value:6d}  {bar(value, maximum)}{suffix}")
 
 
 def render(payload: dict[str, Any]) -> None:
@@ -49,11 +52,15 @@ def render(payload: dict[str, Any]) -> None:
     edge_count = count_value(payload, "edge_count")
     doc_count = count_value(payload, "doc_count")
     inferred = count_value(payload, "inferred_edge_count")
+    stale_inferred = count_value(payload, "stale_inferred_edge_count")
     isolated = count_value(payload, "isolated_doc_count")
     density = float(payload.get("density_edges_per_doc") or 0)
+    quality_status = str(payload.get("quality_status") or status)
+    quality_score = count_value(payload, "quality_score")
     print("ContextLattice Memory Graph")
     print(f"  status: {status}")
-    print(f"  docs: {doc_count}   edges: {edge_count}   inferred: {inferred}   isolated: {isolated}   density: {density:.3f}")
+    print(f"  quality: {quality_status} ({quality_score})")
+    print(f"  docs: {doc_count}   edges: {edge_count}   inferred: {inferred}   stale inferred: {stale_inferred}   isolated: {isolated}   density: {density:.3f}")
     print(f"  doc collection: {payload.get('doc_collection_status') or 'unknown'}")
     edge_store = payload.get("edge_store") if isinstance(payload.get("edge_store"), dict) else {}
     if edge_store:
