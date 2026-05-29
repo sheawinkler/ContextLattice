@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Live release gate for agent-facing ContextLattice boundary payloads."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from _common import REPO_ROOT, contextlattice_base_url, emit, request_json
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import load_agent_contracts_registry, validate_agent_contract_payload  # noqa: E402
+
+
+FORBIDDEN_PROVIDER_PHRASES = (
+    "array_above_max_length",
+    "context length exceeded",
+    "maximum context length",
+    "max context length",
+    "input array is too long",
+    "oversized input",
+)
+
+
+def json_bytes(payload: Any) -> int:
+    return len(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def raw_provider_phrase_findings(payload: Any, case: str) -> list[dict[str, Any]]:
+    encoded = json.dumps(payload, sort_keys=True).lower()
+    return [
+        {"severity": "error", "case": case, "reason": "raw_provider_overflow_phrase_leaked", "phrase": phrase}
+        for phrase in FORBIDDEN_PROVIDER_PHRASES
+        if phrase in encoded
+    ]
+
+
+def validate_contract(case: str, contract_id: str, payload: dict[str, Any], registry: dict[str, Any]) -> list[dict[str, Any]]:
+    findings = [{"severity": "error", "case": case, **item} for item in validate_agent_contract_payload(contract_id, payload, registry)]
+    findings.extend(raw_provider_phrase_findings(payload, case))
+    return findings
+
+
+def format_validation(payload: dict[str, Any]) -> str:
+    format_contract = payload.get("format_contract")
+    if isinstance(format_contract, dict):
+        validation = format_contract.get("validation")
+        if isinstance(validation, dict):
+            return str(validation.get("status") or "")
+    format_contracts = payload.get("format_contracts")
+    if isinstance(format_contracts, dict):
+        validation = format_contracts.get("validation")
+        if isinstance(validation, dict):
+            return str(validation.get("status") or "")
+    return ""
+
+
+def adversarial_text() -> str:
+    seed = "array_above_max_length context length exceeded maximum context length oversized input "
+    return (seed * 360).strip()
+
+
+def endpoint_cases(timeout: float, agents: list[str]) -> list[dict[str, Any]]:
+    query = adversarial_text()
+    context_payload = {
+        "project": "contextlattice",
+        "topic_path": "runbooks/boundary-canary",
+        "query": query,
+        "retrieval_mode": "balanced",
+        "limit": 100,
+        "max_facts": 100,
+        "include_retrieval_debug": True,
+        "agent_id": "codex_gpt5_boundary_canary",
+        "objective_context": {
+            "mission": "boundary canary mission",
+            "objective": "prove ContextLattice clips agent-facing payloads",
+            "goal": "no raw provider overflow shape leaves the product boundary",
+        },
+    }
+    preflight_payload = {
+        "project": "contextlattice",
+        "topic_path": "runbooks/boundary-canary",
+        "query": query,
+        "retrieval_mode": "balanced",
+        "agent_id": "codex_gpt5_boundary_canary",
+        "mission": "boundary canary mission",
+        "objective": "prove ContextLattice clips agent-facing payloads",
+        "goal": "no raw provider overflow shape leaves the product boundary",
+    }
+    cases = [
+        {
+            "name": "memory_context_pack",
+            "path": "/memory/context-pack",
+            "contract": "context_pack_response.v1",
+            "payload": request_json("POST", "/memory/context-pack", context_payload, timeout),
+        },
+        {
+            "name": "tools_context_pack",
+            "path": "/tools/context_pack",
+            "contract": "context_pack_response.v1",
+            "payload": request_json("POST", "/tools/context_pack", context_payload, timeout),
+        },
+        {
+            "name": "codex_preflight",
+            "path": "/v1/codex/preflight",
+            "contract": "agent_preflight_response.v1",
+            "payload": request_json("POST", "/v1/codex/preflight", {**preflight_payload, "agent": "codex"}, timeout),
+        },
+    ]
+    for agent in agents:
+        cases.append(
+            {
+                "name": f"agents_preflight_{agent.replace('-', '_')}",
+                "path": "/v1/agents/preflight",
+                "contract": "agent_preflight_response.v1",
+                "payload": request_json("POST", "/v1/agents/preflight", {**preflight_payload, "agent": agent}, timeout),
+            }
+        )
+    return cases
+
+
+def run_command(case: str, argv: list[str], stdin: str = "", env: dict[str, str] | None = None, timeout: float = 30) -> tuple[int, Any, str]:
+    proc = subprocess.run(
+        argv,
+        input=stdin,
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+        env={**os.environ, **(env or {})},
+        timeout=timeout,
+    )
+    try:
+        parsed: Any = json.loads(proc.stdout or "{}")
+    except Exception:
+        parsed = {"ok": False, "stdout": proc.stdout[:1000], "parse_error": True}
+    return proc.returncode, parsed, proc.stderr[:1000]
+
+
+def compact_cases(timeout: float) -> list[dict[str, Any]]:
+    huge_payload = json.dumps(
+        {
+            "summary": adversarial_text(),
+            "objective": adversarial_text(),
+            "commands": [adversarial_text() for _ in range(12)],
+        }
+    )
+    helper = REPO_ROOT / "scripts" / "agent" / "compaction-handoff-payload"
+    pre_hook = REPO_ROOT / "scripts" / "agent_hooks" / "contextlattice_pre_compaction_write.sh"
+    post_hook = REPO_ROOT / "scripts" / "agent_hooks" / "contextlattice_post_compaction_read.sh"
+    cases: list[dict[str, Any]] = []
+    rc, payload, stderr = run_command(
+        "compaction_handoff_payload",
+        [str(helper), "--fallback-summary", adversarial_text(), "--summary"],
+        stdin=huge_payload,
+        timeout=timeout,
+    )
+    cases.append(
+        {
+            "name": "compaction_handoff_payload",
+            "contract": "handoff_json_budget",
+            "returncode": rc,
+            "payload": payload,
+            "stderr": stderr,
+        }
+    )
+    for name, hook, env_key in (
+        ("precompact_stdout", pre_hook, "CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE"),
+        ("postcompact_stdout", post_hook, "CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE"),
+    ):
+        rc, payload, stderr = run_command(name, [str(hook)], env={env_key: "1"}, timeout=timeout)
+        cases.append(
+            {
+                "name": name,
+                "contract": "codex_compact_hook_stdout.v1",
+                "returncode": rc,
+                "payload": payload,
+                "stderr": stderr,
+            }
+        )
+    return cases
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--skip-live", action="store_true", help="Only validate compact handoff/stdout wrappers.")
+    parser.add_argument(
+        "--agents",
+        default="codex,claude-code,hermes-agent,pi",
+        help="Comma-separated agent profiles to exercise through /v1/agents/preflight.",
+    )
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    registry = load_agent_contracts_registry()
+    findings: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+    agents = [item.strip() for item in str(args.agents or "").split(",") if item.strip()]
+
+    if not args.skip_live:
+        for case in endpoint_cases(args.timeout, agents):
+            payload = case["payload"]
+            case_summary = {
+                "name": case["name"],
+                "path": case["path"],
+                "contract": case["contract"],
+                "json_bytes": json_bytes(payload),
+                "format_validation": format_validation(payload),
+            }
+            cases.append(case_summary)
+            findings.extend(validate_contract(case["name"], case["contract"], payload, registry))
+            if format_validation(payload) not in {"", "passed"}:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "case": case["name"],
+                        "reason": "format_validation_not_passed",
+                        "status": format_validation(payload),
+                    }
+                )
+
+    for case in compact_cases(args.timeout):
+        payload = case["payload"]
+        cases.append(
+            {
+                "name": case["name"],
+                "contract": case["contract"],
+                "returncode": case["returncode"],
+                "json_bytes": json_bytes(payload),
+            }
+        )
+        if case["returncode"] != 0:
+            findings.append({"severity": "error", "case": case["name"], "reason": "command_failed", "stderr": case["stderr"]})
+        if case["contract"] == "codex_compact_hook_stdout.v1":
+            findings.extend(validate_contract(case["name"], case["contract"], payload, registry))
+        else:
+            findings.extend(raw_provider_phrase_findings(payload, case["name"]))
+            if json_bytes(payload) > 12_000:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "case": case["name"],
+                        "reason": "handoff_payload_exceeds_summary_budget",
+                        "bytes": json_bytes(payload),
+                    }
+                )
+
+    errors = [item for item in findings if item.get("severity") == "error"]
+    emit(
+        {
+            "ok": not errors,
+            "base_url": contextlattice_base_url(),
+            "case_count": len(cases),
+            "cases": cases,
+            "findings": findings,
+        },
+        args.pretty,
+    )
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

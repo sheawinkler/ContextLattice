@@ -64,6 +64,10 @@ func (s *server) buildContextPackResponse(
 		"traffic_class":           strings.TrimSpace(anyToString(requestPayload["traffic_class"])),
 		"include_grounding":       true,
 	}
+	objectiveCtx := extractObjectiveContext(requestPayload)
+	if !objectiveCtx.empty() {
+		searchRequest["objective_context"] = objectiveCtx.toMap()
+	}
 	if value := requestPayload["sources"]; value != nil {
 		searchRequest["sources"] = value
 	}
@@ -125,6 +129,9 @@ func (s *server) buildContextPackResponse(
 		if retrievalDebug, ok := searchResponse["retrieval_debug"]; ok {
 			response["retrieval"] = retrievalDebug
 		}
+	}
+	if !objectiveCtx.empty() {
+		response["objective_context"] = objectiveCtx.toMap()
 	}
 	return attachContextPackFormatContract(response), status, nil
 }

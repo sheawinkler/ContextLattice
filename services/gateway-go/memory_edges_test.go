@@ -148,6 +148,82 @@ func TestMemoryV1NeighborsReturnsExplicitEdgesWhenRetrievalDisabled(t *testing.T
 	}
 }
 
+func TestMemoryGraphTelemetrySummarizesEdgesDocsAndRecommendations(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	for _, item := range []normalizedWrite{
+		{
+			project:   "alpha",
+			fileName:  "notes/a.md",
+			content:   "alpha graph qdrant pgvector relationship anchor",
+			topicPath: "runbooks/graph",
+			agentID:   "agent-a",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/b.md",
+			content:   "alpha graph qdrant pgvector relationship neighbor",
+			topicPath: "runbooks/graph",
+			agentID:   "agent-a",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/c.md",
+			content:   "alpha isolated memory note",
+			topicPath: "runbooks/isolated",
+			agentID:   "agent-a",
+		},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory doc: %v", err)
+		}
+	}
+	resp, err := http.Post(
+		gateway.URL+"/v1/memory/edges",
+		"application/json",
+		strings.NewReader(`{"source_id":"alpha::notes/a.md","target_id":"alpha::notes/b.md","relation":"inferred_related","confidence":0.91,"topic_path":"runbooks/graph","metadata":{"inferred":true},"provenance":{"kind":"inferred_memory_edge_scoring"}}`),
+	)
+	if err != nil {
+		t.Fatalf("edge write failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected edge write 200, got %d", resp.StatusCode)
+	}
+
+	telemetry, err := http.Get(gateway.URL + "/telemetry/memory/graph?project=alpha&limit=5")
+	if err != nil {
+		t.Fatalf("graph telemetry request failed: %v", err)
+	}
+	defer telemetry.Body.Close()
+	if telemetry.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(telemetry.Body)
+		t.Fatalf("expected 200 graph telemetry, got %d body=%s", telemetry.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(telemetry.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode graph telemetry: %v", err)
+	}
+	if anyToInt(payload["doc_count"], 0) != 3 {
+		t.Fatalf("expected doc_count=3, got %#v", payload)
+	}
+	if anyToInt(payload["edge_count"], 0) != 1 || anyToInt(payload["inferred_edge_count"], 0) != 1 {
+		t.Fatalf("expected one inferred edge, got %#v", payload)
+	}
+	if anyToInt(payload["isolated_doc_count"], 0) != 1 {
+		t.Fatalf("expected one isolated doc, got %#v", payload)
+	}
+	relations, _ := payload["relations"].([]any)
+	if len(relations) == 0 || anyToString(relations[0].(map[string]any)["name"]) != "inferred_related" {
+		t.Fatalf("expected inferred_related top relation, got %#v", relations)
+	}
+	topNodes, _ := payload["top_nodes"].([]any)
+	if len(topNodes) == 0 {
+		t.Fatalf("expected top_nodes in graph telemetry, got %#v", payload)
+	}
+}
+
 func TestMergeNeighborRowsPrefersExplicitEdgesAndDedupesRetrieval(t *testing.T) {
 	edgeRows := []map[string]any{
 		{"memory_id": "alpha::notes/b.md", "project": "alpha", "file": "notes/b.md", "source": memoryEdgeSource, "score": 0.9},

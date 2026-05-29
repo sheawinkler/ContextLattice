@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -67,6 +68,7 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 		pack,
 		pack,
 		nil,
+		objectiveContext{},
 	)
 	format, ok := policy["format_contract"].(map[string]any)
 	if !ok {
@@ -101,7 +103,7 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 
 func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 	pack := map[string]any{"context_pack": map[string]any{"facts": []any{}, "results": []any{}}}
-	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", pack, pack, nil)
+	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", pack, pack, nil, objectiveContext{})
 	response := attachAgentPreflightFormatContracts(map[string]any{
 		"ok":                     true,
 		"service":                "gateway-go",
@@ -169,6 +171,118 @@ func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
 	writebackValidation, _ := writebackFormat["validation"].(map[string]any)
 	if strings.TrimSpace(anyToString(writebackValidation["status"])) != "passed" {
 		t.Fatalf("expected writeback validation passed, got %#v", writebackValidation)
+	}
+}
+
+func TestAgentBoundaryContractClipsOversizedContextPackPayload(t *testing.T) {
+	oversized := strings.Repeat("array_above_max_length context length exceeded ", 400)
+	items := make([]any, 0, 140)
+	for idx := 0; idx < 140; idx++ {
+		items = append(items, map[string]any{
+			"text":       oversized,
+			"summary":    oversized,
+			"file":       "notes/oversized.md",
+			"source":     "fixture",
+			"topic_path": "runbooks/boundary",
+		})
+	}
+	pack := map[string]any{
+		"facts":               items,
+		"numeric_facts":       items,
+		"citations":           items,
+		"results":             items,
+		"relevant_decisions":  items,
+		"files_to_read":       items,
+		"files_to_avoid":      items,
+		"capabilities_to_use": items,
+		"runbooks":            items,
+		"known_failure_modes": items,
+		"commands":            items,
+		"acceptance_criteria": items,
+	}
+	payload := attachContextPackFormatContract(map[string]any{
+		"ok":                 true,
+		"agent_id":           "codex_gpt5_test",
+		"context_pack":       pack,
+		"source_coverage":    map[string]any{"configured": items, "returned": items, "complete": true},
+		"retrieval":          map[string]any{"debug": oversized},
+		"writeback_required": true,
+	})
+	assertBoundaryContractPassed(t, contextPackResponseContractID, payload)
+	assertBoundaryJSONUnderLimit(t, contextPackResponseContractID, payload)
+	assertNoRawProviderOverflowShape(t, payload)
+	clippedPack, _ := payload["context_pack"].(map[string]any)
+	if results, _ := clippedPack["results"].([]any); len(results) > agentBoundaryLimitsForContract(contextPackResponseContractID).MaxListItems {
+		t.Fatalf("expected context_pack.results clipped, got %d", len(results))
+	}
+}
+
+func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
+	oversized := strings.Repeat("context length exceeded array_above_max_length ", 600)
+	item := map[string]any{"text": oversized, "summary": oversized, "source": "fixture", "file": "oversized.md"}
+	items := []any{}
+	for idx := 0; idx < 120; idx++ {
+		items = append(items, cloneContractMap(item))
+	}
+	pack := attachContextPackFormatContract(map[string]any{
+		"ok":                 true,
+		"agent_id":           "codex_gpt5_test",
+		"context_pack":       map[string]any{"facts": items, "results": items, "citations": items, "relevant_decisions": items, "files_to_read": items, "files_to_avoid": []any{}, "capabilities_to_use": []any{}, "runbooks": []any{}, "known_failure_modes": []any{}, "commands": []any{}, "acceptance_criteria": []any{}},
+		"source_coverage":    map[string]any{"configured": []any{"fixture"}, "returned": []any{"fixture"}, "complete": true},
+		"writeback_required": true,
+	})
+	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", oversized, "balanced", pack, pack, nil, objectiveContext{})
+	response := attachAgentPreflightFormatContracts(map[string]any{
+		"ok":                     true,
+		"service":                "gateway-go",
+		"agent":                  "codex",
+		"agent_id":               "codex_gpt5_test",
+		"project":                "contextlattice",
+		"query":                  oversized,
+		"topic_path":             "runbooks/codex-integration",
+		"retrieval_mode":         "balanced",
+		"status":                 map[string]any{"raw": oversized, "items": items},
+		"scoped_search":          map[string]any{"results": items, "degraded": false},
+		"broadened_search":       map[string]any{"results": items, "degraded": false},
+		"context_pack":           pack,
+		"mission_context_pack":   pack,
+		"policy_context_package": policy,
+	})
+	assertBoundaryContractPassed(t, agentPreflightResponseContractID, response)
+	assertBoundaryJSONUnderLimit(t, agentPreflightResponseContractID, response)
+	assertNoRawProviderOverflowShape(t, response)
+}
+
+func assertBoundaryContractPassed(t *testing.T, contractID string, payload map[string]any) {
+	t.Helper()
+	findings := validateAgentContractPayload(contractID, payload)
+	if len(findings) != 0 {
+		t.Fatalf("expected %s validation passed, got %#v", contractID, findings)
+	}
+}
+
+func assertBoundaryJSONUnderLimit(t *testing.T, contractID string, payload map[string]any) {
+	t.Helper()
+	limits := agentBoundaryLimitsForContract(contractID)
+	if limits.MaxTotalJSONBytes <= 0 {
+		t.Fatalf("expected %s to define max_total_json_bytes", contractID)
+	}
+	if size := jsonByteLen(payload); size > limits.MaxTotalJSONBytes {
+		t.Fatalf("expected %s JSON bytes <= %d, got %d", contractID, limits.MaxTotalJSONBytes, size)
+	}
+}
+
+func assertNoRawProviderOverflowShape(t *testing.T, payload any) {
+	t.Helper()
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	lower := strings.ToLower(string(encoded))
+	for _, forbidden := range []string{"array_above_max_length", "context length exceeded", "maximum context length"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("payload still contains raw provider overflow phrase %q", forbidden)
+		}
 	}
 }
 

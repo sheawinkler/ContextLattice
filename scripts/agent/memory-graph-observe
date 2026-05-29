@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Render ContextLattice memory graph observability in the terminal."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import urllib.parse
+from typing import Any
+
+from _common import emit, request_json
+
+
+def bar(value: int, maximum: int, width: int = 32) -> str:
+    if maximum <= 0:
+        filled = 0
+    else:
+        filled = round((max(0, value) / maximum) * width)
+    filled = max(0, min(width, filled))
+    return "#" * filled + "." * (width - filled)
+
+
+def count_name(row: dict[str, Any]) -> str:
+    return str(row.get("name") or row.get("project") or row.get("memory_id") or "unknown")
+
+
+def count_value(row: dict[str, Any], key: str = "count") -> int:
+    try:
+        return int(row.get(key) or 0)
+    except Exception:
+        return 0
+
+
+def print_counts(title: str, rows: list[dict[str, Any]], value_key: str = "count", limit: int = 8) -> None:
+    print()
+    print(title)
+    if not rows:
+        print("  (none)")
+        return
+    maximum = max(count_value(row, value_key) for row in rows[:limit]) or 1
+    for row in rows[:limit]:
+        name = count_name(row)
+        value = count_value(row, value_key)
+        print(f"  {name[:34]:34} {value:6d}  {bar(value, maximum)}")
+
+
+def render(payload: dict[str, Any]) -> None:
+    status = str(payload.get("status") or "unknown")
+    edge_count = count_value(payload, "edge_count")
+    doc_count = count_value(payload, "doc_count")
+    inferred = count_value(payload, "inferred_edge_count")
+    isolated = count_value(payload, "isolated_doc_count")
+    density = float(payload.get("density_edges_per_doc") or 0)
+    print("ContextLattice Memory Graph")
+    print(f"  status: {status}")
+    print(f"  docs: {doc_count}   edges: {edge_count}   inferred: {inferred}   isolated: {isolated}   density: {density:.3f}")
+    print(f"  doc collection: {payload.get('doc_collection_status') or 'unknown'}")
+    edge_store = payload.get("edge_store") if isinstance(payload.get("edge_store"), dict) else {}
+    if edge_store:
+        print(f"  edge log: {edge_store.get('path') or ''}")
+        print(f"  edge log bytes: {edge_store.get('bytes') or 0}")
+    projects = [row for row in payload.get("projects") or [] if isinstance(row, dict)]
+    relations = [row for row in payload.get("relations") or [] if isinstance(row, dict)]
+    nodes = [row for row in payload.get("top_nodes") or [] if isinstance(row, dict)]
+    print_counts("Projects by edge count", projects, "edges")
+    print_counts("Relations", relations, "count")
+    if nodes:
+        print()
+        print("Top connected memories")
+        maximum = max(count_value(row, "degree") for row in nodes) or 1
+        for row in nodes[:8]:
+            memory_id = str(row.get("memory_id") or "")
+            degree = count_value(row, "degree")
+            in_out = f"in:{count_value(row, 'inbound')} out:{count_value(row, 'outbound')}"
+            print(f"  {memory_id[:48]:48} {degree:5d}  {bar(degree, maximum, 22)}  {in_out}")
+    recommendations = [str(item) for item in payload.get("recommendations") or [] if str(item).strip()]
+    if recommendations:
+        print()
+        print("Recommended next action")
+        for item in recommendations[:4]:
+            print(f"  - {item}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project", default="")
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--include-ephemeral", action="store_true")
+    parser.add_argument("--json", action="store_true", help="Emit raw JSON instead of terminal graphics.")
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--timeout", type=float, default=20)
+    args = parser.parse_args()
+
+    query = {"limit": str(max(1, min(args.limit, 50)))}
+    if args.project:
+        query["project"] = args.project
+    if args.include_ephemeral:
+        query["include_ephemeral"] = "true"
+    path = "/telemetry/memory/graph?" + urllib.parse.urlencode(query)
+    payload = request_json("GET", path, None, args.timeout)
+    if args.json:
+        emit(payload, args.pretty)
+    else:
+        render(payload)
+    return 0 if payload.get("ok", False) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

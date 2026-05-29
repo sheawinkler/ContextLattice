@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""Create bounded ContextLattice project memory from high-signal repo files."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from _common import emit, request_json
+
+
+EXCLUDED_DIRS = {
+    ".git",
+    ".next",
+    ".pytest_cache",
+    ".venv",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+}
+PRIORITY_FILES = (
+    "AGENTS.md",
+    "README.md",
+    "Outline.txt",
+    "EVALUATION.md",
+    "pyproject.toml",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+    "docker-compose.yml",
+    "docker-compose.lite.yml",
+    "Dockerfile",
+)
+PRIORITY_NAMES = {
+    "app.py",
+    "main.py",
+    "models.py",
+    "orchestrator.py",
+    "worker.py",
+    "store.py",
+    "pipeline.py",
+    "main.go",
+    "server.go",
+    "index.ts",
+    "index.tsx",
+}
+TEXT_SUFFIXES = {".md", ".txt", ".py", ".go", ".rs", ".ts", ".tsx", ".js", ".json", ".toml", ".yml", ".yaml"}
+
+
+def utc_date() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def safe_project_from_repo(repo: Path) -> str:
+    name = repo.resolve().name.strip().lower().replace(" ", "-")
+    return "".join(ch for ch in name if ch.isalnum() or ch in "._-") or "project"
+
+
+def should_skip(path: Path, repo: Path) -> bool:
+    try:
+        rel = path.relative_to(repo)
+    except ValueError:
+        return True
+    return any(part in EXCLUDED_DIRS or part.startswith(".venv") for part in rel.parts)
+
+
+def candidate_files(repo: Path, max_files: int) -> list[Path]:
+    seen: set[Path] = set()
+    out: list[Path] = []
+
+    def add(path: Path) -> None:
+        if len(out) >= max_files:
+            return
+        if path in seen or not path.is_file() or should_skip(path, repo):
+            return
+        if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in PRIORITY_FILES and path.name not in PRIORITY_NAMES:
+            return
+        seen.add(path)
+        out.append(path)
+
+    for name in PRIORITY_FILES:
+        add(repo / name)
+    for path in sorted(repo.glob("docs/**/*.md")):
+        add(path)
+    for path in sorted(repo.rglob("*")):
+        if path.name in PRIORITY_NAMES:
+            add(path)
+        if len(out) >= max_files:
+            break
+    return out[:max_files]
+
+
+def compact_text(text: str, limit: int) -> str:
+    text = text.replace("\x00", "")
+    lines = [" ".join(line.strip().split()) for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    compact = "\n".join(lines)
+    if len(compact.encode("utf-8")) <= limit:
+        return compact
+    raw = compact.encode("utf-8")[:limit]
+    return raw.decode("utf-8", errors="ignore") + "\n[truncated]"
+
+
+def read_snippet(path: Path, max_bytes: int) -> str:
+    raw = path.read_bytes()[: max_bytes + 1]
+    truncated = len(raw) > max_bytes
+    if truncated:
+        raw = raw[:max_bytes]
+    text = raw.decode("utf-8", errors="replace")
+    snippet = compact_text(text, max_bytes)
+    return snippet + ("\n[file snippet truncated]" if truncated else "")
+
+
+def file_role(path: Path) -> str:
+    name = path.name.lower()
+    if name.startswith("readme") or name == "agents.md":
+        return "operator_context"
+    if name in {"pyproject.toml", "package.json", "go.mod", "cargo.toml"}:
+        return "runtime_manifest"
+    if "test" in path.parts or name.startswith("test_") or name.endswith("_test.go"):
+        return "test_surface"
+    if path.suffix.lower() in {".py", ".go", ".rs", ".ts", ".tsx", ".js"}:
+        return "code_surface"
+    if "docs" in path.parts:
+        return "documentation"
+    return "project_context"
+
+
+def collect_file_summaries(repo: Path, max_files: int, max_file_bytes: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in candidate_files(repo, max_files):
+        rel = str(path.relative_to(repo))
+        snippet = read_snippet(path, max_file_bytes)
+        rows.append(
+            {
+                "path": rel,
+                "role": file_role(path),
+                "bytes_sampled": min(path.stat().st_size, max_file_bytes),
+                "raw_bytes": path.stat().st_size,
+                "snippet": snippet,
+            }
+        )
+    return rows
+
+
+def render_overview(project: str, repo: Path, rows: list[dict[str, Any]]) -> str:
+    docs = [row for row in rows if row["role"] in {"operator_context", "documentation", "runtime_manifest"}]
+    lines = [
+        "# Project Bootstrap Overview",
+        f"project: {project}",
+        f"repo: {repo}",
+        "scope: bounded high-signal project memory, not raw repository ingestion",
+        "",
+        "## High-signal files",
+    ]
+    for row in docs[:12]:
+        lines.append(f"- {row['path']} ({row['role']}, sampled {row['bytes_sampled']} bytes)")
+    lines.append("")
+    lines.append("## Extracts")
+    for row in docs[:6]:
+        lines.extend([f"### {row['path']}", str(row["snippet"])[:1800], ""])
+    return "\n".join(lines).strip() + "\n"
+
+
+def render_code_map(project: str, rows: list[dict[str, Any]]) -> str:
+    code = [row for row in rows if row["role"] in {"code_surface", "test_surface"}]
+    lines = [
+        "# Project Code Map",
+        f"project: {project}",
+        "scope: compact source-surface map for agent planning",
+        "",
+        "## Files",
+    ]
+    for row in code[:24]:
+        lines.append(f"- {row['path']} ({row['role']}, sampled {row['bytes_sampled']} bytes)")
+    lines.append("")
+    lines.append("## Extracts")
+    for row in code[:8]:
+        lines.extend([f"### {row['path']}", str(row["snippet"])[:1400], ""])
+    return "\n".join(lines).strip() + "\n"
+
+
+def render_next_work(project: str, rows: list[dict[str, Any]]) -> str:
+    markers: list[str] = []
+    for row in rows:
+        for line in str(row["snippet"]).splitlines():
+            lowered = line.lower()
+            if any(token in lowered for token in ("todo", "fixme", "next", "risk", "missing", "follow-up", "follow up")):
+                markers.append(f"{row['path']}: {line[:220]}")
+            if len(markers) >= 32:
+                break
+        if len(markers) >= 32:
+            break
+    lines = [
+        "# Project Bootstrap Next Work",
+        f"project: {project}",
+        "scope: deterministic next-work hints from bounded repo metadata",
+        "",
+        "## Detected markers",
+    ]
+    if markers:
+        lines.extend(f"- {marker}" for marker in markers)
+    else:
+        lines.append("- No TODO/risk/next-work markers found in sampled files.")
+    lines.extend(
+        [
+            "",
+            "## Recommended bootstrap checks",
+            "- Run the repo's lightweight compile/test command before acting on inferred architecture.",
+            "- Use ContextLattice context-pack with this project filter before cross-file planning.",
+            "- Run memory edge backfill after bootstrap writes so graph neighbors can surface related notes.",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def bootstrap_documents(project: str, repo: Path, topic_path: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stamp = utc_date()
+    return [
+        {
+            "project": project,
+            "file_name": f"notes/codex/{project}-bootstrap-overview-{stamp}.md",
+            "topic_path": topic_path,
+            "content": render_overview(project, repo, rows),
+        },
+        {
+            "project": project,
+            "file_name": f"notes/codex/{project}-bootstrap-code-map-{stamp}.md",
+            "topic_path": topic_path,
+            "content": render_code_map(project, rows),
+        },
+        {
+            "project": project,
+            "file_name": f"notes/codex/{project}-bootstrap-next-work-{stamp}.md",
+            "topic_path": topic_path,
+            "content": render_next_work(project, rows),
+        },
+    ]
+
+
+def write_doc(doc: dict[str, Any], timeout: float) -> dict[str, Any]:
+    payload = {
+        "projectName": doc["project"],
+        "fileName": doc["file_name"],
+        "topicPath": doc["topic_path"],
+        "content": doc["content"],
+        "tags": ["type:project_bootstrap", "source:bounded_repo_scan"],
+    }
+    return request_json("POST", "/memory/write", payload, timeout)
+
+
+def backfill_edges(project: str, apply_edges: bool, profile: str, timeout: float) -> dict[str, Any]:
+    profiles = {
+        "strict": {"min_confidence": 0.90, "inferred_min_score": 0.90, "inferred_peer_limit": 1, "inferred_max_token_postings": 64},
+        "balanced": {"min_confidence": 0.85, "inferred_min_score": 0.85, "inferred_peer_limit": 3, "inferred_max_token_postings": 128},
+        "exploratory": {"min_confidence": 0.80, "inferred_min_score": 0.80, "inferred_peer_limit": 5, "inferred_max_token_postings": 256},
+    }
+    selected = profiles.get(profile, profiles["exploratory"])
+    payload: dict[str, Any] = {
+        "dry_run": not apply_edges,
+        "project": project,
+        "corpus": "disk",
+        "relations": ["same_topic", "references", "same_session", "same_agent", "inferred_related"],
+        "include_inferred": True,
+        "include_low_confidence_audit": True,
+        "inferred_min_shared_terms": 3,
+        "sample_limit": 20,
+        **selected,
+    }
+    return request_json("POST", "/v1/memory/edges/backfill", payload, timeout)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", default=".", help="Repository path to summarize.")
+    parser.add_argument("--project", default="", help="ContextLattice project name. Defaults to repo directory name.")
+    parser.add_argument("--topic-path", default="", help="Topic path for bootstrap notes.")
+    parser.add_argument("--max-files", type=int, default=24)
+    parser.add_argument("--max-file-bytes", type=int, default=7000)
+    parser.add_argument("--write", action="store_true", help="Write bootstrap docs to ContextLattice.")
+    parser.add_argument("--apply-edges", action="store_true", help="Apply edge backfill after writes. Defaults to dry-run.")
+    parser.add_argument("--edge-profile", choices=("strict", "balanced", "exploratory"), default="exploratory")
+    parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    repo = Path(args.repo).expanduser().resolve()
+    if not repo.exists() or not repo.is_dir():
+        emit({"ok": False, "error": "repo_not_found", "repo": str(repo)}, args.pretty)
+        return 1
+    project = args.project.strip() or safe_project_from_repo(repo)
+    topic_path = args.topic_path.strip() or f"runbooks/{project}"
+    rows = collect_file_summaries(repo, max(3, min(args.max_files, 80)), max(512, min(args.max_file_bytes, 24_000)))
+    docs = bootstrap_documents(project, repo, topic_path, rows)
+    writes: list[dict[str, Any]] = []
+    if args.write:
+        for doc in docs:
+            writes.append(write_doc(doc, args.timeout))
+    edge_backfill = None
+    if args.write:
+        edge_backfill = backfill_edges(project, args.apply_edges, args.edge_profile, args.timeout)
+
+    emit(
+        {
+            "ok": True,
+            "repo": str(repo),
+            "project": project,
+            "topic_path": topic_path,
+            "dry_run": not args.write,
+            "sampled_files": [{"path": row["path"], "role": row["role"], "bytes_sampled": row["bytes_sampled"]} for row in rows],
+            "documents": [
+                {
+                    "file_name": doc["file_name"],
+                    "topic_path": doc["topic_path"],
+                    "bytes": len(doc["content"].encode("utf-8")),
+                    "preview": doc["content"][:600],
+                }
+                for doc in docs
+            ],
+            "writes": writes,
+            "edge_backfill": edge_backfill,
+        },
+        args.pretty,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

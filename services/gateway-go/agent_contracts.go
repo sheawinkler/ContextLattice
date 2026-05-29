@@ -186,7 +186,7 @@ func contractMetadata(contractID string) map[string]any {
 	if mode == "" {
 		mode = "json_object"
 	}
-	return map[string]any{
+	metadata := map[string]any{
 		"registry_id":          registry.RegistryID,
 		"registry_version":     registry.RegistryVersion,
 		"schema_id":            contractID,
@@ -199,6 +199,20 @@ func contractMetadata(contractID string) map[string]any {
 			"errors": []any{},
 		},
 	}
+	limits := agentBoundaryLimitsFromContract(contract)
+	if limits.MaxTotalJSONBytes > 0 {
+		metadata["max_total_json_bytes"] = limits.MaxTotalJSONBytes
+	}
+	if limits.MaxStringBytes > 0 {
+		metadata["max_string_bytes"] = limits.MaxStringBytes
+	}
+	if limits.MaxListItems > 0 {
+		metadata["max_list_items"] = limits.MaxListItems
+	}
+	if maxBytesByPath, ok := contract["max_bytes_by_path"].(map[string]any); ok && len(maxBytesByPath) > 0 {
+		metadata["max_bytes_by_path"] = cloneContractMap(maxBytesByPath)
+	}
+	return metadata
 }
 
 func stampContractValidation(metadata map[string]any, findings []map[string]any) map[string]any {
@@ -269,6 +283,18 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 		"registry_id":      registryID,
 		"registry_version": registryVersion,
 		"contracts":        contractIDs,
+		"max_total_json_bytes": func() int {
+			limits := agentBoundaryLimitsForContract(agentPreflightResponseContractID)
+			return limits.MaxTotalJSONBytes
+		}(),
+		"max_string_bytes": func() int {
+			limits := agentBoundaryLimitsForContract(agentPreflightResponseContractID)
+			return limits.MaxStringBytes
+		}(),
+		"max_list_items": func() int {
+			limits := agentBoundaryLimitsForContract(agentPreflightResponseContractID)
+			return limits.MaxListItems
+		}(),
 		"validation": map[string]any{
 			"status": status,
 			"errors": errors,
@@ -277,9 +303,14 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 }
 
 func attachPayloadFormatContract(contractID string, payload map[string]any, agentID string, lane string, endpoint string) map[string]any {
-	payload["format_contract"] = contractMetadata(contractID)
+	metadata := contractMetadata(contractID)
+	payload["format_contract"] = metadata
+	enforceAgentBoundaryContract(contractID, payload)
 	findings := validateAgentContractPayload(contractID, payload)
-	payload["format_contract"] = stampContractValidation(contractMetadata(contractID), findings)
+	payload["format_contract"] = stampContractValidation(metadata, findings)
+	enforceAgentBoundaryContract(contractID, payload)
+	findings = validateAgentContractPayload(contractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings)
 	recordAgentContractBoundary(agentID, contractID, lane, endpoint, findings)
 	return payload
 }
@@ -306,7 +337,11 @@ func attachWritebackFormatContract(payload map[string]any, item normalizedWrite,
 
 func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any {
 	payload["format_contracts"] = preflightContractsSummary(nil)
+	enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
 	findings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
+	payload["format_contracts"] = preflightContractsSummary(findings)
+	enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
+	findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
 	payload["format_contracts"] = preflightContractsSummary(findings)
 	recordAgentContractBoundary(anyToString(payload["agent_id"]), agentPreflightResponseContractID, "preflight", "/v1/agents/preflight", findings)
 	return payload
@@ -492,6 +527,25 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 				findings = append(findings, map[string]any{"reason": "list_min_items_not_met", "path": path, "min_items": minItemsCount, "actual": actual, "contract_id": contractID})
 			}
 		}
+	}
+	limits := agentBoundaryLimitsFromContract(contract)
+	if limits.MaxTotalJSONBytes > 0 {
+		actual := jsonByteLen(object)
+		if actual > limits.MaxTotalJSONBytes {
+			findings = append(findings, map[string]any{
+				"reason":       "json_bytes_exceed_contract",
+				"bytes":        actual,
+				"max_bytes":    limits.MaxTotalJSONBytes,
+				"contract_id":  contractID,
+				"payload_kind": contract["payload_kind"],
+			})
+		}
+	}
+	if limits.MaxStringBytes > 0 {
+		findings = append(findings, validateAgentBoundaryStringBytes(object, limits.MaxStringBytes, "", contractID)...)
+	}
+	if limits.MaxListItems > 0 {
+		findings = append(findings, validateAgentBoundaryListItems(object, limits.MaxListItems, "", contractID)...)
 	}
 	if maxBytes, ok := contract["max_bytes_by_path"].(map[string]any); ok {
 		keys := sortedMapKeys(maxBytes)

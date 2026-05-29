@@ -1886,6 +1886,9 @@ type agentPreflightRequest struct {
 	RetrievalMode string `json:"retrieval_mode"`
 	AgentID       string `json:"agent_id"`
 	Agent         string `json:"agent"`
+	Mission       string `json:"mission"`
+	Objective     string `json:"objective"`
+	Goal          string `json:"goal"`
 }
 
 type agentPreflightProfile struct {
@@ -2096,6 +2099,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 	if strings.TrimSpace(reqBody.AgentID) == "" {
 		reqBody.AgentID = "codex_gpt5"
 	}
+	objectiveCtx := objectiveContextFromPreflightRequest(reqBody)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -2111,6 +2115,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"include_grounding":       true,
 		"include_retrieval_debug": true,
 		"agent_id":                reqBody.AgentID,
+		"objective_context":       objectiveCtx.toMap(),
 	}
 	scopedPayload, scopedStatus, scopedErr := s.backendJSONRequest(
 		ctx,
@@ -2141,6 +2146,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			"include_grounding":       true,
 			"include_retrieval_debug": true,
 			"agent_id":                reqBody.AgentID,
+			"objective_context":       objectiveCtx.toMap(),
 		}
 		broadenedPayload, broadenedStatus, broadenedErr = s.backendJSONRequest(
 			ctx,
@@ -2158,6 +2164,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"retrieval_mode":          reqBody.RetrievalMode,
 		"include_retrieval_debug": true,
 		"agent_id":                reqBody.AgentID,
+		"objective_context":       objectiveCtx.toMap(),
 	}
 	contextPackPayload, contextPackStatus, contextPackErr := s.backendJSONRequest(
 		ctx,
@@ -2178,6 +2185,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"retrieval_mode":          reqBody.RetrievalMode,
 		"include_retrieval_debug": true,
 		"agent_id":                reqBody.AgentID,
+		"objective_context":       objectiveCtx.toMap(),
 	}
 	missionPackPayload, missionPackStatus, missionPackErr := s.backendJSONRequest(
 		ctx,
@@ -2206,6 +2214,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		contextPackPayload,
 		missionPackPayload,
 		missionPackErr,
+		objectiveCtx,
 	)
 
 	response := map[string]any{
@@ -2219,6 +2228,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"topic_path":             reqBody.TopicPath,
 		"retrieval_mode":         reqBody.RetrievalMode,
 		"backend_url":            s.backendURL,
+		"objective_context":      objectiveCtx.toMap(),
 		"health":                 healthPayload,
 		"health_status":          healthStatus,
 		"health_error":           errString(healthErr),
@@ -6524,6 +6534,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
 	mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)
+	mux.HandleFunc("/telemetry/memory/graph", s.telemetryMemoryGraphRoute)
 	mux.HandleFunc("/telemetry/agent-contracts", s.agentContractTelemetryRoute)
 	mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)
 	mux.HandleFunc("/telemetry/recall/monitor", s.telemetryRecallMonitorRoute)

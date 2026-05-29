@@ -842,6 +842,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
 		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
+		`mux.HandleFunc("/telemetry/memory/graph", s.telemetryMemoryGraphRoute)`,
 		`mux.HandleFunc("/telemetry/agent-contracts", s.agentContractTelemetryRoute)`,
 		`mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)`,
 		`mux.HandleFunc("/telemetry/recall/monitor", s.telemetryRecallMonitorRoute)`,
@@ -891,6 +892,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
+		`mux.HandleFunc("/telemetry/memory/graph", s.proxy)`,
 		`mux.HandleFunc("/telemetry/recall", s.proxy)`,
 		`mux.HandleFunc("/telemetry/recall/monitor", s.proxy)`,
 		`mux.HandleFunc("/telemetry/tools/invocations", s.proxy)`,
@@ -2733,7 +2735,7 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"project":"contextlattice","topic_path":"runbooks/codex-integration","query":"codex preflight","agent_id":"codex_gpt5_test"}`
+	reqBody := `{"project":"contextlattice","topic_path":"runbooks/codex-integration","query":"codex preflight","agent_id":"codex_gpt5_test","mission":"compound release evidence","objective":"ship boundary graph gate","goal":"protect every agent handoff"}`
 	resp, err := http.Post(gateway.URL+"/v1/codex/preflight", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("preflight request failed: %v", err)
@@ -2775,6 +2777,16 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 		t.Fatalf("expected policy_context_package payload, got nil")
 	}
 	assertPolicyContextIncludesAntiScheming(t, payload["policy_context_package"])
+	objectiveContext, ok := payload["objective_context"].(map[string]any)
+	if !ok || strings.TrimSpace(anyToString(objectiveContext["objective"])) != "ship boundary graph gate" {
+		t.Fatalf("expected preflight objective_context override, got %#v", payload["objective_context"])
+	}
+	policyContext, _ := payload["policy_context_package"].(map[string]any)
+	if strings.TrimSpace(anyToString(policyContext["mission"])) != "compound release evidence" ||
+		strings.TrimSpace(anyToString(policyContext["objective"])) != "ship boundary graph gate" ||
+		strings.TrimSpace(anyToString(policyContext["goal"])) != "protect every agent handoff" {
+		t.Fatalf("expected policy package to mirror requested mission/objective/goal, got %#v", policyContext)
+	}
 	contracts, ok := payload["format_contracts"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected format_contracts object, got %#v", payload["format_contracts"])
