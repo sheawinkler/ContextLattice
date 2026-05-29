@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -12,20 +13,28 @@ import (
 )
 
 const memoryEdgeBackfillVersion = "typed_edge_backfill.v1"
+const memoryEdgeInferredScoringVersion = "memory_edge_inferred_scoring.v1"
 
 type memoryEdgeBackfillRequest struct {
-	DryRun             bool
-	Project            string
-	IncludeCold        bool
-	IncludeEphemeral   bool
-	MinConfidence      float64
-	MaxCandidates      int
-	MaxHistoryLines    int
-	TopicPeerLimit     int
-	SampleLimit        int
-	IncludeLowAudit    bool
-	AllowedRelation    map[string]struct{}
-	RequestedRelations []string
+	DryRun              bool
+	Project             string
+	IncludeCold         bool
+	IncludeEphemeral    bool
+	MinConfidence       float64
+	MaxCandidates       int
+	MaxHistoryLines     int
+	TopicPeerLimit      int
+	SampleLimit         int
+	IncludeLowAudit     bool
+	IncludeInferred     bool
+	InferredRelation    string
+	InferredPeerLimit   int
+	InferredScanLimit   int
+	InferredMinScore    float64
+	InferredMinShared   int
+	InferredMaxPostings int
+	AllowedRelation     map[string]struct{}
+	RequestedRelations  []string
 }
 
 type memoryEdgeBackfillCandidate struct {
@@ -55,16 +64,22 @@ type memoryEdgeBackfillDoc struct {
 
 func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memoryStorePolicy) (memoryEdgeBackfillRequest, error) {
 	req := memoryEdgeBackfillRequest{
-		DryRun:             true,
-		IncludeCold:        true,
-		IncludeLowAudit:    true,
-		MinConfidence:      0.95,
-		MaxCandidates:      50000,
-		MaxHistoryLines:    policy.historyStartupMaxLines,
-		TopicPeerLimit:     2,
-		SampleLimit:        20,
-		AllowedRelation:    map[string]struct{}{},
-		RequestedRelations: []string{},
+		DryRun:              true,
+		IncludeCold:         true,
+		IncludeLowAudit:     true,
+		MinConfidence:       0.95,
+		MaxCandidates:       50000,
+		MaxHistoryLines:     policy.historyStartupMaxLines,
+		TopicPeerLimit:      2,
+		SampleLimit:         20,
+		InferredRelation:    "inferred_related",
+		InferredPeerLimit:   2,
+		InferredScanLimit:   5000,
+		InferredMinScore:    0.90,
+		InferredMinShared:   3,
+		InferredMaxPostings: 64,
+		AllowedRelation:     map[string]struct{}{},
+		RequestedRelations:  []string{},
 	}
 	if req.MaxHistoryLines < 1 {
 		req.MaxHistoryLines = 20000
@@ -108,6 +123,38 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 	if _, ok := payload["include_low_confidence_audit"]; ok {
 		req.IncludeLowAudit = anyToBool(payload["include_low_confidence_audit"])
 	}
+	if _, ok := payload["include_inferred"]; ok {
+		req.IncludeInferred = anyToBool(payload["include_inferred"])
+	}
+	if rawRelation := strings.TrimSpace(anyToString(payload["inferred_relation"])); rawRelation != "" {
+		relation, err := normalizeMemoryEdgeRelation(rawRelation)
+		if err != nil {
+			return req, err
+		}
+		req.InferredRelation = relation
+	}
+	if _, ok := payload["inferred_peer_limit"]; ok {
+		req.InferredPeerLimit = anyToInt(payload["inferred_peer_limit"], req.InferredPeerLimit)
+	}
+	req.InferredPeerLimit = clampInt(req.InferredPeerLimit, 1, 10)
+	if _, ok := payload["inferred_scan_limit"]; ok {
+		req.InferredScanLimit = anyToInt(payload["inferred_scan_limit"], req.InferredScanLimit)
+	}
+	req.InferredScanLimit = clampInt(req.InferredScanLimit, 2, 50000)
+	if _, ok := payload["inferred_min_score"]; ok {
+		req.InferredMinScore = anyToFloat64(payload["inferred_min_score"], req.InferredMinScore)
+	}
+	if req.InferredMinScore < 0 || req.InferredMinScore > 1 {
+		return req, errors.New("inferred_min_score must be between 0 and 1")
+	}
+	if _, ok := payload["inferred_min_shared_terms"]; ok {
+		req.InferredMinShared = anyToInt(payload["inferred_min_shared_terms"], req.InferredMinShared)
+	}
+	req.InferredMinShared = clampInt(req.InferredMinShared, 1, 20)
+	if _, ok := payload["inferred_max_token_postings"]; ok {
+		req.InferredMaxPostings = anyToInt(payload["inferred_max_token_postings"], req.InferredMaxPostings)
+	}
+	req.InferredMaxPostings = clampInt(req.InferredMaxPostings, 4, 512)
 	if rawRelations, ok := payload["relations"].([]any); ok {
 		for _, raw := range rawRelations {
 			relation, err := normalizeMemoryEdgeRelation(anyToString(raw))
@@ -117,6 +164,9 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 			req.AllowedRelation[relation] = struct{}{}
 			req.RequestedRelations = append(req.RequestedRelations, relation)
 		}
+	}
+	if _, ok := req.AllowedRelation[req.InferredRelation]; ok {
+		req.IncludeInferred = true
 	}
 	return req, nil
 }
@@ -292,6 +342,9 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	}
 	generator.generateTopicEdges(ctx)
 	generator.generateReferenceEdges(ctx)
+	if req.IncludeInferred {
+		generator.generateInferredRelatedEdges(ctx)
+	}
 	generator.generateHistorySequenceEdges(ctx, historyEntries, "same_session", 0.98)
 	if req.IncludeLowAudit {
 		generator.generateHistorySequenceEdges(ctx, historyEntries, "same_agent", 0.82)
@@ -332,6 +385,13 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"include_cold":                 req.IncludeCold,
 		"include_ephemeral":            req.IncludeEphemeral,
 		"include_low_confidence_audit": req.IncludeLowAudit,
+		"include_inferred":             req.IncludeInferred,
+		"inferred_relation":            req.InferredRelation,
+		"inferred_peer_limit":          req.InferredPeerLimit,
+		"inferred_scan_limit":          req.InferredScanLimit,
+		"inferred_min_score":           req.InferredMinScore,
+		"inferred_min_shared_terms":    req.InferredMinShared,
+		"inferred_max_token_postings":  req.InferredMaxPostings,
 		"requested_relations":          req.RequestedRelations,
 		"relations":                    generator.stats,
 		"samples":                      generator.sampleRows,
@@ -501,6 +561,242 @@ func (g *memoryEdgeBackfillGenerator) generateReferenceEdges(ctx context.Context
 			}
 		}
 	}
+}
+
+type memoryEdgeInferredDoc struct {
+	doc    memoryEdgeBackfillDoc
+	tokens map[string]struct{}
+}
+
+type memoryEdgeInferredScore struct {
+	targetIndex int
+	shared      int
+	score       float64
+	reason      string
+}
+
+func (g *memoryEdgeBackfillGenerator) generateInferredRelatedEdges(ctx context.Context) {
+	if g.request.InferredPeerLimit < 1 || len(g.docs) < 2 {
+		return
+	}
+	docs := boundedInferredMemoryDocs(g.docs, g.request.InferredScanLimit)
+	inferredDocs := make([]memoryEdgeInferredDoc, 0, len(docs))
+	for _, doc := range docs {
+		tokens := memoryEdgeInferenceTokens(doc)
+		if len(tokens) < g.request.InferredMinShared {
+			continue
+		}
+		inferredDocs = append(inferredDocs, memoryEdgeInferredDoc{doc: doc, tokens: tokens})
+	}
+	if len(inferredDocs) < 2 {
+		return
+	}
+
+	postings := map[string][]int{}
+	for idx, doc := range inferredDocs {
+		for token := range doc.tokens {
+			postings[token] = append(postings[token], idx)
+		}
+	}
+	for token, ids := range postings {
+		sort.Slice(ids, func(i, j int) bool {
+			return strings.ToLower(inferredDocs[ids[i]].doc.MemoryID) < strings.ToLower(inferredDocs[ids[j]].doc.MemoryID)
+		})
+		postings[token] = ids
+	}
+
+	for sourceIndex, source := range inferredDocs {
+		select {
+		case <-ctx.Done():
+			g.ctxErr = ctx.Err()
+			return
+		default:
+		}
+		sharedByTarget := map[int]int{}
+		for token := range source.tokens {
+			ids := postings[token]
+			if len(ids) == 0 || len(ids) > g.request.InferredMaxPostings {
+				continue
+			}
+			for _, targetIndex := range ids {
+				if targetIndex == sourceIndex {
+					continue
+				}
+				sharedByTarget[targetIndex] += 1
+			}
+		}
+
+		scored := make([]memoryEdgeInferredScore, 0, len(sharedByTarget))
+		for targetIndex, shared := range sharedByTarget {
+			if shared < g.request.InferredMinShared {
+				continue
+			}
+			target := inferredDocs[targetIndex]
+			if !strings.EqualFold(source.doc.Project, target.doc.Project) {
+				continue
+			}
+			score, reason := inferredMemoryEdgeScore(source, target, shared)
+			if score < g.request.InferredMinScore {
+				continue
+			}
+			scored = append(scored, memoryEdgeInferredScore{
+				targetIndex: targetIndex,
+				shared:      shared,
+				score:       score,
+				reason:      reason,
+			})
+		}
+		sort.Slice(scored, func(i, j int) bool {
+			if scored[i].score != scored[j].score {
+				return scored[i].score > scored[j].score
+			}
+			if scored[i].shared != scored[j].shared {
+				return scored[i].shared > scored[j].shared
+			}
+			leftID := strings.ToLower(inferredDocs[scored[i].targetIndex].doc.MemoryID)
+			rightID := strings.ToLower(inferredDocs[scored[j].targetIndex].doc.MemoryID)
+			return leftID < rightID
+		})
+
+		addedForSource := 0
+		for _, item := range scored {
+			if addedForSource >= g.request.InferredPeerLimit {
+				break
+			}
+			target := inferredDocs[item.targetIndex]
+			sourceID, targetID, topicPath := orderedInferredMemoryEdgePair(source.doc, target.doc)
+			candidate, err := memoryEdgeBackfillCandidateEdge(
+				sourceID,
+				targetID,
+				g.request.InferredRelation,
+				item.score,
+				topicPath,
+				"bounded_inferred_similarity",
+				item.reason,
+			)
+			if err != nil {
+				continue
+			}
+			candidate.Edge.Provenance["kind"] = "inferred_memory_edge_scoring"
+			candidate.Edge.Provenance["version"] = memoryEdgeInferredScoringVersion
+			candidate.Edge.Provenance["shared_terms"] = item.shared
+			candidate.Edge.Provenance["min_shared_terms"] = g.request.InferredMinShared
+			candidate.Edge.Provenance["min_score"] = g.request.InferredMinScore
+			candidate.Edge.Metadata["inferred"] = true
+			candidate.Edge.Metadata["shared_terms"] = item.shared
+			candidate.Edge.Metadata["scoring_version"] = memoryEdgeInferredScoringVersion
+			g.add(ctx, candidate)
+			addedForSource += 1
+			if g.ctxErr != nil || g.truncated {
+				return
+			}
+		}
+	}
+}
+
+func boundedInferredMemoryDocs(docs []memoryEdgeBackfillDoc, limit int) []memoryEdgeBackfillDoc {
+	if limit < 1 || len(docs) <= limit {
+		return append([]memoryEdgeBackfillDoc(nil), docs...)
+	}
+	candidates := append([]memoryEdgeBackfillDoc(nil), docs...)
+	sort.Slice(candidates, func(i, j int) bool {
+		left := memoryBackfillDocTouch(candidates[i])
+		right := memoryBackfillDocTouch(candidates[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return strings.ToLower(candidates[i].MemoryID) < strings.ToLower(candidates[j].MemoryID)
+	})
+	candidates = candidates[:limit]
+	sort.Slice(candidates, func(i, j int) bool {
+		return memoryBackfillDocLess(candidates[i], candidates[j])
+	})
+	return candidates
+}
+
+func memoryBackfillDocTouch(doc memoryEdgeBackfillDoc) time.Time {
+	if !doc.LastTouch.IsZero() {
+		return doc.LastTouch
+	}
+	return doc.UpdatedAt
+}
+
+func memoryEdgeInferenceTokens(doc memoryEdgeBackfillDoc) map[string]struct{} {
+	rawTokens := lexicalTokenSet(strings.TrimSpace(doc.Summary + " " + doc.TopicPath + " " + doc.FileName))
+	tokens := map[string]struct{}{}
+	for token := range rawTokens {
+		if _, skip := memoryEdgeInferenceStopWords[token]; skip {
+			continue
+		}
+		tokens[token] = struct{}{}
+	}
+	return tokens
+}
+
+var memoryEdgeInferenceStopWords = map[string]struct{}{
+	"about": {}, "after": {}, "again": {}, "against": {}, "all": {}, "also": {}, "and": {},
+	"any": {}, "are": {}, "because": {}, "been": {}, "before": {}, "being": {}, "between": {},
+	"but": {}, "can": {}, "could": {}, "did": {}, "does": {}, "done": {}, "each": {},
+	"for": {}, "from": {}, "had": {}, "has": {}, "have": {}, "into": {}, "its": {},
+	"more": {}, "not": {}, "now": {}, "only": {}, "our": {}, "out": {}, "over": {},
+	"same": {}, "should": {}, "that": {}, "the": {}, "their": {}, "then": {}, "there": {},
+	"these": {}, "this": {}, "through": {}, "under": {}, "using": {}, "was": {}, "were": {},
+	"when": {}, "where": {}, "which": {}, "while": {}, "with": {}, "would": {},
+}
+
+func inferredMemoryEdgeScore(source memoryEdgeInferredDoc, target memoryEdgeInferredDoc, shared int) (float64, string) {
+	union := len(source.tokens) + len(target.tokens) - shared
+	if union < 1 {
+		union = 1
+	}
+	jaccard := float64(shared) / float64(union)
+	score := 0.62 + 0.28*jaccard
+	reasons := []string{fmt.Sprintf("summary_token_overlap:%d", shared)}
+	sourceTopic := strings.Trim(strings.ToLower(source.doc.TopicPath), "/")
+	targetTopic := strings.Trim(strings.ToLower(target.doc.TopicPath), "/")
+	switch {
+	case sourceTopic != "" && sourceTopic == targetTopic && sourceTopic != "root":
+		score += 0.08
+		reasons = append(reasons, "exact_topic")
+	case sourceTopic != "" && targetTopic != "" &&
+		(strings.HasPrefix(sourceTopic, targetTopic+"/") || strings.HasPrefix(targetTopic, sourceTopic+"/")):
+		score += 0.04
+		reasons = append(reasons, "topic_prefix")
+	}
+	if memoryFileDirectory(source.doc.FileName) != "" && memoryFileDirectory(source.doc.FileName) == memoryFileDirectory(target.doc.FileName) {
+		score += 0.03
+		reasons = append(reasons, "same_directory")
+	}
+	if source.doc.Project != "" && strings.EqualFold(source.doc.Project, target.doc.Project) {
+		score += 0.02
+		reasons = append(reasons, "same_project")
+	}
+	if shared >= 6 {
+		score += 0.02
+		reasons = append(reasons, "strong_overlap")
+	}
+	if score > 0.99 {
+		score = 0.99
+	}
+	return score, strings.Join(reasons, ",")
+}
+
+func memoryFileDirectory(fileName string) string {
+	trimmed := strings.TrimSpace(fileName)
+	idx := strings.LastIndex(trimmed, "/")
+	if idx <= 0 {
+		return ""
+	}
+	return strings.ToLower(trimmed[:idx])
+}
+
+func orderedInferredMemoryEdgePair(left memoryEdgeBackfillDoc, right memoryEdgeBackfillDoc) (string, string, string) {
+	leftID := strings.ToLower(left.MemoryID)
+	rightID := strings.ToLower(right.MemoryID)
+	if leftID < rightID || (leftID == rightID && left.MemoryID <= right.MemoryID) {
+		return left.MemoryID, right.MemoryID, left.TopicPath
+	}
+	return right.MemoryID, left.MemoryID, right.TopicPath
 }
 
 func referencedMemoryIDs(sourceProject string, text string, knownIDs map[string]memoryEdgeBackfillDoc) []string {

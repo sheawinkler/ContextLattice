@@ -25,6 +25,8 @@ Required operations:
 - `get_memory(memory_id) -> memory`
 - `upsert_memory_edge(source_id, target_id, relation, metadata) -> edge_id`
 - `backfill_memory_edges(options) -> relation_counts`
+  - dry-run default
+  - bounded inferred scoring options: `include_inferred`, `inferred_peer_limit`, `inferred_scan_limit`, `inferred_min_score`, `inferred_min_shared_terms`
 - `query_neighbors(memory_id, filters) -> list[memory]`
 - `batch_insert(items) -> list[memory_id]`
 
