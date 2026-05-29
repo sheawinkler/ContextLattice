@@ -28,6 +28,7 @@ type normalizedWrite struct {
 	sessionID      string
 	tags           []string
 	createdAt      string
+	lifecycle      string
 	itemID         string
 	idempotencyKey string
 	raw            map[string]any
@@ -140,6 +141,7 @@ func normalizeWritePayload(path string, payload map[string]any) (normalizedWrite
 	item.sessionID = meta.sessionID
 	item.tags = meta.tags
 	item.createdAt = meta.createdAt
+	item.lifecycle = meta.lifecycle
 	return item, nil
 }
 
@@ -187,6 +189,7 @@ func normalizeWriteBatchPayload(path string, payload map[string]any) ([]normaliz
 		item.sessionID = meta.sessionID
 		item.tags = meta.tags
 		item.createdAt = meta.createdAt
+		item.lifecycle = meta.lifecycle
 		rows = append(rows, item)
 	}
 	return rows, nil

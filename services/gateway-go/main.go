@@ -338,6 +338,7 @@ type server struct {
 	continuationHistory             map[string][]map[string]any
 	continuationExpiry              map[string]time.Time
 	continuationDurable             *continuationDurableQueue
+	qdrantWriteFanoutSem            chan struct{}
 	pgvectorWriteFanoutSem          chan struct{}
 	timeoutContractViolations       atomic.Uint64
 	timeoutContractMu               sync.Mutex
@@ -1266,6 +1267,7 @@ func newServer() *server {
 		continuationHistory:             make(map[string][]map[string]any),
 		continuationExpiry:              make(map[string]time.Time),
 		continuationDurable:             continuationDurable,
+		qdrantWriteFanoutSem:            make(chan struct{}, qdrantWriteFanoutAsyncMaxInflight()),
 		pgvectorWriteFanoutSem:          make(chan struct{}, pgvectorWriteFanoutAsyncMaxInflight()),
 		timeoutContractBySource:         make(map[string]uint64),
 		timeoutContractLast:             make(map[string]any),

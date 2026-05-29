@@ -260,7 +260,7 @@
 flowchart TD
   A["Caller"] --> B["gateway-go :8075"]
   B --> C["Rust retrieval + staged policy"]
-  C --> D["Fast default: topic_rollups, postgres_pgvector"]
+  C --> D["Fast default: topic_rollups, qdrant"]
   C --> E["Slow async: mindsdb, mongo_raw, letta, memory_bank"]
   E --> F["Continuation events + cache warm"]
   B --> G["Python fallback :18075 (rollback)"]

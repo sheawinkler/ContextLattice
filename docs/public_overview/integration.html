@@ -305,7 +305,7 @@ export CONTEXTLATTICE_ORCHESTRATOR_API_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTR
           <article class="card component-card">
             <h3>Operational defaults</h3>
             <ul class="spec-list">
-              <li>Use Postgres pgvector as the public local default; keep Qdrant opt-in for full/operator vector deployments.</li>
+              <li>Use Qdrant as the public local lite vector default; keep Postgres pgvector first-class for full/operator SQL-co-located vector deployments.</li>
               <li>Use BYO cloud keys only when explicitly enabled.</li>
               <li>Preserve orchestrator fanout/backpressure defaults before aggressive tuning.</li>
               <li>Strict security mode redacts and blocks suspected secrets on OpenClaw/ZeroClaw/IronClaw routes.</li>

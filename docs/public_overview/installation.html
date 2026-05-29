@@ -178,7 +178,6 @@ gmake monitor-check</code></pre>
 
 # move service data to external SSD
 /Volumes/&lt;external-ssd&gt;/contextlattice/qdrant
-/Volumes/&lt;external-ssd&gt;/contextlattice/pgvector
 /Volumes/&lt;external-ssd&gt;/contextlattice/mongo
 /Volumes/&lt;external-ssd&gt;/contextlattice/mindsdb
 /Volumes/&lt;external-ssd&gt;/contextlattice/letta
@@ -212,8 +211,8 @@ gmake monitor-check</code></pre>
           <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
           <ul class="spec-list">
             <li><strong>App version lane:</strong> Public <code>v3.3.x</code></li>
-            <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Postgres pgvector, MCP hub</li>
-            <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + postgres_pgvector</code>; Qdrant is optional in full/operator stacks</li>
+            <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
+            <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + qdrant</code>; pgvector is available in full/operator stacks</li>
             <li><strong>Resource target:</strong> 2-4 vCPU, 8-12 GB RAM, 25-80 GB SSD</li>
             <li><strong>Startup command:</strong> <code>gmake mem-up-lite</code></li>
           </ul>
@@ -308,7 +307,7 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention 
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <ul class="spec-list">
           <li><code>/health</code> returns <code>ok</code> for orchestrator and connected services.</li>
-          <li><code>/status</code> (with <code>x-api-key</code>) lists Memory Bank and pgvector connectivity; Qdrant appears when enabled in full/operator stacks.</li>
+          <li><code>/status</code> (with <code>x-api-key</code>) lists Memory Bank and Qdrant connectivity; pgvector appears when enabled in full/operator stacks.</li>
           <li><code>/telemetry/fanout</code> (with <code>x-api-key</code>) shows queue depth/retry counters and <code>lettaAutoPrune.state</code>.</li>
           <li><code>POST /telemetry/fanout/letta/auto-prune/run</code> triggers a threshold-gated prune pass and returns <code>ran</code> vs <code>skipped</code>.</li>
           <li><code>/telemetry/retention</code> (with <code>x-api-key</code>) reports retention cadence and sweep activity.</li>

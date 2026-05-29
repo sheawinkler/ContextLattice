@@ -442,7 +442,7 @@ gmake monitor-check</code></pre>
 flowchart LR
   A[Agent or App] --> B["Public Lane: v3.3"]
   B --> C["Gateway-Go :8075"]
-  C --> D["Public default fast sources: topic_rollups + postgres_pgvector"]
+  C --> D["Public default fast sources: topic_rollups + qdrant"]
   C --> E["Slow async continuation: mindsdb + mongo_raw + letta + memory_bank"]
   E --> F["Cache warm + optional deep follow-up"]
   B --> G["Python fallback lane :18075 (rollback only)"]
@@ -458,8 +458,8 @@ flowchart LR
         <h3>Orchestrator gets better at memory recall over time</h3>
         <p class="spotlight">
           The orchestrator uses a learning schema from feedback signals to rerank results and improve
-          retrieval precision over time. Public fast staged reads prioritize topic rollups and
-          postgres-pgvector, while full/operator continuation can incorporate Qdrant, MindsDB, Mongo raw, Letta, and memory-bank.
+          retrieval precision over time. Public local fast staged reads prioritize topic rollups and
+          Qdrant, while full/operator continuation can also incorporate pgvector, MindsDB, Mongo raw, Letta, and memory-bank.
         </p>
         <p class="muted-note">Read the detailed rollout notes on the <a href="updates.html">Updates page</a> and the execution plan on the <a href="roadmap.html">V3 Roadmap</a>.</p>
       </article>
@@ -528,7 +528,7 @@ flowchart LR
 
             <line class="flow-line bus-branch" x1="324" y1="405" x2="346" y2="405"></line>
             <rect class="flow-node sink-node" x="346" y="388" rx="8" ry="8" width="236" height="34"></rect>
-            <text x="364" y="410">postgres_pgvector default</text>
+            <text x="364" y="410">qdrant default</text>
 
             <line class="flow-line bus-branch" x1="324" y1="449" x2="346" y2="449"></line>
             <rect class="flow-node sink-node" x="346" y="432" rx="8" ry="8" width="236" height="34"></rect>
@@ -589,7 +589,7 @@ flowchart LR
             <line class="flow-line bus-branch" x1="190" y1="243" x2="208" y2="243"></line>
 
             <rect class="flow-node sink-node" x="32" y="270" rx="8" ry="8" width="158" height="34"></rect>
-            <text x="46" y="292">Postgres pgvector</text>
+            <text x="46" y="292">Qdrant vectors</text>
             <line class="flow-line bus-branch" x1="190" y1="287" x2="208" y2="287"></line>
 
             <rect class="flow-node sink-node" x="32" y="314" rx="8" ry="8" width="158" height="34"></rect>
@@ -634,13 +634,13 @@ flowchart LR
         </article>
         <article class="card component-card">
           <h3>Qdrant</h3>
-          <p><strong>Benefit:</strong> optional full/operator vector engine.</p>
-          <p><strong>Why:</strong> payload-heavy filtering, quantization, snapshots, and distributed vector deployments remain useful beyond the public lite default.</p>
+          <p><strong>Benefit:</strong> first-class local vector engine.</p>
+          <p><strong>Why:</strong> payload-heavy filtering, quantization, snapshots, and distributed vector deployments keep the lite and full vector lanes aligned.</p>
         </article>
         <article class="card component-card">
           <h3>Postgres + pgvector</h3>
-          <p><strong>Benefit:</strong> low-latency vector + lexical retrieval in one lane.</p>
-          <p><strong>Why:</strong> improves fast-read hit rate and stabilizes p95 latency under mixed workloads.</p>
+          <p><strong>Benefit:</strong> SQL-co-located vector retrieval for full/operator stacks.</p>
+          <p><strong>Why:</strong> joins, relational backups, and Postgres-native operations remain valuable when users already run the SQL lane.</p>
         </article>
         <article class="card component-card">
           <h3>Mongo Raw</h3>
@@ -671,7 +671,7 @@ flowchart LR
         <h3>Learning is strongest when memory is both rich and reliable</h3>
         <p>
           The orchestrator's learning schema can only improve ranking if retrieval sources stay healthy, durable,
-          and synchronized. This architecture makes that possible: topic rollups + postgres-pgvector provide
+          and synchronized. This architecture makes that possible: topic rollups + Qdrant provide
           fast candidates, deep continuation adds MindsDB/Letta/memory-bank evidence, Mongo guarantees recovery, and guardrails keep the
           full loop from collapsing under pressure.
         </p>
@@ -698,8 +698,8 @@ flowchart LR
           <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
           <ul class="spec-list">
             <li><strong>App version lane:</strong> Public <code>v3.3.x</code></li>
-            <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Postgres pgvector, outbox fanout, retention workers</li>
-            <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + postgres_pgvector</code> by default; Qdrant remains optional for full/operator stacks</li>
+            <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
+            <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + qdrant</code> by default; pgvector remains first-class for full/operator stacks</li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
             <li><strong>Memory:</strong> 8-12 GB RAM baseline</li>
             <li><strong>Storage:</strong> 25-80 GB SSD depending on write volume</li>

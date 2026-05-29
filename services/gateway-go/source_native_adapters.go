@@ -73,6 +73,15 @@ func nativeQdrantCollection() string {
 	return token
 }
 
+func nativeApplyQdrantHeaders(req *http.Request, jsonBody bool) {
+	if jsonBody {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if apiKey := strings.TrimSpace(os.Getenv("QDRANT_API_KEY")); apiKey != "" {
+		req.Header.Set("api-key", apiKey)
+	}
+}
+
 func nativeFastembedBaseURL() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("ORCH_FASTEMBED_RS_BASE_URL")), "/")
 }
@@ -113,6 +122,9 @@ func nativeEmbeddingProviderUsesFastembed(provider string) bool {
 }
 
 func nativeDefaultEmbedDim() int {
+	if dim := envInt("ORCH_EMBED_DIM", 0); dim > 0 {
+		return maxInt(8, dim)
+	}
 	return maxInt(8, envInt("ORCH_PGVECTOR_EMBED_DIM", 768))
 }
 
@@ -298,6 +310,7 @@ func nativeQdrantCollectionDim(
 	if err != nil {
 		return 0, err
 	}
+	nativeApplyQdrantHeaders(req, false)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -341,6 +354,202 @@ func nativeQdrantCollectionDim(
 	}
 	nativeQdrantSetCachedDim(baseURL, collection, dim)
 	return dim, nil
+}
+
+func nativeQdrantCollectionMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "status=404") || (strings.Contains(lower, "not found") && strings.Contains(lower, "collection"))
+}
+
+func nativeQdrantEnsureCollection(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	collection string,
+	vectorDim int,
+) error {
+	if vectorDim <= 0 {
+		return errors.New("qdrant vector dimension unavailable")
+	}
+	if dim, err := nativeQdrantCollectionDim(ctx, client, baseURL, collection); err == nil {
+		if dim > 0 && dim != vectorDim {
+			return fmt.Errorf("qdrant collection dimension mismatch: existing=%d required=%d", dim, vectorDim)
+		}
+		return nil
+	} else if !nativeQdrantCollectionMissing(err) {
+		return err
+	}
+	payload := map[string]any{
+		"vectors": map[string]any{
+			"size":     vectorDim,
+			"distance": "Cosine",
+		},
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	requestURL := baseURL + "/collections/" + url.PathEscape(collection)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	nativeApplyQdrantHeaders(req, true)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode != http.StatusConflict {
+			message := "qdrant collection create status=" + strconv.Itoa(resp.StatusCode)
+			if trimmed := strings.TrimSpace(string(responseBody)); trimmed != "" {
+				message += " body=" + trimmed
+			}
+			return errors.New(message)
+		}
+	}
+	nativeQdrantSetCachedDim(baseURL, collection, vectorDim)
+	return nil
+}
+
+func nativeQdrantTopicTagsForPath(topicPath string) []string {
+	root := strings.TrimSpace(os.Getenv("DEFAULT_TOPIC_ROOT"))
+	if root == "" {
+		root = "root"
+	}
+	normalized := strings.Trim(strings.TrimSpace(topicPath), "/")
+	if normalized == "" || normalized == root {
+		return []string{root}
+	}
+	parts := strings.Split(normalized, "/")
+	tags := make([]string, 0, len(parts))
+	current := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := strings.TrimSpace(part)
+		if clean == "" {
+			continue
+		}
+		current = append(current, clean)
+		tags = append(tags, strings.Join(current, "/"))
+	}
+	if len(tags) == 0 {
+		return []string{root}
+	}
+	return tags
+}
+
+func nativeQdrantPointID(eventID string, item normalizedWrite) string {
+	seed := strings.TrimSpace(eventID)
+	if seed == "" {
+		seed = strings.Join([]string{
+			strings.TrimSpace(item.project),
+			strings.TrimSpace(item.fileName),
+			strings.TrimSpace(item.topicPath),
+			strings.TrimSpace(item.content),
+			strings.TrimSpace(item.createdAt),
+		}, "|")
+	}
+	sum := sha256.Sum256([]byte(seed))
+	id := make([]byte, 16)
+	copy(id, sum[:16])
+	id[6] = (id[6] & 0x0f) | 0x50
+	id[8] = (id[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16])
+}
+
+func (s *server) upsertQdrantFromWrite(
+	ctx context.Context,
+	item normalizedWrite,
+	eventID string,
+) (string, error) {
+	if !nativeSourceAdapterEnabled(sourceQdrant, true) {
+		return "skipped_adapter_disabled", nil
+	}
+	baseURL := nativeQdrantURL()
+	if baseURL == "" {
+		return "skipped_unconfigured", nil
+	}
+	collection := nativeQdrantCollection()
+	vectorDim := nativeDefaultEmbedDim()
+	if dim, err := nativeQdrantCollectionDim(ctx, s.client, baseURL, collection); err == nil && dim > 0 {
+		vectorDim = dim
+	} else if err != nil && !nativeQdrantCollectionMissing(err) {
+		return "failed_schema", err
+	}
+	vector, _, err := nativeEmbedQueryVector(ctx, s.client, item.content, vectorDim)
+	if err != nil {
+		return "failed_embed", err
+	}
+	if len(vector) <= 0 {
+		return "failed_embed", errors.New("empty embedding vector")
+	}
+	if err := nativeQdrantEnsureCollection(ctx, s.client, baseURL, collection, len(vector)); err != nil {
+		return "failed_schema", err
+	}
+	summary := strings.TrimSpace(item.content)
+	if summary == "" {
+		summary = item.fileName
+	}
+	createdAt := parseOptionalRFC3339(item.createdAt, time.Now().UTC())
+	payload := map[string]any{
+		"event_id":     strings.TrimSpace(eventID),
+		"project":      strings.TrimSpace(item.project),
+		"file":         strings.TrimSpace(item.fileName),
+		"summary":      clipRunes(summary, 500),
+		"topic_path":   strings.Trim(strings.TrimSpace(item.topicPath), "/"),
+		"topic_tags":   nativeQdrantTopicTagsForPath(item.topicPath),
+		"ts":           createdAt.Unix(),
+		"created_at":   createdAt.Format(time.RFC3339Nano),
+		"content_hash": sha256Hex(item.content),
+		"lifecycle":    normalizeMemoryLifecycle(item.lifecycle),
+	}
+	if item.agentID != "" {
+		payload["agent_id"] = strings.TrimSpace(item.agentID)
+	}
+	if item.sessionID != "" {
+		payload["session_id"] = strings.TrimSpace(item.sessionID)
+	}
+	if len(item.tags) > 0 {
+		payload["tags"] = append([]string{}, item.tags...)
+	}
+	requestPayload := map[string]any{
+		"points": []map[string]any{
+			{
+				"id":      nativeQdrantPointID(eventID, item),
+				"vector":  vector,
+				"payload": payload,
+			},
+		},
+	}
+	bodyBytes, err := json.Marshal(requestPayload)
+	if err != nil {
+		return "failed_serialize", err
+	}
+	requestURL := baseURL + "/collections/" + url.PathEscape(collection) + "/points?wait=true"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "failed_request", err
+	}
+	nativeApplyQdrantHeaders(req, true)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "failed_upsert", err
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := "qdrant upsert status=" + strconv.Itoa(resp.StatusCode)
+		if trimmed := strings.TrimSpace(string(responseBody)); trimmed != "" {
+			message += " body=" + trimmed
+		}
+		return "failed_upsert", errors.New(message)
+	}
+	return "succeeded", nil
 }
 
 func (s *server) queryQdrantSource(
@@ -418,7 +627,7 @@ func (s *server) queryQdrantSource(
 	if err != nil {
 		return nil, warnings, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	nativeApplyQdrantHeaders(req, true)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, warnings, err
