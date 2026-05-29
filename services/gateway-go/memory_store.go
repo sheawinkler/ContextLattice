@@ -937,6 +937,16 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]
 	if docs, ok := m.collectDocsFromHistoryIndex(ctx, projectFilter); ok {
 		return docs, nil
 	}
+	return m.collectDocsFromDisk(ctx, projectFilter, true, false)
+}
+
+func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter string, includeCold bool, includeEphemeral bool) ([]memoryStoreDoc, error) {
+	if m == nil || !m.policy.enabled {
+		return []memoryStoreDoc{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	root := m.policy.rootPath
 	if strings.TrimSpace(projectFilter) != "" {
 		project, err := sanitizeMemoryProject(projectFilter)
