@@ -124,7 +124,8 @@ contextlattice_checkpoint -h
 ./scripts/agent/memory-edge-backfill --include-inferred --min-confidence 0.90
 ./scripts/agent/memory-edge-backfill --write
 ./scripts/agent/memory-edge-inferred-retrofill --all-projects
-./scripts/agent/memory-edge-inferred-retrofill --all-projects --write --confirm-retrofill ALL_PROJECTS
+./scripts/agent/memory-edge-inferred-retrofill --all-projects --profile exploratory
+./scripts/agent/memory-edge-inferred-retrofill --all-projects --profile exploratory --write --confirm-retrofill ALL_PROJECTS
 ```
 
 ## Security and Privacy

@@ -5,10 +5,34 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from typing import Any
 
 from _common import emit, request_json
+
+
+PROFILE_PRESETS: dict[str, dict[str, float | int]] = {
+    "strict": {
+        "min_confidence": 0.90,
+        "inferred_peer_limit": 1,
+        "inferred_min_score": 0.90,
+        "inferred_min_shared_terms": 3,
+        "inferred_max_token_postings": 64,
+    },
+    "balanced": {
+        "min_confidence": 0.85,
+        "inferred_peer_limit": 3,
+        "inferred_min_score": 0.85,
+        "inferred_min_shared_terms": 3,
+        "inferred_max_token_postings": 128,
+    },
+    "exploratory": {
+        "min_confidence": 0.80,
+        "inferred_peer_limit": 5,
+        "inferred_min_score": 0.80,
+        "inferred_min_shared_terms": 3,
+        "inferred_max_token_postings": 256,
+    },
+}
 
 
 def relation_stats(body: dict[str, Any], relation: str) -> dict[str, Any]:
@@ -55,12 +79,13 @@ def build_payload(args: argparse.Namespace, dry_run: bool) -> dict[str, Any]:
     return payload
 
 
-def summarize(stage: str, body: dict[str, Any], relation: str) -> dict[str, Any]:
+def summarize(stage: str, body: dict[str, Any], relation: str, profile: str) -> dict[str, Any]:
     stat = relation_stats(body, relation)
     return {
         "stage": stage,
         "ok": bool(body.get("ok", False)),
         "dry_run": bool(body.get("dry_run", False)),
+        "profile": profile,
         "project": body.get("project", ""),
         "relation": relation,
         "scanned_docs": as_int(body.get("scanned_docs")),
@@ -97,6 +122,14 @@ def confirm_token(args: argparse.Namespace) -> str:
     return "ALL_PROJECTS" if args.all_projects else args.project
 
 
+def apply_profile(args: argparse.Namespace) -> argparse.Namespace:
+    preset = PROFILE_PRESETS[args.profile]
+    for key, value in preset.items():
+        if getattr(args, key) is None:
+            setattr(args, key, value)
+    return args
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     scope = parser.add_mutually_exclusive_group()
@@ -114,19 +147,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude-cold", dest="include_cold", action="store_false")
     parser.add_argument("--include-ephemeral", action="store_true")
     parser.add_argument("--include-test-memory", action="store_true")
-    parser.add_argument("--min-confidence", type=float, default=0.90)
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILE_PRESETS),
+        default="strict",
+        help="Preset inference density. strict=.90/peer1/postings64, balanced=.85/peer3/postings128, exploratory=.80/peer5/postings256.",
+    )
+    parser.add_argument("--min-confidence", type=float, default=None)
     parser.add_argument("--max-candidates", type=int, default=50000)
     parser.add_argument("--max-history-lines", type=int, default=1)
     parser.add_argument("--sample-limit", type=int, default=20)
     parser.add_argument("--inferred-relation", default="inferred_related")
-    parser.add_argument("--inferred-peer-limit", type=int, default=1)
+    parser.add_argument("--inferred-peer-limit", type=int, default=None)
     parser.add_argument("--inferred-scan-limit", type=int, default=5000)
-    parser.add_argument("--inferred-min-score", type=float, default=0.90)
-    parser.add_argument("--inferred-min-shared-terms", type=int, default=3)
-    parser.add_argument("--inferred-max-token-postings", type=int, default=64)
+    parser.add_argument("--inferred-min-score", type=float, default=None)
+    parser.add_argument("--inferred-min-shared-terms", type=int, default=None)
+    parser.add_argument("--inferred-max-token-postings", type=int, default=None)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--json", action="store_true", help="Emit full response payloads instead of summaries.")
-    return parser.parse_args()
+    return apply_profile(parser.parse_args())
 
 
 def main() -> int:
@@ -135,7 +174,7 @@ def main() -> int:
     relation = args.inferred_relation
 
     preflight = request_json("POST", "/v1/memory/edges/backfill", build_payload(args, True), args.timeout)
-    summaries = [summarize("dry_run_preflight", preflight, relation)]
+    summaries = [summarize("dry_run_preflight", preflight, relation, args.profile)]
     if not preflight.get("ok", False):
         if args.json:
             emit({"ok": False, "preflight": preflight}, pretty=True)
@@ -167,12 +206,12 @@ def main() -> int:
         return 2
 
     write = request_json("POST", "/v1/memory/edges/backfill", build_payload(args, False), args.timeout)
-    summaries.append(summarize("write", write, relation))
+    summaries.append(summarize("write", write, relation, args.profile))
     ok = bool(write.get("ok", False))
     repeat: dict[str, Any] | None = None
     if not args.skip_idempotency_check and ok:
         repeat = request_json("POST", "/v1/memory/edges/backfill", build_payload(args, False), args.timeout)
-        repeat_summary = summarize("idempotency_check", repeat, relation)
+        repeat_summary = summarize("idempotency_check", repeat, relation, args.profile)
         summaries.append(repeat_summary)
         ok = bool(repeat.get("ok", False)) and as_int(repeat_summary["written"]) == 0
 

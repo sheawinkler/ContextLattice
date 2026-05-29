@@ -50,10 +50,11 @@ Operator-safe retrofill wrapper:
 
 ```bash
 ./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private
-./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private --write --confirm-retrofill context-lattice-private
+./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private --profile exploratory
+./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private --profile exploratory --write --confirm-retrofill context-lattice-private
 ```
 
-The wrapper restricts the request to `inferred_related`, runs a dry-run preflight before any write, refuses truncated preflight results unless `--allow-truncated` is set, and repeats write mode once to verify idempotency.
+The wrapper restricts the request to `inferred_related`, runs a dry-run preflight before any write, refuses truncated preflight results unless `--allow-truncated` is set, and repeats write mode once to verify idempotency. Profiles provide density presets: `strict` (`0.90`, peer `1`, postings `64`), `balanced` (`0.85`, peer `3`, postings `128`), and `exploratory` (`0.80`, peer `5`, postings `256`). Explicit flags override the selected profile.
 
 ## Runtime Flags
 
