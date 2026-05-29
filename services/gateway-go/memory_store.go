@@ -25,13 +25,17 @@ type memoryStorePolicy struct {
 	enabled                    bool
 	rootPath                   string
 	historyPath                string
+	edgePath                   string
 	contentAddressed           bool
 	contentBlobsPath           string
 	contentLinkMode            string
 	rollupUseHistoryIndex      bool
 	historyStartupMaxLines     int
 	historyStartupTailMaxBytes int64
+	edgeStartupMaxLines        int
 	maxRecent                  int
+	maxEdges                   int
+	maxEdgeNeighbors           int
 	scanLimit                  int
 	maxSummaryChars            int
 	maxRollupSnippets          int
@@ -78,12 +82,17 @@ type topicRollupAggregate struct {
 }
 
 type memoryStore struct {
-	policy      memoryStorePolicy
-	mu          sync.RWMutex
-	recent      []memoryStoreEntry
-	latestTopic map[string]string
-	latestHash  map[string]string
-	rollupCache map[string]topicRollupCacheEntry
+	policy          memoryStorePolicy
+	mu              sync.RWMutex
+	recent          []memoryStoreEntry
+	latestTopic     map[string]string
+	latestHash      map[string]string
+	rollupCache     map[string]topicRollupCacheEntry
+	edges           map[string]memoryEdgeEntry
+	edgeOrder       []string
+	edgeOrdinal     map[string]int64
+	nextEdgeOrdinal int64
+	edgeAdjacency   map[string]map[string]struct{}
 }
 
 type topicRollupCacheEntry struct {
@@ -106,6 +115,10 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	if historyPath == "" {
 		historyPath = filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
 	}
+	edgePath := strings.TrimSpace(os.Getenv("GO_MEMORY_GRAPH_EDGE_PATH"))
+	if edgePath == "" {
+		edgePath = filepath.Join(root, "_contextlattice", "memory_edges.ndjson")
+	}
 	contentBlobsPath := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH"))
 	if contentBlobsPath == "" {
 		contentBlobsPath = filepath.Join(root, "_contextlattice", "content_blobs")
@@ -127,17 +140,25 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		1024*1024,
 		1024*1024*1024,
 	))
+	edgeStartupMaxLines := envInt("GO_MEMORY_GRAPH_EDGE_STARTUP_MAX_LINES", 50000)
+	if edgeStartupMaxLines < 0 {
+		edgeStartupMaxLines = 0
+	}
 	return memoryStorePolicy{
 		enabled:                    envBool("GO_MEMORY_STORE_ENABLED", true),
 		rootPath:                   root,
 		historyPath:                filepath.Clean(historyPath),
+		edgePath:                   filepath.Clean(edgePath),
 		contentAddressed:           envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
 		contentBlobsPath:           filepath.Clean(contentBlobsPath),
 		contentLinkMode:            contentLinkMode,
 		rollupUseHistoryIndex:      envBool("GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX", true),
 		historyStartupMaxLines:     historyStartupMaxLines,
 		historyStartupTailMaxBytes: historyStartupTailMaxBytes,
+		edgeStartupMaxLines:        edgeStartupMaxLines,
 		maxRecent:                  clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
+		maxEdges:                   clampInt(envInt("GO_MEMORY_GRAPH_EDGE_MAX", 100000), 100, 1000000),
+		maxEdgeNeighbors:           clampInt(envInt("GO_MEMORY_GRAPH_EDGE_NEIGHBOR_MAX", 200), 1, 1000),
 		scanLimit:                  clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
 		maxSummaryChars:            clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
 		maxRollupSnippets:          clampInt(envInt("GO_MEMORY_STORE_ROLLUP_SNIPPETS", 3), 1, 8),
@@ -158,11 +179,15 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 func newMemoryStoreFromEnv() (*memoryStore, error) {
 	policy := loadMemoryStorePolicy()
 	store := &memoryStore{
-		policy:      policy,
-		recent:      make([]memoryStoreEntry, 0, policy.maxRecent),
-		latestTopic: map[string]string{},
-		latestHash:  map[string]string{},
-		rollupCache: map[string]topicRollupCacheEntry{},
+		policy:        policy,
+		recent:        make([]memoryStoreEntry, 0, policy.maxRecent),
+		latestTopic:   map[string]string{},
+		latestHash:    map[string]string{},
+		rollupCache:   map[string]topicRollupCacheEntry{},
+		edges:         map[string]memoryEdgeEntry{},
+		edgeOrder:     []string{},
+		edgeOrdinal:   map[string]int64{},
+		edgeAdjacency: map[string]map[string]struct{}{},
 	}
 	if !policy.enabled {
 		return store, nil
@@ -173,12 +198,18 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 	if err := os.MkdirAll(filepath.Dir(policy.historyPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create memory store history directory: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(policy.edgePath), 0o755); err != nil {
+		return nil, fmt.Errorf("create memory graph edge directory: %w", err)
+	}
 	if policy.contentAddressed {
 		if err := os.MkdirAll(policy.contentBlobsPath, 0o755); err != nil {
 			return nil, fmt.Errorf("create memory store content blobs directory: %w", err)
 		}
 	}
 	if err := store.loadHistory(); err != nil {
+		return nil, err
+	}
+	if err := store.loadEdges(); err != nil {
 		return nil, err
 	}
 	return store, nil

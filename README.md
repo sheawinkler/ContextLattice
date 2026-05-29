@@ -110,6 +110,17 @@ contextlattice_checkpoint -h
 | Lite | `2-4` vCPU | `8-12 GB` | `25-80 GB` |
 | Full | `6-8` vCPU | `12-20 GB` | `100-180 GB` |
 
+## Memory Graph
+
+- `GET|POST /v1/memory/edges` persists explicit typed relationships.
+- `POST /v1/memory/edges/backfill` audits or applies deterministic retroactive edges. It is dry-run by default.
+- `POST /v1/memory/neighbors` returns explicit edge neighbors merged with semantic/topic neighbors.
+
+```bash
+./scripts/agent/memory-edge-backfill
+./scripts/agent/memory-edge-backfill --write
+```
+
 ## Security and Privacy
 
 - Local-first by default.

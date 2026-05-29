@@ -23,6 +23,7 @@ Required operations:
 - `add_memory(input) -> memory_id`
 - `update_memory(memory_id, patch) -> bool`
 - `get_memory(memory_id) -> memory`
+- `upsert_memory_edge(source_id, target_id, relation, metadata) -> edge_id`
 - `query_neighbors(memory_id, filters) -> list[memory]`
 - `batch_insert(items) -> list[memory_id]`
 
