@@ -67,6 +67,7 @@ def build_payload(args: argparse.Namespace, dry_run: bool) -> dict[str, Any]:
         "inferred_min_score": args.inferred_min_score,
         "inferred_min_shared_terms": args.inferred_min_shared_terms,
         "inferred_max_token_postings": args.inferred_max_token_postings,
+        "corpus": args.corpus,
     }
     if args.project:
         payload["project"] = args.project
@@ -86,6 +87,7 @@ def summarize(stage: str, body: dict[str, Any], relation: str, profile: str) -> 
         "ok": bool(body.get("ok", False)),
         "dry_run": bool(body.get("dry_run", False)),
         "profile": profile,
+        "corpus": body.get("corpus"),
         "project": body.get("project", ""),
         "relation": relation,
         "scanned_docs": as_int(body.get("scanned_docs")),
@@ -148,6 +150,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-ephemeral", action="store_true")
     parser.add_argument("--include-test-memory", action="store_true")
     parser.add_argument(
+        "--corpus",
+        choices=("history_index", "disk"),
+        default="history_index",
+        help="Corpus source. history_index is the live bounded hot index; disk scans project files and is best for older project-scoped retrofills.",
+    )
+    parser.add_argument(
         "--profile",
         choices=sorted(PROFILE_PRESETS),
         default="strict",
@@ -171,6 +179,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     require_scope(args)
+    if args.corpus == "disk" and args.all_projects:
+        emit(
+            {
+                "ok": False,
+                "error": "--corpus disk requires --project; run per project to avoid broad filesystem scans",
+            },
+            pretty=True,
+        )
+        return 2
     relation = args.inferred_relation
 
     preflight = request_json("POST", "/v1/memory/edges/backfill", build_payload(args, True), args.timeout)

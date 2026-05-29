@@ -45,6 +45,7 @@ Key optional fields:
 - `inferred_min_score` (default `0.90`): minimum inferred score to report.
 - `inferred_min_shared_terms` (default `3`): minimum lexical overlap before scoring.
 - `inferred_max_token_postings` (default `64`): skips overly-common terms to bound fanout.
+- `corpus` (default `history_index`): `history_index` uses the live bounded hot index; `disk` scans project files and is intended for older project-scoped retrofills.
 
 Operator-safe retrofill wrapper:
 
@@ -52,6 +53,7 @@ Operator-safe retrofill wrapper:
 ./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private
 ./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private --profile exploratory
 ./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private --profile exploratory --write --confirm-retrofill context-lattice-private
+./scripts/agent/memory-edge-inferred-retrofill --project hermes-agent-ultra --corpus disk --profile exploratory
 ```
 
 The wrapper restricts the request to `inferred_related`, runs a dry-run preflight before any write, refuses truncated preflight results unless `--allow-truncated` is set, and repeats write mode once to verify idempotency. Profiles provide density presets: `strict` (`0.90`, peer `1`, postings `64`), `balanced` (`0.85`, peer `3`, postings `128`), and `exploratory` (`0.80`, peer `5`, postings `256`). Explicit flags override the selected profile.

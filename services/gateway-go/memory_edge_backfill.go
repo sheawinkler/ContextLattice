@@ -33,6 +33,7 @@ type memoryEdgeBackfillRequest struct {
 	InferredMinScore    float64
 	InferredMinShared   int
 	InferredMaxPostings int
+	Corpus              string
 	AllowedRelation     map[string]struct{}
 	RequestedRelations  []string
 }
@@ -78,6 +79,7 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 		InferredMinScore:    0.90,
 		InferredMinShared:   3,
 		InferredMaxPostings: 64,
+		Corpus:              "history_index",
 		AllowedRelation:     map[string]struct{}{},
 		RequestedRelations:  []string{},
 	}
@@ -155,6 +157,20 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 		req.InferredMaxPostings = anyToInt(payload["inferred_max_token_postings"], req.InferredMaxPostings)
 	}
 	req.InferredMaxPostings = clampInt(req.InferredMaxPostings, 4, 512)
+	if rawCorpus := firstNonEmptyStrings(
+		anyToString(payload["corpus"]),
+		anyToString(payload["backfill_corpus"]),
+		anyToString(payload["scan_source"]),
+	); rawCorpus != "" {
+		switch strings.TrimSpace(strings.ToLower(rawCorpus)) {
+		case "history", "history_index", "history-index", "hot", "hot_index", "hot-index", "auto":
+			req.Corpus = "history_index"
+		case "disk", "filesystem", "file_system", "full_disk", "full-disk":
+			req.Corpus = "disk"
+		default:
+			return req, errors.New("corpus must be history_index or disk")
+		}
+	}
 	if rawRelations, ok := payload["relations"].([]any); ok {
 		for _, raw := range rawRelations {
 			relation, err := normalizeMemoryEdgeRelation(anyToString(raw))
@@ -323,7 +339,13 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	if m == nil || !m.policy.enabled {
 		return nil, errors.New("go memory store is disabled")
 	}
-	storeDocs, err := m.collectDocs(ctx, req.Project)
+	var storeDocs []memoryStoreDoc
+	var err error
+	if req.Corpus == "disk" {
+		storeDocs, err = m.collectDocsFromDisk(ctx, req.Project, req.IncludeCold, req.IncludeEphemeral)
+	} else {
+		storeDocs, err = m.collectDocs(ctx, req.Project)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +414,7 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"inferred_min_score":           req.InferredMinScore,
 		"inferred_min_shared_terms":    req.InferredMinShared,
 		"inferred_max_token_postings":  req.InferredMaxPostings,
+		"corpus":                       req.Corpus,
 		"requested_relations":          req.RequestedRelations,
 		"relations":                    generator.stats,
 		"samples":                      generator.sampleRows,

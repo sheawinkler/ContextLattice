@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -343,6 +344,57 @@ func TestMemoryEdgesBackfillInferredScoringBounded(t *testing.T) {
 	}
 	if anyToInt(repeatRun["existing"], 0) == 0 {
 		t.Fatalf("repeat inferred backfill should report existing edges, got %#v", repeatRun)
+	}
+}
+
+func TestMemoryEdgesBackfillDiskCorpusCoversProjectOutsideHotIndex(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	if _, _, err := s.memoryStore.put(normalizedWrite{
+		project:   "hotproject",
+		fileName:  "notes/recent.md",
+		content:   "recent hot index seed",
+		topicPath: "runbooks/hot",
+	}); err != nil {
+		t.Fatalf("seed hot index write: %v", err)
+	}
+	coldDir := filepath.Join(s.memoryStore.policy.rootPath, "coldproject", "notes")
+	if err := os.MkdirAll(coldDir, 0o755); err != nil {
+		t.Fatalf("create cold project dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(coldDir, "a.md"),
+		[]byte("qdrant vector recall latency memory graph shared context scoring qdrant"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write cold a: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(coldDir, "b.md"),
+		[]byte("qdrant vector recall latency memory graph shared context scoring"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write cold b: %v", err)
+	}
+
+	hotIndexOnly := postEdgeBackfillForTest(t, gateway.URL, `{"project":"coldproject","relations":["inferred_related"],"include_inferred":true,"min_confidence":0.8,"inferred_min_score":0.8,"inferred_peer_limit":5,"inferred_max_token_postings":256,"sample_limit":20}`)
+	if anyToString(hotIndexOnly["corpus"]) != "history_index" {
+		t.Fatalf("expected history_index corpus, got %#v", hotIndexOnly)
+	}
+	if anyToInt(hotIndexOnly["scanned_docs"], -1) != 0 || backfillRelationStatInt(hotIndexOnly, "inferred_related", "eligible") != 0 {
+		t.Fatalf("history index should not see disk-only cold project, got %#v", hotIndexOnly)
+	}
+
+	diskRun := postEdgeBackfillForTest(t, gateway.URL, `{"project":"coldproject","corpus":"disk","relations":["inferred_related"],"include_inferred":true,"min_confidence":0.8,"inferred_min_score":0.8,"inferred_peer_limit":5,"inferred_max_token_postings":256,"sample_limit":20}`)
+	if anyToString(diskRun["corpus"]) != "disk" {
+		t.Fatalf("expected disk corpus, got %#v", diskRun)
+	}
+	if anyToInt(diskRun["scanned_docs"], 0) != 2 {
+		t.Fatalf("expected disk corpus to scan two docs, got %#v", diskRun)
+	}
+	if got := backfillRelationStatInt(diskRun, "inferred_related", "eligible"); got == 0 {
+		t.Fatalf("expected disk corpus inferred candidate, got %#v", diskRun)
 	}
 }
 

@@ -126,6 +126,7 @@ contextlattice_checkpoint -h
 ./scripts/agent/memory-edge-inferred-retrofill --all-projects
 ./scripts/agent/memory-edge-inferred-retrofill --all-projects --profile exploratory
 ./scripts/agent/memory-edge-inferred-retrofill --all-projects --profile exploratory --write --confirm-retrofill ALL_PROJECTS
+./scripts/agent/memory-edge-inferred-retrofill --project hermes-agent-ultra --corpus disk --profile exploratory
 ```
 
 ## Security and Privacy
