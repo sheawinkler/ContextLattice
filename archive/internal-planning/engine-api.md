@@ -46,6 +46,15 @@ Key optional fields:
 - `inferred_min_shared_terms` (default `3`): minimum lexical overlap before scoring.
 - `inferred_max_token_postings` (default `64`): skips overly-common terms to bound fanout.
 
+Operator-safe retrofill wrapper:
+
+```bash
+./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private
+./scripts/agent/memory-edge-inferred-retrofill --project context-lattice-private --write --confirm-retrofill context-lattice-private
+```
+
+The wrapper restricts the request to `inferred_related`, runs a dry-run preflight before any write, refuses truncated preflight results unless `--allow-truncated` is set, and repeats write mode once to verify idempotency.
+
 ## Runtime Flags
 
 - `USE_RUST_CODEC`
