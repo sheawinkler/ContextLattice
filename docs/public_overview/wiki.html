@@ -140,10 +140,16 @@
               <td>Structured pack with topical grouping</td>
             </tr>
             <tr>
+              <td>Typed memory edges</td>
+              <td><code>GET|POST /v1/memory/edges</code>, <code>POST /v1/memory/edges/backfill</code></td>
+              <td>Persist explicit relationships and audit/apply deterministic retroactive edges</td>
+              <td>Durable edge records in the local memory graph index with dry-run backfill counts</td>
+            </tr>
+            <tr>
               <td>Graph neighbors</td>
               <td><code>POST /v1/memory/neighbors</code></td>
               <td>Detail dives from a known memory id</td>
-              <td>Adjacent nodes with edge/relationship semantics</td>
+              <td>Explicit edge neighbors merged with semantic/topic neighbors</td>
             </tr>
             <tr>
               <td>Health</td>

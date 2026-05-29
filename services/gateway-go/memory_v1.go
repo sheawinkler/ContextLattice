@@ -236,7 +236,40 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": splitErr.Error()})
 		return
 	}
+	topicFilter := ""
+	if filters, ok := payload["filters"].(map[string]any); ok {
+		topicFilter = strings.TrimSpace(anyToString(filters["topic_path"]))
+	}
+	graphRows := []map[string]any{}
+	graphBackendName := ""
+	if backend := s.memoryGraphBackend(); backend != nil {
+		graphBackendName = "go_memory_store"
+		rows, edgeErr := backend.memoryGraphNeighbors(r.Context(), memoryGraphNeighborQuery{
+			MemoryID:         memoryID,
+			Limit:            limit,
+			Relation:         anyToString(payload["relation"]),
+			Direction:        anyToString(payload["direction"]),
+			IncludeEphemeral: requestIncludesEphemeralMemory(payload),
+			TopicPath:        topicFilter,
+		})
+		if edgeErr != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": edgeErr.Error()})
+			return
+		}
+		graphRows = rows
+	}
 	if !s.retrieval.enabled {
+		if len(graphRows) > 0 {
+			response := map[string]any{
+				"results":    mergeNeighborRows(memoryID, graphRows, nil, limit),
+				"edge_count": len(graphRows),
+			}
+			if graphBackendName != "" {
+				response["graph_backend"] = graphBackendName
+			}
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
 		if s.strictNoPythonRuntime {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 				"ok":     false,
@@ -263,10 +296,6 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, backendStatus, backendResp)
 		return
 	}
-	topicFilter := ""
-	if filters, ok := payload["filters"].(map[string]any); ok {
-		topicFilter = strings.TrimSpace(anyToString(filters["topic_path"]))
-	}
 	retrievalPayload := map[string]any{
 		"query":   strings.TrimSpace(project + " " + fileName),
 		"limit":   limit,
@@ -277,6 +306,18 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 	}
 	response, _, execErr := s.executeRetrieval(r.Context(), incomingHeaders, retrievalPayload, false)
 	if execErr != nil {
+		if len(graphRows) > 0 {
+			response := map[string]any{
+				"results":    mergeNeighborRows(memoryID, graphRows, nil, limit),
+				"edge_count": len(graphRows),
+				"warnings":   []string{"semantic neighbor retrieval failed; returned explicit edge neighbors only"},
+			}
+			if graphBackendName != "" {
+				response["graph_backend"] = graphBackendName
+			}
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error":  "memory neighbors retrieval failed",
 			"detail": execErr.Error(),
@@ -287,7 +328,14 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 	if results == nil {
 		results = []any{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+	responsePayload := map[string]any{
+		"results":    mergeNeighborRows(memoryID, graphRows, results, limit),
+		"edge_count": len(graphRows),
+	}
+	if graphBackendName != "" {
+		responsePayload["graph_backend"] = graphBackendName
+	}
+	writeJSON(w, http.StatusOK, responsePayload)
 }
 
 func (s *server) fetchV1MemoryPayload(
