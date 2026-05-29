@@ -37,7 +37,9 @@ ContextLattice provides a single memory contract for agentic systems:
 - Tooling compatibility: MCP + HTTP clients.
 - Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
 - Public single-container lite vector default: `topic_rollups` only.
-- Public local lite vector default: `topic_rollups + qdrant`; pgvector is not started by default and remains first-class for full/operator stacks.
+- Public local lite core default: `topic_rollups + qdrant`; pgvector and memory-bank spike adapters are not started by default.
+- Public local lite advanced: opt-in adapter lab via `gmake mem-up-lite-advanced`.
+- Full/operator stacks: Qdrant remains the primary vector-native lane; pgvector stays supported for SQL-co-located vector workloads.
 
 ## Quickstart
 
@@ -107,7 +109,8 @@ contextlattice_checkpoint -h
 
 | Profile | CPU | RAM | Storage |
 | --- | --- | --- | --- |
-| Lite | `2-4` vCPU | `8-12 GB` | `25-80 GB` |
+| Lite core | `2-4` vCPU | `8-12 GB` | `25-80 GB` |
+| Lite advanced | `4-6` vCPU | `12-16 GB` | `80-140 GB` |
 | Full | `6-8` vCPU | `12-20 GB` | `100-180 GB` |
 
 ## Memory Graph

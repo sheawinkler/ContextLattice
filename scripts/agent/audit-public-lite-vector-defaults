@@ -78,15 +78,30 @@ def main() -> int:
                 "qdrant_present": "qdrant" in services,
                 "pgvector_db_absent": "pgvector-db" not in services,
                 "mcp_qdrant_absent": "mcp-qdrant" not in services,
+                "memory_bank_spike_absent": "memory-bank-spike-rs" not in services,
+                "adapter_lab_absent": not any(
+                    service in services
+                    for service in (
+                        "lancedb-spike-adapter",
+                        "trieve-spike-adapter",
+                        "helixdb-spike-adapter",
+                        "icm-spike-adapter",
+                        "shodh-spike-adapter",
+                        "memvid-spike-adapter",
+                        "surrealdb-spike-adapter",
+                    )
+                ),
             }
             env_checks = [
                 assert_env(config, "QDRANT_URL", "http://qdrant:6333"),
                 assert_env(config, "QDRANT_LOCAL_URL", "http://qdrant:6333"),
                 assert_env(config, "ORCH_PGVECTOR_ENABLED", "false"),
                 assert_env(config, "ORCH_PGVECTOR_FANOUT_ENABLED", "false"),
-                assert_env(config, "ORCH_RETRIEVAL_SOURCES", "qdrant,mongo_raw,topic_rollups,memory_bank"),
+                assert_env(config, "ORCH_RETRIEVAL_SOURCES", "qdrant,mongo_raw,topic_rollups"),
                 assert_env(config, "ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant"),
-                assert_env(config, "ORCH_RETRIEVAL_SLOW_SOURCES", "mongo_raw,memory_bank"),
+                assert_env(config, "ORCH_RETRIEVAL_SLOW_SOURCES", "mongo_raw"),
+                assert_env(config, "ORCH_RETRIEVAL_MEMORY_BANK_DEFAULT_ENABLED", "false"),
+                assert_env(config, "ORCH_MEMORY_BANK_SEARCH_BACKEND", "disabled"),
                 assert_env(config, "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true"),
                 assert_env(config, "GO_WRITE_QDRANT_FANOUT_MODE", "async"),
                 assert_env(config, "GO_WRITE_PGVECTOR_FANOUT_MODE", "disabled"),
