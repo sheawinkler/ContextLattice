@@ -16,17 +16,26 @@ type graphTelemetryCount struct {
 }
 
 type graphTelemetryProject struct {
-	Project            string                `json:"project"`
-	Docs               int                   `json:"docs"`
-	ConnectedDocs      int                   `json:"connected_docs"`
-	IsolatedDocs       int                   `json:"isolated_docs"`
-	Edges              int                   `json:"edges"`
-	InferredEdges      int                   `json:"inferred_edges"`
-	ExplicitEdges      int                   `json:"explicit_edges"`
-	InboundEdges       int                   `json:"inbound_edges"`
-	OutboundEdges      int                   `json:"outbound_edges"`
-	DensityEdgesPerDoc float64               `json:"density_edges_per_doc"`
-	TopRelations       []graphTelemetryCount `json:"top_relations"`
+	Project                   string                `json:"project"`
+	Docs                      int                   `json:"docs"`
+	ConnectedDocs             int                   `json:"connected_docs"`
+	IsolatedDocs              int                   `json:"isolated_docs"`
+	Edges                     int                   `json:"edges"`
+	InferredEdges             int                   `json:"inferred_edges"`
+	StaleInferredEdges        int                   `json:"stale_inferred_edges"`
+	ExplicitEdges             int                   `json:"explicit_edges"`
+	InboundEdges              int                   `json:"inbound_edges"`
+	OutboundEdges             int                   `json:"outbound_edges"`
+	DensityEdgesPerDoc        float64               `json:"density_edges_per_doc"`
+	IsolationRatio            float64               `json:"isolation_ratio"`
+	MaxNodeDegree             int                   `json:"max_node_degree"`
+	OverconnectedAnchorCount  int                   `json:"overconnected_anchor_count"`
+	QualityScore              int                   `json:"quality_score"`
+	QualityStatus             string                `json:"quality_status"`
+	QualityReasons            []string              `json:"quality_reasons"`
+	NeedsBackfill             bool                  `json:"needs_backfill"`
+	RecommendedBackfillCorpus string                `json:"recommended_backfill_corpus"`
+	TopRelations              []graphTelemetryCount `json:"top_relations"`
 }
 
 type graphTelemetryNode struct {
@@ -39,39 +48,46 @@ type graphTelemetryNode struct {
 }
 
 type graphTelemetrySnapshot struct {
-	OK                  bool                    `json:"ok"`
-	Source              string                  `json:"source"`
-	GeneratedAt         string                  `json:"generated_at"`
-	ProjectFilter       string                  `json:"project_filter,omitempty"`
-	Corpus              string                  `json:"corpus"`
-	Status              string                  `json:"status"`
-	DocCount            int                     `json:"doc_count"`
-	EdgeCount           int                     `json:"edge_count"`
-	ConnectedDocCount   int                     `json:"connected_doc_count"`
-	IsolatedDocCount    int                     `json:"isolated_doc_count"`
-	InferredEdgeCount   int                     `json:"inferred_edge_count"`
-	ExplicitEdgeCount   int                     `json:"explicit_edge_count"`
-	DensityEdgesPerDoc  float64                 `json:"density_edges_per_doc"`
-	Projects            []graphTelemetryProject `json:"projects"`
-	Relations           []graphTelemetryCount   `json:"relations"`
-	Lifecycles          []graphTelemetryCount   `json:"lifecycles"`
-	TopNodes            []graphTelemetryNode    `json:"top_nodes"`
-	Recommendations     []string                `json:"recommendations"`
-	EdgeStore           map[string]any          `json:"edge_store"`
-	DocCollectionStatus string                  `json:"doc_collection_status"`
+	OK                     bool                    `json:"ok"`
+	Source                 string                  `json:"source"`
+	GeneratedAt            string                  `json:"generated_at"`
+	ProjectFilter          string                  `json:"project_filter,omitempty"`
+	Corpus                 string                  `json:"corpus"`
+	Status                 string                  `json:"status"`
+	DocCount               int                     `json:"doc_count"`
+	EdgeCount              int                     `json:"edge_count"`
+	ConnectedDocCount      int                     `json:"connected_doc_count"`
+	IsolatedDocCount       int                     `json:"isolated_doc_count"`
+	InferredEdgeCount      int                     `json:"inferred_edge_count"`
+	StaleInferredEdgeCount int                     `json:"stale_inferred_edge_count"`
+	ExplicitEdgeCount      int                     `json:"explicit_edge_count"`
+	DensityEdgesPerDoc     float64                 `json:"density_edges_per_doc"`
+	QualityStatus          string                  `json:"quality_status"`
+	QualityScore           int                     `json:"quality_score"`
+	RepairProjectCount     int                     `json:"repair_project_count"`
+	Projects               []graphTelemetryProject `json:"projects"`
+	Relations              []graphTelemetryCount   `json:"relations"`
+	Lifecycles             []graphTelemetryCount   `json:"lifecycles"`
+	TopNodes               []graphTelemetryNode    `json:"top_nodes"`
+	Recommendations        []string                `json:"recommendations"`
+	EdgeStore              map[string]any          `json:"edge_store"`
+	DocCollectionStatus    string                  `json:"doc_collection_status"`
 }
 
 type graphTelemetryProjectStats struct {
-	docs          int
-	docIDs        map[string]struct{}
-	connected     map[string]struct{}
-	isolated      int
-	edges         int
-	inferred      int
-	explicit      int
-	inbound       int
-	outbound      int
-	relationCount map[string]int
+	docs                     int
+	docIDs                   map[string]struct{}
+	connected                map[string]struct{}
+	isolated                 int
+	edges                    int
+	inferred                 int
+	staleInferred            int
+	explicit                 int
+	inbound                  int
+	outbound                 int
+	maxNodeDegree            int
+	overconnectedAnchorCount int
+	relationCount            map[string]int
 }
 
 type graphTelemetryNodeStats struct {
@@ -82,7 +98,7 @@ type graphTelemetryNodeStats struct {
 	outbound int
 }
 
-func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectFilter string, includeEphemeral bool, topLimit int) (graphTelemetrySnapshot, error) {
+func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectFilter string, includeEphemeral bool, topLimit int, staleInferredAfter time.Time) (graphTelemetrySnapshot, error) {
 	if m == nil || !m.policy.enabled {
 		return graphTelemetrySnapshot{}, errors.New("go memory store is disabled")
 	}
@@ -145,6 +161,7 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 	lifecycleCounts := map[string]int{}
 	nodeStats := map[string]*graphTelemetryNodeStats{}
 	inferredCount := 0
+	staleInferredCount := 0
 	explicitCount := 0
 	for _, edge := range edges {
 		projectKey := strings.ToLower(edge.Project)
@@ -162,6 +179,12 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 		if inferred {
 			inferredCount += 1
 			stats.inferred += 1
+			if !staleInferredAfter.IsZero() {
+				if createdAt, ok := parseTimeBestEffort(edge.CreatedAt); ok && createdAt.Before(staleInferredAfter) {
+					staleInferredCount += 1
+					stats.staleInferred += 1
+				}
+			}
 		} else {
 			explicitCount += 1
 			stats.explicit += 1
@@ -189,6 +212,7 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 		recordNode(edge.SourceID, true)
 		recordNode(edge.TargetID, false)
 	}
+	graphTelemetryApplyNodeQuality(projectStats, nodeStats)
 
 	connectedDocCount := 0
 	for id := range docIDs {
@@ -220,27 +244,34 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 		status = "sparse"
 	}
 
+	allProjects := graphTelemetryProjects(projectStats, 0)
+	projects := graphTelemetryProjects(projectStats, topLimit)
+	qualityStatus, qualityScore, repairProjectCount := graphTelemetryGlobalQuality(allProjects, status)
 	return graphTelemetrySnapshot{
-		OK:                  true,
-		Source:              "go_memory_store",
-		GeneratedAt:         time.Now().UTC().Format(time.RFC3339Nano),
-		ProjectFilter:       projectFilter,
-		Corpus:              "memory_store",
-		Status:              status,
-		DocCount:            len(docs),
-		EdgeCount:           len(edges),
-		ConnectedDocCount:   connectedDocCount,
-		IsolatedDocCount:    isolatedDocCount,
-		InferredEdgeCount:   inferredCount,
-		ExplicitEdgeCount:   explicitCount,
-		DensityEdgesPerDoc:  ratioFloat(len(edges), len(docs)),
-		Projects:            graphTelemetryProjects(projectStats, topLimit),
-		Relations:           topGraphTelemetryCounts(relationCounts, topLimit),
-		Lifecycles:          topGraphTelemetryCounts(lifecycleCounts, topLimit),
-		TopNodes:            graphTelemetryTopNodes(nodeStats, topLimit),
-		Recommendations:     graphTelemetryRecommendations(status, len(docs), len(edges), inferredCount, isolatedDocCount),
-		EdgeStore:           m.memoryGraphEdgeStoreInfo(),
-		DocCollectionStatus: docStatus,
+		OK:                     true,
+		Source:                 "go_memory_store",
+		GeneratedAt:            time.Now().UTC().Format(time.RFC3339Nano),
+		ProjectFilter:          projectFilter,
+		Corpus:                 "memory_store",
+		Status:                 status,
+		DocCount:               len(docs),
+		EdgeCount:              len(edges),
+		ConnectedDocCount:      connectedDocCount,
+		IsolatedDocCount:       isolatedDocCount,
+		InferredEdgeCount:      inferredCount,
+		StaleInferredEdgeCount: staleInferredCount,
+		ExplicitEdgeCount:      explicitCount,
+		DensityEdgesPerDoc:     ratioFloat(len(edges), len(docs)),
+		QualityStatus:          qualityStatus,
+		QualityScore:           qualityScore,
+		RepairProjectCount:     repairProjectCount,
+		Projects:               projects,
+		Relations:              topGraphTelemetryCounts(relationCounts, topLimit),
+		Lifecycles:             topGraphTelemetryCounts(lifecycleCounts, topLimit),
+		TopNodes:               graphTelemetryTopNodes(nodeStats, topLimit),
+		Recommendations:        graphTelemetryRecommendations(status, len(docs), len(edges), inferredCount, isolatedDocCount),
+		EdgeStore:              m.memoryGraphEdgeStoreInfo(),
+		DocCollectionStatus:    docStatus,
 	}, nil
 }
 
@@ -275,24 +306,165 @@ func ratioFloat(numerator int, denominator int) float64 {
 	return float64(numerator) / float64(denominator)
 }
 
+func graphTelemetryAnchorThreshold(docs int) int {
+	if docs <= 0 {
+		return 0
+	}
+	threshold := (docs + 3) / 4
+	if docs < 20 {
+		threshold = docs * 4
+	}
+	if threshold < 12 {
+		threshold = 12
+	}
+	return threshold
+}
+
+func graphTelemetryApplyNodeQuality(projectStats map[string]*graphTelemetryProjectStats, nodeStats map[string]*graphTelemetryNodeStats) {
+	for _, node := range nodeStats {
+		if node == nil {
+			continue
+		}
+		stats := projectStats[strings.ToLower(node.project)]
+		if stats == nil {
+			continue
+		}
+		degree := node.inbound + node.outbound
+		if degree > stats.maxNodeDegree {
+			stats.maxNodeDegree = degree
+		}
+		threshold := graphTelemetryAnchorThreshold(stats.docs)
+		if threshold > 0 && degree >= threshold {
+			stats.overconnectedAnchorCount += 1
+		}
+	}
+}
+
+func graphTelemetryProjectQuality(stats *graphTelemetryProjectStats) (int, string, bool, string, []string) {
+	if stats == nil {
+		return 100, "healthy", false, "history_index", nil
+	}
+	score := 100
+	needsBackfill := false
+	reasons := []string{}
+	recommendedCorpus := "history_index"
+	density := ratioFloat(stats.edges, stats.docs)
+	isolationRatio := ratioFloat(stats.isolated, stats.docs)
+
+	if stats.docs == 0 {
+		if stats.edges > 0 {
+			score -= 20
+			reasons = append(reasons, "edges_without_indexed_docs")
+		}
+		return clampInt(score, 0, 100), graphTelemetryQualityStatus(score, false, reasons), false, recommendedCorpus, reasons
+	}
+	if stats.isolated > 0 {
+		penalty := int(isolationRatio * 80)
+		if stats.isolated >= 100 && penalty < 15 {
+			penalty = 15
+		}
+		score -= clampInt(penalty, 5, 35)
+		if isolationRatio >= 0.10 || stats.isolated >= 100 {
+			needsBackfill = true
+			recommendedCorpus = "disk"
+			reasons = append(reasons, "high_isolated_doc_coverage")
+		} else {
+			reasons = append(reasons, "some_isolated_docs")
+		}
+	}
+	if density < 0.50 {
+		score -= 25
+		needsBackfill = true
+		reasons = append(reasons, "sparse_edge_density")
+	} else if density < 1.00 {
+		score -= 10
+		reasons = append(reasons, "low_edge_density")
+	}
+	if stats.inferred == 0 && stats.docs >= 2 {
+		score -= 20
+		needsBackfill = true
+		reasons = append(reasons, "missing_inferred_edges")
+	}
+	if stats.staleInferred > 0 {
+		score -= minInt(15, maxInt(5, stats.staleInferred/100))
+		reasons = append(reasons, "stale_inferred_edges")
+	}
+	if stats.overconnectedAnchorCount > 0 {
+		score -= minInt(20, stats.overconnectedAnchorCount*5)
+		reasons = append(reasons, "overconnected_anchor_nodes")
+	}
+	score = clampInt(score, 0, 100)
+	return score, graphTelemetryQualityStatus(score, needsBackfill, reasons), needsBackfill, recommendedCorpus, reasons
+}
+
+func graphTelemetryQualityStatus(score int, needsBackfill bool, reasons []string) string {
+	if needsBackfill {
+		return "repair_recommended"
+	}
+	if score < 85 || len(reasons) > 0 {
+		return "watch"
+	}
+	return "healthy"
+}
+
+func graphTelemetryGlobalQuality(projects []graphTelemetryProject, fallbackStatus string) (string, int, int) {
+	if len(projects) == 0 {
+		if fallbackStatus == "empty" {
+			return "empty", 100, 0
+		}
+		return "healthy", 100, 0
+	}
+	score := 100
+	repairProjects := 0
+	watchProjects := 0
+	for _, project := range projects {
+		if project.QualityScore < score {
+			score = project.QualityScore
+		}
+		if project.NeedsBackfill {
+			repairProjects += 1
+		}
+		if project.QualityStatus == "watch" {
+			watchProjects += 1
+		}
+	}
+	if repairProjects > 0 {
+		return "repair_recommended", score, repairProjects
+	}
+	if watchProjects > 0 || score < 85 {
+		return "watch", score, repairProjects
+	}
+	return "healthy", score, repairProjects
+}
+
 func graphTelemetryProjects(stats map[string]*graphTelemetryProjectStats, limit int) []graphTelemetryProject {
 	rows := make([]graphTelemetryProject, 0, len(stats))
 	for key, item := range stats {
 		if item == nil {
 			continue
 		}
+		qualityScore, qualityStatus, needsBackfill, corpus, reasons := graphTelemetryProjectQuality(item)
 		rows = append(rows, graphTelemetryProject{
-			Project:            key,
-			Docs:               item.docs,
-			ConnectedDocs:      item.connectedDocCount(),
-			IsolatedDocs:       item.isolated,
-			Edges:              item.edges,
-			InferredEdges:      item.inferred,
-			ExplicitEdges:      item.explicit,
-			InboundEdges:       item.inbound,
-			OutboundEdges:      item.outbound,
-			DensityEdgesPerDoc: ratioFloat(item.edges, item.docs),
-			TopRelations:       topGraphTelemetryCounts(item.relationCount, 5),
+			Project:                   key,
+			Docs:                      item.docs,
+			ConnectedDocs:             item.connectedDocCount(),
+			IsolatedDocs:              item.isolated,
+			Edges:                     item.edges,
+			InferredEdges:             item.inferred,
+			StaleInferredEdges:        item.staleInferred,
+			ExplicitEdges:             item.explicit,
+			InboundEdges:              item.inbound,
+			OutboundEdges:             item.outbound,
+			DensityEdgesPerDoc:        ratioFloat(item.edges, item.docs),
+			IsolationRatio:            ratioFloat(item.isolated, item.docs),
+			MaxNodeDegree:             item.maxNodeDegree,
+			OverconnectedAnchorCount:  item.overconnectedAnchorCount,
+			QualityScore:              qualityScore,
+			QualityStatus:             qualityStatus,
+			QualityReasons:            reasons,
+			NeedsBackfill:             needsBackfill,
+			RecommendedBackfillCorpus: corpus,
+			TopRelations:              topGraphTelemetryCounts(item.relationCount, 5),
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -304,7 +476,7 @@ func graphTelemetryProjects(stats map[string]*graphTelemetryProjectStats, limit 
 		}
 		return rows[i].Project < rows[j].Project
 	})
-	if len(rows) > limit {
+	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}
 	return rows
@@ -404,9 +576,11 @@ func (s *server) telemetryMemoryGraphRoute(w http.ResponseWriter, r *http.Reques
 	project := strings.TrimSpace(r.URL.Query().Get("project"))
 	includeEphemeral := anyToBool(r.URL.Query().Get("include_ephemeral"))
 	limit := clampInt(anyToInt(r.URL.Query().Get("limit"), 10), 1, 50)
+	staleDays := clampInt(anyToInt(r.URL.Query().Get("stale_inferred_days"), 30), 1, 3650)
+	staleAfter := time.Now().UTC().Add(-time.Duration(staleDays) * 24 * time.Hour)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	snapshot, err := s.memoryStore.memoryGraphTelemetrySnapshot(ctx, project, includeEphemeral, limit)
+	snapshot, err := s.memoryStore.memoryGraphTelemetrySnapshot(ctx, project, includeEphemeral, limit, staleAfter)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": err.Error()})
 		return

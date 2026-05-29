@@ -182,7 +182,7 @@ func TestMemoryGraphTelemetrySummarizesEdgesDocsAndRecommendations(t *testing.T)
 	resp, err := http.Post(
 		gateway.URL+"/v1/memory/edges",
 		"application/json",
-		strings.NewReader(`{"source_id":"alpha::notes/a.md","target_id":"alpha::notes/b.md","relation":"inferred_related","confidence":0.91,"topic_path":"runbooks/graph","metadata":{"inferred":true},"provenance":{"kind":"inferred_memory_edge_scoring"}}`),
+		strings.NewReader(`{"source_id":"alpha::notes/a.md","target_id":"alpha::notes/b.md","relation":"inferred_related","confidence":0.91,"topic_path":"runbooks/graph","created_at":"2020-01-01T00:00:00Z","metadata":{"inferred":true},"provenance":{"kind":"inferred_memory_edge_scoring"}}`),
 	)
 	if err != nil {
 		t.Fatalf("edge write failed: %v", err)
@@ -192,7 +192,7 @@ func TestMemoryGraphTelemetrySummarizesEdgesDocsAndRecommendations(t *testing.T)
 		t.Fatalf("expected edge write 200, got %d", resp.StatusCode)
 	}
 
-	telemetry, err := http.Get(gateway.URL + "/telemetry/memory/graph?project=alpha&limit=5")
+	telemetry, err := http.Get(gateway.URL + "/telemetry/memory/graph?project=alpha&limit=5&stale_inferred_days=1")
 	if err != nil {
 		t.Fatalf("graph telemetry request failed: %v", err)
 	}
@@ -211,8 +211,14 @@ func TestMemoryGraphTelemetrySummarizesEdgesDocsAndRecommendations(t *testing.T)
 	if anyToInt(payload["edge_count"], 0) != 1 || anyToInt(payload["inferred_edge_count"], 0) != 1 {
 		t.Fatalf("expected one inferred edge, got %#v", payload)
 	}
+	if anyToInt(payload["stale_inferred_edge_count"], 0) != 1 {
+		t.Fatalf("expected one stale inferred edge, got %#v", payload)
+	}
 	if anyToInt(payload["isolated_doc_count"], 0) != 1 {
 		t.Fatalf("expected one isolated doc, got %#v", payload)
+	}
+	if strings.TrimSpace(anyToString(payload["quality_status"])) != "repair_recommended" {
+		t.Fatalf("expected repair_recommended quality status, got %#v", payload["quality_status"])
 	}
 	relations, _ := payload["relations"].([]any)
 	if len(relations) == 0 || anyToString(relations[0].(map[string]any)["name"]) != "inferred_related" {
@@ -221,6 +227,70 @@ func TestMemoryGraphTelemetrySummarizesEdgesDocsAndRecommendations(t *testing.T)
 	topNodes, _ := payload["top_nodes"].([]any)
 	if len(topNodes) == 0 {
 		t.Fatalf("expected top_nodes in graph telemetry, got %#v", payload)
+	}
+	projects, _ := payload["projects"].([]any)
+	if len(projects) != 1 {
+		t.Fatalf("expected one project row, got %#v", projects)
+	}
+	projectRow, _ := projects[0].(map[string]any)
+	if !anyToBool(projectRow["needs_backfill"]) {
+		t.Fatalf("expected project row to request backfill, got %#v", projectRow)
+	}
+	if anyToInt(projectRow["quality_score"], 0) <= 0 {
+		t.Fatalf("expected project quality score, got %#v", projectRow)
+	}
+}
+
+func TestMemoryGraphTelemetryGlobalQualityIncludesLimitedOutProjects(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	for _, item := range []normalizedWrite{
+		{project: "alpha", fileName: "notes/a.md", content: "alpha connected graph source", topicPath: "runbooks/graph", agentID: "agent-a"},
+		{project: "alpha", fileName: "notes/b.md", content: "alpha connected graph target", topicPath: "runbooks/graph", agentID: "agent-a"},
+		{project: "beta", fileName: "notes/a.md", content: "beta isolated source", topicPath: "runbooks/graph", agentID: "agent-b"},
+		{project: "beta", fileName: "notes/b.md", content: "beta isolated target", topicPath: "runbooks/graph", agentID: "agent-b"},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory doc: %v", err)
+		}
+	}
+	for _, body := range []string{
+		`{"source_id":"alpha::notes/a.md","target_id":"alpha::notes/b.md","relation":"inferred_related","confidence":0.91,"topic_path":"runbooks/graph","metadata":{"inferred":true},"provenance":{"kind":"inferred_memory_edge_scoring"}}`,
+		`{"source_id":"alpha::notes/b.md","target_id":"alpha::notes/a.md","relation":"inferred_related","confidence":0.91,"topic_path":"runbooks/graph","metadata":{"inferred":true},"provenance":{"kind":"inferred_memory_edge_scoring"}}`,
+	} {
+		resp, err := http.Post(gateway.URL+"/v1/memory/edges", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("edge write failed: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected edge write 200, got %d", resp.StatusCode)
+		}
+	}
+
+	telemetry, err := http.Get(gateway.URL + "/telemetry/memory/graph?limit=1")
+	if err != nil {
+		t.Fatalf("graph telemetry request failed: %v", err)
+	}
+	defer telemetry.Body.Close()
+	if telemetry.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(telemetry.Body)
+		t.Fatalf("expected 200 graph telemetry, got %d body=%s", telemetry.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(telemetry.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode graph telemetry: %v", err)
+	}
+	projects, _ := payload["projects"].([]any)
+	if len(projects) != 1 {
+		t.Fatalf("expected project list to honor limit=1, got %#v", projects)
+	}
+	if anyToInt(payload["repair_project_count"], 0) != 1 {
+		t.Fatalf("expected global repair count to include limited-out beta project, got %#v", payload)
+	}
+	if strings.TrimSpace(anyToString(payload["quality_status"])) != "repair_recommended" {
+		t.Fatalf("expected global quality to include limited-out beta project, got %#v", payload["quality_status"])
 	}
 }
 

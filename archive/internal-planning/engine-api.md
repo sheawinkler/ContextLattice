@@ -58,6 +58,23 @@ Operator-safe retrofill wrapper:
 
 The wrapper restricts the request to `inferred_related`, runs a dry-run preflight before any write, refuses truncated preflight results unless `--allow-truncated` is set, and repeats write mode once to verify idempotency. Profiles provide density presets: `strict` (`0.90`, peer `1`, postings `64`), `balanced` (`0.85`, peer `3`, postings `128`), and `exploratory` (`0.80`, peer `5`, postings `256`). Explicit flags override the selected profile.
 
+### Memory Graph Quality
+
+`GET /telemetry/memory/graph` reports graph health, per-project quality score,
+repair reasons, stale inferred edge counts, and over-connected anchor counts.
+The bounded maintenance wrapper consumes that telemetry:
+
+```bash
+./scripts/agent/memory-graph-quality --all-projects --pretty
+./scripts/agent/memory-graph-quality --project context-lattice-private --write --confirm-repair context-lattice-private --pretty
+```
+
+Scheduled mode is available through `make memory-graph-quality-install`. The
+launchd runner defaults to dry-run scoring and writes only when
+`CONTEXTLATTICE_GRAPH_QUALITY_WRITE=1` is set at install time. Repairs are
+project-scoped, dry-run first, capped by `--max-write-edges`, and use
+`history_index` unless disk corpus is explicitly allowed.
+
 ## Runtime Flags
 
 - `USE_RUST_CODEC`

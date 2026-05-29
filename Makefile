@@ -27,7 +27,7 @@ DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := archive/services/orchestrator_legacy_python/tests/test_orchestrator_retrieval.py archive/services/orchestrator_legacy_python/tests/test_migration_runtime.py
 
-.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily storage-ledger-capture storage-ledger-prune storage-ledger-install storage-ledger-uninstall storage-ledger-status weekly-lineage-rollup weekly-lineage-install weekly-lineage-uninstall weekly-lineage-status            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings disk-clean-safe            mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel paid-launch-checklist backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply sentrux-check sentrux-gate sentrux-gate-save agent-context-gate
+.PHONY: help launch all up up-core down status ps logs build rebuild pull clean prune             mcp-proxy-up init qdrant-init mindsdb-seed letta-seed models-pull             proxy-status doctor mem-ping monitor-open monitor-check dmg-build msi-build linux-bundle-build            storage-audit qdrant-snapshot-prune qdrant-cutover cold-snapshot-pack cold-snapshot-tier cold-snapshot-restore telemetry-archive fanout-status fanout-deadletters fanout-rehydrate retention-install retention-uninstall retention-status retention-install-daily storage-ledger-capture storage-ledger-prune storage-ledger-install storage-ledger-uninstall storage-ledger-status memory-graph-quality memory-graph-quality-install memory-graph-quality-uninstall memory-graph-quality-status weekly-lineage-rollup weekly-lineage-install weekly-lineage-uninstall weekly-lineage-status            docker-fs-watchdog-run docker-fs-watchdog-install docker-fs-watchdog-uninstall docker-fs-watchdog-status            storage-migrate-hot-bindings disk-clean-safe            mem-mode-show mem-mode-core mem-mode-balanced mem-mode-full mem-up-core mem-up-balanced mem-up-full observability-up observability-down launch-readiness-gate launch-readiness-gate-schedule launch-readiness-gate-schedule-status launch-readiness-gate-schedule-cancel paid-launch-checklist backup-restore-drill mem-up-release mem-up-lite-release release-lock-verify qdrant-cloud-check quickstart submission-preflight launch-lock launch-lock-public test-py bench-shortlist bench-qdrant-tuning bench-backend-lanes env-lock-check env-lock-apply sentrux-check sentrux-gate sentrux-gate-save agent-context-gate
 
 help:
 > echo "Targets:"
@@ -53,6 +53,7 @@ help:
 > echo "  cold-snapshot-pack|cold-snapshot-tier|cold-snapshot-restore: compact + tier + restore cold snapshots"
 > echo "  storage-ledger-capture|storage-ledger-prune: append/prune metadata-only storage growth ledger"
 > echo "  storage-ledger-install|storage-ledger-status: install hourly ledger runner (launchd)"
+> echo "  memory-graph-quality*: score graph coverage and install bounded repair runner"
 > echo "  weekly-lineage-rollup: generate weekly per-project lineage + global synergy rollups"
 > echo "  weekly-lineage-install|weekly-lineage-status: install weekly lineage runner (launchd)"
 > echo "  qdrant-cutover: set QDRANT_COLLECTION and rehydrate vectors"
@@ -305,6 +306,18 @@ storage-ledger-uninstall:
 
 storage-ledger-status:
 > bash scripts/install_storage_ledger_runner.sh status
+
+memory-graph-quality:
+> scripts/agent/memory-graph-quality --all-projects --pretty
+
+memory-graph-quality-install:
+> bash scripts/install_memory_graph_quality_runner.sh install
+
+memory-graph-quality-uninstall:
+> bash scripts/install_memory_graph_quality_runner.sh uninstall
+
+memory-graph-quality-status:
+> bash scripts/install_memory_graph_quality_runner.sh status
 
 weekly-lineage-rollup:
 > scripts/context_storage_ops.sh weekly-lineage \
