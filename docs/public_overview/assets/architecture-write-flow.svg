@@ -59,7 +59,7 @@
 
   <rect x="530" y="928" width="250" height="120" rx="20" class="node"/>
   <text x="655" y="986" text-anchor="middle" class="label">Qdrant</text>
-  <text x="655" y="1018" text-anchor="middle" class="sub">+ postgres_pgvector</text>
+  <text x="655" y="1018" text-anchor="middle" class="sub">+ qdrant</text>
 
   <rect x="800" y="928" width="250" height="120" rx="20" class="node"/>
   <text x="925" y="994" text-anchor="middle" class="label">MindsDB</text>

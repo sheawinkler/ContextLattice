@@ -75,19 +75,25 @@ def main() -> int:
             )
             config = run_compose(["config"], Path(env_file.name), args.docker_context, compose_files)
             service_checks = {
-                "pgvector_db_present": "pgvector-db" in services,
-                "qdrant_absent": "qdrant" not in services,
+                "qdrant_present": "qdrant" in services,
+                "pgvector_db_absent": "pgvector-db" not in services,
                 "mcp_qdrant_absent": "mcp-qdrant" not in services,
             }
             env_checks = [
-                assert_env(config, "ORCH_RETRIEVAL_SOURCES", "postgres_pgvector,mongo_raw,topic_rollups,memory_bank"),
-                assert_env(config, "ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,postgres_pgvector"),
+                assert_env(config, "QDRANT_URL", "http://qdrant:6333"),
+                assert_env(config, "QDRANT_LOCAL_URL", "http://qdrant:6333"),
+                assert_env(config, "ORCH_PGVECTOR_ENABLED", "false"),
+                assert_env(config, "ORCH_PGVECTOR_FANOUT_ENABLED", "false"),
+                assert_env(config, "ORCH_RETRIEVAL_SOURCES", "qdrant,mongo_raw,topic_rollups,memory_bank"),
+                assert_env(config, "ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups,qdrant"),
                 assert_env(config, "ORCH_RETRIEVAL_SLOW_SOURCES", "mongo_raw,memory_bank"),
-                assert_env(config, "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false"),
-                assert_env(config, "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND", "auto"),
-                assert_env(config, "GO_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES", "postgres_pgvector,topic_rollups"),
+                assert_env(config, "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true"),
+                assert_env(config, "GO_WRITE_QDRANT_FANOUT_MODE", "async"),
+                assert_env(config, "GO_WRITE_PGVECTOR_FANOUT_MODE", "disabled"),
+                assert_env(config, "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND", "qdrant_remote"),
+                assert_env(config, "GO_RETRIEVAL_RUST_QUALITY_FALLBACK_SOURCES", "qdrant,topic_rollups"),
             ]
-            forbidden_env = ["QDRANT_URL:", "QDRANT_LOCAL_URL:", "QDRANT_API_KEY:"]
+            forbidden_env = ["ORCH_PGVECTOR_DSN:", "PGVECTOR_POSTGRES_PASSWORD:", "PGVECTOR_POSTGRES_USER:"]
             forbidden_checks = {key.rstrip(":"): key not in config for key in forbidden_env}
             profiles[label] = {
                 "ok": all(service_checks.values())
@@ -98,9 +104,23 @@ def main() -> int:
                 "env_checks": env_checks,
                 "forbidden_checks": forbidden_checks,
             }
+    hosted_lite_files = ["Dockerfile.orchestrator", "Dockerfile.hf-lite"]
+    hosted_lite_checks = {}
+    for relative in hosted_lite_files:
+        raw = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        hosted_lite_checks[relative] = {
+            "topic_rollups_only": "ORCH_RETRIEVAL_SOURCES=topic_rollups" in raw
+            and "ORCH_RETRIEVAL_FAST_SOURCES=topic_rollups" in raw,
+            "qdrant_disabled": "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED=false" in raw
+            and "GO_WRITE_QDRANT_FANOUT_MODE=disabled" in raw,
+            "pgvector_disabled": "ORCH_PGVECTOR_ENABLED=false" in raw,
+            "qdrant_url_absent": "QDRANT_URL=" not in raw and "QDRANT_LOCAL_URL=" not in raw,
+        }
     payload = {
-        "ok": all(profile["ok"] for profile in profiles.values()),
+        "ok": all(profile["ok"] for profile in profiles.values())
+        and all(all(checks.values()) for checks in hosted_lite_checks.values()),
         "profiles": profiles,
+        "hosted_lite_checks": hosted_lite_checks,
     }
     emit(payload, args.pretty)
     return 0 if payload["ok"] else 1

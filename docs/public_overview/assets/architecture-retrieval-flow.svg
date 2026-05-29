@@ -54,7 +54,7 @@
 
   <rect x="820" y="662" width="250" height="120" rx="20" class="node"/>
   <text x="945" y="716" text-anchor="middle" class="label">Postgres</text>
-  <text x="945" y="748" text-anchor="middle" class="sub">pgvector</text>
+  <text x="945" y="748" text-anchor="middle" class="sub">qdrant</text>
 
   <rect x="1090" y="662" width="270" height="120" rx="20" class="node"/>
   <text x="1225" y="708" text-anchor="middle" class="label">Deep lane</text>

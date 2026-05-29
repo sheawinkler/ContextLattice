@@ -12,6 +12,7 @@ type canonicalMetadata struct {
 	sessionID string
 	tags      []string
 	createdAt string
+	lifecycle string
 }
 
 type metadataContractTracker struct {
@@ -74,6 +75,39 @@ func normalizeTagList(values ...any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func normalizeMemoryLifecycle(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "durable", "permanent", "persist", "persistent", "learning":
+		return "durable"
+	case "working", "work", "scratch", "draft":
+		return "working"
+	case "ephemeral", "temporary", "temp", "tmp", "transient":
+		return "ephemeral"
+	case "test", "smoke", "synthetic", "fixture":
+		return "test"
+	default:
+		return "durable"
+	}
+}
+
+func lifecycleFromTags(tags []string) string {
+	for _, raw := range tags {
+		tag := strings.TrimSpace(strings.ToLower(raw))
+		if strings.HasPrefix(tag, "lifecycle:") {
+			if lifecycle := normalizeMemoryLifecycle(strings.TrimPrefix(tag, "lifecycle:")); lifecycle != "durable" || strings.Contains(tag, "durable") {
+				return lifecycle
+			}
+		}
+		if tag == "kind:test" || tag == "type:test" || tag == "purpose:test" {
+			return "test"
+		}
+		if tag == "kind:smoke" || tag == "type:smoke" || tag == "retrieval-seed" {
+			return "test"
+		}
+	}
+	return ""
 }
 
 func defaultMetadataAgentID() string {
@@ -148,11 +182,22 @@ func normalizeWriteMetadata(raw map[string]any) canonicalMetadata {
 	if len(tags) == 0 {
 		tags = defaultMetadataTags()
 	}
+	lifecycle := firstNonEmptyStrings(
+		anyToString(raw["lifecycle"]),
+		anyToString(raw["memory_lifecycle"]),
+		anyToString(raw["data_lifecycle"]),
+		anyToString(metaMap["lifecycle"]),
+		anyToString(metaMap["memory_lifecycle"]),
+		anyToString(metaMap["data_lifecycle"]),
+		lifecycleFromTags(tags),
+	)
+	lifecycle = normalizeMemoryLifecycle(lifecycle)
 	return canonicalMetadata{
 		agentID:   agentID,
 		sessionID: sessionID,
 		tags:      tags,
 		createdAt: createdAt,
+		lifecycle: lifecycle,
 	}
 }
 

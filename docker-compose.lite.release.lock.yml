@@ -1,8 +1,8 @@
 # Lite release lockfile for reproducible image pulls without reintroducing optional full-stack services.
 # Generated from locally validated images on 2026-02-18.
 services:
-  pgvector-db:
-    image: timescale/timescaledb-ha@sha256:2a8fe7b936aa14ce9990d11b4a119c0c0ae1de9423f8d59386c252b6ab45624e
+  qdrant:
+    image: qdrant/qdrant@sha256:45f8e3ddc2570a4d029877e1b5ec1045c19b3852b4e22a55c7f43b05aea0ca89
 
   mongo:
     image: mongo@sha256:6159d784bc2ed3e6e97648bb28d93d43cf9660401c1230f4f340d14d68421119

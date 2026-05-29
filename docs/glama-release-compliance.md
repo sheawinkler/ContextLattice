@@ -117,6 +117,16 @@ Environment variables JSON schema:
       "description": "Disable pgvector lane in Glama single-container mode.",
       "type": "string"
     },
+    "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED": {
+      "default": "false",
+      "description": "Disable Qdrant retrieval in Glama single-container mode.",
+      "type": "string"
+    },
+    "GO_WRITE_QDRANT_FANOUT_MODE": {
+      "default": "disabled",
+      "description": "Disable Qdrant write fanout in Glama single-container mode.",
+      "type": "string"
+    },
     "ORCH_RETRIEVAL_SOURCES": {
       "default": "topic_rollups",
       "description": "Canonical retrieval lane list for the Go gateway.",
@@ -168,6 +178,8 @@ Placeholder parameters (dev-safe):
   "MONGO_RAW_ENABLED": "false",
   "MINDSDB_ENABLED": "false",
   "ORCH_PGVECTOR_ENABLED": "false",
+  "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED": "false",
+  "GO_WRITE_QDRANT_FANOUT_MODE": "disabled",
   "ORCH_RETRIEVAL_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_DEFAULT_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_FAST_SOURCES": "topic_rollups",
@@ -193,6 +205,8 @@ Placeholder parameters (production strict with key):
   "MONGO_RAW_ENABLED": "false",
   "MINDSDB_ENABLED": "false",
   "ORCH_PGVECTOR_ENABLED": "false",
+  "GO_RETRIEVAL_NATIVE_QDRANT_ENABLED": "false",
+  "GO_WRITE_QDRANT_FANOUT_MODE": "disabled",
   "ORCH_RETRIEVAL_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_DEFAULT_SOURCES": "topic_rollups",
   "ORCH_RETRIEVAL_FAST_SOURCES": "topic_rollups",
@@ -208,7 +222,7 @@ Important typo guard: use `MONGO_RAW_ENABLED` exactly (not `MONGO_RAW_ENABLEDI`)
 
 Glama single-container profile is tuned for deterministic startup:
 
-- no external service dependency (`mongo`, `mindsdb`, `pgvector` disabled)
+- no external service dependency (`mongo`, `mindsdb`, `pgvector`, and Qdrant disabled)
 - sqlite fanout outbox
 - `topic_rollups` default/fast retrieval lane
 - Go runtime strict mode (`GO_RUNTIME_STRICT_NO_PYTHON=true`)

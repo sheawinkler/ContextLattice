@@ -271,6 +271,134 @@ func TestMemoryWriteQueuesPgvectorFanoutAsync(t *testing.T) {
 	}
 }
 
+func TestMemoryWriteSyncsQdrantFanout(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("GO_WRITE_QDRANT_FANOUT_MODE", "sync")
+	t.Setenv("GO_WRITE_QDRANT_FANOUT_TIMEOUT_SECS", "2")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true")
+	t.Setenv("QDRANT_LOCAL_URL", "")
+	t.Setenv("QDRANT_API_KEY", "test-qdrant-key")
+	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
+	t.Setenv("ORCH_PGVECTOR_ENABLED", "false")
+	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
+		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	}
+	createCalls := 0
+	upsertCalls := 0
+	var upsertPayload map[string]any
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("api-key"); got != "test-qdrant-key" {
+			t.Fatalf("expected qdrant api-key header, got %q", got)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/contextlattice_notes":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"status":{"error":"Not found: Collection contextlattice_notes"}}`))
+			return
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/contextlattice_notes":
+			createCalls += 1
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode qdrant collection create payload: %v", err)
+			}
+			vectors, _ := payload["vectors"].(map[string]any)
+			if int(anyToFloat(vectors["size"])) != 768 {
+				t.Fatalf("expected qdrant collection size 768, got %#v", vectors["size"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":true}`))
+			return
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/contextlattice_notes/points":
+			upsertCalls += 1
+			if r.URL.Query().Get("wait") != "true" {
+				t.Fatalf("expected wait=true on qdrant upsert, got raw query %q", r.URL.RawQuery)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
+				t.Fatalf("decode qdrant upsert payload: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":{"operation_id":1,"status":"completed"}}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer qdrant.Close()
+	t.Setenv("QDRANT_URL", qdrant.URL)
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/memory/write",
+		"application/json",
+		strings.NewReader(`{"projectName":"alpha","fileName":"notes/qdrant.md","content":"hello qdrant native fanout","topicPath":"runbooks/testing"}`),
+	)
+	if err != nil {
+		t.Fatalf("memory/write request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode write payload: %v", err)
+	}
+	fanout, ok := payload["fanout"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fanout payload, got %#v", payload["fanout"])
+	}
+	if got := anyToString(fanout["qdrant"]); got != "succeeded" {
+		t.Fatalf("expected qdrant fanout succeeded, got %q payload=%#v", got, payload)
+	}
+	if createCalls != 1 {
+		t.Fatalf("expected one qdrant collection create call, got %d", createCalls)
+	}
+	if upsertCalls != 1 {
+		t.Fatalf("expected one qdrant upsert call, got %d", upsertCalls)
+	}
+	points, _ := upsertPayload["points"].([]any)
+	if len(points) != 1 {
+		t.Fatalf("expected one qdrant point, got %#v", upsertPayload["points"])
+	}
+	point, _ := points[0].(map[string]any)
+	if id := anyToString(point["id"]); len(id) != 36 || strings.Count(id, "-") != 4 {
+		t.Fatalf("expected deterministic UUID-like qdrant id, got %#v", point["id"])
+	}
+	vector, _ := point["vector"].([]any)
+	if len(vector) != 768 {
+		t.Fatalf("expected qdrant vector length 768, got %d", len(vector))
+	}
+	pointPayload, _ := point["payload"].(map[string]any)
+	if got := anyToString(pointPayload["project"]); got != "alpha" {
+		t.Fatalf("expected qdrant payload project alpha, got %#v", pointPayload["project"])
+	}
+	tags, _ := pointPayload["topic_tags"].([]any)
+	tagText := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tagText = append(tagText, anyToString(tag))
+	}
+	if strings.Join(tagText, ",") != "runbooks,runbooks/testing" {
+		t.Fatalf("expected hierarchical qdrant topic tags, got %#v", pointPayload["topic_tags"])
+	}
+}
+
 func TestProxyForwardsQueryParams(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedRawQuery string

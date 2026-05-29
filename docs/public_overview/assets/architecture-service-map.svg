@@ -68,7 +68,7 @@
 
   <rect x="810" y="736" width="168" height="96" rx="18" class="node"/>
   <text x="894" y="786" text-anchor="middle" class="label-small">Postgres</text>
-  <text x="894" y="814" text-anchor="middle" class="label-small">pgvector</text>
+  <text x="894" y="814" text-anchor="middle" class="label-small">qdrant</text>
 
   <rect x="974" y="730" width="224" height="108" rx="18" class="node"/>
   <text x="1086" y="778" text-anchor="middle" class="label-small">Deep lane</text>

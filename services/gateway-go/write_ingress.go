@@ -88,9 +88,9 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			"go_memory_store": "succeeded",
 			"python_backend":  "disabled",
 		}
-		fanoutStatus, warnings := s.handlePgvectorWriteFanout(item, entry.EventID)
-		if strings.TrimSpace(fanoutStatus) != "" {
-			fanout["postgres_pgvector"] = fanoutStatus
+		vectorFanout, warnings := s.handleNativeVectorWriteFanout(item, entry.EventID)
+		for source, status := range vectorFanout {
+			fanout[source] = status
 		}
 		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, map[string]any{
 			"ok":                    true,
@@ -261,9 +261,9 @@ func (s *server) handleWriteBatchIngress(
 								"go_memory_store": "succeeded",
 								"python_backend":  "disabled",
 							}
-							fanoutStatus, warnings := s.handlePgvectorWriteFanout(item, entry.EventID)
-							if strings.TrimSpace(fanoutStatus) != "" {
-								fanout["postgres_pgvector"] = fanoutStatus
+							vectorFanout, warnings := s.handleNativeVectorWriteFanout(item, entry.EventID)
+							for source, status := range vectorFanout {
+								fanout[source] = status
 							}
 							row["fanout"] = fanout
 							row["warnings"] = warnings
@@ -464,6 +464,47 @@ func pgvectorWriteFanoutPreflightStatus() (string, bool) {
 	return "", true
 }
 
+func writeQdrantFanoutMode() string {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_WRITE_QDRANT_FANOUT_MODE")))
+	switch mode {
+	case "sync", "synchronous":
+		return "sync"
+	case "disabled", "off", "false":
+		return "disabled"
+	default:
+		return "async"
+	}
+}
+
+func writeQdrantFanoutTimeout() time.Duration {
+	timeout := envDurationSeconds("GO_WRITE_QDRANT_FANOUT_TIMEOUT_SECS", 30)
+	if timeout < time.Second {
+		return time.Second
+	}
+	return timeout
+}
+
+func qdrantWriteFanoutAsyncMaxInflight() int {
+	limit := envInt("GO_WRITE_QDRANT_FANOUT_ASYNC_MAX_INFLIGHT", 2)
+	if limit < 1 {
+		return 1
+	}
+	if limit > 16 {
+		return 16
+	}
+	return limit
+}
+
+func qdrantWriteFanoutPreflightStatus() (string, bool) {
+	if !nativeSourceAdapterEnabled(sourceQdrant, true) {
+		return "skipped_adapter_disabled", false
+	}
+	if nativeQdrantURL() == "" {
+		return "skipped_unconfigured", false
+	}
+	return "", true
+}
+
 func cloneNormalizedWriteForAsync(item normalizedWrite) normalizedWrite {
 	copyItem := item
 	if item.tags != nil {
@@ -471,6 +512,68 @@ func cloneNormalizedWriteForAsync(item normalizedWrite) normalizedWrite {
 	}
 	copyItem.raw = nil
 	return copyItem
+}
+
+func (s *server) handleNativeVectorWriteFanout(item normalizedWrite, eventID string) (map[string]any, []string) {
+	fanout := map[string]any{}
+	warnings := []string{}
+	if status, sourceWarnings := s.handleQdrantWriteFanout(item, eventID); strings.TrimSpace(status) != "" {
+		fanout[sourceQdrant] = status
+		warnings = append(warnings, sourceWarnings...)
+	}
+	if status, sourceWarnings := s.handlePgvectorWriteFanout(item, eventID); strings.TrimSpace(status) != "" {
+		fanout[sourcePgvector] = status
+		warnings = append(warnings, sourceWarnings...)
+	}
+	return fanout, warnings
+}
+
+func (s *server) handleQdrantWriteFanout(item normalizedWrite, eventID string) (string, []string) {
+	mode := writeQdrantFanoutMode()
+	if mode == "disabled" {
+		return "skipped_write_fanout_mode_disabled", []string{}
+	}
+	if status, enabled := qdrantWriteFanoutPreflightStatus(); !enabled {
+		return status, []string{}
+	}
+	timeout := writeQdrantFanoutTimeout()
+	if mode == "sync" {
+		fanoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		fanoutStatus, fanoutErr := s.upsertQdrantFromWrite(fanoutCtx, item, eventID)
+		cancel()
+		if fanoutErr != nil {
+			log.Printf("qdrant fanout error project=%s file=%s status=%s err=%v", item.project, item.fileName, fanoutStatus, fanoutErr)
+			return fanoutStatus, []string{"qdrant fanout " + fanoutStatus + ": " + fanoutErr.Error()}
+		}
+		return fanoutStatus, []string{}
+	}
+	if s.qdrantWriteFanoutSem == nil {
+		s.qdrantWriteFanoutSem = make(chan struct{}, qdrantWriteFanoutAsyncMaxInflight())
+	}
+	select {
+	case s.qdrantWriteFanoutSem <- struct{}{}:
+	default:
+		warning := "qdrant fanout skipped_async_backpressure: async fanout workers are saturated"
+		log.Printf("qdrant fanout backpressure project=%s file=%s", item.project, item.fileName)
+		return "skipped_async_backpressure", []string{warning}
+	}
+	copyItem := cloneNormalizedWriteForAsync(item)
+	go func() {
+		defer func() {
+			<-s.qdrantWriteFanoutSem
+		}()
+		fanoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		status, err := s.upsertQdrantFromWrite(fanoutCtx, copyItem, eventID)
+		if err != nil {
+			log.Printf("qdrant async fanout error project=%s file=%s status=%s err=%v", copyItem.project, copyItem.fileName, status, err)
+			return
+		}
+		if envBool("GO_WRITE_QDRANT_FANOUT_LOG_SUCCESS", false) {
+			log.Printf("qdrant async fanout complete project=%s file=%s status=%s", copyItem.project, copyItem.fileName, status)
+		}
+	}()
+	return "queued_async", []string{}
 }
 
 func (s *server) handlePgvectorWriteFanout(item normalizedWrite, eventID string) (string, []string) {
