@@ -197,6 +197,7 @@ Context-pack shape is guarded by:
 
 ```bash
 scripts/agent/audit-agent-output-contracts
+scripts/agent/audit-agent-boundary-live
 scripts/agent/audit-context-pack-schema
 scripts/agent/audit-context-overflow-recovery
 scripts/agent/eval-skill-policy
@@ -220,6 +221,36 @@ arrays, preserve function/tool call-output invariants, and emit
 uses provider-style error fixtures and oversized Responses-style input arrays so
 raw errors such as `array_above_max_length` or context-length failures do not
 become the user-facing contract.
+
+Before a release, run the live boundary canary against the local gateway:
+
+```bash
+scripts/agent/audit-agent-boundary-live --pretty
+```
+
+The canary hits `/memory/context-pack`, `/tools/context_pack`,
+`/v1/agents/preflight`, `/v1/codex/preflight`, and compact hook stdout wrappers
+with adversarial oversized inputs. By default it exercises Codex, Claude Code,
+Hermes, and Pi agent profiles through the generic preflight route. It validates
+the shared contracts and fails if raw provider-overflow-shaped text leaves the
+product boundary.
+
+Memory graph observability is available from the gateway at
+`GET /telemetry/memory/graph` and from the terminal:
+
+```bash
+scripts/agent/memory-graph-observe
+```
+
+Project bootstrap for a new repo should stay bounded and curated. Use:
+
+```bash
+scripts/agent/project-bootstrap-memory --repo /path/to/repo --project project-name --write --apply-edges
+```
+
+This writes compact overview/code-map/next-work notes from high-signal files
+only, then runs memory edge backfill for that project. It is not whole-repo raw
+ingestion.
 
 Agent ContextLattice wrappers retry and fail non-zero by default when reads or
 writes cannot complete. A compact JSON failure replaces Python tracebacks, but

@@ -12,6 +12,14 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY_PATH = REPO_ROOT / "config" / "agent_contracts" / "agent_output_contracts.json"
 REGISTRY_ENV = "CONTEXTLATTICE_AGENT_CONTRACTS_PATH"
+PROVIDER_OVERFLOW_PATTERNS = (
+    "array_above_max_length",
+    "context length exceeded",
+    "maximum context length",
+    "max context length",
+    "input array is too long",
+    "oversized input",
+)
 
 
 def registry_path() -> Path:
@@ -93,6 +101,194 @@ def _walk_forbidden_keys(value: Any, forbidden: set[str], path: str = "") -> lis
             current_path = f"{path}[{index}]" if path else f"[{index}]"
             findings.extend(_walk_forbidden_keys(item, forbidden, current_path))
     return findings
+
+
+def _json_bytes(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def _sanitize_provider_overflow_text(value: str) -> str:
+    lowered = value.lower()
+    if any(pattern in lowered for pattern in PROVIDER_OVERFLOW_PATTERNS):
+        return "ContextLattice boundary reduced an oversized provider input before returning this payload."
+    return value
+
+
+def _clip_utf8(value: str, max_bytes: int) -> str:
+    raw = value.encode("utf-8")
+    if max_bytes <= 0 or len(raw) <= max_bytes:
+        return value
+    suffix = b"... [truncated]"
+    if max_bytes <= len(suffix):
+        return raw[:max_bytes].decode("utf-8", errors="ignore")
+    prefix = raw[: max_bytes - len(suffix)].decode("utf-8", errors="ignore")
+    return prefix + suffix.decode("ascii")
+
+
+def _walk_string_bytes(value: Any, max_bytes: int, contract_id: str, path: str = "") -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if max_bytes <= 0:
+        return findings
+    if isinstance(value, dict):
+        for key in sorted(value):
+            next_path = f"{path}.{key}" if path else str(key)
+            findings.extend(_walk_string_bytes(value[key], max_bytes, contract_id, next_path))
+    elif isinstance(value, list):
+        for item in value[:512]:
+            findings.extend(_walk_string_bytes(item, max_bytes, contract_id, f"{path}[]"))
+    elif isinstance(value, str):
+        actual = len(value.encode("utf-8"))
+        if actual > max_bytes:
+            findings.append(
+                {
+                    "reason": "string_bytes_exceed_contract",
+                    "path": path,
+                    "bytes": actual,
+                    "max_bytes": max_bytes,
+                    "contract_id": contract_id,
+                }
+            )
+    return findings
+
+
+def _walk_list_items(value: Any, max_items: int, contract_id: str, path: str = "") -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if max_items <= 0:
+        return findings
+    if isinstance(value, dict):
+        for key in sorted(value):
+            next_path = f"{path}.{key}" if path else str(key)
+            findings.extend(_walk_list_items(value[key], max_items, contract_id, next_path))
+    elif isinstance(value, list):
+        if len(value) > max_items:
+            findings.append(
+                {
+                    "reason": "list_items_exceed_contract",
+                    "path": path,
+                    "items": len(value),
+                    "max_items": max_items,
+                    "contract_id": contract_id,
+                }
+            )
+        for item in value[:512]:
+            findings.extend(_walk_list_items(item, max_items, contract_id, f"{path}[]"))
+    return findings
+
+
+def _enforce_value_limits(value: Any, max_string_bytes: int, max_list_items: int, sanitize_overflow: bool) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _enforce_value_limits(item, max_string_bytes, max_list_items, sanitize_overflow)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        items = value
+        if max_list_items >= 0 and len(items) > max_list_items:
+            items = items[:max_list_items]
+        return [_enforce_value_limits(item, max_string_bytes, max_list_items, sanitize_overflow) for item in items]
+    if isinstance(value, str):
+        text = _sanitize_provider_overflow_text(value) if sanitize_overflow else value
+        if max_string_bytes > 0:
+            text = _clip_utf8(text, max_string_bytes)
+        return text
+    return value
+
+
+def _compact_context_pack_payload(payload: dict[str, Any], keep: int) -> None:
+    pack = payload.get("context_pack")
+    if isinstance(pack, dict):
+        for key in (
+            "facts",
+            "numericFacts",
+            "numeric_facts",
+            "citations",
+            "results",
+            "relevantDecisions",
+            "relevant_decisions",
+            "filesToRead",
+            "files_to_read",
+            "filesToAvoid",
+            "files_to_avoid",
+            "capabilitiesToUse",
+            "capabilities_to_use",
+            "runbooks",
+            "knownFailureModes",
+            "known_failure_modes",
+            "commands",
+            "acceptanceCriteria",
+            "acceptance_criteria",
+        ):
+            if isinstance(pack.get(key), list):
+                pack[key] = pack[key][:keep]
+    if "retrieval" in payload:
+        payload["retrieval"] = {"omitted_by_boundary": True}
+    if isinstance(payload.get("warnings"), list):
+        payload["warnings"] = payload["warnings"][: min(keep, 8)]
+
+
+def _compact_policy_payload(payload: dict[str, Any], keep: int) -> None:
+    for key in ("mission", "objective", "goal", "query"):
+        if isinstance(payload.get(key), str):
+            payload[key] = _clip_utf8(_sanitize_provider_overflow_text(payload[key]), 2000)
+    evidence = payload.get("evidence")
+    if isinstance(evidence, dict):
+        for key in ("primary_facts", "mission_facts"):
+            if isinstance(evidence.get(key), list):
+                evidence[key] = evidence[key][: max(5, keep)]
+        if isinstance(evidence.get("mission_pack_error"), str):
+            evidence["mission_pack_error"] = _clip_utf8(_sanitize_provider_overflow_text(evidence["mission_pack_error"]), 1000)
+    handoff = payload.get("handoff")
+    if isinstance(handoff, dict) and isinstance(handoff.get("handoff_prompt"), str):
+        handoff["handoff_prompt"] = _clip_utf8(_sanitize_provider_overflow_text(handoff["handoff_prompt"]), 4000)
+
+
+def _compact_preflight_payload(payload: dict[str, Any], keep: int) -> None:
+    for key in ("context_pack", "mission_context_pack", "mission_pack"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            _compact_context_pack_payload(value, keep)
+            nested = value.get("payload")
+            if isinstance(nested, dict):
+                _compact_context_pack_payload(nested, keep)
+    for key in ("scoped_search", "broadened_search", "status", "health"):
+        if isinstance(payload.get(key), dict):
+            payload[key] = {"omitted_by_boundary": True}
+    policy = payload.get("policy_context_package")
+    if isinstance(policy, dict):
+        _compact_policy_payload(policy, keep)
+
+
+def enforce_contract_limits(
+    contract_id: str,
+    payload: dict[str, Any],
+    registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    registry = registry or load_agent_contracts_registry()
+    contract = _contract(registry, contract_id)
+    max_total = int(contract.get("max_total_json_bytes") or 0)
+    max_string = int(contract.get("max_string_bytes") or 0)
+    max_list = int(contract.get("max_list_items") or 0)
+    sanitize_overflow = contract_id != "context_overflow_recovery.v1"
+    out = _enforce_value_limits(deepcopy(payload), max_string, max_list if max_list > 0 else -1, sanitize_overflow)
+    if not isinstance(out, dict) or max_total <= 0 or _json_bytes(out) <= max_total:
+        return out if isinstance(out, dict) else dict(payload)
+
+    for keep, string_cap, list_cap in ((16, 2048, 16), (8, 1024, 8), (5, 512, 8)):
+        if contract_id == "context_pack_response.v1":
+            _compact_context_pack_payload(out, keep)
+        elif contract_id == "agent_preflight_response.v1":
+            _compact_preflight_payload(out, keep)
+        elif contract_id == "policy_context_package.v1":
+            _compact_policy_payload(out, keep)
+        out = _enforce_value_limits(
+            out,
+            min(max_string, string_cap) if max_string else string_cap,
+            min(max_list, list_cap) if max_list else list_cap,
+            sanitize_overflow,
+        )
+        if _json_bytes(out) <= max_total:
+            return out
+    return out
 
 
 def validate_agent_contract_payload(
@@ -190,6 +386,26 @@ def validate_agent_contract_payload(
                     }
                 )
 
+    max_total = int(contract.get("max_total_json_bytes") or 0)
+    if max_total > 0:
+        actual = _json_bytes(payload)
+        if actual > max_total:
+            findings.append(
+                {
+                    "reason": "json_bytes_exceed_contract",
+                    "bytes": actual,
+                    "max_bytes": max_total,
+                    "contract_id": contract_id,
+                    "payload_kind": contract.get("payload_kind"),
+                }
+            )
+
+    max_string = int(contract.get("max_string_bytes") or 0)
+    findings.extend(_walk_string_bytes(payload, max_string, contract_id))
+
+    max_list = int(contract.get("max_list_items") or 0)
+    findings.extend(_walk_list_items(payload, max_list, contract_id))
+
     max_bytes = contract.get("max_bytes_by_path")
     if isinstance(max_bytes, dict):
         for dotted_path, raw_max in max_bytes.items():
@@ -225,7 +441,7 @@ def validate_agent_contract_payload(
 def contract_metadata(contract_id: str, registry: dict[str, Any] | None = None) -> dict[str, Any]:
     registry = registry or load_agent_contracts_registry()
     contract = _contract(registry, contract_id)
-    return {
+    metadata = {
         "registry_id": str(registry.get("registry_id") or "contextlattice_agent_output_contracts"),
         "registry_version": int(registry.get("registry_version") or 0),
         "schema_id": contract_id,
@@ -235,6 +451,13 @@ def contract_metadata(contract_id: str, registry: dict[str, Any] | None = None) 
         "forbidden_fields": [str(item) for item in contract.get("forbidden_fields") or []],
         "validation": {"status": "pending", "errors": []},
     }
+    for key in ("max_total_json_bytes", "max_string_bytes", "max_list_items"):
+        value = int(contract.get(key) or 0)
+        if value > 0:
+            metadata[key] = value
+    if isinstance(contract.get("max_bytes_by_path"), dict):
+        metadata["max_bytes_by_path"] = deepcopy(contract["max_bytes_by_path"])
+    return metadata
 
 
 def stamp_validation(metadata: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
@@ -261,6 +484,10 @@ def attach_format_contract(
     stamped = dict(payload)
     metadata = contract_metadata(contract_id, registry)
     stamped["format_contract"] = metadata
+    stamped = enforce_contract_limits(contract_id, stamped, registry)
+    findings = validate_agent_contract_payload(contract_id, stamped, registry)
+    stamped["format_contract"] = stamp_validation(metadata, findings)
+    stamped = enforce_contract_limits(contract_id, stamped, registry)
     findings = validate_agent_contract_payload(contract_id, stamped, registry)
     stamped["format_contract"] = stamp_validation(metadata, findings)
     return stamped
@@ -269,10 +496,14 @@ def attach_format_contract(
 def preflight_contracts_summary(findings: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     registry = load_agent_contracts_registry()
     errors = findings or []
+    preflight_contract = _contract(registry, "agent_preflight_response.v1")
     return {
         "registry_id": str(registry.get("registry_id") or "contextlattice_agent_output_contracts"),
         "registry_version": int(registry.get("registry_version") or 0),
         "contracts": agent_contract_ids(registry),
+        "max_total_json_bytes": int(preflight_contract.get("max_total_json_bytes") or 0),
+        "max_string_bytes": int(preflight_contract.get("max_string_bytes") or 0),
+        "max_list_items": int(preflight_contract.get("max_list_items") or 0),
         "validation": {
             "status": "failed" if errors else "passed",
             "errors": errors[:12],

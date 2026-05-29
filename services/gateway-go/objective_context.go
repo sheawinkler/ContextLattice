@@ -13,6 +13,14 @@ type objectiveContext struct {
 	Goal      string
 }
 
+func defaultObjectiveContext() objectiveContext {
+	return objectiveContext{
+		Mission:   defaultContextLatticeMission(),
+		Objective: defaultContextLatticeObjective(),
+		Goal:      defaultContextLatticeGoal(),
+	}
+}
+
 func defaultContextLatticeMission() string {
 	value := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_MISSION"))
 	if value == "" {
@@ -41,6 +49,25 @@ func (c objectiveContext) empty() bool {
 	return strings.TrimSpace(c.Mission) == "" &&
 		strings.TrimSpace(c.Objective) == "" &&
 		strings.TrimSpace(c.Goal) == ""
+}
+
+func (c objectiveContext) withDefaults() objectiveContext {
+	defaults := defaultObjectiveContext()
+	out := objectiveContext{
+		Mission:   strings.TrimSpace(c.Mission),
+		Objective: strings.TrimSpace(c.Objective),
+		Goal:      strings.TrimSpace(c.Goal),
+	}
+	if out.Mission == "" {
+		out.Mission = defaults.Mission
+	}
+	if out.Objective == "" {
+		out.Objective = defaults.Objective
+	}
+	if out.Goal == "" {
+		out.Goal = defaults.Goal
+	}
+	return out
 }
 
 func (c objectiveContext) toMap() map[string]any {
@@ -84,6 +111,14 @@ func extractObjectiveContext(payload map[string]any) objectiveContext {
 		merge(nested)
 	}
 	return out
+}
+
+func objectiveContextFromPreflightRequest(req agentPreflightRequest) objectiveContext {
+	return objectiveContext{
+		Mission:   req.Mission,
+		Objective: req.Objective,
+		Goal:      req.Goal,
+	}.withDefaults()
 }
 
 func objectiveContextCaptureEnabled() bool {
@@ -294,10 +329,12 @@ func buildPolicyContextPackage(
 	primaryPack map[string]any,
 	missionPack map[string]any,
 	missionPackError error,
+	requestedContext objectiveContext,
 ) map[string]any {
-	mission := defaultContextLatticeMission()
-	objective := defaultContextLatticeObjective()
-	goal := defaultContextLatticeGoal()
+	policyContext := requestedContext.withDefaults()
+	mission := policyContext.Mission
+	objective := policyContext.Objective
+	goal := policyContext.Goal
 	formatContract := contractMetadata(policyContextPackageContractID)
 	policy := map[string]any{
 		"version":        "2026-05-10",

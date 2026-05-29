@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { RetrievalPanel } from "@/components/RetrievalPanel";
+import { MemoryGraphPanel, type MemoryGraphPayload } from "@/components/MemoryGraphPanel";
 
 type Service = {
   name: string;
@@ -61,17 +62,19 @@ export default function StatusPage() {
   const [preferences, setPreferences] = useState<PreferencesPayload | null>(null);
   const [topics, setTopics] = useState<TopicsPayload | null>(null);
   const [memoryTelemetry, setMemoryTelemetry] = useState<MemoryTelemetry | null>(null);
+  const [memoryGraph, setMemoryGraph] = useState<MemoryGraphPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
   async function loadStatus() {
     try {
       setError(null);
-      const [statusRes, prefRes, topicRes, memRes] = await Promise.all([
+      const [statusRes, prefRes, topicRes, memRes, graphRes] = await Promise.all([
         fetch("/api/memory/status", { cache: "no-store" }),
         fetch("/api/memory/preferences", { cache: "no-store" }),
         fetch("/api/memory/topics", { cache: "no-store" }),
         fetch("/api/telemetry/memory", { cache: "no-store" }),
+        fetch("/api/telemetry/memory/graph", { cache: "no-store" }),
       ]);
       const statusData = await statusRes.json();
       if (!statusRes.ok) {
@@ -86,6 +89,9 @@ export default function StatusPage() {
       }
       if (memRes.ok) {
         setMemoryTelemetry(await memRes.json());
+      }
+      if (graphRes.ok) {
+        setMemoryGraph(await graphRes.json());
       }
       setUpdatedAt(new Date().toLocaleTimeString());
     } catch (err: any) {
@@ -205,6 +211,8 @@ export default function StatusPage() {
           </div>
         </div>
       </section>
+
+      <MemoryGraphPanel graph={memoryGraph} />
 
       <RetrievalPanel />
     </div>

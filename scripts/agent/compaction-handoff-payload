@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _common import emit, now_iso
+from _common import REPO_ROOT, emit, now_iso
 
 
 TEXT_KEYS = (
@@ -24,20 +24,108 @@ TEXT_KEYS = (
     "reason",
 )
 SESSION_KEYS = ("session_id", "sessionId", "conversation_id", "conversationId", "id")
+DEFAULT_MAX_STDIN_BYTES = 512 * 1024
+DEFAULT_MAX_SUMMARY_JSON_BYTES = 12_000
+MAX_DEPTH = 8
+MAX_DICT_ITEMS = 80
+MAX_LIST_ITEMS = 64
+MODEL_COMPATIBILITY_CONTRACT_PATH = REPO_ROOT / "config" / "model_compat" / "compaction_prompt_contract.json"
+_MODEL_COMPATIBILITY_CONTRACT: dict[str, Any] | None = None
+PROVIDER_OVERFLOW_PATTERNS = (
+    "array_above_max_length",
+    "context length exceeded",
+    "maximum context length",
+    "max context length",
+    "input array is too long",
+    "oversized input",
+)
+
+
+def env_int(name: str, default: int, min_value: int = 1, max_value: int = 10_000_000) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(min_value, min(max_value, value))
+
+
+def model_compatibility_contract() -> dict[str, Any]:
+    global _MODEL_COMPATIBILITY_CONTRACT
+    if _MODEL_COMPATIBILITY_CONTRACT is None:
+        if not MODEL_COMPATIBILITY_CONTRACT_PATH.exists():
+            _MODEL_COMPATIBILITY_CONTRACT = {}
+            return {}
+        with MODEL_COMPATIBILITY_CONTRACT_PATH.open(encoding="utf-8") as fh:
+            parsed = json.load(fh)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{MODEL_COMPATIBILITY_CONTRACT_PATH} must contain a JSON object")
+        _MODEL_COMPATIBILITY_CONTRACT = parsed
+    return dict(_MODEL_COMPATIBILITY_CONTRACT)
+
+
+def prompt_safe_text(value: str) -> str:
+    text = str(value or "")
+    lowered = text.lower()
+    if any(pattern in lowered for pattern in PROVIDER_OVERFLOW_PATTERNS):
+        text = "ContextLattice boundary reduced an oversized provider input before recording this compaction handoff."
+    replacements = model_compatibility_contract().get("prompt_escape_replacements") or []
+    for replacement in replacements:
+        if not isinstance(replacement, dict):
+            continue
+        needle = str(replacement.get("find") or "")
+        replacement_text = str(replacement.get("replace") or "")
+        if not needle:
+            continue
+        text = text.replace(needle, replacement_text)
+    return " ".join(text.split())
 
 
 def compact_text(value: str, limit: int = 1200) -> str:
-    return " ".join(str(value or "").split())[:limit]
+    return prompt_safe_text(value)[:limit]
+
+
+def bounded_value(value: Any, depth: int = 0) -> Any:
+    if depth >= MAX_DEPTH:
+        return {"_truncated": "max_depth"}
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_DICT_ITEMS:
+                out["_truncated_keys"] = max(0, len(value) - MAX_DICT_ITEMS)
+                break
+            out[str(key)[:160]] = bounded_value(item, depth + 1)
+        return out
+    if isinstance(value, list):
+        out = [bounded_value(item, depth + 1) for item in value[:MAX_LIST_ITEMS]]
+        if len(value) > MAX_LIST_ITEMS:
+            out.append({"_truncated_items": len(value) - MAX_LIST_ITEMS})
+        return out
+    if isinstance(value, str):
+        return compact_text(value, 1600)
+    return value
 
 
 def load_payload() -> Any:
-    raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if sys.stdin.isatty():
+        return {}
+    max_bytes = env_int("CONTEXTLATTICE_COMPACTION_STDIN_MAX_BYTES", DEFAULT_MAX_STDIN_BYTES)
+    raw_bytes = sys.stdin.buffer.read(max_bytes + 1)
+    truncated = len(raw_bytes) > max_bytes
+    if truncated:
+        raw_bytes = raw_bytes[:max_bytes]
+    raw = raw_bytes.decode("utf-8", errors="replace")
     if not raw.strip():
         return {}
     try:
-        return json.loads(raw)
+        payload = bounded_value(json.loads(raw))
+        if isinstance(payload, dict) and truncated:
+            payload["_contextlattice_input_truncated"] = True
+        return payload
     except Exception:
-        return {"raw": raw[:1600]}
+        return {"raw": raw[:1600], "input_truncated": truncated}
 
 
 def first_string(value: Any, keys: tuple[str, ...], accept_bare: bool = False) -> str:

@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 2,
-  "updated_at": "2026-05-27T00:00:00Z",
+  "registry_version": 3,
+  "updated_at": "2026-05-28T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -61,6 +61,9 @@
       "payload_kind": "agent_policy_context_package",
       "required_output_mode": "json_object",
       "safe_failure_behavior": "return_json_contract_violation_envelope_without_raw_payload",
+      "max_total_json_bytes": 60000,
+      "max_string_bytes": 6000,
+      "max_list_items": 32,
       "required_fields": [
         "version",
         "agent",
@@ -160,6 +163,13 @@
         "anti_scheming_protocol.red_flags": 4,
         "anti_scheming_protocol.delivery": 3
       },
+      "max_bytes_by_path": {
+        "mission": 2000,
+        "objective": 2000,
+        "goal": 2000,
+        "handoff.handoff_prompt": 4000,
+        "evidence.mission_pack_error": 1000
+      },
       "forbidden_fields": [
         "hookSpecificOutput",
         "messages",
@@ -175,6 +185,9 @@
       "contract_version": 1,
       "payload_kind": "agent_preflight_response",
       "required_output_mode": "json_object",
+      "max_total_json_bytes": 180000,
+      "max_string_bytes": 8000,
+      "max_list_items": 64,
       "required_fields": [
         "ok",
         "service",
@@ -225,6 +238,9 @@
       "contract_version": 1,
       "payload_kind": "context_pack_response",
       "required_output_mode": "json_object",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 6000,
+      "max_list_items": 64,
       "required_fields": [
         "context_pack",
         "source_coverage",
@@ -274,6 +290,10 @@
         "secrets"
       ],
       "forbidden_scope": "root",
+      "max_bytes_by_path": {
+        "query": 2000,
+        "task_summary": 1000
+      },
       "required_string_contains": {
         "format_contract.schema_id": "context_pack_response.v1"
       }
@@ -321,6 +341,9 @@
       "contract_version": 1,
       "payload_kind": "codex_compact_hook_stdout",
       "required_output_mode": "json_object",
+      "max_total_json_bytes": 4096,
+      "max_string_bytes": 4000,
+      "max_list_items": 4,
       "allowed_fields": [
         "continue",
         "suppressOutput",
@@ -597,6 +620,9 @@
       "payload_kind": "context_overflow_recovery",
       "contract_version": 1,
       "required_output_mode": "json_object",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 8000,
+      "max_list_items": 16000,
       "required_fields": [
         "ok",
         "status",
