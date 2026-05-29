@@ -22,6 +22,7 @@ The Python migration proxies currently use HTTP while gRPC is rolled out.
 - `POST /v1/memory/update`
 - `GET /v1/memory/get?memory_id=...`
 - `GET|POST /v1/memory/edges`
+- `POST /v1/memory/edges/backfill`
 - `POST /v1/memory/neighbors`
 - `POST /v1/memory/batch-put`
 - `POST /v1/retrieval/query`

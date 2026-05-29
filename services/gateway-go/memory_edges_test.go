@@ -168,3 +168,105 @@ func TestMergeNeighborRowsPrefersExplicitEdgesAndDedupesRetrieval(t *testing.T) 
 		t.Fatalf("expected non-duplicate retrieval row second, got %#v", second)
 	}
 }
+
+func TestMemoryEdgesBackfillDryRunWriteAndIdempotency(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	writes := []normalizedWrite{
+		{
+			project:   "alpha",
+			fileName:  "notes/a.md",
+			content:   "A references alpha::notes/b.md",
+			topicPath: "runbooks/testing",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/b.md",
+			content:   "B implementation notes",
+			topicPath: "runbooks/testing",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/c.md",
+			content:   "C related runbook",
+			topicPath: "runbooks/testing",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+	}
+	for _, write := range writes {
+		if _, _, err := s.memoryStore.put(write); err != nil {
+			t.Fatalf("seed memory write %s: %v", write.fileName, err)
+		}
+	}
+
+	dryRun := postEdgeBackfillForTest(t, gateway.URL, `{"project":"alpha","sample_limit":20}`)
+	if !anyToBool(dryRun["dry_run"]) {
+		t.Fatalf("expected dry_run default true, got %#v", dryRun)
+	}
+	if anyToInt(dryRun["written"], -1) != 0 {
+		t.Fatalf("dry run must not write edges, got %#v", dryRun)
+	}
+	if anyToInt(dryRun["eligible"], 0) == 0 || anyToInt(dryRun["would_write"], 0) == 0 {
+		t.Fatalf("expected eligible dry-run candidates, got %#v", dryRun)
+	}
+	if got := backfillRelationStatInt(dryRun, "same_agent", "skipped_below_confidence"); got == 0 {
+		t.Fatalf("expected low-confidence same_agent audit rows to be skipped, got %#v", dryRun["relations"])
+	}
+	if edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{MemoryID: "alpha::notes/a.md", Limit: 100}); err != nil || len(edges) != 0 {
+		t.Fatalf("dry-run should leave edge store empty, edges=%#v err=%v", edges, err)
+	}
+
+	writeRun := postEdgeBackfillForTest(t, gateway.URL, `{"dry_run":false,"project":"alpha","sample_limit":20}`)
+	written := anyToInt(writeRun["written"], 0)
+	if written == 0 {
+		t.Fatalf("expected write mode to persist high-confidence candidates, got %#v", writeRun)
+	}
+	if got := backfillRelationStatInt(writeRun, "same_agent", "written"); got != 0 {
+		t.Fatalf("same_agent is audit-only at default threshold, wrote=%d report=%#v", got, writeRun["relations"])
+	}
+	edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{MemoryID: "alpha::notes/a.md", Limit: 100})
+	if err != nil {
+		t.Fatalf("list written edges: %v", err)
+	}
+	if len(edges) == 0 {
+		t.Fatalf("expected written backfill edges")
+	}
+
+	repeatRun := postEdgeBackfillForTest(t, gateway.URL, `{"dry_run":false,"project":"alpha","sample_limit":20}`)
+	if anyToInt(repeatRun["written"], -1) != 0 {
+		t.Fatalf("repeat backfill should be idempotent and skip existing edges, got %#v", repeatRun)
+	}
+	if anyToInt(repeatRun["existing"], 0) == 0 {
+		t.Fatalf("repeat backfill should report existing edges, got %#v", repeatRun)
+	}
+}
+
+func postEdgeBackfillForTest(t *testing.T, baseURL string, body string) map[string]any {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/v1/memory/edges/backfill", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("edge backfill request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 backfill response, got %d body=%s", resp.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode backfill response: %v body=%s", err, string(raw))
+	}
+	return payload
+}
+
+func backfillRelationStatInt(payload map[string]any, relation string, field string) int {
+	relations, _ := payload["relations"].(map[string]any)
+	rawStat, _ := relations[relation].(map[string]any)
+	return anyToInt(rawStat[field], 0)
+}

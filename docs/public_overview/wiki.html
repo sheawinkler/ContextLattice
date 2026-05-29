@@ -141,9 +141,9 @@
             </tr>
             <tr>
               <td>Typed memory edges</td>
-              <td><code>GET|POST /v1/memory/edges</code></td>
-              <td>Persist explicit relationships such as <code>depends_on</code>, <code>blocks</code>, or <code>supersedes</code></td>
-              <td>Durable edge records in the local memory graph index</td>
+              <td><code>GET|POST /v1/memory/edges</code>, <code>POST /v1/memory/edges/backfill</code></td>
+              <td>Persist explicit relationships and audit/apply deterministic retroactive edges</td>
+              <td>Durable edge records in the local memory graph index with dry-run backfill counts</td>
             </tr>
             <tr>
               <td>Graph neighbors</td>

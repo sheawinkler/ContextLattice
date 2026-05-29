@@ -6548,6 +6548,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/memory/update", s.memoryV1Update)
 	mux.HandleFunc("/v1/memory/get", s.memoryV1Get)
 	mux.HandleFunc("/v1/memory/edges", s.memoryV1Edges)
+	mux.HandleFunc("/v1/memory/edges/backfill", s.memoryV1EdgesBackfill)
 	mux.HandleFunc("/v1/memory/neighbors", s.memoryV1Neighbors)
 	mux.HandleFunc("/v1/memory/batch-put", s.memoryBatchPut)
 	mux.HandleFunc("/migration/runtime", s.migrationRuntime)
