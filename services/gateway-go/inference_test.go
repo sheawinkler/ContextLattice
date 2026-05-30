@@ -439,6 +439,75 @@ func TestInferenceRuntimePolicyRecommendsSGLangOnAccelerator(t *testing.T) {
 	}
 }
 
+func TestInferenceRuntimePolicyIncludesOptInQwen36ModelPolicy(t *testing.T) {
+	resetANEProbeCacheForTest()
+	t.Setenv("ORCH_HOST_HARDWARE_PROFILE", "apple_silicon")
+	t.Setenv("ORCH_HOST_MEMORY_GB", "64")
+	t.Setenv("ORCH_INFER_PROVIDER_PRIORITY", "llama-cpp")
+	t.Setenv("ORCH_INFER_AUTO_PROBE_TIMEOUT_SECS", "0.05")
+
+	llamaCPP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3.6-gguf"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer llamaCPP.Close()
+	t.Setenv("LLAMA_CPP_BASE_URL", llamaCPP.URL)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, payload := getJSON(t, gateway.URL+"/v1/inference/runtime-policy")
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	modelPolicy, _ := payload["modelPolicy"].(map[string]any)
+	if anyToBool(modelPolicy["downloadByDefault"]) {
+		t.Fatalf("expected model policy to avoid default downloads, got %#v", modelPolicy)
+	}
+	if repo := strings.TrimSpace(anyToString(modelPolicy["qwen36GGUFDefault"])); !strings.Contains(repo, "mudler/Qwen3.6-35B-A3B") {
+		t.Fatalf("expected mudler GGUF default, got %q policy=%#v", repo, modelPolicy)
+	}
+	privateEval, _ := modelPolicy["privateEval"].(map[string]any)
+	if anyToBool(privateEval["enabled"]) {
+		t.Fatalf("expected private eval disabled by default, got %#v", privateEval)
+	}
+	if repo := strings.TrimSpace(anyToString(privateEval["repoIfEnabled"])); !strings.Contains(repo, "Huihui-Qwen3.6") {
+		t.Fatalf("expected Huihui private-eval repo metadata, got %q", repo)
+	}
+
+	foundGGUFPolicy := false
+	for _, raw := range payload["candidates"].([]any) {
+		candidate, _ := raw.(map[string]any)
+		if strings.TrimSpace(anyToString(candidate["provider"])) != "llama-cpp" {
+			continue
+		}
+		models, _ := candidate["modelPolicy"].([]any)
+		for _, rawModel := range models {
+			model, _ := rawModel.(map[string]any)
+			if strings.TrimSpace(anyToString(model["id"])) == "qwen36_gguf_opt_in" {
+				foundGGUFPolicy = true
+				if !anyToBool(model["optInRequired"]) || anyToBool(model["downloadByDefault"]) {
+					t.Fatalf("expected opt-in/no-download qwen36 policy, got %#v", model)
+				}
+			}
+		}
+	}
+	if !foundGGUFPolicy {
+		t.Fatalf("expected llama.cpp candidate to include qwen36 GGUF policy, payload=%#v", payload)
+	}
+}
+
 func TestInferenceMSeriesDetectionHonorsHostProfileOverride(t *testing.T) {
 	t.Setenv("ORCH_HOST_HARDWARE_PROFILE", "apple_silicon")
 	if !_inferenceIsMSeriesMac() {

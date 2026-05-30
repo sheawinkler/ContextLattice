@@ -27,6 +27,8 @@ const (
 	defaultInferenceTensorRTBaseURL  = "http://127.0.0.1:8000"
 	defaultInferenceLlamaCPPBaseURL  = "http://127.0.0.1:8080"
 	defaultInferenceANESidecarURL    = "http://127.0.0.1:9099"
+	defaultDreamQwen36GGUFModelRepo  = "mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF"
+	defaultDreamPrivateEvalGGUFRepo  = "huihui-ai/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-MTP-GGUF"
 )
 
 type inferenceRoute struct {
@@ -1452,6 +1454,115 @@ func _inferenceProviderResourceFit(provider string, hardware map[string]any) str
 	}
 }
 
+func _inferenceQwen36GGUFModelRepo() string {
+	return envStringAny(defaultDreamQwen36GGUFModelRepo, "GO_DREAM_QWEN36_GGUF_MODEL_REPO", "CONTEXTLATTICE_QWEN36_GGUF_MODEL_REPO")
+}
+
+func _inferencePrivateEvalGGUFModelRepo() string {
+	return envStringAny(defaultDreamPrivateEvalGGUFRepo, "GO_DREAM_PRIVATE_EVAL_GGUF_MODEL_REPO", "CONTEXTLATTICE_PRIVATE_EVAL_GGUF_MODEL_REPO")
+}
+
+func _inferenceProviderModelRecommendations(provider string, hardware map[string]any) []any {
+	normalized := _inferenceNormalizeProvider(provider)
+	memoryGB := anyToFloat64(hardware["memoryGB"], 0)
+	qwen36GGUF := _inferenceQwen36GGUFModelRepo()
+	recommendations := []any{}
+	switch normalized {
+	case "llama-cpp", "lmstudio", "ollama", "ollama_coreml":
+		recommendations = append(recommendations, map[string]any{
+			"id":                "qwen36_gguf_opt_in",
+			"repo":              qwen36GGUF,
+			"role":              "advanced_reasoning_gguf",
+			"format":            "GGUF",
+			"runtimeFit":        "llama.cpp-compatible GGUF runtime; Ollama/LM Studio only if they can load the selected quant efficiently",
+			"optInRequired":     true,
+			"downloadByDefault": false,
+			"default":           normalized == "llama-cpp",
+			"reason":            "Best current public GGUF target for Qwen3.6 Dream Mode experiments without making large weights part of the default app.",
+		})
+		if memoryGB > 0 && memoryGB < 32 {
+			recommendations = append(recommendations, map[string]any{
+				"id":                "small_local_fallback",
+				"model":             "qwen3.5:9b",
+				"role":              "compatibility_fallback",
+				"format":            "Ollama/GGUF-style local quant",
+				"optInRequired":     false,
+				"downloadByDefault": false,
+				"reason":            "Visible memory is below the practical range for a comfortable 35B-A3B GGUF Dream Mode default.",
+			})
+		}
+	case "mlx":
+		recommendations = append(recommendations, map[string]any{
+			"id":                "mlx_qwen_opt_in",
+			"role":              "first_class_apple_silicon",
+			"format":            "MLX",
+			"optInRequired":     true,
+			"downloadByDefault": false,
+			"reason":            "Use an MLX-converted Qwen3.x model when available; do not fall back to CPU-only Ollama for long Dream Mode synthesis on Apple Silicon.",
+		})
+	case "vllm-metal":
+		recommendations = append(recommendations, map[string]any{
+			"id":                "metal_openai_compatible_qwen_opt_in",
+			"role":              "advanced_apple_silicon_server",
+			"format":            "backend-native HF/Metal server format",
+			"optInRequired":     true,
+			"downloadByDefault": false,
+			"reason":            "Prefer a Metal-backed OpenAI-compatible server over CPU-only generation when MLX is not the chosen path.",
+		})
+	case "sglang", "vllm", "tgi", "tensorrt-llm":
+		recommendations = append(recommendations, map[string]any{
+			"id":                "accelerated_hf_qwen_opt_in",
+			"role":              "gpu_server_reasoning",
+			"format":            "backend-native Hugging Face/safetensors quant",
+			"optInRequired":     true,
+			"downloadByDefault": false,
+			"reason":            "Use a backend-native Qwen3.x checkpoint verified for this accelerator; GGUF is not the default target for these servers.",
+		})
+	default:
+		recommendations = append(recommendations, map[string]any{
+			"id":                "openai_compatible_qwen_opt_in",
+			"role":              "bring_your_own_endpoint",
+			"format":            "OpenAI-compatible chat completions",
+			"optInRequired":     true,
+			"downloadByDefault": false,
+			"reason":            "Let the external runtime own model installation, quantization, and resource policy.",
+		})
+	}
+	return recommendations
+}
+
+func _inferenceDefaultModelPolicyProvider(hardware map[string]any) string {
+	switch strings.TrimSpace(anyToString(hardware["profile"])) {
+	case "apple_silicon":
+		return "mlx"
+	case "nvidia_cuda", "amd_rocm":
+		return "sglang"
+	default:
+		return "llama-cpp"
+	}
+}
+
+func _inferenceDreamModelPolicy(hardware map[string]any) map[string]any {
+	allowPrivateEval := envBool("GO_DREAM_ALLOW_UNCENSORED_MODELS", false)
+	privateEval := map[string]any{
+		"enabled":       allowPrivateEval,
+		"optInEnv":      "GO_DREAM_ALLOW_UNCENSORED_MODELS=true",
+		"reason":        "Abliterated/uncensored model variants are never recommended by default and are intended for explicit private evaluation only.",
+		"repoIfEnabled": _inferencePrivateEvalGGUFModelRepo(),
+	}
+	return map[string]any{
+		"policy":             "large Qwen3.6 models are opt-in advisory targets only; ContextLattice does not bundle or pull them by default",
+		"downloadByDefault":  false,
+		"defaultFallback":    "qwen3.5:9b",
+		"qwen36GGUFDefault":  _inferenceQwen36GGUFModelRepo(),
+		"qwen36DefaultRole":  "advanced opt-in GGUF target for llama.cpp-compatible runtimes",
+		"privateEval":        privateEval,
+		"providerGuidance":   _inferenceProviderModelRecommendations(_inferenceDefaultModelPolicyProvider(hardware), hardware),
+		"cpuOnlyGuidance":    "CPU-only local generation may work for small models, but it is not the recommended Dream Mode path for Qwen3.5/Qwen3.6 on Apple Silicon; prefer MLX, vLLM-Metal, or native Metal llama.cpp.",
+		"sourceModelDefault": "none; source/provenance repos are not user-facing defaults unless a backend-native accelerated format is verified",
+	}
+}
+
 func _inferenceModelSizingGuidance(hardware map[string]any) map[string]any {
 	profile := strings.TrimSpace(anyToString(hardware["profile"]))
 	memoryGB := anyToFloat64(hardware["memoryGB"], 0)
@@ -1544,6 +1655,7 @@ func _inferenceRuntimeRecommendation(hardware map[string]any, candidates []map[s
 		"selectedRoute":     selected,
 		"modelStrategy":     _inferenceModelStrategyForHardware(hardware),
 		"modelSizing":       _inferenceModelSizingGuidance(hardware),
+		"modelPolicy":       _inferenceDreamModelPolicy(hardware),
 		"setupHint":         _inferenceProviderSetupHint(provider),
 		"source":            "gateway-runtime-policy",
 		"fallbackWhenBlind": "If resources are not identifiable, start with Q4/IQ4 7B-9B models and benchmark before moving to 27B/35B-A3B.",
@@ -1582,6 +1694,7 @@ func (s *server) inferenceRuntimePolicyPayload() map[string]any {
 			"detail":         detail,
 			"useCase":        _inferenceProviderUseCase(provider),
 			"modelFormats":   _inferenceProviderModelFormats(provider),
+			"modelPolicy":    _inferenceProviderModelRecommendations(provider, hardware),
 			"setupHint":      _inferenceProviderSetupHint(provider),
 			"resourceFit":    _inferenceProviderResourceFit(provider, hardware),
 			"manualAdvanced": provider == "openai-compatible" || provider == "lmstudio" || provider == "llama-cpp" || provider == "sglang" || provider == "tgi" || provider == "tensorrt-llm",
@@ -1610,6 +1723,7 @@ func (s *server) inferenceRuntimePolicyPayload() map[string]any {
 		},
 		"candidates": candidates,
 	}
+	payload["modelPolicy"] = _inferenceDreamModelPolicy(hardware)
 	payload["recommendation"] = _inferenceRuntimeRecommendation(hardware, candidates, selected, err)
 	if err != nil {
 		payload["error"] = err.Error()
