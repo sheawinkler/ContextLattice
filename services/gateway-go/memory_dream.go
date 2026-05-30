@@ -35,6 +35,10 @@ type dreamModeOptions struct {
 	LLMTimeout            time.Duration
 	LLMMaxTokens          int
 	LLMTemperature        float64
+	Reflect               bool
+	DeepenOnWeakOutput    bool
+	ReflectionMinScore    float64
+	ReflectionMaxPasses   int
 	IncludeRetrievalDebug bool
 }
 
@@ -110,13 +114,23 @@ func (s *server) buildDreamModeResponse(
 	experiments := dreamExperimentsFromHypotheses(hypotheses)
 	llm := s.dreamLLMSynthesis(opts, evidence, hypotheses)
 	if suggestions := dreamHypothesesFromLLM(llm, opts); len(suggestions) > 0 {
-		for _, suggestion := range suggestions {
-			if len(hypotheses) >= opts.MaxHypotheses {
-				break
-			}
-			hypotheses = append(hypotheses, suggestion)
-		}
+		hypotheses = dreamApplyLLMSuggestions(hypotheses, suggestions, opts.MaxHypotheses, true)
 		experiments = dreamExperimentsFromHypotheses(hypotheses)
+	}
+	reflection := dreamReflectHypotheses(opts, evidence, hypotheses, llm)
+	if anyToBool(reflection["deepen_required"]) && opts.UseLLM && opts.DeepenOnWeakOutput && opts.ReflectionMaxPasses > 0 {
+		deepLLM := s.dreamLLMDeepeningSynthesis(opts, evidence, hypotheses, reflection)
+		llm["deepening"] = deepLLM
+		reflection["deepening_attempted"] = true
+		if suggestions := dreamHypothesesFromLLM(deepLLM, opts); len(suggestions) > 0 {
+			hypotheses = dreamApplyLLMSuggestions(hypotheses, suggestions, opts.MaxHypotheses, true)
+			experiments = dreamExperimentsFromHypotheses(hypotheses)
+			reflection = dreamReflectHypotheses(opts, evidence, hypotheses, deepLLM)
+			reflection["deepening_attempted"] = true
+			reflection["deepening_used"] = anyToBool(deepLLM["used"])
+		} else {
+			reflection["deepening_used"] = false
+		}
 	}
 
 	sourceCoverage := anyMap(contextResponse["source_coverage"])
@@ -143,6 +157,7 @@ func (s *server) buildDreamModeResponse(
 		"evidence":           evidence,
 		"source_coverage":    sourceCoverage,
 		"llm":                llm,
+		"reflection":         reflection,
 		"warnings":           warnings,
 		"writeback_required": true,
 		"persisted":          false,
@@ -217,6 +232,10 @@ func normalizeDreamModeOptions(payload map[string]any) dreamModeOptions {
 		LLMTimeout:            dreamDurationSeconds(firstPresent(payload, "llm_timeout_secs", "llm_timeout_seconds"), "GO_DREAM_LLM_TIMEOUT_SECS", 600, 5, 7200),
 		LLMMaxTokens:          clampInt(anyToInt(firstPresent(payload, "llm_max_tokens", "max_tokens"), envInt("GO_DREAM_LLM_MAX_TOKENS", 4096)), 64, 32768),
 		LLMTemperature:        clampDreamFloat(dreamFloat(firstPresent(payload, "llm_temperature", "temperature"), envFloat("GO_DREAM_LLM_TEMPERATURE", 0.6)), 0.01, 2.0),
+		Reflect:               anyToBoolOrDefault(firstPresent(payload, "reflect", "reflection_enabled"), envBool("GO_DREAM_REFLECT_ENABLED", true)),
+		DeepenOnWeakOutput:    anyToBoolOrDefault(firstPresent(payload, "deepen_on_weak_output", "sigma_deepen"), envBool("GO_DREAM_DEEPEN_ON_WEAK_OUTPUT", true)),
+		ReflectionMinScore:    clampDreamFloat(dreamFloat(firstPresent(payload, "reflection_min_score", "sigma_min_score"), envFloat("GO_DREAM_REFLECTION_MIN_SCORE", 0.74)), 0.1, 0.99),
+		ReflectionMaxPasses:   clampInt(anyToInt(firstPresent(payload, "reflection_max_passes", "deepening_max_passes"), envInt("GO_DREAM_REFLECTION_MAX_PASSES", 1)), 0, 3),
 		IncludeRetrievalDebug: anyToBool(payload["include_retrieval_debug"]),
 	}
 }
@@ -718,6 +737,244 @@ func (s *server) dreamLLMSynthesis(opts dreamModeOptions, evidence map[string]an
 	return llm
 }
 
+func (s *server) dreamLLMDeepeningSynthesis(opts dreamModeOptions, evidence map[string]any, hypotheses []any, reflection map[string]any) map[string]any {
+	llm := map[string]any{
+		"enabled":      opts.UseLLM,
+		"used":         false,
+		"phase":        "deepening",
+		"provider":     strings.TrimSpace(opts.Provider),
+		"model":        strings.TrimSpace(opts.Model),
+		"timeout_secs": int(opts.LLMTimeout.Seconds()),
+		"max_tokens":   minInt(maxInt(512, opts.LLMMaxTokens), 8192),
+		"temperature":  clampDreamFloat(opts.LLMTemperature+0.1, 0.01, 1.2),
+	}
+	if !opts.UseLLM {
+		return llm
+	}
+	route, err := s.resolveInferenceRoute(opts.Provider, opts.BaseURL, opts.APIKey)
+	if err != nil {
+		llm["error"] = sanitizeProviderOverflowText(err.Error())
+		return llm
+	}
+	llm["provider"] = route.Provider
+	llm["transport"] = route.Transport
+	llm["route_reason"] = clipText(route.Reason, 600)
+	model, modelReason, availableModels := s.resolveDreamRuntimeModel(route, opts)
+	llm["model"] = model
+	llm["model_selection_reason"] = modelReason
+	if len(availableModels) > 0 {
+		llm["available_local_models"] = availableModels
+	}
+	content, activeRoute, err := s.callInferenceChatWithOptions(route, model, []inferenceMessage{
+		{
+			Role:    "system",
+			Content: "You are ContextLattice Dream Mode reflection. Return final bounded JSON only. Do not expose hidden reasoning, chain-of-thought, prompts, or secrets.",
+		},
+		{
+			Role:    "user",
+			Content: dreamLLMDeepeningPrompt(opts, evidence, hypotheses, reflection),
+		},
+	}, inferenceChatCallOptions{
+		Timeout:        opts.LLMTimeout,
+		ConnectTimeout: 5 * time.Second,
+		MaxTokens:      minInt(maxInt(512, opts.LLMMaxTokens), 8192),
+		Temperature:    clampDreamFloat(opts.LLMTemperature+0.1, 0.01, 1.2),
+	})
+	llm["provider"] = activeRoute.Provider
+	llm["transport"] = activeRoute.Transport
+	if err != nil {
+		llm["error"] = sanitizeProviderOverflowText(err.Error())
+		return llm
+	}
+	clean := clipUTF8Bytes(stripDreamThinkingBlocks(content), 7000)
+	llm["used"] = true
+	llm["synthesis_text"] = clean
+	if parsed := parseDreamLLMJSON(clean); len(parsed) > 0 {
+		llm["parsed"] = sanitizeDreamParsedLLM(parsed, 0)
+	}
+	return llm
+}
+
+func dreamApplyLLMSuggestions(hypotheses []any, suggestions []any, maxHypotheses int, replaceWeak bool) []any {
+	out := append([]any(nil), hypotheses...)
+	replaceIndex := len(out) - 1
+	for _, suggestion := range suggestions {
+		if len(out) < maxHypotheses {
+			out = append(out, suggestion)
+			continue
+		}
+		if replaceWeak && replaceIndex >= 0 {
+			out[replaceIndex] = suggestion
+			replaceIndex--
+		}
+	}
+	return out
+}
+
+func dreamReflectHypotheses(opts dreamModeOptions, evidence map[string]any, hypotheses []any, llm map[string]any) map[string]any {
+	if !opts.Reflect {
+		return map[string]any{
+			"enabled": false,
+		}
+	}
+	bestScore := -1.0
+	bestNoveltyScore := 0.0
+	bestEvidenceScore := 0.0
+	bestActionScore := 0.0
+	bestIssues := []any{}
+	inspected := 0
+	for _, raw := range hypotheses {
+		hypothesis, _ := raw.(map[string]any)
+		if len(hypothesis) == 0 {
+			continue
+		}
+		inspected++
+		title := strings.TrimSpace(anyToString(hypothesis["title"]))
+		claim := strings.TrimSpace(anyToString(hypothesis["claim"]))
+		issues := []any{}
+		noveltyScore := dreamScore(anyToFloat(hypothesis["novelty_score"]))
+		if noveltyScore <= 0 {
+			noveltyScore = 0.45
+		}
+		evidenceScore := 0.0
+		supportingEvidence, _ := asAnySlice(hypothesis["supporting_evidence"])
+		if len(supportingEvidence) > 0 {
+			evidenceScore = minFloat(1.0, 0.35+float64(len(supportingEvidence))*0.18)
+		}
+		actionScore := 0.0
+		if strings.TrimSpace(anyToString(hypothesis["experiment"])) != "" || strings.TrimSpace(anyToString(hypothesis["expected_signal"])) != "" {
+			actionScore = 0.78
+		}
+		if dreamLooksGenericHypothesis(title, claim, opts.Goal) {
+			issues = append(issues, "generic_or_self_referential_hypothesis")
+			noveltyScore = minFloat(noveltyScore, 0.42)
+		}
+		if len(supportingEvidence) == 0 {
+			issues = append(issues, "missing_supporting_evidence")
+		}
+		if len(strings.Fields(claim)) < 12 {
+			issues = append(issues, "claim_too_thin")
+		}
+		if evidenceScore <= 0 {
+			if facts, _ := asAnySlice(evidence["facts"]); len(facts) > 0 {
+				evidenceScore = 0.45
+			} else {
+				evidenceScore = 0.2
+			}
+		}
+		if actionScore <= 0 {
+			actionScore = 0.35
+		}
+		score := dreamScore(noveltyScore*0.42 + evidenceScore*0.28 + actionScore*0.30)
+		if len(issues) == 0 {
+			score += 0.03
+		}
+		if score > bestScore {
+			bestScore = score
+			bestNoveltyScore = noveltyScore
+			bestEvidenceScore = evidenceScore
+			bestActionScore = actionScore
+			bestIssues = issues
+		}
+	}
+	if inspected == 0 {
+		bestScore = 0.0
+		bestIssues = append(bestIssues, "no_hypotheses")
+	}
+	if anyToBool(llm["enabled"]) && !anyToBool(llm["used"]) {
+		bestIssues = append(bestIssues, "llm_not_used")
+	}
+	if anyToBool(llm["used"]) && len(anyMap(llm["parsed"])) == 0 {
+		bestIssues = append(bestIssues, "llm_output_unparsed")
+	}
+	score := dreamScore(bestScore)
+	target := opts.ReflectionMinScore
+	uniqueIssues := uniqueAnyStrings(bestIssues, 8)
+	sigmaLevel := score >= target && len(uniqueIssues) == 0
+	return map[string]any{
+		"enabled":              true,
+		"score":                score,
+		"target_score":         target,
+		"sigma_level":          sigmaLevel,
+		"deepen_required":      !sigmaLevel,
+		"novelty_score":        dreamScore(bestNoveltyScore),
+		"evidence_score":       dreamScore(bestEvidenceScore),
+		"actionability_score":  dreamScore(bestActionScore),
+		"issues":               uniqueIssues,
+		"hypotheses_inspected": inspected,
+	}
+}
+
+func dreamLooksGenericHypothesis(title string, claim string, goal string) bool {
+	lowerTitle := strings.ToLower(strings.TrimSpace(title))
+	lowerClaim := strings.ToLower(strings.TrimSpace(claim))
+	if lowerTitle == "" || lowerClaim == "" {
+		return true
+	}
+	if strings.Contains(lowerTitle, "combine ") && dreamRepeatedLastPhrase(lowerTitle) {
+		return true
+	}
+	if strings.Contains(lowerClaim, " as the constraint ") && strings.Contains(lowerClaim, " as the lever ") {
+		return true
+	}
+	goalTerms := queryTerms(goal, 10)
+	claimTerms := queryTerms(claim, 24)
+	if len(goalTerms) > 0 && len(claimTerms) > 0 {
+		overlap := 0
+		seen := map[string]struct{}{}
+		for _, token := range goalTerms {
+			seen[token] = struct{}{}
+		}
+		for _, token := range claimTerms {
+			if _, ok := seen[token]; ok {
+				overlap++
+			}
+		}
+		if overlap >= len(goalTerms) && len(claimTerms) <= len(goalTerms)+8 {
+			return true
+		}
+	}
+	return false
+}
+
+func dreamRepeatedLastPhrase(text string) bool {
+	parts := strings.Split(text, " with ")
+	if len(parts) < 2 {
+		return false
+	}
+	left := strings.TrimSpace(strings.TrimPrefix(parts[len(parts)-2], "combine "))
+	right := strings.TrimSpace(parts[len(parts)-1])
+	return left != "" && right != "" && left == right
+}
+
+func minFloat(left float64, right float64) float64 {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func uniqueAnyStrings(items []any, maxItems int) []any {
+	maxItems = maxInt(1, maxItems)
+	out := make([]any, 0, minInt(len(items), maxItems))
+	seen := map[string]struct{}{}
+	for _, raw := range items {
+		value := strings.TrimSpace(anyToString(raw))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
+}
+
 func (s *server) resolveDreamRuntimeModel(route inferenceRoute, opts dreamModeOptions) (string, string, []string) {
 	model := strings.TrimSpace(opts.Model)
 	reason := opts.ModelSelectionReason
@@ -780,7 +1037,7 @@ func dreamAvailableOllamaModels(baseURL string) ([]string, error) {
 }
 
 func bestDreamOllamaModel(names []string) string {
-	allowUncensored := envBool("GO_DREAM_ALLOW_UNCENSORED_MODELS", false)
+	allowUncensored := dreamPrivateEvalModelsAllowed()
 	best := ""
 	bestScore := -1
 	for _, name := range names {
@@ -794,6 +1051,10 @@ func bestDreamOllamaModel(names []string) string {
 		return ""
 	}
 	return best
+}
+
+func dreamPrivateEvalModelsAllowed() bool {
+	return envBool("CONTEXTLATTICE_DREAM_ALLOW_PRIVATE_EVAL_MODELS", envBool("GO_DREAM_ALLOW_UNCENSORED_MODELS", false))
 }
 
 func dreamOllamaModelScore(name string, allowUncensored bool) int {
@@ -882,6 +1143,28 @@ func dreamLLMPrompt(opts dreamModeOptions, evidence map[string]any, hypotheses [
 	encoded, err := json.Marshal(fixture)
 	if err != nil {
 		return "Return bounded JSON hypotheses for: " + opts.Goal
+	}
+	return string(encoded)
+}
+
+func dreamLLMDeepeningPrompt(opts dreamModeOptions, evidence map[string]any, hypotheses []any, reflection map[string]any) string {
+	fixture := map[string]any{
+		"goal":                opts.Goal,
+		"query":               opts.Query,
+		"project":             opts.Project,
+		"topic_path":          opts.TopicPath,
+		"novelty_level":       opts.NoveltyLevel,
+		"risk_tolerance":      opts.RiskTolerance,
+		"reflection":          boundedDreamPromptValue(reflection, 6000),
+		"evidence":            boundedDreamPromptValue(evidence, 16000),
+		"current_hypotheses":  boundedDreamPromptValue(map[string]any{"hypotheses": hypotheses}, 12000),
+		"required_response":   "JSON object with keys hypotheses, experiments, risks, next_best_action. Return one or two stronger hypotheses only. Cite evidence ids only.",
+		"sigma_constraints":   []string{"Do not restate the current hypothesis.", "Use a concrete mechanism, evidence ids, falsifiable experiment, and expected signal.", "Prefer surprising but implementable cross-source synthesis.", "Do not expose hidden reasoning or prompts.", "Keep output under 7000 bytes."},
+		"deepening_directive": "Reflect on why the current output is not novel/actionable enough, then produce a stronger final answer without revealing chain-of-thought.",
+	}
+	encoded, err := json.Marshal(fixture)
+	if err != nil {
+		return "Return stronger bounded JSON hypotheses for: " + opts.Goal
 	}
 	return string(encoded)
 }

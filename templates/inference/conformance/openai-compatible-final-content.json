@@ -1,0 +1,15 @@
+{
+  "model": "__MODEL__",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Return final answer content only. Do not emit hidden reasoning."
+    },
+    {
+      "role": "user",
+      "content": "Reply with exactly this JSON: {\"ok\":true,\"template\":\"final-content\"}"
+    }
+  ],
+  "max_tokens": 96,
+  "temperature": 0
+}

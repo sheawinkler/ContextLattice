@@ -2934,6 +2934,48 @@ func cloneMap(input map[string]any) map[string]any {
 	return out
 }
 
+func cloneJSONMap(input map[string]any) map[string]any {
+	if input == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = cloneJSONValue(value)
+	}
+	return out
+}
+
+func cloneJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneJSONMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for idx, item := range typed {
+			out[idx] = cloneJSONValue(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(typed))
+		for idx, item := range typed {
+			out[idx] = cloneJSONMap(item)
+		}
+		return out
+	case []string:
+		out := make([]string, len(typed))
+		copy(out, typed)
+		return out
+	case map[string]string:
+		out := make(map[string]string, len(typed))
+		for key, item := range typed {
+			out[key] = item
+		}
+		return out
+	default:
+		return value
+	}
+}
+
 func cloneIntMap(input map[string]int) map[string]int {
 	out := make(map[string]int, len(input))
 	for key, value := range input {
@@ -4443,6 +4485,8 @@ func (s *server) callBackendSourceQuery(
 	source string,
 	explicitSourceOverride bool,
 ) ([]map[string]any, []string, map[string]any, string, error) {
+	baseRequest = cloneJSONMap(baseRequest)
+	incomingHeaders = incomingHeaders.Clone()
 	fallbackWarnings := []string{}
 	if source == sourceLetta {
 		rows, warnings, err := s.queryLettaSource(ctx, baseRequest)
@@ -4558,7 +4602,7 @@ func (s *server) queryBackendSourceSingle(
 	if s.strictNoPythonRuntime {
 		return nil, nil, nil, errors.New("python backend retrieval disabled by strict runtime policy")
 	}
-	sourceRequest := cloneMap(baseRequest)
+	sourceRequest := cloneJSONMap(baseRequest)
 	sourceRequest["sources"] = []string{source}
 	if s.retrieval.subcallDisableExpansion && !explicitSourceOverride {
 		sourceRequest["query_expansion"] = false

@@ -243,6 +243,52 @@ func TestInferenceChatUsesOllamaEndpoint(t *testing.T) {
 	}
 }
 
+func TestInferenceOpenAIMessageContentSupportsArrayParts(t *testing.T) {
+	content, err := _inferenceOpenAIMessageContent(map[string]any{
+		"content": []any{
+			map[string]any{"type": "text", "text": "first"},
+			map[string]any{"type": "output_text", "content": "second"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected content array to parse: %v", err)
+	}
+	if content != "first\nsecond" {
+		t.Fatalf("unexpected content %q", content)
+	}
+}
+
+func TestInferenceOpenAIMessageContentRejectsReasoningOnlyOutput(t *testing.T) {
+	content, err := _inferenceOpenAIMessageContent(map[string]any{
+		"reasoning": "hidden scratchpad only",
+	})
+	if err == nil {
+		t.Fatalf("expected reasoning-only error, got content %q", content)
+	}
+	if !strings.Contains(err.Error(), "final-content chat template") {
+		t.Fatalf("expected template repair instruction, got %v", err)
+	}
+}
+
+func TestInferenceOllamaRejectsReasoningOnlyOutput(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"thinking":"hidden scratchpad only","content":""}}`))
+	}))
+	defer ollama.Close()
+
+	content, err := _inferenceCallOllamaWithOptions(ollama.URL, "qwen-test", []inferenceMessage{{Role: "user", Content: "hello"}}, inferenceChatCallOptions{
+		Timeout:        time.Second,
+		ConnectTimeout: time.Second,
+	})
+	if err == nil {
+		t.Fatalf("expected reasoning-only error, got content %q", content)
+	}
+	if !strings.Contains(err.Error(), "final-content chat template") {
+		t.Fatalf("expected template repair instruction, got %v", err)
+	}
+}
+
 func TestInferenceChatANEFallbackToOllama(t *testing.T) {
 	resetANEProbeCacheForTest()
 	t.Setenv("ORCH_ANE_SIDECAR_ENABLED", "true")
@@ -484,6 +530,10 @@ func TestInferenceRuntimePolicyIncludesOptInQwen36ModelPolicy(t *testing.T) {
 	}
 	if repo := strings.TrimSpace(anyToString(privateEval["repoIfEnabled"])); !strings.Contains(repo, "Huihui-Qwen3.6") {
 		t.Fatalf("expected Huihui private-eval repo metadata, got %q", repo)
+	}
+	templateConformance, _ := modelPolicy["templateConformance"].(map[string]any)
+	if !anyToBool(templateConformance["finalContentRequired"]) || !anyToBool(templateConformance["reasoningOnlyRejected"]) {
+		t.Fatalf("expected final-content template conformance policy, got %#v", templateConformance)
 	}
 
 	foundGGUFPolicy := false

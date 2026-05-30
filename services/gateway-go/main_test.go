@@ -1745,6 +1745,90 @@ func TestMemoryDreamUsesBackendLLMWhenRequested(t *testing.T) {
 	}
 }
 
+func TestMemoryDreamDeepensWhenReflectionFindsWeakOutput(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "true")
+
+	var mu sync.Mutex
+	chatCalls := 0
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/chat" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		mu.Lock()
+		chatCalls++
+		call := chatCalls
+		mu.Unlock()
+		if call == 1 {
+			_, _ = w.Write([]byte(`{"message":{"content":"{\"hypotheses\":[{\"title\":\"Combine v3.3.41 dream mode with v3.3.41 dream mode\",\"claim\":\"Combine Dream Mode with itself.\",\"supporting_evidence\":[\"e1\"],\"experiment\":\"Repeat the same query.\",\"expected_signal\":\"Same output repeats.\"}]}"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"message":{"content":"{\"hypotheses\":[{\"title\":\"Use template conformance as Dream Mode's runtime gate\",\"claim\":\"A template conformance pass can detect reasoning-only local runtime outputs before Dream Mode accepts synthesis, then reroute through a final-content profile to improve usable novelty.\",\"supporting_evidence\":[\"e1\"],\"experiment\":\"Run Dream Mode against default and final-content MLX templates and compare reflection score, llm usage, and generic hypothesis rate.\",\"expected_signal\":\"Reflection score crosses the sigma target while reasoning-only outputs fail with repair instructions.\"}],\"experiments\":[],\"next_best_action\":\"ship the conformance gate\"}"}}`))
+	}))
+	defer llmServer.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/templates.md","source":"qdrant","score":0.94,"summary":"Dream Mode must reject reasoning-only template outputs and prefer final content conformance before accepting synthesis","topic_path":"contextlattice/dream-mode"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","goal":"make Dream Mode template conformance novel and useful","topic_path":"contextlattice/dream-mode","use_llm":true,"provider":"ollama","base_url":"` + llmServer.URL + `","model":"dream-test","max_hypotheses":1,"novelty_level":5,"reflection_min_score":0.8,"reflection_max_passes":1}`
+	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream payload: %v", err)
+	}
+	mu.Lock()
+	gotCalls := chatCalls
+	mu.Unlock()
+	if gotCalls < 2 {
+		t.Fatalf("expected primary plus deepening LLM calls, got %d payload=%#v", gotCalls, payload)
+	}
+	reflection, _ := payload["reflection"].(map[string]any)
+	if !anyToBool(reflection["deepening_attempted"]) || !anyToBool(reflection["deepening_used"]) {
+		t.Fatalf("expected reflection to use deepening, got %#v", reflection)
+	}
+	if !anyToBool(reflection["sigma_level"]) {
+		t.Fatalf("expected deepened output to reach sigma target, got %#v", reflection)
+	}
+	llm, _ := payload["llm"].(map[string]any)
+	deepening, _ := llm["deepening"].(map[string]any)
+	if !anyToBool(deepening["used"]) {
+		t.Fatalf("expected deepening llm used, got %#v", llm)
+	}
+	hypotheses, _ := payload["hypotheses"].([]any)
+	if len(hypotheses) == 0 {
+		t.Fatalf("expected hypotheses, got %#v", payload["hypotheses"])
+	}
+	first, _ := hypotheses[0].(map[string]any)
+	if !strings.Contains(anyToString(first["title"]), "template conformance") {
+		t.Fatalf("expected deepened hypothesis to replace weak output, got %#v", first)
+	}
+}
+
 func TestMemoryDreamReplacesDeprecatedModelAndPassesPatientLLMOptions(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
@@ -1783,7 +1867,7 @@ func TestMemoryDreamReplacesDeprecatedModelAndPassesPatientLLMOptions(t *testing
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"project":"contextlattice","goal":"patient dream synthesis","topic_path":"contextlattice/dream-mode","use_llm":true,"provider":"ollama","base_url":"` + llmServer.URL + `","model":"qwen2.5-coder:7b","llm_timeout_secs":7,"llm_max_tokens":123,"llm_temperature":0.7}`
+	reqBody := `{"project":"contextlattice","goal":"patient dream synthesis","topic_path":"contextlattice/dream-mode","use_llm":true,"provider":"ollama","base_url":"` + llmServer.URL + `","model":"qwen2.5-coder:7b","llm_timeout_secs":7,"llm_max_tokens":123,"llm_temperature":0.7,"reflection_max_passes":0}`
 	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("dream request failed: %v", err)

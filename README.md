@@ -74,7 +74,9 @@ Task inference defaults to `ORCH_INFER_PROVIDER=auto`. `gateway-go` detects the 
 - Generic CPU default priority: `openai-compatible,llama-cpp,lmstudio,ollama`.
 - Supported provider ids include `sglang`, `vllm`, `vllm-metal`, `mlx`, `mtplx` (alias for MLX), `openai-compatible`, `lmstudio`, `llama-cpp`, `tgi`, `tensorrt-llm`, `ane_sidecar`, and `ollama`.
 - `/v1/inference/runtime-policy` returns live provider health plus resource-aware model guidance. If host memory/VRAM is not identifiable, it falls back to generic local advice: start with Q4/IQ4 7B-9B models, benchmark, then scale up.
-- Large Qwen3.6 Dream Mode models are opt-in only; ContextLattice does not bundle or pull them by default. The default GGUF recommendation is `mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF` for llama.cpp-compatible advanced users. Abliterated variants are private-eval only behind `GO_DREAM_ALLOW_UNCENSORED_MODELS=true`.
+- Large Qwen3.6 Dream Mode models are opt-in only; ContextLattice does not bundle or pull them by default. The default GGUF recommendation is `mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF` for llama.cpp-compatible advanced users. Abliterated variants are private-eval only behind `CONTEXTLATTICE_DREAM_ALLOW_PRIVATE_EVAL_MODELS=true` (`GO_DREAM_ALLOW_UNCENSORED_MODELS=true` remains a legacy alias).
+- Inference runtimes must emit final assistant content through their API. Reasoning-only responses fail with repair instructions instead of being accepted. For MLX Qwen thinking templates, use `scripts/inference_mlx_server.sh --model /path/to/mlx/model --template-profile qwen-final-content`, then verify with `scripts/inference_template_conformance.sh --provider mlx --model /path/to/mlx/model`.
+- Dream Mode reflects on generated hypotheses by default and performs one bounded deepening pass when the best output misses the sigma target (`GO_DREAM_REFLECT_ENABLED=true`, `GO_DREAM_DEEPEN_ON_WEAK_OUTPUT=true`, `GO_DREAM_REFLECTION_MIN_SCORE=0.74`).
 - Ollama remains a compatibility fallback, not the preferred always-on embedding path.
 - Local helpers enforce one active LLM backend by default (`CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND=true`).
 
@@ -83,6 +85,7 @@ Inspect live routing and benchmark configured backends:
 ```bash
 scripts/inference_runtime_policy.sh
 scripts/benchmark_inference_backends.sh
+scripts/inference_template_conformance.sh --provider mlx --model /path/to/mlx/model
 ```
 
 Embedding defaults to the Rust `fastembed-rs` sidecar. Ollama stays available as an explicit compatibility fallback, not the preferred embedding path.
