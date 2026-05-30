@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -539,74 +540,49 @@ func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, proj
 	topicPrefix = recallEvalNormalizeTopicPath(topicPrefix)
 	cases := make([]map[string]any, 0, maxCases)
 	if s.memoryStore != nil && s.memoryStore.policy.enabled {
-		rollups := s.memoryStore.topicRollupsWithContext(context.Background(), project, minHits, maxCases*6, 0)
-		if rowsAny, ok := rollups["topics"].([]any); ok {
-			for _, item := range rowsAny {
-				row := anyMap(item)
-				topic := recallEvalNormalizeTopicPath(anyToString(row["topic_path"]))
-				if topic == "" {
-					topic = recallEvalNormalizeTopicPath(anyToString(row["path"]))
-				}
-				if topicPrefix != "" && !strings.HasPrefix(topic, topicPrefix) {
-					continue
-				}
-				hits := anyToInt(row["event_count"], anyToInt(row["eventCount"], 0))
-				if hits < minHits {
-					continue
-				}
-				query := strings.TrimSpace(strings.ReplaceAll(topic, "/", " "))
-				summarySnippets := recallEvalSummarySnippets(row)
-				if query == "" && len(summarySnippets) > 0 {
-					query = strings.TrimSpace(summarySnippets[0])
-				}
-				if query == "" {
-					continue
-				}
-				expectedFiles := recallEvalExpectedFilesFromTopic(row)
-				expectedTerms := []string{}
-				for _, summary := range summarySnippets {
-					expectedTerms = append(expectedTerms, clipText(strings.ToLower(summary), 64))
-					if len(expectedTerms) >= 2 {
-						break
-					}
-				}
-				cases = append(cases, map[string]any{
-					"id":                  recallEvalCaseID(topic, len(cases)),
-					"query":               query,
-					"project":             project,
-					"topic_path":          topic,
-					"limit":               10,
-					"expected_files":      expectedFiles,
-					"expected_substrings": expectedTerms,
-				})
-				if len(cases) >= maxCases {
-					break
-				}
-			}
+		docs, err := s.memoryStore.collectDocs(context.Background(), project)
+		if err == nil {
+			cases = recallEvalCasesFromDocs(docs, maxCases, minHits, project, topicPrefix)
 		}
 		if len(cases) == 0 {
-			docs, err := s.memoryStore.collectDocs(context.Background(), project)
-			if err == nil {
-				for _, doc := range docs {
-					topic := recallEvalNormalizeTopicPath(doc.TopicPath)
+			rollups := s.memoryStore.topicRollupsWithContext(context.Background(), project, minHits, maxCases*6, 0)
+			if rowsAny, ok := rollups["topics"].([]any); ok {
+				for _, item := range rowsAny {
+					row := anyMap(item)
+					topic := recallEvalNormalizeTopicPath(anyToString(row["topic_path"]))
+					if topic == "" {
+						topic = recallEvalNormalizeTopicPath(anyToString(row["path"]))
+					}
 					if topicPrefix != "" && !strings.HasPrefix(topic, topicPrefix) {
 						continue
 					}
-					query := recallEvalQueryFromDoc(doc)
-					if query == "" || strings.TrimSpace(doc.FileName) == "" {
+					hits := anyToInt(row["event_count"], anyToInt(row["eventCount"], 0))
+					if hits < minHits {
 						continue
 					}
+					query := strings.TrimSpace(strings.ReplaceAll(topic, "/", " "))
+					summarySnippets := recallEvalSummarySnippets(row)
+					if query == "" && len(summarySnippets) > 0 {
+						query = strings.TrimSpace(summarySnippets[0])
+					}
+					if query == "" {
+						continue
+					}
+					expectedFiles := recallEvalExpectedFilesFromTopic(row)
 					expectedTerms := []string{}
-					if summary := strings.TrimSpace(doc.Summary); summary != "" {
+					for _, summary := range summarySnippets {
 						expectedTerms = append(expectedTerms, clipText(strings.ToLower(summary), 64))
+						if len(expectedTerms) >= 2 {
+							break
+						}
 					}
 					cases = append(cases, map[string]any{
-						"id":                  recallEvalCaseID(doc.Project+"::"+doc.FileName, len(cases)),
+						"id":                  recallEvalCaseID(topic, len(cases)),
 						"query":               query,
-						"project":             doc.Project,
+						"project":             project,
 						"topic_path":          topic,
 						"limit":               10,
-						"expected_files":      []string{doc.FileName},
+						"expected_files":      expectedFiles,
 						"expected_substrings": expectedTerms,
 					})
 					if len(cases) >= maxCases {
@@ -633,6 +609,82 @@ func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, proj
 		},
 		"cases": cases,
 	}
+}
+
+func recallEvalCasesFromDocs(docs []memoryStoreDoc, maxCases int, minHits int, project string, topicPrefix string) []map[string]any {
+	topicCounts := map[string]int{}
+	for _, doc := range docs {
+		topic := recallEvalNormalizeTopicPath(doc.TopicPath)
+		if topic == "" {
+			continue
+		}
+		topicCounts[topic] += 1
+	}
+	filtered := make([]memoryStoreDoc, 0, len(docs))
+	for _, doc := range docs {
+		if strings.TrimSpace(doc.FileName) == "" {
+			continue
+		}
+		topic := recallEvalNormalizeTopicPath(doc.TopicPath)
+		if topicPrefix != "" && !strings.HasPrefix(topic, topicPrefix) {
+			continue
+		}
+		if minHits > 1 && topicCounts[topic] < minHits {
+			continue
+		}
+		if recallEvalQueryFromDoc(doc) == "" {
+			continue
+		}
+		filtered = append(filtered, doc)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		leftTopic := recallEvalNormalizeTopicPath(filtered[i].TopicPath)
+		rightTopic := recallEvalNormalizeTopicPath(filtered[j].TopicPath)
+		leftDepth := topicDepth(leftTopic)
+		rightDepth := topicDepth(rightTopic)
+		if leftDepth != rightDepth {
+			return leftDepth > rightDepth
+		}
+		if !filtered[i].UpdatedAt.Equal(filtered[j].UpdatedAt) {
+			return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
+		}
+		return strings.TrimSpace(filtered[i].FileName) < strings.TrimSpace(filtered[j].FileName)
+	})
+	seen := map[string]struct{}{}
+	cases := make([]map[string]any, 0, maxCases)
+	for _, doc := range filtered {
+		fileName := strings.Trim(strings.TrimSpace(doc.FileName), "/")
+		if fileName == "" {
+			continue
+		}
+		dedupeKey := strings.ToLower(strings.TrimSpace(doc.Project + "::" + fileName))
+		if _, ok := seen[dedupeKey]; ok {
+			continue
+		}
+		seen[dedupeKey] = struct{}{}
+		topic := recallEvalNormalizeTopicPath(doc.TopicPath)
+		expectedTerms := []string{}
+		if summary := strings.TrimSpace(doc.Summary); summary != "" {
+			expectedTerms = append(expectedTerms, clipText(strings.ToLower(summary), 96))
+		}
+		caseProject := strings.TrimSpace(doc.Project)
+		if caseProject == "" {
+			caseProject = project
+		}
+		cases = append(cases, map[string]any{
+			"id":                  recallEvalCaseID(caseProject+"::"+fileName, len(cases)),
+			"query":               recallEvalQueryFromDoc(doc),
+			"project":             caseProject,
+			"topic_path":          topic,
+			"limit":               10,
+			"expected_files":      []string{fileName},
+			"expected_substrings": expectedTerms,
+		})
+		if len(cases) >= maxCases {
+			break
+		}
+	}
+	return cases
 }
 
 func recallEvalSummarySnippets(row map[string]any) []string {
@@ -683,7 +735,8 @@ func recallEvalQueryFromDoc(doc memoryStoreDoc) string {
 	fileName := strings.TrimSpace(doc.FileName)
 	fileStem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	fileStem = strings.ReplaceAll(fileStem, "/", " ")
-	query := strings.TrimSpace(topic + " " + fileStem)
+	summary := clipText(doc.Summary, 120)
+	query := strings.TrimSpace(strings.Join([]string{topic, fileStem, summary}, " "))
 	if query != "" {
 		return query
 	}
