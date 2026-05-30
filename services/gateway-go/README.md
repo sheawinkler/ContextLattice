@@ -40,12 +40,25 @@ Env:
 Dream Mode:
 - `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked synthesis with deterministic hypotheses and optional backend LLM augmentation.
 - `GO_DREAM_LLM_ENABLED` (default `true`)
-- `GO_DREAM_MODEL` (falls back to `TASK_MODEL`, then `qwen3.5:9b`)
+- `GO_DREAM_MODEL` (explicit override; deprecated `qwen2.5-coder` is replaced for Dream Mode)
+- `GO_DREAM_LLM_TIMEOUT_SECS` (default `600`)
+- `GO_DREAM_LLM_MAX_TOKENS` (default `4096`)
+- `GO_DREAM_ALLOW_UNCENSORED_MODELS` (default `false`)
 
-CLI wrapper:
+Typed memory tools:
+- `POST /tools/context_pack`: agent-facing wrapper around `/memory/context-pack`.
+- `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked Dream Mode synthesis with deterministic hypotheses and optional backend LLM augmentation.
+- `POST /tools/checkpoint_write`: durable checkpoint write with lifecycle metadata.
+- `POST /tools/ephemeral_memory_write`: scratch/test write that is hidden from normal retrieval.
+- `POST /tools/ephemeral_memory_purge`: safe-prefix purge with `dry_run=true` by default and `confirm=true` required for deletion.
+- `GET|POST /tools/memory_file_get`: exact file read by `project` + `file`.
+
+Dream Mode defaults to `GO_DREAM_LLM_ENABLED=true`. Explicit request `model` and `GO_DREAM_MODEL` are honored unless they name deprecated `qwen2.5-coder`; otherwise Ollama routes can auto-select the best installed local Qwen 3.x model, preferring Qwen3.7/Qwen3.6 over `TASK_MODEL` and excluding abliterated/uncensored variants unless `GO_DREAM_ALLOW_UNCENSORED_MODELS=true`. Qwen3.7-Max is API/proprietary as of May 2026, so use it through `sglang`, `vllm`, `mlx`, `mtplx`, `llama-cpp`, `tgi`, `tensorrt-llm`, or another OpenAI-compatible provider/base URL rather than expecting a local Ollama tag. If the backend LLM is unavailable, the route still returns a contract-valid deterministic synthesis.
+
+Long nonlinear synthesis is bounded with infrastructure fail-safes instead of a short 60s cap: `GO_DREAM_LLM_TIMEOUT_SECS` defaults to `600`, `GO_DREAM_LLM_MAX_TOKENS` defaults to `4096`, and final output is clipped to the Dream Mode response contract. CLI wrapper:
 
 ```bash
-scripts/agent/contextlattice-dream "invent the next memory primitive" --no-use-llm --pretty
+scripts/agent/contextlattice-dream "invent the next memory primitive" --llm-timeout-secs 900 --llm-max-tokens 8192 --pretty
 ```
 
 Run locally:

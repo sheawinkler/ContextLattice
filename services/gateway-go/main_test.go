@@ -1745,6 +1745,80 @@ func TestMemoryDreamUsesBackendLLMWhenRequested(t *testing.T) {
 	}
 }
 
+func TestMemoryDreamReplacesDeprecatedModelAndPassesPatientLLMOptions(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "true")
+
+	var chatPayload map[string]any
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/tags":
+			_, _ = w.Write([]byte(`{"models":[{"name":"qwen2.5-coder:7b"},{"name":"qwen3.5:9b"},{"name":"qwen3.6:35b-a3b"}]}`))
+		case "/api/chat":
+			if err := json.NewDecoder(r.Body).Decode(&chatPayload); err != nil {
+				t.Fatalf("decode ollama chat payload: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"message":{"content":"{\"hypotheses\":[{\"title\":\"Patient nonlinear synthesis\",\"claim\":\"A longer bounded inference budget lets Dream Mode connect distant evidence without exposing raw thinking.\",\"supporting_evidence\":[\"e1\"],\"experiment\":\"Run the same dream query with 60s and 600s budgets.\",\"expected_signal\":\"More useful cross-source hypotheses.\"}]}"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer llmServer.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/dream.md","source":"qdrant","score":0.91,"summary":"Dream Mode should synthesize nonlinear relationships across shared memory","topic_path":"contextlattice/dream-mode"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","goal":"patient dream synthesis","topic_path":"contextlattice/dream-mode","use_llm":true,"provider":"ollama","base_url":"` + llmServer.URL + `","model":"qwen2.5-coder:7b","llm_timeout_secs":7,"llm_max_tokens":123,"llm_temperature":0.7}`
+	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream payload: %v", err)
+	}
+	llm, _ := payload["llm"].(map[string]any)
+	if got := strings.TrimSpace(anyToString(llm["model"])); got != "qwen3.6:35b-a3b" {
+		t.Fatalf("expected qwen3.6 runtime model, got %q llm=%#v", got, llm)
+	}
+	if got := strings.TrimSpace(anyToString(llm["deprecated_model_replaced"])); got != "qwen2.5-coder:7b" {
+		t.Fatalf("expected deprecated model replacement, got %#v", llm)
+	}
+	if int(anyToFloat(llm["timeout_secs"])) != 7 || int(anyToFloat(llm["max_tokens"])) != 123 {
+		t.Fatalf("expected patient llm controls in response, got %#v", llm)
+	}
+	if got := strings.TrimSpace(anyToString(chatPayload["model"])); got != "qwen3.6:35b-a3b" {
+		t.Fatalf("expected ollama request to use selected model, got %q payload=%#v", got, chatPayload)
+	}
+	options, _ := chatPayload["options"].(map[string]any)
+	if int(anyToFloat(options["num_predict"])) != 123 {
+		t.Fatalf("expected ollama num_predict=123, got %#v", options)
+	}
+	if temp := anyToFloat(options["temperature"]); temp < 0.69 || temp > 0.71 {
+		t.Fatalf("expected ollama temperature=0.7, got %#v", options)
+	}
+}
+
 func TestMemoryDreamRejectsMissingGoalWithInstructions(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("missing dream goal should not call backend path %s", r.URL.Path)

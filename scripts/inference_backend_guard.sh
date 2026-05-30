@@ -32,6 +32,9 @@ normalize_provider() {
     ane|ane-sidecar) echo "ane_sidecar" ;;
     openai|openai-compat|openai-compatible) echo "openai-compatible" ;;
     llamacpp|llama-cpp) echo "llama-cpp" ;;
+    sglang|sgl) echo "sglang" ;;
+    tgi|text-generation-inference) echo "tgi" ;;
+    tensorrt|tensorrt-llm|trtllm|trt-llm) echo "tensorrt-llm" ;;
     mlx|mlx-lm|mtplx) echo "mlx" ;;
     vllm-metal|vllm-metal-mlx|vllm-mlx) echo "vllm-metal" ;;
     "") echo "auto" ;;
@@ -78,8 +81,17 @@ provider_health_url() {
     vllm)
       openai_models_url "${VLLM_BASE_URL:-http://127.0.0.1:8000}"
       ;;
+    sglang)
+      openai_models_url "${SGLANG_BASE_URL:-${SGLANG_API_BASE:-http://127.0.0.1:30000}}"
+      ;;
     vllm-metal)
       openai_models_url "${VLLM_METAL_BASE_URL:-http://127.0.0.1:8000}"
+      ;;
+    tgi)
+      openai_models_url "${TGI_BASE_URL:-${TEXT_GENERATION_INFERENCE_BASE_URL:-http://127.0.0.1:8080}}"
+      ;;
+    tensorrt-llm)
+      openai_models_url "${TENSORRT_LLM_BASE_URL:-${TRTLLM_BASE_URL:-http://127.0.0.1:8000}}"
       ;;
     openai-compatible)
       [[ -z "${OPENAI_API_BASE:-}" ]] && return 1
@@ -142,11 +154,23 @@ stop_provider() {
         pkill -f "vllm.*serve" >/dev/null 2>&1 || true
       fi
       ;;
+    sglang)
+      stop_pidfile "$ROOT_DIR/.sglang.pid"
+      if truthy "$KILL_PROCESSES"; then
+        pkill -f "sglang.*launch_server" >/dev/null 2>&1 || true
+      fi
+      ;;
     vllm-metal)
       stop_pidfile "$ROOT_DIR/.vllm-metal.pid"
       if truthy "$KILL_PROCESSES"; then
         pkill -f "vllm.*metal" >/dev/null 2>&1 || true
       fi
+      ;;
+    tgi)
+      stop_pidfile "$ROOT_DIR/.tgi.pid"
+      ;;
+    tensorrt-llm)
+      stop_pidfile "$ROOT_DIR/.tensorrt-llm.pid"
       ;;
     llama-cpp)
       stop_pidfile "$ROOT_DIR/.llama-cpp.pid"
@@ -165,7 +189,7 @@ is_same_endpoint() {
 }
 
 collect_active() {
-  local providers=(vllm-metal mlx ane_sidecar llama-cpp lmstudio openai-compatible vllm ollama)
+  local providers=(mlx vllm-metal sglang vllm ane_sidecar llama-cpp lmstudio openai-compatible tgi tensorrt-llm ollama)
   active_keys=()
   active_providers=()
   active_urls=()
@@ -230,7 +254,7 @@ case "$ACTION" in
   prepare)
     target="$(normalize_provider "$TARGET")"
     if truthy "$SINGLE_ACTIVE" && truthy "$STOP_OTHERS" && [[ "$target" != "auto" ]]; then
-      for provider in vllm-metal mlx ane_sidecar llama-cpp lmstudio openai-compatible vllm ollama; do
+      for provider in mlx vllm-metal sglang vllm ane_sidecar llama-cpp lmstudio openai-compatible tgi tensorrt-llm ollama; do
         [[ "$(normalize_provider "$provider")" == "$target" ]] && continue
         stop_provider "$provider"
       done

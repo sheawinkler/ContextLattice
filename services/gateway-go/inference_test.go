@@ -167,6 +167,42 @@ func TestInferenceRouteAliasesMLXAndVLLMMetal(t *testing.T) {
 	}
 }
 
+func TestInferenceRouteSupportsSGLangProvider(t *testing.T) {
+	resetANEProbeCacheForTest()
+	sglang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3.6"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer sglang.Close()
+	t.Setenv("SGLANG_BASE_URL", sglang.URL)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, payload := postJSON(t, gateway.URL+"/v1/inference/route", `{"provider":"sgl"}`)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	route, _ := payload["route"].(map[string]any)
+	if provider := strings.TrimSpace(anyToString(route["provider"])); provider != "sglang" {
+		t.Fatalf("expected sgl alias to resolve to sglang, got %q", provider)
+	}
+	if baseURL := strings.TrimSpace(anyToString(route["base_url"])); baseURL != sglang.URL {
+		t.Fatalf("expected sglang base URL, got %q", baseURL)
+	}
+}
+
 func TestInferenceChatUsesOllamaEndpoint(t *testing.T) {
 	resetANEProbeCacheForTest()
 	t.Setenv("ORCH_ANE_SIDECAR_ENABLED", "false")
@@ -332,6 +368,74 @@ func TestInferenceRuntimePolicyEndpoint(t *testing.T) {
 	}
 	if !anyToBool(payload["singleActiveBackend"]) {
 		t.Fatalf("expected single-active backend policy to default true, payload=%#v", payload)
+	}
+	recommendation, _ := payload["recommendation"].(map[string]any)
+	if strings.TrimSpace(anyToString(recommendation["modelStrategy"])) == "" {
+		t.Fatalf("expected runtime recommendation with model strategy, payload=%#v", payload)
+	}
+}
+
+func TestInferenceRuntimePolicyRecommendsSGLangOnAccelerator(t *testing.T) {
+	resetANEProbeCacheForTest()
+	t.Setenv("ORCH_HOST_HARDWARE_PROFILE", "nvidia_cuda")
+	t.Setenv("ORCH_HOST_VRAM_GB", "48")
+	t.Setenv("ORCH_INFER_PROVIDER_PRIORITY", "sglang,vllm,ollama")
+	t.Setenv("ORCH_INFER_AUTO_PROBE_TIMEOUT_SECS", "0.05")
+	t.Setenv("VLLM_BASE_URL", "http://127.0.0.1:1")
+
+	sglang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3.6"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer sglang.Close()
+	t.Setenv("SGLANG_BASE_URL", sglang.URL)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, payload := getJSON(t, gateway.URL+"/v1/inference/runtime-policy")
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d payload=%#v", status, payload)
+	}
+	selected, _ := payload["selected"].(map[string]any)
+	if provider := strings.TrimSpace(anyToString(selected["provider"])); provider != "sglang" {
+		t.Fatalf("expected sglang selected, got %q payload=%#v", provider, payload)
+	}
+	recommendation, _ := payload["recommendation"].(map[string]any)
+	if provider := strings.TrimSpace(anyToString(recommendation["provider"])); provider != "sglang" {
+		t.Fatalf("expected sglang recommendation, got %q recommendation=%#v", provider, recommendation)
+	}
+	modelSizing, _ := recommendation["modelSizing"].(map[string]any)
+	if !anyToBool(modelSizing["resourceKnown"]) {
+		t.Fatalf("expected known resource sizing, got %#v", modelSizing)
+	}
+	foundSGLangCandidate := false
+	for _, raw := range payload["candidates"].([]any) {
+		candidate, _ := raw.(map[string]any)
+		if strings.TrimSpace(anyToString(candidate["provider"])) == "sglang" {
+			foundSGLangCandidate = true
+			if strings.TrimSpace(anyToString(candidate["setupHint"])) == "" {
+				t.Fatalf("expected sglang setup hint, got %#v", candidate)
+			}
+			formats, _ := candidate["modelFormats"].([]any)
+			if len(formats) == 0 {
+				t.Fatalf("expected sglang model formats, got %#v", candidate)
+			}
+		}
+	}
+	if !foundSGLangCandidate {
+		t.Fatalf("expected sglang candidate, payload=%#v", payload)
 	}
 }
 
