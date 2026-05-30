@@ -1270,11 +1270,14 @@ func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
 		if strings.HasPrefix(anyToString(item["id"]), "health-") {
 			t.Fatalf("refresh should not fall back to default cases, got %#v", cases)
 		}
-		if len(anyToStringSlice(item["expected_files"])) == 0 {
+		if len(anyToStringSlice(item["expected_files"])) != 1 {
 			t.Fatalf("expected file-backed recall case, got %#v", item)
 		}
 		if !strings.Contains(anyToString(item["query"]), "recall") {
 			t.Fatalf("expected topic-derived recall query, got %#v", item)
+		}
+		if anyToString(item["project"]) != "contextlattice" {
+			t.Fatalf("expected case to stay project-scoped, got %#v", item)
 		}
 	}
 }
