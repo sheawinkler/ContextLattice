@@ -452,10 +452,11 @@ func (s *server) memoryRecallEvalCases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":      cfg.Path,
-		"version":   cfg.Version,
-		"updatedAt": cfg.UpdatedAt,
-		"k":         cfg.K,
+		"path":            cfg.Path,
+		"version":         cfg.Version,
+		"updatedAt":       cfg.UpdatedAt,
+		"k":               cfg.K,
+		"case_set_health": validateSavedRecallEvalCaseSet(cfg),
 		"gate": map[string]any{
 			"minRecallAtK":        cfg.Gate.MinRecallAtK,
 			"minMrr":              cfg.Gate.MinMRR,
@@ -507,15 +508,29 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 		return
 	}
 	casesAny, _ := refreshed["cases"].([]map[string]any)
+	refreshedHealth := validateSavedRecallEvalCaseSet(recallEvalSavedConfig{
+		Path:      path,
+		Version:   refreshed["version"],
+		UpdatedAt: refreshed["updatedAt"],
+		K:         anyToInt(refreshed["k"], defaultRecallEvalK),
+		Gate: recallEvalGate{
+			MinRecallAtK:      defaultRecallEvalGateMinRecallAtK,
+			MinMRR:            defaultRecallEvalGateMinMRR,
+			MinNumericExactly: defaultRecallEvalGateMinNumeric,
+		},
+		Cases: casesAny,
+	})
 	response := map[string]any{
-		"ok": true,
+		"ok":              anyToBool(refreshedHealth["valid"]),
+		"case_set_health": refreshedHealth,
 		"savedCaseSet": map[string]any{
-			"path":      path,
-			"version":   refreshed["version"],
-			"updatedAt": refreshed["updatedAt"],
-			"count":     len(casesAny),
-			"maxCases":  maxCases,
-			"minHits":   minHits,
+			"path":           path,
+			"version":        refreshed["version"],
+			"updatedAt":      refreshed["updatedAt"],
+			"count":          len(casesAny),
+			"maxCases":       maxCases,
+			"minHits":        minHits,
+			"caseSetHealthy": anyToBool(refreshedHealth["valid"]),
 		},
 	}
 	if anyToBool(payload["run_evaluation"]) {
