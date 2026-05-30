@@ -161,6 +161,35 @@ func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
 		t.Fatalf("expected context-pack validation passed, got %#v", contextValidation)
 	}
 
+	dream := attachPayloadFormatContract(dreamModeResponseContractID, map[string]any{
+		"ok":             true,
+		"mode":           "dream",
+		"agent_id":       "codex_gpt5_test",
+		"project":        "contextlattice",
+		"goal":           "invent a better memory primitive",
+		"query":          "invent a better memory primitive",
+		"topic_path":     "contextlattice/dream-mode",
+		"retrieval_mode": "balanced",
+		"novelty_level":  3,
+		"risk_tolerance": "balanced",
+		"hypotheses":     []any{map[string]any{"id": "h1", "title": "t", "claim": "c", "supporting_evidence": []any{"e1"}}},
+		"experiments":    []any{map[string]any{"id": "x1", "hypothesis_id": "h1", "method": "test"}},
+		"evidence": map[string]any{
+			"facts":     []any{map[string]any{"id": "e1", "text": "fact"}},
+			"results":   []any{},
+			"citations": []any{},
+			"counts":    map[string]any{"facts": 1},
+		},
+		"source_coverage":    coverage,
+		"llm":                map[string]any{"enabled": false, "used": false, "provider": "auto", "model": "qwen3.5:9b"},
+		"writeback_required": true,
+	}, "codex_gpt5_test", "dream", "/memory/dream")
+	dreamFormat, _ := dream["format_contract"].(map[string]any)
+	dreamValidation, _ := dreamFormat["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(dreamValidation["status"])) != "passed" {
+		t.Fatalf("expected dream validation passed, got %#v", dreamValidation)
+	}
+
 	writeback := attachWritebackFormatContract(
 		map[string]any{"ok": true, "event_id": "evt_test"},
 		normalizedWrite{project: "contextlattice", fileName: "notes/test.md", topicPath: "runbooks/codex-integration", agentID: "codex_gpt5_test"},
@@ -214,6 +243,54 @@ func TestAgentBoundaryContractClipsOversizedContextPackPayload(t *testing.T) {
 	clippedPack, _ := payload["context_pack"].(map[string]any)
 	if results, _ := clippedPack["results"].([]any); len(results) > agentBoundaryLimitsForContract(contextPackResponseContractID).MaxListItems {
 		t.Fatalf("expected context_pack.results clipped, got %d", len(results))
+	}
+}
+
+func TestAgentBoundaryContractClipsOversizedDreamPayload(t *testing.T) {
+	oversized := strings.Repeat("array_above_max_length context length exceeded nonlinear hypothesis ", 500)
+	items := make([]any, 0, 140)
+	for idx := 0; idx < 140; idx++ {
+		items = append(items, map[string]any{
+			"id":                  "h",
+			"title":               oversized,
+			"claim":               oversized,
+			"why_novel":           oversized,
+			"supporting_evidence": []any{"e1", "e2"},
+			"experiment":          oversized,
+			"expected_signal":     oversized,
+		})
+	}
+	payload := attachPayloadFormatContract(dreamModeResponseContractID, map[string]any{
+		"ok":             true,
+		"mode":           "dream",
+		"agent_id":       "codex_gpt5_test",
+		"project":        "contextlattice",
+		"goal":           oversized,
+		"query":          oversized,
+		"topic_path":     "contextlattice/dream-mode",
+		"retrieval_mode": "balanced",
+		"novelty_level":  5,
+		"risk_tolerance": "experimental",
+		"hypotheses":     items,
+		"experiments":    items,
+		"evidence": map[string]any{
+			"facts":     items,
+			"results":   items,
+			"citations": items,
+			"combined":  items,
+			"counts":    map[string]any{"facts": 140, "results": 140, "citations": 140},
+		},
+		"source_coverage":    map[string]any{"configured": items, "returned": items, "complete": true},
+		"llm":                map[string]any{"enabled": true, "used": false, "provider": "ollama", "model": "qwen3.5:9b", "synthesis_text": oversized, "parsed": map[string]any{"hypotheses": items}},
+		"retrieval":          map[string]any{"debug": oversized},
+		"writeback":          map[string]any{"debug": oversized},
+		"writeback_required": true,
+	}, "codex_gpt5_test", "dream", "/memory/dream")
+	assertBoundaryContractPassed(t, dreamModeResponseContractID, payload)
+	assertBoundaryJSONUnderLimit(t, dreamModeResponseContractID, payload)
+	assertNoRawProviderOverflowShape(t, payload)
+	if hypotheses, _ := payload["hypotheses"].([]any); len(hypotheses) > agentBoundaryLimitsForContract(dreamModeResponseContractID).MaxListItems {
+		t.Fatalf("expected dream hypotheses clipped, got %d", len(hypotheses))
 	}
 }
 

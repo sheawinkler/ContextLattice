@@ -22,6 +22,7 @@ const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdou
 const GeneratedAgentContractContextOverflowRecoveryV1 = "context_overflow_recovery.v1"
 const GeneratedAgentContractContextPackResponseV1 = "context_pack_response.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
+const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
 const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 
@@ -36,6 +37,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextOverflowRecoveryV1,
 	GeneratedAgentContractContextPackResponseV1,
 	GeneratedAgentContractContractAcknowledgementV1,
+	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractPolicyContextPackageV1,
 	GeneratedAgentContractWritebackResultV1,
 }
@@ -98,6 +100,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContractAcknowledgementV1,
 		PayloadKind:        "contract_acknowledgement",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractDreamModeResponseV1,
+		PayloadKind:        "dream_mode_response",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

@@ -253,6 +253,8 @@ func shrinkAgentBoundaryPayload(
 	switch contractID {
 	case contextPackResponseContractID:
 		compactContextPackResponseBoundary(payload, 16, stats)
+	case dreamModeResponseContractID:
+		compactDreamModeResponseBoundary(payload, 16, stats)
 	case agentPreflightResponseContractID:
 		compactPreflightResponseBoundary(payload, 16, stats)
 	case policyContextPackageContractID:
@@ -266,6 +268,9 @@ func shrinkAgentBoundaryPayload(
 	case contextPackResponseContractID:
 		dropContextPackDebugBoundary(payload, stats)
 		compactContextPackResponseBoundary(payload, 8, stats)
+	case dreamModeResponseContractID:
+		dropDreamModeOptionalBoundary(payload, stats)
+		compactDreamModeResponseBoundary(payload, 8, stats)
 	case agentPreflightResponseContractID:
 		compactPreflightResponseBoundary(payload, 8, stats)
 		dropPreflightOptionalBoundary(payload, stats)
@@ -279,6 +284,8 @@ func shrinkAgentBoundaryPayload(
 	switch contractID {
 	case contextPackResponseContractID:
 		compactContextPackResponseBoundary(payload, 3, stats)
+	case dreamModeResponseContractID:
+		compactDreamModeResponseBoundary(payload, 4, stats)
 	case agentPreflightResponseContractID:
 		compactPreflightResponseBoundary(payload, 4, stats)
 	case policyContextPackageContractID:
@@ -291,6 +298,8 @@ func shrinkAgentBoundaryPayload(
 	switch contractID {
 	case contextPackResponseContractID:
 		forceMinimalContextPackResponseBoundary(payload, stats)
+	case dreamModeResponseContractID:
+		forceMinimalDreamModeResponseBoundary(payload, stats)
 	case agentPreflightResponseContractID:
 		forceMinimalPreflightResponseBoundary(payload, stats)
 	case policyContextPackageContractID:
@@ -410,6 +419,58 @@ func dropContextPackDebugBoundary(payload map[string]any, stats *agentBoundarySt
 	}
 }
 
+func compactDreamModeResponseBoundary(payload map[string]any, keep int, stats *agentBoundaryStats) {
+	if _, ok := payload["hypotheses"]; ok {
+		payload["hypotheses"] = trimBoundaryList(payload["hypotheses"], keep, stats)
+	}
+	if _, ok := payload["experiments"]; ok {
+		payload["experiments"] = trimBoundaryList(payload["experiments"], keep, stats)
+	}
+	if evidence, ok := payload["evidence"].(map[string]any); ok {
+		for _, key := range []string{"facts", "results", "citations", "combined"} {
+			if _, ok := evidence[key]; ok {
+				evidence[key] = trimBoundaryList(evidence[key], keep, stats)
+			}
+		}
+	}
+	compactSourceCoverageBoundary(anyMap(payload["source_coverage"]), keep, stats)
+	if warnings, ok := payload["warnings"]; ok {
+		payload["warnings"] = trimBoundaryList(warnings, minInt(keep, 8), stats)
+	}
+	if llm, ok := payload["llm"].(map[string]any); ok {
+		if text := strings.TrimSpace(anyToString(llm["synthesis_text"])); text != "" {
+			llm["synthesis_text"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), minPositive(6000, 6000))
+		}
+		if parsed, ok := llm["parsed"].(map[string]any); ok {
+			if _, exists := parsed["hypotheses"]; exists {
+				parsed["hypotheses"] = trimBoundaryList(parsed["hypotheses"], keep, stats)
+			}
+			if _, exists := parsed["experiments"]; exists {
+				parsed["experiments"] = trimBoundaryList(parsed["experiments"], keep, stats)
+			}
+		}
+	}
+}
+
+func dropDreamModeOptionalBoundary(payload map[string]any, stats *agentBoundaryStats) {
+	for _, key := range []string{"retrieval", "writeback"} {
+		if _, ok := payload[key]; ok {
+			payload[key] = map[string]any{"omitted_by_boundary": true}
+			if stats != nil {
+				stats.OptionalFieldsCompacted++
+			}
+		}
+	}
+	if llm, ok := payload["llm"].(map[string]any); ok {
+		if _, exists := llm["parsed"]; exists {
+			delete(llm, "parsed")
+			if stats != nil {
+				stats.OptionalFieldsCompacted++
+			}
+		}
+	}
+}
+
 func compactContextPackValueBoundary(value any, keep int, stats *agentBoundaryStats) any {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -502,6 +563,29 @@ func forceMinimalContextPackResponseBoundary(payload map[string]any, stats *agen
 	payload["source_coverage"] = minimalSourceCoverageBoundary(sourceCoverage)
 	payload["warnings"] = []any{"ContextLattice context pack was clipped to the output boundary budget."}
 	delete(payload, "retrieval")
+	if stats != nil {
+		stats.OptionalFieldsCompacted++
+	}
+}
+
+func forceMinimalDreamModeResponseBoundary(payload map[string]any, stats *agentBoundaryStats) {
+	dropDreamModeOptionalBoundary(payload, stats)
+	sourceCoverage := anyMap(payload["source_coverage"])
+	payload["hypotheses"] = trimBoundaryList(payload["hypotheses"], 2, stats)
+	payload["experiments"] = trimBoundaryList(payload["experiments"], 2, stats)
+	if evidence, ok := payload["evidence"].(map[string]any); ok {
+		evidence["facts"] = trimBoundaryList(evidence["facts"], 2, stats)
+		evidence["results"] = trimBoundaryList(evidence["results"], 2, stats)
+		evidence["citations"] = trimBoundaryList(evidence["citations"], 2, stats)
+		evidence["combined"] = []any{}
+	}
+	payload["source_coverage"] = minimalSourceCoverageBoundary(sourceCoverage)
+	payload["warnings"] = []any{"ContextLattice Dream Mode was clipped to the output boundary budget."}
+	if llm, ok := payload["llm"].(map[string]any); ok {
+		if text := strings.TrimSpace(anyToString(llm["synthesis_text"])); text != "" {
+			llm["synthesis_text"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 1000)
+		}
+	}
 	if stats != nil {
 		stats.OptionalFieldsCompacted++
 	}

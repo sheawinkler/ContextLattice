@@ -298,6 +298,97 @@
         "format_contract.schema_id": "context_pack_response.v1"
       }
     },
+    "dream_mode_response.v1": {
+      "contract_version": 1,
+      "payload_kind": "dream_mode_response",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_json_with_deterministic_synthesis_when_llm_unavailable",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 6000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "mode",
+        "project",
+        "goal",
+        "query",
+        "topic_path",
+        "retrieval_mode",
+        "novelty_level",
+        "risk_tolerance",
+        "hypotheses",
+        "experiments",
+        "evidence",
+        "source_coverage",
+        "llm",
+        "writeback_required",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "mode": "string",
+        "project": "string",
+        "goal": "string",
+        "query": "string",
+        "topic_path": "string",
+        "retrieval_mode": "string",
+        "novelty_level": "int",
+        "risk_tolerance": "string",
+        "hypotheses": "list",
+        "experiments": "list",
+        "evidence": "object",
+        "source_coverage": "object",
+        "llm": "object",
+        "writeback_required": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "evidence": [
+          "facts",
+          "results",
+          "citations",
+          "counts"
+        ],
+        "llm": [
+          "enabled",
+          "used",
+          "provider",
+          "model"
+        ],
+        "source_coverage": [
+          "configured",
+          "returned",
+          "complete"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "raw_contextlattice_json",
+        "raw_prompt",
+        "secret",
+        "secrets"
+      ],
+      "max_bytes_by_path": {
+        "goal": 2000,
+        "query": 2000,
+        "llm.synthesis_text": 6000
+      },
+      "required_string_contains": {
+        "format_contract.schema_id": "dream_mode_response.v1"
+      }
+    },
     "writeback_result.v1": {
       "contract_version": 1,
       "payload_kind": "writeback_result",

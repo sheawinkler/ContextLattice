@@ -101,6 +101,7 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"coverageRescueEnabled":    s.retrieval.coverageRescueEnabled,
 		},
 		"tools": map[string]any{
+			"dream":                     true,
 			"memory_write_batch":        true,
 			"ops_queue_status":          true,
 			"feedback_submit":           true,

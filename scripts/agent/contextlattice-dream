@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Ask ContextLattice Dream Mode for bounded evidence-linked hypotheses."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from typing import Any
+
+from _common import REPO_ROOT, emit, request_json
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import attach_format_contract  # noqa: E402
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def encoded_len(value: Any) -> int:
+    return len((json.dumps(value) + "\n").encode("utf-8"))
+
+
+def trim_list(value: Any, keep: int) -> list[Any]:
+    return as_list(value)[: max(0, keep)]
+
+
+def compact_dream(raw: dict[str, Any], budget_chars: int) -> dict[str, Any]:
+    budget_chars = max(2048, int(budget_chars or 0))
+    payload = attach_format_contract("dream_mode_response.v1", raw)
+    if encoded_len(payload) <= budget_chars:
+        return payload
+
+    payload["clipped"] = True
+    payload["hypotheses"] = trim_list(payload.get("hypotheses"), 4)
+    payload["experiments"] = trim_list(payload.get("experiments"), 4)
+    evidence = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
+    for key in ("facts", "results", "citations", "combined"):
+        if isinstance(evidence.get(key), list):
+            evidence[key] = evidence[key][:4]
+    llm = payload.get("llm") if isinstance(payload.get("llm"), dict) else {}
+    llm.pop("parsed", None)
+    if isinstance(llm.get("synthesis_text"), str):
+        llm["synthesis_text"] = llm["synthesis_text"][:2000]
+    payload = attach_format_contract("dream_mode_response.v1", payload)
+    if encoded_len(payload) <= budget_chars:
+        return payload
+
+    payload["hypotheses"] = trim_list(payload.get("hypotheses"), 2)
+    payload["experiments"] = trim_list(payload.get("experiments"), 2)
+    for key in ("facts", "results", "citations", "combined"):
+        if isinstance(evidence.get(key), list):
+            evidence[key] = evidence[key][:2]
+    payload["warnings"] = ["ContextLattice Dream Mode clipped to local output budget."]
+    return attach_format_contract("dream_mode_response.v1", payload)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("goal")
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--topic-path", default="contextlattice/dream-mode")
+    parser.add_argument("--mode", default="balanced")
+    parser.add_argument("--novelty-level", type=int, default=3)
+    parser.add_argument("--risk-tolerance", default="balanced")
+    parser.add_argument("--max-hypotheses", type=int, default=4)
+    parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--max-facts", type=int, default=16)
+    parser.add_argument("--use-llm", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--persist", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--model", default="")
+    parser.add_argument("--provider", default="")
+    parser.add_argument("--budget-chars", type=int, default=12000)
+    parser.add_argument("--timeout", type=float, default=75)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    payload = {
+        "goal": args.goal,
+        "query": args.goal,
+        "project": args.project,
+        "topic_path": args.topic_path,
+        "retrieval_mode": args.mode,
+        "novelty_level": args.novelty_level,
+        "risk_tolerance": args.risk_tolerance,
+        "max_hypotheses": args.max_hypotheses,
+        "limit": args.limit,
+        "max_facts": args.max_facts,
+        "use_llm": args.use_llm,
+        "persist": args.persist,
+    }
+    if args.model:
+        payload["model"] = args.model
+    if args.provider:
+        payload["provider"] = args.provider
+
+    raw = request_json("POST", "/memory/dream", payload, args.timeout)
+    emit(compact_dream(raw, args.budget_chars), args.pretty)
+    return 0 if raw.get("ok", False) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

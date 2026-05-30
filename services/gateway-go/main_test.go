@@ -1593,6 +1593,189 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	}
 }
 
+func TestMemoryDreamBuildsEvidenceLinkedHypothesesWithoutLLM(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "false")
+	retrievalCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/retrieval/query":
+			retrievalCalls += 1
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/graph.md","source":"qdrant","score":0.92,"summary":"graph edges enable shared memory interpretation and cross-agent synthesis","topic_path":"contextlattice/graph"},{"project":"contextlattice","file":"notes/llm.md","source":"qdrant","score":0.87,"summary":"backend llm should produce bounded nonlinear hypotheses from retrieved evidence","topic_path":"contextlattice/dream-mode"}],"warnings":[]}`))
+			return
+		case "/memory/dream":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"proxy path should not be called"}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","goal":"invent the next ContextLattice memory primitive","topic_path":"contextlattice/dream-mode","novelty_level":4,"risk_tolerance":"relaxed","use_llm":false}`
+	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream payload: %v", err)
+	}
+	if !anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok=true, got %#v", payload)
+	}
+	hypotheses, _ := payload["hypotheses"].([]any)
+	if len(hypotheses) == 0 {
+		t.Fatalf("expected hypotheses, got %#v", payload["hypotheses"])
+	}
+	firstHypothesis, _ := hypotheses[0].(map[string]any)
+	if support, _ := firstHypothesis["supporting_evidence"].([]any); len(support) == 0 {
+		t.Fatalf("expected evidence-linked hypothesis, got %#v", firstHypothesis)
+	}
+	experiments, _ := payload["experiments"].([]any)
+	if len(experiments) == 0 {
+		t.Fatalf("expected experiments, got %#v", payload["experiments"])
+	}
+	evidence, _ := payload["evidence"].(map[string]any)
+	results, _ := evidence["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("expected rendered evidence results, got %#v", evidence)
+	}
+	llm, _ := payload["llm"].(map[string]any)
+	if anyToBool(llm["enabled"]) || anyToBool(llm["used"]) {
+		t.Fatalf("expected llm disabled, got %#v", llm)
+	}
+	format, _ := payload["format_contract"].(map[string]any)
+	if strings.TrimSpace(anyToString(format["schema_id"])) != dreamModeResponseContractID {
+		t.Fatalf("expected dream format contract, got %#v", format)
+	}
+	validation, _ := format["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected dream validation passed, got %#v", validation)
+	}
+	if retrievalCalls < 1 {
+		t.Fatalf("expected retrieval backend call, got %d", retrievalCalls)
+	}
+}
+
+func TestMemoryDreamUsesBackendLLMWhenRequested(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "true")
+
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/chat" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":{"content":"{\"hypotheses\":[{\"title\":\"Let graph edges steer Dream Mode\",\"claim\":\"Use memory edges as a hypothesis prior before retrieval ranking.\",\"supporting_evidence\":[\"e1\"],\"experiment\":\"Compare dream output with and without graph-edge priors.\",\"expected_signal\":\"Higher useful hypothesis rate.\"}],\"experiments\":[],\"next_best_action\":\"ship bounded route\"}"}}`))
+	}))
+	defer llmServer.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/edges.md","source":"qdrant","score":0.91,"summary":"memory edges make related agent decisions visible to synthesis","topic_path":"contextlattice/graph"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","goal":"use the backend llm for nonlinear memory synthesis","topic_path":"contextlattice/dream-mode","use_llm":true,"provider":"ollama","base_url":"` + llmServer.URL + `","model":"dream-test","max_hypotheses":5}`
+	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream payload: %v", err)
+	}
+	llm, _ := payload["llm"].(map[string]any)
+	if !anyToBool(llm["enabled"]) || !anyToBool(llm["used"]) {
+		t.Fatalf("expected llm used, got %#v", llm)
+	}
+	hypotheses, _ := payload["hypotheses"].([]any)
+	foundLLM := false
+	for _, raw := range hypotheses {
+		item, _ := raw.(map[string]any)
+		if strings.TrimSpace(anyToString(item["type"])) == "llm_synthesis" {
+			foundLLM = true
+			break
+		}
+	}
+	if !foundLLM {
+		t.Fatalf("expected llm_synthesis hypothesis, got %#v", hypotheses)
+	}
+	format, _ := payload["format_contract"].(map[string]any)
+	validation, _ := format["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected dream validation passed, got %#v", validation)
+	}
+}
+
+func TestMemoryDreamRejectsMissingGoalWithInstructions(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("missing dream goal should not call backend path %s", r.URL.Path)
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(`{"project":"contextlattice"}`))
+	if err != nil {
+		t.Fatalf("dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 422, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream error payload: %v", err)
+	}
+	if strings.TrimSpace(anyToString(payload["error"])) != "goal_or_query_required" {
+		t.Fatalf("expected goal_or_query_required, got %#v", payload)
+	}
+	if !strings.Contains(anyToString(payload["instructions"]), "goal or query") {
+		t.Fatalf("expected repair instructions, got %#v", payload["instructions"])
+	}
+	assertBoundaryContractPassed(t, dreamModeResponseContractID, payload)
+}
+
 func TestMemoryContextPackBlocksForConfiguredSlowSourcesByDefault(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant,mindsdb")
