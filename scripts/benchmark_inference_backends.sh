@@ -1,12 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-${MEMMCP_ORCHESTRATOR_URL:-http://127.0.0.1:8075}}"
-MODEL="${TASK_MODEL:-qwen3.5:9b}"
-PROVIDERS="${ORCH_INFER_BENCH_PROVIDERS:-auto}"
-TIMEOUT="${ORCH_INFER_BENCH_TIMEOUT_SECS:-30}"
-PROMPT="${ORCH_INFER_BENCH_PROMPT:-Reply with exactly: ok}"
-ALLOW_MULTI="${ORCH_INFER_BENCH_ALLOW_MULTI:-false}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TIMEOUT="${CONTEXTLATTICE_INFER_BENCH_TIMEOUT_SECS:-8}"
+CHAT_TIMEOUT="${CONTEXTLATTICE_INFER_BENCH_CHAT_TIMEOUT_SECS:-30}"
+MODEL="${CONTEXTLATTICE_INFER_BENCH_MODEL:-${GO_DREAM_MODEL:-${TASK_MODEL:-qwen3.5:9b}}}"
+PROMPT="${CONTEXTLATTICE_INFER_BENCH_PROMPT:-Reply with exactly one short sentence.}"
+MAX_TOKENS="${CONTEXTLATTICE_INFER_BENCH_MAX_TOKENS:-24}"
+RUN_CHAT=false
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/benchmark_inference_backends.sh [--chat] [--providers a,b,c] [--model name] [--prompt text]
+
+Health probes are always lightweight. --chat adds a tiny OpenAI-compatible
+/chat/completions request to healthy providers and never pulls or launches models.
+EOF
+}
+
+has_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+now_ms() {
+  if has_cmd python3; then
+    python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+    return
+  fi
+  date +%s000
+}
 
 json_escape() {
   local value="${1:-}"
@@ -16,70 +41,169 @@ json_escape() {
   printf '%s' "$value"
 }
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-infer-bench.XXXXXX")"
-cleanup() {
-  rm -rf "$tmp_dir"
+trim_right_slash() {
+  local value="${1:-}"
+  while [[ "$value" == */ ]]; do
+    value="${value%/}"
+  done
+  printf '%s' "$value"
 }
-trap cleanup EXIT
 
-IFS=',' read -r -a providers <<< "$PROVIDERS"
-provider_count=0
-for raw_provider in "${providers[@]}"; do
-  provider="$(echo "$raw_provider" | xargs)"
-  [[ -n "$provider" ]] && provider_count=$((provider_count + 1))
-done
-if (( provider_count > 1 )) && [[ "$(printf '%s' "$ALLOW_MULTI" | tr '[:upper:]' '[:lower:]')" != "true" ]]; then
-  printf '{"ok":false,"error":"multi_provider_benchmark_disabled","providerCount":%d,"hint":"Set ORCH_INFER_BENCH_ALLOW_MULTI=true only when the host can safely run/load-test multiple backends."}\n' "$provider_count"
-  exit 2
-fi
+normalize_provider() {
+  local provider
+  provider="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+  case "$provider" in
+    ollama-coreml) echo "ollama" ;;
+    ane|ane-sidecar) echo "ane_sidecar" ;;
+    openai|openai-compat|openai-compatible) echo "openai-compatible" ;;
+    llamacpp|llama-cpp) echo "llama-cpp" ;;
+    sglang|sgl) echo "sglang" ;;
+    tgi|text-generation-inference) echo "tgi" ;;
+    tensorrt|tensorrt-llm|trtllm|trt-llm) echo "tensorrt-llm" ;;
+    mlx|mlx-lm|mtplx) echo "mlx" ;;
+    vllm-metal|vllm-metal-mlx|vllm-mlx) echo "vllm-metal" ;;
+    "") echo "auto" ;;
+    *) echo "$provider" ;;
+  esac
+}
 
-if [[ "${CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND:-true}" != "false" ]]; then
-  if ! scripts/inference_backend_guard.sh assert-one >"$tmp_dir/backend_guard.json"; then
-    guard_payload="$(tr '\n' ' ' < "$tmp_dir/backend_guard.json" | cut -c1-500)"
-    printf '{"ok":false,"error":"multiple_active_inference_backends","guard":%s}\n' "${guard_payload:-null}"
-    exit 2
-  fi
-fi
+provider_base_url() {
+  local provider
+  provider="$(normalize_provider "$1")"
+  case "$provider" in
+    ollama)
+      printf '%s' "${OLLAMA_API_BASE:-${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}}"
+      ;;
+    mlx)
+      printf '%s' "${MLX_API_BASE:-http://127.0.0.1:18087/v1}"
+      ;;
+    vllm)
+      printf '%s' "${VLLM_BASE_URL:-http://127.0.0.1:8000}"
+      ;;
+    vllm-metal)
+      printf '%s' "${VLLM_METAL_BASE_URL:-http://127.0.0.1:8000}"
+      ;;
+    sglang)
+      printf '%s' "${SGLANG_BASE_URL:-${SGLANG_API_BASE:-http://127.0.0.1:30000}}"
+      ;;
+    openai-compatible)
+      [[ -n "${OPENAI_API_BASE:-}" ]] || return 1
+      printf '%s' "$OPENAI_API_BASE"
+      ;;
+    lmstudio)
+      printf '%s' "${LMSTUDIO_BASE_URL:-${LM_STUDIO_BASE_URL:-http://127.0.0.1:1234}}"
+      ;;
+    llama-cpp)
+      printf '%s' "${LLAMA_CPP_BASE_URL:-http://127.0.0.1:8080}"
+      ;;
+    tgi)
+      printf '%s' "${TGI_BASE_URL:-${TEXT_GENERATION_INFERENCE_BASE_URL:-http://127.0.0.1:8080}}"
+      ;;
+    tensorrt-llm)
+      printf '%s' "${TENSORRT_LLM_BASE_URL:-${TRTLLM_BASE_URL:-http://127.0.0.1:8000}}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
-printf '{"ok":true,"gateway":"%s","model":"%s","results":[' "$(json_escape "${ORCH_URL%/}")" "$(json_escape "$MODEL")"
-first=1
-for raw_provider in "${providers[@]}"; do
-  provider="$(echo "$raw_provider" | xargs)"
-  [[ -z "$provider" ]] && continue
-  body_file="$tmp_dir/${provider//[^A-Za-z0-9_.-]/_}.json"
-  : > "$body_file"
-  : > "$body_file.err"
-  payload="{\"provider\":\"$(json_escape "$provider")\",\"model\":\"$(json_escape "$MODEL")\",\"messages\":[{\"role\":\"user\",\"content\":\"$(json_escape "$PROMPT")\"}]}"
-  if [[ "$first" == "1" ]]; then
-    first=0
+openai_url() {
+  local base path
+  base="$(trim_right_slash "$1")"
+  path="$2"
+  if [[ "$base" == */v1 ]]; then
+    printf '%s/%s' "$base" "$path"
   else
-    printf ','
+    printf '%s/v1/%s' "$base" "$path"
   fi
-  http_code="$(
-    curl -sS --max-time "$TIMEOUT" \
-      -o "$body_file" \
-      -w '%{http_code} %{time_total}' \
-      -H 'content-type: application/json' \
-      -d "$payload" \
-      "${ORCH_URL%/}/v1/inference/chat" 2>"$body_file.err" || true
-  )"
-  status="${http_code%% *}"
-  total="${http_code#* }"
-  status_num=0
-  if [[ "$status" =~ ^[0-9]+$ ]]; then
-    status_num=$((10#$status))
+}
+
+curl_code() {
+  local timeout="$1"
+  shift
+  curl -sS -o /dev/null -w '%{http_code}' --max-time "$timeout" "$@" 2>/dev/null || printf '000'
+}
+
+probe_provider() {
+  local provider base url start end code latency
+  provider="$(normalize_provider "$1")"
+  base="$(provider_base_url "$provider" 2>/dev/null || true)"
+  if [[ -z "$base" ]]; then
+    printf '%-18s %-8s %-10s %s\n' "$provider" "skip" "-" "no base URL configured"
+    return 0
   fi
-  total_num="${total:-0}"
-  if [[ ! "$total_num" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    total_num=0
+  url="$(openai_url "$base" models)"
+  start="$(now_ms)"
+  code="$(curl_code "$TIMEOUT" "$url")"
+  end="$(now_ms)"
+  latency=$((end - start))
+  if [[ "$code" =~ ^2 ]]; then
+    printf '%-18s %-8s %-10sms %s\n' "$provider" "healthy" "$latency" "$url"
+    if [[ "$RUN_CHAT" == "true" ]]; then
+      chat_provider "$provider" "$base"
+    fi
+    return 0
   fi
-  if [[ "$status" =~ ^2 ]]; then
-    printf '{"provider":"%s","ok":true,"status":%s,"timeTotalSecs":%s}' "$(json_escape "$provider")" "$status_num" "$total_num"
-  else
-    error="$(tr '\n' ' ' < "$body_file.err" | cut -c1-300)"
-    response="$(tr '\n' ' ' < "$body_file" | cut -c1-300)"
-    printf '{"provider":"%s","ok":false,"status":%s,"timeTotalSecs":%s,"error":"%s","response":"%s"}' \
-      "$(json_escape "$provider")" "$status_num" "$total_num" "$(json_escape "$error")" "$(json_escape "$response")"
+  printf '%-18s %-8s %-10sms %s\n' "$provider" "down:$code" "$latency" "$url"
+}
+
+chat_provider() {
+  local provider base url payload start end code latency
+  provider="$1"
+  base="$2"
+  url="$(openai_url "$base" chat/completions)"
+  payload='{"model":"'"$(json_escape "$MODEL")"'","messages":[{"role":"user","content":"'"$(json_escape "$PROMPT")"'"}],"max_tokens":'"$MAX_TOKENS"',"temperature":0}'
+  start="$(now_ms)"
+  code="$(curl_code "$CHAT_TIMEOUT" -H 'Content-Type: application/json' -d "$payload" "$url")"
+  end="$(now_ms)"
+  latency=$((end - start))
+  printf '%-18s %-8s %-10sms %s\n' "${provider}/chat" "$code" "$latency" "$url"
+}
+
+default_providers() {
+  if [[ -n "${ORCH_INFER_PROVIDER_PRIORITY:-}" ]]; then
+    printf '%s' "$ORCH_INFER_PROVIDER_PRIORITY"
+    return
   fi
+  printf '%s' 'mlx,vllm-metal,sglang,vllm,openai-compatible,llama-cpp,lmstudio,tgi,tensorrt-llm,ollama'
+}
+
+PROVIDERS="$(default_providers)"
+while (($#)); do
+  case "$1" in
+    --chat)
+      RUN_CHAT=true
+      shift
+      ;;
+    --providers)
+      PROVIDERS="${2:?missing provider list}"
+      shift 2
+      ;;
+    --model)
+      MODEL="${2:?missing model}"
+      shift 2
+      ;;
+    --prompt)
+      PROMPT="${2:?missing prompt}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'unknown argument: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
 done
-printf ']}\n'
+
+cd "$ROOT_DIR"
+printf 'provider           status   latency    endpoint\n'
+printf '%s\n' '---------------------------------------------------------------'
+IFS=',' read -r -a provider_list <<< "$PROVIDERS"
+for provider in "${provider_list[@]}"; do
+  probe_provider "$provider"
+done
