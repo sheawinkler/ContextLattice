@@ -21,6 +21,7 @@ pub const CODEX_COMPACT_HOOK_STDOUT_V1: &str = "codex_compact_hook_stdout.v1";
 pub const CONTEXT_OVERFLOW_RECOVERY_V1: &str = "context_overflow_recovery.v1";
 pub const CONTEXT_PACK_RESPONSE_V1: &str = "context_pack_response.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
+pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
 pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 
@@ -35,6 +36,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_OVERFLOW_RECOVERY_V1,
     CONTEXT_PACK_RESPONSE_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
+    DREAM_MODE_RESPONSE_V1,
     POLICY_CONTEXT_PACKAGE_V1,
     WRITEBACK_RESULT_V1,
 ];
@@ -97,6 +99,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTRACT_ACKNOWLEDGEMENT_V1,
         payload_kind: "contract_acknowledgement",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: DREAM_MODE_RESPONSE_V1,
+        payload_kind: "dream_mode_response",
         contract_version: 1,
         required_output_mode: "json_object",
     },

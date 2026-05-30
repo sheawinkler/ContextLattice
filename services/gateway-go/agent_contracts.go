@@ -15,6 +15,7 @@ const policyContextPackageContractID = "policy_context_package.v1"
 const antiSchemingContractID = "anti_scheming_protocol.v1"
 const agentPreflightResponseContractID = "agent_preflight_response.v1"
 const contextPackResponseContractID = "context_pack_response.v1"
+const dreamModeResponseContractID = "dream_mode_response.v1"
 const writebackResultContractID = "writeback_result.v1"
 const codexCompactHookStdoutContractID = "codex_compact_hook_stdout.v1"
 const agentTaskResultContractID = "agent_task_result.v1"
@@ -244,6 +245,7 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 		policyContextPackageContractID,
 		antiSchemingContractID,
 		contextPackResponseContractID,
+		dreamModeResponseContractID,
 		writebackResultContractID,
 		codexCompactHookStdoutContractID,
 		agentTaskResultContractID,

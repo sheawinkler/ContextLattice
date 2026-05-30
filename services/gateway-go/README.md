@@ -37,6 +37,17 @@ Env:
 - `ORCH_STORAGE_LEDGER_READ_LIMIT_DEFAULT` (default `168`)
 - `ORCH_STORAGE_LEDGER_READ_LIMIT_MAX` (default `5000`)
 
+Dream Mode:
+- `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked synthesis with deterministic hypotheses and optional backend LLM augmentation.
+- `GO_DREAM_LLM_ENABLED` (default `true`)
+- `GO_DREAM_MODEL` (falls back to `TASK_MODEL`, then `qwen3.5:9b`)
+
+CLI wrapper:
+
+```bash
+scripts/agent/contextlattice-dream "invent the next memory primitive" --no-use-llm --pretty
+```
+
 Run locally:
 
 ```bash
