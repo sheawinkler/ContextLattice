@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -603,6 +604,7 @@ func TestProxyForwardsMemorySearchRequest(t *testing.T) {
 
 func TestMemorySearchUsesGoStagedRetrieval(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
@@ -998,11 +1000,13 @@ func TestMemorySearchInjectsConfiguredAPIKeyWhenMissing(t *testing.T) {
 
 func TestMemoryRecallEvaluateSavedIsGoNative(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
 
 	recallCasesPath := filepath.Join(t.TempDir(), "recall_eval_cases.json")
+	recallMonitorPath := filepath.Join(t.TempDir(), "recall_monitor.ndjson")
 	if err := os.WriteFile(
 		recallCasesPath,
 		[]byte(`{
@@ -1025,6 +1029,7 @@ func TestMemoryRecallEvaluateSavedIsGoNative(t *testing.T) {
 		t.Fatalf("write saved recall eval config: %v", err)
 	}
 	t.Setenv("ORCH_RECALL_EVAL_CASES_PATH", recallCasesPath)
+	t.Setenv("RECALL_MONITOR_PATH", recallMonitorPath)
 
 	var capturedPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1071,8 +1076,153 @@ func TestMemoryRecallEvaluateSavedIsGoNative(t *testing.T) {
 	if anyToInt(metrics["casesEvaluated"], 0) != 1 {
 		t.Fatalf("expected one evaluated case, got %#v", metrics)
 	}
+	if anyToFloat64(metrics["citationCoverage"], 0) != 1 {
+		t.Fatalf("expected citation coverage default 1.0, got %#v", metrics)
+	}
+	if anyToFloat64(metrics["sourceDiversity"], 0) != 1 {
+		t.Fatalf("expected one source in diversity metric, got %#v", metrics)
+	}
+	if anyToFloat64(metrics["p95LatencyMs"], -1) < 0 {
+		t.Fatalf("expected p95 latency metric, got %#v", metrics)
+	}
+	graphContribution, _ := metrics["graphContribution"].(map[string]any)
+	if anyToBool(graphContribution["memoryGraphStoreActive"]) {
+		t.Fatalf("expected disabled graph store in native route smoke, got %#v", graphContribution)
+	}
+	cases, _ := payload["cases"].([]any)
+	if len(cases) != 1 {
+		t.Fatalf("expected one case report, got %#v", payload["cases"])
+	}
+	caseReport, _ := cases[0].(map[string]any)
+	if _, ok := caseReport["graph_contribution"].(map[string]any); !ok {
+		t.Fatalf("expected case graph contribution, got %#v", caseReport)
+	}
+	monitorRaw, err := os.ReadFile(recallMonitorPath)
+	if err != nil {
+		t.Fatalf("expected recall monitor sample: %v", err)
+	}
+	if !strings.Contains(string(monitorRaw), `"recallAtK"`) {
+		t.Fatalf("expected recall monitor sample to include eval metrics, got %s", string(monitorRaw))
+	}
 	if capturedPath != "/v1/retrieval/query" {
 		t.Fatalf("expected go-native route to call retrieval query path, got %s", capturedPath)
+	}
+}
+
+func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_MEMORY_GRAPH_EDGE_PATH", filepath.Join(root, "_contextlattice", "memory_edges.ndjson"))
+	t.Setenv("RECALL_MONITOR_PATH", filepath.Join(root, "_contextlattice", "recall_monitor.ndjson"))
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+
+	recallCasesPath := filepath.Join(t.TempDir(), "recall_eval_cases.json")
+	if err := os.WriteFile(
+		recallCasesPath,
+		[]byte(`{
+  "version": 1,
+  "updatedAt": "2026-04-28T00:00:00Z",
+  "k": 3,
+  "gate": {"minRecallAtK": 0.0, "minMrr": 0.0, "minNumericExactness": 0.0},
+  "cases": [
+    {
+      "id": "graph-lift",
+      "query": "target by neighbor",
+      "limit": 3,
+      "project": "alpha",
+      "sources": ["qdrant"],
+      "expected_files": ["notes/target.md"]
+    }
+  ]
+}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("write saved recall eval config: %v", err)
+	}
+	t.Setenv("ORCH_RECALL_EVAL_CASES_PATH", recallCasesPath)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/seed.md","memory_id":"alpha::notes/seed.md","summary":"seed only","source":"qdrant","score":0.91}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+		t.Fatalf("expected enabled memory store")
+	}
+	for _, item := range []normalizedWrite{
+		{project: "alpha", fileName: "notes/seed.md", content: "seed memory", topicPath: "recall/graph"},
+		{project: "alpha", fileName: "notes/target.md", content: "target memory", topicPath: "recall/graph"},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory store: %v", err)
+		}
+	}
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		SourceID:   "alpha::notes/seed.md",
+		TargetID:   "alpha::notes/target.md",
+		Relation:   "inferred_related",
+		Project:    "alpha",
+		TopicPath:  "recall/graph",
+		Confidence: 0.92,
+		CreatedAt:  nowUTCISO(),
+		Source:     memoryEdgeSource,
+	}); err != nil {
+		t.Fatalf("seed memory edge: %v", err)
+	}
+
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/recall/evaluate/saved", "application/json", strings.NewReader(`{"include_retrieval_debug":true}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response payload: %v", err)
+	}
+	metrics, _ := payload["metrics"].(map[string]any)
+	if anyToFloat64(metrics["recallAtK"], -1) != 0 {
+		t.Fatalf("expected top-k miss before graph expansion, got %#v", metrics)
+	}
+	if anyToFloat64(metrics["graphLift"], 0) != 1 {
+		t.Fatalf("expected graph lift to recover the case, got metrics=%#v cases=%#v", metrics, payload["cases"])
+	}
+	graphContribution, _ := metrics["graphContribution"].(map[string]any)
+	if anyToInt(graphContribution["helpedCases"], 0) != 1 {
+		t.Fatalf("expected one helped graph case, got %#v", graphContribution)
+	}
+	cases, _ := payload["cases"].([]any)
+	caseReport, _ := cases[0].(map[string]any)
+	caseGraph, _ := caseReport["graph_contribution"].(map[string]any)
+	if !anyToBool(caseGraph["helped"]) || anyToInt(caseGraph["added_expected_hit_count"], 0) != 1 {
+		t.Fatalf("expected per-case graph contribution, got %#v", caseGraph)
 	}
 }
 

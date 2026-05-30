@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Run saved recall evaluation and print a compact quality view."""
+
+from __future__ import annotations
+
+import argparse
+import urllib.parse
+from typing import Any
+
+from _common import emit, request_json
+
+
+def as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def pct(value: Any) -> str:
+    return f"{round(as_float(value) * 100):3d}%"
+
+
+def bar(value: Any, width: int = 24) -> str:
+    ratio = max(0.0, min(1.0, as_float(value)))
+    filled = round(ratio * width)
+    return "[" + ("#" * filled) + ("-" * (width - filled)) + "]"
+
+
+def compact_eval(payload: dict[str, Any], tuning: dict[str, Any] | None) -> dict[str, Any]:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    graph = metrics.get("graphContribution") if isinstance(metrics.get("graphContribution"), dict) else {}
+    quality = None
+    if tuning:
+        recommended = tuning.get("recommended") if isinstance(tuning.get("recommended"), dict) else {}
+        quality = recommended.get("quality") if isinstance(recommended.get("quality"), dict) else None
+    return {
+        "ok": bool(payload.get("ok", False)),
+        "passed": bool(payload.get("passed", False)),
+        "quality_status": payload.get("quality_status") or metrics.get("qualityStatus"),
+        "cases": {
+            "total": as_int(metrics.get("casesTotal")),
+            "evaluated": as_int(metrics.get("casesEvaluated")),
+        },
+        "recall": {
+            "k": as_int(metrics.get("k")),
+            "recallAtK": as_float(metrics.get("recallAtK")),
+            "mrr": as_float(metrics.get("mrr")),
+            "numericExactness": as_float(metrics.get("numericExactness")),
+            "citationCoverage": as_float(metrics.get("citationCoverage")),
+            "sourceDiversity": as_float(metrics.get("sourceDiversity")),
+        },
+        "graph": {
+            "lift": as_float(metrics.get("graphLift")),
+            "helpedCases": as_int(graph.get("helpedCases")),
+            "candidateCount": as_int(graph.get("candidateCount")),
+            "expectedHits": as_int(graph.get("expectedHitCount")),
+            "active": bool(graph.get("memoryGraphStoreActive", False)),
+        },
+        "latency": {
+            "avgMs": as_float(metrics.get("avgLatencyMs")),
+            "p95Ms": as_float(metrics.get("p95LatencyMs")),
+        },
+        "tuning": quality or {},
+        "recommendations": payload.get("recommendations") or [],
+    }
+
+
+def print_terminal(summary: dict[str, Any]) -> None:
+    status = "PASS" if summary["passed"] else "FAIL"
+    print(f"recall-quality {status} status={summary.get('quality_status') or 'unknown'}")
+    recall = summary["recall"]
+    graph = summary["graph"]
+    latency = summary["latency"]
+    print(f"  recall@{recall['k']:<2} {bar(recall['recallAtK'])} {pct(recall['recallAtK'])}   mrr={as_float(recall['mrr']):.3f}")
+    print(f"  citations {bar(recall['citationCoverage'])} {pct(recall['citationCoverage'])}   diversity={as_float(recall['sourceDiversity']):.2f}")
+    print(
+        "  graph     "
+        f"{bar(min(1.0, as_float(graph['lift']) * 4.0))} {pct(graph['lift'])}   "
+        f"helped={graph['helpedCases']} candidates={graph['candidateCount']} expected={graph['expectedHits']}"
+    )
+    print(f"  latency   avg={as_float(latency['avgMs']):.1f}ms p95={as_float(latency['p95Ms']):.1f}ms")
+    tuning = summary.get("tuning") if isinstance(summary.get("tuning"), dict) else {}
+    graph_expansion = tuning.get("graphExpansion") if isinstance(tuning.get("graphExpansion"), dict) else {}
+    source_order = tuning.get("sourceOrder") if isinstance(tuning.get("sourceOrder"), list) else []
+    if graph_expansion or source_order:
+        enabled = "on" if graph_expansion.get("enabled") else "off"
+        depth = as_int(graph_expansion.get("depth"))
+        limit = as_int(graph_expansion.get("neighborLimit"))
+        print(f"  tuning    graph={enabled} depth={depth} limit={limit} sources={','.join(map(str, source_order[:5])) or '-'}")
+    for item in (summary.get("recommendations") or [])[:3]:
+        print(f"  - {item}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--k", type=int, default=None, help="Override saved eval K.")
+    parser.add_argument("--timeout", type=float, default=240.0)
+    parser.add_argument("--include-debug", action="store_true")
+    parser.add_argument("--include-preferences", action="store_true")
+    parser.add_argument("--refresh-cases", action="store_true")
+    parser.add_argument("--max-cases", type=int, default=12)
+    parser.add_argument("--min-hits", type=int, default=1)
+    parser.add_argument("--project", default="")
+    parser.add_argument("--topic-prefix", default="")
+    parser.add_argument("--tuning", action="store_true", help="Fetch recall tuning recommendations after eval.")
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--json", action="store_true", help="Emit compact JSON instead of terminal view.")
+    args = parser.parse_args()
+
+    refresh_payload = {
+        "max_cases": args.max_cases,
+        "min_hits": args.min_hits,
+        "project": args.project,
+        "topic_prefix": args.topic_prefix,
+    }
+    if args.refresh_cases:
+        request_json("POST", "/memory/recall/eval-cases/refresh", refresh_payload, args.timeout)
+
+    payload: dict[str, Any] = {
+        "include_retrieval_debug": args.include_debug,
+        "include_preferences": args.include_preferences,
+    }
+    if args.k is not None:
+        payload["k"] = args.k
+    evaluation = request_json("POST", "/memory/recall/evaluate/saved", payload, args.timeout)
+    tuning = None
+    if args.tuning:
+        query = urllib.parse.urlencode({"max_samples": "96", "min_samples": "1"})
+        tuning = request_json("GET", f"/telemetry/recall/tuning?{query}", None, args.timeout)
+    summary = compact_eval(evaluation, tuning)
+    if args.json or args.pretty:
+        emit(summary, pretty=args.pretty)
+    else:
+        print_terminal(summary)
+    return 0 if summary["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

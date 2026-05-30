@@ -879,22 +879,59 @@ func (s *server) telemetryRecallRoute(w http.ResponseWriter, r *http.Request) {
 		sourceErrorRate = float64(totalErrors) / float64(totalRequests)
 	}
 	alerts := buildRetrievalAlerts(order, statsBySource)
+	monitorRows := s.readRecallMonitorHistory(envInt("ORCH_RECALL_MONITOR_HISTORY_LIMIT", 96))
+	latestQuality := latestRecallEvalMonitorSample(monitorRows)
+	qualityTotals := map[string]any{
+		"requests":          totalRequests,
+		"timeouts":          totalTimeouts,
+		"errors":            totalErrors,
+		"sourceErrorRate":   roundFloat(sourceErrorRate, 6),
+		"noHitRate":         0.0,
+		"lowConfidenceRate": 0.0,
+		"staleHitRate":      0.0,
+		"recallAtK":         nil,
+		"mrr":               nil,
+		"numericExactness":  nil,
+		"citationCoverage":  nil,
+		"sourceDiversity":   nil,
+		"graphLift":         nil,
+		"evalP95Ms":         nil,
+		"lastEvalAt":        nil,
+	}
+	qualityStatus := "unknown"
+	if latestQuality != nil {
+		qualityStatus = strings.TrimSpace(anyToString(latestQuality["qualityStatus"]))
+		if qualityStatus == "" {
+			qualityStatus = recallQualityStatusFromSample(latestQuality)
+		}
+		qualityTotals["noHitRate"] = anyToFloat64(latestQuality["noHitRate"], 0.0)
+		qualityTotals["lowConfidenceRate"] = anyToFloat64(latestQuality["lowConfidenceRate"], 0.0)
+		qualityTotals["staleHitRate"] = anyToFloat64(latestQuality["staleHitRate"], 0.0)
+		qualityTotals["recallAtK"] = anyToFloat64(latestQuality["recallAtK"], 0.0)
+		qualityTotals["mrr"] = anyToFloat64(latestQuality["mrr"], 0.0)
+		qualityTotals["numericExactness"] = anyToFloat64(latestQuality["numericExactness"], 0.0)
+		qualityTotals["citationCoverage"] = anyToFloat64(latestQuality["citationCoverage"], 0.0)
+		qualityTotals["sourceDiversity"] = anyToFloat64(latestQuality["sourceDiversity"], 0.0)
+		qualityTotals["graphLift"] = anyToFloat64(latestQuality["graphLift"], 0.0)
+		qualityTotals["evalP95Ms"] = anyToFloat64(latestQuality["evalP95Ms"], 0.0)
+		qualityTotals["lastEvalAt"] = latestQuality["timestamp"]
+	}
+	recentQuality := recentRecallEvalMonitorSamples(monitorRows, 10)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"updatedAt":    updatedAt,
 		"trafficClass": trafficClass,
 		"quality": map[string]any{
-			"updatedAt": updatedAt,
-			"totals": map[string]any{
-				"requests":          totalRequests,
-				"timeouts":          totalTimeouts,
-				"errors":            totalErrors,
-				"sourceErrorRate":   roundFloat(sourceErrorRate, 6),
-				"noHitRate":         0.0,
-				"lowConfidenceRate": 0.0,
-				"staleHitRate":      0.0,
-			},
-			"bySource": bySource,
-			"recent":   []any{},
+			"updatedAt":   updatedAt,
+			"status":      qualityStatus,
+			"totals":      qualityTotals,
+			"bySource":    bySource,
+			"recent":      recentQuality,
+			"sampleCount": len(recentQuality),
+			"recommendations": recallTelemetryQualityRecommendations(
+				latestQuality,
+				totalRequests,
+				sourceErrorRate,
+			),
 		},
 		"alerts": map[string]any{
 			"thresholds": map[string]any{
@@ -959,6 +996,95 @@ func (s *server) syntheticRecallMonitorSample() map[string]any {
 	}
 }
 
+func latestRecallEvalMonitorSample(rows []map[string]any) map[string]any {
+	for idx := len(rows) - 1; idx >= 0; idx-- {
+		row := rows[idx]
+		if row == nil {
+			continue
+		}
+		if _, exists := row["recallAtK"]; exists {
+			return row
+		}
+		if _, exists := row["mrr"]; exists {
+			return row
+		}
+	}
+	return nil
+}
+
+func recentRecallEvalMonitorSamples(rows []map[string]any, limit int) []map[string]any {
+	if limit < 1 {
+		limit = 1
+	}
+	out := make([]map[string]any, 0, limit)
+	for idx := len(rows) - 1; idx >= 0 && len(out) < limit; idx-- {
+		row := rows[idx]
+		if row == nil {
+			continue
+		}
+		if _, exists := row["recallAtK"]; !exists {
+			if _, exists := row["mrr"]; !exists {
+				continue
+			}
+		}
+		out = append(out, row)
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out
+}
+
+func recallQualityStatusFromSample(sample map[string]any) string {
+	if sample == nil {
+		return "unknown"
+	}
+	if anyToBool(sample["passed"]) {
+		return "healthy"
+	}
+	recallAtK := anyToFloat64(sample["recallAtK"], 0)
+	mrr := anyToFloat64(sample["mrr"], 0)
+	if recallAtK < 0.5 || mrr < 0.35 {
+		return "repair_recommended"
+	}
+	return "watch"
+}
+
+func recallTelemetryQualityRecommendations(sample map[string]any, totalRequests int, sourceErrorRate float64) []string {
+	recommendations := make([]string, 0, 5)
+	if sample == nil {
+		recommendations = append(recommendations, "Run scripts/agent/recall-quality-eval to seed recall quality telemetry.")
+	} else {
+		recallAtK := anyToFloat64(sample["recallAtK"], 0)
+		mrr := anyToFloat64(sample["mrr"], 0)
+		citationCoverage := anyToFloat64(sample["citationCoverage"], 1)
+		graphLift := anyToFloat64(sample["graphLift"], 0)
+		sourceDiversity := anyToFloat64(sample["sourceDiversity"], 0)
+		if recallAtK < 0.75 {
+			recommendations = append(recommendations, "Recall@K is below the production floor; refresh saved cases and inspect failing queries.")
+		}
+		if mrr < 0.55 {
+			recommendations = append(recommendations, "MRR is below target; tune ranking and staged source ordering before increasing context size.")
+		}
+		if citationCoverage < 0.9 {
+			recommendations = append(recommendations, "Citation coverage is weak; prioritize file-backed hits in context packs.")
+		}
+		if graphLift > 0 {
+			recommendations = append(recommendations, "Graph neighbors improve recall; keep first-hop edge expansion enabled in agent-boundary context packaging.")
+		}
+		if sourceDiversity < 1.5 {
+			recommendations = append(recommendations, "Recall is leaning on too few sources; verify qdrant, pgvector, and topic rollups are healthy.")
+		}
+	}
+	if totalRequests > 0 && sourceErrorRate >= 0.25 {
+		recommendations = append(recommendations, "Retrieval source error rate is elevated; inspect /telemetry/retrieval/source-quality.")
+	}
+	if len(recommendations) == 0 {
+		recommendations = append(recommendations, "Recall quality telemetry is inside current production thresholds.")
+	}
+	return recommendations
+}
+
 func (s *server) telemetryRecallMonitorRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -980,6 +1106,393 @@ func (s *server) telemetryRecallMonitorRoute(w http.ResponseWriter, r *http.Requ
 		"config": map[string]any{
 			"historyLimit":  limit,
 			"lookbackHours": envFloat("RECALL_MONITOR_LOOKBACK_HOURS", 24.0),
+		},
+	})
+}
+
+func recallMonitorSamplesForWindow(rows []map[string]any, lookbackHours float64, maxSamples int) []map[string]any {
+	if maxSamples < 1 {
+		maxSamples = 1
+	}
+	if len(rows) == 0 {
+		return []map[string]any{}
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(lookbackHours * float64(time.Hour)))
+	selected := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		parsed, ok := parseRecallMonitorSampleTimestamp(row["timestamp"])
+		if !ok {
+			continue
+		}
+		if parsed.After(cutoff) || parsed.Equal(cutoff) {
+			selected = append(selected, row)
+		}
+	}
+	if len(selected) == 0 {
+		if len(rows) <= maxSamples {
+			return append([]map[string]any(nil), rows...)
+		}
+		return append([]map[string]any(nil), rows[len(rows)-maxSamples:]...)
+	}
+	if len(selected) > maxSamples {
+		selected = append([]map[string]any(nil), selected[len(selected)-maxSamples:]...)
+	} else {
+		selected = append([]map[string]any(nil), selected...)
+	}
+	return selected
+}
+
+func parseRecallMonitorSampleTimestamp(value any) (time.Time, bool) {
+	token := strings.TrimSpace(anyToString(value))
+	if token == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, token); err == nil {
+		return parsed.UTC(), true
+	}
+	if parsed, err := time.Parse(time.RFC3339, token); err == nil {
+		return parsed.UTC(), true
+	}
+	return time.Time{}, false
+}
+
+func recommendRecallRateThreshold(values []float64, current float64, floor float64, ceiling float64) float64 {
+	clean := make([]float64, 0, len(values))
+	for _, value := range values {
+		if value < 0 {
+			value = 0
+		}
+		clean = append(clean, value)
+	}
+	if len(clean) == 0 {
+		return roundFloat(clampFloat(current, floor, ceiling), 6)
+	}
+	sort.Float64s(clean)
+	p95 := percentileFloat(clean, 0.95)
+	p99 := percentileFloat(clean, 0.99)
+	suggested := maxFloat(current*0.8, maxFloat(p95*1.2, p99*1.05))
+	return roundFloat(clampFloat(suggested, floor, ceiling), 6)
+}
+
+func recommendRecallLatencyThreshold(values []float64, current float64, floor float64) float64 {
+	clean := make([]float64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		clean = append(clean, value)
+	}
+	if len(clean) == 0 {
+		return roundFloat(maxFloat(current, floor), 3)
+	}
+	sort.Float64s(clean)
+	p95 := percentileFloat(clean, 0.95)
+	p99 := percentileFloat(clean, 0.99)
+	suggested := maxFloat(current*0.85, maxFloat(p95*1.15, maxFloat(p99*1.05, floor)))
+	return roundFloat(suggested, 3)
+}
+
+func maxFloat(left float64, right float64) float64 {
+	if left >= right {
+		return left
+	}
+	return right
+}
+
+func recallPercentile(values []float64, pct float64) float64 {
+	clean := make([]float64, 0, len(values))
+	for _, value := range values {
+		if value < 0 {
+			continue
+		}
+		clean = append(clean, value)
+	}
+	if len(clean) == 0 {
+		return 0
+	}
+	sort.Float64s(clean)
+	return roundFloat(percentileFloat(clean, pct), 6)
+}
+
+func buildRecallQualityTuningRecommendation(
+	latest map[string]any,
+	recallAtKValues []float64,
+	mrrValues []float64,
+	citationCoverageValues []float64,
+	sourceDiversityValues []float64,
+	graphLiftValues []float64,
+	evalP95Values []float64,
+	defaultSources []string,
+) map[string]any {
+	recallLatest := anyToFloat64(latest["recallAtK"], 0)
+	mrrLatest := anyToFloat64(latest["mrr"], 0)
+	graphLiftLatest := anyToFloat64(latest["graphLift"], 0)
+	sourceDiversityLatest := anyToFloat64(latest["sourceDiversity"], 0)
+	citationLatest := anyToFloat64(latest["citationCoverage"], 0)
+	depth := 0
+	neighborLimit := 0
+	if latest != nil && (graphLiftLatest > 0 || recallLatest < 0.75 || mrrLatest < 0.55) {
+		depth = 1
+		neighborLimit = 12
+		if graphLiftLatest >= 0.15 {
+			neighborLimit = 20
+		}
+	}
+	sourceOrder := orderedSourceUnion(
+		defaultSources,
+		[]string{sourceTopicRollup, sourceQdrant, sourcePgvector, sourceMemoryBank},
+	)
+	recommendations := make([]string, 0, 5)
+	if latest == nil {
+		recommendations = append(recommendations, "Run saved recall evaluation before applying quality tuning.")
+	} else {
+		if recallLatest < 0.75 || mrrLatest < 0.55 {
+			recommendations = append(recommendations, "Keep source fanout broad for boundary context packs until recall and MRR are back above floor.")
+		}
+		if graphLiftLatest > 0 {
+			recommendations = append(recommendations, "Use first-hop graph expansion for agent context packages; graph neighbors are contributing measurable recall.")
+		}
+		if citationLatest > 0 && citationLatest < 0.9 {
+			recommendations = append(recommendations, "Prefer file-backed citations in ranking when context packs need auditable memory evidence.")
+		}
+		if sourceDiversityLatest > 0 && sourceDiversityLatest < 1.5 {
+			recommendations = append(recommendations, "Do not narrow retrieval source order yet; current quality samples show low source diversity.")
+		}
+	}
+	if len(recommendations) == 0 {
+		recommendations = append(recommendations, "Quality samples support current source order and graph expansion defaults.")
+	}
+	return map[string]any{
+		"latest": map[string]any{
+			"recallAtK":        roundFloat(recallLatest, 6),
+			"mrr":              roundFloat(mrrLatest, 6),
+			"citationCoverage": roundFloat(citationLatest, 6),
+			"sourceDiversity":  roundFloat(sourceDiversityLatest, 3),
+			"graphLift":        roundFloat(graphLiftLatest, 6),
+		},
+		"baselines": map[string]any{
+			"recallAtKP50":        recallPercentile(recallAtKValues, 0.50),
+			"recallAtKP95":        recallPercentile(recallAtKValues, 0.95),
+			"mrrP50":              recallPercentile(mrrValues, 0.50),
+			"citationCoverageP50": recallPercentile(citationCoverageValues, 0.50),
+			"sourceDiversityP50":  recallPercentile(sourceDiversityValues, 0.50),
+			"graphLiftP95":        recallPercentile(graphLiftValues, 0.95),
+			"evalP95MsP95":        recallPercentile(evalP95Values, 0.95),
+		},
+		"graphExpansion": map[string]any{
+			"enabled":       depth > 0,
+			"depth":         depth,
+			"neighborLimit": neighborLimit,
+			"policy":        "first_hop_only",
+		},
+		"sourceOrder": sourceOrder,
+		"cadence": map[string]any{
+			"savedEval":     "hourly_or_before_release",
+			"caseRefresh":   "daily_or_after_memory_schema_change",
+			"openCoreAudit": "before_public_or_paid_sync",
+		},
+		"recommendations": recommendations,
+	}
+}
+
+func (s *server) telemetryRecallTuningRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+
+	query := r.URL.Query()
+	lookbackHours := parseOptionalFloatQuery(
+		query.Get("lookback_hours"),
+		maxFloat(1.0, envFloat("ORCH_RECALL_MONITOR_LOOKBACK_HOURS", 24.0)),
+		1.0,
+		24.0*365.0,
+	)
+	minSamples := parseOptionalIntQuery(
+		query.Get("min_samples"),
+		maxInt(4, envInt("ORCH_RECALL_TUNING_MIN_SAMPLES", 16)),
+		1,
+		100000,
+	)
+	maxSamples := parseOptionalIntQuery(
+		query.Get("max_samples"),
+		maxInt(24, envInt("ORCH_RECALL_MONITOR_HISTORY_LIMIT", 288)),
+		1,
+		100000,
+	)
+
+	rows := s.readRecallMonitorHistory(maxSamples)
+	windowSamples := recallMonitorSamplesForWindow(rows, lookbackHours, maxSamples)
+
+	noHitValues := make([]float64, 0, len(windowSamples))
+	lowConfidenceValues := make([]float64, 0, len(windowSamples))
+	staleValues := make([]float64, 0, len(windowSamples))
+	sourceErrorValues := make([]float64, 0, len(windowSamples))
+	lettaP95Values := make([]float64, 0, len(windowSamples))
+	lettaP99Values := make([]float64, 0, len(windowSamples))
+	lettaTimeoutValues := make([]float64, 0, len(windowSamples))
+	recallAtKValues := make([]float64, 0, len(windowSamples))
+	mrrValues := make([]float64, 0, len(windowSamples))
+	citationCoverageValues := make([]float64, 0, len(windowSamples))
+	sourceDiversityValues := make([]float64, 0, len(windowSamples))
+	graphLiftValues := make([]float64, 0, len(windowSamples))
+	evalP95Values := make([]float64, 0, len(windowSamples))
+	for _, sample := range windowSamples {
+		noHitValues = append(noHitValues, anyToFloat64(sample["noHitRate"], 0.0))
+		lowConfidenceValues = append(lowConfidenceValues, anyToFloat64(sample["lowConfidenceRate"], 0.0))
+		staleValues = append(staleValues, anyToFloat64(sample["staleHitRate"], 0.0))
+		sourceErrorValues = append(sourceErrorValues, anyToFloat64(sample["maxSourceErrorRate"], 0.0))
+
+		lettaP95 := anyToFloat64(sample["lettaP95Ms"], 0.0)
+		if lettaP95 > 0 {
+			lettaP95Values = append(lettaP95Values, lettaP95)
+		}
+		lettaP99 := anyToFloat64(sample["lettaP99Ms"], 0.0)
+		if lettaP99 > 0 {
+			lettaP99Values = append(lettaP99Values, lettaP99)
+		}
+		lettaTimeoutValues = append(lettaTimeoutValues, anyToFloat64(sample["lettaTimeoutRate"], 0.0))
+		if _, exists := sample["recallAtK"]; exists {
+			recallAtKValues = append(recallAtKValues, anyToFloat64(sample["recallAtK"], 0.0))
+			mrrValues = append(mrrValues, anyToFloat64(sample["mrr"], 0.0))
+			citationCoverageValues = append(citationCoverageValues, anyToFloat64(sample["citationCoverage"], 0.0))
+			sourceDiversityValues = append(sourceDiversityValues, anyToFloat64(sample["sourceDiversity"], 0.0))
+			graphLiftValues = append(graphLiftValues, anyToFloat64(sample["graphLift"], 0.0))
+			evalP95Values = append(evalP95Values, anyToFloat64(sample["evalP95Ms"], 0.0))
+		}
+	}
+
+	currentRecallNoHit := clampFloat(envFloat("ORCH_RECALL_ALERT_NO_HIT_RATE", 0.35), 0.0, 1.0)
+	currentRecallLowConfidence := clampFloat(envFloat("ORCH_RECALL_ALERT_LOW_CONFIDENCE_RATE", 0.4), 0.0, 1.0)
+	currentRecallStale := clampFloat(envFloat("ORCH_RECALL_ALERT_STALE_HIT_RATE", 0.45), 0.0, 1.0)
+	currentRecallSourceError := clampFloat(envFloat("ORCH_RECALL_ALERT_SOURCE_ERROR_RATE", 0.25), 0.0, 1.0)
+	currentRecallMinRequests := maxInt(5, envInt("ORCH_RECALL_ALERT_MIN_REQUESTS", 50))
+
+	currentRetrievalLettaP95 := maxFloat(1000.0, envFloat("ORCH_RETRIEVAL_ALERT_LETTA_P95_MS", 30000.0))
+	currentRetrievalLettaP99 := maxFloat(currentRetrievalLettaP95, envFloat("ORCH_RETRIEVAL_ALERT_LETTA_P99_MS", 45000.0))
+	currentRetrievalLettaTimeout := clampFloat(envFloat("ORCH_RETRIEVAL_ALERT_LETTA_TIMEOUT_RATE", 0.05), 0.0, 1.0)
+	currentRetrievalMinRequests := maxInt(1, envInt("ORCH_RETRIEVAL_ALERT_MIN_REQUESTS", 20))
+
+	recommended := map[string]any{
+		"recall": map[string]any{
+			"noHitRate": recommendRecallRateThreshold(noHitValues, currentRecallNoHit, 0.001, 1.0),
+			"lowConfidenceRate": recommendRecallRateThreshold(
+				lowConfidenceValues,
+				currentRecallLowConfidence,
+				0.001,
+				1.0,
+			),
+			"staleHitRate": recommendRecallRateThreshold(staleValues, currentRecallStale, 0.001, 1.0),
+			"sourceErrorRate": recommendRecallRateThreshold(
+				sourceErrorValues,
+				currentRecallSourceError,
+				0.001,
+				1.0,
+			),
+			"minRequests": currentRecallMinRequests,
+		},
+		"retrieval": map[string]any{
+			"lettaP95Ms": recommendRecallLatencyThreshold(
+				lettaP95Values,
+				currentRetrievalLettaP95,
+				1000.0,
+			),
+			"lettaP99Ms": recommendRecallLatencyThreshold(
+				lettaP99Values,
+				currentRetrievalLettaP99,
+				currentRetrievalLettaP95,
+			),
+			"lettaTimeoutRate": recommendRecallRateThreshold(
+				lettaTimeoutValues,
+				currentRetrievalLettaTimeout,
+				0.001,
+				1.0,
+			),
+			"minRequests": currentRetrievalMinRequests,
+		},
+	}
+	latestQualitySample := latestRecallEvalMonitorSample(windowSamples)
+	qualityRecommendation := buildRecallQualityTuningRecommendation(
+		latestQualitySample,
+		recallAtKValues,
+		mrrValues,
+		citationCoverageValues,
+		sourceDiversityValues,
+		graphLiftValues,
+		evalP95Values,
+		s.retrieval.defaultSources,
+	)
+	recommended["quality"] = qualityRecommendation
+
+	warnings := make([]string, 0, 1)
+	if len(windowSamples) < minSamples {
+		warnings = append(
+			warnings,
+			"Only "+strconv.Itoa(len(windowSamples))+" recall monitor samples available; collect at least "+
+				strconv.Itoa(minSamples)+" for stable tuning.",
+		)
+	}
+
+	monitorLimit := maxSamples
+	if monitorLimit > 20 {
+		monitorLimit = 20
+	}
+	monitorRows := s.readRecallMonitorHistory(monitorLimit)
+	latestSample := any(nil)
+	if len(windowSamples) > 0 {
+		latestSample = windowSamples[len(windowSamples)-1]
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"window": map[string]any{
+			"lookbackHours": lookbackHours,
+			"samples":       len(windowSamples),
+			"minSamples":    minSamples,
+			"sufficient":    len(windowSamples) >= minSamples,
+		},
+		"current": map[string]any{
+			"recall": map[string]any{
+				"noHitRate":         currentRecallNoHit,
+				"lowConfidenceRate": currentRecallLowConfidence,
+				"staleHitRate":      currentRecallStale,
+				"sourceErrorRate":   currentRecallSourceError,
+				"minRequests":       currentRecallMinRequests,
+			},
+			"retrieval": map[string]any{
+				"lettaP95Ms":       currentRetrievalLettaP95,
+				"lettaP99Ms":       currentRetrievalLettaP99,
+				"lettaTimeoutRate": currentRetrievalLettaTimeout,
+				"minRequests":      currentRetrievalMinRequests,
+			},
+		},
+		"recommended": recommended,
+		"env": map[string]any{
+			"ORCH_RECALL_ALERT_NO_HIT_RATE":               recommended["recall"].(map[string]any)["noHitRate"],
+			"ORCH_RECALL_ALERT_LOW_CONFIDENCE_RATE":       recommended["recall"].(map[string]any)["lowConfidenceRate"],
+			"ORCH_RECALL_ALERT_STALE_HIT_RATE":            recommended["recall"].(map[string]any)["staleHitRate"],
+			"ORCH_RECALL_ALERT_SOURCE_ERROR_RATE":         recommended["recall"].(map[string]any)["sourceErrorRate"],
+			"ORCH_RETRIEVAL_ALERT_LETTA_P95_MS":           recommended["retrieval"].(map[string]any)["lettaP95Ms"],
+			"ORCH_RETRIEVAL_ALERT_LETTA_P99_MS":           recommended["retrieval"].(map[string]any)["lettaP99Ms"],
+			"ORCH_RETRIEVAL_ALERT_LETTA_TIMEOUT_RATE":     recommended["retrieval"].(map[string]any)["lettaTimeoutRate"],
+			"CONTEXTLATTICE_RECALL_GRAPH_EXPANSION_DEPTH": qualityRecommendation["graphExpansion"].(map[string]any)["depth"],
+			"CONTEXTLATTICE_RECALL_GRAPH_EXPANSION_LIMIT": qualityRecommendation["graphExpansion"].(map[string]any)["neighborLimit"],
+		},
+		"warnings":     warnings,
+		"latestSample": latestSample,
+		"monitor": map[string]any{
+			"updatedAt": nowUTCISO(),
+			"history":   monitorRows,
+			"count":     len(monitorRows),
+			"config": map[string]any{
+				"historyLimit":  monitorLimit,
+				"lookbackHours": maxFloat(1.0, envFloat("ORCH_RECALL_MONITOR_LOOKBACK_HOURS", 24.0)),
+			},
 		},
 	})
 }
