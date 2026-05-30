@@ -1133,11 +1133,42 @@ func _inferenceCallOpenAICompatibleWithOptions(
 	}
 	firstChoice, _ := choices[0].(map[string]any)
 	message, _ := firstChoice["message"].(map[string]any)
-	content := strings.TrimSpace(anyToString(message["content"]))
-	if content == "" {
-		return "", fmt.Errorf("openai-compatible response missing content")
+	content, contentErr := _inferenceOpenAIMessageContent(message)
+	if contentErr != nil {
+		return "", contentErr
 	}
 	return content, nil
+}
+
+func _inferenceOpenAIMessageContent(message map[string]any) (string, error) {
+	content := strings.TrimSpace(anyToString(message["content"]))
+	if content != "" {
+		return content, nil
+	}
+	if parts, ok := asAnySlice(message["content"]); ok {
+		var b strings.Builder
+		for _, raw := range parts {
+			part, _ := raw.(map[string]any)
+			partType := strings.TrimSpace(anyToString(part["type"]))
+			switch partType {
+			case "", "text", "output_text":
+				text := strings.TrimSpace(anyToString(firstPresent(part, "text", "content")))
+				if text != "" {
+					if b.Len() > 0 {
+						b.WriteString("\n")
+					}
+					b.WriteString(text)
+				}
+			}
+		}
+		if strings.TrimSpace(b.String()) != "" {
+			return strings.TrimSpace(b.String()), nil
+		}
+	}
+	if strings.TrimSpace(anyToString(message["reasoning"])) != "" || strings.TrimSpace(anyToString(message["reasoning_content"])) != "" {
+		return "", fmt.Errorf("openai-compatible response contained reasoning but no final content; configure a final-content chat template or disable thinking for this runtime")
+	}
+	return "", fmt.Errorf("openai-compatible response missing content")
 }
 
 func _inferenceCallOllama(baseURL string, model string, messages []inferenceMessage) (string, error) {
@@ -1191,6 +1222,9 @@ func _inferenceCallOllamaWithOptions(baseURL string, model string, messages []in
 	message, _ := data["message"].(map[string]any)
 	content := strings.TrimSpace(anyToString(message["content"]))
 	if content == "" {
+		if strings.TrimSpace(anyToString(message["reasoning"])) != "" || strings.TrimSpace(anyToString(message["reasoning_content"])) != "" || strings.TrimSpace(anyToString(message["thinking"])) != "" {
+			return "", fmt.Errorf("ollama response contained reasoning but no final content; configure a final-content chat template or disable thinking for this runtime")
+		}
 		return "", fmt.Errorf("ollama response missing content")
 	}
 	return content, nil
@@ -1543,21 +1577,29 @@ func _inferenceDefaultModelPolicyProvider(hardware map[string]any) string {
 }
 
 func _inferenceDreamModelPolicy(hardware map[string]any) map[string]any {
-	allowPrivateEval := envBool("GO_DREAM_ALLOW_UNCENSORED_MODELS", false)
+	allowPrivateEval := dreamPrivateEvalModelsAllowed()
 	privateEval := map[string]any{
-		"enabled":       allowPrivateEval,
-		"optInEnv":      "GO_DREAM_ALLOW_UNCENSORED_MODELS=true",
-		"reason":        "Abliterated/uncensored model variants are never recommended by default and are intended for explicit private evaluation only.",
-		"repoIfEnabled": _inferencePrivateEvalGGUFModelRepo(),
+		"enabled":        allowPrivateEval,
+		"optInEnv":       "CONTEXTLATTICE_DREAM_ALLOW_PRIVATE_EVAL_MODELS=true",
+		"legacyOptInEnv": "GO_DREAM_ALLOW_UNCENSORED_MODELS=true",
+		"reason":         "Abliterated/uncensored model variants are never recommended by default and are intended for explicit private evaluation only.",
+		"repoIfEnabled":  _inferencePrivateEvalGGUFModelRepo(),
 	}
 	return map[string]any{
-		"policy":             "large Qwen3.6 models are opt-in advisory targets only; ContextLattice does not bundle or pull them by default",
-		"downloadByDefault":  false,
-		"defaultFallback":    "qwen3.5:9b",
-		"qwen36GGUFDefault":  _inferenceQwen36GGUFModelRepo(),
-		"qwen36DefaultRole":  "advanced opt-in GGUF target for llama.cpp-compatible runtimes",
-		"privateEval":        privateEval,
-		"providerGuidance":   _inferenceProviderModelRecommendations(_inferenceDefaultModelPolicyProvider(hardware), hardware),
+		"policy":            "large Qwen3.6 models are opt-in advisory targets only; ContextLattice does not bundle or pull them by default",
+		"downloadByDefault": false,
+		"defaultFallback":   "qwen3.5:9b",
+		"qwen36GGUFDefault": _inferenceQwen36GGUFModelRepo(),
+		"qwen36DefaultRole": "advanced opt-in GGUF target for llama.cpp-compatible runtimes",
+		"privateEval":       privateEval,
+		"providerGuidance":  _inferenceProviderModelRecommendations(_inferenceDefaultModelPolicyProvider(hardware), hardware),
+		"templateConformance": map[string]any{
+			"required":                true,
+			"finalContentRequired":    true,
+			"reasoningOnlyRejected":   true,
+			"checkCommand":            "scripts/inference_template_conformance.sh --provider <provider> --model <model>",
+			"mlxQwenFinalContentPath": "templates/inference/mlx/qwen-final-content.jinja",
+		},
 		"cpuOnlyGuidance":    "CPU-only local generation may work for small models, but it is not the recommended Dream Mode path for Qwen3.5/Qwen3.6 on Apple Silicon; prefer MLX, vLLM-Metal, or native Metal llama.cpp.",
 		"sourceModelDefault": "none; source/provenance repos are not user-facing defaults unless a backend-native accelerated format is verified",
 	}
