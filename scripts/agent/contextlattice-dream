@@ -71,8 +71,11 @@ def main() -> int:
     parser.add_argument("--persist", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--model", default="")
     parser.add_argument("--provider", default="")
+    parser.add_argument("--llm-timeout-secs", type=float, default=None)
+    parser.add_argument("--llm-max-tokens", type=int, default=None)
+    parser.add_argument("--llm-temperature", type=float, default=None)
     parser.add_argument("--budget-chars", type=int, default=12000)
-    parser.add_argument("--timeout", type=float, default=75)
+    parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
@@ -94,8 +97,17 @@ def main() -> int:
         payload["model"] = args.model
     if args.provider:
         payload["provider"] = args.provider
+    if args.llm_timeout_secs is not None:
+        payload["llm_timeout_secs"] = args.llm_timeout_secs
+    if args.llm_max_tokens is not None:
+        payload["llm_max_tokens"] = args.llm_max_tokens
+    if args.llm_temperature is not None:
+        payload["llm_temperature"] = args.llm_temperature
 
-    raw = request_json("POST", "/memory/dream", payload, args.timeout)
+    request_timeout = args.timeout
+    if request_timeout is None:
+        request_timeout = max(75.0, float(args.llm_timeout_secs or 600) + 60.0)
+    raw = request_json("POST", "/memory/dream", payload, request_timeout)
     emit(compact_dream(raw, args.budget_chars), args.pretty)
     return 0 if raw.get("ok", False) else 1
 

@@ -69,10 +69,12 @@ curl -fsS http://127.0.0.1:8075/health | jq
 
 Task inference defaults to `ORCH_INFER_PROVIDER=auto`. `gateway-go` detects the host profile and probes local backends before selecting a route.
 
-- Apple Silicon priority: `vllm-metal`, `mlx`, `ane_sidecar`, `llama-cpp`, `ollama`.
-- CUDA/ROCm priority: `vllm`, `openai-compatible`, `llama-cpp`, `lmstudio`, `ollama`.
-- CPU priority: `openai-compatible`, `llama-cpp`, `lmstudio`, `ollama`.
-- Supported provider ids: `vllm`, `vllm-metal`, `mlx`, `mtplx`, `openai-compatible`, `lmstudio`, `llama-cpp`, `ane_sidecar`, `ollama`.
+- Apple Silicon default priority: `mlx,vllm-metal,ane_sidecar,llama-cpp,ollama`.
+- CUDA/ROCm default priority: `sglang,vllm,openai-compatible,llama-cpp,lmstudio,ollama`.
+- Generic CPU default priority: `openai-compatible,llama-cpp,lmstudio,ollama`.
+- Supported provider ids include `sglang`, `vllm`, `vllm-metal`, `mlx`, `mtplx` (alias for MLX), `openai-compatible`, `lmstudio`, `llama-cpp`, `tgi`, `tensorrt-llm`, `ane_sidecar`, and `ollama`.
+- `/v1/inference/runtime-policy` returns live provider health plus resource-aware model guidance. If host memory/VRAM is not identifiable, it falls back to generic local advice: start with Q4/IQ4 7B-9B models, benchmark, then scale up.
+- Ollama remains a compatibility fallback, not the preferred always-on embedding path.
 - Local helpers enforce one active LLM backend by default (`CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND=true`).
 
 Inspect live routing and benchmark configured backends:
@@ -83,6 +85,19 @@ scripts/benchmark_inference_backends.sh
 ```
 
 Embedding defaults to the Rust `fastembed-rs` sidecar. Ollama stays available as an explicit compatibility fallback, not the preferred embedding path.
+
+Useful model runtime knobs:
+
+```bash
+ORCH_INFER_PROVIDER=auto
+ORCH_INFER_PROVIDER_PRIORITY=mlx,vllm-metal,ane_sidecar,sglang,vllm,openai-compatible,llama-cpp,ollama
+ORCH_INFER_AUTO_PROBE_ENABLED=true
+SGLANG_BASE_URL=http://127.0.0.1:30000
+VLLM_BASE_URL=http://127.0.0.1:8000
+VLLM_METAL_BASE_URL=http://127.0.0.1:8000
+MLX_API_BASE=http://127.0.0.1:18087/v1
+LLAMA_CPP_BASE_URL=http://127.0.0.1:8080
+```
 
 ## Agent CLI
 

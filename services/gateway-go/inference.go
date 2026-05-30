@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ const (
 	defaultInferenceOpenAICompatBase = "http://127.0.0.1:8000"
 	defaultInferenceVLLMBaseURL      = "http://127.0.0.1:8000"
 	defaultInferenceVLLMMetalBaseURL = "http://127.0.0.1:8000"
+	defaultInferenceSGLangBaseURL    = "http://127.0.0.1:30000"
+	defaultInferenceTGIBaseURL       = "http://127.0.0.1:8080"
+	defaultInferenceTensorRTBaseURL  = "http://127.0.0.1:8000"
 	defaultInferenceLlamaCPPBaseURL  = "http://127.0.0.1:8080"
 	defaultInferenceANESidecarURL    = "http://127.0.0.1:9099"
 )
@@ -104,6 +108,12 @@ func _inferenceNormalizeProvider(provider string) string {
 		return "openai-compatible"
 	case "llamacpp", "llama-cpp", "llama_cpp":
 		return "llama-cpp"
+	case "sglang", "sgl":
+		return "sglang"
+	case "tgi", "text-generation-inference", "text_generation_inference":
+		return "tgi"
+	case "tensorrt", "tensorrt-llm", "tensorrt_llm", "trtllm", "trt-llm":
+		return "tensorrt-llm"
 	case "mlx", "mlx-lm", "mlx_lm", "mtplx":
 		return "mlx"
 	case "vllm-metal", "vllm-metal-mlx", "vllm-mlx", "vllm_metal", "vllm_mlx":
@@ -128,8 +138,14 @@ func _inferenceProviderDisplayName(provider string) string {
 		return "vLLM Metal"
 	case "vllm":
 		return "vLLM"
+	case "sglang":
+		return "SGLang"
 	case "mlx":
 		return "MLX"
+	case "tgi":
+		return "Hugging Face TGI"
+	case "tensorrt-llm":
+		return "TensorRT-LLM"
 	case "ollama_coreml":
 		return "Ollama CoreML"
 	case "ane_sidecar":
@@ -210,6 +226,8 @@ func _inferenceHostHardwareProfile() map[string]any {
 			hasROCm = true
 		}
 	}
+	memoryGB, memorySource := _inferenceHostMemoryGB()
+	vramGB, vramSource := _inferenceHostVRAMGB()
 	profile := "generic_cpu"
 	if override != "" {
 		profile = override
@@ -230,6 +248,10 @@ func _inferenceHostHardwareProfile() map[string]any {
 		"cudaDetected":  hasCUDA,
 		"rocmDetected":  hasROCm,
 		"metalDetected": appleSilicon,
+		"memoryGB":      memoryGB,
+		"memorySource":  memorySource,
+		"vramGB":        vramGB,
+		"vramSource":    vramSource,
 		"containerRuntime": map[string]any{
 			"orbstackKernel":      orbStackAppleContainer,
 			"dockerDesktopKernel": dockerDesktopAppleContainer,
@@ -237,12 +259,65 @@ func _inferenceHostHardwareProfile() map[string]any {
 	}
 }
 
+func _inferenceHostMemoryGB() (float64, string) {
+	if value, ok := _inferenceEnvFloatAny("ORCH_HOST_MEMORY_GB", "CONTEXTLATTICE_HOST_MEMORY_GB"); ok && value > 0 {
+		return roundedGB(value), "env"
+	}
+	raw, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, "unknown"
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			break
+		}
+		kb, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil || kb <= 0 {
+			break
+		}
+		return roundedGB(kb / 1024 / 1024), "proc_meminfo"
+	}
+	return 0, "unknown"
+}
+
+func _inferenceHostVRAMGB() (float64, string) {
+	if value, ok := _inferenceEnvFloatAny("ORCH_HOST_VRAM_GB", "CONTEXTLATTICE_HOST_VRAM_GB", "ORCH_HOST_GPU_MEMORY_GB"); ok && value > 0 {
+		return roundedGB(value), "env"
+	}
+	return 0, "unknown"
+}
+
+func _inferenceEnvFloatAny(names ...string) (float64, bool) {
+	for _, name := range names {
+		raw := strings.TrimSpace(os.Getenv(name))
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.ParseFloat(raw, 64)
+		if err == nil {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func roundedGB(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	return float64(int(value*10+0.5)) / 10
+}
+
 func _inferenceDefaultProviderPriorityForHardware(profile string) []string {
 	switch profile {
 	case "apple_silicon":
-		return []string{"vllm-metal", "mlx", "ane_sidecar", "llama-cpp", "ollama"}
+		return []string{"mlx", "vllm-metal", "ane_sidecar", "llama-cpp", "ollama"}
 	case "nvidia_cuda", "amd_rocm":
-		return []string{"vllm", "openai-compatible", "llama-cpp", "lmstudio", "ollama"}
+		return []string{"sglang", "vllm", "openai-compatible", "llama-cpp", "lmstudio", "ollama"}
 	default:
 		return []string{"openai-compatible", "llama-cpp", "lmstudio", "ollama"}
 	}
@@ -330,12 +405,30 @@ func _inferenceBaseURLFromProvider(provider string, override string) string {
 			return value
 		}
 		return defaultInferenceVLLMBaseURL
+	case "sglang":
+		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("SGLANG_BASE_URL", "SGLANG_API_BASE", "OPENAI_API_BASE"), "/"))
+		if value != "" {
+			return value
+		}
+		return defaultInferenceSGLangBaseURL
 	case "vllm-metal":
 		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("VLLM_METAL_BASE_URL", "VLLM_BASE_URL", "OPENAI_API_BASE"), "/"))
 		if value != "" {
 			return value
 		}
 		return defaultInferenceVLLMMetalBaseURL
+	case "tgi":
+		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("TGI_BASE_URL", "TEXT_GENERATION_INFERENCE_BASE_URL", "OPENAI_API_BASE"), "/"))
+		if value != "" {
+			return value
+		}
+		return defaultInferenceTGIBaseURL
+	case "tensorrt-llm":
+		value := strings.TrimSpace(strings.TrimRight(firstNonEmptyEnv("TENSORRT_LLM_BASE_URL", "TRTLLM_BASE_URL", "OPENAI_API_BASE"), "/"))
+		if value != "" {
+			return value
+		}
+		return defaultInferenceTensorRTBaseURL
 	case "openai-compatible":
 		value := strings.TrimSpace(strings.TrimRight(os.Getenv("OPENAI_API_BASE"), "/"))
 		if value != "" {
@@ -929,7 +1022,7 @@ func (s *server) resolveInferenceRoute(requestedProvider string, baseURLOverride
 		return resolveOllama("explicit ollama provider", "explicit"), nil
 	case "mlx":
 		return resolveOpenAIProvider("mlx", "explicit mlx provider", "explicit"), nil
-	case "lmstudio", "openai-compatible", "vllm", "vllm-metal", "llama-cpp":
+	case "lmstudio", "openai-compatible", "vllm", "vllm-metal", "sglang", "tgi", "tensorrt-llm", "llama-cpp":
 		return resolveOpenAIProvider(requested, "explicit provider", "explicit"), nil
 	default:
 		return resolveOpenAIProvider("openai-compatible", fmt.Sprintf("unknown provider '%s'; defaulted to openai-compatible", requested), "explicit-fallback"), nil
@@ -951,6 +1044,29 @@ func _inferenceMessagesToPayload(messages []inferenceMessage) []map[string]strin
 	return payload
 }
 
+type inferenceChatCallOptions struct {
+	Timeout        time.Duration
+	ConnectTimeout time.Duration
+	MaxTokens      int
+	Temperature    float64
+}
+
+func normalizeInferenceChatCallOptions(options inferenceChatCallOptions) inferenceChatCallOptions {
+	if options.Timeout <= 0 {
+		options.Timeout = 60 * time.Second
+	}
+	if options.ConnectTimeout <= 0 {
+		options.ConnectTimeout = 5 * time.Second
+	}
+	if options.Temperature <= 0 {
+		options.Temperature = 0.2
+	}
+	if options.MaxTokens < 0 {
+		options.MaxTokens = 0
+	}
+	return options
+}
+
 func _inferenceCallOpenAICompatible(
 	baseURL string,
 	model string,
@@ -959,12 +1075,29 @@ func _inferenceCallOpenAICompatible(
 	timeout time.Duration,
 	connectTimeout time.Duration,
 ) (string, error) {
+	return _inferenceCallOpenAICompatibleWithOptions(baseURL, model, messages, apiKey, inferenceChatCallOptions{
+		Timeout:        timeout,
+		ConnectTimeout: connectTimeout,
+	})
+}
+
+func _inferenceCallOpenAICompatibleWithOptions(
+	baseURL string,
+	model string,
+	messages []inferenceMessage,
+	apiKey string,
+	options inferenceChatCallOptions,
+) (string, error) {
 	endpoint := _inferenceNormalizeOpenAIBase(baseURL) + "/chat/completions"
+	options = normalizeInferenceChatCallOptions(options)
 	payload := map[string]any{
 		"model":       model,
 		"messages":    _inferenceMessagesToPayload(messages),
-		"temperature": 0.2,
+		"temperature": options.Temperature,
 		"stream":      false,
+	}
+	if options.MaxTokens > 0 {
+		payload["max_tokens"] = options.MaxTokens
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -978,7 +1111,7 @@ func _inferenceCallOpenAICompatible(
 	if strings.TrimSpace(apiKey) != "" {
 		req.Header.Set("authorization", "Bearer "+strings.TrimSpace(apiKey))
 	}
-	client := _inferenceHTTPClient(timeout, connectTimeout)
+	client := _inferenceHTTPClient(options.Timeout, options.ConnectTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -1006,11 +1139,29 @@ func _inferenceCallOpenAICompatible(
 }
 
 func _inferenceCallOllama(baseURL string, model string, messages []inferenceMessage) (string, error) {
+	return _inferenceCallOllamaWithOptions(baseURL, model, messages, inferenceChatCallOptions{
+		Timeout:        60 * time.Second,
+		ConnectTimeout: 5 * time.Second,
+	})
+}
+
+func _inferenceCallOllamaWithOptions(baseURL string, model string, messages []inferenceMessage, options inferenceChatCallOptions) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/api/chat"
+	options = normalizeInferenceChatCallOptions(options)
 	payload := map[string]any{
 		"model":    model,
 		"messages": _inferenceMessagesToPayload(messages),
 		"stream":   false,
+	}
+	ollamaOptions := map[string]any{}
+	if options.MaxTokens > 0 {
+		ollamaOptions["num_predict"] = options.MaxTokens
+	}
+	if options.Temperature > 0 {
+		ollamaOptions["temperature"] = options.Temperature
+	}
+	if len(ollamaOptions) > 0 {
+		payload["options"] = ollamaOptions
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -1021,7 +1172,7 @@ func _inferenceCallOllama(baseURL string, model string, messages []inferenceMess
 		return "", err
 	}
 	req.Header.Set("content-type", "application/json")
-	client := _inferenceHTTPClient(60*time.Second, 5*time.Second)
+	client := _inferenceHTTPClient(options.Timeout, options.ConnectTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -1044,23 +1195,33 @@ func _inferenceCallOllama(baseURL string, model string, messages []inferenceMess
 }
 
 func (s *server) callInferenceChat(route inferenceRoute, model string, messages []inferenceMessage) (string, inferenceRoute, error) {
+	return s.callInferenceChatWithOptions(route, model, messages, inferenceChatCallOptions{})
+}
+
+func (s *server) callInferenceChatWithOptions(route inferenceRoute, model string, messages []inferenceMessage, options inferenceChatCallOptions) (string, inferenceRoute, error) {
 	if strings.TrimSpace(model) == "" {
 		return "", route, fmt.Errorf("model is required")
 	}
 	if len(messages) == 0 {
 		return "", route, fmt.Errorf("messages are required")
 	}
+	rawOptions := options
+	options = normalizeInferenceChatCallOptions(options)
 	if route.Transport == "ollama" {
-		content, err := _inferenceCallOllama(route.BaseURL, model, messages)
+		content, err := _inferenceCallOllamaWithOptions(route.BaseURL, model, messages, options)
 		return content, route, err
 	}
-	timeout := 60 * time.Second
-	connectTimeout := 5 * time.Second
+	timeout := options.Timeout
+	connectTimeout := options.ConnectTimeout
 	retries := 0
 	backoff := 250 * time.Millisecond
 	if route.Provider == "ane_sidecar" {
-		timeout = envDurationSeconds("ORCH_ANE_SIDECAR_TIMEOUT_SECS", 20.0)
-		connectTimeout = envDurationSeconds("ORCH_ANE_SIDECAR_CONNECT_TIMEOUT_SECS", 2.0)
+		if rawOptions.Timeout <= 0 {
+			timeout = envDurationSeconds("ORCH_ANE_SIDECAR_TIMEOUT_SECS", 20.0)
+		}
+		if rawOptions.ConnectTimeout <= 0 {
+			connectTimeout = envDurationSeconds("ORCH_ANE_SIDECAR_CONNECT_TIMEOUT_SECS", 2.0)
+		}
 		retries = envInt("ORCH_ANE_SIDECAR_RETRIES", 1)
 		if retries < 0 {
 			retries = 0
@@ -1071,8 +1232,11 @@ func (s *server) callInferenceChat(route inferenceRoute, model string, messages 
 		}
 	}
 	var lastErr error
+	callOptions := options
+	callOptions.Timeout = timeout
+	callOptions.ConnectTimeout = connectTimeout
 	for attempt := 0; attempt <= retries; attempt++ {
-		content, err := _inferenceCallOpenAICompatible(route.BaseURL, model, messages, route.APIKey, timeout, connectTimeout)
+		content, err := _inferenceCallOpenAICompatibleWithOptions(route.BaseURL, model, messages, route.APIKey, callOptions)
 		if err == nil {
 			return content, route, nil
 		}
@@ -1094,7 +1258,7 @@ func (s *server) callInferenceChat(route inferenceRoute, model string, messages 
 			CoreMLEnabled:     false,
 			SidecarEnabled:    false,
 		}
-		content, err := _inferenceCallOllama(fallbackRoute.BaseURL, model, messages)
+		content, err := _inferenceCallOllamaWithOptions(fallbackRoute.BaseURL, model, messages, options)
 		return content, fallbackRoute, err
 	}
 	if lastErr == nil {
@@ -1184,19 +1348,205 @@ func (s *server) inferenceChatHandler(w http.ResponseWriter, r *http.Request) {
 func _inferenceProviderUseCase(provider string) string {
 	switch _inferenceNormalizeProvider(provider) {
 	case "vllm":
-		return "automatic on CUDA/ROCm hosts; manual advanced elsewhere"
+		return "high-throughput Hugging Face safetensors/quantized serving on CUDA/ROCm"
+	case "sglang":
+		return "production-grade Hugging Face and Qwen serving with prefix caching, tool-use support, and high throughput"
 	case "vllm-metal":
-		return "automatic on Apple Silicon when healthy"
+		return "advanced Apple Silicon/Metal OpenAI-compatible serving when configured"
 	case "mlx":
-		return "automatic on Apple Silicon when healthy; mtplx alias supported"
+		return "first-class Apple Silicon path for MLX-format Hugging Face models; mtplx alias supported"
 	case "ane_sidecar":
 		return "automatic only when explicitly enabled and healthy"
 	case "ollama":
-		return "fallback and compatibility lane"
-	case "llama-cpp", "lmstudio", "openai-compatible":
-		return "manual advanced or configured fallback"
+		return "easy compatibility fallback for installed Ollama models"
+	case "llama-cpp":
+		return "fast GGUF lane for Hugging Face GGUF models across CPU, Metal, CUDA, and small local boxes"
+	case "lmstudio":
+		return "desktop-managed local model server for GGUF and compatible local models"
+	case "tgi":
+		return "Hugging Face Text Generation Inference lane when deployed locally or on a LAN host"
+	case "tensorrt-llm":
+		return "NVIDIA-optimized serving lane for TensorRT-LLM deployments"
+	case "openai-compatible":
+		return "generic local or LAN OpenAI-compatible server"
 	default:
 		return "manual advanced"
+	}
+}
+
+func _inferenceProviderModelFormats(provider string) []any {
+	switch _inferenceNormalizeProvider(provider) {
+	case "mlx":
+		return []any{"MLX", "MLX quantized Hugging Face repos"}
+	case "llama-cpp", "lmstudio", "ollama":
+		return []any{"GGUF", "Hugging Face GGUF repos"}
+	case "vllm", "sglang", "tgi", "tensorrt-llm", "vllm-metal":
+		return []any{"Hugging Face Transformers", "safetensors", "FP8/AWQ/GPTQ where backend supports it"}
+	default:
+		return []any{"OpenAI-compatible chat completions"}
+	}
+}
+
+func _inferenceProviderSetupHint(provider string) string {
+	switch _inferenceNormalizeProvider(provider) {
+	case "sglang":
+		return "Run SGLang with an OpenAI-compatible endpoint, e.g. python -m sglang.launch_server --model-path <hf_repo> --host 0.0.0.0 --port 30000."
+	case "vllm":
+		return "Run vLLM with vllm serve <hf_repo> --port 8000, then set VLLM_BASE_URL=http://127.0.0.1:8000."
+	case "vllm-metal":
+		return "Run a Metal-capable vLLM-compatible server on Apple Silicon, then set VLLM_METAL_BASE_URL."
+	case "mlx":
+		return "Run mlx_lm.server --model <mlx_hf_repo_or_path> --port 18087, then set MLX_API_BASE=http://127.0.0.1:18087/v1."
+	case "llama-cpp":
+		return "Run llama-server -hf <gguf_repo>:<quant> --port 8080; set LLAMA_CPP_BASE_URL=http://127.0.0.1:8080."
+	case "lmstudio":
+		return "Start LM Studio local server and set LMSTUDIO_BASE_URL, usually http://127.0.0.1:1234."
+	case "ollama", "ollama_coreml":
+		return "Install or pull an Ollama model and keep OLLAMA_BASE_URL at http://127.0.0.1:11434 unless customized."
+	case "tgi":
+		return "Run Hugging Face TGI locally or on a LAN host and set TGI_BASE_URL."
+	case "tensorrt-llm":
+		return "Run TensorRT-LLM's OpenAI-compatible server and set TENSORRT_LLM_BASE_URL."
+	default:
+		return "Expose a /v1/chat/completions compatible server and set OPENAI_API_BASE."
+	}
+}
+
+func _inferenceProviderResourceFit(provider string, hardware map[string]any) string {
+	profile := strings.TrimSpace(anyToString(hardware["profile"]))
+	memoryGB := anyToFloat64(hardware["memoryGB"], 0)
+	vramGB := anyToFloat64(hardware["vramGB"], 0)
+	knownMemory := memoryGB > 0
+	knownVRAM := vramGB > 0
+	switch _inferenceNormalizeProvider(provider) {
+	case "mlx":
+		if profile == "apple_silicon" {
+			if knownMemory {
+				return "best Apple Silicon fit; choose MLX 4-bit/6-bit models sized to unified memory (" + fmt.Sprintf("%.1f GB visible", memoryGB) + ")"
+			}
+			return "best Apple Silicon fit when unified memory is not known; choose MLX 4-bit models first"
+		}
+		return "Apple Silicon only; use another provider on this host profile"
+	case "vllm", "sglang":
+		if profile == "nvidia_cuda" || profile == "amd_rocm" {
+			if knownVRAM {
+				return "best accelerator fit for HF safetensors; size model to visible VRAM (" + fmt.Sprintf("%.1f GB", vramGB) + ")"
+			}
+			return "best accelerator fit for HF safetensors; VRAM not identified, so start with 7B-14B or FP8/4-bit variants"
+		}
+		return "best when a GPU-backed server is available; otherwise use llama.cpp/MLX/Ollama"
+	case "vllm-metal":
+		if profile == "apple_silicon" {
+			return "advanced Apple Silicon route when its server is healthy; MLX is the simpler first choice"
+		}
+		return "not preferred outside Apple Silicon"
+	case "llama-cpp", "lmstudio", "ollama":
+		if knownMemory {
+			return "good compatibility fit; choose GGUF quantization based on visible memory (" + fmt.Sprintf("%.1f GB", memoryGB) + ")"
+		}
+		return "good compatibility fit when resources are unknown; start with GGUF Q4/IQ4 and scale up after benchmark"
+	case "tgi", "tensorrt-llm":
+		return "advanced server route; use when you already operate this backend or need its deployment stack"
+	default:
+		return "generic OpenAI-compatible route; rely on the server's own model/resource policy"
+	}
+}
+
+func _inferenceModelSizingGuidance(hardware map[string]any) map[string]any {
+	profile := strings.TrimSpace(anyToString(hardware["profile"]))
+	memoryGB := anyToFloat64(hardware["memoryGB"], 0)
+	vramGB := anyToFloat64(hardware["vramGB"], 0)
+	resourceGB := memoryGB
+	resourceLabel := "system_or_unified_memory"
+	if (profile == "nvidia_cuda" || profile == "amd_rocm") && vramGB > 0 {
+		resourceGB = vramGB
+		resourceLabel = "vram"
+	}
+	if resourceGB <= 0 {
+		return map[string]any{
+			"resourceKnown":  false,
+			"recommendation": "Resources were not identifiable. Start with 4-bit 7B-9B models, use MLX on Apple Silicon, SGLang/vLLM on CUDA/ROCm, and llama.cpp/Ollama for GGUF fallback.",
+			"modelSizes": []any{
+				"unknown resources: begin with 0.5B-9B Q4/MLX-4bit/GGUF and benchmark",
+				"avoid 27B/35B local defaults until memory or VRAM is known",
+			},
+		}
+	}
+	sizes := []any{}
+	switch {
+	case resourceGB < 8:
+		sizes = append(sizes, "0.5B-4B quantized models")
+	case resourceGB < 16:
+		sizes = append(sizes, "4B-9B 4-bit models")
+	case resourceGB < 32:
+		sizes = append(sizes, "9B-14B 4-bit/6-bit models; 27B only with low quantization and patience")
+	case resourceGB < 64:
+		sizes = append(sizes, "27B dense or 35B-A3B MoE 4-bit/5-bit if backend supports it")
+	default:
+		sizes = append(sizes, "35B-A3B and larger MoE/FP8 models; prefer SGLang or vLLM for throughput")
+	}
+	return map[string]any{
+		"resourceKnown":  true,
+		"resourceGB":     roundedGB(resourceGB),
+		"resourceKind":   resourceLabel,
+		"recommendation": fmt.Sprintf("Visible %s is %.1f GB; select model size and quantization accordingly.", resourceLabel, resourceGB),
+		"modelSizes":     sizes,
+	}
+}
+
+func _inferenceModelStrategyForHardware(hardware map[string]any) string {
+	switch strings.TrimSpace(anyToString(hardware["profile"])) {
+	case "apple_silicon":
+		return "Prefer MLX-format Hugging Face models for speed on Apple Silicon; use llama.cpp GGUF when no MLX conversion exists; keep Ollama as the easy compatibility fallback."
+	case "nvidia_cuda", "amd_rocm":
+		return "Prefer SGLang or vLLM for Hugging Face safetensors/FP8/AWQ/GPTQ and high-throughput serving; use llama.cpp for GGUF; keep Ollama/LM Studio for simple local workflows."
+	default:
+		return "Resources are generic or unknown: prefer llama.cpp/LM Studio/Ollama with GGUF Q4/IQ4, or configure any OpenAI-compatible server explicitly."
+	}
+}
+
+func _inferenceRuntimeRecommendation(hardware map[string]any, candidates []map[string]any, selected inferenceRoute, routeErr error) map[string]any {
+	selectedProvider := strings.TrimSpace(selected.Provider)
+	var firstHealthy map[string]any
+	for _, candidate := range candidates {
+		if anyToBool(candidate["healthy"]) && firstHealthy == nil {
+			firstHealthy = candidate
+		}
+		if selectedProvider != "" && strings.TrimSpace(anyToString(candidate["provider"])) == selectedProvider {
+			firstHealthy = candidate
+			break
+		}
+	}
+	provider := selectedProvider
+	if provider == "" && firstHealthy != nil {
+		provider = strings.TrimSpace(anyToString(firstHealthy["provider"]))
+	}
+	if provider == "" {
+		provider = strings.TrimSpace(anyToString(hardware["profile"]))
+	}
+	confidence := "medium"
+	reason := "Use the first healthy provider in the hardware-aware priority list."
+	if routeErr != nil {
+		confidence = "low"
+		reason = "No healthy route was selected; start one of the suggested local servers or configure an OpenAI-compatible endpoint."
+	} else if selected.SelectionMode == "auto-fallback" {
+		confidence = "low"
+		reason = "Auto probing did not find a preferred healthy backend; using configured fallback while preserving compatibility."
+	} else if firstHealthy != nil {
+		confidence = "high"
+		reason = "A healthy backend matched the hardware-aware priority list."
+	}
+	return map[string]any{
+		"provider":          provider,
+		"displayName":       _inferenceProviderDisplayName(provider),
+		"confidence":        confidence,
+		"reason":            reason,
+		"selectedRoute":     selected,
+		"modelStrategy":     _inferenceModelStrategyForHardware(hardware),
+		"modelSizing":       _inferenceModelSizingGuidance(hardware),
+		"setupHint":         _inferenceProviderSetupHint(provider),
+		"source":            "gateway-runtime-policy",
+		"fallbackWhenBlind": "If resources are not identifiable, start with Q4/IQ4 7B-9B models and benchmark before moving to 27B/35B-A3B.",
 	}
 }
 
@@ -1231,7 +1581,10 @@ func (s *server) inferenceRuntimePolicyPayload() map[string]any {
 			"healthy":        healthy,
 			"detail":         detail,
 			"useCase":        _inferenceProviderUseCase(provider),
-			"manualAdvanced": provider == "openai-compatible" || provider == "lmstudio" || provider == "llama-cpp",
+			"modelFormats":   _inferenceProviderModelFormats(provider),
+			"setupHint":      _inferenceProviderSetupHint(provider),
+			"resourceFit":    _inferenceProviderResourceFit(provider, hardware),
+			"manualAdvanced": provider == "openai-compatible" || provider == "lmstudio" || provider == "llama-cpp" || provider == "sglang" || provider == "tgi" || provider == "tensorrt-llm",
 		})
 	}
 	payload := map[string]any{
@@ -1243,6 +1596,7 @@ func (s *server) inferenceRuntimePolicyPayload() map[string]any {
 		"autoProbeTimeout":    _inferenceAutoProbeTimeout().Seconds(),
 		"singleActiveBackend": envBool("CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND", true),
 		"manualAdvancedProviders": []string{
+			"sglang",
 			"vllm",
 			"vllm-metal",
 			"mlx",
@@ -1250,10 +1604,13 @@ func (s *server) inferenceRuntimePolicyPayload() map[string]any {
 			"openai-compatible",
 			"lmstudio",
 			"llama-cpp",
+			"tgi",
+			"tensorrt-llm",
 			"ollama",
 		},
 		"candidates": candidates,
 	}
+	payload["recommendation"] = _inferenceRuntimeRecommendation(hardware, candidates, selected, err)
 	if err != nil {
 		payload["error"] = err.Error()
 	} else {
