@@ -1226,6 +1226,59 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
 	}
 }
 
+func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+
+	s := newServer()
+	for _, item := range []normalizedWrite{
+		{
+			project:   "contextlattice",
+			fileName:  "notes/releases/v3.3.37-recall-quality-loop.md",
+			content:   "recall quality loop graph contribution dashboard tuning",
+			topicPath: "contextlattice/recall-quality-loop",
+		},
+		{
+			project:   "contextlattice",
+			fileName:  "notes/ops/live-recall-gate.md",
+			content:   "live recall gate saved eval file backed memory",
+			topicPath: "contextlattice/recall-quality-loop",
+		},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory store: %v", err)
+		}
+	}
+
+	refreshed := s.buildRefreshedRecallEvalCaseSet(5, 1, "contextlattice", "contextlattice/recall-quality-loop")
+	cases, _ := refreshed["cases"].([]map[string]any)
+	if len(cases) == 0 {
+		t.Fatalf("expected refreshed recall cases, got %#v", refreshed)
+	}
+	for _, item := range cases {
+		if strings.HasPrefix(anyToString(item["id"]), "health-") {
+			t.Fatalf("refresh should not fall back to default cases, got %#v", cases)
+		}
+		if len(anyToStringSlice(item["expected_files"])) == 0 {
+			t.Fatalf("expected file-backed recall case, got %#v", item)
+		}
+		if !strings.Contains(anyToString(item["query"]), "recall") {
+			t.Fatalf("expected topic-derived recall query, got %#v", item)
+		}
+	}
+}
+
 func TestMemorySearchAcceptsQueryParamAPIKey(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
@@ -1637,6 +1690,8 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 		t.Fatalf("expected /ops/capabilities to be handled natively, got proxied path %s", capturedPath)
 	}
 
+	t.Setenv("ORCH_RECALL_EVAL_CASES_PATH", filepath.Join(t.TempDir(), "recall_eval_cases.json"))
+	backendCallsBeforeRecallRefresh := backendCalls
 	req5, err := http.NewRequest(
 		http.MethodPost,
 		gateway.URL+"/memory/recall/eval-cases/refresh",
@@ -1654,8 +1709,8 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if resp5.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /memory/recall/eval-cases/refresh, got %d", resp5.StatusCode)
 	}
-	if capturedPath != "/memory/recall/eval-cases/refresh" {
-		t.Fatalf("expected /memory/recall/eval-cases/refresh to be proxied, got %s", capturedPath)
+	if backendCalls != backendCallsBeforeRecallRefresh {
+		t.Fatalf("expected /memory/recall/eval-cases/refresh to stay go-native, backend calls before=%d after=%d", backendCallsBeforeRecallRefresh, backendCalls)
 	}
 
 	resp6, err := http.Get(gateway.URL + "/memory/recent?project=contextlattice")
