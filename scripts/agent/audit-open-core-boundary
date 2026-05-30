@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Audit lite/full/paid branch boundaries before public sync."""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+from dataclasses import dataclass
+from typing import Any
+
+from _common import emit
+
+
+DEFAULT_REFS = ["origin/main", "public/main", "public-paid/main"]
+
+CORE_RUST_PATHS = [
+    "crates/Cargo.toml",
+    "services/fastembed_sidecar_rs/Cargo.toml",
+    "services/fastembed_gate_rs/Cargo.toml",
+    "services/memory_bank_spike_rs/Cargo.toml",
+]
+
+PAID_RUST_PATHS = [
+    "services/spike_adapter_rs/Cargo.toml",
+]
+
+LITE_ENV_MARKERS = [
+    "ORCH_EMBED_PROVIDER",
+    "ORCH_RUST_RETRIEVAL_VECTOR_BACKEND",
+    "ORCH_RUST_RETRIEVAL_LEXICAL_BACKEND",
+    "ORCH_MEMORY_BANK_SPIKE_HTTP_URL",
+]
+
+
+@dataclass
+class Finding:
+    severity: str
+    ref: str
+    check: str
+    detail: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "severity": self.severity,
+            "ref": self.ref,
+            "check": self.check,
+            "detail": self.detail,
+        }
+
+
+def git(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check)
+
+
+def ref_exists(ref: str) -> bool:
+    return git("rev-parse", "--verify", "--quiet", ref).returncode == 0
+
+
+def path_exists(ref: str, path: str) -> bool:
+    return git("cat-file", "-e", f"{ref}:{path}").returncode == 0
+
+
+def read_path(ref: str, path: str) -> str:
+    proc = git("show", f"{ref}:{path}")
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout
+
+
+def audit_ref(ref: str) -> list[Finding]:
+    findings: list[Finding] = []
+    if not ref_exists(ref):
+        return [Finding("error", ref, "ref_exists", "Git ref is missing or not fetched.")]
+
+    for path in CORE_RUST_PATHS:
+        if not path_exists(ref, path):
+            findings.append(Finding("error", ref, "core_rust_present", f"Missing public-safe Rust path: {path}"))
+
+    is_public = ref == "public/main"
+    is_paid_or_private = ref in {"origin/main", "public-paid/main"}
+    for path in PAID_RUST_PATHS:
+        exists = path_exists(ref, path)
+        if is_paid_or_private and not exists:
+            findings.append(Finding("error", ref, "paid_rust_present", f"Missing paid/private Rust path: {path}"))
+        if is_public and exists:
+            findings.append(Finding("warn", ref, "public_lite_boundary", f"Lite branch contains paid/private adapter path: {path}"))
+
+    for compose_path in ["docker-compose.yml", "docker-compose.lite.yml"]:
+        compose = read_path(ref, compose_path)
+        if not compose:
+            findings.append(Finding("error", ref, "compose_present", f"Missing {compose_path}"))
+            continue
+        if ref == "public/main":
+            for marker in LITE_ENV_MARKERS:
+                if marker not in compose:
+                    findings.append(Finding("error", ref, "lite_compose_markers", f"{compose_path} missing {marker}"))
+
+    package = read_path(ref, "README.md") + "\n" + read_path(ref, "docs/open-core-boundary.md")
+    if ref == "public/main" and "Spike" in package and "paid" not in package.lower():
+        findings.append(Finding("warn", ref, "lite_docs_boundary", "Lite docs mention Spike without a paid/full boundary note."))
+
+    return findings
+
+
+def summarize(refs: list[str], findings: list[Finding]) -> dict[str, Any]:
+    errors = [item for item in findings if item.severity == "error"]
+    warnings = [item for item in findings if item.severity == "warn"]
+    return {
+        "ok": not errors,
+        "refs": refs,
+        "summary": {
+            "errors": len(errors),
+            "warnings": len(warnings),
+            "findings": len(findings),
+        },
+        "findings": [item.to_dict() for item in findings],
+        "contract": {
+            "lite": "public/main keeps the public-safe Rust core, qdrant/pgvector-compatible compose markers, and excludes paid/private Spike adapter paths.",
+            "paid": "public-paid/main carries the full Rust adapter surface without private repository history.",
+            "private": "origin/main remains the development superset and source of release promotion.",
+        },
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refs", default=",".join(DEFAULT_REFS), help="Comma-separated refs to audit.")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+    refs = [item.strip() for item in args.refs.split(",") if item.strip()]
+    findings: list[Finding] = []
+    for ref in refs:
+        findings.extend(audit_ref(ref))
+    payload = summarize(refs, findings)
+    emit(payload, pretty=args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
