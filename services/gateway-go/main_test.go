@@ -1019,7 +1019,10 @@ func TestMemoryRecallEvaluateSavedIsGoNative(t *testing.T) {
       "id": "native-go-route",
       "query": "alpha",
       "limit": 5,
+      "project": "alpha",
+      "topic_path": "runbooks/testing",
       "sources": ["qdrant"],
+      "expected_files": ["notes/alpha.md"],
       "expected_substrings": ["alpha"]
     }
   ]
@@ -1109,6 +1112,92 @@ func TestMemoryRecallEvaluateSavedIsGoNative(t *testing.T) {
 	}
 }
 
+func TestMemoryRecallEvaluateSavedFailsFastForUnhealthyCaseSet(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+
+	recallCasesPath := filepath.Join(t.TempDir(), "recall_eval_cases.json")
+	recallMonitorPath := filepath.Join(t.TempDir(), "recall_monitor.ndjson")
+	if err := os.WriteFile(
+		recallCasesPath,
+		[]byte(`{
+  "version": 1,
+  "updatedAt": "2026-04-28T00:00:00Z",
+  "k": 5,
+  "gate": {"minRecallAtK": 0.75, "minMrr": 0.55, "minNumericExactness": 0.9},
+  "cases": [
+    {
+      "id": "health-surface",
+      "query": "root",
+      "topic_path": "root",
+      "limit": 10,
+      "expected_files": ["notes/a.md", "notes/b.md"]
+    }
+  ]
+}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("write unhealthy saved recall eval config: %v", err)
+	}
+	t.Setenv("ORCH_RECALL_EVAL_CASES_PATH", recallCasesPath)
+	t.Setenv("RECALL_MONITOR_PATH", recallMonitorPath)
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls += 1
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/a.md","summary":"alpha","source":"qdrant","score":0.92}]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/recall/evaluate/saved", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 fail-fast payload, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected fail-fast validation to avoid retrieval, got backend calls=%d", backendCalls)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response payload: %v", err)
+	}
+	if anyToBool(payload["ok"]) || anyToBool(payload["passed"]) || !anyToBool(payload["failed_fast"]) {
+		t.Fatalf("expected failed_fast invalid payload, got %#v", payload)
+	}
+	if anyToString(payload["quality_status"]) != "case_set_invalid" {
+		t.Fatalf("expected case_set_invalid status, got %#v", payload)
+	}
+	health, _ := payload["case_set_health"].(map[string]any)
+	if anyToBool(health["valid"]) || anyToInt(health["issue_count"], 0) < 4 {
+		t.Fatalf("expected multiple case-set health issues, got %#v", health)
+	}
+	instructions := anyToStringSlice(payload["agent_instructions"])
+	if len(instructions) == 0 || !strings.Contains(strings.Join(instructions, " "), "/memory/write") {
+		t.Fatalf("expected agent remediation instructions, got %#v", payload["agent_instructions"])
+	}
+	if !strings.Contains(strings.Join(instructions, " "), "/memory/recall/eval-cases/refresh") {
+		t.Fatalf("expected refresh remediation instruction, got %#v", payload["agent_instructions"])
+	}
+	monitorRaw, err := os.ReadFile(recallMonitorPath)
+	if err != nil {
+		t.Fatalf("expected recall monitor fail-fast sample: %v", err)
+	}
+	if !strings.Contains(string(monitorRaw), `"failedFast":true`) || !strings.Contains(string(monitorRaw), `"case_set_invalid"`) {
+		t.Fatalf("expected fail-fast monitor sample, got %s", string(monitorRaw))
+	}
+}
+
 func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
 	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
 	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
@@ -1144,6 +1233,7 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
       "query": "target by neighbor",
       "limit": 3,
       "project": "alpha",
+      "topic_path": "recall/graph",
       "sources": ["qdrant"],
       "expected_files": ["notes/target.md"]
     }

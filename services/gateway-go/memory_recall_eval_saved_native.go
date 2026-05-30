@@ -70,6 +70,11 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "saved recall eval case set is empty"})
 		return
 	}
+	caseSetHealth := validateSavedRecallEvalCaseSet(cfg)
+	if !anyToBool(caseSetHealth["valid"]) {
+		s.writeRecallEvalCaseSetInvalid(w, cfg, caseSetHealth)
+		return
+	}
 
 	k := clampInt(cfg.K, 1, 20)
 	if raw, exists := payload["k"]; exists {
@@ -409,6 +414,92 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	})
 }
 
+func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recallEvalSavedConfig, health map[string]any) {
+	k := clampInt(cfg.K, 1, 20)
+	qualityStatus := "case_set_invalid"
+	instructions := recallEvalCaseSetAgentInstructions()
+	metrics := map[string]any{
+		"k":                 k,
+		"casesTotal":        len(cfg.Cases),
+		"casesEvaluated":    0,
+		"recallAtK":         0.0,
+		"mrr":               0.0,
+		"numericExactness":  0.0,
+		"numericExpected":   0,
+		"numericMatched":    0,
+		"citationCoverage":  0.0,
+		"citationExpected":  0,
+		"citationMatched":   0,
+		"noHitRate":         0.0,
+		"lowConfidenceRate": 0.0,
+		"sourceDiversity":   0.0,
+		"avgLatencyMs":      0.0,
+		"p95LatencyMs":      0.0,
+		"durationMs":        0.0,
+		"qualityStatus":     qualityStatus,
+		"failedFast":        true,
+		"inputHealthStatus": anyToString(health["status"]),
+		"graphContribution": map[string]any{
+			"evaluatedCases":         0,
+			"seedCount":              0,
+			"candidateCount":         0,
+			"addedCandidateCount":    0,
+			"expectedHitCount":       0,
+			"addedExpectedHitCount":  0,
+			"helpedCases":            0,
+			"lift":                   0.0,
+			"neighborLimitPerSeed":   recallEvalGraphNeighborLimit(),
+			"memoryGraphStoreActive": s.memoryGraphBackend() != nil,
+		},
+	}
+	_ = s.appendRecallMonitorSample(map[string]any{
+		"timestamp":           nowUTCISO(),
+		"source":              "saved_recall_eval",
+		"passed":              false,
+		"failedFast":          true,
+		"qualityStatus":       qualityStatus,
+		"inputHealthStatus":   anyToString(health["status"]),
+		"inputHealthIssues":   anyToInt(health["issue_count"], 0),
+		"caseCount":           len(cfg.Cases),
+		"evaluatedCases":      0,
+		"k":                   k,
+		"recallAtK":           0.0,
+		"mrr":                 0.0,
+		"numericExactness":    0.0,
+		"citationCoverage":    0.0,
+		"noHitRate":           0.0,
+		"lowConfidenceRate":   0.0,
+		"sourceDiversity":     0.0,
+		"graphLift":           0.0,
+		"avgLatencyMs":        0.0,
+		"evalP95Ms":           0.0,
+		"retrievalAlertCount": anyToInt(health["issue_count"], 0),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                 false,
+		"passed":             false,
+		"failed_fast":        true,
+		"quality_status":     qualityStatus,
+		"error":              "saved recall eval case set failed input health validation",
+		"case_set_health":    health,
+		"agent_instructions": instructions,
+		"recommendations":    instructions,
+		"metrics":            metrics,
+		"gate": map[string]any{
+			"minRecallAtK":        cfg.Gate.MinRecallAtK,
+			"minMrr":              cfg.Gate.MinMRR,
+			"minNumericExactness": cfg.Gate.MinNumericExactly,
+		},
+		"cases": []any{},
+		"savedCaseSet": map[string]any{
+			"path":      cfg.Path,
+			"version":   cfg.Version,
+			"updatedAt": cfg.UpdatedAt,
+			"count":     len(cfg.Cases),
+		},
+	})
+}
+
 func loadSavedRecallEvalConfig() (recallEvalSavedConfig, error) {
 	path := resolveRecallEvalCasesPath()
 	raw, err := os.ReadFile(path)
@@ -478,6 +569,88 @@ func defaultSavedRecallEvalConfig(path string) recallEvalSavedConfig {
 				"expected_substrings": []string{"letta", "memory_bank"},
 			},
 		},
+	}
+}
+
+func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
+	issues := make([]map[string]any, 0)
+	invalidCases := map[int]struct{}{}
+	addIssue := func(idx int, rawCase map[string]any, code string, detail string, fix string) {
+		caseID := strings.TrimSpace(anyToString(rawCase["id"]))
+		if caseID == "" {
+			caseID = fmt.Sprintf("case-%d", idx+1)
+		}
+		invalidCases[idx] = struct{}{}
+		issues = append(issues, map[string]any{
+			"case_index": idx,
+			"case_id":    caseID,
+			"code":       code,
+			"detail":     detail,
+			"fix":        fix,
+		})
+	}
+	defaultIDs := map[string]struct{}{
+		"health-surface":            {},
+		"trading-telemetry-surface": {},
+		"retrieval-sources-surface": {},
+	}
+	for idx, rawCase := range cfg.Cases {
+		caseID := strings.TrimSpace(anyToString(rawCase["id"]))
+		query := strings.TrimSpace(anyToString(rawCase["query"]))
+		project := strings.TrimSpace(anyToString(rawCase["project"]))
+		topicPath := recallEvalNormalizeCaseTopic(anyToString(rawCase["topic_path"]))
+		expectedFiles := sortedKeys(normalizeExpectedFileTokens(rawCase["expected_files"]))
+		if _, ok := defaultIDs[caseID]; ok {
+			addIssue(idx, rawCase, "default_fallback_case", "case matches the built-in fallback recall surface", "Refresh saved cases from live memory with /memory/recall/eval-cases/refresh after writing file-backed memory.")
+		}
+		if query == "" {
+			addIssue(idx, rawCase, "missing_query", "case has no query", "Add a concrete query that can recover the expected memory file.")
+		}
+		if project == "" {
+			addIssue(idx, rawCase, "missing_project", "case is not scoped to a project", "Set project to the memory project that owns the expected file, or refresh with {\"project\":\"<project>\"}.")
+		}
+		if topicPath == "" {
+			addIssue(idx, rawCase, "missing_topic_path", "case has no topic_path", "Set topic_path to the durable memory topic for the expected file.")
+		} else if topicPath == "root" || topicPath == "." {
+			addIssue(idx, rawCase, "broad_root_topic", "case uses a broad root topic", "Use a concrete topic path such as runbooks/contextlattice/recall-quality-loop instead of root.")
+		}
+		if len(expectedFiles) == 0 {
+			addIssue(idx, rawCase, "missing_expected_file", "case has no expected_files entry", "Set expected_files to exactly one durable memory file that the query should recover.")
+		}
+		if len(expectedFiles) > 1 {
+			addIssue(idx, rawCase, "multi_file_rollup_case", "case expects multiple files from a broad rollup", "Split this into one case per expected file, or refresh from file-backed memory docs.")
+		}
+	}
+	status := "healthy"
+	if len(issues) > 0 {
+		status = "invalid"
+	}
+	return map[string]any{
+		"valid":              len(issues) == 0,
+		"status":             status,
+		"case_count":         len(cfg.Cases),
+		"invalid_case_count": len(invalidCases),
+		"issue_count":        len(issues),
+		"issues":             issues,
+		"agent_instructions": recallEvalCaseSetAgentInstructions(),
+	}
+}
+
+func recallEvalNormalizeCaseTopic(value string) string {
+	normalized := strings.Trim(strings.TrimSpace(strings.ReplaceAll(value, "\\", "/")), "/")
+	for strings.Contains(normalized, "//") {
+		normalized = strings.ReplaceAll(normalized, "//", "/")
+	}
+	return strings.ToLower(normalized)
+}
+
+func recallEvalCaseSetAgentInstructions() []string {
+	return []string{
+		"Refresh saved recall cases from live file-backed memory: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":12,\"min_hits\":1}.",
+		"If refresh has no eligible memory, write durable memory first: POST /memory/write with projectName, fileName, topicPath, and content, then refresh the saved eval cases.",
+		"Each saved recall eval case must include project, topic_path, query, limit, and exactly one expected_files item naming the file the query should recover.",
+		"Do not use built-in fallback case IDs, empty project, topic_path root, or broad rollup cases with multiple expected_files.",
+		"When authoring ORCH_RECALL_EVAL_CASES_PATH manually, split broad topics into one concrete file-backed case per expected memory file.",
 	}
 }
 
