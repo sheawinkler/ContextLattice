@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -435,15 +438,268 @@ func (s *server) memoryContinuitySnapshotByID(w http.ResponseWriter, r *http.Req
 }
 
 func (s *server) memoryRecallEvalCases(w http.ResponseWriter, r *http.Request) {
-	s.forwardJSONGET(w, r, "/memory/recall/eval-cases")
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	cfg, err := loadSavedRecallEvalConfig()
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to load saved recall eval cases", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":      cfg.Path,
+		"version":   cfg.Version,
+		"updatedAt": cfg.UpdatedAt,
+		"k":         cfg.K,
+		"gate": map[string]any{
+			"minRecallAtK":        cfg.Gate.MinRecallAtK,
+			"minMrr":              cfg.Gate.MinMRR,
+			"minNumericExactness": cfg.Gate.MinNumericExactly,
+		},
+		"count": len(cfg.Cases),
+		"cases": cfg.Cases,
+	})
 }
 
 func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Request) {
-	s.forwardJSONPOST(w, r, "/memory/recall/eval-cases/refresh")
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
+		return
+	}
+	payload := map[string]any{}
+	if strings.TrimSpace(string(bodyBytes)) != "" {
+		payload, err = parseJSONMap(bodyBytes)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+			return
+		}
+	}
+	maxCases := clampInt(anyToInt(payload["max_cases"], 12), 1, 20)
+	minHits := clampInt(anyToInt(payload["min_hits"], 1), 1, 1000)
+	project := strings.TrimSpace(anyToString(payload["project"]))
+	topicPrefix := strings.TrimSpace(anyToString(payload["topic_prefix"]))
+	refreshed := s.buildRefreshedRecallEvalCaseSet(maxCases, minHits, project, topicPrefix)
+	path := resolveRecallEvalCasesPath()
+	raw, err := json.MarshalIndent(refreshed, "", "  ")
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to encode refreshed cases", "detail": err.Error()})
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to create recall eval directory", "detail": err.Error()})
+		return
+	}
+	if err := writeAtomicFile(path, raw, 0o644); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to persist refreshed recall eval cases", "detail": err.Error()})
+		return
+	}
+	casesAny, _ := refreshed["cases"].([]map[string]any)
+	response := map[string]any{
+		"ok": true,
+		"savedCaseSet": map[string]any{
+			"path":      path,
+			"version":   refreshed["version"],
+			"updatedAt": refreshed["updatedAt"],
+			"count":     len(casesAny),
+			"maxCases":  maxCases,
+			"minHits":   minHits,
+		},
+	}
+	if anyToBool(payload["run_evaluation"]) {
+		response["evaluation"] = map[string]any{
+			"ok":      false,
+			"warning": "native refresh completed; run /memory/recall/evaluate/saved for full evaluation payload",
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) memoryRecallEvaluateSaved(w http.ResponseWriter, r *http.Request) {
 	s.memoryRecallEvaluateSavedNative(w, r)
+}
+
+func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, project string, topicPrefix string) map[string]any {
+	maxCases = clampInt(maxCases, 1, 20)
+	if minHits < 1 {
+		minHits = 1
+	}
+	project = strings.TrimSpace(project)
+	topicPrefix = recallEvalNormalizeTopicPath(topicPrefix)
+	cases := make([]map[string]any, 0, maxCases)
+	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+		rollups := s.memoryStore.topicRollupsWithContext(context.Background(), project, minHits, maxCases*6, 0)
+		if rowsAny, ok := rollups["topics"].([]any); ok {
+			for _, item := range rowsAny {
+				row := anyMap(item)
+				topic := recallEvalNormalizeTopicPath(anyToString(row["topic_path"]))
+				if topic == "" {
+					topic = recallEvalNormalizeTopicPath(anyToString(row["path"]))
+				}
+				if topicPrefix != "" && !strings.HasPrefix(topic, topicPrefix) {
+					continue
+				}
+				hits := anyToInt(row["event_count"], anyToInt(row["eventCount"], 0))
+				if hits < minHits {
+					continue
+				}
+				query := strings.TrimSpace(strings.ReplaceAll(topic, "/", " "))
+				summarySnippets := recallEvalSummarySnippets(row)
+				if query == "" && len(summarySnippets) > 0 {
+					query = strings.TrimSpace(summarySnippets[0])
+				}
+				if query == "" {
+					continue
+				}
+				expectedFiles := recallEvalExpectedFilesFromTopic(row)
+				expectedTerms := []string{}
+				for _, summary := range summarySnippets {
+					expectedTerms = append(expectedTerms, clipText(strings.ToLower(summary), 64))
+					if len(expectedTerms) >= 2 {
+						break
+					}
+				}
+				cases = append(cases, map[string]any{
+					"id":                  recallEvalCaseID(topic, len(cases)),
+					"query":               query,
+					"project":             project,
+					"topic_path":          topic,
+					"limit":               10,
+					"expected_files":      expectedFiles,
+					"expected_substrings": expectedTerms,
+				})
+				if len(cases) >= maxCases {
+					break
+				}
+			}
+		}
+		if len(cases) == 0 {
+			docs, err := s.memoryStore.collectDocs(context.Background(), project)
+			if err == nil {
+				for _, doc := range docs {
+					topic := recallEvalNormalizeTopicPath(doc.TopicPath)
+					if topicPrefix != "" && !strings.HasPrefix(topic, topicPrefix) {
+						continue
+					}
+					query := recallEvalQueryFromDoc(doc)
+					if query == "" || strings.TrimSpace(doc.FileName) == "" {
+						continue
+					}
+					expectedTerms := []string{}
+					if summary := strings.TrimSpace(doc.Summary); summary != "" {
+						expectedTerms = append(expectedTerms, clipText(strings.ToLower(summary), 64))
+					}
+					cases = append(cases, map[string]any{
+						"id":                  recallEvalCaseID(doc.Project+"::"+doc.FileName, len(cases)),
+						"query":               query,
+						"project":             doc.Project,
+						"topic_path":          topic,
+						"limit":               10,
+						"expected_files":      []string{doc.FileName},
+						"expected_substrings": expectedTerms,
+					})
+					if len(cases) >= maxCases {
+						break
+					}
+				}
+			}
+		}
+	}
+	if len(cases) == 0 {
+		cases = defaultSavedRecallEvalConfig(resolveRecallEvalCasesPath()).Cases
+		if len(cases) > maxCases {
+			cases = cases[:maxCases]
+		}
+	}
+	return map[string]any{
+		"version":   1,
+		"updatedAt": nowUTCISO(),
+		"k":         defaultRecallEvalK,
+		"gate": map[string]any{
+			"minRecallAtK":        defaultRecallEvalGateMinRecallAtK,
+			"minMrr":              defaultRecallEvalGateMinMRR,
+			"minNumericExactness": defaultRecallEvalGateMinNumeric,
+		},
+		"cases": cases,
+	}
+}
+
+func recallEvalSummarySnippets(row map[string]any) []string {
+	snippets := make([]string, 0, 3)
+	for _, item := range anyToStringSlice(row["summarySnippets"]) {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			snippets = append(snippets, trimmed)
+		}
+	}
+	if summary := strings.TrimSpace(anyToString(row["summary"])); summary != "" {
+		snippets = append(snippets, summary)
+	}
+	return snippets
+}
+
+func recallEvalExpectedFilesFromTopic(row map[string]any) []string {
+	seen := map[string]struct{}{}
+	files := make([]string, 0, 5)
+	add := func(fileName string) {
+		trimmed := strings.Trim(strings.TrimSpace(fileName), "/")
+		if trimmed == "" {
+			return
+		}
+		normalized := strings.ToLower(trimmed)
+		if _, exists := seen[normalized]; exists {
+			return
+		}
+		seen[normalized] = struct{}{}
+		files = append(files, trimmed)
+	}
+	for _, fileName := range anyToStringSlice(row["uniqueFiles"]) {
+		add(fileName)
+	}
+	if partitions, ok := row["filePartitions"].([]any); ok {
+		for _, raw := range partitions {
+			partition := anyMap(raw)
+			add(anyToString(partition["file"]))
+		}
+	}
+	if len(files) > 5 {
+		files = files[:5]
+	}
+	return files
+}
+
+func recallEvalQueryFromDoc(doc memoryStoreDoc) string {
+	topic := strings.ReplaceAll(recallEvalNormalizeTopicPath(doc.TopicPath), "/", " ")
+	fileName := strings.TrimSpace(doc.FileName)
+	fileStem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	fileStem = strings.ReplaceAll(fileStem, "/", " ")
+	query := strings.TrimSpace(topic + " " + fileStem)
+	if query != "" {
+		return query
+	}
+	return strings.TrimSpace(clipText(doc.Summary, 160))
+}
+
+func recallEvalCaseID(seed string, idx int) string {
+	token := strings.TrimSpace(seed)
+	if token == "" {
+		token = strconv.Itoa(idx + 1)
+	}
+	return "refresh-" + sha256Hex(token)[:16]
+}
+
+func recallEvalNormalizeTopicPath(value string) string {
+	return strings.Trim(strings.ToLower(strings.TrimSpace(value)), "/")
 }
 
 func (s *server) feedbackRoute(w http.ResponseWriter, r *http.Request) {
