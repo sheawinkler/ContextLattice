@@ -74,6 +74,7 @@ Task inference defaults to `ORCH_INFER_PROVIDER=auto`. `gateway-go` detects the 
 - Generic CPU default priority: `openai-compatible,llama-cpp,lmstudio,ollama`.
 - Supported provider ids include `sglang`, `vllm`, `vllm-metal`, `mlx`, `mtplx` (alias for MLX), `openai-compatible`, `lmstudio`, `llama-cpp`, `tgi`, `tensorrt-llm`, `ane_sidecar`, and `ollama`.
 - `/v1/inference/runtime-policy` returns live provider health plus resource-aware model guidance. If host memory/VRAM is not identifiable, it falls back to generic local advice: start with Q4/IQ4 7B-9B models, benchmark, then scale up.
+- Large Qwen3.6 Dream Mode models are opt-in only; ContextLattice does not bundle or pull them by default. The default GGUF recommendation is `mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF` for llama.cpp-compatible advanced users. Abliterated variants are private-eval only behind `GO_DREAM_ALLOW_UNCENSORED_MODELS=true`.
 - Ollama remains a compatibility fallback, not the preferred always-on embedding path.
 - Local helpers enforce one active LLM backend by default (`CONTEXTLATTICE_SINGLE_ACTIVE_INFER_BACKEND=true`).
 
