@@ -17,6 +17,7 @@
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
         <a href="local-ai-workspaces.html">Compare</a>
+        <a href="scaling-memory.html">Scale</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
@@ -87,16 +88,16 @@
     <section class="section" id="integration-paid-host">
       <article class="card">
         <div class="kicker">Hosted default</div>
-        <h3>Use a dedicated app host for paid runtime and billing webhooks</h3>
+        <h3>Use a dedicated app host for paid runtime and billing operations</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p>Default host split for production is marketing on <code>contextlattice.io</code> and paid app/API on <code>app.contextlattice.io</code>.</p>
         <ul class="spec-list">
           <li><strong>Marketing/public site:</strong> <code>https://contextlattice.io</code></li>
           <li><strong>Paid app + dashboard + API:</strong> <code>https://app.contextlattice.io</code></li>
-          <li><strong>Stripe webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/stripe/webhook</code></li>
-          <li><strong>PayPal webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/paypal/webhook</code></li>
-          <li><strong>Apple Pay + Google Pay:</strong> configured through Stripe checkout (no separate webhook URL).</li>
-          <li><strong>Operator verify routes:</strong> <code>/api/billing/solana-pay/verify</code> and <code>/api/billing/kraken/verify</code> require owner/admin auth.</li>
+          <li><strong>Billing infrastructure:</strong> managed on the app host via private operator configuration.</li>
+          <li><strong>Wallet/card checkout:</strong> unified purchase flow with provider-specific verification handled server-side.</li>
+          <li><strong>Apple Pay + Google Pay:</strong> available through Stripe checkout when supported by device/browser.</li>
+          <li><strong>Admin verification controls:</strong> restricted to owner/admin authenticated operations.</li>
         </ul>
       </article>
     </section>
@@ -157,8 +158,7 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 
 Runtime:
 - Orchestrator: http://127.0.0.1:8075
-- Local/free dashboard setup does not require a user API key.
-- In strict auth mode only, use CONTEXTLATTICE_ORCHESTRATOR_API_KEY from my local .env for direct orchestrator calls.
+- API key: CONTEXTLATTICE_ORCHESTRATOR_API_KEY from my local .env
 
 Required behavior:
 1) Before planning, call POST /memory/search with a compact query and project/topic filters.

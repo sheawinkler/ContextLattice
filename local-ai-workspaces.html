@@ -4,17 +4,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ContextLattice vs Local AI Workspaces | Context Lattice</title>
-  <meta name="description" content="ContextLattice is the local-first memory and control plane that plugs into AI workspaces, agent harnesses, MCP clients, and custom agents." />
+  <meta name="description" content="ContextLattice is the local-first memory spine that lets AI workspaces, agent harnesses, MCP clients, and custom agents remember together." />
   <link rel="canonical" href="https://contextlattice.io/local-ai-workspaces.html" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Context Lattice" />
   <meta property="og:title" content="ContextLattice vs Local AI Workspaces" />
-  <meta property="og:description" content="AI workspaces are cockpits. ContextLattice is the durable memory layer they plug into." />
+  <meta property="og:description" content="AI workspaces are cockpits. ContextLattice is the memory spine they plug into." />
   <meta property="og:url" content="https://contextlattice.io/local-ai-workspaces.html" />
   <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="ContextLattice vs Local AI Workspaces" />
-  <meta name="twitter:description" content="AI workspaces are interfaces. ContextLattice is the memory/control plane underneath them." />
+  <meta name="twitter:description" content="Not another cockpit. The memory spine beneath the ones you already use." />
   <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
   <link rel="stylesheet" href="styles-gray.css?v=20260531a" />
@@ -30,6 +30,7 @@
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
         <a class="active" href="local-ai-workspaces.html">Compare</a>
+        <a href="scaling-memory.html">Scale</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
@@ -46,10 +47,10 @@
 
     <section class="hero workspace-hero">
       <span class="badge">Positioning guide</span>
-      <h1>AI workspaces are cockpits. ContextLattice is the memory layer underneath them.</h1>
-      <p class="sub">Odysseus, Open WebUI, LibreChat, Claude Desktop, Cursor, and custom MCP agents help people operate models. ContextLattice gives those operators and agents one durable local-first contract for memory, retrieval, write durability, and context reuse.</p>
+      <h1>AI workspaces are cockpits. ContextLattice is the memory spine they were missing.</h1>
+      <p class="sub">Odysseus, Open WebUI, LibreChat, Claude Desktop, Cursor, and custom MCP agents help people steer models. ContextLattice gives those surfaces a shared way to remember: one local-first write path, one retrieval contract, and one spine that keeps getting smarter as the work grows.</p>
       <div class="cta-row">
-        <a class="cta primary" href="installation.html">Run the memory layer</a>
+        <a class="cta primary" href="installation.html">Run the spine locally</a>
         <a class="cta secondary" href="integration.html">Plug in an agent</a>
         <a class="cta secondary" href="architecture.html">See the architecture</a>
       </div>
@@ -58,8 +59,8 @@
     <section class="section section-tight">
       <article class="card quick-path-card">
         <div class="kicker">Plain claim</div>
-        <h3>ContextLattice is not trying to be the prettiest cockpit.</h3>
-        <p>It is trying to be the memory/control plane every cockpit can plug into. The public promise is simple: agents forget, long-context stuffing is expensive, and every serious stack eventually needs a durable memory contract.</p>
+        <h3>Not another cockpit. The black box, map, and nervous system beneath them.</h3>
+        <p>The novelty is not a prettier chat window. It is a shared memory substrate for the tools you already want to use: durable writes, sharp retrieval, bounded context, and deeper recall lanes when the work gets heavy.</p>
       </article>
     </section>
 
@@ -80,12 +81,12 @@
         <article class="card feature-card claim-card">
           <span class="claim-number">01</span>
           <h3>Agents forget.</h3>
-          <p>Chat history and workspace state are not durable memory. ContextLattice persists decisions, references, checkpoints, feedback, and task context so future agents can recover useful state without replaying everything.</p>
+          <p>Chat history and workspace state are not durable memory. ContextLattice persists decisions, references, checkpoints, feedback, and task context so future agents can wake up with the thread already in their hands.</p>
         </article>
         <article class="card feature-card claim-card">
           <span class="claim-number">02</span>
           <h3>Long-context stuffing is expensive.</h3>
-          <p>Dumping every file, note, transcript, and previous result into the prompt increases cost and noise. ContextLattice retrieves the smallest useful context package for the current task.</p>
+          <p>Dumping every file, note, transcript, and previous result into the prompt is panic with a bigger backpack. ContextLattice retrieves the smallest useful context package for the current task.</p>
         </article>
         <article class="card feature-card claim-card">
           <span class="claim-number">03</span>
@@ -97,7 +98,7 @@
 
     <section class="section" id="role-table">
       <div class="kicker">Category clarity</div>
-      <h2>ContextLattice complements AI workspaces instead of replacing them.</h2>
+      <h2>The cockpit stays yours. The memory becomes shared.</h2>
       <article class="card table-scroll">
         <table class="lane-table workspace-table">
           <thead>
@@ -122,10 +123,10 @@
               <td>Provides checkpoints, recall, task handoff, and context-pack contracts.</td>
             </tr>
             <tr>
-              <td>Memory/control plane</td>
+              <td>Memory spine</td>
               <td>ContextLattice</td>
               <td>Durable write path, retrieval policy, source fanout, topic rollups, and agent-facing context contracts.</td>
-              <td>Acts as the shared memory layer beneath many cockpits and agents.</td>
+              <td>Acts as the shared memory spine beneath many cockpits and agents.</td>
             </tr>
           </tbody>
         </table>
@@ -135,6 +136,7 @@
     <section class="section" id="memory-contract">
       <div class="kicker">The contract</div>
       <h2>One local-first memory boundary for many agent surfaces.</h2>
+      <p class="muted-note">Public local lite starts with topic rollups and Qdrant. Full/operator stacks can add pgvector, raw ledger, and deeper async recall lanes behind the same contract.</p>
       <div class="grid mode-grid">
         <article class="card component-card">
           <h3>Write durability</h3>
@@ -179,7 +181,7 @@
             </linearGradient>
           </defs>
           <rect class="workspace-bg" x="20" y="20" width="1140" height="580" rx="20"></rect>
-          <text class="workspace-title" x="590" y="70" text-anchor="middle">Local AI stack with ContextLattice as the memory/control plane</text>
+          <text class="workspace-title" x="590" y="70" text-anchor="middle">Local AI stack with ContextLattice as the shared memory spine</text>
 
           <g class="workspace-row workspace-row-top">
             <rect class="workspace-node" x="80" y="118" width="220" height="86" rx="12"></rect>
@@ -221,15 +223,15 @@
 
             <rect class="workspace-store" x="492" y="438" width="172" height="70" rx="10"></rect>
             <text x="578" y="466" text-anchor="middle">pgvector</text>
-            <text class="workspace-node-sub" x="578" y="489" text-anchor="middle">structured vectors</text>
+            <text class="workspace-node-sub" x="578" y="489" text-anchor="middle">full/operator lane</text>
 
             <rect class="workspace-store" x="698" y="438" width="172" height="70" rx="10"></rect>
             <text x="784" y="466" text-anchor="middle">raw ledger</text>
-            <text class="workspace-node-sub" x="784" y="489" text-anchor="middle">write truth</text>
+            <text class="workspace-node-sub" x="784" y="489" text-anchor="middle">write audit lane</text>
 
             <rect class="workspace-store" x="904" y="438" width="172" height="70" rx="10"></rect>
             <text x="990" y="466" text-anchor="middle">deep memory</text>
-            <text class="workspace-node-sub" x="990" y="489" text-anchor="middle">slow-source recall</text>
+            <text class="workspace-node-sub" x="990" y="489" text-anchor="middle">async/operator recall</text>
           </g>
 
           <path class="workspace-link workspace-link-store" d="M590 408 C456 420 286 422 166 438" marker-end="url(#workspace-arrow)"></path>
