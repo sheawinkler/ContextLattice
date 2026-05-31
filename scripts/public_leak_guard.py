@@ -33,7 +33,12 @@ BLOCKED_TEXT = (
     _s("launch_", "channel_", "copybook"),
     _s("submission_", "requirements"),
     _s("internal", "-planning"),
+    _s("internal ", "docs"),
+    _s("internal ", "documentation"),
+    _s("private ", "operator"),
     _s("private ", "operator ", "docs"),
+    _s("private ", "operator ", "runbooks"),
+    _s("private ", "runbooks"),
 )
 
 TEXT_EXTENSIONS = {
