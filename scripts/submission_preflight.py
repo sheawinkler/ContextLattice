@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -101,6 +102,22 @@ def _check_glama_claim() -> list[CheckResult]:
     ]
 
 
+def _check_public_leak_guard() -> list[CheckResult]:
+    script = ROOT / "scripts/public_leak_guard.py"
+    if not script.exists():
+        return [CheckResult(False, "public_leak_guard", "script missing")]
+    proc = subprocess.run(
+        [sys.executable, str(script), "--summary"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    details = (proc.stdout or proc.stderr).strip().splitlines()
+    summary = details[-1] if details else ("pass" if proc.returncode == 0 else "fail")
+    return [CheckResult(proc.returncode == 0, "public_leak_guard", summary)]
+
+
 def _check_urls(urls: Iterable[str], timeout: int) -> list[CheckResult]:
     out: list[CheckResult] = []
     for url in urls:
@@ -147,11 +164,6 @@ def main() -> int:
         default=12,
         help="HTTP timeout seconds for --online checks.",
     )
-    parser.add_argument(
-        "--include-internal-docs",
-        action="store_true",
-        help="Require private/internal submission docs that are intentionally excluded from public repo.",
-    )
     args = parser.parse_args()
 
     checks: list[CheckResult] = []
@@ -174,14 +186,6 @@ def main() -> int:
         "docs/public_overview/.well-known/glama.json",
         "registry/contextlattice.server.template.json",
     ]
-    if args.include_internal_docs:
-        required_paths.extend(
-            [
-                "docs/publish_execution_tracker.md",
-                "docs/launch_channel_copybook.md",
-                "docs/submission_requirements.md",
-            ]
-        )
     checks.extend(
         _exists(required_paths)
     )
@@ -189,8 +193,6 @@ def main() -> int:
         "gmake quickstart",
         "Local-first",
     ]
-    if args.include_internal_docs:
-        readme_required.append("Private/Public Sync Notes")
     checks.extend(_contains("README.md", readme_required))
     checks.extend(
         _contains(
@@ -205,6 +207,7 @@ def main() -> int:
     )
     checks.extend(_contains("docs/public_overview/contact.html", ["sheawinkler@gmail.com"]))
     checks.extend(_contains("docs/public_overview/CNAME", ["contextlattice.io"]))
+    checks.extend(_check_public_leak_guard())
     checks.extend(_check_launch_config())
     checks.extend(_check_glama_claim())
 

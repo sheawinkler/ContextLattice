@@ -171,13 +171,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--tracker-out",
-        default="docs/publish_execution_tracker.md",
-        help="Output markdown for publish execution tracker",
+        default="tmp/launch/publish-tracker.md",
+        help="Output markdown for the launch tracker",
     )
     parser.add_argument(
         "--copybook-out",
-        default="docs/launch_channel_copybook.md",
-        help="Output markdown for channel copybook",
+        default="tmp/launch/channel-copy.md",
+        help="Output markdown for channel copy",
     )
     args = parser.parse_args()
 

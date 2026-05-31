@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Memory That Scales | Context Lattice</title>
+  <meta name="description" content="How ContextLattice keeps agent memory useful as projects, tools, and data grow: fast rollups, vector recall, durable writes, and deeper async memory lanes behind one local-first contract." />
+  <link rel="canonical" href="https://contextlattice.io/scaling-memory.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Context Lattice" />
+  <meta property="og:title" content="Memory That Scales | Context Lattice" />
+  <meta property="og:description" content="Agents should not get more forgetful as the work gets bigger. ContextLattice gives them a memory spine that scales." />
+  <meta property="og:url" content="https://contextlattice.io/scaling-memory.html" />
+  <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Memory That Scales | Context Lattice" />
+  <meta name="twitter:description" content="Fast memories close. Deep memories warming. One contract every agent can use." />
+  <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260601a" />
+</head>
+<body class="home scale-page">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="local-ai-workspaces.html">Compare</a>
+        <a class="active" href="scaling-memory.html">Scale</a>
+        <a href="wiki.html">Wiki</a>
+        <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
+        <a href="installation.html">Installation</a>
+        <a href="cli.html">CLI</a>
+        <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a href="app.html">App</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero scale-hero">
+      <span class="badge">Memory that survives growth</span>
+      <h1>Your agent stack should not get dumber as the work gets bigger.</h1>
+      <p class="sub">ContextLattice turns scattered chats, tool outputs, decisions, and evidence into a memory spine: fast enough for the next answer, durable enough for next week, and deep enough to keep learning as the system expands.</p>
+      <div class="cta-row">
+        <a class="cta primary" href="installation.html">Run the spine locally</a>
+        <a class="cta secondary" href="local-ai-workspaces.html">See where it fits</a>
+        <a class="cta secondary" href="architecture.html">Open the map</a>
+      </div>
+    </section>
+
+    <section class="section section-tight">
+      <article class="card quick-path-card scale-manifesto">
+        <div class="kicker">The novelty</div>
+        <h3>Not another chat box. Not another pretty cockpit. The memory nervous system beneath them.</h3>
+        <p>Workspaces help humans steer models. Agent harnesses let models act. ContextLattice gives both a shared place to remember: one local-first write path, one retrieval contract, and one way to grow from quick recall into a real memory fabric.</p>
+      </article>
+    </section>
+
+    <section class="section section-tight">
+      <nav class="page-nav-inline" aria-label="On this page">
+        <a href="#shape">Shape</a>
+        <a href="#lanes">Memory lanes</a>
+        <a href="#why">Why it matters</a>
+        <a href="#boundary">Boundary</a>
+      </nav>
+    </section>
+
+    <section class="section" id="shape">
+      <div class="kicker">Scaling shape</div>
+      <h2>Fast memories close. Deep memories warming. Write truth underneath.</h2>
+      <div class="scale-ladder" aria-label="ContextLattice scaling ladder">
+        <article class="card scale-step scale-step-hot">
+          <span class="claim-number">01</span>
+          <h3>Hot context</h3>
+          <p><code>topic_rollups</code> keep the recent project shape close to the agent so startup recall is fast and cheap.</p>
+        </article>
+        <article class="card scale-step scale-step-vector">
+          <span class="claim-number">02</span>
+          <h3>Vector recall</h3>
+          <p><code>qdrant</code> gives the public local stack a vector-native lane without changing the agent contract.</p>
+        </article>
+        <article class="card scale-step scale-step-ledger">
+          <span class="claim-number">03</span>
+          <h3>Durable write truth</h3>
+          <p>Every checkpoint, decision, and evidence note enters through a stable write path before it fans out anywhere else.</p>
+        </article>
+        <article class="card scale-step scale-step-deep">
+          <span class="claim-number">04</span>
+          <h3>Deep lanes</h3>
+          <p>Full/operator stacks can add pgvector, raw ledger, and slower async recall without asking agents to learn a new interface.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="lanes">
+      <div class="kicker">Memory lanes</div>
+      <h2>One contract. Multiple speeds of remembering.</h2>
+      <article class="card scale-board">
+        <div class="scale-map">
+          <div class="scale-map-node scale-map-user">AI workspace<br><span>Odysseus, Open WebUI, LibreChat</span></div>
+          <div class="scale-map-node scale-map-agent">Agent harness<br><span>Codex, Cursor, Claude Code, custom MCP</span></div>
+          <div class="scale-map-core">ContextLattice memory spine<br><span>HTTP / MCP + bounded context packs + durable writes</span></div>
+          <div class="scale-map-lane lane-hot">topic rollups<br><span>fast local shape</span></div>
+          <div class="scale-map-lane lane-vector">Qdrant<br><span>public vector lane</span></div>
+          <div class="scale-map-lane lane-structured">pgvector<br><span>full/operator SQL vector lane</span></div>
+          <div class="scale-map-lane lane-ledger">raw ledger<br><span>write audit lane</span></div>
+          <div class="scale-map-lane lane-deep">deep recall<br><span>async enrichment</span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="section" id="why">
+      <div class="kicker">Why it matters</div>
+      <h2>Long-context stuffing is not memory. It is panic with a bigger backpack.</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Less token waste</h3>
+          <p>Retrieve the sharpest slice of context instead of dragging the whole attic into every prompt.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Cleaner handoffs</h3>
+          <p>Sister agents can inherit decisions, references, checkpoints, and task state without excavating a giant transcript.</p>
+        </article>
+        <article class="card component-card">
+          <h3>Room to grow</h3>
+          <p>Start with public local lite. Add deeper stores when the workload earns them. The agent-facing contract stays still.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="boundary">
+      <div class="kicker">Public boundary</div>
+      <h2>The architecture is public. The workshop stays out of the window.</h2>
+      <article class="card quick-path-card">
+        <p>Public docs should explain how ContextLattice scales memory: rollups, vectors, durable writes, async recall, retention, compaction, and graph maintenance. Non-public rollout records, deployment secrets, and operating procedures stay out of the public repo.</p>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice scaling guide</span>
+      <a href="index.html">Home</a>
+      <a href="local-ai-workspaces.html">Compare</a>
+      <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+    </footer>
+  </main>
+</body>
+</html>
