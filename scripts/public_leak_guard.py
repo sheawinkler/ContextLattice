@@ -68,10 +68,19 @@ def _tracked_files() -> list[str]:
     proc = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,
-        check=True,
         capture_output=True,
+        check=False,
     )
-    return [p.decode("utf-8") for p in proc.stdout.split(b"\0") if p]
+    if proc.returncode == 0:
+        return [p.decode("utf-8") for p in proc.stdout.split(b"\0") if p]
+
+    out: list[str] = []
+    for path in ROOT.rglob("*"):
+        if ".git" in path.parts:
+            continue
+        if path.is_file():
+            out.append(path.relative_to(ROOT).as_posix())
+    return out
 
 
 def _is_text_candidate(path: str) -> bool:
