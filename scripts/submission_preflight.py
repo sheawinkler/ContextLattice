@@ -185,16 +185,13 @@ def main() -> int:
     checks.extend(
         _exists(required_paths)
     )
-    checks.extend(
-        _contains(
-            "README.md",
-            [
-                "gmake quickstart",
-                "Private/Public Sync Notes",
-                "Local-first",
-            ],
-        )
-    )
+    readme_required = [
+        "gmake quickstart",
+        "Local-first",
+    ]
+    if args.include_internal_docs:
+        readme_required.append("Private/Public Sync Notes")
+    checks.extend(_contains("README.md", readme_required))
     checks.extend(
         _contains(
             "docs/public_overview/index.html",
