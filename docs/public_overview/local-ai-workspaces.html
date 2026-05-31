@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ContextLattice vs Local AI Workspaces | Context Lattice</title>
+  <meta name="description" content="ContextLattice is the local-first memory and control plane that plugs into AI workspaces, agent harnesses, MCP clients, and custom agents." />
+  <link rel="canonical" href="https://contextlattice.io/local-ai-workspaces.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Context Lattice" />
+  <meta property="og:title" content="ContextLattice vs Local AI Workspaces" />
+  <meta property="og:description" content="AI workspaces are cockpits. ContextLattice is the durable memory layer they plug into." />
+  <meta property="og:url" content="https://contextlattice.io/local-ai-workspaces.html" />
+  <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="ContextLattice vs Local AI Workspaces" />
+  <meta name="twitter:description" content="AI workspaces are interfaces. ContextLattice is the memory/control plane underneath them." />
+  <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260531a" />
+</head>
+<body class="home workspace-page">
+  <main class="container">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-copy"><span class="brand-label">Context Lattice</span><span class="brand-sub">By Private Memory Corp</span></span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="architecture.html">Architecture</a>
+        <a class="active" href="local-ai-workspaces.html">Compare</a>
+        <a href="wiki.html">Wiki</a>
+        <a href="updates.html">Updates</a>
+        <a href="roadmap.html">Roadmap</a>
+        <a href="installation.html">Installation</a>
+        <a href="cli.html">CLI</a>
+        <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a href="app.html">App</a>
+        <a href="troubleshooting.html">Troubleshooting</a>
+        <a href="contact.html">Contact</a>
+        <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero workspace-hero">
+      <span class="badge">Positioning guide</span>
+      <h1>AI workspaces are cockpits. ContextLattice is the memory layer underneath them.</h1>
+      <p class="sub">Odysseus, Open WebUI, LibreChat, Claude Desktop, Cursor, and custom MCP agents help people operate models. ContextLattice gives those operators and agents one durable local-first contract for memory, retrieval, write durability, and context reuse.</p>
+      <div class="cta-row">
+        <a class="cta primary" href="installation.html">Run the memory layer</a>
+        <a class="cta secondary" href="integration.html">Plug in an agent</a>
+        <a class="cta secondary" href="architecture.html">See the architecture</a>
+      </div>
+    </section>
+
+    <section class="section section-tight">
+      <article class="card quick-path-card">
+        <div class="kicker">Plain claim</div>
+        <h3>ContextLattice is not trying to be the prettiest cockpit.</h3>
+        <p>It is trying to be the memory/control plane every cockpit can plug into. The public promise is simple: agents forget, long-context stuffing is expensive, and every serious stack eventually needs a durable memory contract.</p>
+      </article>
+    </section>
+
+    <section class="section section-tight">
+      <nav class="page-nav-inline" aria-label="On this page">
+        <a href="#three-claims">Claims</a>
+        <a href="#role-table">Roles</a>
+        <a href="#memory-contract">Contract</a>
+        <a href="#diagram">Diagram</a>
+        <a href="#when-to-use">When to use</a>
+      </nav>
+    </section>
+
+    <section class="section" id="three-claims">
+      <div class="kicker">Why this exists</div>
+      <h2>Three problems appear once agents do real work.</h2>
+      <div class="grid component-grid claim-grid">
+        <article class="card feature-card claim-card">
+          <span class="claim-number">01</span>
+          <h3>Agents forget.</h3>
+          <p>Chat history and workspace state are not durable memory. ContextLattice persists decisions, references, checkpoints, feedback, and task context so future agents can recover useful state without replaying everything.</p>
+        </article>
+        <article class="card feature-card claim-card">
+          <span class="claim-number">02</span>
+          <h3>Long-context stuffing is expensive.</h3>
+          <p>Dumping every file, note, transcript, and previous result into the prompt increases cost and noise. ContextLattice retrieves the smallest useful context package for the current task.</p>
+        </article>
+        <article class="card feature-card claim-card">
+          <span class="claim-number">03</span>
+          <h3>Every stack reinvents memory badly.</h3>
+          <p>One app writes JSON, another keeps a SQLite cache, another ships a vector store with no write contract. ContextLattice gives local tools one memory and retrieval boundary.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="role-table">
+      <div class="kicker">Category clarity</div>
+      <h2>ContextLattice complements AI workspaces instead of replacing them.</h2>
+      <article class="card table-scroll">
+        <table class="lane-table workspace-table">
+          <thead>
+            <tr>
+              <th>Tool type</th>
+              <th>Examples</th>
+              <th>Primary role</th>
+              <th>Where ContextLattice fits</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>AI workspace</td>
+              <td>Odysseus, Open WebUI, LibreChat</td>
+              <td>User interface for model choice, chat, files, prompts, and local workflows.</td>
+              <td>Supplies persistent memory and scoped retrieval through HTTP or MCP.</td>
+            </tr>
+            <tr>
+              <td>Agent harness</td>
+              <td>Claude Desktop, Cursor, Codex, Claude Code, custom MCP agents</td>
+              <td>Actor that reads, writes, runs tools, edits repos, and executes tasks.</td>
+              <td>Provides checkpoints, recall, task handoff, and context-pack contracts.</td>
+            </tr>
+            <tr>
+              <td>Memory/control plane</td>
+              <td>ContextLattice</td>
+              <td>Durable write path, retrieval policy, source fanout, topic rollups, and agent-facing context contracts.</td>
+              <td>Acts as the shared memory layer beneath many cockpits and agents.</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+    </section>
+
+    <section class="section" id="memory-contract">
+      <div class="kicker">The contract</div>
+      <h2>One local-first memory boundary for many agent surfaces.</h2>
+      <div class="grid mode-grid">
+        <article class="card component-card">
+          <h3>Write durability</h3>
+          <ul class="spec-list">
+            <li>Durable writes for decisions, checkpoints, notes, and evidence.</li>
+            <li>Fanout to configured stores without each agent inventing its own persistence path.</li>
+            <li>Compact payload contracts instead of full transcript dumping.</li>
+          </ul>
+        </article>
+        <article class="card component-card">
+          <h3>Retrieval quality</h3>
+          <ul class="spec-list">
+            <li>Topic rollups for fast local context.</li>
+            <li>Vector and structured stores for deeper recall.</li>
+            <li>Staged retrieval so slow sources can warm without blocking every answer.</li>
+          </ul>
+        </article>
+        <article class="card component-card">
+          <h3>Context reuse</h3>
+          <ul class="spec-list">
+            <li>Agent policy packs for session startup.</li>
+            <li>Context packs that stay bounded and task-scoped.</li>
+            <li>Handoff checkpoints so sister agents can continue without losing state.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="diagram">
+      <div class="kicker">Mental model</div>
+      <h2>Workspaces and agents plug into the same memory spine.</h2>
+      <article class="card architecture-board workspace-board">
+        <svg class="workspace-svg" viewBox="0 0 1180 620" role="img" aria-label="ContextLattice sits below AI workspaces and agent harnesses as a shared memory contract">
+          <defs>
+            <marker id="workspace-arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#e9e9e9"></path>
+            </marker>
+            <linearGradient id="workspace-glow" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#83cecb" stop-opacity="0.28"></stop>
+              <stop offset="0.5" stop-color="#f0f0f0" stop-opacity="0.12"></stop>
+              <stop offset="1" stop-color="#d6bd86" stop-opacity="0.28"></stop>
+            </linearGradient>
+          </defs>
+          <rect class="workspace-bg" x="20" y="20" width="1140" height="580" rx="20"></rect>
+          <text class="workspace-title" x="590" y="70" text-anchor="middle">Local AI stack with ContextLattice as the memory/control plane</text>
+
+          <g class="workspace-row workspace-row-top">
+            <rect class="workspace-node" x="80" y="118" width="220" height="86" rx="12"></rect>
+            <text x="190" y="154" text-anchor="middle">Odysseus</text>
+            <text class="workspace-node-sub" x="190" y="180" text-anchor="middle">workspace UI</text>
+
+            <rect class="workspace-node" x="344" y="118" width="220" height="86" rx="12"></rect>
+            <text x="454" y="154" text-anchor="middle">Open WebUI</text>
+            <text class="workspace-node-sub" x="454" y="180" text-anchor="middle">local model cockpit</text>
+
+            <rect class="workspace-node" x="608" y="118" width="220" height="86" rx="12"></rect>
+            <text x="718" y="154" text-anchor="middle">LibreChat</text>
+            <text class="workspace-node-sub" x="718" y="180" text-anchor="middle">chat workspace</text>
+
+            <rect class="workspace-node" x="872" y="118" width="220" height="86" rx="12"></rect>
+            <text x="982" y="154" text-anchor="middle">Claude / Cursor / Codex</text>
+            <text class="workspace-node-sub" x="982" y="180" text-anchor="middle">agent harnesses</text>
+          </g>
+
+          <path class="workspace-link" d="M190 205 L190 282 L390 282" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link" d="M454 205 L454 282" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link" d="M718 205 L718 282" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link" d="M982 205 L982 282 L790 282" marker-end="url(#workspace-arrow)"></path>
+
+          <rect class="workspace-contract" x="316" y="258" width="548" height="104" rx="16"></rect>
+          <text class="workspace-contract-title" x="590" y="302" text-anchor="middle">ContextLattice Memory Contract</text>
+          <text class="workspace-contract-sub" x="590" y="333" text-anchor="middle">HTTP / MCP + bounded context packs + durable writes + retrieval policy</text>
+
+          <path class="workspace-link workspace-link-strong" d="M590 362 L590 426" marker-end="url(#workspace-arrow)"></path>
+
+          <g class="workspace-store-row">
+            <rect class="workspace-store" x="80" y="438" width="172" height="70" rx="10"></rect>
+            <text x="166" y="466" text-anchor="middle">topic rollups</text>
+            <text class="workspace-node-sub" x="166" y="489" text-anchor="middle">fast local recall</text>
+
+            <rect class="workspace-store" x="286" y="438" width="172" height="70" rx="10"></rect>
+            <text x="372" y="466" text-anchor="middle">Qdrant</text>
+            <text class="workspace-node-sub" x="372" y="489" text-anchor="middle">vector recall</text>
+
+            <rect class="workspace-store" x="492" y="438" width="172" height="70" rx="10"></rect>
+            <text x="578" y="466" text-anchor="middle">pgvector</text>
+            <text class="workspace-node-sub" x="578" y="489" text-anchor="middle">structured vectors</text>
+
+            <rect class="workspace-store" x="698" y="438" width="172" height="70" rx="10"></rect>
+            <text x="784" y="466" text-anchor="middle">raw ledger</text>
+            <text class="workspace-node-sub" x="784" y="489" text-anchor="middle">write truth</text>
+
+            <rect class="workspace-store" x="904" y="438" width="172" height="70" rx="10"></rect>
+            <text x="990" y="466" text-anchor="middle">deep memory</text>
+            <text class="workspace-node-sub" x="990" y="489" text-anchor="middle">slow-source recall</text>
+          </g>
+
+          <path class="workspace-link workspace-link-store" d="M590 408 C456 420 286 422 166 438" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link workspace-link-store" d="M590 408 C500 420 420 424 372 438" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link workspace-link-store" d="M590 408 L578 438" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link workspace-link-store" d="M590 408 C676 420 736 424 784 438" marker-end="url(#workspace-arrow)"></path>
+          <path class="workspace-link workspace-link-store" d="M590 408 C734 420 900 424 990 438" marker-end="url(#workspace-arrow)"></path>
+        </svg>
+      </article>
+    </section>
+
+    <section class="section" id="when-to-use">
+      <div class="kicker">Decision rule</div>
+      <h2>Use ContextLattice when memory becomes infrastructure.</h2>
+      <div class="grid component-grid">
+        <article class="card component-card">
+          <h3>Use a workspace when...</h3>
+          <ul class="spec-list">
+            <li>You need a better chat surface.</li>
+            <li>You want to switch models visually.</li>
+            <li>You want document upload, prompt libraries, or local model controls.</li>
+          </ul>
+        </article>
+        <article class="card component-card">
+          <h3>Use an agent harness when...</h3>
+          <ul class="spec-list">
+            <li>You need code edits, shell execution, browser work, or tool calls.</li>
+            <li>You want an actor that can advance tasks instead of just chat.</li>
+            <li>You need local files and app-specific tools in the loop.</li>
+          </ul>
+        </article>
+        <article class="card component-card">
+          <h3>Use ContextLattice when...</h3>
+          <ul class="spec-list">
+            <li>You need state to survive across agents, tools, sessions, and days.</li>
+            <li>You need retrieval that improves without stuffing everything into prompts.</li>
+            <li>You need one write/search/checkpoint contract under many AI surfaces.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Context Lattice comparison guide</span>
+      <a href="index.html">Home</a>
+      <a href="integration.html">Integrations</a>
+      <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
+    </footer>
+  </main>
+</body>
+</html>

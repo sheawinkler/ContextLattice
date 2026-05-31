@@ -169,6 +169,7 @@ def main() -> int:
         "docs/public_overview/contact.html",
         "docs/public_overview/.nojekyll",
         "docs/public_overview/assets/contextlattice-og-1200x630.png",
+        "docs/public_overview/assets/social/contextlattice-architecture-social-v2-2026-04-28.png",
         "docs/public_overview/assets/contextlattice-icon-512.png",
         "docs/public_overview/.well-known/glama.json",
         "registry/contextlattice.server.template.json",
@@ -201,7 +202,7 @@ def main() -> int:
                 'property="og:title"',
                 'name="twitter:card"',
                 "application/ld+json",
-                "assets/contextlattice-og-1200x630.png",
+                "assets/social/contextlattice-architecture-social-v2-2026-04-28.png",
             ],
         )
     )

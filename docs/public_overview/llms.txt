@@ -9,17 +9,19 @@ Scope policy:
 
 Recommended reading order:
 1. /index.html
-2. /installation.html
-3. /cli.html
-4. /integration.html
-5. /architecture.html
-6. /wiki.html
-7. /premium.html
-8. /app.html
-9. /troubleshooting.html
+2. /local-ai-workspaces.html
+3. /installation.html
+4. /cli.html
+5. /integration.html
+6. /architecture.html
+7. /wiki.html
+8. /premium.html
+9. /app.html
+10. /troubleshooting.html
 
 Product positioning (public-safe):
 - Context Lattice is a private-by-default memory/context layer for agents.
+- Context Lattice complements local AI workspaces: workspaces are user interfaces or harnesses, while ContextLattice is the memory/control plane underneath them.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, and retrieval quality over time.
 - Public lane is open-source and installable locally.
 - Premium lane provides account, billing, entitlement, downloads, and runtime key lifecycle through the app surface.

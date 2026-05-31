@@ -1305,6 +1305,139 @@ pre code {
     linear-gradient(180deg, rgba(24, 29, 39, 0.98), rgba(19, 23, 30, 0.98));
 }
 
+.workspace-page .hero {
+  background:
+    radial-gradient(circle at 76% 16%, rgba(214, 189, 134, 0.14), transparent 34%),
+    radial-gradient(circle at 16% 8%, rgba(131, 206, 203, 0.12), transparent 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    #151515;
+}
+
+.claim-grid {
+  align-items: stretch;
+}
+
+.claim-card {
+  min-height: 280px;
+}
+
+.claim-number {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 18px;
+  border: 1.5px solid rgba(131, 206, 203, 0.66);
+  background: rgba(131, 206, 203, 0.12);
+  color: #dff7f5;
+  padding: 5px 8px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.workspace-table td:first-child {
+  font-family: "IBM Plex Mono", monospace;
+  color: #f0f0f0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.workspace-table {
+  min-width: 780px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.workspace-board {
+  background:
+    radial-gradient(circle at 48% 42%, rgba(131, 206, 203, 0.09), transparent 42%),
+    radial-gradient(circle at 72% 68%, rgba(214, 189, 134, 0.08), transparent 38%),
+    #121416;
+  overflow-x: auto;
+}
+
+.workspace-svg {
+  display: block;
+  width: 100%;
+  min-width: 760px;
+  min-height: 420px;
+  height: auto;
+}
+
+.workspace-bg {
+  fill: rgba(255, 255, 255, 0.02);
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 1.5;
+}
+
+.workspace-title,
+.workspace-node,
+.workspace-contract-title,
+.workspace-store {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.workspace-title {
+  fill: #ededed;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.workspace-node,
+.workspace-store {
+  fill: #181818;
+  stroke: #6d6d6d;
+  stroke-width: 1.5;
+}
+
+.workspace-node + text,
+.workspace-store + text {
+  fill: #f0f0f0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.workspace-node-sub,
+.workspace-contract-sub {
+  fill: #bdbdbd;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 14px;
+}
+
+.workspace-contract {
+  fill: url(#workspace-glow);
+  stroke: #d6d6d6;
+  stroke-width: 2;
+}
+
+.workspace-contract-title {
+  fill: #ffffff;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.workspace-link {
+  fill: none;
+  stroke: #d8d8d8;
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.74;
+}
+
+.workspace-link-strong {
+  stroke: #83cecb;
+  stroke-width: 3;
+  opacity: 0.95;
+}
+
+.workspace-link-store {
+  stroke: #d6bd86;
+  opacity: 0.7;
+}
+
 @media (max-width: 980px) {
   .flow-grid {
     grid-template-columns: 1fr;
@@ -1324,6 +1457,10 @@ pre code {
 
   .arch-split {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-svg {
+    min-height: 340px;
   }
 }
 
