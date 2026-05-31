@@ -16,12 +16,15 @@
       <nav class="nav" aria-label="Primary">
         <a href="index.html">Home</a>
         <a class="active" href="architecture.html">Architecture</a>
+        <a href="local-ai-workspaces.html">Compare</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
         <a href="installation.html">Installation</a>
         <a href="cli.html">CLI</a>
         <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a href="app.html">App</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
         <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
@@ -153,7 +156,7 @@
       <article class="card architecture-board">
         <div class="arch-diagram-grid">
           <figure class="arch-diagram-panel">
-            <img class="arch-diagram-image" src="assets/architecture-service-map.svg?v=20260319a" alt="Service map showing orchestrator, memory plane, and external dependencies" loading="lazy" decoding="async" />
+            <img class="arch-diagram-image" src="assets/architecture-service-map.svg?v=20260319b" alt="Service map showing orchestrator, memory plane, and external dependencies" loading="lazy" decoding="async" />
             <figcaption class="arch-diagram-caption"><strong>Service Map:</strong> the single control plane and every core system it coordinates.</figcaption>
           </figure>
           <figure class="arch-diagram-panel">
@@ -260,7 +263,7 @@
 flowchart TD
   A["Caller"] --> B["gateway-go :8075"]
   B --> C["Rust retrieval + staged policy"]
-  C --> D["Fast now: topic_rollups, qdrant, postgres_pgvector"]
+  C --> D["Fast default: topic_rollups, qdrant"]
   C --> E["Slow async: mindsdb, mongo_raw, letta, memory_bank"]
   E --> F["Continuation events + cache warm"]
   B --> G["Python fallback :18075 (rollback)"]

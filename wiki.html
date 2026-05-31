@@ -17,12 +17,15 @@
       <nav class="nav" aria-label="Primary">
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
+        <a href="local-ai-workspaces.html">Compare</a>
         <a class="active" href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
         <a href="installation.html">Installation</a>
         <a href="cli.html">CLI</a>
         <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a href="app.html">App</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
         <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
@@ -140,10 +143,16 @@
               <td>Structured pack with topical grouping</td>
             </tr>
             <tr>
+              <td>Typed memory edges</td>
+              <td><code>GET|POST /v1/memory/edges</code>, <code>POST /v1/memory/edges/backfill</code></td>
+              <td>Persist explicit relationships and audit/apply deterministic retroactive or opt-in inferred edges</td>
+              <td>Durable edge records in the local memory graph index with dry-run counts and bounded inferred scoring</td>
+            </tr>
+            <tr>
               <td>Graph neighbors</td>
               <td><code>POST /v1/memory/neighbors</code></td>
               <td>Detail dives from a known memory id</td>
-              <td>Adjacent nodes with edge/relationship semantics</td>
+              <td>Explicit edge neighbors merged with semantic/topic neighbors</td>
             </tr>
             <tr>
               <td>Health</td>

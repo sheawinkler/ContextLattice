@@ -16,12 +16,15 @@
       <nav class="nav" aria-label="Primary">
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
+        <a href="local-ai-workspaces.html">Compare</a>
         <a href="wiki.html">Wiki</a>
         <a class="active" href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
         <a href="installation.html">Installation</a>
         <a href="cli.html">CLI</a>
         <a href="integration.html">Integrations</a>
+        <a href="premium.html">Premium</a>
+        <a href="app.html">App</a>
         <a href="troubleshooting.html">Troubleshooting</a>
         <a href="contact.html">Contact</a>
         <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
@@ -55,22 +58,6 @@
 
     <section class="section timeline">
       <article class="update-card">
-        <span class="update-meta">2026-04-02 · v3.3.1 · Public Spike-Lab Guardrails + Release Sync</span>
-        <h3>Public main now documents spike-lab as advanced opt-in with one-lane controls</h3>
-        <p class="spotlight">
-          We kept spike benchmarking transparent for advanced operators while reducing default-user risk: public startup remains clean,
-          and spike-lab now has explicit lane-by-lane control and published benchmark references.
-        </p>
-        <ul>
-          <li><strong>No default runtime expansion:</strong> default profiles stay <code>core,llm,observability</code>.</li>
-          <li><strong>One-lane operator controls:</strong> <code>gmake mem-spike-ls</code>, <code>gmake mem-spike-up SPIKE_LANE=&lt;lane&gt;</code>, <code>gmake mem-spike-down SPIKE_LANE=&lt;lane&gt;</code>.</li>
-          <li><strong>Resource guardrail:</strong> documented Docker VM RSS guard policy for spike services (<code>DOCKER_VM_RSS_GUARD_*</code>).</li>
-          <li><strong>Published benchmark transparency:</strong> <code>bench/results/backend_lane_matrix_latest.json</code>, <code>bench/results/memory_bank_spike_direct_matrix_latest.json</code>, and <code>docs/perf_v3_spike_matrix.md</code>.</li>
-          <li><strong>Included commit train since v3.3.0:</strong> gateway-go telemetry route cutover, mongo_raw+mindsdb go-native sync, build-integrity restore, and env/runtime stability hardening.</li>
-        </ul>
-      </article>
-
-      <article class="update-card">
         <span class="update-meta">2026-03-24 · v3.2.13 · Glama-lite SQLite Acceleration</span>
         <h3>Lite mode now ships sqlite WAL + FTS5 BM25 acceleration with optional sqlite-vec detection</h3>
         <p class="spotlight">
@@ -79,7 +66,7 @@
         </p>
         <ul>
           <li><strong>Lite architecture:</strong> <code>topic_rollups</code> + sqlite outbox + sqlite rollup index (WAL + FTS5 BM25).</li>
-          <li><strong>Full architecture:</strong> staged fast lane <code>topic_rollups + qdrant + postgres_pgvector</code> plus deep async continuation <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li><strong>Full architecture:</strong> staged fast lane <code>topic_rollups + qdrant</code> in local lite, Qdrant plus pgvector in full/operator stacks, plus deep async continuation <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
           <li><strong>Optional vector lane:</strong> <code>sqlite-vec</code> capability is auto-detected and remains fail-open when unavailable.</li>
           <li><strong>Correctness guardrail:</strong> sqlite rollup search is only used when sqlite generation marker matches the active in-memory rollup snapshot.</li>
           <li><strong>A/B snapshot:</strong> topic rollup lookup average <code>85.065ms → 50.225ms</code> (<code>1.694x</code> faster) in single-container benchmark artifact <code>bench/results/glama_lite_topic_rollup_sqlite_ab_20260324.json</code>.</li>
@@ -99,7 +86,7 @@
         </div>
         <ul>
           <li>Installation mode summaries now call out Gateway-Go frontdoor ownership.</li>
-          <li>Lite mode now explicitly lists the fast staged lane: <code>topic_rollups + qdrant + postgres_pgvector</code>.</li>
+          <li>Lite mode now explicitly lists the fast staged lane: <code>topic_rollups + qdrant</code>.</li>
           <li>Full mode now explicitly lists deep async continuation lane sources: <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
           <li>Release assets include DMG (macOS), MSI (Windows), and Linux bootstrap tarball.</li>
         </ul>
@@ -113,7 +100,7 @@
         </p>
         <ul>
           <li>Updated shared SVG architecture panels used by both README and website.</li>
-          <li>Reflected current staged retrieval lanes: fast <code>topic_rollups + qdrant + postgres_pgvector</code>, deep async <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
+          <li>Reflected current staged retrieval lanes: fast <code>topic_rollups + qdrant</code> in local lite, Qdrant plus pgvector for full/operator stacks, deep async <code>mindsdb + mongo_raw + letta + memory_bank</code>.</li>
           <li>Updated runtime ownership copy to show Go ingress on <code>:8075</code>, Rust hot path, and Python fallback on <code>:18075</code>.</li>
           <li>Bumped architecture asset cache keys so updated diagrams render immediately.</li>
         </ul>
@@ -185,7 +172,7 @@
         <h3>Rust+Go runtime is now default; Python retained as legacy fallback</h3>
         <p class="spotlight">
           We ran a live A/B on the same <code>/memory/search</code> path before and after cutover.
-          Test profile: <code>tooling/python/bench/phase1_runtime_comparison.py</code>, <code>8</code> requests, <code>20s</code> timeout.
+          Test profile: <code>bench/phase1_runtime_comparison.py</code>, <code>8</code> requests, <code>20s</code> timeout.
         </p>
         <ul>
           <li>Cutover ON (Rust+Go): mean <code>3557ms</code>, p50 <code>2334ms</code>, p95 <code>8494ms</code>, p99 <code>9359ms</code>, errors <code>0/8</code>.</li>

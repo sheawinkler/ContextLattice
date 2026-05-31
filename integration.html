@@ -16,6 +16,7 @@
       <nav class="nav" aria-label="Primary">
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
+        <a href="local-ai-workspaces.html">Compare</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
@@ -86,16 +87,16 @@
     <section class="section" id="integration-paid-host">
       <article class="card">
         <div class="kicker">Hosted default</div>
-        <h3>Use a dedicated app host for paid runtime and billing operations</h3>
+        <h3>Use a dedicated app host for paid runtime and billing webhooks</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p>Default host split for production is marketing on <code>contextlattice.io</code> and paid app/API on <code>app.contextlattice.io</code>.</p>
         <ul class="spec-list">
           <li><strong>Marketing/public site:</strong> <code>https://contextlattice.io</code></li>
           <li><strong>Paid app + dashboard + API:</strong> <code>https://app.contextlattice.io</code></li>
-          <li><strong>Billing infrastructure:</strong> managed on the app host via private operator configuration.</li>
-          <li><strong>Wallet/card checkout:</strong> unified purchase flow with provider-specific verification handled server-side.</li>
-          <li><strong>Apple Pay + Google Pay:</strong> available through Stripe checkout when supported by device/browser.</li>
-          <li><strong>Admin verification controls:</strong> restricted to owner/admin authenticated operations.</li>
+          <li><strong>Stripe webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/stripe/webhook</code></li>
+          <li><strong>PayPal webhook:</strong> <code>POST https://app.contextlattice.io/api/billing/paypal/webhook</code></li>
+          <li><strong>Apple Pay + Google Pay:</strong> configured through Stripe checkout (no separate webhook URL).</li>
+          <li><strong>Operator verify routes:</strong> <code>/api/billing/solana-pay/verify</code> and <code>/api/billing/kraken/verify</code> require owner/admin auth.</li>
         </ul>
       </article>
     </section>
@@ -119,7 +120,7 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq</code></
         <ul class="spec-list">
           <li><strong>Orchestrator API:</strong> <code>http://127.0.0.1:8075</code></li>
           <li><strong>MCP hub memory endpoint:</strong> <code>http://127.0.0.1:53130/memorymcp/mcp</code></li>
-          <li><strong>MCP hub qdrant endpoint:</strong> <code>http://127.0.0.1:53130/qdrant/mcp</code></li>
+          <li><strong>MCP hub qdrant endpoint:</strong> optional in full/operator stacks at <code>http://127.0.0.1:53130/qdrant/mcp</code></li>
         </ul>
       </article>
     </section>
@@ -156,7 +157,8 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 
 Runtime:
 - Orchestrator: http://127.0.0.1:8075
-- API key: CONTEXTLATTICE_ORCHESTRATOR_API_KEY from my local .env
+- Local/free dashboard setup does not require a user API key.
+- In strict auth mode only, use CONTEXTLATTICE_ORCHESTRATOR_API_KEY from my local .env for direct orchestrator calls.
 
 Required behavior:
 1) Before planning, call POST /memory/search with a compact query and project/topic filters.
@@ -197,10 +199,13 @@ python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
 python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
 
 # auto-installed global CLI wrappers (~/.contextlattice/bin)
+contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice --topic-path runbooks/codex-integration
 contextlattice_write --project contextlattice --file notes/codex/checkpoint.md --content "checkpoint saved" --topic-path runbooks/codex-integration
+printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/codex-integration --file notes/codex/checkpoint.md --stdin
 contextlattice_search -h
-contextlattice_write -h</code></pre>
+contextlattice_write -h
+contextlattice_checkpoint -h</code></pre>
         <ul class="spec-list">
           <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
           <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>
@@ -302,7 +307,7 @@ export CONTEXTLATTICE_ORCHESTRATOR_API_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTR
           <article class="card component-card">
             <h3>Operational defaults</h3>
             <ul class="spec-list">
-              <li>Keep Qdrant local-first with gRPC preferred.</li>
+              <li>Use Qdrant as the public local lite vector default; keep Postgres pgvector first-class for full/operator SQL-co-located vector deployments.</li>
               <li>Use BYO cloud keys only when explicitly enabled.</li>
               <li>Preserve orchestrator fanout/backpressure defaults before aggressive tuning.</li>
               <li>Strict security mode redacts and blocks suspected secrets on OpenClaw/ZeroClaw/IronClaw routes.</li>

@@ -17,6 +17,7 @@
       <nav class="nav" aria-label="Primary">
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
+        <a href="local-ai-workspaces.html">Compare</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
@@ -88,8 +89,11 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
         <h3>Installed wrappers for agents/operators</h3>
 <pre><code>contextlattice_search -h
 contextlattice_write -h
+contextlattice_agent_start -h
+contextlattice_checkpoint -h
+contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice
-contextlattice_write --project contextlattice --file notes/checkpoint.md --content "checkpoint saved"</code></pre>
+printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/setup --file notes/checkpoint.md --stdin</code></pre>
       </article>
     </section>
 
