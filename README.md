@@ -159,6 +159,8 @@ contextlattice_checkpoint -h
 
 - Overview: `https://contextlattice.io/`
 - Architecture: `https://contextlattice.io/architecture.html`
+- Local AI workspace comparison: `https://contextlattice.io/local-ai-workspaces.html`
+- Scaling memory: `https://contextlattice.io/scaling-memory.html`
 - Wiki: `https://contextlattice.io/wiki.html`
 - Installation: `https://contextlattice.io/installation.html`
 - Integrations: `https://contextlattice.io/integration.html`

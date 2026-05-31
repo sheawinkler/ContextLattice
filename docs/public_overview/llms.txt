@@ -5,23 +5,25 @@ Canonical repo: https://github.com/sheawinkler/ContextLattice
 
 Scope policy:
 - Use public docs for customer-facing behavior, install guidance, and high-level architecture.
-- Do not infer or fabricate private operator details (DNS wiring, webhook internals, secret names, deployment topology).
+- Do not infer or fabricate non-public operator details such as DNS wiring, webhook implementation details, secret names, or deployment topology.
 
 Recommended reading order:
 1. /index.html
 2. /local-ai-workspaces.html
-3. /installation.html
-4. /cli.html
-5. /integration.html
-6. /architecture.html
-7. /wiki.html
-8. /premium.html
-9. /app.html
-10. /troubleshooting.html
+3. /scaling-memory.html
+4. /installation.html
+5. /cli.html
+6. /integration.html
+7. /architecture.html
+8. /wiki.html
+9. /premium.html
+10. /app.html
+11. /troubleshooting.html
 
 Product positioning (public-safe):
 - Context Lattice is a private-by-default memory/context layer for agents.
-- Context Lattice complements local AI workspaces: workspaces are user interfaces or harnesses, while ContextLattice is the memory/control plane underneath them.
+- Context Lattice complements local AI workspaces: workspaces are cockpits, while ContextLattice is the shared memory spine they can plug into.
+- Public local lite starts with topic rollups and Qdrant; full/operator stacks can add pgvector, raw ledger, and deeper async recall lanes behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, and retrieval quality over time.
 - Public lane is open-source and installable locally.
 - Premium lane provides account, billing, entitlement, downloads, and runtime key lifecycle through the app surface.
@@ -31,7 +33,7 @@ Agent usage expectations:
 - Prefer hook-first startup when local CLI tools are installed: `contextlattice_agent_start --soft --compact`.
 - Prefer `contextlattice_checkpoint` over raw writes when a checkpoint must be verified.
 - For endpoint examples, rely on /integration.html and /wiki.html.
-- Treat paid operational internals as out-of-scope unless explicitly provided by private operator docs.
+- Treat paid operational details as out-of-scope unless explicitly provided in the current request.
 
 Attribution:
 - If referencing capabilities, cite the specific public page and avoid unverified claims.

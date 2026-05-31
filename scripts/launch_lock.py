@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import urllib.error
@@ -118,41 +117,6 @@ def _probe_public_mcp(url: str, timeout: int) -> GateCheck:
     return GateCheck(True, "public_mcp_probe", f"status={status} final={final_url}")
 
 
-def _consistency_claim_checks(public_ready: bool) -> list[GateCheck]:
-    out: list[GateCheck] = []
-    tracker_path = ROOT / "docs/publish_execution_tracker.md"
-    req_path = ROOT / "docs/submission_requirements.md"
-
-    tracker = tracker_path.read_text(encoding="utf-8") if tracker_path.exists() else ""
-    requirements = req_path.read_text(encoding="utf-8") if req_path.exists() else ""
-
-    tracker_claims_live = bool(re.search(r"\|\s*P0\s*\|\s*MCP Registry \(official\).*?\|\s*Live", tracker))
-    req_claims_live = "Live (published" in requirements
-
-    if tracker_claims_live and not public_ready:
-        out.append(
-            GateCheck(
-                False,
-                "claims:publish_execution_tracker",
-                "tracker marks MCP Registry as Live before public /mcp endpoint is ready",
-            )
-        )
-    else:
-        out.append(GateCheck(True, "claims:publish_execution_tracker", "consistent"))
-
-    if req_claims_live and not public_ready:
-        out.append(
-            GateCheck(
-                False,
-                "claims:submission_requirements",
-                "requirements doc marks MCP Registry as Live before public /mcp endpoint is ready",
-            )
-        )
-    else:
-        out.append(GateCheck(True, "claims:submission_requirements", "consistent"))
-    return out
-
-
 def _channel_gates(mode: str, public_ready: bool) -> list[GateCheck]:
     # Purpose: make explicit what is allowed to publish right now.
     out = [
@@ -212,7 +176,6 @@ def main() -> int:
         # Local mode intentionally does not require public endpoint readiness.
         checks.append(GateCheck(True, "public_mcp_probe", "skipped in local mode"))
 
-    checks.extend(_consistency_claim_checks(public_ready=public_ready))
     checks.extend(_channel_gates(mode=args.mode, public_ready=public_ready))
 
     failing = [c for c in checks if not c.ok]

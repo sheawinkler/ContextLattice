@@ -42,6 +42,7 @@ if [[ -d "$PUBLIC_SOURCE_DIR" ]]; then
   cp "$PUBLIC_SOURCE_DIR/index.html" "$PUBLIC_DIR/index.html"
   cp "$PUBLIC_SOURCE_DIR/architecture.html" "$PUBLIC_DIR/architecture.html"
   cp "$PUBLIC_SOURCE_DIR/local-ai-workspaces.html" "$PUBLIC_DIR/local-ai-workspaces.html"
+  cp "$PUBLIC_SOURCE_DIR/scaling-memory.html" "$PUBLIC_DIR/scaling-memory.html"
   cp "$PUBLIC_SOURCE_DIR/wiki.html" "$PUBLIC_DIR/wiki.html"
   cp "$PUBLIC_SOURCE_DIR/updates.html" "$PUBLIC_DIR/updates.html"
   cp "$PUBLIC_SOURCE_DIR/roadmap.html" "$PUBLIC_DIR/roadmap.html"
