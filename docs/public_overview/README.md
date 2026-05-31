@@ -5,6 +5,7 @@ This folder is the source for the public ContextLattice overview web pages.
 ## Files
 - `index.html` - public landing page
 - `architecture.html` - detailed runtime architecture
+- `local-ai-workspaces.html` - comparison guide for local AI workspaces, agent harnesses, and ContextLattice's memory/control-plane role
 - `wiki.html` - operator wiki with endpoint atlas and playbooks
 - `updates.html` - chronological updates page
 - `roadmap.html` - V3 integration and efficacy roadmap
@@ -48,6 +49,7 @@ scripts/sync_public_overview.sh
 This syncs:
 - `index.html`
 - `architecture.html`
+- `local-ai-workspaces.html`
 - `wiki.html`
 - `updates.html`
 - `roadmap.html`
