@@ -49,6 +49,8 @@ if [[ -d "$PUBLIC_SOURCE_DIR" ]]; then
   cp "$PUBLIC_SOURCE_DIR/installation.html" "$PUBLIC_DIR/installation.html"
   cp "$PUBLIC_SOURCE_DIR/cli.html" "$PUBLIC_DIR/cli.html"
   cp "$PUBLIC_SOURCE_DIR/integration.html" "$PUBLIC_DIR/integration.html"
+  cp "$PUBLIC_SOURCE_DIR/premium.html" "$PUBLIC_DIR/premium.html"
+  cp "$PUBLIC_SOURCE_DIR/app.html" "$PUBLIC_DIR/app.html"
   cp "$PUBLIC_SOURCE_DIR/troubleshooting.html" "$PUBLIC_DIR/troubleshooting.html"
   cp "$PUBLIC_SOURCE_DIR/contact.html" "$PUBLIC_DIR/contact.html"
   cp "$PUBLIC_SOURCE_DIR/llms.txt" "$PUBLIC_DIR/llms.txt"
