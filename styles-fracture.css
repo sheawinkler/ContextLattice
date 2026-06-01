@@ -1693,3 +1693,70 @@ body.home .ribbon-nav a {
 body.home .nav-fold {
   margin-top: 10px;
 }
+
+body.home .feature-tile {
+  position: relative;
+  display: block;
+  min-height: 74px;
+  padding: 0;
+  perspective: 900px;
+  cursor: default;
+  outline: none;
+}
+
+body.home .feature-tile-inner {
+  display: grid;
+  width: 100%;
+  min-height: inherit;
+  transform-style: preserve-3d;
+  transition: transform 360ms ease;
+}
+
+body.home .feature-tile:hover .feature-tile-inner,
+body.home .feature-tile:focus .feature-tile-inner,
+body.home .feature-tile:focus-within .feature-tile-inner {
+  transform: rotateY(180deg);
+}
+
+body.home .feature-tile-face {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: inherit;
+  padding: 12px 14px;
+  text-align: center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+body.home .feature-tile-front {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.28;
+  text-transform: uppercase;
+}
+
+body.home .feature-tile-back {
+  transform: rotateY(180deg);
+  color: var(--muted);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.32;
+  text-transform: none;
+}
+
+body.home .feature-tile:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(232, 228, 216, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.home .feature-tile-inner {
+    transition: none;
+  }
+}

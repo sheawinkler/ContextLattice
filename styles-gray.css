@@ -688,6 +688,71 @@ section[id] {
   border-color: rgba(214, 189, 134, 0.48);
 }
 
+.feature-tile {
+  position: relative;
+  display: block;
+  min-height: 74px;
+  padding: 0;
+  perspective: 900px;
+  cursor: default;
+  outline: none;
+}
+
+.feature-tile-inner {
+  display: grid;
+  width: 100%;
+  min-height: inherit;
+  transform-style: preserve-3d;
+  transition: transform 360ms ease;
+}
+
+.feature-tile:hover .feature-tile-inner,
+.feature-tile:focus .feature-tile-inner,
+.feature-tile:focus-within .feature-tile-inner {
+  transform: rotateY(180deg);
+}
+
+.feature-tile-face {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: inherit;
+  padding: 12px 14px;
+  text-align: center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.feature-tile-front {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.28;
+}
+
+.feature-tile-back {
+  transform: rotateY(180deg);
+  color: var(--muted);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.32;
+  text-transform: none;
+}
+
+.feature-tile:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(232, 228, 216, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feature-tile-inner {
+    transition: none;
+  }
+}
+
 .offer-section {
   position: relative;
 }
