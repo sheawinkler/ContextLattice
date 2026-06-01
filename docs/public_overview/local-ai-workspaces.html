@@ -4,20 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ContextLattice vs Local AI Workspaces | Context Lattice</title>
-  <meta name="description" content="ContextLattice is the local-first memory spine that lets AI workspaces, agent harnesses, MCP clients, and custom agents remember together." />
+  <meta name="description" content="ContextLattice is local-first memory infrastructure for AI workspaces, agent harnesses, MCP clients, and custom agents: durable writes, scoped recall, Skills Index discovery, CLI workflows, and provenance." />
   <link rel="canonical" href="https://contextlattice.io/local-ai-workspaces.html" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Context Lattice" />
   <meta property="og:title" content="ContextLattice vs Local AI Workspaces" />
-  <meta property="og:description" content="AI workspaces are cockpits. ContextLattice is the memory spine they plug into." />
+  <meta property="og:description" content="AI workspaces are cockpits. ContextLattice is the local-first memory infrastructure they plug into." />
   <meta property="og:url" content="https://contextlattice.io/local-ai-workspaces.html" />
   <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="ContextLattice vs Local AI Workspaces" />
-  <meta name="twitter:description" content="Not another cockpit. The memory spine beneath the ones you already use." />
+  <meta name="twitter:description" content="Not another cockpit. Durable memory, Skills Index discovery, CLI workflows, and provenance beneath the tools you already use." />
   <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260531a" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260601b" />
 </head>
 <body class="home workspace-page">
   <main class="container">
@@ -30,7 +30,7 @@
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
         <a class="active" href="local-ai-workspaces.html">Compare</a>
-        <a href="scaling-memory.html">Scale</a>
+        <a href="scaling-memory.html">Memory at Scale</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
@@ -47,10 +47,10 @@
 
     <section class="hero workspace-hero">
       <span class="badge">Positioning guide</span>
-      <h1>AI workspaces are cockpits. ContextLattice is the memory spine they were missing.</h1>
-      <p class="sub">Odysseus, Open WebUI, LibreChat, Claude Desktop, Cursor, and custom MCP agents help people steer models. ContextLattice gives those surfaces a shared way to remember: one local-first write path, one retrieval contract, and one spine that keeps getting smarter as the work grows.</p>
+      <h1>AI workspaces are cockpits. ContextLattice is the memory infrastructure they were missing.</h1>
+      <p class="sub">Odysseus, Open WebUI, LibreChat, Claude Desktop, Cursor, and custom MCP agents help people steer models. ContextLattice gives those surfaces a shared way to remember: one local-first write path, one retrieval contract, CLI-native handoff, Skills Index discovery, behavior provenance, and one memory spine that keeps getting smarter as the work grows.</p>
       <div class="cta-row">
-        <a class="cta primary" href="installation.html">Run the spine locally</a>
+        <a class="cta primary" href="installation.html">Add memory to your agents</a>
         <a class="cta secondary" href="integration.html">Plug in an agent</a>
         <a class="cta secondary" href="architecture.html">See the architecture</a>
       </div>
@@ -60,7 +60,7 @@
       <article class="card quick-path-card">
         <div class="kicker">Plain claim</div>
         <h3>Not another cockpit. The black box, map, and nervous system beneath them.</h3>
-        <p>The novelty is not a prettier chat window. It is a shared memory substrate for the tools you already want to use: durable writes, sharp retrieval, bounded context, and deeper recall lanes when the work gets heavy.</p>
+        <p>The novelty is not a prettier chat window. It is shared agent infrastructure for the tools you already want to use: durable writes, sharp retrieval, bounded context, CLI workflows, Skills Index discovery, provenance trails, and deeper recall lanes when the work gets heavy.</p>
       </article>
     </section>
 
@@ -123,9 +123,9 @@
               <td>Provides checkpoints, recall, task handoff, and context-pack contracts.</td>
             </tr>
             <tr>
-              <td>Memory spine</td>
+              <td>Memory infrastructure</td>
               <td>ContextLattice</td>
-              <td>Durable write path, retrieval policy, source fanout, topic rollups, and agent-facing context contracts.</td>
+              <td>Durable write path, retrieval policy, source fanout, topic rollups, Skills Index discovery, provenance trails, and agent-facing context contracts.</td>
               <td>Acts as the shared memory spine beneath many cockpits and agents.</td>
             </tr>
           </tbody>
@@ -136,7 +136,7 @@
     <section class="section" id="memory-contract">
       <div class="kicker">The contract</div>
       <h2>One local-first memory boundary for many agent surfaces.</h2>
-      <p class="muted-note">Public local lite starts with topic rollups and Qdrant. Full/operator stacks can add pgvector, raw ledger, and deeper async recall lanes behind the same contract.</p>
+      <p class="muted-note">Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery. Full/operator stacks can add pgvector, raw ledger, deeper async recall lanes, behavior provenance, and stronger reliability controls behind the same contract.</p>
       <div class="grid mode-grid">
         <article class="card component-card">
           <h3>Write durability</h3>
@@ -162,6 +162,22 @@
             <li>Handoff checkpoints so sister agents can continue without losing state.</li>
           </ul>
         </article>
+        <article class="card component-card">
+          <h3>Capability discovery</h3>
+          <ul class="spec-list">
+            <li>Skills Index search exposes quarantined capabilities on demand.</li>
+            <li>Agents do not need every low-probability skill loaded into the active prompt.</li>
+            <li>Tooling stays discoverable without turning startup context into a landfill.</li>
+          </ul>
+        </article>
+        <article class="card component-card">
+          <h3>Behavior provenance</h3>
+          <ul class="spec-list">
+            <li>Decisions, evidence, checkpoints, and agent/session context stay attached to the work.</li>
+            <li>Future agents can inspect why a state exists instead of trusting vibes from stale chat history.</li>
+            <li>Learning feedback improves recall while preserving the trail that made it useful.</li>
+          </ul>
+        </article>
       </div>
     </section>
 
@@ -181,7 +197,7 @@
             </linearGradient>
           </defs>
           <rect class="workspace-bg" x="20" y="20" width="1140" height="580" rx="20"></rect>
-          <text class="workspace-title" x="590" y="70" text-anchor="middle">Local AI stack with ContextLattice as the shared memory spine</text>
+          <text class="workspace-title" x="590" y="70" text-anchor="middle">Local AI stack with ContextLattice as memory infrastructure</text>
 
           <g class="workspace-row workspace-row-top">
             <rect class="workspace-node" x="80" y="118" width="220" height="86" rx="12"></rect>

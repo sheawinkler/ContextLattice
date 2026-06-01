@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Memory That Scales | Context Lattice</title>
-  <meta name="description" content="How ContextLattice keeps agent memory useful as projects, tools, and data grow: fast rollups, vector recall, durable writes, and deeper async memory lanes behind one local-first contract." />
+  <title>Memory Infrastructure That Scales | Context Lattice</title>
+  <meta name="description" content="How ContextLattice keeps agent memory useful as projects, tools, and data grow: fast rollups, vector recall, durable writes, CLI workflows, Skills Index discovery, behavior provenance, and deeper async memory lanes." />
   <link rel="canonical" href="https://contextlattice.io/scaling-memory.html" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Context Lattice" />
-  <meta property="og:title" content="Memory That Scales | Context Lattice" />
-  <meta property="og:description" content="Agents should not get more forgetful as the work gets bigger. ContextLattice gives them a memory spine that scales." />
+  <meta property="og:title" content="Memory Infrastructure That Scales | Context Lattice" />
+  <meta property="og:description" content="Agents should not get more forgetful as the work gets bigger. ContextLattice gives them local-first memory infrastructure that scales." />
   <meta property="og:url" content="https://contextlattice.io/scaling-memory.html" />
   <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Memory That Scales | Context Lattice" />
-  <meta name="twitter:description" content="Fast memories close. Deep memories warming. One contract every agent can use." />
+  <meta name="twitter:title" content="Memory Infrastructure That Scales | Context Lattice" />
+  <meta name="twitter:description" content="Fast memories close. Deep memories warming. CLI, Skills Index, provenance, learning, and one contract every agent can use." />
   <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260601a" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260601b" />
 </head>
 <body class="home scale-page">
   <main class="container">
@@ -30,7 +30,7 @@
         <a href="index.html">Home</a>
         <a href="architecture.html">Architecture</a>
         <a href="local-ai-workspaces.html">Compare</a>
-        <a class="active" href="scaling-memory.html">Scale</a>
+        <a class="active" href="scaling-memory.html">Memory at Scale</a>
         <a href="wiki.html">Wiki</a>
         <a href="updates.html">Updates</a>
         <a href="roadmap.html">Roadmap</a>
@@ -48,9 +48,9 @@
     <section class="hero scale-hero">
       <span class="badge">Memory that survives growth</span>
       <h1>Your agent stack should not get dumber as the work gets bigger.</h1>
-      <p class="sub">ContextLattice turns scattered chats, tool outputs, decisions, and evidence into a memory spine: fast enough for the next answer, durable enough for next week, and deep enough to keep learning as the system expands.</p>
+      <p class="sub">ContextLattice turns scattered chats, tool outputs, decisions, skills, checkpoints, and evidence into local-first memory infrastructure: fast enough for the next answer, durable enough for next week, and deep enough to keep learning as the system expands.</p>
       <div class="cta-row">
-        <a class="cta primary" href="installation.html">Run the spine locally</a>
+        <a class="cta primary" href="installation.html">Add memory to your agents</a>
         <a class="cta secondary" href="local-ai-workspaces.html">See where it fits</a>
         <a class="cta secondary" href="architecture.html">Open the map</a>
       </div>
@@ -60,7 +60,7 @@
       <article class="card quick-path-card scale-manifesto">
         <div class="kicker">The novelty</div>
         <h3>Not another chat box. Not another pretty cockpit. The memory nervous system beneath them.</h3>
-        <p>Workspaces help humans steer models. Agent harnesses let models act. ContextLattice gives both a shared place to remember: one local-first write path, one retrieval contract, and one way to grow from quick recall into a real memory fabric.</p>
+        <p>Workspaces help humans steer models. Agent harnesses let models act. ContextLattice gives both shared infrastructure for remembering: one local-first write path, one retrieval contract, one CLI-native workflow, one Skills Index, and one way to grow from quick recall into a real memory fabric.</p>
       </article>
     </section>
 
@@ -95,7 +95,7 @@
         <article class="card scale-step scale-step-deep">
           <span class="claim-number">04</span>
           <h3>Deep lanes</h3>
-          <p>Full/operator stacks can add pgvector, raw ledger, and slower async recall without asking agents to learn a new interface.</p>
+          <p>Full/operator stacks can add pgvector, raw ledger, behavior provenance, and slower async recall without asking agents to learn a new interface.</p>
         </article>
       </div>
     </section>
@@ -107,12 +107,12 @@
         <div class="scale-map">
           <div class="scale-map-node scale-map-user">AI workspace<br><span>Odysseus, Open WebUI, LibreChat</span></div>
           <div class="scale-map-node scale-map-agent">Agent harness<br><span>Codex, Cursor, Claude Code, custom MCP</span></div>
-          <div class="scale-map-core">ContextLattice memory spine<br><span>HTTP / MCP + bounded context packs + durable writes</span></div>
+          <div class="scale-map-core">ContextLattice memory infrastructure<br><span>HTTP / MCP + CLI + bounded packs + durable writes</span></div>
           <div class="scale-map-lane lane-hot">topic rollups<br><span>fast local shape</span></div>
           <div class="scale-map-lane lane-vector">Qdrant<br><span>public vector lane</span></div>
-          <div class="scale-map-lane lane-structured">pgvector<br><span>full/operator SQL vector lane</span></div>
-          <div class="scale-map-lane lane-ledger">raw ledger<br><span>write audit lane</span></div>
-          <div class="scale-map-lane lane-deep">deep recall<br><span>async enrichment</span></div>
+          <div class="scale-map-lane lane-structured">Skills Index<br><span>capability discovery</span></div>
+          <div class="scale-map-lane lane-ledger">provenance ledger<br><span>evidence + behavior trail</span></div>
+          <div class="scale-map-lane lane-deep">deep recall<br><span>pgvector + async enrichment</span></div>
         </div>
       </article>
     </section>
