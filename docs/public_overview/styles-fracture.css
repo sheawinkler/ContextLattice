@@ -1451,3 +1451,245 @@ body.home.orb-white .hero-lattice .hl-anomaly-signal {
     padding-right: 0.72rem;
   }
 }
+
+/* Minimal palette override for the public homepage. Keep the fracture layout, remove neon color variety. */
+:root {
+  --fx-bg-0: var(--bg);
+  --fx-bg-1: var(--paper);
+  --fx-bg-2: var(--paper-soft);
+  --fx-panel: var(--paper);
+  --fx-panel-elev: var(--paper-soft);
+  --fx-panel-deep: #0b0b0a;
+  --fx-ink: var(--ink);
+  --fx-ink-soft: var(--accent);
+  --fx-muted: var(--muted);
+  --fx-line: rgba(232, 228, 216, 0.24);
+  --fx-line-hard: var(--line);
+  --fx-hot: var(--accent);
+  --fx-cold: var(--accent);
+  --fx-accent: var(--accent);
+  --fx-warning: var(--accent);
+  --fx-danger: var(--accent);
+  --fx-radius: 0;
+  --fx-shadow-lg: var(--shadow);
+  --fx-shadow-md: var(--shadow);
+}
+
+html body.home {
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, #11110f 0%, #0b0b0a 100%),
+    repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 32px);
+}
+
+html body.home::before {
+  background:
+    repeating-linear-gradient(90deg, rgba(241, 239, 231, 0.34) 0 1px, transparent 1px 88px),
+    repeating-linear-gradient(0deg, rgba(241, 239, 231, 0.16) 0 1px, transparent 1px 88px);
+  opacity: 0.08;
+  animation: none;
+}
+
+html body.home::after {
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.34) 100%);
+  mix-blend-mode: normal;
+  opacity: 1;
+  animation: none;
+}
+
+body.home .topbar,
+body.home .hero,
+body.home .section .card,
+body.home .card,
+body.home .feature-card,
+body.home .download-fold,
+body.home .nav-fold,
+body.home .fold,
+body.home .trust-strip a,
+body.home .lattice-ribbon,
+body.home .architecture-board,
+body.home .timeline,
+body.home .auth-card,
+body.home .spec-table,
+body.home .kv-table,
+body.home .lane-table,
+body.home .offer-card {
+  background: var(--paper);
+  border-color: var(--line);
+  border-radius: 0;
+  box-shadow: var(--shadow);
+}
+
+body.home .topbar::after,
+body.home .hero::before,
+body.home .badge::before,
+body.home .badge::after,
+body.home .scale-step::after,
+body.home .split-rule::before,
+body.home .split-rule::after {
+  background: var(--accent);
+}
+
+body.home .brand-mark,
+body.home .nav a,
+body.home .ribbon-nav a,
+body.home .nav-more a,
+body.home .badge,
+body.home .hero-local,
+body.home .cta.secondary,
+body.home .feature-tile,
+body.home .feature-tile.tile-major,
+body.home .feature-tile.tile-wide,
+body.home .feature-tile.tile-mid,
+body.home .trust-strip a,
+body.home .download-card,
+body.home .platform-choice,
+body.home .auth-pill,
+body.home .auth-control,
+body.home .hero-legend-link a {
+  background: var(--paper-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+body.home .nav a.active,
+body.home .ribbon-nav a.active,
+body.home .cta.primary,
+body.home .download-card.primary,
+body.home .platform-choice.active,
+body.home .auth-submit {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+body.home .nav a:hover,
+body.home .ribbon-nav a:hover,
+body.home .nav-more a:hover,
+body.home .cta.secondary:hover,
+body.home .hero-legend-link a:hover {
+  background: #24231f;
+  border-color: var(--accent-dark);
+  color: var(--ink);
+  filter: none;
+}
+
+body.home .topbar-motto,
+body.home .hero .sub,
+body.home .hero p,
+body.home .muted-note,
+body.home .footer,
+body.home .brand-sub,
+body.home .trust-strip a,
+body.home .download-meta,
+body.home .download-desc,
+body.home .auth-copy p {
+  color: var(--muted);
+}
+
+body.home .badge,
+body.home .hero-local,
+body.home .feature-tile,
+body.home .download-card,
+body.home .auth-pill {
+  text-shadow: none;
+}
+
+body.home .hero-art,
+body.home .hero-lattice,
+body.home .arch-diagram-image,
+body.home .flow-svg {
+  filter: grayscale(1) saturate(0) contrast(1.04);
+}
+
+body.home .hero-art {
+  opacity: 0.28;
+}
+
+body.home .hero-lattice .hl-lane,
+body.home .hero-lattice .hl-link,
+body.home .hero-lattice .hl-converge,
+body.home .hero-lattice .hl-converge.strong,
+body.home .hero-lattice .hl-converge.warm,
+body.home .hero-lattice .hl-source-ring,
+body.home .hero-lattice .hl-source-orbit {
+  stroke: var(--accent);
+}
+
+body.home .hero-lattice .hl-node,
+body.home .hero-lattice .hl-node-square,
+body.home .hero-lattice .hl-node-diamond,
+body.home .hero-lattice .hl-node-tri,
+body.home .hero-lattice .hl-node.cool,
+body.home .hero-lattice .hl-node.warm,
+body.home .hero-lattice .hl-stream-dot,
+body.home .hero-lattice .hl-stream-square,
+body.home .hero-lattice .hl-stream-tri,
+body.home .hero-lattice .hl-stream-hex,
+body.home .hero-lattice .hl-source-orb,
+body.home .hero-lattice .hl-anomaly-signal {
+  fill: var(--accent);
+  stroke: var(--bg);
+  filter: none;
+}
+
+body.home .hero-lattice .hl-source-aura,
+body.home .hero-lattice .hl-capture-sink,
+body.home .hero-lattice .hl-source-core,
+body.home .hero-lattice .hl-source-orb,
+body.home .hero-lattice .hl-stream-particles,
+body.home .hero-lattice .hl-anomaly-signals,
+body.home .hero-lattice .hl-lanes-flow {
+  mix-blend-mode: normal;
+  filter: none;
+}
+
+body.home .topbar,
+body.home .topbar-motto,
+body.home .brand-mark,
+body.home .nav a,
+body.home .ribbon-nav a,
+body.home .nav-more a,
+body.home .badge,
+body.home .hero,
+body.home .hero-local,
+body.home .cta,
+body.home .trust-strip a,
+body.home .download-fold,
+body.home .nav-fold,
+body.home .fold,
+body.home .architecture-fold,
+body.home .download-card,
+body.home .platform-choice,
+body.home .auth-pill,
+body.home .auth-control,
+body.home .auth-submit {
+  border-radius: 0;
+}
+
+body.home .lattice-ribbon {
+  min-height: 0;
+  margin: 18px 0 8px;
+  padding: 12px;
+}
+
+body.home .ribbon-nav {
+  min-height: 0;
+  align-items: center;
+  justify-content: flex-start;
+  align-content: center;
+  gap: 8px;
+  padding: 0;
+}
+
+body.home .ribbon-nav a {
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 12px;
+  font-size: 0.66rem;
+}
+
+body.home .nav-fold {
+  margin-top: 10px;
+}
