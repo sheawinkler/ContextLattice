@@ -478,6 +478,28 @@ a:hover {
   border-color: var(--accent-dark);
 }
 
+.trust-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.trust-strip a {
+  border: 1.5px solid rgba(214, 230, 238, 0.28);
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: rgba(8, 12, 18, 0.72);
+  color: #dbe7ee;
+  font-size: 13px;
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.trust-strip strong {
+  color: #ffffff;
+}
+
 .lattice-ribbon {
   position: relative;
   min-height: 164px;
@@ -679,6 +701,58 @@ section[id] {
     linear-gradient(130deg, rgba(214, 189, 134, 0.16) 0%, rgba(214, 189, 134, 0.04) 100%),
     #1d1d1d;
   border-color: rgba(214, 189, 134, 0.48);
+}
+
+.offer-section {
+  position: relative;
+}
+
+.offer-section h2 {
+  max-width: 920px;
+}
+
+.offer-grid {
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+}
+
+.offer-card {
+  min-height: 100%;
+  padding: 22px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.01) 58%),
+    #151515;
+}
+
+.offer-card h3 {
+  font-size: clamp(24px, 3vw, 38px);
+  letter-spacing: -0.03em;
+  max-width: 12ch;
+}
+
+.offer-card p {
+  max-width: 58ch;
+}
+
+.offer-builder {
+  border-color: rgba(131, 206, 203, 0.72);
+  box-shadow:
+    9px 9px 0 rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(131, 206, 203, 0.12);
+}
+
+.offer-operator {
+  border-color: rgba(214, 189, 134, 0.72);
+  box-shadow:
+    9px 9px 0 rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(214, 189, 134, 0.12);
+}
+
+.suite-section .suite-card {
+  grid-column: span 2;
+}
+
+.suite-card h3 {
+  max-width: 18ch;
 }
 
 .section .card {
@@ -1588,6 +1662,18 @@ pre code {
   .scale-ladder {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .trust-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .offer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .suite-section .suite-card {
+    grid-column: span 1;
+  }
 }
 
 @media (max-width: 700px) {
@@ -1651,6 +1737,10 @@ pre code {
 
   .feature-matrix {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trust-strip {
+    grid-template-columns: 1fr;
   }
 
   .feature-tile.tile-major,

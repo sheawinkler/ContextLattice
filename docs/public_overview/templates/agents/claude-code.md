@@ -16,8 +16,6 @@ export MEMMCP_AGENT_ID=claude_code_agent
 Preflight:
 ```bash
 ./scripts/agent_orchestration.sh preflight-agent claude-code contextlattice
-# Direct Python fallback:
-python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice
 # Or from globally installed wrapper (~/.contextlattice/bin):
 contextlattice_agent_orchestration preflight-agent claude-code contextlattice
 ```

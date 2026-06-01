@@ -16,8 +16,6 @@ export MEMMCP_AGENT_ID=opencode_agent
 Preflight:
 ```bash
 ./scripts/agent_orchestration.sh preflight-agent opencode contextlattice
-# Direct Python fallback:
-python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
 # Or from globally installed wrapper (~/.contextlattice/bin):
 contextlattice_agent_orchestration preflight-agent opencode contextlattice
 ```

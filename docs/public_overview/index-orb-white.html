@@ -3,24 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Context Lattice | Private memory fabric for AI agents (White Orb Variant)</title>
-  <meta name="description" content="Context Lattice is a private-by-default memory & context layer for agents with durable fanout and retrieval learning loops across multiple data backends." />
+  <title>Context Lattice | Local-first memory infrastructure for AI agents (White Orb Variant)</title>
+  <meta name="description" content="Context Lattice is local-first memory infrastructure for AI agents: durable writes, scoped retrieval, CLI workflows, Skills Index discovery, learning loops, behavior provenance, and graph memory." />
   <link rel="canonical" href="https://contextlattice.io/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Context Lattice" />
-  <meta property="og:title" content="Context Lattice | Private memory fabric for AI agents" />
-  <meta property="og:description" content="Private-by-default memory & context layer for agents with HTTP-preferred MCP, durable fanout, and multi-backend learning retrieval." />
+  <meta property="og:title" content="Context Lattice | Local-first memory infrastructure for AI agents" />
+  <meta property="og:description" content="Agents forget. ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and MCP agents durable memory, scoped recall, Skills Index discovery, and learning retrieval." />
   <meta property="og:url" content="https://contextlattice.io/" />
   <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <meta property="og:image:width" content="1672" />
   <meta property="og:image:height" content="941" />
-  <meta property="og:image:alt" content="Context Lattice: private-by-default memory & context layer for agents" />
+  <meta property="og:image:alt" content="Context Lattice: local-first memory infrastructure for AI agents" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Context Lattice | Private memory fabric for AI agents" />
-  <meta name="twitter:description" content="Local-first memory orchestration with durable fanout and learning retrieval." />
+  <meta name="twitter:title" content="Context Lattice | Local-first memory infrastructure for AI agents" />
+  <meta name="twitter:description" content="Durable memory, scoped recall, CLI workflows, Skills Index discovery, learning retrieval, and provenance for real agent work." />
   <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
-  <link rel="stylesheet" href="styles-gray.css?v=20260428a" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260601b" />
   <link rel="stylesheet" href="styles-fracture.css?v=20260508b" />
   <script type="application/ld+json">
     {
@@ -30,7 +30,7 @@
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux",
       "url": "https://contextlattice.io/",
-      "description": "Private-by-default memory & context layer for agents with HTTP-preferred MCP, durable fanout, and multi-backend learning retrieval.",
+      "description": "Local-first memory infrastructure for AI agents with durable writes, scoped retrieval, CLI workflows, Skills Index discovery, learning loops, behavior provenance, and graph memory.",
       "author": {
         "@type": "Organization",
         "name": "Private Memory Corp"
@@ -49,23 +49,23 @@
     </header>
 
     <section class="hero">
-      <span class="badge">Private-by-default memory & context layer for agents</span>
-      <h1>Give agents durable memory, then ship faster with less token waste.</h1>
+      <span class="badge">Local-first memory infrastructure for AI agents</span>
+      <h1>Stop giving your agents amnesia and calling it workflow.</h1>
       <p class="sub">
-        ContextLattice fuses vector, lexical, rollup, and deep-memory backends behind one retrieval contract so recall quality rises while latency stays predictable.
+        ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and custom MCP agents one durable place to remember decisions, evidence, skills, checkpoints, behavior, and project context.
       </p>
-      <div class="hero-local">HTTP-preferred MCP + durable fanout + staged retrieval</div>
+      <div class="hero-local">CLI + HTTP/MCP + Skills Index + learning retrieval + behavior provenance</div>
       <div class="cta-row">
-        <a class="cta primary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">Start Free on GitHub</a>
-        <a class="cta secondary" href="installation.html">Run Locally</a>
+        <a class="cta primary" href="installation.html">Add memory to your agents</a>
+        <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">Start Free on GitHub</a>
         <a class="cta secondary" href="premium.html">See Premium</a>
         <a class="cta secondary" href="index.html">Warm Orb Version</a>
       </div>
       <div class="trust-strip" aria-label="Trust signals">
-        <a href="updates.html"><strong>Release:</strong> v3.3.x stable</a>
-        <a href="architecture.html"><strong>Runtime:</strong> Go + Rust primary lanes</a>
-        <a href="troubleshooting.html"><strong>Security:</strong> API-key auth by default</a>
-        <a href="wiki.html"><strong>Behavior:</strong> fast-return + async continuation</a>
+        <a href="cli.html"><strong>CLI:</strong> start, search, checkpoint</a>
+        <a href="wiki.html"><strong>Skills:</strong> searchable capability index</a>
+        <a href="architecture.html"><strong>Learning:</strong> feedback-aware retrieval</a>
+        <a href="scaling-memory.html"><strong>Scale:</strong> graph + deep recall lanes</a>
       </div>
       <details class="fold download-fold">
         <summary>Download options + technical bundles</summary>
@@ -316,7 +316,7 @@
         <a href="cli.html">CLI</a>
         <a href="architecture.html">Architecture</a>
         <a href="local-ai-workspaces.html">Compare</a>
-        <a href="scaling-memory.html">Scale</a>
+        <a href="scaling-memory.html">Memory at Scale</a>
         <a href="premium.html">Pricing</a>
         <a href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
@@ -334,32 +334,63 @@
       </details>
     </div>
 
-    <section class="section">
+    <section class="section offer-section">
+      <div class="kicker">Two lanes</div>
+      <h2>Simple enough to install. Deep enough to become your agent memory infrastructure.</h2>
+      <div class="grid offer-grid">
+        <article class="card offer-card offer-builder">
+          <div class="kicker">For builders</div>
+          <h3>Give every agent the same memory contract.</h3>
+          <p>Plug Codex, Cursor, Claude Desktop, Open WebUI, Claude Code, and custom MCP agents into one local-first layer for writes, recall, context packs, and repeatable handoff.</p>
+          <ul class="spec-list">
+            <li><strong>CLI-first workflow:</strong> <code>contextlattice_agent_start</code>, <code>contextlattice_search</code>, and <code>contextlattice_checkpoint</code>.</li>
+            <li><strong>Agent templates:</strong> copy-ready instructions for Codex, Claude Code, OpenCode, Hermes, ChatGPT, and Claude.</li>
+            <li><strong>Skills Index:</strong> discover quarantined capabilities without loading every skill into every agent context.</li>
+          </ul>
+        </article>
+        <article class="card offer-card offer-operator">
+          <div class="kicker">For operators</div>
+          <h3>Keep memory useful when the work gets heavier.</h3>
+          <p>Move beyond "save some chat logs" into durable write truth, staged retrieval, behavior provenance, learning feedback, and graph-aware recall that can grow with the team.</p>
+          <ul class="spec-list">
+            <li><strong>Durable fanout:</strong> write once, then route to rollups, vectors, ledgers, and deeper stores.</li>
+            <li><strong>Learning loops:</strong> feedback and eval cases improve ranking instead of freezing recall quality in place.</li>
+            <li><strong>Behavior provenance:</strong> preserve decisions, evidence, checkpoints, and agent/session context for audit-grade handoff.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section suite-section">
       <div class="grid">
-        <article class="card feature-card">
-          <div class="kicker">What it solves</div>
-          <h3>Memory quality + cost control</h3>
-          <p>Replace repetitive long-context stuffing with reusable memory retrieval and sink durability.</p>
+        <article class="card feature-card suite-card">
+          <div class="kicker">Full suite</div>
+          <h3>Not just memory. The operating layer around memory.</h3>
+          <p>ContextLattice packages durable memory, retrieval policy, skills discovery, CLI workflows, templates, learning, provenance, and deep-memory lanes behind one local contract.</p>
           <div class="feature-matrix" aria-label="Core feature list">
-            <span class="feature-tile tile-major">HTTP-preferred MCP</span>
-            <span class="feature-tile tile-mid">Federated retrieval</span>
-            <span class="feature-tile tile-mid">100 msgs/sec writes</span>
-            <span class="feature-tile tile-wide">Durable outbox fanout</span>
-            <span class="feature-tile tile-wide">HTTP/messaging app interfacing (claw-ready)</span>
+            <span class="feature-tile tile-major">Durable memory writes</span>
+            <span class="feature-tile tile-major">Scoped context packs</span>
+            <span class="feature-tile tile-mid">Global CLI</span>
+            <span class="feature-tile tile-mid">Skills Index</span>
+            <span class="feature-tile tile-wide">HTTP + MCP integration contract</span>
+            <span class="feature-tile tile-wide">Behavior provenance trails</span>
             <span class="feature-tile tile-mid">Learning rerank</span>
-            <span class="feature-tile tile-mid">Letta RAG support</span>
-            <span class="feature-tile tile-mid">Qwen default model</span>
+            <span class="feature-tile tile-mid">Typed graph edges</span>
+            <span class="feature-tile tile-mid">Async deep recall</span>
+            <span class="feature-tile tile-mid">Agent templates</span>
+            <span class="feature-tile tile-wide">Runtime policy + template conformance</span>
+            <span class="feature-tile tile-mid">Qdrant local lane</span>
           </div>
         </article>
         <article class="card">
-          <div class="kicker">How it runs</div>
-          <h3>Qwen-first, any-model runtime</h3>
-          <p>Ships with Qwen by default and can plug into your preferred stack via Ollama, LLVM/llama.cpp, LM Studio, and compatible local gateways.</p>
+          <div class="kicker">Plain English</div>
+          <h3>Your tools remember the same work.</h3>
+          <p>Less replaying context. Less copy-pasting transcripts. Less "wait, what were we doing?" Your agents pick up decisions, evidence, and project state from the same shared memory spine.</p>
         </article>
         <article class="card">
-          <div class="kicker">Latest platform step</div>
-          <h3>100 msgs/sec write stability</h3>
-          <p>Write path is tuned for ~100 messages/sec with queue backpressure, fanout coalescing, admission control, retry workers, and retention sweeps to keep sinks stable under burst load.</p>
+          <div class="kicker">Technical proof</div>
+          <h3>Local-first, multi-lane, measurable.</h3>
+          <p>Public local lite starts with topic rollups and Qdrant. Full/operator stacks can add pgvector, raw ledger, async continuation, memory-bank lanes, graph maintenance, and stronger reliability controls.</p>
         </article>
       </div>
     </section>

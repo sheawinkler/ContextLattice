@@ -1,8 +1,8 @@
 # Scaling Memory as Data Grows
 
-ContextLattice is built around one belief: agents should not get more forgetful as the work gets larger.
+ContextLattice is local-first memory infrastructure built around one belief: agents should not get more forgetful as the work gets larger.
 
-A chat transcript is a room. ContextLattice is the city map, the archive, and the transit system beneath the room. It keeps the fast memories close, routes deeper recall through specialized stores, and preserves the write trail so tomorrow's agent can pick up the thread without asking the user to replay the whole movie.
+A chat transcript is a room. ContextLattice is the city map, the archive, and the transit system beneath the room. It keeps the fast memories close, routes deeper recall through specialized stores, preserves the write trail, exposes agent capabilities through the Skills Index, and gives tomorrow's agent enough provenance to pick up the thread without asking the user to replay the whole movie.
 
 ## The Scaling Shape
 
@@ -11,6 +11,8 @@ Public local lite starts simple:
 - `topic_rollups` keep fresh project context close to the agent.
 - `qdrant` gives the public local stack a vector-native recall lane.
 - HTTP and MCP endpoints give workspaces and agents one shared contract.
+- global CLI wrappers make start, search, and checkpoint flows repeatable.
+- Skills Index search keeps low-probability capabilities discoverable without loading every skill into the active prompt.
 
 As work grows, the same contract can fan out into deeper lanes:
 
@@ -18,6 +20,7 @@ As work grows, the same contract can fan out into deeper lanes:
 - raw ledger storage for durable write truth and auditability.
 - async continuation lanes for slower, deeper recall that should not block the first answer.
 - graph and edge maintenance so memory becomes connected instead of becoming a pile of notes.
+- learning feedback and behavior provenance so recall quality improves without losing the trail behind important decisions.
 
 ## Why This Matters
 
