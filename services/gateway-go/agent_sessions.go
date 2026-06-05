@@ -344,6 +344,31 @@ func normalizeAgentContribution(input map[string]any) map[string]any {
 	return out
 }
 
+func parseISOTime(value string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		parsed, err := time.Parse(layout, trimmed)
+		if err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(bodyBytes)) == "" {
+		return map[string]any{}, nil
+	}
+	return parseJSONMap(bodyBytes)
+}
+
 func bumpContribution(contribution map[string]any, eventType string, metadata map[string]any, at string) map[string]any {
 	out := normalizeAgentContribution(contribution)
 	kind := "event"
