@@ -3,6 +3,10 @@ services:
     image: caddy:2.9
     container_name: contextlattice-caddy
     restart: unless-stopped
+    mem_limit: ${CADDY_MEMORY_LIMIT:-512m}
+    pids_limit: ${CADDY_PIDS_LIMIT:-256}
+    environment:
+      CADDY_INGRESS_PROTOCOLS: ${CADDY_INGRESS_PROTOCOLS:-h1}
     ports:
       - "80:80"
       - "443:443"

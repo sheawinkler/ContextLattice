@@ -1,18 +1,27 @@
 # Copy to infra/caddy/Caddyfile or let scripts/deploy_hosted_core.sh write one.
 # Replace example.com with your domain and update the TLS email if desired.
+{
+	servers {
+		# HTTP/2 Bomb mitigation (2026-06): ContextLattice hosted ingress does not
+		# require client-side h2/h3. Default to h1 until this Caddy build and edge
+		# path have audited header-count and stalled-stream bounds.
+		protocols {$CADDY_INGRESS_PROTOCOLS:h1}
+	}
+}
+
 example.com {
-  encode gzip
-  tls you@example.com
+	encode gzip
+	tls you@example.com
 
-  handle_path /mcp* {
-    reverse_proxy mcp-hub:53130
-  }
+	handle_path /mcp* {
+		reverse_proxy mcp-hub:53130
+	}
 
-  handle_path /status* {
-    reverse_proxy contextlattice-orchestrator:8075
-  }
+	handle_path /status* {
+		reverse_proxy contextlattice-orchestrator:8075
+	}
 
-  handle {
-    reverse_proxy contextlattice-orchestrator:8075
-  }
+	handle {
+		reverse_proxy contextlattice-orchestrator:8075
+	}
 }
