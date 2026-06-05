@@ -1,0 +1,554 @@
+#!/usr/bin/env python3
+"""Universal ContextLattice adapter for agent runtimes."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from _common import REPO_ROOT, emit, ensure_agent_session, now_iso, request_json
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import attach_format_contract, enforce_contract_limits, validate_agent_contract_payload  # noqa: E402
+from agent_orchestration import AGENT_PREFLIGHT_PROFILES, _resolve_agent_preflight_profile  # noqa: E402
+
+
+AGENT_CONFIG_PATH = REPO_ROOT / "config" / "agents" / "agent_profiles.json"
+PROVIDER_OVERFLOW_PATTERNS = (
+    "array_above_max_length",
+    "context length exceeded",
+    "maximum context length",
+    "max context length",
+    "input array is too long",
+    "oversized input",
+)
+
+
+def load_agent_config() -> dict[str, Any]:
+    try:
+        parsed = json.loads(AGENT_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def adapter_contract() -> dict[str, Any]:
+    config = load_agent_config()
+    contract = config.get("adapter_contract") if isinstance(config.get("adapter_contract"), dict) else {}
+    if contract:
+        return dict(contract)
+    return {
+        "schema_id": "contextlattice_universal_agent_adapter.v1",
+        "version": "2026-06-05",
+        "required_phases": ["preflight", "auto_session", "context_pack", "checkpoint", "handoff", "completion"],
+        "required_exports": [
+            "CONTEXTLATTICE_ORCHESTRATOR_URL",
+            "MEMMCP_ORCHESTRATOR_URL",
+            "CONTEXTLATTICE_AGENT",
+            "CONTEXTLATTICE_AGENT_ID",
+            "MEMMCP_AGENT_ID",
+            "CONTEXTLATTICE_SESSION_ID",
+        ],
+        "preflight_route": "/v1/agents/preflight",
+        "event_route": "/v1/agents/sessions/event",
+        "context_pack_route": "/memory/context-pack",
+        "checkpoint_route": "/memory/write",
+        "handoff_helper": "scripts/agent/compaction-handoff-payload",
+    }
+
+
+def validation_status(payload: Any, key: str = "format_contract") -> str:
+    if not isinstance(payload, dict):
+        return ""
+    contract = payload.get(key)
+    if not isinstance(contract, dict):
+        return ""
+    validation = contract.get("validation")
+    if not isinstance(validation, dict):
+        return ""
+    return str(validation.get("status") or "")
+
+
+def configure_base_url(args: argparse.Namespace) -> None:
+    base_url = str(getattr(args, "base_url", "") or "").strip().rstrip("/")
+    if not base_url:
+        return
+    os.environ["CONTEXTLATTICE_ORCHESTRATOR_URL"] = base_url
+    os.environ["MEMMCP_ORCHESTRATOR_URL"] = base_url
+
+
+def contains_provider_overflow(payload: Any) -> bool:
+    rendered = json.dumps(payload, sort_keys=True).lower()
+    return any(pattern in rendered for pattern in PROVIDER_OVERFLOW_PATTERNS)
+
+
+def resolve_profile(agent: str) -> tuple[str, dict[str, Any]]:
+    profile_key, profile = _resolve_agent_preflight_profile(agent)
+    return profile_key, dict(profile)
+
+
+def profile_payload(args: argparse.Namespace) -> tuple[str, dict[str, Any], str, str, str, str]:
+    profile_key, profile = resolve_profile(args.agent)
+    agent_id = str(args.agent_id or profile.get("agent_id") or "").strip()
+    topic_path = str(args.topic_path or profile.get("topic_path") or "").strip()
+    query = str(args.query or args.objective or profile.get("query") or "").strip()
+    mode = str(args.mode or profile.get("retrieval_mode") or "balanced").strip().lower() or "balanced"
+    return profile_key, profile, agent_id, topic_path, query, mode
+
+
+def env_exports(base_url: str, profile_key: str, agent_id: str, session_id: str) -> dict[str, str]:
+    return {
+        "CONTEXTLATTICE_ORCHESTRATOR_URL": base_url,
+        "MEMMCP_ORCHESTRATOR_URL": base_url,
+        "CONTEXTLATTICE_AGENT": profile_key,
+        "CONTEXTLATTICE_AGENT_ID": agent_id,
+        "MEMMCP_AGENT_ID": agent_id,
+        "CONTEXTLATTICE_SESSION_ID": session_id,
+    }
+
+
+def shell_exports(values: dict[str, str]) -> list[str]:
+    out = []
+    for key, value in values.items():
+        safe = str(value).replace("'", "'\"'\"'")
+        out.append(f"export {key}='{safe}'")
+    return out
+
+
+def adapter_response(
+    *,
+    command: str,
+    ok: bool,
+    project: str,
+    session_id: str,
+    result: dict[str, Any],
+    findings: list[dict[str, Any]] | None = None,
+    agent: str = "",
+    agent_id: str = "",
+) -> dict[str, Any]:
+    payload = {
+        "ok": bool(ok),
+        "command": command,
+        "agent": str(agent or "").strip(),
+        "agent_id": str(agent_id or "").strip(),
+        "project": str(project or "").strip(),
+        "session_id": str(session_id or "").strip(),
+        "adapter_contract": adapter_contract(),
+        "result": result,
+        "findings": findings or [],
+    }
+    return attach_format_contract("universal_agent_adapter_response.v1", payload)
+
+
+def contract_findings_for_bootstrap(response: dict[str, Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    findings.extend(validate_agent_contract_payload("agent_preflight_response.v1", response))
+    runtime = response.get("objective_runtime") if isinstance(response.get("objective_runtime"), dict) else {}
+    findings.extend(validate_agent_contract_payload("objective_runtime_state.v1", runtime))
+    policy = response.get("policy_context_package") if isinstance(response.get("policy_context_package"), dict) else {}
+    policy_runtime = policy.get("objective_runtime") if isinstance(policy.get("objective_runtime"), dict) else {}
+    findings.extend(validate_agent_contract_payload("objective_runtime_state.v1", policy_runtime))
+    if validation_status(runtime) != "passed":
+        findings.append({"reason": "objective_runtime_validation_not_passed", "validation": runtime.get("format_contract")})
+    if validation_status(policy_runtime) != "passed":
+        findings.append({"reason": "policy_objective_runtime_validation_not_passed", "validation": policy_runtime.get("format_contract")})
+    if contains_provider_overflow(response):
+        findings.append({"reason": "provider_overflow_phrase_leaked"})
+    if not str(response.get("session_id") or "").strip():
+        findings.append({"reason": "missing_session_id"})
+    return findings
+
+
+def cmd_bootstrap(args: argparse.Namespace) -> int:
+    configure_base_url(args)
+    profile_key, profile, agent_id, topic_path, query, mode = profile_payload(args)
+    payload = {
+        "agent": profile_key,
+        "agent_id": agent_id,
+        "project": args.project,
+        "topic_path": topic_path,
+        "query": query,
+        "retrieval_mode": mode,
+        "mission": args.mission,
+        "objective": args.objective or query,
+        "goal": args.goal,
+    }
+    payload = {key: value for key, value in payload.items() if value not in ("", None)}
+    response = request_json("POST", "/v1/agents/preflight", payload, args.timeout)
+    session_id = str(response.get("session_id") or "").strip()
+    exports = env_exports(args.base_url, profile_key, agent_id, session_id)
+    findings = contract_findings_for_bootstrap(response)
+    output = adapter_response(
+        command="bootstrap",
+        ok=not findings,
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={
+            "topic_path": topic_path,
+            "query": query,
+            "retrieval_mode": mode,
+            "profile": profile,
+            "exports": exports,
+            "shell_exports": shell_exports(exports),
+            "objective_runtime": response.get("objective_runtime"),
+            "policy_context_package": response.get("policy_context_package"),
+            "format_contracts": response.get("format_contracts"),
+            "preflight": {
+                "ok": response.get("ok"),
+                "service": response.get("service"),
+                "orchestrator_url": response.get("orchestrator_url"),
+            },
+        },
+        findings=findings,
+    )
+    emit(output, args.pretty)
+    return 1 if findings else 0
+
+
+def ensure_session_for_args(args: argparse.Namespace, objective: str) -> str:
+    if args.session_id:
+        return args.session_id
+    ensured = ensure_agent_session(
+        project=args.project,
+        objective=objective,
+        agent=args.agent,
+        agent_id=args.agent_id,
+        mission=args.mission,
+        goal=args.goal,
+        metadata={"adapter": "contextlattice-agent-adapter"},
+        tags=["universal-agent-adapter"],
+        timeout=min(float(args.timeout), 10.0),
+        soft=not args.strict,
+    )
+    return str(ensured.get("session_id") or "")
+
+
+def cmd_event(args: argparse.Namespace) -> int:
+    configure_base_url(args)
+    session_id = ensure_session_for_args(args, args.summary or args.event_type)
+    payload = {
+        "session_id": session_id,
+        "agent": args.agent,
+        "agent_id": args.agent_id,
+        "project": args.project,
+        "type": args.event_type,
+        "summary": args.summary,
+        "status": args.status,
+        "metadata": metadata_from_args(args.metadata_json),
+    }
+    payload = {key: value for key, value in payload.items() if value not in ("", None, {})}
+    response = request_json("POST", "/v1/agents/sessions/event", payload, args.timeout)
+    output = adapter_response(
+        command="event",
+        ok=bool(response.get("ok")),
+        agent=args.agent,
+        agent_id=args.agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"event": response},
+    )
+    emit(output, args.pretty)
+    return 0 if response.get("ok") else 1
+
+
+def metadata_from_args(raw: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid --metadata-json: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise SystemExit("--metadata-json must decode to an object")
+    return parsed
+
+
+def cmd_checkpoint(args: argparse.Namespace) -> int:
+    configure_base_url(args)
+    profile_key, profile, agent_id, topic_path, query, mode = profile_payload(args)
+    session_id = ensure_session_for_args(args, args.content or query)
+    content = args.content
+    if args.stdin:
+        content = sys.stdin.read()
+    content = (content or "").strip()
+    if len(content) < 12:
+        raise SystemExit("checkpoint content must be at least 12 characters")
+    body = {
+        "projectName": args.project,
+        "fileName": args.file,
+        "topicPath": args.topic_path or topic_path or "agent/checkpoints",
+        "content": content,
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "created_at": now_iso(),
+        "tags": ["agent-writeback", "checkpoint", "universal-agent-adapter"],
+    }
+    write = request_json("POST", "/memory/write", body, args.timeout)
+    event = request_json(
+        "POST",
+        "/v1/agents/sessions/event",
+        {
+            "session_id": session_id,
+            "agent": profile_key,
+            "agent_id": agent_id,
+            "project": args.project,
+            "type": "writeback.completed",
+            "summary": content[:240],
+            "metadata": {"file": args.file, "topic_path": body["topicPath"], "adapter": "contextlattice-agent-adapter"},
+        },
+        args.timeout,
+    )
+    writeback = attach_format_contract(
+        "writeback_result.v1",
+        {
+            "ok": bool(write.get("ok", True)),
+            "kind": "checkpoint",
+            "project": args.project,
+            "file": args.file,
+            "topic_path": body["topicPath"],
+            "session_id": session_id,
+            "write": write,
+            "event": event,
+            "adapter_contract": adapter_contract(),
+        },
+    )
+    output = adapter_response(
+        command="checkpoint",
+        ok=bool(writeback.get("ok")),
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"writeback": writeback, "retrieval_mode": mode, "profile": profile},
+    )
+    emit(output, args.pretty)
+    return 0 if output.get("ok") else 1
+
+
+def cmd_context_pack(args: argparse.Namespace) -> int:
+    configure_base_url(args)
+    profile_key, profile, agent_id, topic_path, query, mode = profile_payload(args)
+    session_id = ensure_session_for_args(args, args.objective or query)
+    request = {
+        "query": query,
+        "project": args.project,
+        "topic_path": args.topic_path or topic_path,
+        "retrieval_mode": mode,
+        "limit": int(args.limit),
+        "max_facts": int(args.max_facts),
+        "include_retrieval_debug": bool(args.include_retrieval_debug),
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "traffic_class": "user",
+    }
+    request = {key: value for key, value in request.items() if value not in ("", None)}
+    context_pack = request_json("POST", "/memory/context-pack", request, args.timeout)
+    if isinstance(context_pack, dict):
+        context_pack = attach_format_contract("context_pack_response.v1", context_pack)
+    findings = validate_agent_contract_payload("context_pack_response.v1", context_pack)
+    if contains_provider_overflow(context_pack):
+        findings.append({"reason": "context_pack_provider_overflow_phrase_leaked"})
+    event = request_json(
+        "POST",
+        "/v1/agents/sessions/event",
+        {
+            "session_id": session_id,
+            "agent": profile_key,
+            "agent_id": agent_id,
+            "project": args.project,
+            "type": "context_pack.completed",
+            "summary": f"context pack completed for {query[:160]}",
+            "metadata": {
+                "adapter": "contextlattice-agent-adapter",
+                "topic_path": request.get("topic_path"),
+                "retrieval_mode": mode,
+                "contract_ok": not findings,
+            },
+        },
+        args.timeout,
+    )
+    output = adapter_response(
+        command="context-pack",
+        ok=not findings and bool(event.get("ok")),
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={
+            "profile": profile,
+            "topic_path": request.get("topic_path"),
+            "query": query,
+            "retrieval_mode": mode,
+            "context_pack": enforce_contract_limits("context_pack_response.v1", context_pack),
+            "event": event,
+        },
+        findings=findings,
+    )
+    emit(output, args.pretty)
+    return 1 if findings or not event.get("ok") else 0
+
+
+def cmd_handoff(args: argparse.Namespace) -> int:
+    configure_base_url(args)
+    session_id = ensure_session_for_args(args, args.summary or "handoff")
+    payload = {
+        "schema_version": 1,
+        "event": "adapter_handoff",
+        "project": args.project,
+        "session_id": session_id,
+        "summary": args.summary or "universal agent adapter handoff",
+        "objective": args.objective,
+        "next_action": args.next_action,
+    }
+    env = os.environ.copy()
+    env["CONTEXTLATTICE_SESSION_ID"] = session_id
+    env["CONTEXTLATTICE_PROJECT"] = args.project
+    proc = subprocess.run(
+        [str(REPO_ROOT / "scripts" / "agent" / "compaction-handoff-payload"), "--summary"],
+        input=json.dumps(payload),
+        cwd=str(REPO_ROOT),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=max(5.0, float(args.timeout)),
+    )
+    try:
+        handoff = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        handoff = {"raw": proc.stdout[:2000], "stderr": proc.stderr[:1000]}
+    findings = []
+    if proc.returncode != 0:
+        findings.append({"reason": "handoff_payload_failed", "returncode": proc.returncode, "stderr": proc.stderr[:1000]})
+    if contains_provider_overflow(handoff):
+        findings.append({"reason": "handoff_provider_overflow_phrase_leaked"})
+    event = request_json(
+        "POST",
+        "/v1/agents/sessions/event",
+        {
+            "session_id": session_id,
+            "agent": args.agent,
+            "agent_id": args.agent_id,
+            "project": args.project,
+            "type": "handoff.created",
+            "summary": args.summary,
+            "metadata": {"adapter": "contextlattice-agent-adapter", "handoff_ok": not findings},
+        },
+        args.timeout,
+    )
+    output = adapter_response(
+        command="handoff",
+        ok=not findings and bool(event.get("ok")),
+        agent=args.agent,
+        agent_id=args.agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"handoff": handoff, "event": event},
+        findings=findings,
+    )
+    emit(output, args.pretty)
+    return 1 if findings or not event.get("ok") else 0
+
+
+def cmd_complete(args: argparse.Namespace) -> int:
+    args.event_type = "session.completed"
+    args.status = "completed"
+    return cmd_event(args)
+
+
+def cmd_profiles(args: argparse.Namespace) -> int:
+    output = adapter_response(
+        command="profiles",
+        ok=True,
+        project=args.project,
+        session_id="",
+        result={"profiles": AGENT_PREFLIGHT_PROFILES},
+    )
+    emit(output, args.pretty)
+    return 0
+
+
+def add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--agent", default="codex")
+    parser.add_argument("--agent-id", default="")
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--session-id", default=os.getenv("CONTEXTLATTICE_SESSION_ID", ""))
+    parser.add_argument("--mission", default="")
+    parser.add_argument("--objective", default="")
+    parser.add_argument("--goal", default="")
+    parser.add_argument("--base-url", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"))
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    bootstrap = sub.add_parser("bootstrap")
+    add_common(bootstrap)
+    bootstrap.add_argument("--topic-path", default="")
+    bootstrap.add_argument("--query", default="")
+    bootstrap.add_argument("--mode", default="")
+    bootstrap.set_defaults(func=cmd_bootstrap)
+
+    checkpoint = sub.add_parser("checkpoint")
+    add_common(checkpoint)
+    checkpoint.add_argument("--topic-path", default="")
+    checkpoint.add_argument("--query", default="")
+    checkpoint.add_argument("--mode", default="")
+    checkpoint.add_argument("--file", default="notes/agent-adapters/checkpoint.md")
+    checkpoint.add_argument("--content", default="")
+    checkpoint.add_argument("--stdin", action="store_true")
+    checkpoint.set_defaults(func=cmd_checkpoint)
+
+    context_pack = sub.add_parser("context-pack")
+    add_common(context_pack)
+    context_pack.add_argument("--topic-path", default="")
+    context_pack.add_argument("--query", default="")
+    context_pack.add_argument("--mode", default="")
+    context_pack.add_argument("--limit", type=int, default=6)
+    context_pack.add_argument("--max-facts", type=int, default=8)
+    context_pack.add_argument("--include-retrieval-debug", action="store_true")
+    context_pack.set_defaults(func=cmd_context_pack)
+
+    handoff = sub.add_parser("handoff")
+    add_common(handoff)
+    handoff.add_argument("--summary", default="")
+    handoff.add_argument("--next-action", default="")
+    handoff.set_defaults(func=cmd_handoff)
+
+    event = sub.add_parser("event")
+    add_common(event)
+    event.add_argument("event_type")
+    event.add_argument("--summary", default="")
+    event.add_argument("--status", default="")
+    event.add_argument("--metadata-json", default="")
+    event.set_defaults(func=cmd_event)
+
+    complete = sub.add_parser("complete")
+    add_common(complete)
+    complete.add_argument("--summary", default="session completed")
+    complete.add_argument("--status", default="")
+    complete.add_argument("--metadata-json", default="")
+    complete.set_defaults(func=cmd_complete)
+
+    list_cmd = sub.add_parser("profiles")
+    list_cmd.add_argument("--project", default="contextlattice")
+    list_cmd.add_argument("--pretty", action="store_true")
+    list_cmd.set_defaults(func=cmd_profiles)
+
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -16,6 +16,7 @@ Templates are contract-aware but intentionally light: agents should preserve `fo
 
 Global helper CLI tools are auto-installed by `gmake quickstart` and installer flows:
 - `~/.contextlattice/bin/contextlattice_agent_orchestration`
+- `~/.contextlattice/bin/contextlattice_agent_adapter`
 - `~/.contextlattice/bin/contextlattice_search`
 - `~/.contextlattice/bin/contextlattice_write`
 - `~/.contextlattice/bin/contextlattice_agent_start`
@@ -24,5 +25,5 @@ Global helper CLI tools are auto-installed by `gmake quickstart` and installer f
 Preferred startup:
 
 ```bash
-contextlattice_agent_start --soft --compact
+contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
 ```

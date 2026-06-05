@@ -1,4 +1,29 @@
 {
+  "adapter_contract": {
+    "schema_id": "contextlattice_universal_agent_adapter.v1",
+    "version": "2026-06-05",
+    "required_phases": [
+      "preflight",
+      "auto_session",
+      "context_pack",
+      "checkpoint",
+      "handoff",
+      "completion"
+    ],
+    "required_exports": [
+      "CONTEXTLATTICE_ORCHESTRATOR_URL",
+      "MEMMCP_ORCHESTRATOR_URL",
+      "CONTEXTLATTICE_AGENT",
+      "CONTEXTLATTICE_AGENT_ID",
+      "MEMMCP_AGENT_ID",
+      "CONTEXTLATTICE_SESSION_ID"
+    ],
+    "event_route": "/v1/agents/sessions/event",
+    "preflight_route": "/v1/agents/preflight",
+    "context_pack_route": "/memory/context-pack",
+    "checkpoint_route": "/memory/write",
+    "handoff_helper": "scripts/agent/compaction-handoff-payload"
+  },
   "profiles": {
     "codex": {
       "agent_id": "codex_gpt5",

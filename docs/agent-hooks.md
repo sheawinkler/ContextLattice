@@ -43,6 +43,7 @@ Installed commands:
 | Command | Purpose |
 | --- | --- |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
+| `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
 | `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |
@@ -63,10 +64,12 @@ Installed commands:
 ## Recommended startup sequence
 
 ```bash
-contextlattice_agent_start --soft --compact
+contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
 ```
 
-This runs:
+This creates or recovers a ContextLattice-owned session, returns bounded exports,
+and emits a contract-valid `universal_agent_adapter_response.v1`. For Codex hook
+startup, `contextlattice_agent_start --soft --compact` still runs:
 1. resource pressure sampler
 2. git lane guard
 3. OrbStack/host-forward guard

@@ -15,8 +15,11 @@ export MEMMCP_AGENT_ID=claude_code_agent
 
 Preflight:
 ```bash
-./scripts/agent_orchestration.sh preflight-agent claude-code contextlattice
-# Or from globally installed wrapper (~/.contextlattice/bin):
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent claude-code --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+contextlattice_agent_adapter context-pack --agent claude-code --project contextlattice --session-id "$SESSION_ID" --pretty
+
+# Compatibility wrapper:
 contextlattice_agent_orchestration preflight-agent claude-code contextlattice
 ```
 

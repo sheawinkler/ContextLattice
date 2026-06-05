@@ -21,6 +21,7 @@ try:
     from scripts.agent_contracts import (
         anti_scheming_protocol,
         contract_metadata,
+        enforce_contract_limits,
         load_agent_contracts_registry,
         preflight_contracts_summary,
         stamp_validation,
@@ -34,6 +35,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
     from agent_contracts import (  # type: ignore[no-redef]
         anti_scheming_protocol,
         contract_metadata,
+        enforce_contract_limits,
         load_agent_contracts_registry,
         preflight_contracts_summary,
         stamp_validation,
@@ -367,6 +369,9 @@ class ContextLatticeOrchestrator:
         primary_pack: Dict[str, Any],
         mission_pack: Optional[Dict[str, Any]],
         mission_pack_error: Optional[str],
+        objective_runtime: Optional[Dict[str, Any]] = None,
+        session_id: str = "",
+        action_executed: str = "agent.preflight.completed",
     ) -> Dict[str, Any]:
         """Build a portable objective/goal/mission package for downstream agents."""
         mission = DEFAULT_CONTEXTLATTICE_MISSION
@@ -379,6 +384,17 @@ class ContextLatticeOrchestrator:
         registry = load_agent_contracts_registry()
         protocol = anti_scheming_protocol(registry)
         format_contract = contract_metadata("policy_context_package.v1", registry)
+        if not isinstance(objective_runtime, dict):
+            objective_runtime = ContextLatticeOrchestrator._build_objective_runtime_state(
+                agent=agent,
+                agent_id=agent_id,
+                project=project,
+                topic_path=topic_path,
+                retrieval_mode=retrieval_mode,
+                query=query,
+                session_id=session_id,
+                action_executed=action_executed,
+            )
         package = {
             "version": "2026-05-10",
             "agent": agent,
@@ -398,6 +414,7 @@ class ContextLatticeOrchestrator:
             "policy_contract": {
                 "retrieve_before_inference": True,
                 "anti_scheming_required": True,
+                "objective_runtime_required": True,
                 "checkpoint_during_execution": True,
                 "final_recency_pass_required": True,
                 "include_grounding": True,
@@ -407,6 +424,7 @@ class ContextLatticeOrchestrator:
                 "contract_boundary_validated": True,
                 "fail_closed_on_contract_violation": True,
             },
+            "objective_runtime": objective_runtime,
             "anti_scheming_protocol": protocol,
             "handoff": {
                 "disperse_to_agents": True,
@@ -429,6 +447,74 @@ class ContextLatticeOrchestrator:
         contract_findings.extend(validate_agent_contract_payload("policy_context_package.v1", package, registry))
         package["format_contract"] = stamp_validation(format_contract, contract_findings)
         return package
+
+    @staticmethod
+    def _build_objective_runtime_state(
+        *,
+        agent: str,
+        agent_id: str,
+        project: str,
+        topic_path: str,
+        retrieval_mode: str,
+        query: str,
+        session_id: str = "",
+        action_executed: str = "objective_runtime_contract_built",
+    ) -> Dict[str, Any]:
+        registry = load_agent_contracts_registry()
+        payload = {
+            "version": "2026-06-05",
+            "agent": str(agent or "").strip(),
+            "agent_id": str(agent_id or "").strip(),
+            "project": str(project or "").strip(),
+            "session_id": str(session_id or "").strip(),
+            "objective_state": "active",
+            "mission": DEFAULT_CONTEXTLATTICE_MISSION,
+            "objective": DEFAULT_CONTEXTLATTICE_OBJECTIVE,
+            "goal": DEFAULT_CONTEXTLATTICE_GOAL,
+            "scoreboard": {
+                "primary_kpi": os.getenv("CONTEXTLATTICE_PRIMARY_KPI", "").strip()
+                or "agent makes measurable progress toward the requested objective",
+                "guardrail_kpi": os.getenv("CONTEXTLATTICE_GUARDRAIL_KPI", "").strip()
+                or "outputs stay contract-valid, bounded, evidence-grounded, and generic across agent runners",
+                "cadence_kpi": os.getenv("CONTEXTLATTICE_CADENCE_KPI", "").strip()
+                or "each preflight, context pack, checkpoint, handoff, and completion emits objective/session evidence",
+            },
+            "action_executed": str(action_executed or "objective_runtime_contract_built").strip(),
+            "evidence": {
+                "required": [
+                    "retrieved_context_or_explicit_no_data",
+                    "deterministic_check_or_artifact_inspection",
+                    "checkpoint_or_session_event_for_handoff",
+                ],
+                "current": [
+                    {
+                        "kind": "preflight_contract",
+                        "query": str(query or "").strip()[:720],
+                        "topic_path": str(topic_path or "").strip(),
+                        "retrieval_mode": str(retrieval_mode or "").strip(),
+                        "session_id": str(session_id or "").strip(),
+                    }
+                ],
+            },
+            "objective_delta": {
+                "before": "objective state unproven until agent records an executed action with evidence",
+                "after": "agent has a bounded objective runtime contract and session path for subsequent events",
+            },
+            "risk_or_blocker": {
+                "status": "none_reported",
+                "fastest_recovery_path": "run preflight or contextlattice-session ensure, then attach the returned session_id to context, checkpoint, and handoff calls",
+            },
+            "next_action": "execute the smallest useful action, verify it with matching artifacts, and emit a session event or checkpoint before handoff",
+        }
+        metadata = contract_metadata("objective_runtime_state.v1", registry)
+        payload["format_contract"] = metadata
+        payload = enforce_contract_limits("objective_runtime_state.v1", payload, registry)
+        findings = validate_agent_contract_payload("objective_runtime_state.v1", payload, registry)
+        payload["format_contract"] = stamp_validation(metadata, findings)
+        payload = enforce_contract_limits("objective_runtime_state.v1", payload, registry)
+        findings = validate_agent_contract_payload("objective_runtime_state.v1", payload, registry)
+        payload["format_contract"] = stamp_validation(metadata, findings)
+        return payload
 
     def search_with_lifecycle(
         self,
@@ -888,6 +974,15 @@ class ContextLatticeOrchestrator:
         except Exception as exc:
             mission_pack_error = str(exc)
 
+        objective_runtime = self._build_objective_runtime_state(
+            agent=profile_key,
+            agent_id=effective_agent_id,
+            project=project,
+            topic_path=effective_topic_path,
+            retrieval_mode=effective_mode,
+            query=effective_query,
+            action_executed="agent.preflight.completed",
+        )
         policy_context_package = self._build_agent_policy_context_package(
             agent=profile_key,
             agent_id=effective_agent_id,
@@ -898,6 +993,7 @@ class ContextLatticeOrchestrator:
             primary_pack=pack,
             mission_pack=mission_pack,
             mission_pack_error=mission_pack_error,
+            objective_runtime=objective_runtime,
         )
 
         response = {
@@ -917,6 +1013,7 @@ class ContextLatticeOrchestrator:
             "broadened_search": broadened,
             "context_pack": pack,
             "mission_context_pack": mission_pack,
+            "objective_runtime": objective_runtime,
             "policy_context_package": policy_context_package,
             "format_contracts": preflight_contracts_summary(),
         }

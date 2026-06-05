@@ -15,12 +15,11 @@ export MEMMCP_AGENT_ID=codex_gpt5
 
 Preflight:
 ```bash
-contextlattice_agent_start --soft --compact
-./scripts/agent_orchestration.sh preflight contextlattice runbooks/codex-integration
-# Or from any working directory:
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
-# Or from globally installed wrapper (~/.contextlattice/bin):
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
+
+# Compatibility wrapper:
 contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integration
 ```
 

@@ -6,48 +6,49 @@ Paste this into your agent/LLM system instruction block.
 Use ContextLattice at http://127.0.0.1:8075 as mandatory memory/context orchestration.
 
 Operating rules:
-1) Before any planning/inference, call POST /memory/search with include_grounding=true and scoped project/topic when known.
-2) If scoped search is empty or degraded, run one broader search in the same project before concluding there is no context.
-3) For broad multi-file work, call POST /memory/context-pack.
-4) During execution, checkpoint key decisions/outcomes with POST /memory/write or contextlattice_checkpoint.
-5) Prefer hook-first startup when CLI tools are installed: contextlattice_agent_start --soft --compact.
+1) If CLI tools are available, run `contextlattice_agent_adapter bootstrap --agent <profile> --project <project>` before planning/inference and preserve the returned exports/session_id.
+2) If CLI tools are unavailable, call POST /v1/agents/preflight with the agent profile, project, topic_path, query, and retrieval_mode.
+3) For scoped recall, use `contextlattice_agent_adapter context-pack --agent <profile> --project <project> --session-id <session_id>` or POST /memory/context-pack.
+4) If scoped search/context is empty or degraded, run one broader project query before concluding there is no context.
+5) During execution, checkpoint key decisions/outcomes with `contextlattice_agent_adapter checkpoint`, `contextlattice_checkpoint`, or POST /memory/write.
 6) Before final output, run one final recency retrieval (POST /memory/search or POST /memory/context-pack).
-7) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events (or re-query shortly after).
-8) Retrieval mode semantics:
+7) Before handoff or compaction, run `contextlattice_agent_adapter handoff --session-id <session_id> --summary "<objective state>"`.
+8) On normal completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`.
+9) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, and `universal_agent_adapter_response.v1` contract metadata in downstream handoffs.
+10) If direct search is needed, call POST /memory/search with include_grounding=true and scoped project/topic when known.
+11) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events (or re-query shortly after).
+12) Retrieval mode semantics:
    - balanced = fast sync now + slow async continuation.
    - deep = broader/lower-cap retrieval budgets but still fail-open; do not wait forever on one lane.
-9) If a transport call times out with zero bytes, immediately retry once, then check continuation events and re-read.
-10) Use POST /v1/memory/neighbors for relationship recall when graph-neighbor context is useful.
-11) Use profile-aware preflight via POST /v1/agents/preflight before major tasks.
-12) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
-13) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
-14) Preserve ContextLattice format_contract / format_contracts fields in agent handoffs; do not strip or fabricate contract metadata.
-15) Before context compaction, run compaction handoff write+readback so objective state survives:
-    contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced
-
-If memory is degraded, continue execution, explicitly report degraded-memory mode, and provide continuation token/status when available.
+13) If a transport call times out with zero bytes, immediately retry once, then check continuation events and re-read.
+14) Use POST /v1/memory/neighbors for relationship recall when graph-neighbor context is useful.
+15) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
+16) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
+17) If memory is degraded, continue execution, explicitly report degraded-memory mode, and provide continuation token/status when available.
 ```
 
-Preflight command helper for CLI agents:
+Universal adapter helper for CLI agents:
 ```bash
-# repo-root invocation
-python3 scripts/agent_orchestration.py preflight contextlattice runbooks/codex-integration
+# list supported profiles
+contextlattice_agent_adapter profiles
 
-# any-working-directory invocation
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-python3 "$REPO_ROOT/scripts/agent_orchestration.py" preflight contextlattice runbooks/codex-integration
+# start/recover a ContextLattice-owned session and bounded preflight package
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 
-# global wrapper invocation (auto-installed by quickstart/installers)
+# retrieve bounded context against the same session
+contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
+
+# checkpoint and handoff through the shared lifecycle
+contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
+contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
+contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed"
+
+# legacy direct helpers remain available
 contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integration
-
-# global retrieval/write helpers
 contextlattice_search -h
 contextlattice_write -h
-contextlattice_agent_start -h
 contextlattice_checkpoint -h
-
-# compaction handoff helper (default before summary compaction)
-contextlattice_agent_orchestration compaction-handoff contextlattice "objective summary" runbooks/context-compaction-handoff balanced
 
 # boundary contract telemetry
 curl -fsS http://127.0.0.1:8075/telemetry/agent-contracts

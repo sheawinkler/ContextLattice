@@ -19,6 +19,7 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_search
   contextlattice_write
   contextlattice_agent_orchestration
+  contextlattice_agent_adapter
   contextlattice_agent_start
   contextlattice_checkpoint
   contextlattice_*_guard wrappers
@@ -79,6 +80,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "${GLOBAL_SCRIPTS_DIR}" "${GLOBAL_BIN_DIR}"
+mkdir -p "${GLOBAL_HOME}/config/agent_contracts" "${GLOBAL_HOME}/config/agents"
 
 copy_script() {
   local src="$1"
@@ -92,6 +94,7 @@ copy_script() {
 }
 
 copy_script "${ROOT_DIR}/scripts/agent_orchestration.py" "${GLOBAL_SCRIPTS_DIR}/agent_orchestration.py"
+copy_script "${ROOT_DIR}/scripts/agent_contracts.py" "${GLOBAL_SCRIPTS_DIR}/agent_contracts.py"
 copy_script "${ROOT_DIR}/scripts/contextlattice_client.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_client.py"
 copy_script "${ROOT_DIR}/scripts/contextlattice_search.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_search.py"
 copy_script "${ROOT_DIR}/scripts/contextlattice_write.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_write.py"
@@ -99,6 +102,22 @@ rm -rf "${GLOBAL_SCRIPTS_DIR}/agent_hooks"
 mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent_hooks"
 for hook_script in "${ROOT_DIR}"/scripts/agent_hooks/*.sh; do
   copy_script "$hook_script" "${GLOBAL_SCRIPTS_DIR}/agent_hooks/$(basename "$hook_script")"
+done
+rm -rf "${GLOBAL_SCRIPTS_DIR}/agent"
+mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent"
+for agent_script in "${ROOT_DIR}"/scripts/agent/*; do
+  [[ -f "$agent_script" ]] || continue
+  copy_script "$agent_script" "${GLOBAL_SCRIPTS_DIR}/agent/$(basename "$agent_script")"
+done
+for contract_config in "${ROOT_DIR}"/config/agent_contracts/*.json; do
+  [[ -f "$contract_config" ]] || continue
+  cp "$contract_config" "${GLOBAL_HOME}/config/agent_contracts/$(basename "$contract_config")"
+  chmod 0644 "${GLOBAL_HOME}/config/agent_contracts/$(basename "$contract_config")"
+done
+for agent_config in "${ROOT_DIR}"/config/agents/*.json; do
+  [[ -f "$agent_config" ]] || continue
+  cp "$agent_config" "${GLOBAL_HOME}/config/agents/$(basename "$agent_config")"
+  chmod 0644 "${GLOBAL_HOME}/config/agents/$(basename "$agent_config")"
 done
 
 if [[ "$SKIP_VENV" != "1" ]]; then
@@ -154,10 +173,24 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/contextlattice-agent-adapter"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_search" \
   "${GLOBAL_BIN_DIR}/contextlattice_write" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
+  "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
+  "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
 
 write_hook_wrapper() {
   local command_name="$1"
@@ -340,6 +373,7 @@ log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pre_compaction_write"
@@ -348,4 +382,5 @@ log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
 log "  contextlattice_write -h"
+log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_agent_start -h"

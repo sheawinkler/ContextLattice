@@ -40,6 +40,7 @@ REQUIRED_CONTRACTS = (
     "codex_compact_hook_stdout.v1",
     "context_overflow_recovery.v1",
     "objective_runtime_state.v1",
+    "universal_agent_adapter_response.v1",
 )
 
 
@@ -275,6 +276,47 @@ def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
     return policy
 
 
+def sample_universal_agent_adapter_response(registry: dict[str, Any]) -> dict[str, Any]:
+    return attach_format_contract(
+        "universal_agent_adapter_response.v1",
+        {
+            "ok": True,
+            "command": "bootstrap",
+            "agent": "codex",
+            "agent_id": "codex_gpt5_test",
+            "project": "contextlattice",
+            "session_id": "sess_audit",
+            "adapter_contract": {
+                "schema_id": "contextlattice_universal_agent_adapter.v1",
+                "version": "2026-06-05",
+                "required_phases": [
+                    "preflight",
+                    "auto_session",
+                    "context_pack",
+                    "checkpoint",
+                    "handoff",
+                    "completion",
+                ],
+                "required_exports": [
+                    "CONTEXTLATTICE_ORCHESTRATOR_URL",
+                    "MEMMCP_ORCHESTRATOR_URL",
+                    "CONTEXTLATTICE_AGENT",
+                    "CONTEXTLATTICE_AGENT_ID",
+                    "MEMMCP_AGENT_ID",
+                    "CONTEXTLATTICE_SESSION_ID",
+                ],
+            },
+            "result": {
+                "exports": {"CONTEXTLATTICE_SESSION_ID": "sess_audit"},
+                "objective_runtime": sample_objective_runtime(registry),
+                "policy_context_package": sample_policy_package(registry),
+            },
+            "findings": [],
+        },
+        registry,
+    )
+
+
 def validate_expected_failure(contract_id: str, payload: dict[str, Any], reason: str) -> dict[str, Any] | None:
     findings = validate_agent_contract_payload(contract_id, payload)
     if not findings:
@@ -333,6 +375,7 @@ def run_audit() -> list[dict[str, Any]]:
         ("a2a_readiness_profile.v1", sample_a2a_readiness()),
         ("context_overflow_recovery.v1", sample_context_overflow_recovery()),
         ("objective_runtime_state.v1", sample_objective_runtime(registry)),
+        ("universal_agent_adapter_response.v1", sample_universal_agent_adapter_response(registry)),
     ):
         for item in validate_agent_contract_payload(contract_id, payload, registry):
             findings.append({"severity": "error", **item})
