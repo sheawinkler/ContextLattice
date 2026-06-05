@@ -29,7 +29,13 @@ ContextLattice provides a single memory contract for agentic systems:
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
 - Local-first deployment with optional hosted surfaces.
 
-## Public Runtime Stack (v3)
+## Current Public Baseline
+
+`v3.4.0` is the public agent runtime contract baseline: universal adapter lifecycle, native agent sessions, objective runtime state, scoped recall, checkpoints, handoffs, and completion flow behind one local contract.
+
+`v4` remains the private tuning lane for experiments that still need benchmark, recall, and soak gates before public promotion.
+
+## Public Runtime Stack (v3.4)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -108,12 +114,14 @@ LLAMA_CPP_BASE_URL=http://127.0.0.1:8080
 Installer and quickstart paths install agent helpers under `~/.contextlattice/bin`.
 
 ```bash
+contextlattice_agent_adapter profiles
 contextlattice_agent_start --soft --compact
 contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h
 ```
 
+- `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
 - Hook pack details: `docs/agent-hooks.md`.
@@ -128,6 +136,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime flows.
+- Use `scripts/agent/contextlattice-session sweep-stale-audits --all-projects --pretty` for dry-run-first cleanup of stale objective-runtime audit/preflight sessions; add `--confirm` only after reviewing matches.
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
 - Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
 
@@ -181,6 +190,7 @@ Canonical event families include `session.started`, `context_pack.completed`, `d
 - Integrations: `https://contextlattice.io/integration.html`
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
+- Release notes: `docs/releases/v3.4.0.md`
 
 ## License
 

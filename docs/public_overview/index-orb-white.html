@@ -449,9 +449,9 @@ gmake monitor-check</code></pre>
       <h2>What is public now vs private next</h2>
       <div class="grid component-grid">
         <article class="card component-card">
-          <h3>Public v3.3 (current launch lane)</h3>
+          <h3>Public v3.4 (current launch lane)</h3>
           <ul class="spec-list">
-            <li><strong>Current public release:</strong> <code>v3.3.2</code></li>
+            <li><strong>Current public release:</strong> <code>v3.4.0</code></li>
             <li><strong>Frontdoor:</strong> <code>gateway-go</code> on <code>:8075</code></li>
             <li><strong>Fallback:</strong> Python orchestrator on <code>:18075</code></li>
             <li><strong>Memory-bank default:</strong> <code>shodh_spike</code></li>
@@ -476,7 +476,7 @@ gmake monitor-check</code></pre>
         <h3>Launch flow map</h3>
         <div class="mermaid">
 flowchart LR
-  A[Agent or App] --> B["Public Lane: v3.3"]
+  A[Agent or App] --> B["Public Lane: v3.4"]
   B --> C["Gateway-Go :8075"]
   C --> D["Public default fast sources: topic_rollups + qdrant"]
   C --> E["Slow async continuation: mindsdb + mongo_raw + letta + memory_bank"]
@@ -722,7 +722,7 @@ flowchart LR
           <h3>Hugging Face / Glama lite</h3>
           <p>Single-container lane focused on compatibility and low footprint.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.3.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.4.x</code></li>
             <li><strong>Includes:</strong> gateway + orchestrator container with topic-rollup-first retrieval</li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
             <li><strong>Memory:</strong> 4-8 GB RAM baseline</li>
@@ -733,7 +733,7 @@ flowchart LR
           <h3>Lite mode</h3>
           <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.3.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.4.x</code></li>
             <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
             <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + qdrant</code> by default; pgvector remains first-class for full/operator stacks</li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
@@ -745,7 +745,7 @@ flowchart LR
           <h3>Full mode</h3>
           <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.3.x</code> Full, and baseline for private <code>v4</code> tuning</li>
+            <li><strong>App version lane:</strong> Public <code>v3.4.x</code> Full, and baseline for private <code>v4</code> tuning</li>
             <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
             <li><strong>Deep continuation lane:</strong> async enrichment from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Compute:</strong> 6-8 vCPU recommended</li>

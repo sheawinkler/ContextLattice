@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -158,6 +159,118 @@ def cmd_runtime(args: argparse.Namespace) -> int:
     return 0 if raw.get("enabled", False) else 1
 
 
+STALE_AUDIT_OBJECTIVE_PATTERNS = (
+    "audit contextlattice generic auto session objective runtime",
+    "prove objective runtime state is present",
+    "objective runtime contract smoke",
+)
+
+STALE_AUDIT_LAST_EVENTS = {
+    "agent.preflight.completed",
+    "context_pack.completed",
+}
+
+
+def session_age_secs(session: dict[str, Any]) -> float:
+    value = session.get("last_event_age_secs")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    raw_ts = str(session.get("last_event_at") or session.get("updated_at") or "").strip()
+    if not raw_ts:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+
+
+def is_stale_audit_session(session: dict[str, Any], min_age_secs: float) -> bool:
+    if str(session.get("status") or "").strip().lower() != "active":
+        return False
+    if session_age_secs(session) < min_age_secs:
+        return False
+    objective = str(session.get("objective") or "").strip().lower()
+    if not any(pattern in objective for pattern in STALE_AUDIT_OBJECTIVE_PATTERNS):
+        return False
+    last_event = str(session.get("last_event_type") or "").strip()
+    return last_event in STALE_AUDIT_LAST_EVENTS
+
+
+def cmd_sweep_stale_audits(args: argparse.Namespace) -> int:
+    params: dict[str, Any] = {
+        "limit": args.limit,
+        "status": "active",
+        "agent": args.agent,
+    }
+    if args.project and not args.all_projects:
+        params["project"] = args.project
+    query = urlencode({key: value for key, value in params.items() if value not in ("", None)})
+    raw = request_json("GET", f"/v1/agents/sessions?{query}", None, args.timeout)
+    sessions = raw.get("sessions") if isinstance(raw.get("sessions"), list) else []
+    candidates = [
+        session
+        for session in sessions
+        if isinstance(session, dict) and is_stale_audit_session(session, args.min_age_secs)
+    ]
+    closed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    if args.confirm:
+        for session in candidates:
+            session_id = str(session.get("id") or "").strip()
+            if not session_id:
+                continue
+            payload = {
+                "session_id": session_id,
+                "project": session.get("project") or args.project,
+                "agent": session.get("agent") or "",
+                "agent_id": session.get("agent_id") or "",
+                "type": "session.completed",
+                "status": "completed",
+                "summary": args.summary,
+                "metadata": {
+                    "swept_by": "contextlattice-session sweep-stale-audits",
+                    "reason": "stale_audit_session",
+                    "last_event_type": session.get("last_event_type") or "",
+                    "last_event_age_secs": session_age_secs(session),
+                },
+            }
+            result = request_json("POST", "/v1/agents/sessions/event", payload, args.timeout)
+            if result.get("ok"):
+                closed.append({"id": session_id, "project": payload["project"], "agent": payload["agent"]})
+            else:
+                errors.append({"id": session_id, "error": result})
+
+    payload = {
+        "ok": not errors,
+        "dry_run": not args.confirm,
+        "scanned": len(sessions),
+        "matched": len(candidates),
+        "closed": closed,
+        "errors": errors,
+        "min_age_secs": args.min_age_secs,
+        "scope": "all_projects" if args.all_projects else (args.project or "all_projects"),
+        "candidates": [
+            {
+                "id": session.get("id"),
+                "project": session.get("project"),
+                "agent": session.get("agent"),
+                "objective": session.get("objective"),
+                "last_event_type": session.get("last_event_type"),
+                "last_event_age_secs": session_age_secs(session),
+            }
+            for session in candidates
+        ],
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--session-id", default="")
     parser.add_argument("--agent", default="")
@@ -230,6 +343,18 @@ def main() -> int:
     add_common(runtime)
     runtime.add_argument("--limit", type=int, default=16)
     runtime.set_defaults(func=cmd_runtime)
+
+    sweep = sub.add_parser("sweep-stale-audits")
+    sweep.add_argument("--project", default="")
+    sweep.add_argument("--agent", default="")
+    sweep.add_argument("--all-projects", action="store_true")
+    sweep.add_argument("--limit", type=int, default=200)
+    sweep.add_argument("--min-age-secs", type=float, default=300)
+    sweep.add_argument("--timeout", type=float, default=10)
+    sweep.add_argument("--summary", default="completed stale objective-runtime audit session")
+    sweep.add_argument("--confirm", action="store_true")
+    sweep.add_argument("--pretty", action="store_true")
+    sweep.set_defaults(func=cmd_sweep_stale_audits)
 
     args = parser.parse_args()
     return int(args.func(args))
