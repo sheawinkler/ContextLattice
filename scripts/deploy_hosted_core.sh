@@ -13,21 +13,30 @@ fi
 
 mkdir -p "$CADDY_DIR"
 cat >"$CADDY_DIR/Caddyfile" <<EOF2
+{
+	servers {
+		# HTTP/2 Bomb mitigation (2026-06): ContextLattice hosted ingress does not
+		# require client-side h2/h3. Default to h1 until this Caddy build and edge
+		# path have audited header-count and stalled-stream bounds.
+		protocols {\$CADDY_INGRESS_PROTOCOLS:h1}
+	}
+}
+
 $DOMAIN {
-  encode gzip
-  tls $EMAIL
+	encode gzip
+	tls $EMAIL
 
-  handle_path /mcp* {
-    reverse_proxy mcp-hub:53130
-  }
+	handle_path /mcp* {
+		reverse_proxy mcp-hub:53130
+	}
 
-  handle_path /status* {
-    reverse_proxy contextlattice-orchestrator:8075
-  }
+	handle_path /status* {
+		reverse_proxy contextlattice-orchestrator:8075
+	}
 
-  handle {
-    reverse_proxy contextlattice-orchestrator:8075
-  }
+	handle {
+		reverse_proxy contextlattice-orchestrator:8075
+	}
 }
 EOF2
 
