@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -67,6 +68,8 @@ def main() -> int:
     parser.add_argument("--max-hypotheses", type=int, default=4)
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--max-facts", type=int, default=16)
+    parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", ""))
+    parser.add_argument("--session-id", default=os.getenv("CONTEXTLATTICE_SESSION_ID", ""))
     parser.add_argument("--use-llm", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--persist", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--model", default="")
@@ -93,6 +96,10 @@ def main() -> int:
         "use_llm": args.use_llm,
         "persist": args.persist,
     }
+    if args.agent_id:
+        payload["agent_id"] = args.agent_id
+    if args.session_id:
+        payload["session_id"] = args.session_id
     if args.model:
         payload["model"] = args.model
     if args.provider:

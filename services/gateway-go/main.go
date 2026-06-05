@@ -351,6 +351,7 @@ type server struct {
 	lettaAgentMu                    sync.Mutex
 	lettaAgentBySession             map[string]string
 	lettaAgentVerifiedAt            map[string]time.Time
+	agentSessions                   *agentSessionStore
 }
 
 func normalizeHotPath(path string) string {
@@ -1223,6 +1224,10 @@ func newServer() *server {
 	}
 	telemetrySpoolInstance := newTelemetrySpoolFromEnv()
 	telemetryRingInstance := newTelemetryRingFromEnv()
+	agentSessionStoreInstance, agentSessionStoreErr := newAgentSessionStoreFromEnv()
+	if agentSessionStoreErr != nil {
+		log.Printf("gateway-go agent session runtime degraded: %v", agentSessionStoreErr)
+	}
 	memoryStoreInstance, memoryStoreErr := newMemoryStoreFromEnv()
 	if memoryStoreErr != nil {
 		log.Printf("gateway-go memory store disabled: %v", memoryStoreErr)
@@ -1248,6 +1253,7 @@ func newServer() *server {
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,
+		agentSessions:                   agentSessionStoreInstance,
 		telemetryMetricsState:           defaultTelemetryMetricsState(),
 		tradingState:                    defaultTradingState(),
 		tradingHistory:                  make([]map[string]any, 0, tradingHistoryLimit),
@@ -1888,6 +1894,7 @@ type agentPreflightRequest struct {
 	RetrievalMode string `json:"retrieval_mode"`
 	AgentID       string `json:"agent_id"`
 	Agent         string `json:"agent"`
+	SessionID     string `json:"session_id"`
 	Mission       string `json:"mission"`
 	Objective     string `json:"objective"`
 	Goal          string `json:"goal"`
@@ -2102,9 +2109,84 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		reqBody.AgentID = "codex_gpt5"
 	}
 	objectiveCtx := objectiveContextFromPreflightRequest(reqBody)
+	sessionID := strings.TrimSpace(reqBody.SessionID)
+	var preflightSession map[string]any
+	if s.agentSessions != nil {
+		startPayload := map[string]any{
+			"session_id": sessionID,
+			"agent":      profileKey,
+			"agent_id":   reqBody.AgentID,
+			"project":    reqBody.Project,
+			"objective":  firstNonEmptyStrings(reqBody.Objective, reqBody.Query),
+			"mission":    reqBody.Mission,
+			"goal":       reqBody.Goal,
+			"status":     "active",
+			"metadata": map[string]any{
+				"topic_path":     reqBody.TopicPath,
+				"retrieval_mode": reqBody.RetrievalMode,
+				"profile":        profileKey,
+				"endpoint":       r.URL.Path,
+			},
+			"tags": []any{"agent-runtime", "preflight"},
+		}
+		if created, startErr := s.agentSessions.start(startPayload); startErr == nil {
+			preflightSession = created
+			sessionID = anyToString(created["id"])
+			_ = s.recordAgentSessionEvent(sessionID, "agent.preflight.started", map[string]any{
+				"agent":    profileKey,
+				"agent_id": reqBody.AgentID,
+				"project":  reqBody.Project,
+				"summary":  reqBody.Query,
+				"metadata": map[string]any{
+					"topic_path":     reqBody.TopicPath,
+					"retrieval_mode": reqBody.RetrievalMode,
+					"endpoint":       r.URL.Path,
+				},
+			})
+		}
+	}
+	reqBody.SessionID = sessionID
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	if s.strictNoPythonRuntime {
+		payload := s.agentPreflightNative(ctx, r.Header.Clone(), reqBody)
+		payload["service"] = "gateway-go"
+		payload["agent"] = profileKey
+		payload["agent_profile"] = profile
+		payload["project"] = reqBody.Project
+		payload["query"] = reqBody.Query
+		payload["topic_path"] = reqBody.TopicPath
+		payload["retrieval_mode"] = reqBody.RetrievalMode
+		payload["backend_url"] = s.backendURL
+		payload["objective_context"] = objectiveCtx.toMap()
+		payload["session_id"] = sessionID
+		if sessionID != "" {
+			session := s.recordAgentSessionEvent(sessionID, "agent.preflight.completed", map[string]any{
+				"agent":    profileKey,
+				"agent_id": reqBody.AgentID,
+				"project":  reqBody.Project,
+				"summary":  reqBody.Query,
+				"metadata": map[string]any{
+					"endpoint":       r.URL.Path,
+					"retrieval_mode": reqBody.RetrievalMode,
+					"context_status": anyToInt(anyMap(payload["context_pack"])["status"], 0),
+					"mission_status": anyToInt(anyMap(payload["mission_pack"])["status"], 0),
+				},
+			})
+			if session != nil {
+				payload["agent_runtime"] = map[string]any{
+					"session":             session,
+					"memory_contribution": session["memory_contribution"],
+				}
+			}
+		} else if preflightSession != nil {
+			payload["agent_runtime"] = map[string]any{"session": preflightSession}
+		}
+		payload = attachAgentPreflightFormatContracts(payload)
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
 
 	healthPayload, healthStatus, healthErr := s.backendJSONRequest(ctx, http.MethodGet, "/health", r.Header, nil)
 	statusPayload, statusStatus, statusErr := s.backendJSONRequest(ctx, http.MethodGet, "/status", r.Header, nil)
@@ -2117,6 +2199,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"include_grounding":       true,
 		"include_retrieval_debug": true,
 		"agent_id":                reqBody.AgentID,
+		"session_id":              sessionID,
 		"objective_context":       objectiveCtx.toMap(),
 	}
 	scopedPayload, scopedStatus, scopedErr := s.backendJSONRequest(
@@ -2148,6 +2231,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			"include_grounding":       true,
 			"include_retrieval_debug": true,
 			"agent_id":                reqBody.AgentID,
+			"session_id":              sessionID,
 			"objective_context":       objectiveCtx.toMap(),
 		}
 		broadenedPayload, broadenedStatus, broadenedErr = s.backendJSONRequest(
@@ -2166,6 +2250,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"retrieval_mode":          reqBody.RetrievalMode,
 		"include_retrieval_debug": true,
 		"agent_id":                reqBody.AgentID,
+		"session_id":              sessionID,
 		"objective_context":       objectiveCtx.toMap(),
 	}
 	contextPackPayload, contextPackStatus, contextPackErr := s.backendJSONRequest(
@@ -2187,6 +2272,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"retrieval_mode":          reqBody.RetrievalMode,
 		"include_retrieval_debug": true,
 		"agent_id":                reqBody.AgentID,
+		"session_id":              sessionID,
 		"objective_context":       objectiveCtx.toMap(),
 	}
 	missionPackPayload, missionPackStatus, missionPackErr := s.backendJSONRequest(
@@ -2229,6 +2315,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"query":                  reqBody.Query,
 		"topic_path":             reqBody.TopicPath,
 		"retrieval_mode":         reqBody.RetrievalMode,
+		"session_id":             sessionID,
 		"backend_url":            s.backendURL,
 		"objective_context":      objectiveCtx.toMap(),
 		"health":                 healthPayload,
@@ -2250,6 +2337,33 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"mission_context_status": missionPackStatus,
 		"mission_context_error":  errString(missionPackErr),
 		"policy_context_package": policyContextPackage,
+	}
+	if sessionID != "" {
+		session := s.recordAgentSessionEvent(sessionID, "agent.preflight.completed", map[string]any{
+			"agent":    profileKey,
+			"agent_id": reqBody.AgentID,
+			"project":  reqBody.Project,
+			"summary":  reqBody.Query,
+			"metadata": map[string]any{
+				"endpoint":               r.URL.Path,
+				"retrieval_mode":         reqBody.RetrievalMode,
+				"health_status":          healthStatus,
+				"status_status":          statusStatus,
+				"scoped_status":          scopedStatus,
+				"broadened_status":       broadenedStatus,
+				"context_status":         contextPackStatus,
+				"mission_context_status": missionPackStatus,
+				"policy_context":         policyContextPackage != nil,
+			},
+		})
+		if session != nil {
+			response["agent_runtime"] = map[string]any{
+				"session":             session,
+				"memory_contribution": session["memory_contribution"],
+			}
+		}
+	} else if preflightSession != nil {
+		response["agent_runtime"] = map[string]any{"session": preflightSession}
 	}
 	response = attachAgentPreflightFormatContracts(response)
 	writeJSON(w, http.StatusOK, response)
@@ -4379,7 +4493,8 @@ func (s *server) queryTopicRollupsSource(
 	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
 	topics := make([]any, 0)
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+	memoryStoreEnabled := s.memoryStore != nil && s.memoryStore.policy.enabled
+	if memoryStoreEnabled {
 		topN := s.retrieval.topicRollupSearchTopN
 		if topN < limit {
 			topN = limit
@@ -4399,7 +4514,10 @@ func (s *server) queryTopicRollupsSource(
 	}
 	if len(topics) == 0 {
 		if s.strictNoPythonRuntime {
-			return nil, nil, errors.New("memory store topic rollups empty")
+			if memoryStoreEnabled {
+				return nil, nil, errTopicRollupsNoMatch
+			}
+			return nil, nil, errors.New("memory store topic rollups unavailable")
 		}
 		backendPayload := map[string]any{
 			"project":  projectFilter,
@@ -6536,6 +6654,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/info", s.info)
 	mux.HandleFunc("/v1/codex/preflight", s.codexPreflight)
 	mux.HandleFunc("/v1/agents/preflight", s.agentsPreflight)
+	mux.HandleFunc("/v1/agents/sessions", s.agentsSessionsRoute)
+	mux.HandleFunc("/v1/agents/sessions/", s.agentsSessionsRoute)
 	mux.HandleFunc("/v1/inference/route", s.inferenceRouteHandler)
 	mux.HandleFunc("/v1/inference/chat", s.inferenceChatHandler)
 	mux.HandleFunc("/v1/inference/runtime-policy", s.inferenceRuntimePolicyHandler)
@@ -6586,6 +6706,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)
 	mux.HandleFunc("/telemetry/recall/monitor", s.telemetryRecallMonitorRoute)
 	mux.HandleFunc("/telemetry/tools/invocations", s.telemetryToolsInvocationsRoute)
+	mux.HandleFunc("/telemetry/agents/runtime", s.agentRuntimeTelemetryRoute)
 	mux.HandleFunc("/telemetry/trading", s.telemetryTradingRoute)
 	mux.HandleFunc("/telemetry/trading/history", s.telemetryTradingHistoryRoute)
 	mux.HandleFunc("/telemetry/", s.telemetryRoute)

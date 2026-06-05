@@ -172,7 +172,10 @@ def main() -> int:
     parser.add_argument("--budget-chars", type=int, default=10000)
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--max-facts", type=int, default=24)
-    parser.add_argument("--nonblocking", action="store_true", help="Do not wait for slow sources in /memory/context-pack.")
+    parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", ""))
+    parser.add_argument("--session-id", default=os.getenv("CONTEXTLATTICE_SESSION_ID", ""))
+    parser.add_argument("--blocking", action="store_true", help="Wait synchronously for slow sources in /memory/context-pack.")
+    parser.add_argument("--nonblocking", action="store_true", help="Deprecated compatibility flag; fail-open is the default.")
     parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
     parser.add_argument("--strict", action="store_true", help="Deprecated compatibility flag; hard failure is the default.")
     parser.add_argument("--retries", type=int, default=2)
@@ -181,6 +184,7 @@ def main() -> int:
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
+    blocking_slow_sources = bool(args.blocking and not args.nonblocking)
     payload = {
         "query": args.query,
         "project": args.project,
@@ -190,12 +194,16 @@ def main() -> int:
         "retrieval_mode": args.mode,
         "include_grounding": True,
         "include_retrieval_debug": True,
-        "combined_sources": not args.nonblocking,
-        "wait_for_slow_sources": not args.nonblocking,
-        "sync_slow_sources": not args.nonblocking,
+        "combined_sources": True,
+        "wait_for_slow_sources": blocking_slow_sources,
+        "sync_slow_sources": blocking_slow_sources,
         "limit": args.limit,
         "max_facts": args.max_facts,
     }
+    if args.agent_id:
+        payload["agent_id"] = args.agent_id
+    if args.session_id:
+        payload["session_id"] = args.session_id
     raw, error, attempts = request_with_retries(
         "/memory/context-pack",
         payload,

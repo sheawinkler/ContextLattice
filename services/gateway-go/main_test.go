@@ -4813,6 +4813,73 @@ func TestStagedRetrievalTopicRollupsNoLexicalMatchDoesNotFallback(t *testing.T) 
 	}
 }
 
+func TestStagedRetrievalTopicRollupsEmptyStoreIsNoData(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_NON_DEGRADABLE_SOURCES", "topic_rollups")
+	t.Setenv("GO_RETRIEVAL_PROTECTED_SOURCES", "topic_rollups")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", t.TempDir())
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/retrieval/query" {
+			backendCalls++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/v1/retrieval/query",
+		"application/json",
+		strings.NewReader(`{"request":{"query":"empty topic rollup smoke","limit":5,"retrieval_mode":"fast","sources":["topic_rollups"]}}`),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend fallback calls on empty topic rollup store, got %d", backendCalls)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) != 0 {
+		t.Fatalf("expected empty results on empty topic rollup store, got %#v", rows)
+	}
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if strings.Contains(warnings, "topic_rollups go-adapter fallback to backend retrieval lane") {
+		t.Fatalf("unexpected topic_rollups fallback warning: %v", payload["warnings"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	errorsMap, _ := debug["source_errors"].(map[string]any)
+	if _, exists := errorsMap["topic_rollups"]; exists {
+		t.Fatalf("expected no source_errors.topic_rollups on empty topic rollup store, got %#v", errorsMap["topic_rollups"])
+	}
+}
+
 func TestStagedRetrievalCoverageRescueQueryVariant(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("GO_RETRIEVAL_COVERAGE_RESCUE_ENABLED", "true")

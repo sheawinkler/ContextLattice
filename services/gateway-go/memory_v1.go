@@ -267,6 +267,7 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 			if graphBackendName != "" {
 				response["graph_backend"] = graphBackendName
 			}
+			s.attachNeighborSessionRuntime(response, payload, project, memoryID, len(graphRows))
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
@@ -315,6 +316,7 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 			if graphBackendName != "" {
 				response["graph_backend"] = graphBackendName
 			}
+			s.attachNeighborSessionRuntime(response, payload, project, memoryID, len(graphRows))
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
@@ -335,7 +337,40 @@ func (s *server) memoryV1Neighbors(w http.ResponseWriter, r *http.Request) {
 	if graphBackendName != "" {
 		responsePayload["graph_backend"] = graphBackendName
 	}
+	s.attachNeighborSessionRuntime(responsePayload, payload, project, memoryID, len(graphRows))
 	writeJSON(w, http.StatusOK, responsePayload)
+}
+
+func (s *server) attachNeighborSessionRuntime(response map[string]any, request map[string]any, project string, memoryID string, edgeCount int) {
+	if response == nil {
+		return
+	}
+	sessionID := strings.TrimSpace(firstNonEmptyStrings(anyToString(request["session_id"]), anyToString(request["sessionId"])))
+	if sessionID == "" {
+		return
+	}
+	results, _ := asAnySlice(response["results"])
+	session := s.recordAgentSessionEvent(sessionID, "graph.neighbors_returned", map[string]any{
+		"agent_id": firstNonEmptyStrings(anyToString(request["agent_id"]), anyToString(request["agentId"])),
+		"project":  project,
+		"summary":  memoryID,
+		"metadata": map[string]any{
+			"endpoint":     "/v1/memory/neighbors",
+			"memory_id":    memoryID,
+			"edge_count":   edgeCount,
+			"result_count": len(results),
+			"relation":     anyToString(request["relation"]),
+			"direction":    anyToString(request["direction"]),
+		},
+	})
+	if session == nil {
+		return
+	}
+	response["session_id"] = sessionID
+	response["agent_runtime"] = map[string]any{
+		"session_id":          sessionID,
+		"memory_contribution": session["memory_contribution"],
+	}
 }
 
 func (s *server) fetchV1MemoryPayload(

@@ -88,6 +88,33 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"securityStrict":          securityStrict,
 			"productionRequireApiKey": productionRequireAPIKey,
 		},
+		"agentRuntime": map[string]any{
+			"sessionLedger": true,
+			"statusLifecycle": []string{
+				"active",
+				"completed",
+				"failed",
+				"blocked",
+				"paused",
+				"canceled",
+			},
+			"eventContract": []string{
+				"session.started",
+				"context_pack.completed",
+				"dream.completed",
+				"graph.edge_touched",
+				"decision.made",
+				"test.ran",
+				"handoff.created",
+				"writeback.completed",
+				"session.completed",
+			},
+			"endpoints": map[string]any{
+				"sessions": "/v1/agents/sessions",
+				"event":    "/v1/agents/sessions/event",
+				"runtime":  "/telemetry/agents/runtime",
+			},
+		},
 		"retrieval": map[string]any{
 			"stagedEnabled":            s.retrieval.enabled,
 			"defaultMode":              normalizeRetrievalMode(envStringAny("balanced", "ORCH_RETRIEVAL_MODE_DEFAULT")),

@@ -593,7 +593,29 @@ func (s *server) memoryV1Edges(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "memory edge write failed", "detail": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "edge_id": edge.EdgeID, "edge": edge.toMap()})
+		response := map[string]any{"ok": true, "edge_id": edge.EdgeID, "edge": edge.toMap()}
+		if strings.TrimSpace(edge.SessionID) != "" {
+			session := s.recordAgentSessionEvent(edge.SessionID, "graph.edge_touched", map[string]any{
+				"agent_id": edge.AgentID,
+				"project":  edge.Project,
+				"summary":  edge.SourceID + " " + edge.Relation + " " + edge.TargetID,
+				"metadata": map[string]any{
+					"endpoint":   "/v1/memory/edges",
+					"edge_id":    edge.EdgeID,
+					"source_id":  edge.SourceID,
+					"target_id":  edge.TargetID,
+					"relation":   edge.Relation,
+					"confidence": edge.Confidence,
+				},
+			})
+			if session != nil {
+				response["agent_runtime"] = map[string]any{
+					"session_id":          edge.SessionID,
+					"memory_contribution": session["memory_contribution"],
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, response)
 	case http.MethodGet:
 		limit := clampInt(anyToInt(r.URL.Query().Get("limit"), 50), 1, 1000)
 		query := memoryEdgeQuery{
