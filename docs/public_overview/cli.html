@@ -90,11 +90,44 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
         <h3>Installed wrappers for agents/operators</h3>
 <pre><code>contextlattice_search -h
 contextlattice_write -h
+contextlattice_agent_adapter profiles
 contextlattice_agent_start -h
 contextlattice_checkpoint -h
 contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice
 printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/setup --file notes/checkpoint.md --stdin</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Agent runtime contract</div>
+        <h3>Give every agent the same memory spine</h3>
+<pre><code># start or recover a ContextLattice-owned session
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+
+# retrieve bounded context against that session
+contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
+
+# write durable progress and handoff state
+contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
+contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
+contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed"</code></pre>
+        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes.</p>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Session hygiene</div>
+        <h3>Review stale audit sessions before cleanup</h3>
+<pre><code># dry-run: list only known stale objective-runtime audit/preflight sessions
+scripts/agent/contextlattice-session sweep-stale-audits --all-projects --pretty
+
+# confirmed cleanup after review
+scripts/agent/contextlattice-session sweep-stale-audits --all-projects --confirm --pretty</code></pre>
+        <p class="muted-note">Normal users do not need this during everyday memory work. It is an operator safety valve for stale audit/preflight sessions, and dry-run is the default.</p>
       </article>
     </section>
 
