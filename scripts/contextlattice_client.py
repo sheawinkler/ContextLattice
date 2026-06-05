@@ -8,11 +8,17 @@ headers, timeouts) so scripts do not duplicate drift-prone request code.
 
 from __future__ import annotations
 
+import json as jsonlib
 import os
-from urllib.parse import urljoin
+import urllib.error
+import urllib.request
+from urllib.parse import urlencode, urljoin
 from typing import Any
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - exercised in dependency-free CI.
+    httpx = None
 
 DEFAULT_ORCHESTRATOR_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
@@ -50,6 +56,70 @@ def build_orchestrator_headers(api_key: str | None = None) -> dict[str, str]:
     return headers
 
 
+class _UrllibResponse:
+    def __init__(self, status_code: int, headers: dict[str, str], body: bytes) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self._body = body
+
+    @property
+    def text(self) -> str:
+        return self._body.decode("utf-8", errors="replace")
+
+    def json(self) -> Any:
+        return jsonlib.loads(self.text or "{}")
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"ContextLattice request failed status={self.status_code}: {self.text[:500]}")
+
+
+class _UrllibClient:
+    def __init__(self, *, timeout: float, headers: dict[str, str]) -> None:
+        self.timeout = max(1.0, float(timeout))
+        self.headers = dict(headers)
+
+    def close(self) -> None:
+        return None
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        json: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> _UrllibResponse:
+        if params:
+            separator = "&" if "?" in url else "?"
+            url = url + separator + urlencode(params)
+        headers = dict(self.headers)
+        data = None
+        if json is not None:
+            data = jsonlib.dumps(json).encode("utf-8")
+            headers["content-type"] = "application/json"
+        request = urllib.request.Request(url, data=data, method=method.upper(), headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
+                return _UrllibResponse(response.status, dict(response.headers.items()), response.read())
+        except urllib.error.HTTPError as exc:
+            return _UrllibResponse(exc.code, dict(exc.headers.items()), exc.read())
+
+    def get(self, url: str, *, params: dict[str, str] | None = None, timeout: float | None = None) -> _UrllibResponse:
+        return self._request("GET", url, params=params, timeout=timeout)
+
+    def post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> _UrllibResponse:
+        return self._request("POST", url, params=params, json=json, timeout=timeout)
+
+
 class ContextLatticeClient:
     """Small HTTP client wrapper for ContextLattice orchestrator calls."""
 
@@ -67,10 +137,14 @@ class ContextLatticeClient:
             if api_key is not None
             else resolve_orchestrator_api_key(role=role)
         )
-        self.client = httpx.Client(
-            timeout=max(1.0, float(timeout)),
-            headers=build_orchestrator_headers(resolved_key),
-        )
+        headers = build_orchestrator_headers(resolved_key)
+        if httpx is not None:
+            self.client = httpx.Client(
+                timeout=max(1.0, float(timeout)),
+                headers=headers,
+            )
+        else:
+            self.client = _UrllibClient(timeout=timeout, headers=headers)
 
     def close(self) -> None:
         self.client.close()
@@ -137,4 +211,3 @@ def create_worker_client(
         role="worker",
         api_key=api_key,
     )
-
