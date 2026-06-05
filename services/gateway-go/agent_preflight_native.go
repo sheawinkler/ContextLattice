@@ -97,7 +97,18 @@ func (s *server) agentPreflightNative(ctx context.Context, headers http.Header, 
 		delete(missionReqBroad, "topic_path")
 		missionPackPayload, missionPackStatus, missionPackErr = s.buildContextPackResponse(ctx, headers, missionReqBroad)
 	}
-	policyPack := buildPolicyContextPackage(reqBody.Agent, reqBody.AgentID, reqBody.Project, reqBody.TopicPath, reqBody.Query, reqBody.RetrievalMode, contextPackPayload, missionPackPayload, missionPackErr, objectiveCtx)
+	objectiveRuntime := buildObjectiveRuntimeState(
+		reqBody.Agent,
+		reqBody.AgentID,
+		reqBody.Project,
+		reqBody.TopicPath,
+		reqBody.Query,
+		reqBody.RetrievalMode,
+		reqBody.SessionID,
+		objectiveCtx,
+		"agent.preflight.completed",
+	)
+	policyPack := buildPolicyContextPackage(reqBody.Agent, reqBody.AgentID, reqBody.Project, reqBody.TopicPath, reqBody.Query, reqBody.RetrievalMode, contextPackPayload, missionPackPayload, missionPackErr, objectiveRuntime, objectiveCtx)
 	return map[string]any{
 		"ok":                true,
 		"agent":             strings.TrimSpace(reqBody.Agent),
@@ -105,6 +116,7 @@ func (s *server) agentPreflightNative(ctx context.Context, headers http.Header, 
 		"session_id":        reqBody.SessionID,
 		"orchestrator_url":  "http://127.0.0.1:8075",
 		"objective_context": objectiveCtx.toMap(),
+		"objective_runtime": objectiveRuntime,
 		"health":            healthPayload,
 		"status":            statusPayload,
 		"scoped_search": map[string]any{

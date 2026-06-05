@@ -39,6 +39,7 @@ REQUIRED_CONTRACTS = (
     "agent_flight_recorder_event.v1",
     "codex_compact_hook_stdout.v1",
     "context_overflow_recovery.v1",
+    "objective_runtime_state.v1",
 )
 
 
@@ -155,6 +156,47 @@ def sample_a2a_readiness() -> dict[str, Any]:
     )
 
 
+def sample_objective_runtime(registry: dict[str, Any]) -> dict[str, Any]:
+    return attach_format_contract(
+        "objective_runtime_state.v1",
+        {
+            "version": "2026-06-05",
+            "agent": "codex",
+            "agent_id": "codex_gpt5_test",
+            "project": "contextlattice",
+            "session_id": "sess_audit",
+            "objective_state": "active",
+            "mission": "Compound knowledge across projects into better agent outcomes with less repeated inference.",
+            "objective": "Improve longitudinal recall, retrieval quality, and orchestration decisions over time.",
+            "goal": "Maximize useful context per token while preserving correctness, provenance, and latency discipline.",
+            "scoreboard": {
+                "primary_kpi": "agent makes measurable progress toward the requested objective",
+                "guardrail_kpi": "outputs stay contract-valid, bounded, evidence-grounded, and generic across agent runners",
+                "cadence_kpi": "each preflight, context pack, checkpoint, handoff, and completion emits objective/session evidence",
+            },
+            "action_executed": "agent.preflight.completed",
+            "evidence": {
+                "required": [
+                    "retrieved_context_or_explicit_no_data",
+                    "deterministic_check_or_artifact_inspection",
+                    "checkpoint_or_session_event_for_handoff",
+                ],
+                "current": [{"kind": "contract_audit", "session_id": "sess_audit"}],
+            },
+            "objective_delta": {
+                "before": "objective state unproven until agent records an executed action with evidence",
+                "after": "agent has a bounded objective runtime contract and session path for subsequent events",
+            },
+            "risk_or_blocker": {
+                "status": "none_reported",
+                "fastest_recovery_path": "run preflight or contextlattice-session ensure, then attach the returned session_id",
+            },
+            "next_action": "execute the smallest useful action, verify it, and emit a session event",
+        },
+        registry,
+    )
+
+
 def sample_context_overflow_recovery() -> dict[str, Any]:
     return attach_format_contract(
         "context_overflow_recovery.v1",
@@ -188,6 +230,7 @@ def sample_context_overflow_recovery() -> dict[str, Any]:
 def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
     protocol = anti_scheming_protocol(registry)
     metadata = contract_metadata("policy_context_package.v1", registry)
+    objective_runtime = sample_objective_runtime(registry)
     policy = {
         "version": "2026-05-10",
         "agent": "codex",
@@ -207,6 +250,7 @@ def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
         "policy_contract": {
             "retrieve_before_inference": True,
             "anti_scheming_required": True,
+            "objective_runtime_required": True,
             "checkpoint_during_execution": True,
             "final_recency_pass_required": True,
             "include_grounding": True,
@@ -216,6 +260,7 @@ def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
             "contract_boundary_validated": True,
             "fail_closed_on_contract_violation": True,
         },
+        "objective_runtime": objective_runtime,
         "anti_scheming_protocol": protocol,
         "handoff": {
             "disperse_to_agents": True,
@@ -287,6 +332,7 @@ def run_audit() -> list[dict[str, Any]]:
         ("agent_flight_recorder_event.v1", sample_flight_event()),
         ("a2a_readiness_profile.v1", sample_a2a_readiness()),
         ("context_overflow_recovery.v1", sample_context_overflow_recovery()),
+        ("objective_runtime_state.v1", sample_objective_runtime(registry)),
     ):
         for item in validate_agent_contract_payload(contract_id, payload, registry):
             findings.append({"severity": "error", **item})
@@ -311,6 +357,7 @@ def run_audit() -> list[dict[str, Any]]:
         "topic_path": "runbooks/codex-integration",
         "retrieval_mode": "fast",
         "context_pack": context_pack,
+        "objective_runtime": policy.get("objective_runtime"),
         "policy_context_package": policy,
         "format_contracts": preflight_contracts_summary(),
     }

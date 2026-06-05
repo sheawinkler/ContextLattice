@@ -9,6 +9,7 @@ usage() {
 Usage: agent_start.sh [--agent <id>] [--project <name>] [--topic-path <path>] [--soft] [--compact]
 
 Runs low-cost deterministic startup hooks for agents:
+  0. agent runtime session ensure/recovery
   1. resource pressure sampler
   2. git lane guard
   3. OrbStack/host-forward guard
@@ -16,7 +17,7 @@ Runs low-cost deterministic startup hooks for agents:
   5. recall monitor seed
   6. ContextLattice policy pack retrieval
 
-This does not commit, launch, or mutate project data.
+This does not commit or launch. It may record a bounded agent runtime session.
 USAGE
 }
 
@@ -36,6 +37,36 @@ while [[ $# -gt 0 ]]; do
     *) fail "unknown argument: $1" ;;
   esac
 done
+
+contextlattice_env
+REPO_ROOT="$(repo_root)"
+if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
+  set +e
+  session_out="$(python3 "${REPO_ROOT}/scripts/agent/contextlattice-session" ensure \
+    "Agent startup for ${PROJECT} at ${TOPIC}" \
+    --project "$PROJECT" \
+    --agent "$AGENT" \
+    --agent-id "$AGENT" \
+    --tag agent-start \
+    --tag auto-session \
+    --metadata-json '{"hook":"agent_start"}' 2>/dev/null)"
+  session_status=$?
+  set -e
+  if [[ "$session_status" == "0" && -n "$session_out" ]]; then
+    session_id="$(python3 - "$session_out" <<'PY'
+import json, sys
+try:
+    payload = json.loads(sys.argv[1])
+except Exception:
+    payload = {}
+print(str(payload.get("session_id") or ""))
+PY
+)"
+    if [[ -n "$session_id" ]]; then
+      export CONTEXTLATTICE_SESSION_ID="$session_id"
+    fi
+  fi
+fi
 
 run_hook() {
   local name="$1"
@@ -72,20 +103,20 @@ results+=("$(run_hook recall_seed "${SCRIPT_DIR}/recall_monitor_seed.sh" "${soft
 results+=("$(run_hook policy_pack "${SCRIPT_DIR}/agent_policy_pack.sh" --agent "$AGENT" --project "$PROJECT" --topic-path "$TOPIC")")
 
 python3 - "$COMPACT" "$SOFT" "${results[@]}" <<'PY'
-import json, sys
+import json, os, sys
 compact = sys.argv[1] == '1'
 soft = sys.argv[2] == '1'
 items = [json.loads(x) for x in sys.argv[3:]]
 strict_ok = all(item.get('ok') for item in items)
 ok = strict_ok or soft
 if compact:
-    summary = {'ok': ok, 'soft': soft, 'strict_ok': strict_ok, 'hooks': [{'name': i['name'], 'ok': i['ok']} for i in items]}
+    summary = {'ok': ok, 'soft': soft, 'strict_ok': strict_ok, 'session_id': os.getenv('CONTEXTLATTICE_SESSION_ID', ''), 'hooks': [{'name': i['name'], 'ok': i['ok']} for i in items]}
     policy = next((i.get('payload') for i in items if i.get('name') == 'policy_pack'), None)
     if isinstance(policy, dict):
         summary['policy'] = {k: policy.get(k) for k in ('mission','objective','goal')}
         summary['retrieval'] = policy.get('retrieval')
     print(json.dumps(summary, separators=(',', ':')))
 else:
-    print(json.dumps({'ok': ok, 'soft': soft, 'strict_ok': strict_ok, 'hooks': items}, separators=(',', ':')))
+    print(json.dumps({'ok': ok, 'soft': soft, 'strict_ok': strict_ok, 'session_id': os.getenv('CONTEXTLATTICE_SESSION_ID', ''), 'hooks': items}, separators=(',', ':')))
 raise SystemExit(0 if ok else 1)
 PY

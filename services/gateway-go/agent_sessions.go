@@ -540,6 +540,16 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	session["last_event_at"] = createdAt
 	session["updated_at"] = createdAt
 	session["event_count"] = anyToInt(session["event_count"], 0) + 1
+	metadata := anyMap(event["metadata"])
+	if runtime := anyMap(metadata["objective_runtime"]); len(runtime) > 0 {
+		session["objective_runtime"] = compactAgentSessionMetadata(runtime)
+	}
+	if objectiveState := strings.TrimSpace(anyToString(metadata["objective_state"])); objectiveState != "" {
+		session["objective_state"] = clipText(objectiveState, 80)
+	}
+	if nextAction := strings.TrimSpace(anyToString(metadata["next_action"])); nextAction != "" {
+		session["next_action"] = clipText(nextAction, 720)
+	}
 	switch eventType {
 	case "session.completed", "agent.session.completed":
 		session["status"] = "completed"
@@ -561,7 +571,7 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	session["memory_contribution"] = bumpContribution(
 		anyMap(session["memory_contribution"]),
 		eventType,
-		anyMap(event["metadata"]),
+		metadata,
 		createdAt,
 	)
 	s.enforceBoundsLocked()

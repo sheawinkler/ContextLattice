@@ -6,12 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from typing import Any
 from urllib.parse import urlencode
 
-from _common import emit, request_json
+from _common import emit, ensure_agent_session, git_value, request_json, write_agent_session_state
 
 
 def metadata_from_args(raw: str) -> dict[str, Any]:
@@ -24,13 +23,6 @@ def metadata_from_args(raw: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise SystemExit("--metadata-json must decode to an object")
     return parsed
-
-
-def git_value(args: list[str]) -> str:
-    try:
-        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
-    except Exception:
-        return ""
 
 
 def default_branch() -> str:
@@ -69,8 +61,39 @@ def cmd_start(args: argparse.Namespace) -> int:
     session = raw.get("session") if isinstance(raw.get("session"), dict) else {}
     if session.get("id"):
         raw["export"] = f"export CONTEXTLATTICE_SESSION_ID={session['id']}"
+        if args.persist:
+            write_agent_session_state(
+                args.project,
+                {
+                    "session_id": str(session["id"]),
+                    "project": args.project,
+                    "agent": payload.get("agent", ""),
+                    "agent_id": payload.get("agent_id", ""),
+                    "objective": args.objective,
+                    "source": "contextlattice-session-start",
+                },
+            )
     emit(raw, args.pretty)
     return 0 if raw.get("ok") else 1
+
+
+def cmd_ensure(args: argparse.Namespace) -> int:
+    raw = ensure_agent_session(
+        project=args.project,
+        objective=args.objective,
+        agent=args.agent,
+        agent_id=args.agent_id,
+        mission=args.mission,
+        goal=args.goal,
+        metadata=metadata_from_args(args.metadata_json),
+        tags=args.tag,
+        timeout=args.timeout,
+        soft=not args.strict,
+    )
+    if raw.get("session_id"):
+        raw["export"] = f"export CONTEXTLATTICE_SESSION_ID={raw['session_id']}"
+    emit(raw, args.pretty)
+    return 0 if raw.get("session_id") or (raw.get("ok") and not args.strict) else 1
 
 
 def event_payload(args: argparse.Namespace, event_type: str, status: str = "") -> dict[str, Any]:
@@ -158,7 +181,18 @@ def main() -> int:
     start.add_argument("--cwd", default="")
     start.add_argument("--tag", action="append", default=[])
     start.add_argument("--metadata-json", default="")
+    start.add_argument("--persist", action=argparse.BooleanOptionalAction, default=True)
     start.set_defaults(func=cmd_start)
+
+    ensure = sub.add_parser("ensure")
+    add_common(ensure)
+    ensure.add_argument("objective")
+    ensure.add_argument("--mission", default="")
+    ensure.add_argument("--goal", default="")
+    ensure.add_argument("--tag", action="append", default=["auto-session"])
+    ensure.add_argument("--metadata-json", default="")
+    ensure.add_argument("--strict", action="store_true")
+    ensure.set_defaults(func=cmd_ensure)
 
     event = sub.add_parser("event")
     add_common(event)

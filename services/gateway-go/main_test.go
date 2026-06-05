@@ -3273,6 +3273,10 @@ func assertPolicyContextIncludesAntiScheming(t *testing.T, raw any) {
 	if !anyToBool(contract["anti_scheming_required"]) {
 		t.Fatalf("expected anti_scheming_required=true, got %#v", contract["anti_scheming_required"])
 	}
+	if !anyToBool(contract["objective_runtime_required"]) {
+		t.Fatalf("expected objective_runtime_required=true, got %#v", contract["objective_runtime_required"])
+	}
+	assertObjectiveRuntimeContractPassed(t, policy["objective_runtime"])
 	protocol, ok := policy["anti_scheming_protocol"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected anti_scheming_protocol object, got %#v", policy["anti_scheming_protocol"])
@@ -3302,6 +3306,30 @@ func assertPolicyContextIncludesAntiScheming(t *testing.T, raw any) {
 	validation, ok := format["validation"].(map[string]any)
 	if !ok || strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected policy format validation passed, got %#v", format["validation"])
+	}
+}
+
+func assertObjectiveRuntimeContractPassed(t *testing.T, raw any) {
+	t.Helper()
+	runtime, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected objective_runtime object, got %#v", raw)
+	}
+	format, ok := runtime["format_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected objective_runtime format_contract object, got %#v", runtime["format_contract"])
+	}
+	if strings.TrimSpace(anyToString(format["schema_id"])) != objectiveRuntimeStateContractID {
+		t.Fatalf("unexpected objective_runtime schema_id: %#v", format["schema_id"])
+	}
+	validation, ok := format["validation"].(map[string]any)
+	if !ok || strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected objective_runtime validation passed, got %#v", format["validation"])
+	}
+	for _, key := range []string{"objective_state", "action_executed", "evidence", "objective_delta", "risk_or_blocker", "next_action"} {
+		if _, ok := runtime[key]; !ok {
+			t.Fatalf("objective_runtime missing %s: %#v", key, runtime)
+		}
 	}
 }
 
@@ -3415,6 +3443,7 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	if payload["policy_context_package"] == nil {
 		t.Fatalf("expected policy_context_package payload, got nil")
 	}
+	assertObjectiveRuntimeContractPassed(t, payload["objective_runtime"])
 	assertPolicyContextIncludesAntiScheming(t, payload["policy_context_package"])
 	objectiveContext, ok := payload["objective_context"].(map[string]any)
 	if !ok || strings.TrimSpace(anyToString(objectiveContext["objective"])) != "ship boundary graph gate" {

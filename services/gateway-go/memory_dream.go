@@ -183,6 +183,18 @@ func (s *server) buildDreamModeResponse(
 			response["warnings"] = append(parseWarnings(response["warnings"]), fmt.Sprintf("Dream Mode writeback returned status %d.", persistStatus))
 		}
 	}
+	objectiveRuntime := buildObjectiveRuntimeState(
+		"dream-mode",
+		opts.AgentID,
+		opts.Project,
+		opts.TopicPath,
+		firstNonEmptyStrings(opts.Goal, opts.Query),
+		opts.RetrievalMode,
+		opts.SessionID,
+		objectiveContext{Mission: "", Objective: opts.Goal, Goal: opts.Query},
+		"dream.completed",
+	)
+	response["objective_runtime"] = objectiveRuntime
 	if opts.SessionID != "" {
 		session := s.recordAgentSessionEvent(opts.SessionID, "dream.completed", map[string]any{
 			"agent_id": opts.AgentID,
@@ -201,6 +213,9 @@ func (s *server) buildDreamModeResponse(
 				"deepening_used":      anyToBool(reflection["deepening_used"]),
 				"writeback_persisted": anyToBool(response["persisted"]),
 				"source_coverage":     sourceCoverage,
+				"objective_state":     anyToString(objectiveRuntime["objective_state"]),
+				"next_action":         anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime":   objectiveRuntime,
 			},
 		})
 		if session != nil {

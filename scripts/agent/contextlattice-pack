@@ -11,7 +11,7 @@ import sys
 import time
 from typing import Any
 
-from _common import REPO_ROOT, emit, request_json
+from _common import REPO_ROOT, emit, ensure_agent_session, request_json
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from agent_contracts import attach_format_contract  # noqa: E402
@@ -70,6 +70,9 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "task_summary": query[:240],
         "context_budget_chars": budget_chars,
         "clipped": False,
+        "session_id": raw.get("session_id") or "",
+        "agent_runtime": raw.get("agent_runtime") if isinstance(raw.get("agent_runtime"), dict) else {},
+        "objective_runtime": raw.get("objective_runtime") if isinstance(raw.get("objective_runtime"), dict) else {},
         "fact_count": len(as_list(pack.get("facts"))),
         "result_count": len(as_list(pack.get("results"))),
         "source_coverage": source_coverage,
@@ -174,6 +177,7 @@ def main() -> int:
     parser.add_argument("--max-facts", type=int, default=24)
     parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", ""))
     parser.add_argument("--session-id", default=os.getenv("CONTEXTLATTICE_SESSION_ID", ""))
+    parser.add_argument("--auto-session", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--blocking", action="store_true", help="Wait synchronously for slow sources in /memory/context-pack.")
     parser.add_argument("--nonblocking", action="store_true", help="Deprecated compatibility flag; fail-open is the default.")
     parser.add_argument("--soft", action="store_true", help="Return exit 0 on unavailable ContextLattice after retries.")
@@ -200,10 +204,23 @@ def main() -> int:
         "limit": args.limit,
         "max_facts": args.max_facts,
     }
+    session_id = args.session_id
+    if not session_id and args.auto_session:
+        ensured = ensure_agent_session(
+            project=args.project,
+            objective=args.query,
+            agent_id=args.agent_id,
+            agent="agent-cli",
+            metadata={"tool": "contextlattice-pack", "topic_path": args.topic_path, "retrieval_mode": args.mode},
+            tags=["auto-session", "context-pack"],
+            timeout=min(float(args.timeout), 10.0),
+            soft=True,
+        )
+        session_id = str(ensured.get("session_id") or "")
     if args.agent_id:
         payload["agent_id"] = args.agent_id
-    if args.session_id:
-        payload["session_id"] = args.session_id
+    if session_id:
+        payload["session_id"] = session_id
     raw, error, attempts = request_with_retries(
         "/memory/context-pack",
         payload,

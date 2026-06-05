@@ -319,6 +319,74 @@ func contextPackEvidence(pack map[string]any, maxItems int) []map[string]any {
 	return rows
 }
 
+func buildObjectiveRuntimeState(
+	agent string,
+	agentID string,
+	project string,
+	topicPath string,
+	query string,
+	retrievalMode string,
+	sessionID string,
+	requestedContext objectiveContext,
+	actionExecuted string,
+) map[string]any {
+	policyContext := requestedContext.withDefaults()
+	if strings.TrimSpace(actionExecuted) == "" {
+		actionExecuted = "objective_runtime_contract_built"
+	}
+	payload := map[string]any{
+		"version":         "2026-06-05",
+		"agent":           strings.TrimSpace(agent),
+		"agent_id":        strings.TrimSpace(agentID),
+		"project":         strings.TrimSpace(project),
+		"session_id":      strings.TrimSpace(sessionID),
+		"objective_state": "active",
+		"mission":         policyContext.Mission,
+		"objective":       policyContext.Objective,
+		"goal":            policyContext.Goal,
+		"scoreboard": map[string]any{
+			"primary_kpi":   firstNonEmptyStrings(os.Getenv("CONTEXTLATTICE_PRIMARY_KPI"), "agent makes measurable progress toward the requested objective"),
+			"guardrail_kpi": firstNonEmptyStrings(os.Getenv("CONTEXTLATTICE_GUARDRAIL_KPI"), "outputs stay contract-valid, bounded, evidence-grounded, and generic across agent runners"),
+			"cadence_kpi":   firstNonEmptyStrings(os.Getenv("CONTEXTLATTICE_CADENCE_KPI"), "each preflight, context pack, checkpoint, handoff, and completion emits objective/session evidence"),
+		},
+		"action_executed": actionExecuted,
+		"evidence": map[string]any{
+			"required": []any{
+				"retrieved_context_or_explicit_no_data",
+				"deterministic_check_or_artifact_inspection",
+				"checkpoint_or_session_event_for_handoff",
+			},
+			"current": []any{
+				map[string]any{
+					"kind":           "preflight_contract",
+					"query":          clipText(strings.TrimSpace(query), 720),
+					"topic_path":     strings.TrimSpace(topicPath),
+					"retrieval_mode": strings.TrimSpace(retrievalMode),
+					"session_id":     strings.TrimSpace(sessionID),
+				},
+			},
+		},
+		"objective_delta": map[string]any{
+			"before": "objective state unproven until agent records an executed action with evidence",
+			"after":  "agent has a bounded objective runtime contract and session path for subsequent events",
+		},
+		"risk_or_blocker": map[string]any{
+			"status":                "none_reported",
+			"fastest_recovery_path": "run preflight or contextlattice-session ensure, then attach the returned session_id to context, checkpoint, and handoff calls",
+		},
+		"next_action": "execute the smallest useful action, verify it with matching artifacts, and emit a session event or checkpoint before handoff",
+	}
+	metadata := contractMetadata(objectiveRuntimeStateContractID)
+	payload["format_contract"] = metadata
+	enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload)
+	findings := validateAgentContractPayload(objectiveRuntimeStateContractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings)
+	enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload)
+	findings = validateAgentContractPayload(objectiveRuntimeStateContractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings)
+	return payload
+}
+
 func buildPolicyContextPackage(
 	agent string,
 	agentID string,
@@ -329,6 +397,7 @@ func buildPolicyContextPackage(
 	primaryPack map[string]any,
 	missionPack map[string]any,
 	missionPackError error,
+	objectiveRuntime map[string]any,
 	requestedContext objectiveContext,
 ) map[string]any {
 	policyContext := requestedContext.withDefaults()
@@ -336,6 +405,9 @@ func buildPolicyContextPackage(
 	objective := policyContext.Objective
 	goal := policyContext.Goal
 	formatContract := contractMetadata(policyContextPackageContractID)
+	if objectiveRuntime == nil {
+		objectiveRuntime = buildObjectiveRuntimeState(agent, agentID, project, topicPath, query, retrievalMode, "", requestedContext, "policy_context_package_built")
+	}
 	policy := map[string]any{
 		"version":        "2026-05-10",
 		"agent":          agent,
@@ -359,6 +431,7 @@ func buildPolicyContextPackage(
 		"policy_contract": map[string]any{
 			"retrieve_before_inference":         true,
 			"anti_scheming_required":            true,
+			"objective_runtime_required":        true,
 			"checkpoint_during_execution":       true,
 			"final_recency_pass_required":       true,
 			"include_grounding":                 true,
@@ -368,6 +441,7 @@ func buildPolicyContextPackage(
 			"contract_boundary_validated":       true,
 			"fail_closed_on_contract_violation": true,
 		},
+		"objective_runtime":      objectiveRuntime,
 		"anti_scheming_protocol": antiSchemingProtocol(),
 		"handoff": map[string]any{
 			"disperse_to_agents": true,

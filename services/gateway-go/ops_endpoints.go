@@ -89,7 +89,9 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"productionRequireApiKey": productionRequireAPIKey,
 		},
 		"agentRuntime": map[string]any{
-			"sessionLedger": true,
+			"sessionLedger":            true,
+			"objectiveRuntimeContract": objectiveRuntimeStateContractID,
+			"autoSession":              true,
 			"statusLifecycle": []string{
 				"active",
 				"completed",

@@ -2162,16 +2162,20 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		payload["objective_context"] = objectiveCtx.toMap()
 		payload["session_id"] = sessionID
 		if sessionID != "" {
+			objectiveRuntime := anyMap(payload["objective_runtime"])
 			session := s.recordAgentSessionEvent(sessionID, "agent.preflight.completed", map[string]any{
 				"agent":    profileKey,
 				"agent_id": reqBody.AgentID,
 				"project":  reqBody.Project,
 				"summary":  reqBody.Query,
 				"metadata": map[string]any{
-					"endpoint":       r.URL.Path,
-					"retrieval_mode": reqBody.RetrievalMode,
-					"context_status": anyToInt(anyMap(payload["context_pack"])["status"], 0),
-					"mission_status": anyToInt(anyMap(payload["mission_pack"])["status"], 0),
+					"endpoint":          r.URL.Path,
+					"retrieval_mode":    reqBody.RetrievalMode,
+					"context_status":    anyToInt(anyMap(payload["context_pack"])["status"], 0),
+					"mission_status":    anyToInt(anyMap(payload["mission_pack"])["status"], 0),
+					"objective_state":   anyToString(objectiveRuntime["objective_state"]),
+					"next_action":       anyToString(objectiveRuntime["next_action"]),
+					"objective_runtime": objectiveRuntime,
 				},
 			})
 			if session != nil {
@@ -2292,6 +2296,17 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			missionPackReq,
 		)
 	}
+	objectiveRuntime := buildObjectiveRuntimeState(
+		profileKey,
+		reqBody.AgentID,
+		reqBody.Project,
+		reqBody.TopicPath,
+		reqBody.Query,
+		reqBody.RetrievalMode,
+		sessionID,
+		objectiveCtx,
+		"agent.preflight.completed",
+	)
 	policyContextPackage := buildPolicyContextPackage(
 		profileKey,
 		reqBody.AgentID,
@@ -2302,6 +2317,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		contextPackPayload,
 		missionPackPayload,
 		missionPackErr,
+		objectiveRuntime,
 		objectiveCtx,
 	)
 
@@ -2318,6 +2334,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"session_id":             sessionID,
 		"backend_url":            s.backendURL,
 		"objective_context":      objectiveCtx.toMap(),
+		"objective_runtime":      objectiveRuntime,
 		"health":                 healthPayload,
 		"health_status":          healthStatus,
 		"health_error":           errString(healthErr),
@@ -2354,6 +2371,9 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"context_status":         contextPackStatus,
 				"mission_context_status": missionPackStatus,
 				"policy_context":         policyContextPackage != nil,
+				"objective_state":        anyToString(objectiveRuntime["objective_state"]),
+				"next_action":            anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime":      objectiveRuntime,
 			},
 		})
 		if session != nil {

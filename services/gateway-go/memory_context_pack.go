@@ -139,6 +139,21 @@ func (s *server) buildContextPackResponse(
 	if !objectiveCtx.empty() {
 		response["objective_context"] = objectiveCtx.toMap()
 	}
+	objectiveRuntime := map[string]any{}
+	if sessionID != "" || !objectiveCtx.empty() {
+		objectiveRuntime = buildObjectiveRuntimeState(
+			"context-pack",
+			strings.TrimSpace(anyToString(searchResponse["agent_id"])),
+			strings.TrimSpace(anyToString(requestPayload["project"])),
+			strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+			query,
+			retrievalMode,
+			sessionID,
+			objectiveCtx,
+			"context_pack.completed",
+		)
+		response["objective_runtime"] = objectiveRuntime
+	}
 	if sessionID != "" {
 		facts, _ := asAnySlice(contextPack["facts"])
 		results, _ := asAnySlice(contextPack["results"])
@@ -147,15 +162,18 @@ func (s *server) buildContextPackResponse(
 			"project":  requestPayload["project"],
 			"summary":  query,
 			"metadata": map[string]any{
-				"endpoint":         "/memory/context-pack",
-				"retrieval_mode":   retrievalMode,
-				"retrieval_intent": retrievalIntent,
-				"traffic_class":    trafficClass,
-				"source_coverage":  sourceCoverage,
-				"fact_count":       len(facts),
-				"result_count":     len(results),
-				"memory_hits":      len(results),
-				"warnings_count":   len(parseWarnings(response["warnings"])),
+				"endpoint":          "/memory/context-pack",
+				"retrieval_mode":    retrievalMode,
+				"retrieval_intent":  retrievalIntent,
+				"traffic_class":     trafficClass,
+				"source_coverage":   sourceCoverage,
+				"fact_count":        len(facts),
+				"result_count":      len(results),
+				"memory_hits":       len(results),
+				"warnings_count":    len(parseWarnings(response["warnings"])),
+				"objective_state":   anyToString(objectiveRuntime["objective_state"]),
+				"next_action":       anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime": objectiveRuntime,
 			},
 		})
 		if session != nil {

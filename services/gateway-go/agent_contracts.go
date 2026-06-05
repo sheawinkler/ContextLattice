@@ -12,6 +12,7 @@ import (
 
 const agentContractsRegistryEnv = "CONTEXTLATTICE_AGENT_CONTRACTS_PATH"
 const policyContextPackageContractID = "policy_context_package.v1"
+const objectiveRuntimeStateContractID = "objective_runtime_state.v1"
 const antiSchemingContractID = "anti_scheming_protocol.v1"
 const agentPreflightResponseContractID = "agent_preflight_response.v1"
 const contextPackResponseContractID = "context_pack_response.v1"
@@ -243,6 +244,7 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 	contractIDs := []any{
 		agentPreflightResponseContractID,
 		policyContextPackageContractID,
+		objectiveRuntimeStateContractID,
 		antiSchemingContractID,
 		contextPackResponseContractID,
 		dreamModeResponseContractID,
@@ -339,9 +341,11 @@ func attachWritebackFormatContract(payload map[string]any, item normalizedWrite,
 
 func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any {
 	payload["format_contracts"] = preflightContractsSummary(nil)
+	sanitizePreflightSearchBoundary(payload)
 	enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
 	findings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
 	payload["format_contracts"] = preflightContractsSummary(findings)
+	sanitizePreflightSearchBoundary(payload)
 	enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
 	findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
 	payload["format_contracts"] = preflightContractsSummary(findings)

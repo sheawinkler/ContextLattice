@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from _common import HOME, REPO_ROOT, emit, now_iso, read_text, request_json
+from _common import HOME, REPO_ROOT, emit, ensure_agent_session, now_iso, read_text, request_json
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from agent_contracts import attach_format_contract  # noqa: E402
@@ -138,19 +138,35 @@ def main() -> int:
         emit({"ok": False, "error": "content_too_short_for_durable_write"}, args.pretty)
         return 2
 
+    agent_id = first_env("GO_WRITE_DEFAULT_AGENT_ID", "CONTEXTLATTICE_AGENT_ID", "MEMMCP_AGENT_ID", fallback="codex_gpt5")
+    session_id = first_env(
+        "GO_WRITE_DEFAULT_SESSION_ID",
+        "CONTEXTLATTICE_SESSION_ID",
+        "MEMMCP_SESSION_ID",
+        "LETTA_AUTO_SESSION_ID",
+    )
+    if not session_id:
+        ensured = ensure_agent_session(
+            project=args.project,
+            objective=content[:240],
+            agent_id=agent_id,
+            agent="agent-cli",
+            metadata={"tool": "writeback", "kind": args.kind, "topic_path": args.topic_path, "file": args.file},
+            tags=["auto-session", "writeback", args.kind],
+            timeout=min(float(args.timeout), 10.0),
+            soft=True,
+        )
+        session_id = str(ensured.get("session_id") or "")
+    if not session_id:
+        session_id = "codex-default"
+
     body = {
         "projectName": args.project,
         "fileName": args.file,
         "topicPath": args.topic_path,
         "content": content,
-        "agent_id": first_env("GO_WRITE_DEFAULT_AGENT_ID", "CONTEXTLATTICE_AGENT_ID", "MEMMCP_AGENT_ID", fallback="codex_gpt5"),
-        "session_id": first_env(
-            "GO_WRITE_DEFAULT_SESSION_ID",
-            "CONTEXTLATTICE_SESSION_ID",
-            "MEMMCP_SESSION_ID",
-            "LETTA_AUTO_SESSION_ID",
-            fallback="codex-default",
-        ),
+        "agent_id": agent_id,
+        "session_id": session_id,
         "created_at": now_iso(),
         "tags": ["agent-writeback", args.kind],
     }

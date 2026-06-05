@@ -35,7 +35,7 @@ contextlattice_env
 export CONTEXTLATTICE_AGENT_ID="$AGENT" MEMMCP_AGENT_ID="$AGENT"
 BASE="${CONTEXTLATTICE_ORCHESTRATOR_URL%/}"
 payload="$(python3 - "$PROJECT" "$TOPIC" "$QUERY" "$AGENT" "$MODE" <<'PY'
-import json, sys
+import json, os, sys
 project, topic, query, agent, mode = sys.argv[1:]
 print(json.dumps({
   "project": project,
@@ -44,6 +44,7 @@ print(json.dumps({
   "topicPath": topic,
   "query": query,
   "agent_id": agent,
+  "session_id": os.getenv("CONTEXTLATTICE_SESSION_ID", ""),
   "include_grounding": True,
   "include_retrieval_debug": True,
   "retrieval_mode": mode,
