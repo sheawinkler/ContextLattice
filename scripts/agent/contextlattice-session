@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Record agent runtime sessions and typed events in ContextLattice."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Any
+from urllib.parse import urlencode
+
+from _common import emit, ensure_agent_session, git_value, request_json, write_agent_session_state
+
+
+def metadata_from_args(raw: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid --metadata-json: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise SystemExit("--metadata-json must decode to an object")
+    return parsed
+
+
+def default_branch() -> str:
+    return git_value(["git", "branch", "--show-current"])
+
+
+def default_repo() -> str:
+    return git_value(["git", "config", "--get", "remote.origin.url"])
+
+
+def common_payload(args: argparse.Namespace) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "session_id": args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", ""),
+        "agent": args.agent or os.getenv("CONTEXTLATTICE_AGENT", ""),
+        "agent_id": args.agent_id or os.getenv("CONTEXTLATTICE_AGENT_ID", ""),
+        "project": args.project,
+    }
+    return {key: value for key, value in payload.items() if value not in ("", None)}
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    payload = common_payload(args)
+    payload.update(
+        {
+            "objective": args.objective,
+            "mission": args.mission,
+            "goal": args.goal,
+            "repo": args.repo or default_repo(),
+            "branch": args.branch or default_branch(),
+            "cwd": args.cwd or os.getcwd(),
+            "tags": args.tag,
+            "metadata": metadata_from_args(args.metadata_json),
+        }
+    )
+    raw = request_json("POST", "/v1/agents/sessions/start", payload, args.timeout)
+    session = raw.get("session") if isinstance(raw.get("session"), dict) else {}
+    if session.get("id"):
+        raw["export"] = f"export CONTEXTLATTICE_SESSION_ID={session['id']}"
+        if args.persist:
+            write_agent_session_state(
+                args.project,
+                {
+                    "session_id": str(session["id"]),
+                    "project": args.project,
+                    "agent": payload.get("agent", ""),
+                    "agent_id": payload.get("agent_id", ""),
+                    "objective": args.objective,
+                    "source": "contextlattice-session-start",
+                },
+            )
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
+def cmd_ensure(args: argparse.Namespace) -> int:
+    raw = ensure_agent_session(
+        project=args.project,
+        objective=args.objective,
+        agent=args.agent,
+        agent_id=args.agent_id,
+        mission=args.mission,
+        goal=args.goal,
+        metadata=metadata_from_args(args.metadata_json),
+        tags=args.tag,
+        timeout=args.timeout,
+        soft=not args.strict,
+    )
+    if raw.get("session_id"):
+        raw["export"] = f"export CONTEXTLATTICE_SESSION_ID={raw['session_id']}"
+    emit(raw, args.pretty)
+    return 0 if raw.get("session_id") or (raw.get("ok") and not args.strict) else 1
+
+
+def event_payload(args: argparse.Namespace, event_type: str, status: str = "") -> dict[str, Any]:
+    payload = common_payload(args)
+    metadata = metadata_from_args(args.metadata_json)
+    payload.update(
+        {
+            "type": event_type,
+            "summary": args.summary,
+            "status": status or args.status,
+            "metadata": metadata,
+        }
+    )
+    return {key: value for key, value in payload.items() if value not in ("", None, {})}
+
+
+def post_event(args: argparse.Namespace, event_type: str, status: str = "") -> int:
+    payload = event_payload(args, event_type, status)
+    raw = request_json("POST", "/v1/agents/sessions/event", payload, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
+def cmd_event(args: argparse.Namespace) -> int:
+    return post_event(args, args.event_type)
+
+
+def cmd_complete(args: argparse.Namespace) -> int:
+    return post_event(args, "session.completed", "completed")
+
+
+def cmd_fail(args: argparse.Namespace) -> int:
+    return post_event(args, "session.failed", "failed")
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    session_id = args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+    if not session_id:
+        raise SystemExit("session id is required; pass --session-id or set CONTEXTLATTICE_SESSION_ID")
+    raw = request_json("GET", f"/v1/agents/sessions/{session_id}", None, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    params = {
+        "limit": args.limit,
+        "status": args.status,
+        "project": args.project,
+        "agent": args.agent,
+    }
+    query = urlencode({key: value for key, value in params.items() if value not in ("", None)})
+    raw = request_json("GET", f"/v1/agents/sessions?{query}", None, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
+def cmd_runtime(args: argparse.Namespace) -> int:
+    query = urlencode({"limit": args.limit})
+    raw = request_json("GET", f"/telemetry/agents/runtime?{query}", None, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("enabled", False) else 1
+
+
+def add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--session-id", default="")
+    parser.add_argument("--agent", default="")
+    parser.add_argument("--agent-id", default="")
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--pretty", action="store_true")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    start = sub.add_parser("start")
+    add_common(start)
+    start.add_argument("objective")
+    start.add_argument("--mission", default="")
+    start.add_argument("--goal", default="")
+    start.add_argument("--repo", default="")
+    start.add_argument("--branch", default="")
+    start.add_argument("--cwd", default="")
+    start.add_argument("--tag", action="append", default=[])
+    start.add_argument("--metadata-json", default="")
+    start.add_argument("--persist", action=argparse.BooleanOptionalAction, default=True)
+    start.set_defaults(func=cmd_start)
+
+    ensure = sub.add_parser("ensure")
+    add_common(ensure)
+    ensure.add_argument("objective")
+    ensure.add_argument("--mission", default="")
+    ensure.add_argument("--goal", default="")
+    ensure.add_argument("--tag", action="append", default=["auto-session"])
+    ensure.add_argument("--metadata-json", default="")
+    ensure.add_argument("--strict", action="store_true")
+    ensure.set_defaults(func=cmd_ensure)
+
+    event = sub.add_parser("event")
+    add_common(event)
+    event.add_argument("event_type")
+    event.add_argument("--summary", default="")
+    event.add_argument("--status", default="")
+    event.add_argument("--metadata-json", default="")
+    event.set_defaults(func=cmd_event)
+
+    complete = sub.add_parser("complete")
+    add_common(complete)
+    complete.add_argument("--summary", default="session completed")
+    complete.add_argument("--status", default="")
+    complete.add_argument("--metadata-json", default="")
+    complete.set_defaults(func=cmd_complete)
+
+    fail = sub.add_parser("fail")
+    add_common(fail)
+    fail.add_argument("--summary", default="session failed")
+    fail.add_argument("--status", default="")
+    fail.add_argument("--metadata-json", default="")
+    fail.set_defaults(func=cmd_fail)
+
+    status = sub.add_parser("status")
+    add_common(status)
+    status.set_defaults(func=cmd_status)
+
+    list_cmd = sub.add_parser("list")
+    add_common(list_cmd)
+    list_cmd.add_argument("--status", default="")
+    list_cmd.add_argument("--limit", type=int, default=20)
+    list_cmd.set_defaults(func=cmd_list)
+
+    runtime = sub.add_parser("runtime")
+    add_common(runtime)
+    runtime.add_argument("--limit", type=int, default=16)
+    runtime.set_defaults(func=cmd_runtime)
+
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

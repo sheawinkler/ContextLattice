@@ -68,6 +68,7 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 		pack,
 		pack,
 		nil,
+		nil,
 		objectiveContext{},
 	)
 	format, ok := policy["format_contract"].(map[string]any)
@@ -83,6 +84,9 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	}
 	if findings := validateAgentContractPayload(policyContextPackageContractID, policy); len(findings) != 0 {
 		t.Fatalf("policy package should validate: %#v", findings)
+	}
+	if findings := validateAgentContractPayload(objectiveRuntimeStateContractID, anyMap(policy["objective_runtime"])); len(findings) != 0 {
+		t.Fatalf("objective runtime should validate: %#v", findings)
 	}
 
 	badPolicy := cloneContractMap(policy)
@@ -101,9 +105,52 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	}
 }
 
+func TestObjectiveRuntimeStateContractValidationPassesAndFails(t *testing.T) {
+	runtime := buildObjectiveRuntimeState(
+		"generic-agent",
+		"generic_agent_test",
+		"contextlattice",
+		"runbooks/generic-agent",
+		"runtime contract test",
+		"balanced",
+		"sess-runtime-test",
+		objectiveContext{Mission: "ship durable coordination", Objective: "prove objective runtime state", Goal: "keep output bounded"},
+		"agent.preflight.completed",
+	)
+	format, ok := runtime["format_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing objective runtime format_contract: %#v", runtime)
+	}
+	if strings.TrimSpace(anyToString(format["schema_id"])) != objectiveRuntimeStateContractID {
+		t.Fatalf("unexpected objective runtime schema_id: %#v", format["schema_id"])
+	}
+	validation, _ := format["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected objective runtime validation passed, got %#v", validation)
+	}
+	if findings := validateAgentContractPayload(objectiveRuntimeStateContractID, runtime); len(findings) != 0 {
+		t.Fatalf("objective runtime should validate: %#v", findings)
+	}
+	bad := cloneContractMap(runtime)
+	delete(bad, "next_action")
+	bad["raw_prompt"] = "unsafe"
+	findings := validateAgentContractPayload(objectiveRuntimeStateContractID, bad)
+	if len(findings) == 0 {
+		t.Fatalf("expected malformed objective runtime state to fail")
+	}
+	joined := ""
+	for _, finding := range findings {
+		joined += anyToString(finding["reason"]) + " " + anyToString(finding["path"]) + " " + anyToString(finding["field"]) + "\n"
+	}
+	if !strings.Contains(joined, "missing_required_field") || !strings.Contains(joined, "forbidden_field_present") {
+		t.Fatalf("expected missing required and forbidden findings, got %#v", findings)
+	}
+}
+
 func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 	pack := map[string]any{"context_pack": map[string]any{"facts": []any{}, "results": []any{}}}
-	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", pack, pack, nil, objectiveContext{})
+	objectiveRuntime := buildObjectiveRuntimeState("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", "sess-test", objectiveContext{}, "agent.preflight.completed")
+	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", pack, pack, nil, objectiveRuntime, objectiveContext{})
 	response := attachAgentPreflightFormatContracts(map[string]any{
 		"ok":                     true,
 		"service":                "gateway-go",
@@ -114,6 +161,7 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 		"topic_path":             "runbooks/codex-integration",
 		"retrieval_mode":         "fast",
 		"context_pack":           pack,
+		"objective_runtime":      objectiveRuntime,
 		"policy_context_package": policy,
 	})
 	contracts, ok := response["format_contracts"].(map[string]any)
@@ -308,7 +356,8 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 		"source_coverage":    map[string]any{"configured": []any{"fixture"}, "returned": []any{"fixture"}, "complete": true},
 		"writeback_required": true,
 	})
-	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", oversized, "balanced", pack, pack, nil, objectiveContext{})
+	objectiveRuntime := buildObjectiveRuntimeState("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", oversized, "balanced", "sess-test", objectiveContext{}, "agent.preflight.completed")
+	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", oversized, "balanced", pack, pack, nil, objectiveRuntime, objectiveContext{})
 	response := attachAgentPreflightFormatContracts(map[string]any{
 		"ok":                     true,
 		"service":                "gateway-go",
@@ -323,10 +372,42 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 		"broadened_search":       map[string]any{"results": items, "degraded": false},
 		"context_pack":           pack,
 		"mission_context_pack":   pack,
+		"objective_runtime":      objectiveRuntime,
 		"policy_context_package": policy,
 	})
 	assertBoundaryContractPassed(t, agentPreflightResponseContractID, response)
 	assertBoundaryJSONUnderLimit(t, agentPreflightResponseContractID, response)
+	assertNoRawProviderOverflowShape(t, response)
+}
+
+func TestAgentPreflightBoundarySanitizesProviderOverflowSearchTextUnderBudget(t *testing.T) {
+	phrase := "documentation mentions array_above_max_length and context length exceeded as historical provider errors"
+	pack := attachContextPackFormatContract(map[string]any{
+		"ok":                 true,
+		"agent_id":           "codex_gpt5_test",
+		"context_pack":       map[string]any{"facts": []any{}, "results": []any{}, "citations": []any{}, "relevant_decisions": []any{}, "files_to_read": []any{}, "files_to_avoid": []any{}, "capabilities_to_use": []any{}, "runbooks": []any{}, "known_failure_modes": []any{}, "commands": []any{}, "acceptance_criteria": []any{}},
+		"source_coverage":    map[string]any{"configured": []any{"fixture"}, "returned": []any{"fixture"}, "complete": true},
+		"writeback_required": true,
+	})
+	objectiveRuntime := buildObjectiveRuntimeState("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "balanced", "sess-test", objectiveContext{}, "agent.preflight.completed")
+	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "balanced", pack, pack, nil, objectiveRuntime, objectiveContext{})
+	response := attachAgentPreflightFormatContracts(map[string]any{
+		"ok":             true,
+		"service":        "gateway-go",
+		"agent":          "codex",
+		"agent_id":       "codex_gpt5_test",
+		"project":        "contextlattice",
+		"query":          "preflight",
+		"topic_path":     "runbooks/codex-integration",
+		"retrieval_mode": "balanced",
+		"broadened_search": map[string]any{
+			"results": map[string]any{"results": []map[string]any{{"summary": phrase}}},
+		},
+		"context_pack":           pack,
+		"objective_runtime":      objectiveRuntime,
+		"policy_context_package": policy,
+	})
+	assertBoundaryContractPassed(t, agentPreflightResponseContractID, response)
 	assertNoRawProviderOverflowShape(t, response)
 }
 

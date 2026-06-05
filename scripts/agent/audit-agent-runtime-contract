@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Audit generic agent objective runtime and auto-session contracts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from _common import REPO_ROOT, emit, request_json
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from agent_contracts import load_agent_contracts_registry, validate_agent_contract_payload  # noqa: E402
+
+
+PROVIDER_OVERFLOW_PATTERNS = (
+    "array_above_max_length",
+    "context length exceeded",
+    "maximum context length",
+)
+
+
+def validation_status(payload: Any, key: str = "format_contract") -> str:
+    if not isinstance(payload, dict):
+        return ""
+    contract = payload.get(key)
+    if not isinstance(contract, dict):
+        return ""
+    validation = contract.get("validation")
+    if not isinstance(validation, dict):
+        return ""
+    return str(validation.get("status") or "")
+
+
+def contains_provider_overflow(payload: Any) -> bool:
+    rendered = json.dumps(payload, sort_keys=True).lower()
+    return any(pattern in rendered for pattern in PROVIDER_OVERFLOW_PATTERNS)
+
+
+def audit_registry(findings: list[dict[str, Any]]) -> None:
+    registry = load_agent_contracts_registry()
+    contracts = registry.get("contracts") if isinstance(registry.get("contracts"), dict) else {}
+    if "objective_runtime_state.v1" not in contracts:
+        findings.append({"severity": "error", "reason": "missing_objective_runtime_contract"})
+    policy = contracts.get("policy_context_package.v1") if isinstance(contracts, dict) else {}
+    required = policy.get("required_fields") if isinstance(policy, dict) else []
+    if "objective_runtime" not in required:
+        findings.append({"severity": "error", "reason": "policy_contract_missing_objective_runtime_requirement"})
+
+
+def audit_preflight(findings: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
+    payload = {
+        "agent": "generic-agent",
+        "agent_id": "generic_agent_audit",
+        "project": "context-lattice-private",
+        "topic_path": "contextlattice/agent-runtime-coordination",
+        "query": "audit generic objective runtime contract and auto session path",
+        "retrieval_mode": "balanced",
+        "mission": "make ContextLattice coordinate any agent runtime",
+        "objective": "prove objective runtime state is present and contract-valid",
+        "goal": "generic agents can preflight, retrieve, checkpoint, and resume with session identity",
+    }
+    response = request_json("POST", "/v1/agents/preflight", payload, timeout)
+    runtime = response.get("objective_runtime") if isinstance(response.get("objective_runtime"), dict) else {}
+    policy = response.get("policy_context_package") if isinstance(response.get("policy_context_package"), dict) else {}
+    policy_runtime = policy.get("objective_runtime") if isinstance(policy.get("objective_runtime"), dict) else {}
+    if not response.get("session_id"):
+        findings.append({"severity": "error", "reason": "preflight_missing_auto_session_id"})
+    if validation_status(runtime) != "passed":
+        findings.append({"severity": "error", "reason": "preflight_objective_runtime_validation_failed", "validation": runtime.get("format_contract")})
+    if validation_status(policy_runtime) != "passed":
+        findings.append({"severity": "error", "reason": "policy_objective_runtime_validation_failed", "validation": policy_runtime.get("format_contract")})
+    for item in validate_agent_contract_payload("objective_runtime_state.v1", runtime):
+        findings.append({"severity": "error", **item})
+    if contains_provider_overflow(response):
+        findings.append({"severity": "error", "reason": "preflight_provider_overflow_phrase_leaked"})
+    return response
+
+
+def audit_cli_auto_session(findings: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as tmp:
+        env = os.environ.copy()
+        env.pop("CONTEXTLATTICE_SESSION_ID", None)
+        env["CONTEXTLATTICE_SESSION_STATE_PATH"] = str(Path(tmp) / "session.json")
+        env["CONTEXTLATTICE_AGENT_ID"] = "generic_agent_audit"
+        proc = subprocess.run(
+            [
+                str(REPO_ROOT / "scripts" / "agent" / "contextlattice-pack"),
+                "audit contextlattice generic auto session objective runtime",
+                "--project",
+                "context-lattice-private",
+                "--topic-path",
+                "contextlattice/agent-runtime-coordination",
+                "--budget-chars",
+                "9000",
+                "--limit",
+                "3",
+                "--max-facts",
+                "3",
+                "--timeout",
+                str(timeout),
+                "--soft",
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout + 10, 30),
+        )
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            payload = {"raw": proc.stdout[:1200], "stderr": proc.stderr[:1200]}
+        if proc.returncode != 0:
+            findings.append({"severity": "error", "reason": "contextlattice_pack_auto_session_failed", "returncode": proc.returncode, "stderr": proc.stderr[:500]})
+        if not payload.get("session_id"):
+            findings.append({"severity": "error", "reason": "contextlattice_pack_missing_auto_session_id", "payload": payload})
+        runtime = payload.get("objective_runtime") if isinstance(payload.get("objective_runtime"), dict) else {}
+        if runtime and validation_status(runtime) != "passed":
+            findings.append({"severity": "error", "reason": "contextlattice_pack_objective_runtime_validation_failed", "validation": runtime.get("format_contract")})
+        if contains_provider_overflow(payload):
+            findings.append({"severity": "error", "reason": "contextlattice_pack_provider_overflow_phrase_leaked"})
+        return payload
+
+
+def complete_session(session_id: str, summary: str, timeout: float, findings: list[dict[str, Any]]) -> None:
+    if not session_id:
+        return
+    try:
+        request_json(
+            "POST",
+            "/v1/agents/sessions/event",
+            {
+                "session_id": session_id,
+                "type": "session.completed",
+                "summary": summary,
+                "metadata": {"audit": "agent-runtime-contract"},
+            },
+            timeout,
+        )
+    except Exception as exc:
+        findings.append({"severity": "warn", "reason": "audit_session_complete_failed", "session_id": session_id, "detail": str(exc)[:500]})
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    findings: list[dict[str, Any]] = []
+    preflight = {}
+    cli = {}
+    try:
+        audit_registry(findings)
+        preflight = audit_preflight(findings, args.timeout)
+        cli = audit_cli_auto_session(findings, args.timeout)
+        complete_session(str(preflight.get("session_id") or ""), "agent runtime contract preflight audit completed", args.timeout, findings)
+        complete_session(str(cli.get("session_id") or ""), "agent runtime contract CLI auto-session audit completed", args.timeout, findings)
+    except Exception as exc:
+        findings.append({"severity": "error", "reason": "audit_exception", "detail": str(exc)[:1000]})
+
+    errors = [item for item in findings if item.get("severity") == "error"]
+    emit(
+        {
+            "ok": not errors,
+            "findings": findings,
+            "preflight": {
+                "session_id": preflight.get("session_id"),
+                "objective_runtime_status": validation_status(preflight.get("objective_runtime")),
+            },
+            "cli": {
+                "session_id": cli.get("session_id"),
+                "objective_runtime_status": validation_status(cli.get("objective_runtime")),
+            },
+        },
+        args.pretty,
+    )
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -240,6 +240,25 @@ def _compact_policy_payload(payload: dict[str, Any], keep: int) -> None:
     handoff = payload.get("handoff")
     if isinstance(handoff, dict) and isinstance(handoff.get("handoff_prompt"), str):
         handoff["handoff_prompt"] = _clip_utf8(_sanitize_provider_overflow_text(handoff["handoff_prompt"]), 4000)
+    objective_runtime = payload.get("objective_runtime")
+    if isinstance(objective_runtime, dict):
+        _compact_objective_runtime_payload(objective_runtime, keep)
+
+
+def _compact_objective_runtime_payload(payload: dict[str, Any], keep: int) -> None:
+    for key in ("mission", "objective", "goal"):
+        if isinstance(payload.get(key), str):
+            payload[key] = _clip_utf8(_sanitize_provider_overflow_text(payload[key]), 1600)
+    if isinstance(payload.get("next_action"), str):
+        payload["next_action"] = _clip_utf8(_sanitize_provider_overflow_text(payload["next_action"]), 1200)
+    risk = payload.get("risk_or_blocker")
+    if isinstance(risk, dict) and isinstance(risk.get("fastest_recovery_path"), str):
+        risk["fastest_recovery_path"] = _clip_utf8(_sanitize_provider_overflow_text(risk["fastest_recovery_path"]), 1200)
+    evidence = payload.get("evidence")
+    if isinstance(evidence, dict):
+        for key in ("required", "current"):
+            if isinstance(evidence.get(key), list):
+                evidence[key] = evidence[key][: max(3, keep)]
 
 
 def _compact_preflight_payload(payload: dict[str, Any], keep: int) -> None:
@@ -256,6 +275,9 @@ def _compact_preflight_payload(payload: dict[str, Any], keep: int) -> None:
     policy = payload.get("policy_context_package")
     if isinstance(policy, dict):
         _compact_policy_payload(policy, keep)
+    objective_runtime = payload.get("objective_runtime")
+    if isinstance(objective_runtime, dict):
+        _compact_objective_runtime_payload(objective_runtime, keep)
 
 
 def enforce_contract_limits(
@@ -280,6 +302,8 @@ def enforce_contract_limits(
             _compact_preflight_payload(out, keep)
         elif contract_id == "policy_context_package.v1":
             _compact_policy_payload(out, keep)
+        elif contract_id == "objective_runtime_state.v1":
+            _compact_objective_runtime_payload(out, keep)
         out = _enforce_value_limits(
             out,
             min(max_string, string_cap) if max_string else string_cap,

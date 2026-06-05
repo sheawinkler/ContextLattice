@@ -70,6 +70,34 @@ mode="${CONTEXTLATTICE_COMPACTION_RETRIEVAL_MODE:-balanced}"
 query="${CONTEXTLATTICE_COMPACTION_QUERY:-context compaction handoff mission objective goal blockers next actions}"
 export CONTEXTLATTICE_CLIENT_TIMEOUT_SECS="${CONTEXTLATTICE_CLIENT_TIMEOUT_SECS:-${CONTEXTLATTICE_HOOK_TIMEOUT_SECS:-200}}"
 
+if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
+  set +e
+  session_out="$(python3 "${REPO_ROOT}/scripts/agent/contextlattice-session" ensure \
+    "$summary" \
+    --project "$project" \
+    --agent "${CONTEXTLATTICE_AGENT:-compact-hook}" \
+    --agent-id "${CONTEXTLATTICE_AGENT_ID:-codex_gpt5}" \
+    --tag compaction \
+    --tag auto-session \
+    --metadata-json '{"hook":"pre_compaction"}' 2>/dev/null)"
+  session_status=$?
+  set -e
+  if [[ "$session_status" == "0" && -n "$session_out" ]]; then
+    session_id="$(python3 - "$session_out" <<'PY'
+import json, sys
+try:
+    payload = json.loads(sys.argv[1])
+except Exception:
+    payload = {}
+print(str(payload.get("session_id") or ""))
+PY
+)"
+    if [[ -n "$session_id" ]]; then
+      export CONTEXTLATTICE_SESSION_ID="$session_id"
+    fi
+  fi
+fi
+
 if [[ "${CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE:-}" == "1" ]]; then
   printf '%s' '{"ok":true}' | emit_codex_precompact_output 0
   exit 0

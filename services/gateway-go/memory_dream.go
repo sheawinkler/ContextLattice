@@ -18,6 +18,7 @@ type dreamModeOptions struct {
 	TopicPath             string
 	RetrievalMode         string
 	AgentID               string
+	SessionID             string
 	RiskTolerance         string
 	NoveltyLevel          int
 	MaxHypotheses         int
@@ -152,6 +153,7 @@ func (s *server) buildDreamModeResponse(
 		"novelty_level":      opts.NoveltyLevel,
 		"risk_tolerance":     opts.RiskTolerance,
 		"agent_id":           opts.AgentID,
+		"session_id":         opts.SessionID,
 		"hypotheses":         hypotheses,
 		"experiments":        experiments,
 		"evidence":           evidence,
@@ -179,6 +181,49 @@ func (s *server) buildDreamModeResponse(
 		response["writeback"] = persistPayload
 		if persistStatus >= 400 {
 			response["warnings"] = append(parseWarnings(response["warnings"]), fmt.Sprintf("Dream Mode writeback returned status %d.", persistStatus))
+		}
+	}
+	objectiveRuntime := buildObjectiveRuntimeState(
+		"dream-mode",
+		opts.AgentID,
+		opts.Project,
+		opts.TopicPath,
+		firstNonEmptyStrings(opts.Goal, opts.Query),
+		opts.RetrievalMode,
+		opts.SessionID,
+		objectiveContext{Mission: "", Objective: opts.Goal, Goal: opts.Query},
+		"dream.completed",
+	)
+	response["objective_runtime"] = objectiveRuntime
+	if opts.SessionID != "" {
+		session := s.recordAgentSessionEvent(opts.SessionID, "dream.completed", map[string]any{
+			"agent_id": opts.AgentID,
+			"project":  opts.Project,
+			"summary":  firstNonEmptyStrings(opts.Goal, opts.Query),
+			"metadata": map[string]any{
+				"endpoint":            endpoint,
+				"topic_path":          opts.TopicPath,
+				"retrieval_mode":      opts.RetrievalMode,
+				"hypothesis_count":    len(hypotheses),
+				"experiment_count":    len(experiments),
+				"novelty_level":       opts.NoveltyLevel,
+				"reflection":          reflection,
+				"llm_used":            anyToBool(llm["used"]),
+				"deepening_attempted": anyToBool(reflection["deepening_attempted"]),
+				"deepening_used":      anyToBool(reflection["deepening_used"]),
+				"writeback_persisted": anyToBool(response["persisted"]),
+				"source_coverage":     sourceCoverage,
+				"objective_state":     anyToString(objectiveRuntime["objective_state"]),
+				"next_action":         anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime":   objectiveRuntime,
+			},
+		})
+		if session != nil {
+			response["agent_runtime"] = map[string]any{
+				"session_id":          opts.SessionID,
+				"memory_contribution": session["memory_contribution"],
+				"last_event_type":     session["last_event_type"],
+			}
 		}
 	}
 	status := http.StatusOK
@@ -215,6 +260,7 @@ func normalizeDreamModeOptions(payload map[string]any) dreamModeOptions {
 		TopicPath:             topicPath,
 		RetrievalMode:         retrievalMode,
 		AgentID:               strings.TrimSpace(anyToString(payload["agent_id"])),
+		SessionID:             strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["session_id"]), anyToString(payload["sessionId"]))),
 		RiskTolerance:         normalizeDreamRisk(anyToString(payload["risk_tolerance"])),
 		NoveltyLevel:          clampInt(anyToInt(payload["novelty_level"], envInt("GO_DREAM_NOVELTY_LEVEL", 3)), 1, 5),
 		MaxHypotheses:         maxHypotheses,
@@ -365,6 +411,7 @@ func dreamContextPackRequest(opts dreamModeOptions, payload map[string]any) map[
 		"limit":                   opts.Limit,
 		"max_facts":               opts.MaxFacts,
 		"agent_id":                opts.AgentID,
+		"session_id":              opts.SessionID,
 		"include_retrieval_debug": opts.IncludeRetrievalDebug,
 		"combined_sources":        anyToBoolOrDefault(payload["combined_sources"], true),
 	}

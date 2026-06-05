@@ -61,6 +61,7 @@ func (s *server) buildContextPackResponse(
 		"include_preferences":     anyToBool(requestPayload["include_preferences"]),
 		"include_retrieval_debug": includeRetrievalDebug,
 		"agent_id":                strings.TrimSpace(anyToString(requestPayload["agent_id"])),
+		"session_id":              strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["session_id"]), anyToString(requestPayload["sessionId"]))),
 		"traffic_class":           strings.TrimSpace(anyToString(requestPayload["traffic_class"])),
 		"include_grounding":       true,
 	}
@@ -108,6 +109,10 @@ func (s *server) buildContextPackResponse(
 	if agentID := strings.TrimSpace(anyToString(searchRequest["agent_id"])); agentID != "" {
 		searchResponse["agent_id"] = agentID
 	}
+	sessionID := strings.TrimSpace(anyToString(searchRequest["session_id"]))
+	if sessionID != "" {
+		searchResponse["session_id"] = sessionID
+	}
 
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
 	sourceCoverage := contextPackSourceCoverage(searchResponse)
@@ -122,6 +127,7 @@ func (s *server) buildContextPackResponse(
 		"retrieval_intent":   searchResponse["retrieval_intent"],
 		"traffic_class":      searchResponse["traffic_class"],
 		"agent_id":           searchResponse["agent_id"],
+		"session_id":         sessionID,
 		"source_coverage":    sourceCoverage,
 		"writeback_required": true,
 	}
@@ -132,6 +138,51 @@ func (s *server) buildContextPackResponse(
 	}
 	if !objectiveCtx.empty() {
 		response["objective_context"] = objectiveCtx.toMap()
+	}
+	objectiveRuntime := map[string]any{}
+	if sessionID != "" || !objectiveCtx.empty() {
+		objectiveRuntime = buildObjectiveRuntimeState(
+			"context-pack",
+			strings.TrimSpace(anyToString(searchResponse["agent_id"])),
+			strings.TrimSpace(anyToString(requestPayload["project"])),
+			strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+			query,
+			retrievalMode,
+			sessionID,
+			objectiveCtx,
+			"context_pack.completed",
+		)
+		response["objective_runtime"] = objectiveRuntime
+	}
+	if sessionID != "" {
+		facts, _ := asAnySlice(contextPack["facts"])
+		results, _ := asAnySlice(contextPack["results"])
+		session := s.recordAgentSessionEvent(sessionID, "context_pack.completed", map[string]any{
+			"agent_id": searchResponse["agent_id"],
+			"project":  requestPayload["project"],
+			"summary":  query,
+			"metadata": map[string]any{
+				"endpoint":          "/memory/context-pack",
+				"retrieval_mode":    retrievalMode,
+				"retrieval_intent":  retrievalIntent,
+				"traffic_class":     trafficClass,
+				"source_coverage":   sourceCoverage,
+				"fact_count":        len(facts),
+				"result_count":      len(results),
+				"memory_hits":       len(results),
+				"warnings_count":    len(parseWarnings(response["warnings"])),
+				"objective_state":   anyToString(objectiveRuntime["objective_state"]),
+				"next_action":       anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime": objectiveRuntime,
+			},
+		})
+		if session != nil {
+			response["agent_runtime"] = map[string]any{
+				"session_id":          sessionID,
+				"memory_contribution": session["memory_contribution"],
+				"last_event_type":     session["last_event_type"],
+			}
+		}
 	}
 	return attachContextPackFormatContract(response), status, nil
 }

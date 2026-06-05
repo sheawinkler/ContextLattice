@@ -118,6 +118,20 @@ contextlattice_checkpoint -h
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
 - Hook pack details: `docs/agent-hooks.md`.
 
+## Agent Runtime Sessions
+
+ContextLattice tracks live agent work as first-class sessions, independent of the runner or model provider.
+
+- Start/list/read sessions through `GET|POST /v1/agents/sessions` and `GET /v1/agents/sessions/{session_id}`.
+- Emit normalized events through `POST /v1/agents/sessions/event` or `POST /v1/agents/sessions/{session_id}/events`.
+- Read live runtime telemetry from `GET /telemetry/agents/runtime`.
+- Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
+- Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime flows.
+- `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
+- Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
+
+Canonical event families include `session.started`, `context_pack.completed`, `dream.completed`, `graph.neighbors_returned`, `graph.edge_touched`, `decision.made`, `test.ran`, `handoff.created`, `writeback.completed`, and `session.completed`.
+
 ## Download Installers
 
 - macOS DMG: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg`

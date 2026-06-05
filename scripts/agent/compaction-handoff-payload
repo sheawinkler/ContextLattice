@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _common import REPO_ROOT, emit, now_iso
+from _common import REPO_ROOT, emit, now_iso, read_agent_session_state
 
 
 TEXT_KEYS = (
@@ -194,7 +194,11 @@ def find_session_id(payload: Any) -> str:
     env_value = os.getenv("CODEX_SESSION_ID") or os.getenv("CONTEXTLATTICE_SESSION_ID") or ""
     if env_value.strip():
         return compact_text(env_value, 160)
-    return first_string(payload, SESSION_KEYS)[:160]
+    payload_value = first_string(payload, SESSION_KEYS)[:160]
+    if payload_value:
+        return payload_value
+    state = read_agent_session_state(os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice"))
+    return compact_text(str(state.get("session_id") or ""), 160)
 
 
 def git_branch(cwd: Path) -> str:

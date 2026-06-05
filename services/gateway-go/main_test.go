@@ -3273,6 +3273,10 @@ func assertPolicyContextIncludesAntiScheming(t *testing.T, raw any) {
 	if !anyToBool(contract["anti_scheming_required"]) {
 		t.Fatalf("expected anti_scheming_required=true, got %#v", contract["anti_scheming_required"])
 	}
+	if !anyToBool(contract["objective_runtime_required"]) {
+		t.Fatalf("expected objective_runtime_required=true, got %#v", contract["objective_runtime_required"])
+	}
+	assertObjectiveRuntimeContractPassed(t, policy["objective_runtime"])
 	protocol, ok := policy["anti_scheming_protocol"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected anti_scheming_protocol object, got %#v", policy["anti_scheming_protocol"])
@@ -3302,6 +3306,30 @@ func assertPolicyContextIncludesAntiScheming(t *testing.T, raw any) {
 	validation, ok := format["validation"].(map[string]any)
 	if !ok || strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected policy format validation passed, got %#v", format["validation"])
+	}
+}
+
+func assertObjectiveRuntimeContractPassed(t *testing.T, raw any) {
+	t.Helper()
+	runtime, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected objective_runtime object, got %#v", raw)
+	}
+	format, ok := runtime["format_contract"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected objective_runtime format_contract object, got %#v", runtime["format_contract"])
+	}
+	if strings.TrimSpace(anyToString(format["schema_id"])) != objectiveRuntimeStateContractID {
+		t.Fatalf("unexpected objective_runtime schema_id: %#v", format["schema_id"])
+	}
+	validation, ok := format["validation"].(map[string]any)
+	if !ok || strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected objective_runtime validation passed, got %#v", format["validation"])
+	}
+	for _, key := range []string{"objective_state", "action_executed", "evidence", "objective_delta", "risk_or_blocker", "next_action"} {
+		if _, ok := runtime[key]; !ok {
+			t.Fatalf("objective_runtime missing %s: %#v", key, runtime)
+		}
 	}
 }
 
@@ -3415,6 +3443,7 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	if payload["policy_context_package"] == nil {
 		t.Fatalf("expected policy_context_package payload, got nil")
 	}
+	assertObjectiveRuntimeContractPassed(t, payload["objective_runtime"])
 	assertPolicyContextIncludesAntiScheming(t, payload["policy_context_package"])
 	objectiveContext, ok := payload["objective_context"].(map[string]any)
 	if !ok || strings.TrimSpace(anyToString(objectiveContext["objective"])) != "ship boundary graph gate" {
@@ -4810,6 +4839,73 @@ func TestStagedRetrievalTopicRollupsNoLexicalMatchDoesNotFallback(t *testing.T) 
 	errorsMap, _ := debug["source_errors"].(map[string]any)
 	if _, exists := errorsMap["topic_rollups"]; exists {
 		t.Fatalf("expected no source_errors.topic_rollups on lexical miss, got %#v", errorsMap["topic_rollups"])
+	}
+}
+
+func TestStagedRetrievalTopicRollupsEmptyStoreIsNoData(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "topic_rollups")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_RETRIEVAL_NON_DEGRADABLE_SOURCES", "topic_rollups")
+	t.Setenv("GO_RETRIEVAL_PROTECTED_SOURCES", "topic_rollups")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", t.TempDir())
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/retrieval/query" {
+			backendCalls++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/v1/retrieval/query",
+		"application/json",
+		strings.NewReader(`{"request":{"query":"empty topic rollup smoke","limit":5,"retrieval_mode":"fast","sources":["topic_rollups"]}}`),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected zero backend fallback calls on empty topic rollup store, got %d", backendCalls)
+	}
+	rows, _ := payload["results"].([]any)
+	if len(rows) != 0 {
+		t.Fatalf("expected empty results on empty topic rollup store, got %#v", rows)
+	}
+	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
+	if strings.Contains(warnings, "topic_rollups go-adapter fallback to backend retrieval lane") {
+		t.Fatalf("unexpected topic_rollups fallback warning: %v", payload["warnings"])
+	}
+	debug, _ := payload["retrieval_debug"].(map[string]any)
+	errorsMap, _ := debug["source_errors"].(map[string]any)
+	if _, exists := errorsMap["topic_rollups"]; exists {
+		t.Fatalf("expected no source_errors.topic_rollups on empty topic rollup store, got %#v", errorsMap["topic_rollups"])
 	}
 }
 

@@ -79,6 +79,26 @@ func applyAgentBoundaryLimits(value any, maxStringBytes int, maxListItems int, s
 			items[idx] = applyAgentBoundaryLimits(item, maxStringBytes, maxListItems, sanitizeOverflow, stats)
 		}
 		return items
+	case []map[string]any:
+		items := typed
+		if maxListItems >= 0 && len(items) > maxListItems {
+			items = items[:maxListItems]
+			if stats != nil {
+				stats.ListsClipped++
+			}
+		}
+		for idx, item := range items {
+			if next, ok := applyAgentBoundaryLimits(item, maxStringBytes, maxListItems, sanitizeOverflow, stats).(map[string]any); ok {
+				items[idx] = next
+			}
+		}
+		return items
+	case map[string]string:
+		out := map[string]any{}
+		for key, item := range typed {
+			out[key] = applyAgentBoundaryLimits(item, maxStringBytes, maxListItems, sanitizeOverflow, stats)
+		}
+		return out
 	case []string:
 		items := make([]any, 0, len(typed))
 		for _, item := range typed {
@@ -504,6 +524,55 @@ func compactSearchBoundary(value any, stats *agentBoundaryStats) any {
 	return out
 }
 
+func sanitizePreflightSearchBoundary(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	for _, key := range []string{"scoped_search", "broadened_search"} {
+		if value, ok := payload[key]; ok {
+			payload[key] = sanitizeProviderOverflowValue(value)
+		}
+	}
+}
+
+func sanitizeProviderOverflowValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			typed[key] = sanitizeProviderOverflowValue(item)
+		}
+		return typed
+	case []any:
+		for idx, item := range typed {
+			typed[idx] = sanitizeProviderOverflowValue(item)
+		}
+		return typed
+	case []map[string]any:
+		for idx, item := range typed {
+			if next, ok := sanitizeProviderOverflowValue(item).(map[string]any); ok {
+				typed[idx] = next
+			}
+		}
+		return typed
+	case map[string]string:
+		out := map[string]any{}
+		for key, item := range typed {
+			out[key] = sanitizeProviderOverflowText(item)
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, sanitizeProviderOverflowText(item))
+		}
+		return out
+	case string:
+		return sanitizeProviderOverflowText(typed)
+	default:
+		return value
+	}
+}
+
 func compactPreflightResponseBoundary(payload map[string]any, keep int, stats *agentBoundaryStats) {
 	for _, key := range []string{"context_pack", "mission_context_pack", "mission_pack"} {
 		if value, ok := payload[key]; ok {
@@ -512,6 +581,9 @@ func compactPreflightResponseBoundary(payload map[string]any, keep int, stats *a
 	}
 	if policy, ok := payload["policy_context_package"].(map[string]any); ok {
 		compactPolicyContextPackageBoundary(policy, maxInt(keep, 5), stats)
+	}
+	if objectiveRuntime, ok := payload["objective_runtime"].(map[string]any); ok {
+		compactObjectiveRuntimeBoundary(objectiveRuntime, stats)
 	}
 	for _, key := range []string{"scoped_search", "broadened_search"} {
 		if value, ok := payload[key]; ok {
@@ -554,6 +626,32 @@ func compactPolicyContextPackageBoundary(policy map[string]any, keep int, stats 
 		if text := strings.TrimSpace(anyToString(handoff["handoff_prompt"])); text != "" {
 			handoff["handoff_prompt"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 4000)
 		}
+	}
+	if objectiveRuntime, ok := policy["objective_runtime"].(map[string]any); ok {
+		compactObjectiveRuntimeBoundary(objectiveRuntime, stats)
+	}
+}
+
+func compactObjectiveRuntimeBoundary(runtime map[string]any, stats *agentBoundaryStats) {
+	if runtime == nil {
+		return
+	}
+	for _, key := range []string{"mission", "objective", "goal"} {
+		if text := strings.TrimSpace(anyToString(runtime[key])); text != "" {
+			runtime[key] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 1600)
+		}
+	}
+	if text := strings.TrimSpace(anyToString(runtime["next_action"])); text != "" {
+		runtime["next_action"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 1200)
+	}
+	if risk, ok := runtime["risk_or_blocker"].(map[string]any); ok {
+		if text := strings.TrimSpace(anyToString(risk["fastest_recovery_path"])); text != "" {
+			risk["fastest_recovery_path"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 1200)
+		}
+	}
+	if evidence, ok := runtime["evidence"].(map[string]any); ok {
+		evidence["current"] = trimBoundaryList(evidence["current"], 8, stats)
+		evidence["required"] = trimBoundaryList(evidence["required"], 8, stats)
 	}
 }
 
@@ -634,5 +732,8 @@ func forceMinimalPreflightResponseBoundary(payload map[string]any, stats *agentB
 	payload["mission_pack"] = map[string]any{"omitted_by_boundary": true}
 	if policy, ok := payload["policy_context_package"].(map[string]any); ok {
 		compactPolicyContextPackageBoundary(policy, 5, stats)
+	}
+	if objectiveRuntime, ok := payload["objective_runtime"].(map[string]any); ok {
+		compactObjectiveRuntimeBoundary(objectiveRuntime, stats)
 	}
 }

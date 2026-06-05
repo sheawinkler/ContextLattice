@@ -73,6 +73,33 @@ contextlattice_env
 project="${CONTEXTLATTICE_PROJECT:-contextlattice}"
 topic="${CONTEXTLATTICE_COMPACTION_TOPIC_PATH:-runbooks/context-compaction-handoff}"
 query="${CONTEXTLATTICE_COMPACTION_QUERY:-}"
+if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
+  set +e
+  session_out="$(python3 "${REPO_ROOT}/scripts/agent/contextlattice-session" ensure \
+    "Post-compaction objective readback for ${project}" \
+    --project "$project" \
+    --agent "${CONTEXTLATTICE_AGENT:-compact-hook}" \
+    --agent-id "${CONTEXTLATTICE_AGENT_ID:-codex_gpt5}" \
+    --tag compaction \
+    --tag auto-session \
+    --metadata-json '{"hook":"post_compaction"}' 2>/dev/null)"
+  session_status=$?
+  set -e
+  if [[ "$session_status" == "0" && -n "$session_out" ]]; then
+    session_id="$(python3 - "$session_out" <<'PY'
+import json, sys
+try:
+    payload = json.loads(sys.argv[1])
+except Exception:
+    payload = {}
+print(str(payload.get("session_id") or ""))
+PY
+)"
+    if [[ -n "$session_id" ]]; then
+      export CONTEXTLATTICE_SESSION_ID="$session_id"
+    fi
+  fi
+fi
 if [[ -z "${query}" && ! -t 0 ]]; then
   set +e
   query="$(python3 "${SCRIPT_DIR}/../agent/compaction-handoff-payload" --query)"
@@ -87,7 +114,7 @@ timeout="${CONTEXTLATTICE_HOOK_TIMEOUT_SECS:-200}"
 base="${CONTEXTLATTICE_ORCHESTRATOR_URL%/}"
 
 payload="$(python3 - "$project" "$topic" "$query" <<'PY'
-import json, sys
+import json, os, sys
 project, topic, query = sys.argv[1:]
 print(json.dumps({
   "project": project,
@@ -96,6 +123,7 @@ print(json.dumps({
   "topicPath": topic,
   "query": query,
   "retrieval_mode": "balanced",
+  "session_id": os.getenv("CONTEXTLATTICE_SESSION_ID", ""),
   "include_grounding": True,
   "include_retrieval_debug": True,
   "limit": 5,

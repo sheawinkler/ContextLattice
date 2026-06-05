@@ -33,5 +33,6 @@ if [[ "${CONTEXTLATTICE_GRAPH_QUALITY_WRITE:-0}" == "1" ]]; then
   fi
 fi
 
-export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/Volumes/wd_black/contextlattice/pycache}"
+DEFAULT_CACHE_ROOT="${CONTEXTLATTICE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/contextlattice}"
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-${DEFAULT_CACHE_ROOT}/pycache}"
 exec scripts/agent/memory-graph-quality "${args[@]}"
