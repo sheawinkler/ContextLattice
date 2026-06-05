@@ -9,6 +9,8 @@ INTERVAL_SECONDS="${CONTEXTLATTICE_GRAPH_QUALITY_INTERVAL_SECONDS:-21600}"
 RUN_AT_LOAD="${CONTEXTLATTICE_GRAPH_QUALITY_RUN_AT_LOAD:-1}"
 USER_ID="$(id -u)"
 ACTION="${1:-install}"
+DEFAULT_CACHE_ROOT="${CONTEXTLATTICE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/contextlattice}"
+DEFAULT_PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-${DEFAULT_CACHE_ROOT}/pycache}"
 
 if ! [[ "$INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || [[ "$INTERVAL_SECONDS" -le 0 ]]; then
   echo "CONTEXTLATTICE_GRAPH_QUALITY_INTERVAL_SECONDS must be a positive integer (got: $INTERVAL_SECONDS)" >&2
@@ -50,7 +52,7 @@ install_agent() {
     <key>PATH</key>
     <string>${PATH}</string>
     <key>PYTHONPYCACHEPREFIX</key>
-    <string>${PYTHONPYCACHEPREFIX:-/Volumes/wd_black/contextlattice/pycache}</string>
+    <string>${DEFAULT_PYTHONPYCACHEPREFIX}</string>
     <key>CONTEXTLATTICE_GRAPH_QUALITY_WRITE</key>
     <string>${CONTEXTLATTICE_GRAPH_QUALITY_WRITE:-0}</string>
     <key>CONTEXTLATTICE_GRAPH_QUALITY_ALLOW_DISK</key>
