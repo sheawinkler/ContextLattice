@@ -20,6 +20,7 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_write
   contextlattice_agent_orchestration
   contextlattice_agent_adapter
+  contextlattice_codex_session_store_doctor
   contextlattice_agent_start
   contextlattice_checkpoint
   contextlattice_*_guard wrappers
@@ -186,11 +187,25 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/audit-codex-session-store"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_search" \
   "${GLOBAL_BIN_DIR}/contextlattice_write" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
-  "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
+  "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
+  "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 
 write_hook_wrapper() {
   local command_name="$1"
@@ -374,6 +389,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pre_compaction_write"

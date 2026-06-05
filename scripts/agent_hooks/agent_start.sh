@@ -10,12 +10,13 @@ Usage: agent_start.sh [--agent <id>] [--project <name>] [--topic-path <path>] [-
 
 Runs low-cost deterministic startup hooks for agents:
   0. agent runtime session ensure/recovery
-  1. resource pressure sampler
-  2. git lane guard
-  3. OrbStack/host-forward guard
-  4. native endpoint smoke
-  5. recall monitor seed
-  6. ContextLattice policy pack retrieval
+  1. Codex session-store doctor
+  2. resource pressure sampler
+  3. git lane guard
+  4. OrbStack/host-forward guard
+  5. native endpoint smoke
+  6. recall monitor seed
+  7. ContextLattice policy pack retrieval
 
 This does not commit or launch. It may record a bounded agent runtime session.
 USAGE
@@ -95,6 +96,7 @@ PY
 results=()
 soft_arg=()
 [[ "$SOFT" == "1" ]] && soft_arg=(--soft)
+results+=("$(run_hook codex_session_store "${REPO_ROOT}/scripts/agent/audit-codex-session-store")")
 results+=("$(run_hook resource_pressure "${SCRIPT_DIR}/resource_pressure_guard.sh" "${soft_arg[@]}")")
 results+=("$(run_hook git_lane "${SCRIPT_DIR}/git_lane_guard.sh")")
 results+=("$(run_hook orbstack_forward "${SCRIPT_DIR}/orbstack_forward_guard.sh")")
@@ -115,6 +117,27 @@ if compact:
     if isinstance(policy, dict):
         summary['policy'] = {k: policy.get(k) for k in ('mission','objective','goal')}
         summary['retrieval'] = policy.get('retrieval')
+    session_store = next((i.get('payload') for i in items if i.get('name') == 'codex_session_store'), None)
+    if isinstance(session_store, dict):
+        findings = session_store.get('findings') or []
+        summary['codex_session_store'] = {
+            'ok': session_store.get('ok'),
+            'advanced_mode': session_store.get('advanced_mode'),
+            'external_volume': session_store.get('external_volume'),
+            'tcc_managed': session_store.get('tcc_managed'),
+            'sessions_realpath': session_store.get('sessions_realpath'),
+            'warning_count': session_store.get('warning_count', 0),
+            'error_count': session_store.get('error_count', 0),
+            'findings': [
+                {
+                    'severity': f.get('severity'),
+                    'reason': f.get('reason'),
+                    'path': f.get('path'),
+                }
+                for f in findings[:4]
+                if isinstance(f, dict)
+            ],
+        }
     print(json.dumps(summary, separators=(',', ':')))
 else:
     print(json.dumps({'ok': ok, 'soft': soft, 'strict_ok': strict_ok, 'session_id': os.getenv('CONTEXTLATTICE_SESSION_ID', ''), 'hooks': items}, separators=(',', ':')))

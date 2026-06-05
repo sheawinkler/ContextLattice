@@ -65,6 +65,23 @@ def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, A
                 "skipped": payload.get("skipped", False),
             }
         )
+    elif name == "codex_session_store":
+        findings = payload.get("findings") or []
+        errors = [item for item in findings if item.get("severity") == "error"]
+        warnings = [item for item in findings if item.get("severity") == "warn"]
+        summary.update(
+            {
+                "advanced_mode": payload.get("advanced_mode", False),
+                "default_local_safe": payload.get("default_local_safe", False),
+                "external_volume": payload.get("external_volume", False),
+                "tcc_managed": payload.get("tcc_managed", False),
+                "sessions_realpath": payload.get("sessions_realpath"),
+                "error_count": len(errors),
+                "warning_count": len(warnings),
+                "errors": errors[:10],
+                "warnings": warnings[:10],
+            }
+        )
     elif name == "context_pack_schema":
         findings = payload.get("findings") or []
         summary.update({"finding_count": len(findings), "findings": findings[:10]})
@@ -136,6 +153,7 @@ def main() -> int:
         run_json("skill_frontmatter", [str(SCRIPT_DIR / "audit-skill-frontmatter")]),
         run_json("compaction_hooks", [str(SCRIPT_DIR / "audit-compaction-hooks")]),
         run_json("codex_hook_trust", [str(SCRIPT_DIR / "audit-codex-hook-trust")]),
+        run_json("codex_session_store", [str(SCRIPT_DIR / "audit-codex-session-store")]),
         run_json("context_pack_schema", [str(SCRIPT_DIR / "audit-context-pack-schema")]),
         run_json("agent_output_contracts", [str(SCRIPT_DIR / "audit-agent-output-contracts")]),
         run_json("context_overflow_recovery", [str(SCRIPT_DIR / "audit-context-overflow-recovery")]),
@@ -150,6 +168,7 @@ def main() -> int:
         "skill_frontmatter",
         "compaction_hooks",
         "codex_hook_trust",
+        "codex_session_store",
         "context_pack_schema",
         "agent_output_contracts",
         "context_overflow_recovery",

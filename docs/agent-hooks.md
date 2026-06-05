@@ -44,6 +44,7 @@ Installed commands:
 | --- | --- |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
+| `contextlattice_codex_session_store_doctor` | Checks Codex transcript storage for symlink, external-volume, cloud-folder, TCC, and read/write traps. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
 | `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |
@@ -70,12 +71,13 @@ contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --
 This creates or recovers a ContextLattice-owned session, returns bounded exports,
 and emits a contract-valid `universal_agent_adapter_response.v1`. For Codex hook
 startup, `contextlattice_agent_start --soft --compact` still runs:
-1. resource pressure sampler
-2. git lane guard
-3. OrbStack/host-forward guard
-4. native endpoint smoke
-5. recall monitor seed
-6. agent policy/context pack retrieval
+1. Codex session-store doctor
+2. resource pressure sampler
+3. git lane guard
+4. OrbStack/host-forward guard
+5. native endpoint smoke
+6. recall monitor seed
+7. agent policy/context pack retrieval
 
 `--soft` is intentional for session startup: agents should learn current state
 without blocking if the local app is restarting.
@@ -156,6 +158,30 @@ hook commands:
 ```bash
 scripts/agent/audit-codex-hook-trust --repair
 ```
+
+## Codex session storage
+
+Default Codex transcript storage under local `~/.codex/sessions` is the safe
+path. ContextLattice does not require users to move it.
+
+External or symlinked transcript storage is advanced mode. It can depend on the
+external volume being mounted, macOS privacy/TCC state, and whether the process
+that launched Codex has access to the real target path. The same risk applies
+when sessions live under Desktop, Documents, Downloads, iCloud, Dropbox, Google
+Drive, OneDrive, or another cloud-sync/TCC-managed location.
+
+Run the doctor when Codex resume looks like transcript corruption or when a
+machine uses external session storage:
+
+```bash
+contextlattice_codex_session_store_doctor --pretty
+```
+
+The doctor resolves `~/.codex/sessions`, checks read/write/traverse access,
+warns when the real path crosses `/Volumes/*` or a cloud/TCC-managed folder,
+samples transcript readability, and prints the exact failing path with a
+suggested fix. Warnings do not fail the aggregate agent context audit; hard
+access failures do.
 
 ## Context compaction
 
