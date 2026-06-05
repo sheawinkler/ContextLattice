@@ -1,0 +1,463 @@
+#!/usr/bin/env python3
+"""Audit Codex session storage for symlink, external volume, and TCC traps."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import stat
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+
+HOME = Path.home()
+DEFAULT_CODEX_HOME = HOME / ".codex"
+TCC_HOME_DIRS = ("Desktop", "Documents", "Downloads")
+CLOUD_MARKERS = (
+    "/Library/Mobile Documents/",
+    "/Library/CloudStorage/",
+    "/Dropbox/",
+    "/Google Drive/",
+    "/OneDrive/",
+)
+
+
+def absolute_path(path: Path) -> Path:
+    path = path.expanduser()
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
+def is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def path_text(path: Path) -> str:
+    return str(path)
+
+
+def add_finding(
+    findings: list[dict[str, Any]],
+    *,
+    severity: str,
+    reason: str,
+    path: Path | str,
+    detail: str = "",
+    suggested_fix: str = "",
+) -> None:
+    finding: dict[str, Any] = {
+        "severity": severity,
+        "reason": reason,
+        "path": str(path),
+    }
+    if detail:
+        finding["detail"] = detail
+    if suggested_fix:
+        finding["suggested_fix"] = suggested_fix
+    findings.append(finding)
+
+
+def tcc_reason(path: Path) -> str:
+    for dirname in TCC_HOME_DIRS:
+        if is_under(path, HOME / dirname):
+            return f"under_home_{dirname.lower()}"
+    for dirname in ("Dropbox", "Google Drive", "OneDrive"):
+        if is_under(path, HOME / dirname):
+            return f"under_home_{dirname.lower().replace(' ', '_')}"
+    if is_under(path, HOME / "Library" / "Mobile Documents"):
+        return "under_icloud_mobile_documents"
+    if is_under(path, HOME / "Library" / "CloudStorage"):
+        return "under_cloud_storage"
+    text = path_text(path)
+    for marker in CLOUD_MARKERS:
+        if marker in text:
+            return "under_cloud_or_sync_storage"
+    return ""
+
+
+def classify_path(path: Path) -> dict[str, Any]:
+    realpath = Path(os.path.realpath(path))
+    raw_tcc = tcc_reason(path)
+    real_tcc = tcc_reason(realpath)
+    return {
+        "realpath": realpath,
+        "external_volume": path_text(realpath).startswith("/Volumes/"),
+        "tcc_managed": bool(raw_tcc or real_tcc),
+        "tcc_reason": raw_tcc or real_tcc,
+    }
+
+
+def readlink(path: Path) -> str:
+    try:
+        return os.readlink(path)
+    except OSError:
+        return ""
+
+
+def lstat(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except OSError:
+        return None
+
+
+def stat_error_detail(exc: OSError) -> str:
+    return f"{exc.__class__.__name__}: {exc}"
+
+
+def nearest_existing_parent(path: Path) -> Path | None:
+    current = path
+    while True:
+        try:
+            if current.exists():
+                return current
+        except OSError:
+            return current
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+
+
+def component_failures(path: Path, findings: list[dict[str, Any]]) -> None:
+    if not path.is_absolute():
+        path = absolute_path(path)
+    current = Path(path.anchor or "/")
+    for part in path.parts[1:]:
+        current = current / part
+        try:
+            st = current.stat()
+        except OSError as exc:
+            add_finding(
+                findings,
+                severity="error",
+                reason="path_component_inaccessible",
+                path=current,
+                detail=stat_error_detail(exc),
+                suggested_fix="Move Codex sessions to a local ~/.codex/sessions directory or grant the launching app access to this exact path.",
+            )
+            return
+        if stat.S_ISDIR(st.st_mode) and not os.access(current, os.X_OK):
+            add_finding(
+                findings,
+                severity="error",
+                reason="path_component_not_traversable",
+                path=current,
+                suggested_fix="Fix directory execute/traverse permission or choose a local session directory.",
+            )
+            return
+
+
+def probe_directory_io(path: Path, findings: list[dict[str, Any]], write_probe: bool) -> dict[str, bool]:
+    access = {"stat": False, "list": False, "write": False}
+    try:
+        path.stat()
+        access["stat"] = True
+    except OSError as exc:
+        add_finding(
+            findings,
+            severity="error",
+            reason="sessions_dir_stat_failed",
+            path=path,
+            detail=stat_error_detail(exc),
+            suggested_fix="Fix access to the resolved Codex sessions directory before using codex resume.",
+        )
+        return access
+    try:
+        with os.scandir(path) as iterator:
+            next(iterator, None)
+        access["list"] = True
+    except OSError as exc:
+        add_finding(
+            findings,
+            severity="error",
+            reason="sessions_dir_read_failed",
+            path=path,
+            detail=stat_error_detail(exc),
+            suggested_fix="Grant read/traverse access or move sessions back to ~/.codex/sessions.",
+        )
+    if not write_probe:
+        access["write"] = True
+        return access
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path,
+            prefix=".contextlattice-session-store-probe.",
+            delete=False,
+        ) as handle:
+            temp_path = handle.name
+            handle.write("ok\n")
+        access["write"] = True
+    except OSError as exc:
+        add_finding(
+            findings,
+            severity="error",
+            reason="sessions_dir_write_failed",
+            path=path,
+            detail=stat_error_detail(exc),
+            suggested_fix="Grant write access or move sessions back to a local writable ~/.codex/sessions directory.",
+        )
+    finally:
+        if temp_path:
+            try:
+                Path(temp_path).unlink()
+            except OSError:
+                pass
+    return access
+
+
+def transcript_samples(
+    root: Path,
+    *,
+    limit: int,
+    findings: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    samples: list[dict[str, Any]] = []
+    symlinked: list[dict[str, Any]] = []
+    if limit <= 0:
+        return samples, symlinked
+    try:
+        walker = os.walk(root, followlinks=False)
+        for dirpath, dirnames, filenames in walker:
+            dirnames.sort()
+            for filename in sorted(filenames):
+                if not filename.endswith(".jsonl"):
+                    continue
+                path = Path(dirpath) / filename
+                item: dict[str, Any] = {"path": str(path)}
+                path_lstat = lstat(path)
+                if path_lstat and stat.S_ISLNK(path_lstat.st_mode):
+                    target = readlink(path)
+                    realpath = Path(os.path.realpath(path))
+                    item.update({"is_symlink": True, "link_target": target, "realpath": str(realpath)})
+                    link_info = {"path": str(path), "link_target": target, "realpath": str(realpath)}
+                    symlinked.append(link_info)
+                try:
+                    with path.open("rb") as handle:
+                        handle.read(1)
+                    item["readable"] = True
+                except OSError as exc:
+                    item["readable"] = False
+                    add_finding(
+                        findings,
+                        severity="warn",
+                        reason="transcript_sample_read_failed",
+                        path=path,
+                        detail=stat_error_detail(exc),
+                        suggested_fix="If this is a transcript you need to resume, restore read access or move it under local ~/.codex/sessions.",
+                    )
+                samples.append(item)
+                if len(samples) >= limit:
+                    return samples, symlinked
+    except OSError as exc:
+        add_finding(
+            findings,
+            severity="error",
+            reason="transcript_walk_failed",
+            path=root,
+            detail=stat_error_detail(exc),
+            suggested_fix="Fix directory traversal for the Codex session store.",
+        )
+    return samples, symlinked
+
+
+def audit(args: argparse.Namespace) -> dict[str, Any]:
+    explicit_sessions_path = bool(args.sessions_path)
+    codex_home = absolute_path(Path(args.codex_home))
+    sessions_path = absolute_path(Path(args.sessions_path) if args.sessions_path else codex_home / "sessions")
+    findings: list[dict[str, Any]] = []
+
+    codex_home_exists = codex_home.exists()
+    if not codex_home_exists and not explicit_sessions_path:
+        add_finding(
+            findings,
+            severity="info",
+            reason="codex_home_missing",
+            path=codex_home,
+            suggested_fix="No action needed unless this machine is expected to run Codex.",
+        )
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "codex_home_missing",
+            "codex_home": str(codex_home),
+            "sessions_path": str(sessions_path),
+            "findings": findings,
+        }
+
+    path_lstat = lstat(sessions_path)
+    is_symlink = bool(path_lstat and stat.S_ISLNK(path_lstat.st_mode))
+    link_target = readlink(sessions_path) if is_symlink else ""
+    classification = classify_path(sessions_path)
+    realpath = classification["realpath"]
+
+    if is_symlink:
+        add_finding(
+            findings,
+            severity="warn",
+            reason="sessions_path_symlink",
+            path=sessions_path,
+            detail=f"target={link_target}",
+            suggested_fix="Default local ~/.codex/sessions is safest. If this symlink is intentional, treat it as advanced mode and run this doctor after OS/privacy or volume changes.",
+        )
+    if classification["external_volume"]:
+        add_finding(
+            findings,
+            severity="warn",
+            reason="sessions_realpath_external_volume",
+            path=sessions_path,
+            detail=f"realpath={realpath}",
+            suggested_fix="Keep Codex sessions on local disk, or grant the launching app Full Disk Access and Removable Volumes access and keep the volume mounted.",
+        )
+    if classification["tcc_managed"]:
+        add_finding(
+            findings,
+            severity="warn",
+            reason="sessions_path_tcc_or_sync_managed",
+            path=sessions_path,
+            detail=f"{classification['tcc_reason']} realpath={realpath}",
+            suggested_fix="Move Codex sessions out of Desktop/Documents/Downloads/iCloud/cloud-sync paths, or grant the launching app explicit access.",
+        )
+
+    try:
+        exists = sessions_path.exists()
+    except OSError as exc:
+        add_finding(
+            findings,
+            severity="error",
+            reason="sessions_path_exists_check_failed",
+            path=sessions_path,
+            detail=stat_error_detail(exc),
+            suggested_fix="Fix access to this path before using codex resume.",
+        )
+        exists = False
+
+    if not exists:
+        if is_symlink:
+            add_finding(
+                findings,
+                severity="error",
+                reason="sessions_path_broken_symlink",
+                path=sessions_path,
+                detail=f"target={link_target}",
+                suggested_fix="Restore the symlink target or replace the symlink with a local ~/.codex/sessions directory.",
+            )
+        else:
+            parent = nearest_existing_parent(sessions_path)
+            severity = "error" if explicit_sessions_path else "warn"
+            add_finding(
+                findings,
+                severity=severity,
+                reason="sessions_dir_missing",
+                path=sessions_path,
+                detail=f"nearest_existing_parent={parent}" if parent else "",
+                suggested_fix="Create the directory or let Codex create it on first run. Avoid placing it on external or cloud-managed storage.",
+            )
+        error_count = sum(1 for finding in findings if finding["severity"] == "error")
+        warning_count = sum(1 for finding in findings if finding["severity"] == "warn")
+        return {
+            "ok": error_count == 0 and not (args.strict_warnings and warning_count),
+            "codex_home": str(codex_home),
+            "sessions_path": str(sessions_path),
+            "sessions_realpath": str(realpath),
+            "exists": False,
+            "is_symlink": is_symlink,
+            "link_target": link_target,
+            "external_volume": bool(classification["external_volume"]),
+            "tcc_managed": bool(classification["tcc_managed"]),
+            "advanced_mode": bool(is_symlink or classification["external_volume"] or classification["tcc_managed"]),
+            "error_count": error_count,
+            "warning_count": warning_count,
+            "findings": findings,
+        }
+
+    if not sessions_path.is_dir():
+        add_finding(
+            findings,
+            severity="error",
+            reason="sessions_path_not_directory",
+            path=sessions_path,
+            suggested_fix="Replace this path with a directory for Codex session transcripts.",
+        )
+    component_failures(sessions_path, findings)
+    if realpath != sessions_path:
+        component_failures(realpath, findings)
+    access = probe_directory_io(sessions_path, findings, write_probe=not args.no_write_probe)
+    samples, symlinked = transcript_samples(sessions_path, limit=args.sample_limit, findings=findings)
+    external_symlinked = [item for item in symlinked if str(item.get("realpath") or "").startswith("/Volumes/")]
+    if symlinked:
+        add_finding(
+            findings,
+            severity="warn",
+            reason="transcript_samples_include_symlinks",
+            path=sessions_path,
+            detail=f"sampled_symlinked={len(symlinked)} first={symlinked[0].get('path')}",
+            suggested_fix="Prefer regular transcript files. If symlinked transcripts are intentional, keep targets mounted and grant the launcher access.",
+        )
+    if external_symlinked:
+        add_finding(
+            findings,
+            severity="warn",
+            reason="transcript_samples_target_external_volume",
+            path=sessions_path,
+            detail=f"sampled_external_targets={len(external_symlinked)} first_realpath={external_symlinked[0].get('realpath')}",
+            suggested_fix="External transcript targets are advanced mode; default local ~/.codex/sessions avoids this failure class.",
+        )
+
+    error_count = sum(1 for finding in findings if finding["severity"] == "error")
+    warning_count = sum(1 for finding in findings if finding["severity"] == "warn")
+    advanced_mode = bool(is_symlink or classification["external_volume"] or classification["tcc_managed"] or symlinked)
+    default_path = sessions_path == DEFAULT_CODEX_HOME / "sessions"
+    default_local_safe = bool(default_path and not advanced_mode and error_count == 0)
+
+    return {
+        "ok": error_count == 0 and not (args.strict_warnings and warning_count),
+        "codex_home": str(codex_home),
+        "sessions_path": str(sessions_path),
+        "sessions_realpath": str(realpath),
+        "exists": True,
+        "is_symlink": is_symlink,
+        "link_target": link_target,
+        "external_volume": bool(classification["external_volume"]),
+        "tcc_managed": bool(classification["tcc_managed"]),
+        "tcc_reason": classification["tcc_reason"],
+        "advanced_mode": advanced_mode,
+        "default_path": default_path,
+        "default_local_safe": default_local_safe,
+        "access": access,
+        "sampled_transcript_count": len(samples),
+        "symlinked_transcript_count": len(symlinked),
+        "symlinked_transcripts": symlinked[:10],
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "findings": findings,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--codex-home", default=str(DEFAULT_CODEX_HOME))
+    parser.add_argument("--sessions-path", default="")
+    parser.add_argument("--sample-limit", type=int, default=20)
+    parser.add_argument("--no-write-probe", action="store_true")
+    parser.add_argument("--strict-warnings", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+    payload = audit(args)
+    emit(payload, args.pretty)
+    return 0 if payload.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
