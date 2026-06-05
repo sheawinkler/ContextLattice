@@ -10,6 +10,9 @@ Follow the full operating contract in docs/public_overview/templates/agents/univ
 
 Operator preflight:
 ```bash
+contextlattice_agent_adapter bootstrap --agent claude-web --project contextlattice --pretty
+
+# Direct HTTP fallback for web-only environments:
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${CONTEXTLATTICE_ORCHESTRATOR_API_KEY}" \
   -d '{"agent":"claude-web","project":"contextlattice"}' \
   http://127.0.0.1:8075/v1/agents/preflight | jq

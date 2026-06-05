@@ -15,8 +15,11 @@ export MEMMCP_AGENT_ID=opencode_agent
 
 Preflight:
 ```bash
-./scripts/agent_orchestration.sh preflight-agent opencode contextlattice
-# Or from globally installed wrapper (~/.contextlattice/bin):
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent opencode --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+contextlattice_agent_adapter context-pack --agent opencode --project contextlattice --session-id "$SESSION_ID" --pretty
+
+# Compatibility wrapper:
 contextlattice_agent_orchestration preflight-agent opencode contextlattice
 ```
 

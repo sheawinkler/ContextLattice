@@ -25,6 +25,7 @@ const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgemen
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
+const GeneratedAgentContractUniversalAgentAdapterResponseV1 = "universal_agent_adapter_response.v1"
 const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 
 var GeneratedAgentContractIDs = []string{
@@ -41,6 +42,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractPolicyContextPackageV1,
+	GeneratedAgentContractUniversalAgentAdapterResponseV1,
 	GeneratedAgentContractWritebackResultV1,
 }
 
@@ -120,6 +122,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPolicyContextPackageV1,
 		PayloadKind:        "agent_policy_context_package",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractUniversalAgentAdapterResponseV1,
+		PayloadKind:        "universal_agent_adapter_response",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

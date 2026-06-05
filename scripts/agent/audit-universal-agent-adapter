@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+"""Audit the universal ContextLattice agent adapter contract.
+
+Default mode is network-free. Use --live to exercise the local gateway and
+prove the adapter can own the session/event/checkpoint/handoff lifecycle for
+selected agent profiles.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from _common import emit  # noqa: E402
+from agent_contracts import attach_format_contract, validate_agent_contract_payload  # noqa: E402
+from agent_orchestration import AGENT_PREFLIGHT_PROFILES, ContextLatticeOrchestrator, _resolve_agent_preflight_profile  # noqa: E402
+
+
+ADAPTER = SCRIPT_DIR / "contextlattice-agent-adapter"
+CONFIG = REPO_ROOT / "config" / "agents" / "agent_profiles.json"
+PROVIDER_OVERFLOW_PATTERNS = (
+    "array_above_max_length",
+    "context length exceeded",
+    "maximum context length",
+    "max context length",
+    "input array is too long",
+    "oversized input",
+)
+REQUIRED_PHASES = {
+    "preflight",
+    "auto_session",
+    "context_pack",
+    "checkpoint",
+    "handoff",
+    "completion",
+}
+REQUIRED_EXPORTS = {
+    "CONTEXTLATTICE_ORCHESTRATOR_URL",
+    "MEMMCP_ORCHESTRATOR_URL",
+    "CONTEXTLATTICE_AGENT",
+    "CONTEXTLATTICE_AGENT_ID",
+    "MEMMCP_AGENT_ID",
+    "CONTEXTLATTICE_SESSION_ID",
+}
+
+
+def contains_provider_overflow(payload: Any) -> bool:
+    return any(pattern in json.dumps(payload, sort_keys=True).lower() for pattern in PROVIDER_OVERFLOW_PATTERNS)
+
+
+def validation_status(payload: Any, key: str = "format_contract") -> str:
+    contract = payload.get(key) if isinstance(payload, dict) else {}
+    validation = contract.get("validation") if isinstance(contract, dict) else {}
+    return str(validation.get("status") or "") if isinstance(validation, dict) else ""
+
+
+def load_adapter_contract() -> dict[str, Any]:
+    try:
+        parsed = json.loads(CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        parsed = {}
+    contract = parsed.get("adapter_contract") if isinstance(parsed, dict) else {}
+    return dict(contract) if isinstance(contract, dict) else {}
+
+
+def profile_agents(raw_agents: str | None) -> list[str]:
+    if raw_agents:
+        return [item.strip() for item in raw_agents.split(",") if item.strip()]
+    preferred = [
+        "codex",
+        "claude-code",
+        "opencode",
+        "hermes-agent",
+        "hermes-ultra",
+        "pi",
+        "chatgpt-web",
+        "chatgpt-desktop",
+        "claude-web",
+        "claude-desktop",
+    ]
+    ordered = [agent for agent in preferred if agent in AGENT_PREFLIGHT_PROFILES]
+    return ordered + sorted(set(AGENT_PREFLIGHT_PROFILES) - set(ordered))
+
+
+def sample_context_pack(agent_id: str) -> dict[str, Any]:
+    pack = {
+        "facts": [{"text": "offline universal adapter fact", "source": "audit-universal-agent-adapter"}],
+        "results": [{"file": "notes/audit-universal-agent-adapter.md", "source": "offline_fixture"}],
+        "citations": [],
+        "relevant_decisions": [],
+        "files_to_read": [],
+        "files_to_avoid": [],
+        "capabilities_to_use": [],
+        "runbooks": [],
+        "known_failure_modes": [],
+        "commands": [],
+        "acceptance_criteria": [],
+    }
+    return attach_format_contract(
+        "context_pack_response.v1",
+        {
+            "ok": True,
+            "agent_id": agent_id,
+            "context_pack": pack,
+            "source_coverage": {"configured": ["offline_fixture"], "returned": ["offline_fixture"], "complete": True},
+            "writeback_required": True,
+        },
+    )
+
+
+def audit_adapter_contract(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    contract = load_adapter_contract()
+    if not contract:
+        findings.append({"severity": "error", "reason": "missing_adapter_contract"})
+        return {}
+    if contract.get("schema_id") != "contextlattice_universal_agent_adapter.v1":
+        findings.append({"severity": "error", "reason": "adapter_schema_id_mismatch", "actual": contract.get("schema_id")})
+    phases = {str(item) for item in contract.get("required_phases") or []}
+    missing_phases = sorted(REQUIRED_PHASES - phases)
+    if missing_phases:
+        findings.append({"severity": "error", "reason": "adapter_required_phases_missing", "missing": missing_phases})
+    exports = {str(item) for item in contract.get("required_exports") or []}
+    missing_exports = sorted(REQUIRED_EXPORTS - exports)
+    if missing_exports:
+        findings.append({"severity": "error", "reason": "adapter_required_exports_missing", "missing": missing_exports})
+    return contract
+
+
+def validate_adapter_payload(command: str, payload: Any) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for item in validate_agent_contract_payload("universal_agent_adapter_response.v1", payload):
+        findings.append({"severity": "error", "command": command, **item})
+    if validation_status(payload) != "passed":
+        findings.append({"severity": "error", "command": command, "reason": "adapter_response_validation_not_passed", "validation": payload.get("format_contract") if isinstance(payload, dict) else None})
+    if contains_provider_overflow(payload):
+        findings.append({"severity": "error", "command": command, "reason": "provider_overflow_phrase_leaked"})
+    return findings
+
+
+def offline_case(agent: str, contract: dict[str, Any]) -> dict[str, Any]:
+    profile_key, profile = _resolve_agent_preflight_profile(agent)
+    agent_id = str(profile.get("agent_id") or "").strip()
+    topic_path = str(profile.get("topic_path") or "").strip()
+    query = str(profile.get("query") or "").strip()
+    retrieval_mode = str(profile.get("retrieval_mode") or "balanced").strip().lower() or "balanced"
+    context_pack = sample_context_pack(agent_id)
+    runtime = ContextLatticeOrchestrator._build_objective_runtime_state(
+        agent=profile_key,
+        agent_id=agent_id,
+        project="contextlattice",
+        topic_path=topic_path,
+        retrieval_mode=retrieval_mode,
+        query=query,
+        session_id="sess_universal_adapter_audit",
+        action_executed="adapter.bootstrap.completed",
+    )
+    policy = ContextLatticeOrchestrator._build_agent_policy_context_package(
+        agent=profile_key,
+        agent_id=agent_id,
+        project="contextlattice",
+        topic_path=topic_path,
+        retrieval_mode=retrieval_mode,
+        query=query,
+        primary_pack=context_pack,
+        mission_pack=context_pack,
+        mission_pack_error=None,
+        objective_runtime=runtime,
+        session_id="sess_universal_adapter_audit",
+        action_executed="adapter.bootstrap.completed",
+    )
+    payload = attach_format_contract(
+        "universal_agent_adapter_response.v1",
+        {
+            "ok": True,
+            "command": "bootstrap",
+            "agent": profile_key,
+            "agent_id": agent_id,
+            "project": "contextlattice",
+            "session_id": "sess_universal_adapter_audit",
+            "adapter_contract": contract,
+            "result": {
+                "profile": profile,
+                "context_pack": context_pack,
+                "objective_runtime": runtime,
+                "policy_context_package": policy,
+                "exports": {"CONTEXTLATTICE_SESSION_ID": "sess_universal_adapter_audit"},
+            },
+            "findings": [],
+        },
+    )
+    findings = validate_adapter_payload("offline-bootstrap", payload)
+    for item in validate_agent_contract_payload("objective_runtime_state.v1", runtime):
+        findings.append({"severity": "error", "reason": "objective_runtime_invalid", **item})
+    for item in validate_agent_contract_payload("policy_context_package.v1", policy):
+        findings.append({"severity": "error", "reason": "policy_context_package_invalid", **item})
+    return {
+        "agent": agent,
+        "profile_key": profile_key,
+        "agent_id": agent_id,
+        "ok": not findings,
+        "findings": findings,
+    }
+
+
+def run_adapter(argv: list[str], env: dict[str, str], timeout: float) -> tuple[int, dict[str, Any], str]:
+    proc = subprocess.run(
+        [str(ADAPTER), *argv],
+        cwd=str(REPO_ROOT),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=max(10.0, timeout + 10.0),
+    )
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"ok": False, "stdout": proc.stdout[:2000], "stderr": proc.stderr[:2000]}
+    return proc.returncode, payload, proc.stderr[:2000]
+
+
+def audit_cli_profiles(findings: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
+    env = os.environ.copy()
+    code, payload, stderr = run_adapter(["profiles"], env, timeout)
+    if code != 0:
+        findings.append({"severity": "error", "reason": "profiles_command_failed", "returncode": code, "stderr": stderr})
+    findings.extend(validate_adapter_payload("profiles", payload))
+    return payload
+
+
+def live_case(agent: str, base_url: str, timeout: float) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        env = os.environ.copy()
+        env["CONTEXTLATTICE_ORCHESTRATOR_URL"] = base_url.rstrip("/")
+        env["MEMMCP_ORCHESTRATOR_URL"] = base_url.rstrip("/")
+        env["CONTEXTLATTICE_SESSION_STATE_PATH"] = str(Path(tmp) / "session.json")
+        common = [
+            "--agent",
+            agent,
+            "--project",
+            "contextlattice",
+            "--timeout",
+            str(timeout),
+        ]
+        code, bootstrap, stderr = run_adapter(["bootstrap", *common], env, timeout)
+        findings.extend(validate_adapter_payload("bootstrap", bootstrap))
+        if code != 0:
+            findings.append({"severity": "error", "reason": "bootstrap_failed", "returncode": code, "stderr": stderr})
+        session_id = str(bootstrap.get("session_id") or "").strip()
+        if not session_id:
+            findings.append({"severity": "error", "reason": "bootstrap_missing_session_id"})
+            return {"agent": agent, "ok": False, "session_id": "", "findings": findings}
+
+        commands = [
+            (
+                "context-pack",
+                [
+                    "context-pack",
+                    *common,
+                    "--session-id",
+                    session_id,
+                    "--limit",
+                    "3",
+                    "--max-facts",
+                    "3",
+                    "--mode",
+                    "fast",
+                ],
+            ),
+            (
+                "checkpoint",
+                [
+                    "checkpoint",
+                    *common,
+                    "--session-id",
+                    session_id,
+                    "--file",
+                    "notes/audits/universal-agent-adapter-live.md",
+                    "--topic-path",
+                    "audits/universal-agent-adapter",
+                    "--content",
+                    "universal agent adapter live checkpoint audit completed with bounded lifecycle output",
+                ],
+            ),
+            (
+                "handoff",
+                [
+                    "handoff",
+                    *common,
+                    "--session-id",
+                    session_id,
+                    "--summary",
+                    "universal adapter live handoff audit completed",
+                    "--next-action",
+                    "continue with contract-valid agent lifecycle events",
+                ],
+            ),
+            (
+                "complete",
+                [
+                    "complete",
+                    *common,
+                    "--session-id",
+                    session_id,
+                    "--summary",
+                    "universal adapter live audit completed",
+                ],
+            ),
+        ]
+        command_results: list[dict[str, Any]] = [{"command": "bootstrap", "returncode": code, "ok": bool(bootstrap.get("ok"))}]
+        for command, argv in commands:
+            code, payload, stderr = run_adapter(argv, env, timeout)
+            findings.extend(validate_adapter_payload(command, payload))
+            if code != 0:
+                findings.append({"severity": "error", "reason": f"{command}_failed", "returncode": code, "stderr": stderr})
+            command_results.append({"command": command, "returncode": code, "ok": bool(payload.get("ok"))})
+    return {
+        "agent": agent,
+        "ok": not findings,
+        "session_id": session_id,
+        "commands": command_results,
+        "findings": findings,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--agents", help="Comma-separated canonical or alias agent names to audit.")
+    parser.add_argument("--live", action="store_true")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8075")
+    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    findings: list[dict[str, Any]] = []
+    contract = audit_adapter_contract(findings)
+    cli_profiles = audit_cli_profiles(findings, args.timeout)
+    agents = profile_agents(args.agents)
+    cases = [offline_case(agent, contract) for agent in agents]
+    for case in cases:
+        findings.extend({"agent": case["agent"], **item} for item in case.get("findings") or [])
+
+    live_cases: list[dict[str, Any]] = []
+    if args.live:
+        live_agents = agents if args.agents else ["codex"]
+        for agent in live_agents:
+            case = live_case(agent, args.base_url, args.timeout)
+            live_cases.append(case)
+            findings.extend({"agent": case["agent"], **item} for item in case.get("findings") or [])
+
+    errors = [item for item in findings if item.get("severity") == "error"]
+    output = {
+        "ok": not errors,
+        "adapter_contract": contract,
+        "agents": agents,
+        "case_count": len(cases),
+        "cases": cases,
+        "cli_profiles": {
+            "ok": bool(cli_profiles.get("ok")) if isinstance(cli_profiles, dict) else False,
+            "profile_count": len(((cli_profiles.get("result") or {}).get("profiles") or {}) if isinstance(cli_profiles, dict) else {}),
+        },
+        "live": bool(args.live),
+        "live_cases": live_cases,
+        "findings": findings,
+    }
+    emit(output, args.pretty)
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

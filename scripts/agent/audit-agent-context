@@ -88,6 +88,17 @@ def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, A
                 "findings": findings[:10],
             }
         )
+    elif name == "universal_agent_adapter":
+        findings = payload.get("findings") or []
+        summary.update(
+            {
+                "case_count": payload.get("case_count", 0),
+                "agents": payload.get("agents", []),
+                "live": payload.get("live", False),
+                "finding_count": len(findings),
+                "findings": findings[:10],
+            }
+        )
     elif name == "skill_policy_eval":
         cases = payload.get("cases") or []
         failed = [item for item in cases if not item.get("ok")]
@@ -128,6 +139,7 @@ def main() -> int:
         run_json("context_pack_schema", [str(SCRIPT_DIR / "audit-context-pack-schema")]),
         run_json("agent_output_contracts", [str(SCRIPT_DIR / "audit-agent-output-contracts")]),
         run_json("context_overflow_recovery", [str(SCRIPT_DIR / "audit-context-overflow-recovery")]),
+        run_json("universal_agent_adapter", [str(SCRIPT_DIR / "audit-universal-agent-adapter")]),
         run_json("skill_policy_eval", [str(SCRIPT_DIR / "eval-skill-policy")]),
         run_json("instruction_conflicts", [str(SCRIPT_DIR / "audit-conflicts")]),
         run_json("instruction_duplicates", [str(SCRIPT_DIR / "audit-instruction-duplicates")]),
@@ -141,6 +153,7 @@ def main() -> int:
         "context_pack_schema",
         "agent_output_contracts",
         "context_overflow_recovery",
+        "universal_agent_adapter",
         "skill_policy_eval",
     }
     hard_failures = [
