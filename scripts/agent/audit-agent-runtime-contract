@@ -129,6 +129,25 @@ def audit_cli_auto_session(findings: list[dict[str, Any]], timeout: float) -> di
         return payload
 
 
+def complete_session(session_id: str, summary: str, timeout: float, findings: list[dict[str, Any]]) -> None:
+    if not session_id:
+        return
+    try:
+        request_json(
+            "POST",
+            "/v1/agents/sessions/event",
+            {
+                "session_id": session_id,
+                "type": "session.completed",
+                "summary": summary,
+                "metadata": {"audit": "agent-runtime-contract"},
+            },
+            timeout,
+        )
+    except Exception as exc:
+        findings.append({"severity": "warn", "reason": "audit_session_complete_failed", "session_id": session_id, "detail": str(exc)[:500]})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=float, default=30)
@@ -142,6 +161,8 @@ def main() -> int:
         audit_registry(findings)
         preflight = audit_preflight(findings, args.timeout)
         cli = audit_cli_auto_session(findings, args.timeout)
+        complete_session(str(preflight.get("session_id") or ""), "agent runtime contract preflight audit completed", args.timeout, findings)
+        complete_session(str(cli.get("session_id") or ""), "agent runtime contract CLI auto-session audit completed", args.timeout, findings)
     except Exception as exc:
         findings.append({"severity": "error", "reason": "audit_exception", "detail": str(exc)[:1000]})
 
