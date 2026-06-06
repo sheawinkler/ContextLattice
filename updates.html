@@ -57,6 +57,22 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-06 · v3.4.1 · Runtime Hardening + Security Patch</span>
+        <h3>The agent runtime contract gets its first field hardening patch.</h3>
+        <p class="spotlight">
+          ContextLattice v3.4.1 tightens the local memory spine after real operator pressure: storage governance now follows
+          the mounted data lane, Codex transcript storage gets an explicit doctor check, and the LanceDB adapter clears the
+          public PyArrow security alert.
+        </p>
+        <ul>
+          <li><strong>Storage truth:</strong> <code>gateway-go</code> now receives <code>ORCH_STORAGE_GOVERNANCE_DISK_ROOT=/data</code> so status checks measure the memory lane, not container overlay.</li>
+          <li><strong>Mount guard:</strong> <code>scripts/verify_storage_mounts.sh</code> now rejects unset, relative, root, or overlay-oriented storage-governance roots.</li>
+          <li><strong>Codex doctor:</strong> session-store audits resolve symlinked transcript paths and warn on external/TCC-managed storage before resume failures look like corruption.</li>
+          <li><strong>Security:</strong> <code>pyarrow</code> is pinned to <code>23.0.1</code> for the LanceDB adapter, resolving GHSA-rgxp-2hwp-jwgg / CVE-2026-25087.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-05 · v3.4.0 · Agent Runtime Contract + Universal Adapter</span>
         <h3>Agents now get one local memory contract instead of every stack inventing its own.</h3>
         <p class="spotlight">
