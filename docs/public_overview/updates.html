@@ -57,6 +57,21 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-06 · v3.4.2 · Agent Runtime Proof Pack</span>
+        <h3>The agent memory contract now proves itself in one command.</h3>
+        <p class="spotlight">
+          ContextLattice v3.4.2 adds a live proof pack for the whole agent lifecycle: bootstrap, scoped recall,
+          checkpoint, handoff, completion, status, and runtime telemetry. Not a demo script. A contract probe.
+        </p>
+        <ul>
+          <li><strong>One command:</strong> run <code>contextlattice_agent_runtime_proof --pretty</code> after global install, or <code>scripts/agent/agent-runtime-proof-pack --pretty</code> from the repo.</li>
+          <li><strong>Real writes:</strong> the proof starts a real session, retrieves bounded context, writes a checkpoint, creates a handoff, and completes the session.</li>
+          <li><strong>Runtime evidence:</strong> the proof verifies final session status and confirms the session is visible in <code>/telemetry/agents/runtime</code>.</li>
+          <li><strong>Installer surface:</strong> macOS/Linux and Windows global installers now expose the proof command beside the universal adapter.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-06 · v3.4.1 · Runtime Hardening + Security Patch</span>
         <h3>The agent runtime contract gets its first field hardening patch.</h3>
         <p class="spotlight">
