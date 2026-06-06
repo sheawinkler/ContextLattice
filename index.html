@@ -407,10 +407,11 @@
         </article>
         <article class="card">
           <div class="kicker">60-second verify</div>
-          <h3>Prove service + auth in two calls</h3>
+          <h3>Prove service, auth, and agent memory</h3>
 <pre><code>ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' .env)"
 curl -fsS http://127.0.0.1:8075/health | jq
-curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.service,.sinks'</code></pre>
+curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/status | jq '.service,.sinks'
+scripts/agent/agent-runtime-proof-pack --pretty</code></pre>
         </article>
         <article class="card">
           <div class="kicker">Easy Monitoring</div>
