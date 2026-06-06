@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""Run a live proof of the ContextLattice agent runtime contract."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+AGENT_DIR = REPO_ROOT / "scripts" / "agent"
+ADAPTER = AGENT_DIR / "contextlattice-agent-adapter"
+SESSION = AGENT_DIR / "contextlattice-session"
+
+
+class ProofError(Exception):
+    """Raised when a proof phase fails."""
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def validation_status(payload: Any) -> str:
+    data = as_dict(payload)
+    contract = as_dict(data.get("format_contract"))
+    validation = as_dict(contract.get("validation"))
+    return str(validation.get("status") or "")
+
+
+def compact_command(args: list[str]) -> list[str]:
+    out: list[str] = []
+    for arg in args:
+        text = str(arg)
+        if text.startswith(str(REPO_ROOT)):
+            text = text.replace(str(REPO_ROOT), ".", 1)
+        out.append(text)
+    return out
+
+
+def run_json(name: str, args: list[str], timeout: float, env: dict[str, str]) -> dict[str, Any]:
+    proc = subprocess.run(
+        args,
+        cwd=str(REPO_ROOT),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=max(5.0, timeout + 5.0),
+    )
+    if proc.returncode != 0:
+        raise ProofError(
+            json.dumps(
+                {
+                    "phase": name,
+                    "returncode": proc.returncode,
+                    "command": compact_command(args),
+                    "stdout": proc.stdout[:2000],
+                    "stderr": proc.stderr[:2000],
+                },
+                sort_keys=True,
+            )
+        )
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise ProofError(
+            json.dumps(
+                {
+                    "phase": name,
+                    "reason": "invalid_json",
+                    "error": str(exc),
+                    "command": compact_command(args),
+                    "stdout": proc.stdout[:2000],
+                    "stderr": proc.stderr[:2000],
+                },
+                sort_keys=True,
+            )
+        ) from exc
+    payload["_proof_command"] = compact_command(args)
+    return payload
+
+
+def adapter_common(args: argparse.Namespace, session_id: str = "") -> list[str]:
+    common = [
+        "--agent",
+        args.agent,
+        "--agent-id",
+        args.agent_id,
+        "--project",
+        args.project,
+        "--mission",
+        args.mission,
+        "--objective",
+        args.objective,
+        "--goal",
+        args.goal,
+        "--base-url",
+        args.base_url,
+        "--timeout",
+        str(args.timeout),
+    ]
+    if session_id:
+        common.extend(["--session-id", session_id])
+    return common
+
+
+def phase_record(name: str, ok: bool, payload: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    record = {
+        "name": name,
+        "ok": bool(ok),
+        "command": payload.get("_proof_command", []),
+        "evidence": evidence,
+    }
+    findings = payload.get("findings")
+    if findings not in (None, []):
+        record["findings"] = findings
+    return record
+
+
+def require_phase(name: str, condition: bool, reason: str, payload: dict[str, Any]) -> None:
+    if condition:
+        return
+    raise ProofError(
+        json.dumps(
+            {
+                "phase": name,
+                "reason": reason,
+                "command": payload.get("_proof_command", []),
+                "payload_keys": sorted(k for k in payload.keys() if not k.startswith("_")),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def bootstrap(args: argparse.Namespace, env: dict[str, str]) -> tuple[str, dict[str, Any]]:
+    payload = run_json(
+        "bootstrap",
+        [
+            str(ADAPTER),
+            "bootstrap",
+            *adapter_common(args),
+            "--topic-path",
+            args.topic_path,
+            "--query",
+            args.query,
+            "--mode",
+            args.mode,
+        ],
+        args.timeout,
+        env,
+    )
+    session_id = str(payload.get("session_id") or "").strip()
+    result = as_dict(payload.get("result"))
+    objective_runtime = as_dict(result.get("objective_runtime"))
+    require_phase("bootstrap", bool(payload.get("ok")) and bool(session_id), "missing_ok_or_session_id", payload)
+    require_phase("bootstrap", payload.get("findings") in (None, []), "bootstrap_findings_present", payload)
+    require_phase(
+        "bootstrap",
+        validation_status(objective_runtime) == "passed",
+        "objective_runtime_contract_not_passed",
+        payload,
+    )
+    evidence = {
+        "session_id": session_id,
+        "preflight": as_dict(result.get("preflight")),
+        "objective_runtime_validation": validation_status(objective_runtime),
+    }
+    return session_id, phase_record("bootstrap", True, payload, evidence)
+
+
+def context_pack(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    payload = run_json(
+        "context_pack",
+        [
+            str(ADAPTER),
+            "context-pack",
+            *adapter_common(args, session_id),
+            "--topic-path",
+            args.topic_path,
+            "--query",
+            args.query,
+            "--mode",
+            args.mode,
+            "--limit",
+            str(args.limit),
+            "--max-facts",
+            str(args.max_facts),
+        ],
+        args.timeout,
+        env,
+    )
+    result = as_dict(payload.get("result"))
+    pack = as_dict(result.get("context_pack"))
+    require_phase("context_pack", bool(payload.get("ok")), "context_pack_not_ok", payload)
+    require_phase("context_pack", payload.get("findings") in (None, []), "context_pack_findings_present", payload)
+    require_phase(
+        "context_pack",
+        validation_status(pack) == "passed",
+        "context_pack_contract_not_passed",
+        payload,
+    )
+    evidence = {
+        "session_id": session_id,
+        "topic_path": result.get("topic_path"),
+        "retrieval_mode": result.get("retrieval_mode"),
+        "context_pack_validation": validation_status(pack),
+        "event_ok": bool(as_dict(result.get("event")).get("ok")),
+    }
+    return phase_record("context_pack", True, payload, evidence)
+
+
+def checkpoint(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    content = (
+        "agent runtime proof pack checkpoint: bootstrap, scoped context pack, "
+        "writeback, handoff, completion, status, and runtime telemetry are being verified live."
+    )
+    payload = run_json(
+        "checkpoint",
+        [
+            str(ADAPTER),
+            "checkpoint",
+            *adapter_common(args, session_id),
+            "--topic-path",
+            args.topic_path,
+            "--query",
+            args.query,
+            "--mode",
+            args.mode,
+            "--file",
+            f"notes/agent-runtime-proof-pack/{session_id}.md",
+            "--content",
+            content,
+        ],
+        args.timeout,
+        env,
+    )
+    writeback = as_dict(as_dict(payload.get("result")).get("writeback"))
+    require_phase("checkpoint", bool(payload.get("ok")) and bool(writeback.get("ok")), "checkpoint_not_ok", payload)
+    evidence = {
+        "session_id": session_id,
+        "file": writeback.get("file"),
+        "topic_path": writeback.get("topic_path"),
+        "write_ok": bool(writeback.get("ok")),
+        "writeback_validation": validation_status(writeback),
+    }
+    return phase_record("checkpoint", True, payload, evidence)
+
+
+def handoff(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    payload = run_json(
+        "handoff",
+        [
+            str(ADAPTER),
+            "handoff",
+            *adapter_common(args, session_id),
+            "--summary",
+            "agent runtime proof pack handoff created after live checkpoint",
+            "--next-action",
+            "inspect proof_pack JSON, status evidence, and runtime telemetry; no manual session repair required",
+        ],
+        args.timeout,
+        env,
+    )
+    result = as_dict(payload.get("result"))
+    require_phase("handoff", bool(payload.get("ok")), "handoff_not_ok", payload)
+    require_phase("handoff", payload.get("findings") in (None, []), "handoff_findings_present", payload)
+    evidence = {
+        "session_id": session_id,
+        "event_ok": bool(as_dict(result.get("event")).get("ok")),
+        "handoff_keys": sorted(as_dict(result.get("handoff")).keys())[:12],
+    }
+    return phase_record("handoff", True, payload, evidence)
+
+
+def complete(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    payload = run_json(
+        "complete",
+        [
+            str(ADAPTER),
+            "complete",
+            *adapter_common(args, session_id),
+            "--summary",
+            "agent runtime proof pack completed with live bootstrap, context pack, checkpoint, handoff, and runtime evidence",
+        ],
+        args.timeout,
+        env,
+    )
+    result = as_dict(payload.get("result"))
+    event = as_dict(result.get("event"))
+    require_phase("complete", bool(payload.get("ok")) and bool(event.get("ok")), "complete_not_ok", payload)
+    evidence = {
+        "session_id": session_id,
+        "event_ok": bool(event.get("ok")),
+        "command": payload.get("command"),
+    }
+    return phase_record("complete", True, payload, evidence)
+
+
+def status(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    payload = run_json(
+        "status",
+        [str(SESSION), "status", "--session-id", session_id, "--timeout", str(args.timeout)],
+        args.timeout,
+        env,
+    )
+    session = as_dict(payload.get("session"))
+    require_phase("status", bool(payload.get("ok")), "status_not_ok", payload)
+    require_phase("status", session.get("status") == "completed", "session_not_completed", payload)
+    require_phase("status", int(session.get("event_count") or 0) >= 5, "session_event_count_too_low", payload)
+    memory_contribution = as_dict(session.get("memory_contribution"))
+    evidence = {
+        "session_id": session_id,
+        "status": session.get("status"),
+        "event_count": session.get("event_count"),
+        "last_event_type": session.get("last_event_type"),
+        "memory_score": memory_contribution.get("score"),
+        "writebacks": memory_contribution.get("writebacks"),
+        "handoffs": memory_contribution.get("handoffs"),
+    }
+    return phase_record("status", True, payload, evidence)
+
+
+def runtime(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    payload = run_json(
+        "runtime",
+        [str(SESSION), "runtime", "--limit", str(args.runtime_limit), "--timeout", str(args.timeout)],
+        args.timeout,
+        env,
+    )
+    sessions = [item for item in as_list(payload.get("sessions")) if isinstance(item, dict)]
+    match = next((item for item in sessions if str(item.get("id") or "") == session_id), {})
+    require_phase("runtime", bool(payload.get("enabled")), "runtime_not_enabled", payload)
+    require_phase("runtime", bool(match), "session_not_visible_in_runtime_limit", payload)
+    evidence = {
+        "session_id": session_id,
+        "runtime_enabled": bool(payload.get("enabled")),
+        "runtime_path": payload.get("path"),
+        "completed_total": payload.get("completed"),
+        "active_total": payload.get("active"),
+        "session_visible": bool(match),
+        "visible_status": match.get("status"),
+    }
+    return phase_record("runtime", True, payload, evidence)
+
+
+def fail_session(args: argparse.Namespace, session_id: str, env: dict[str, str], reason: str) -> None:
+    if not session_id:
+        return
+    subprocess.run(
+        [
+            str(SESSION),
+            "fail",
+            "--agent",
+            args.agent,
+            "--agent-id",
+            args.agent_id,
+            "--project",
+            args.project,
+            "--session-id",
+            session_id,
+            "--summary",
+            f"agent runtime proof pack failed: {reason[:180]}",
+            "--timeout",
+            str(min(args.timeout, 10.0)),
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=max(5.0, min(args.timeout, 10.0) + 5.0),
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run a live ContextLattice agent runtime proof pack.")
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--agent", default="codex")
+    parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", "codex_gpt5"))
+    parser.add_argument("--mission", default="make ContextLattice coordinate any agent runtime")
+    parser.add_argument("--objective", default="prove the ContextLattice agent runtime contract end to end")
+    parser.add_argument("--goal", default="bootstrap, retrieve, checkpoint, handoff, complete, and expose runtime evidence")
+    parser.add_argument("--topic-path", default="runbooks/codex-integration")
+    parser.add_argument("--query", default="")
+    parser.add_argument("--mode", default="balanced")
+    parser.add_argument("--limit", type=int, default=6)
+    parser.add_argument("--max-facts", type=int, default=8)
+    parser.add_argument("--runtime-limit", type=int, default=80)
+    parser.add_argument("--base-url", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"))
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--pretty", action="store_true")
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.query:
+        args.query = args.objective
+
+    env = os.environ.copy()
+    env["CONTEXTLATTICE_ORCHESTRATOR_URL"] = args.base_url
+    env["MEMMCP_ORCHESTRATOR_URL"] = args.base_url
+
+    phases: list[dict[str, Any]] = []
+    session_id = ""
+    try:
+        session_id, record = bootstrap(args, env)
+        phases.append(record)
+        env["CONTEXTLATTICE_SESSION_ID"] = session_id
+        phases.append(context_pack(args, session_id, env))
+        phases.append(checkpoint(args, session_id, env))
+        phases.append(handoff(args, session_id, env))
+        phases.append(complete(args, session_id, env))
+        phases.append(status(args, session_id, env))
+        phases.append(runtime(args, session_id, env))
+        output = {
+            "ok": True,
+            "proof_pack": {
+                "schema_id": "contextlattice_agent_runtime_proof_pack.v1",
+                "project": args.project,
+                "agent": args.agent,
+                "agent_id": args.agent_id,
+                "session_id": session_id,
+                "base_url": args.base_url,
+                "phase_count": len(phases),
+                "phases": phases,
+            },
+            "next_command": f"{SESSION} status --session-id {session_id} --pretty",
+        }
+        print(json.dumps(output, indent=2 if args.pretty else None, sort_keys=True))
+        return 0
+    except (ProofError, subprocess.TimeoutExpired) as exc:
+        reason = str(exc)
+        fail_session(args, session_id, env, reason)
+        output = {
+            "ok": False,
+            "session_id": session_id,
+            "error": reason[:4000],
+            "phase_count": len(phases),
+            "phases": phases,
+        }
+        print(json.dumps(output, indent=2 if args.pretty else None, sort_keys=True))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

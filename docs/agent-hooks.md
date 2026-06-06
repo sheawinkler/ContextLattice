@@ -44,6 +44,7 @@ Installed commands:
 | --- | --- |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
+| `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry work end to end. |
 | `contextlattice_codex_session_store_doctor` | Checks Codex transcript storage for symlink, external-volume, cloud-folder, TCC, and read/write traps. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
@@ -66,6 +67,7 @@ Installed commands:
 
 ```bash
 contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
+contextlattice_agent_runtime_proof --pretty
 ```
 
 This creates or recovers a ContextLattice-owned session, returns bounded exports,
