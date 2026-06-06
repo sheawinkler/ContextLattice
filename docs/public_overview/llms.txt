@@ -27,6 +27,7 @@ Product positioning (public-safe):
 - Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery; full/operator stacks can add pgvector, raw ledger, behavior provenance, deeper async recall lanes, and stronger reliability controls behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, behavior provenance, and retrieval quality over time.
 - Public lane is open-source and installable locally.
+- Homebrew macOS path uses the first-party tap: `brew tap sheawinkler/contextlattice && brew install --cask contextlattice`.
 - Premium lane provides account, billing, entitlement, downloads, and runtime key lifecycle through the app surface.
 
 Agent usage expectations:

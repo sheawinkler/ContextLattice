@@ -69,6 +69,7 @@ gmake quickstart
 
 ```bash
 curl -fsS http://127.0.0.1:8075/health | jq
+scripts/agent/agent-runtime-proof-pack --pretty
 ```
 
 ## Model Runtime
@@ -146,6 +147,7 @@ Canonical event families include `session.started`, `context_pack.completed`, `d
 ## Download Installers
 
 - macOS DMG: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg`
+- Homebrew cask: `brew tap sheawinkler/contextlattice && brew install --cask contextlattice`
 - Windows MSI: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi`
 - Linux bundle: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz`
 
