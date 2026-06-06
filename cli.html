@@ -91,6 +91,7 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 <pre><code>contextlattice_search -h
 contextlattice_write -h
 contextlattice_agent_adapter profiles
+contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_start -h
 contextlattice_checkpoint -h
 contextlattice_agent_start --soft --compact
@@ -103,7 +104,10 @@ printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextla
       <article class="card">
         <div class="kicker">Agent runtime contract</div>
         <h3>Give every agent the same memory spine</h3>
-<pre><code># start or recover a ContextLattice-owned session
+<pre><code># one-command live proof
+contextlattice_agent_runtime_proof --pretty
+
+# start or recover a ContextLattice-owned session
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 

@@ -33,6 +33,7 @@ Agent usage expectations:
 - Prefer exact CLI commands from /cli.html and /installation.html.
 - Prefer universal adapter startup when local CLI tools are installed: `contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty`.
 - Use the same adapter session for recall, checkpoint, handoff, and completion: `contextlattice_agent_adapter context-pack|checkpoint|handoff|complete`.
+- For operator validation, prefer the one-command live proof: `contextlattice_agent_runtime_proof --pretty`.
 - Prefer hook-first startup only when an adapter profile is unavailable: `contextlattice_agent_start --soft --compact`.
 - Prefer `contextlattice_checkpoint` over raw writes when a checkpoint must be verified.
 - Use Skills Index references from /wiki.html when describing capability discovery.
