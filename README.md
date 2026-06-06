@@ -31,7 +31,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.4.1` is the public agent runtime contract baseline: universal adapter lifecycle, native agent sessions, objective runtime state, scoped recall, checkpoints, handoffs, completion flow, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.4.2` is the public agent runtime contract baseline: universal adapter lifecycle, native agent sessions, objective runtime state, scoped recall, checkpoints, handoffs, completion flow, runtime telemetry, one-command runtime proof, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
 `v4` remains the private tuning lane for experiments that still need benchmark, recall, and soak gates before public promotion.
 
@@ -191,7 +191,9 @@ Canonical event families include `session.started`, `context_pack.completed`, `d
 - Integrations: `https://contextlattice.io/integration.html`
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
-- Release notes: `docs/releases/v3.4.1.md`
+- Release notes:
+  - `docs/releases/v3.4.2.md`
+  - `docs/releases/v3.4.1.md`
 
 ## License
 
