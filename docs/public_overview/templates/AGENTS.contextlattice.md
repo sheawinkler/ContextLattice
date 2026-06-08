@@ -35,13 +35,23 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 - Global helper CLIs (auto-installed by quickstart/installers):
   - `contextlattice_agent_start` (hook-first startup guard)
   - `contextlattice_agent_orchestration` (preflight/task helpers)
+  - `contextlattice_agent_adapter` (profile bootstrap, context-pack, checkpoint, handoff)
+  - `contextlattice_agent_session` (runtime, rollup, context-package, completion)
   - `contextlattice_search` (lifecycle-aware search helper)
   - `contextlattice_write` (checkpoint write helper)
   - `contextlattice_checkpoint` (write + verified readback helper)
+  - `contextlattice_skills_index` (capability lookup without loading every skill)
 
 Hook-first default:
 ```bash
 contextlattice_agent_start --soft --compact
+```
+
+Agent-session default:
+```bash
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 ```
 
 ## 3) Checkpoints and Final Recency Pass
@@ -52,6 +62,12 @@ contextlattice_agent_start --soft --compact
 - Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
 - Before any context-compaction handoff, persist and read back objective state:
   - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
+- Before a major model handoff or hard follow-up prompt, package the session:
+  - `contextlattice_agent_session rollup --session-id <session_id> --pretty`
+  - `contextlattice_agent_session context-package --session-id <session_id> --pretty`
+  - Use the returned `reference_prompt`/`context_package` as the bounded factual scaffold instead of raw logs.
+- When the agent needs capabilities but not the whole skills tree, search:
+  - `contextlattice_skills_index search "<task or tool need>" --pretty`
 - If memory endpoints degrade, continue task execution but report degraded-memory mode.
 - Optional tool-call key split:
   - `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` for orchestrator/admin tasks.

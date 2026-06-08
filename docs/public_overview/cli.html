@@ -91,7 +91,10 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 <pre><code>contextlattice_search -h
 contextlattice_write -h
 contextlattice_agent_adapter profiles
+contextlattice_agent_session runtime --pretty
+contextlattice_agent_runtime_doctor --pretty
 contextlattice_agent_runtime_proof --pretty
+contextlattice_skills_index search "browser automation" --pretty
 contextlattice_agent_start -h
 contextlattice_checkpoint -h
 contextlattice_agent_start --soft --compact
@@ -117,7 +120,11 @@ contextlattice_agent_adapter context-pack --agent codex --project contextlattice
 # write durable progress and handoff state
 contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
 contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
-contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed"</code></pre>
+contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed"
+
+# package the session for the next model call
+contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
+contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty</code></pre>
         <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes.</p>
       </article>
     </section>

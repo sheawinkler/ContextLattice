@@ -142,6 +142,24 @@
               <td>Structured pack with topical grouping</td>
             </tr>
             <tr>
+              <td>Agent session rollup</td>
+              <td><code>GET /v1/agents/sessions/{id}/rollup</code></td>
+              <td>Summarize current objective state, evidence coverage, risks, and next action</td>
+              <td>Contracted <code>agent_session_rollup.v1</code> payload with runtime confidence</td>
+            </tr>
+            <tr>
+              <td>Next-model context package</td>
+              <td><code>GET /v1/agents/sessions/{id}/context-package</code></td>
+              <td>Prepare a bounded reference packet before a hard model handoff or follow-up prompt</td>
+              <td>Contracted <code>agent_prompt_context_package.v1</code> payload plus <code>reference_prompt</code></td>
+            </tr>
+            <tr>
+              <td>Capability discovery</td>
+              <td><code>GET|POST /tools/skills_index_search</code></td>
+              <td>Find relevant skills/tools without loading every capability into startup context</td>
+              <td>Ranked Skills Index matches with paths, score, and matched terms</td>
+            </tr>
+            <tr>
               <td>Typed memory edges</td>
               <td><code>GET|POST /v1/memory/edges</code>, <code>POST /v1/memory/edges/backfill</code></td>
               <td>Persist explicit relationships and audit/apply deterministic retroactive or opt-in inferred edges</td>

@@ -51,6 +51,7 @@
         <ol class="step-list">
           <li>Bring the stack up and verify <code>/health</code> and authenticated <code>/status</code>.</li>
           <li>Run the write/search smoke test to confirm end-to-end memory behavior.</li>
+          <li>Bootstrap an agent session, then generate a context package for the next model call.</li>
           <li>Set agent read-call timeout to match retrieval mode (fast: 25s, balanced: 60s, deep: 75s).</li>
           <li>Paste the human operator instruction block into your agent session.</li>
           <li>Map your client/tooling surface to <code>/memory/write</code>, <code>/memory/search</code>, and <code>/tools/feedback_submit</code>.</li>
@@ -164,9 +165,10 @@ Required behavior:
 1) Before planning, call POST /memory/search with a compact query and project/topic filters.
 2) During long tasks, checkpoint major decisions and outcomes with POST /memory/write.
 3) Submit quality feedback with POST /tools/feedback_submit (use idempotencyKey).
-4) Before final answer, run one more POST /memory/search for recency.
-5) Keep writes compact (summaries, decisions, diffs), never dump full transcripts.
-6) If /memory/* fails, continue task and report degraded memory mode explicitly.</code></pre>
+4) Before a hard follow-up prompt, use GET /v1/agents/sessions/{session_id}/context-package and pass the returned reference_prompt/context_package instead of raw logs.
+5) Before final answer, run one more POST /memory/search for recency.
+6) Keep writes compact (summaries, decisions, diffs), never dump full transcripts.
+7) If /memory/* fails, continue task and report degraded memory mode explicitly.</code></pre>
         <ul class="spec-list">
           <li><strong>Best practice:</strong> include <code>projectName</code>, <code>fileName</code>, and topic path on every write.</li>
           <li><strong>Timeout guidance:</strong> fast reads <code>25s</code>, balanced reads <code>60s</code>, deep/slow-source reads <code>75s</code>.</li>
@@ -203,11 +205,17 @@ contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice --topic-path runbooks/codex-integration
 contextlattice_write --project contextlattice --file notes/codex/checkpoint.md --content "checkpoint saved" --topic-path runbooks/codex-integration
 printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/codex-integration --file notes/codex/checkpoint.md --stdin
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
+contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_skills_index search "browser automation" --pretty
 contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h</code></pre>
         <ul class="spec-list">
           <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
+          <li><strong>Session package:</strong> <code>contextlattice_agent_session context-package</code> turns current objective state, evidence, missing sources, risks, and next action into a bounded reference packet.</li>
           <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>
           <li><strong>Endpoint remains pinned:</strong> <code>http://127.0.0.1:8075</code>.</li>
         </ul>

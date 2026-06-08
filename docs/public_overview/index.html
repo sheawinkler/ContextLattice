@@ -4,12 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Context Lattice | Local-first memory infrastructure for AI agents</title>
-  <meta name="description" content="Context Lattice is local-first memory infrastructure for AI agents: durable writes, scoped retrieval, CLI workflows, Skills Index discovery, learning loops, behavior provenance, and graph memory." />
+  <meta name="description" content="Context Lattice is local-first memory infrastructure for AI agents: durable writes, scoped retrieval, prompt-ready session packages, CLI workflows, Skills Index discovery, learning loops, behavior provenance, and graph memory." />
   <link rel="canonical" href="https://contextlattice.io/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Context Lattice" />
   <meta property="og:title" content="Context Lattice | Local-first memory infrastructure for AI agents" />
-  <meta property="og:description" content="Agents forget. ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and MCP agents durable memory, scoped recall, Skills Index discovery, and learning retrieval." />
+  <meta property="og:description" content="Agents forget. ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and MCP agents durable memory, scoped recall, prompt-ready session packages, Skills Index discovery, and learning retrieval." />
   <meta property="og:url" content="https://contextlattice.io/" />
   <meta property="og:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <meta property="og:image:width" content="1672" />
@@ -17,7 +17,7 @@
   <meta property="og:image:alt" content="Context Lattice: local-first memory infrastructure for AI agents" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Context Lattice | Local-first memory infrastructure for AI agents" />
-  <meta name="twitter:description" content="Durable memory, scoped recall, CLI workflows, Skills Index discovery, learning retrieval, and provenance for real agent work." />
+  <meta name="twitter:description" content="Durable memory, scoped recall, prompt-ready session packages, CLI workflows, Skills Index discovery, learning retrieval, and provenance for real agent work." />
   <meta name="twitter:image" content="https://contextlattice.io/assets/social/contextlattice-architecture-social-v2-2026-04-28.png?v=20260428a" />
   <link rel="icon" type="image/png" sizes="512x512" href="assets/contextlattice-icon-512.png" />
   <link rel="stylesheet" href="styles-gray.css?v=20260601e" />
@@ -30,7 +30,7 @@
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux",
       "url": "https://contextlattice.io/",
-      "description": "Local-first memory infrastructure for AI agents with durable writes, scoped retrieval, CLI workflows, Skills Index discovery, learning loops, behavior provenance, and graph memory.",
+      "description": "Local-first memory infrastructure for AI agents with durable writes, scoped retrieval, prompt-ready session packages, CLI workflows, Skills Index discovery, learning loops, behavior provenance, and graph memory.",
       "author": {
         "@type": "Organization",
         "name": "Private Memory Corp"
@@ -54,7 +54,7 @@
       <p class="sub">
         ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and custom MCP agents one durable place to remember decisions, evidence, skills, checkpoints, behavior, and project context.
       </p>
-      <div class="hero-local">CLI + HTTP/MCP + Skills Index + learning retrieval + behavior provenance</div>
+      <div class="hero-local">CLI + HTTP/MCP + prompt-ready context + Skills Index + behavior provenance</div>
       <div class="cta-row">
         <a class="cta primary" href="installation.html">Add memory to your agents</a>
         <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">Start Free on GitHub</a>
@@ -342,10 +342,11 @@
         <article class="card offer-card offer-builder">
           <div class="kicker">For builders</div>
           <h3>Give every agent the same memory contract.</h3>
-          <p>Plug Codex, Cursor, Claude Desktop, Open WebUI, Claude Code, and custom MCP agents into one local-first layer for writes, recall, context packs, and repeatable handoff.</p>
+          <p>Plug Codex, Cursor, Claude Desktop, Open WebUI, Claude Code, and custom MCP agents into one local-first layer for writes, recall, context packs, prompt-ready session summaries, and repeatable handoff.</p>
           <ul class="spec-list">
             <li><strong>CLI-first workflow:</strong> <code>contextlattice_agent_start</code>, <code>contextlattice_search</code>, and <code>contextlattice_checkpoint</code>.</li>
             <li><strong>Agent templates:</strong> copy-ready instructions for Codex, Claude Code, OpenCode, Hermes, ChatGPT, and Claude.</li>
+            <li><strong>Session context packages:</strong> turn prior work, evidence, risks, and next action into a sharp reference packet for the next model call.</li>
             <li><strong>Skills Index:</strong> discover quarantined capabilities without loading every skill into every agent context.</li>
           </ul>
         </article>
@@ -367,10 +368,11 @@
         <article class="card feature-card suite-card">
           <div class="kicker">Full suite</div>
           <h3>Not just memory. The operating layer around memory.</h3>
-          <p>ContextLattice packages durable memory, retrieval policy, skills discovery, CLI workflows, templates, learning, provenance, and deep-memory lanes behind one local contract.</p>
+          <p>ContextLattice packages durable memory, retrieval policy, session rollups, prompt-ready context packages, skills discovery, CLI workflows, templates, learning, provenance, and deep-memory lanes behind one local contract.</p>
           <div class="feature-matrix" aria-label="Core feature list">
             <button type="button" class="feature-tile tile-major" aria-pressed="false" aria-label="Durable memory writes: Store decisions, evidence, checkpoints, and notes before they fan out anywhere else."><span class="feature-tile-inner"><span class="feature-tile-face feature-tile-front">Durable memory writes</span><span class="feature-tile-face feature-tile-back">Store decisions, evidence, checkpoints, and notes before they fan out anywhere else.</span></span></button>
             <button type="button" class="feature-tile tile-major" aria-pressed="false" aria-label="Scoped context packs: Give agents the smallest useful bundle for the task instead of replaying the whole transcript."><span class="feature-tile-inner"><span class="feature-tile-face feature-tile-front">Scoped context packs</span><span class="feature-tile-face feature-tile-back">Give agents the smallest useful bundle for the task instead of replaying the whole transcript.</span></span></button>
+            <button type="button" class="feature-tile tile-wide" aria-pressed="false" aria-label="Prompt-ready session packages: Repack prior work, evidence, risks, and next action into a bounded reference packet for the next model call."><span class="feature-tile-inner"><span class="feature-tile-face feature-tile-front">Prompt-ready session packages</span><span class="feature-tile-face feature-tile-back">Repack prior work, evidence, risks, and next action into a bounded reference packet for the next model call.</span></span></button>
             <button type="button" class="feature-tile tile-mid" aria-pressed="false" aria-label="Global CLI: Start, search, checkpoint, and preflight ContextLattice from any agent shell."><span class="feature-tile-inner"><span class="feature-tile-face feature-tile-front">Global CLI</span><span class="feature-tile-face feature-tile-back">Start, search, checkpoint, and preflight ContextLattice from any agent shell.</span></span></button>
             <button type="button" class="feature-tile tile-mid" aria-pressed="false" aria-label="Skills Index: Find dormant or quarantined capabilities on demand without bloating startup context."><span class="feature-tile-inner"><span class="feature-tile-face feature-tile-front">Skills Index</span><span class="feature-tile-face feature-tile-back">Find dormant or quarantined capabilities on demand without bloating startup context.</span></span></button>
             <button type="button" class="feature-tile tile-wide" aria-pressed="false" aria-label="HTTP and MCP integration contract: One local boundary for Codex, Cursor, Claude Desktop, Open WebUI, and custom agents."><span class="feature-tile-inner"><span class="feature-tile-face feature-tile-front">HTTP + MCP integration contract</span><span class="feature-tile-face feature-tile-back">One local boundary for Codex, Cursor, Claude Desktop, Open WebUI, and custom agents.</span></span></button>

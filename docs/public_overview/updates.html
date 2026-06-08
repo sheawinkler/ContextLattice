@@ -57,6 +57,23 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-08 · v3.4.x · Session Rollups + Context Packages</span>
+        <h3>Agent runs can now package what matters for the next model call.</h3>
+        <p class="spotlight">
+          ContextLattice now turns a live agent session into a bounded reference package: objective, evidence,
+          source coverage, artifacts, missing checks, risks, and next action. Agents get a sharper handoff than a
+          transcript replay, while operators see prompt readiness in Agent Radar.
+        </p>
+        <ul>
+          <li><strong>Session rollups:</strong> <code>/v1/agents/sessions/&lt;id&gt;/rollup</code> summarizes lifecycle phases, memory contribution, source coverage, artifacts, and risk signals.</li>
+          <li><strong>Context package:</strong> <code>/v1/agents/sessions/&lt;id&gt;/context-package</code> emits a bounded reference prompt and structured package for the next model call.</li>
+          <li><strong>CLI path:</strong> <code>contextlattice_agent_session rollup</code> and <code>contextlattice_agent_session context-package</code> give local agents the lowest-overhead access path.</li>
+          <li><strong>Capability lookup:</strong> <code>contextlattice_skills_index search</code> exposes Skills Index discovery without loading every skill into startup context.</li>
+          <li><strong>Runtime confidence:</strong> Agent Radar shows prompt package readiness, source coverage, missing evidence, and confidence per session.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-06 · v3.4.2 · Agent Runtime Proof Pack</span>
         <h3>The agent memory contract now proves itself in one command.</h3>
         <p class="spotlight">

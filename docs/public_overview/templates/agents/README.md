@@ -21,9 +21,15 @@ Global helper CLI tools are auto-installed by `gmake quickstart` and installer f
 - `~/.contextlattice/bin/contextlattice_write`
 - `~/.contextlattice/bin/contextlattice_agent_start`
 - `~/.contextlattice/bin/contextlattice_checkpoint`
+- `~/.contextlattice/bin/contextlattice_agent_session`
+- `~/.contextlattice/bin/contextlattice_agent_runtime_doctor`
+- `~/.contextlattice/bin/contextlattice_skills_index`
 
 Preferred startup:
 
 ```bash
-contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
+BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
+SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_skills_index search "browser automation" --pretty
 ```
