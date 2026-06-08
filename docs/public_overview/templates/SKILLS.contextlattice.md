@@ -23,13 +23,20 @@ Use this as a reusable skill block for agent frameworks that support skills or t
    - Preserve any returned `format_contract` or `format_contracts` metadata; contract violations are product signals, not wording suggestions.
 4. During execution, checkpoint durable decisions:
    - `POST /memory/write`
-5. Submit explicit retrieval feedback for learning/rerank:
+5. Before a hard model handoff or problem-solving prompt, package current session state:
+   - `GET /v1/agents/sessions/{session_id}/rollup`
+   - `GET /v1/agents/sessions/{session_id}/context-package`
+   - Prefer the returned `reference_prompt`/`context_package` over raw logs.
+6. Discover capabilities on demand:
+   - `POST /tools/skills_index_search`
+   - CLI equivalent: `contextlattice_skills_index search "<task or tool need>" --pretty`
+7. Submit explicit retrieval feedback for learning/rerank:
    - `POST /tools/feedback_submit` (include `idempotencyKey`)
-6. Before context compaction/summarization, persist objective continuity and read it back:
+8. Before context compaction/summarization, persist objective continuity and read it back:
    - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
-7. Before completion, run one recency retrieval pass:
+9. Before completion, run one recency retrieval pass:
    - `POST /memory/search` or `POST /memory/context-pack`
-8. Set caller timeout to match retrieval mode:
+10. Set caller timeout to match retrieval mode:
    - `fast`: `25s`
    - `balanced`: `60s`
    - `deep` (or explicit `letta` / `memory_bank`): `75s`

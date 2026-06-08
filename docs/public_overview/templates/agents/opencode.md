@@ -18,6 +18,8 @@ Preflight:
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent opencode --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 contextlattice_agent_adapter context-pack --agent opencode --project contextlattice --session-id "$SESSION_ID" --pretty
+contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_skills_index search "repo conventions testing release" --pretty
 
 # Compatibility wrapper:
 contextlattice_agent_orchestration preflight-agent opencode contextlattice
@@ -25,3 +27,4 @@ contextlattice_agent_orchestration preflight-agent opencode contextlattice
 
 Behavior contract:
 - Paste `docs/public_overview/templates/agents/universal.md` into system instructions.
+- Before a difficult model call, use the session context package as the bounded factual scaffold.
