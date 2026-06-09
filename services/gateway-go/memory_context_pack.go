@@ -30,7 +30,7 @@ func (s *server) memoryContextPack(w http.ResponseWriter, r *http.Request) {
 	}
 	response, status, execErr := s.buildContextPackResponse(r.Context(), incomingHeaders, payload)
 	if execErr != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "context_pack_unavailable", "detail": execErr.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "context_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
 	}
 	writeJSON(w, status, response)
@@ -81,11 +81,22 @@ func (s *server) buildContextPackResponse(
 	if value, present := requestPayload["query_expansion"]; present {
 		searchRequest["query_expansion"] = value
 	}
+	for _, flag := range []string{"include_ephemeral", "include_ephemeral_memory", "include_test_memory"} {
+		if value, present := requestPayload[flag]; present {
+			searchRequest[flag] = value
+		}
+	}
+	for _, flag := range []string{"blocking", "wait_for_slow_sources", "sync_slow_sources"} {
+		if value, present := requestPayload[flag]; present {
+			searchRequest[flag] = value
+		}
+	}
 	combinedSources := anyToBoolOrDefault(requestPayload["combined_sources"], true)
-	if _, present := requestPayload["wait_for_slow_sources"]; !present && combinedSources {
+	blockSlowByDefault := combinedSources && contextPackBlocksSlowSourcesByDefault()
+	if _, present := requestPayload["wait_for_slow_sources"]; !present && blockSlowByDefault {
 		searchRequest["wait_for_slow_sources"] = true
 	}
-	if _, present := requestPayload["sync_slow_sources"]; !present && combinedSources {
+	if _, present := requestPayload["sync_slow_sources"]; !present && blockSlowByDefault {
 		searchRequest["sync_slow_sources"] = true
 	}
 
@@ -118,10 +129,20 @@ func (s *server) buildContextPackResponse(
 	sourceCoverage := contextPackSourceCoverage(searchResponse)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
+	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, objectiveCtx)
+	contextPack["rankedEvidence"] = compiled["ranked_evidence"]
+	contextPack["ranked_evidence"] = compiled["ranked_evidence"]
+	contextPack["promptSections"] = compiled["prompt_sections"]
+	contextPack["prompt_sections"] = compiled["prompt_sections"]
+	contextPack["contextCompiler"] = compiled["context_compiler"]
+	contextPack["context_compiler"] = compiled["context_compiler"]
+	referencePrompt := anyToString(compiled["reference_prompt"])
 	response := map[string]any{
 		"ok":                 true,
 		"query":              query,
 		"context_pack":       contextPack,
+		"context_compiler":   compiled["context_compiler"],
+		"reference_prompt":   referencePrompt,
 		"warnings":           parseWarnings(searchResponse["warnings"]),
 		"retrieval_mode":     searchResponse["retrieval_mode"],
 		"retrieval_intent":   searchResponse["retrieval_intent"],
@@ -174,6 +195,7 @@ func (s *server) buildContextPackResponse(
 				"objective_state":   anyToString(objectiveRuntime["objective_state"]),
 				"next_action":       anyToString(objectiveRuntime["next_action"]),
 				"objective_runtime": objectiveRuntime,
+				"context_compiler":  compiled["context_compiler"],
 			},
 		})
 		if session != nil {
@@ -185,6 +207,291 @@ func (s *server) buildContextPackResponse(
 		}
 	}
 	return attachContextPackFormatContract(response), status, nil
+}
+
+func contextPackBlocksSlowSourcesByDefault() bool {
+	return envBool("GO_CONTEXT_PACK_BLOCKING_SLOW_DEFAULT", true) ||
+		envBool("GO_CONTEXT_PACK_SYNC_SLOW_SOURCES_DEFAULT", false)
+}
+
+func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext) map[string]any {
+	rankedEvidence := contextPackRankedEvidence(contextPack)
+	promptSections := contextPackPromptSections(query, contextPack, sourceCoverage, objectiveCtx, rankedEvidence)
+	compiler := map[string]any{
+		"schema_id":           "contextlattice_context_compiler.v1",
+		"version":             1,
+		"strategy":            "ranked_evidence_prompt_packet",
+		"intended_use":        "send the next model call with bounded task context, ranked evidence, constraints, and checks",
+		"recommended_surface": "cli_for_local_agents",
+		"alternate_surfaces": []any{
+			"http_for_app_integrations",
+			"mcp_for_tool_calling_hosts",
+		},
+		"ranked_evidence_count": len(rankedEvidence),
+		"source_count":          len(anyToStringList(sourceCoverage["returned"], 64)),
+		"complete":              anyToBool(sourceCoverage["complete"]),
+		"guardrails": []any{
+			"bounded_contract_output",
+			"cite_or_inspect_before_claims",
+			"no_raw_logs_or_volatile_artifacts",
+			"strict_numeric_copy",
+		},
+	}
+	return map[string]any{
+		"context_compiler": compiler,
+		"ranked_evidence":  rankedEvidence,
+		"prompt_sections":  promptSections,
+		"reference_prompt": contextPackReferencePrompt(promptSections),
+	}
+}
+
+func contextPackRankedEvidence(contextPack map[string]any) []any {
+	type evidenceItem struct {
+		Rank       int
+		Kind       string
+		Score      float64
+		Reason     string
+		Text       string
+		Project    string
+		File       string
+		Source     string
+		TopicPath  string
+		Timestamp  string
+		Confidence float64
+	}
+	out := []evidenceItem{}
+	seen := map[string]struct{}{}
+	add := func(kind string, baseScore float64, reason string, text string, source map[string]any) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		project := strings.TrimSpace(anyToString(source["project"]))
+		fileName := strings.TrimSpace(anyToString(source["file"]))
+		sourceName := strings.TrimSpace(anyToString(source["source"]))
+		topicPath := strings.TrimSpace(anyToString(source["topic_path"]))
+		key := strings.Join([]string{kind, project, fileName, sourceName, topicPath, text}, "\x1f")
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		sourceScore := anyToFloat(source["score"])
+		score := baseScore
+		if sourceScore > 0 {
+			score += sourceScore * 10
+		}
+		out = append(out, evidenceItem{
+			Kind:       kind,
+			Score:      score,
+			Reason:     reason,
+			Text:       clipText(text, 520),
+			Project:    project,
+			File:       fileName,
+			Source:     sourceName,
+			TopicPath:  topicPath,
+			Timestamp:  strings.TrimSpace(anyToString(source["timestamp"])),
+			Confidence: roundFloat(clampFloat(score/100, 0.1, 0.99), 3),
+		})
+	}
+	for _, item := range contextPackAnyList(contextPack["relevant_decisions"]) {
+		source := anyMap(item)
+		add("decision", 92, "retrieved decision or policy matched the task", anyToString(source["text"]), source)
+	}
+	for _, item := range contextPackAnyList(contextPack["known_failure_modes"]) {
+		source := anyMap(item)
+		add("risk", 88, "known failure mode can prevent repeated mistakes", anyToString(source["text"]), source)
+	}
+	for _, item := range contextPackAnyList(contextPack["acceptance_criteria"]) {
+		source := anyMap(item)
+		add("check", 84, "acceptance or verification signal should shape the next action", anyToString(source["text"]), source)
+	}
+	for _, item := range contextPackAnyList(contextPack["runbooks"]) {
+		source := anyMap(item)
+		add("runbook", 80, "runbook or workflow can guide execution", anyToString(source["text"]), source)
+	}
+	for _, item := range contextPackAnyList(contextPack["capabilities_to_use"]) {
+		source := anyMap(item)
+		add("capability", 76, "capability or skill is relevant to the task", anyToString(source["text"]), source)
+	}
+	for _, item := range contextPackAnyList(contextPack["facts"]) {
+		source := anyMap(item)
+		text := firstNonEmptyStrings(anyToString(source["text"]), anyToString(source["summary"]), anyToString(source["claim"]))
+		add("fact", 72, "grounded fact returned by retrieval", text, source)
+	}
+	for _, item := range contextPackAnyList(contextPack["results"]) {
+		source := anyMap(item)
+		add("memory", 64, "retrieved memory result matched the task", anyToString(source["summary"]), source)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Score > out[j].Score
+	})
+	limit := minInt(len(out), 16)
+	rendered := make([]any, 0, limit)
+	for idx := 0; idx < limit; idx++ {
+		item := out[idx]
+		item.Rank = idx + 1
+		renderedItem := map[string]any{
+			"rank":       item.Rank,
+			"kind":       item.Kind,
+			"score":      roundFloat(item.Score, 3),
+			"confidence": item.Confidence,
+			"reason":     item.Reason,
+			"text":       item.Text,
+		}
+		if item.Project != "" {
+			renderedItem["project"] = item.Project
+		}
+		if item.File != "" {
+			renderedItem["file"] = item.File
+		}
+		if item.Source != "" {
+			renderedItem["source"] = item.Source
+		}
+		if item.TopicPath != "" {
+			renderedItem["topic_path"] = item.TopicPath
+		}
+		if item.Timestamp != "" {
+			renderedItem["timestamp"] = item.Timestamp
+		}
+		rendered = append(rendered, renderedItem)
+	}
+	return rendered
+}
+
+func contextPackPromptSections(
+	query string,
+	contextPack map[string]any,
+	sourceCoverage map[string]any,
+	objectiveCtx objectiveContext,
+	rankedEvidence []any,
+) map[string]any {
+	files := anyToStringList(contextPack["files_to_read"], 12)
+	commands := contextPackTextList(contextPack["commands"], 8)
+	checks := contextPackTextList(contextPack["acceptance_criteria"], 8)
+	risks := contextPackTextList(contextPack["known_failure_modes"], 8)
+	capabilities := contextPackTextList(contextPack["capabilities_to_use"], 8)
+	nextAction := "Use the ranked evidence, inspect cited files when necessary, then execute the smallest verifiable step."
+	objective := strings.TrimSpace(query)
+	if !objectiveCtx.empty() && strings.TrimSpace(objectiveCtx.Objective) != "" {
+		objective = objectiveCtx.Objective
+	}
+	return map[string]any{
+		"objective":        clipText(objective, 900),
+		"task":             clipText(query, 900),
+		"mission":          clipText(objectiveCtx.Mission, 900),
+		"goal":             clipText(objectiveCtx.Goal, 900),
+		"next_action":      clipText(nextAction, 900),
+		"evidence":         rankedEvidence,
+		"files_to_inspect": files,
+		"commands":         commands,
+		"checks":           checks,
+		"risks":            risks,
+		"capabilities":     capabilities,
+		"source_coverage": map[string]any{
+			"returned": anyToStringList(sourceCoverage["returned"], 16),
+			"pending":  anyToStringList(sourceCoverage["pending"], 16),
+			"failed":   anyToStringList(sourceCoverage["failed"], 8),
+			"complete": anyToBool(sourceCoverage["complete"]),
+		},
+		"constraints": []any{
+			"Prefer cited evidence over inference.",
+			"Inspect files before claiming current code behavior.",
+			"Do not include raw logs, volatile telemetry, secrets, or oversized provider errors.",
+			"Keep the next model call focused on the requested task and acceptance checks.",
+		},
+	}
+}
+
+func contextPackReferencePrompt(promptSections map[string]any) string {
+	lines := []string{
+		"Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
+		"Objective: " + anyToString(promptSections["objective"]),
+		"Task: " + anyToString(promptSections["task"]),
+	}
+	if mission := strings.TrimSpace(anyToString(promptSections["mission"])); mission != "" {
+		lines = append(lines, "Mission: "+mission)
+	}
+	if goal := strings.TrimSpace(anyToString(promptSections["goal"])); goal != "" {
+		lines = append(lines, "Goal: "+goal)
+	}
+	lines = append(lines, "Next action: "+anyToString(promptSections["next_action"]))
+	lines = append(lines, "", "Ranked evidence:")
+	evidence := contextPackAnyList(promptSections["evidence"])
+	if len(evidence) == 0 {
+		lines = append(lines, "- No ranked evidence returned; retrieve or inspect before making claims.")
+	}
+	for idx, item := range evidence {
+		if idx >= 10 {
+			break
+		}
+		entry := anyMap(item)
+		citation := contextPackEvidenceCitation(entry)
+		line := "- [" + anyToString(entry["kind"]) + " #" + anyToString(entry["rank"]) + "] " + anyToString(entry["text"])
+		if citation != "" {
+			line += " (" + citation + ")"
+		}
+		lines = append(lines, line)
+	}
+	if files := anyToStringList(promptSections["files_to_inspect"], 8); len(files) > 0 {
+		lines = append(lines, "", "Files to inspect:")
+		for _, fileName := range files {
+			lines = append(lines, "- "+fileName)
+		}
+	}
+	if checks := anyToStringList(promptSections["checks"], 8); len(checks) > 0 {
+		lines = append(lines, "", "Acceptance checks:")
+		for _, check := range checks {
+			lines = append(lines, "- "+check)
+		}
+	}
+	if risks := anyToStringList(promptSections["risks"], 6); len(risks) > 0 {
+		lines = append(lines, "", "Known risks:")
+		for _, risk := range risks {
+			lines = append(lines, "- "+risk)
+		}
+	}
+	lines = append(lines, "", "Rules: cite evidence, inspect current files for code claims, avoid raw logs/volatile telemetry, and keep output bounded.")
+	return clipText(strings.Join(lines, "\n"), 5000)
+}
+
+func contextPackEvidenceCitation(item map[string]any) string {
+	parts := []string{}
+	for _, key := range []string{"project", "file", "source", "topic_path"} {
+		value := strings.TrimSpace(anyToString(item[key]))
+		if value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, " / ")
+}
+
+func contextPackTextList(value any, maxItems int) []string {
+	out := []string{}
+	for _, item := range contextPackAnyList(value) {
+		text := strings.TrimSpace(anyToString(item))
+		if text == "" {
+			text = strings.TrimSpace(anyToString(anyMap(item)["text"]))
+		}
+		if text == "" {
+			continue
+		}
+		out = append(out, clipText(text, 360))
+		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
+}
+
+func contextPackAnyList(value any) []any {
+	items, ok := asAnySlice(value)
+	if !ok {
+		return []any{}
+	}
+	return items
 }
 
 func buildContextPackPayload(
@@ -233,6 +540,9 @@ func buildContextPackPayload(
 			"topic_path": row["topic_path"],
 			"timestamp":  contextPackTimestamp(row),
 			"summary":    clipText(anyToString(row["summary"]), 480),
+		}
+		if lifecycle := strings.TrimSpace(anyToString(row["lifecycle"])); lifecycle != "" {
+			rendered["lifecycle"] = normalizeMemoryLifecycle(lifecycle)
 		}
 		if topicRollup, ok := row["topic_rollup"].(map[string]any); ok {
 			rendered["topic_rollup"] = contextPackTopicRollup(topicRollup)

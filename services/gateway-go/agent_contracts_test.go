@@ -51,12 +51,59 @@ func TestGeneratedAgentContractsMatchRegistry(t *testing.T) {
 	}
 }
 
+func testContextCompilerFixture(strategy string, evidenceCount int) map[string]any {
+	return map[string]any{
+		"schema_id":             "contextlattice_context_compiler.v1",
+		"version":               1,
+		"strategy":              strategy,
+		"intended_use":          "verify bounded prompt-ready context packages",
+		"recommended_surface":   "cli_for_local_agents",
+		"ranked_evidence_count": evidenceCount,
+	}
+}
+
+func testPromptSectionsFixture(task string, evidence []any) map[string]any {
+	return map[string]any{
+		"objective":        task,
+		"task":             task,
+		"next_action":      "Use ranked evidence, inspect files, and run matching checks.",
+		"evidence":         evidence,
+		"files_to_inspect": []any{},
+		"commands":         []any{},
+		"checks":           []any{},
+		"risks":            []any{},
+		"capabilities":     []any{},
+		"constraints":      []any{"Keep output bounded."},
+	}
+}
+
+func testContextPackFixture(items []any) map[string]any {
+	if items == nil {
+		items = []any{}
+	}
+	compiler := testContextCompilerFixture("test_fixture", len(items))
+	return map[string]any{
+		"facts":               items,
+		"numeric_facts":       items,
+		"results":             items,
+		"citations":           items,
+		"context_compiler":    compiler,
+		"prompt_sections":     testPromptSectionsFixture("contract test", items),
+		"ranked_evidence":     items,
+		"relevant_decisions":  items,
+		"files_to_read":       []any{},
+		"files_to_avoid":      []any{},
+		"capabilities_to_use": []any{},
+		"runbooks":            []any{},
+		"known_failure_modes": []any{},
+		"commands":            []any{},
+		"acceptance_criteria": []any{},
+	}
+}
+
 func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	pack := map[string]any{
-		"context_pack": map[string]any{
-			"facts":   []any{map[string]any{"text": "f1", "source": "test"}},
-			"results": []any{},
-		},
+		"context_pack": testContextPackFixture([]any{map[string]any{"text": "f1", "source": "test"}}),
 	}
 	policy := buildPolicyContextPackage(
 		"codex",
@@ -148,7 +195,15 @@ func TestObjectiveRuntimeStateContractValidationPassesAndFails(t *testing.T) {
 }
 
 func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
-	pack := map[string]any{"context_pack": map[string]any{"facts": []any{}, "results": []any{}}}
+	contextPack := testContextPackFixture([]any{})
+	pack := map[string]any{
+		"ok":                 true,
+		"context_pack":       contextPack,
+		"context_compiler":   contextPack["context_compiler"],
+		"reference_prompt":   "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
+		"source_coverage":    map[string]any{"configured": []any{"fixture"}, "returned": []any{"fixture"}, "complete": true},
+		"writeback_required": true,
+	}
 	objectiveRuntime := buildObjectiveRuntimeState("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", "sess-test", objectiveContext{}, "agent.preflight.completed")
 	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", "preflight", "fast", pack, pack, nil, objectiveRuntime, objectiveContext{})
 	response := attachAgentPreflightFormatContracts(map[string]any{
@@ -182,24 +237,14 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 }
 
 func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
-	pack := map[string]any{
-		"facts":               []any{},
-		"results":             []any{},
-		"citations":           []any{},
-		"relevant_decisions":  []any{},
-		"files_to_read":       []any{},
-		"files_to_avoid":      []any{},
-		"capabilities_to_use": []any{},
-		"runbooks":            []any{},
-		"known_failure_modes": []any{},
-		"commands":            []any{},
-		"acceptance_criteria": []any{},
-	}
+	pack := testContextPackFixture([]any{})
 	coverage := map[string]any{"configured": []any{"postgres_pgvector"}, "returned": []any{"postgres_pgvector"}, "complete": true}
 	contextResponse := attachContextPackFormatContract(map[string]any{
 		"ok":                 true,
 		"agent_id":           "codex_gpt5_test",
 		"context_pack":       pack,
+		"context_compiler":   pack["context_compiler"],
+		"reference_prompt":   "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
 		"source_coverage":    coverage,
 		"writeback_required": true,
 	})
@@ -263,24 +308,20 @@ func TestAgentBoundaryContractClipsOversizedContextPackPayload(t *testing.T) {
 			"topic_path": "runbooks/boundary",
 		})
 	}
-	pack := map[string]any{
-		"facts":               items,
-		"numeric_facts":       items,
-		"citations":           items,
-		"results":             items,
-		"relevant_decisions":  items,
-		"files_to_read":       items,
-		"files_to_avoid":      items,
-		"capabilities_to_use": items,
-		"runbooks":            items,
-		"known_failure_modes": items,
-		"commands":            items,
-		"acceptance_criteria": items,
-	}
+	pack := testContextPackFixture(items)
+	pack["files_to_read"] = items
+	pack["files_to_avoid"] = items
+	pack["capabilities_to_use"] = items
+	pack["runbooks"] = items
+	pack["known_failure_modes"] = items
+	pack["commands"] = items
+	pack["acceptance_criteria"] = items
 	payload := attachContextPackFormatContract(map[string]any{
 		"ok":                 true,
 		"agent_id":           "codex_gpt5_test",
 		"context_pack":       pack,
+		"context_compiler":   pack["context_compiler"],
+		"reference_prompt":   oversized,
 		"source_coverage":    map[string]any{"configured": items, "returned": items, "complete": true},
 		"retrieval":          map[string]any{"debug": oversized},
 		"writeback_required": true,
@@ -349,10 +390,19 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 	for idx := 0; idx < 120; idx++ {
 		items = append(items, cloneContractMap(item))
 	}
+	contextPack := testContextPackFixture(items)
+	contextPack["files_to_read"] = items
+	contextPack["capabilities_to_use"] = items
+	contextPack["runbooks"] = items
+	contextPack["known_failure_modes"] = items
+	contextPack["commands"] = items
+	contextPack["acceptance_criteria"] = items
 	pack := attachContextPackFormatContract(map[string]any{
 		"ok":                 true,
 		"agent_id":           "codex_gpt5_test",
-		"context_pack":       map[string]any{"facts": items, "results": items, "citations": items, "relevant_decisions": items, "files_to_read": items, "files_to_avoid": []any{}, "capabilities_to_use": []any{}, "runbooks": []any{}, "known_failure_modes": []any{}, "commands": []any{}, "acceptance_criteria": []any{}},
+		"context_pack":       contextPack,
+		"context_compiler":   contextPack["context_compiler"],
+		"reference_prompt":   oversized,
 		"source_coverage":    map[string]any{"configured": []any{"fixture"}, "returned": []any{"fixture"}, "complete": true},
 		"writeback_required": true,
 	})
@@ -382,10 +432,13 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 
 func TestAgentPreflightBoundarySanitizesProviderOverflowSearchTextUnderBudget(t *testing.T) {
 	phrase := "documentation mentions array_above_max_length and context length exceeded as historical provider errors"
+	contextPack := testContextPackFixture([]any{})
 	pack := attachContextPackFormatContract(map[string]any{
 		"ok":                 true,
 		"agent_id":           "codex_gpt5_test",
-		"context_pack":       map[string]any{"facts": []any{}, "results": []any{}, "citations": []any{}, "relevant_decisions": []any{}, "files_to_read": []any{}, "files_to_avoid": []any{}, "capabilities_to_use": []any{}, "runbooks": []any{}, "known_failure_modes": []any{}, "commands": []any{}, "acceptance_criteria": []any{}},
+		"context_pack":       contextPack,
+		"context_compiler":   contextPack["context_compiler"],
+		"reference_prompt":   "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
 		"source_coverage":    map[string]any{"configured": []any{"fixture"}, "returned": []any{"fixture"}, "complete": true},
 		"writeback_required": true,
 	})

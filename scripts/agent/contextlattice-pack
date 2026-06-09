@@ -33,6 +33,10 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def encoded_len(value: Any) -> int:
+    return len((json.dumps(value) + "\n").encode("utf-8"))
+
+
 def compact_items(value: Any, limit: int) -> list[Any]:
     out = []
     for item in as_list(value)[:limit]:
@@ -47,17 +51,170 @@ def compact_items(value: Any, limit: int) -> list[Any]:
     return out
 
 
+def slim_source_coverage(value: Any) -> dict[str, Any]:
+    coverage = value if isinstance(value, dict) else {}
+    return {
+        "configured": as_list(coverage.get("configured"))[:8],
+        "returned": as_list(coverage.get("returned"))[:8],
+        "pending": as_list(coverage.get("pending"))[:8],
+        "warming": as_list(coverage.get("warming"))[:8],
+        "failed": as_list(coverage.get("failed"))[:4],
+        "timed_out": as_list(coverage.get("timed_out"))[:4],
+        "budget_exceeded": as_list(coverage.get("budget_exceeded"))[:4],
+        "complete": bool(coverage.get("complete")),
+    }
+
+
+def trim_context_pack_lists(context_pack: dict[str, Any], limit: int) -> None:
+    for key in ("facts", "numeric_facts", "citations", "results", "ranked_evidence", *CAMEL_TO_SNAKE.values()):
+        if isinstance(context_pack.get(key), list):
+            context_pack[key] = context_pack[key][: max(0, limit)]
+    prompt_sections = context_pack.get("prompt_sections")
+    if isinstance(prompt_sections, dict):
+        for key in ("evidence", "files_to_inspect", "commands", "checks", "risks", "capabilities", "constraints"):
+            if isinstance(prompt_sections.get(key), list):
+                prompt_sections[key] = prompt_sections[key][: max(0, limit)]
+
+
+def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) -> dict[str, Any]:
+    budget_chars = max(1024, int(budget_chars or 0))
+    payload = attach_format_contract("context_pack_response.v1", payload)
+    if encoded_len(payload) <= budget_chars:
+        return payload
+
+    payload["clipped"] = True
+    context_pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
+    coverage = slim_source_coverage(payload.get("source_coverage") or context_pack.get("source_coverage"))
+    payload["source_coverage"] = coverage
+    context_pack["source_coverage"] = coverage
+    payload["warnings"] = as_list(payload.get("warnings"))[:3]
+    trim_context_pack_lists(context_pack, 3)
+    payload = attach_format_contract("context_pack_response.v1", payload)
+    if encoded_len(payload) <= budget_chars:
+        return payload
+
+    context_pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
+    trim_context_pack_lists(context_pack, 1)
+    context_pack["results"] = []
+    context_pack["citations"] = []
+    payload["warnings"] = ["ContextLattice context pack clipped to local output budget."]
+    payload = attach_format_contract("context_pack_response.v1", payload)
+    if encoded_len(payload) <= budget_chars:
+        return payload
+
+    minimal_pack = {
+        "query": context_pack.get("query") or payload.get("task_summary") or "",
+        "retrieval_mode": context_pack.get("retrieval_mode") or "",
+        "retrieval_intent": context_pack.get("retrieval_intent") or "",
+        "source_coverage": coverage,
+        "context_compiler": context_pack.get("context_compiler") or minimal_context_compiler("minimal_payload", 0),
+        "prompt_sections": minimal_prompt_sections(
+            context_pack.get("query") or payload.get("task_summary") or "",
+            "ContextLattice clipped this context package to a minimal bounded payload; rerun with a larger budget for ranked evidence.",
+        ),
+        "ranked_evidence": [],
+        "facts": [],
+        "numeric_facts": [],
+        "citations": [],
+        "results": [],
+        "relevant_decisions": [],
+        "files_to_read": [],
+        "files_to_avoid": [],
+        "capabilities_to_use": [],
+        "runbooks": [],
+        "known_failure_modes": [],
+        "commands": [],
+        "acceptance_criteria": [],
+    }
+    minimal = {
+        "ok": bool(payload.get("ok", True)),
+        "task_summary": str(payload.get("task_summary") or "")[:240],
+        "context_budget_chars": budget_chars,
+        "clipped": True,
+        "fact_count": int(payload.get("fact_count") or 0),
+        "result_count": int(payload.get("result_count") or 0),
+        "source_coverage": coverage,
+        "warnings": ["ContextLattice context pack clipped to minimal local output budget."],
+        "context_pack": minimal_pack,
+        "context_compiler": minimal_pack["context_compiler"],
+        "reference_prompt": "ContextLattice clipped this package to a minimal bounded payload. Rerun with a larger budget before making detailed evidence-backed claims.",
+        "writeback_required": True,
+    }
+    return attach_format_contract("context_pack_response.v1", minimal)
+
+
+def minimal_context_compiler(strategy: str, ranked_count: int) -> dict[str, Any]:
+    return {
+        "schema_id": "contextlattice_context_compiler.v1",
+        "version": 1,
+        "strategy": strategy,
+        "intended_use": "return a bounded prompt-ready context packet for the next agent step",
+        "recommended_surface": "cli_for_local_agents",
+        "ranked_evidence_count": ranked_count,
+    }
+
+
+def minimal_prompt_sections(query: str, next_action: str) -> dict[str, Any]:
+    return {
+        "objective": query,
+        "task": query,
+        "next_action": next_action,
+        "evidence": [],
+        "files_to_inspect": [],
+        "commands": [],
+        "checks": [],
+        "risks": [],
+        "capabilities": [],
+        "constraints": ["Use cited evidence; rerun context compilation if evidence is missing."],
+    }
+
+
+def fallback_reference_prompt(query: str, prompt_sections: dict[str, Any], ranked_evidence: list[Any]) -> str:
+    lines = [
+        "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
+        f"Objective: {str(prompt_sections.get('objective') or query)[:900]}",
+        f"Task: {str(prompt_sections.get('task') or query)[:900]}",
+        f"Next action: {str(prompt_sections.get('next_action') or 'Use the retrieved evidence, inspect files, and run matching checks.')[:900]}",
+        "",
+        "Ranked evidence:",
+    ]
+    if ranked_evidence:
+        for item in ranked_evidence[:8]:
+            if isinstance(item, dict):
+                text = str(item.get("text") or item.get("summary") or "")[:420]
+                kind = str(item.get("kind") or "evidence")
+                rank = str(item.get("rank") or "?")
+                if text:
+                    lines.append(f"- [{kind} #{rank}] {text}")
+    else:
+        lines.append("- No ranked evidence was returned by this gateway version; use the included context sections and inspect cited files before making claims.")
+    return "\n".join(lines)[:5000]
+
+
 def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> dict[str, Any]:
     pack = raw.get("context_pack") if isinstance(raw.get("context_pack"), dict) else {}
     source_coverage = raw.get("source_coverage") or pack.get("sourceCoverage") or {}
     facts = compact_items(pack.get("facts"), 8)
     numeric_facts = compact_items(pack.get("numericFacts"), 8)
     results = compact_items(pack.get("results"), 10)
+    ranked_evidence = compact_items(pack.get("ranked_evidence") or pack.get("rankedEvidence"), 16)
+    prompt_sections = pack.get("prompt_sections") or pack.get("promptSections")
+    if not isinstance(prompt_sections, dict):
+        prompt_sections = minimal_prompt_sections(query, "Use the retrieved evidence, inspect files when necessary, and execute the smallest verifiable step.")
+    context_compiler = pack.get("context_compiler") or pack.get("contextCompiler") or raw.get("context_compiler")
+    if not isinstance(context_compiler, dict):
+        context_compiler = minimal_context_compiler("cli_compact_context_pack", len(ranked_evidence))
+    reference_prompt = raw.get("reference_prompt")
+    if not isinstance(reference_prompt, str) or not reference_prompt.strip():
+        reference_prompt = fallback_reference_prompt(query, prompt_sections, ranked_evidence)
     context_pack: dict[str, Any] = {
         "query": pack.get("query") or raw.get("query") or query,
         "retrieval_mode": raw.get("retrieval_mode") or pack.get("retrievalMode"),
         "retrieval_intent": raw.get("retrieval_intent") or pack.get("retrievalIntent"),
         "source_coverage": source_coverage,
+        "context_compiler": context_compiler,
+        "prompt_sections": prompt_sections,
+        "ranked_evidence": ranked_evidence,
         "facts": facts,
         "numeric_facts": numeric_facts,
         "citations": compact_items(pack.get("citations"), 12),
@@ -76,13 +233,14 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "fact_count": len(as_list(pack.get("facts"))),
         "result_count": len(as_list(pack.get("results"))),
         "source_coverage": source_coverage,
+        "context_compiler": context_compiler,
+        "reference_prompt": reference_prompt,
         "warnings": as_list(raw.get("warnings"))[:10],
         "context_pack": context_pack,
         "writeback_required": True,
     }
     payload = attach_format_contract("context_pack_response.v1", payload)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    if len(encoded) <= budget_chars:
+    if encoded_len(payload) <= budget_chars:
         return payload
     payload["clipped"] = True
     context_pack["facts"] = facts[:4]
@@ -91,13 +249,15 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     context_pack["results"] = results[:5]
     for snake in CAMEL_TO_SNAKE.values():
         context_pack[snake] = context_pack[snake][:6]
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    if len(encoded) > budget_chars:
+    if encoded_len(payload) > budget_chars:
+        context_pack["ranked_evidence"] = context_pack["ranked_evidence"][:3]
+        if isinstance(context_pack.get("prompt_sections"), dict):
+            context_pack["prompt_sections"]["evidence"] = as_list(context_pack["prompt_sections"].get("evidence"))[:3]
         context_pack["results"] = []
         context_pack["citations"] = []
         context_pack["facts"] = context_pack["facts"][:2]
         context_pack["numeric_facts"] = context_pack["numeric_facts"][:2]
-    return attach_format_contract("context_pack_response.v1", payload)
+    return finalize_context_pack_payload(payload, budget_chars)
 
 
 def failure_payload(query: str, budget_chars: int, error: str, attempts: int) -> dict[str, Any]:
@@ -113,6 +273,12 @@ def failure_payload(query: str, budget_chars: int, error: str, attempts: int) ->
             "query": query,
             "retrieval_mode": "",
             "retrieval_intent": "",
+            "context_compiler": minimal_context_compiler("failure_payload", 0),
+            "prompt_sections": minimal_prompt_sections(
+                query,
+                "Recover ContextLattice availability, then rerun context package compilation.",
+            ),
+            "ranked_evidence": [],
             "source_coverage": {"configured": [], "returned": [], "complete": False},
             "facts": [],
             "numeric_facts": [],
@@ -127,10 +293,12 @@ def failure_payload(query: str, budget_chars: int, error: str, attempts: int) ->
             "commands": [],
             "acceptance_criteria": [],
         },
+        "context_compiler": minimal_context_compiler("failure_payload", 0),
+        "reference_prompt": "ContextLattice context package compilation failed. Recover the local service, then rerun context compilation before making evidence-backed claims.",
         "source_coverage": {"configured": [], "returned": [], "complete": False},
         "writeback_required": True,
     }
-    return attach_format_contract("context_pack_response.v1", payload)
+    return finalize_context_pack_payload(payload, budget_chars)
 
 
 def request_with_retries(path: str, payload: dict[str, Any], timeout: float, retries: int, retry_delay: float) -> tuple[dict[str, Any] | None, str, int]:

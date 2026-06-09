@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CLI Quickstart | Context Lattice</title>
-  <meta name="description" content="Context Lattice CLI quickstart for install, launch, monitoring, write/search validation, and agent preflight." />
+  <meta name="description" content="Context Lattice CLI quickstart for install, launch, monitoring, write/search validation, context compilation, and agent preflight." />
   <link rel="stylesheet" href="styles-gray.css?v=20260601d" />
 </head>
 <body class="home">
@@ -36,7 +36,7 @@
     <section class="hero">
       <span class="badge">CLI</span>
       <h1>Install, launch, and validate Context Lattice from terminal in minutes.</h1>
-      <p class="sub">Use these commands as the canonical local flow for public and premium lanes.</p>
+      <p class="sub">Use these commands as the canonical local flow for public and premium lanes, including prompt-ready context compilation before expensive agent reasoning.</p>
     </section>
 
     <section class="section">
@@ -95,6 +95,7 @@ contextlattice_agent_session runtime --pretty
 contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty
+contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_skills_index search "browser automation" --pretty
 contextlattice_agent_start -h
@@ -102,6 +103,19 @@ contextlattice_checkpoint -h
 contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice
 printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/setup --file notes/checkpoint.md --stdin</code></pre>
+      </article>
+    </section>
+
+    <section class="section">
+      <article class="card">
+        <div class="kicker">Context compiler</div>
+        <h3>Build the next prompt packet from memory</h3>
+<pre><code>contextlattice_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
+
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
+  http://127.0.0.1:8075/memory/context-pack | jq '.reference_prompt'</code></pre>
+        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code> that can be handed to Codex, Claude Code, MCP hosts, or a custom LLM app.</p>
       </article>
     </section>
 

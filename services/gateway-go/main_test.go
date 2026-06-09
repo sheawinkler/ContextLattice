@@ -1586,6 +1586,29 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	if commands, ok := contextPack["commands"].([]any); !ok || len(commands) == 0 {
 		t.Fatalf("expected extracted commands in context pack, got %#v", contextPack["commands"])
 	}
+	compiler := anyMap(payload["context_compiler"])
+	if anyToString(compiler["schema_id"]) != "contextlattice_context_compiler.v1" {
+		t.Fatalf("expected compiler metadata, got %#v", compiler)
+	}
+	if prompt := anyToString(payload["reference_prompt"]); !strings.Contains(prompt, "Ranked evidence") || !strings.Contains(prompt, "notes/a.md") {
+		t.Fatalf("expected prompt-ready reference prompt with ranked evidence, got %q", prompt)
+	}
+	ranked, _ := asAnySlice(contextPack["ranked_evidence"])
+	if len(ranked) == 0 {
+		t.Fatalf("expected ranked evidence in context pack, got %#v", contextPack["ranked_evidence"])
+	}
+	firstEvidence := anyMap(ranked[0])
+	if anyToInt(firstEvidence["rank"], 0) != 1 || strings.TrimSpace(anyToString(firstEvidence["reason"])) == "" {
+		t.Fatalf("expected ranked evidence reason and rank, got %#v", firstEvidence)
+	}
+	promptSections := anyMap(contextPack["prompt_sections"])
+	if !strings.Contains(anyToString(promptSections["next_action"]), "ranked evidence") {
+		t.Fatalf("expected prompt sections next action, got %#v", promptSections)
+	}
+	contextCompiler := anyMap(contextPack["context_compiler"])
+	if anyToString(contextCompiler["recommended_surface"]) != "cli_for_local_agents" {
+		t.Fatalf("expected CLI-first compiler surface, got %#v", contextCompiler)
+	}
 	if retrievalCalls < 1 {
 		t.Fatalf("expected at least one retrieval backend call, got %d", retrievalCalls)
 	}

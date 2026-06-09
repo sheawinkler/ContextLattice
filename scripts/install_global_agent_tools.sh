@@ -17,6 +17,7 @@ Usage: scripts/install_global_agent_tools.sh [options]
 
 Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_search
+  contextlattice_pack
   contextlattice_write
   contextlattice_agent_orchestration
   contextlattice_agent_adapter
@@ -163,6 +164,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_pack" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/contextlattice-pack"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -230,6 +244,7 @@ EOF
 
 chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_search" \
+  "${GLOBAL_BIN_DIR}/contextlattice_pack" \
   "${GLOBAL_BIN_DIR}/contextlattice_write" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
@@ -416,6 +431,7 @@ fi
 
 log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
@@ -429,6 +445,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_post_compaction_read"
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
+log "  contextlattice_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_agent_runtime_proof --pretty"

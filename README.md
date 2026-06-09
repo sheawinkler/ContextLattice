@@ -117,6 +117,7 @@ Installer and quickstart paths install agent helpers under `~/.contextlattice/bi
 ```bash
 contextlattice_agent_adapter profiles
 contextlattice_agent_start --soft --compact
+contextlattice_pack "what should the next agent know?" --project my-project --pretty
 contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h
@@ -125,6 +126,7 @@ contextlattice_source_backfill --source jsonl --path data.jsonl --project my-pro
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
+- `contextlattice_pack` compiles a bounded prompt-ready packet with ranked evidence, files to inspect, risks, checks, source coverage, and a `reference_prompt`.
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
 - `contextlattice_source_backfill` imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.
 - Hook pack details: `docs/agent-hooks.md`.
@@ -136,6 +138,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Start/list/read sessions through `GET|POST /v1/agents/sessions` and `GET /v1/agents/sessions/{session_id}`.
 - Emit normalized events through `POST /v1/agents/sessions/event` or `POST /v1/agents/sessions/{session_id}/events`.
 - Read live runtime telemetry from `GET /telemetry/agents/runtime`.
+- Compile task context through `POST /memory/context-pack`, `POST /tools/context_pack`, or global `contextlattice_pack`; responses include `context_compiler`, ranked evidence, prompt sections, and a bounded `reference_prompt`.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
