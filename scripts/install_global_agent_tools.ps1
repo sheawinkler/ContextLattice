@@ -134,6 +134,45 @@ if not exist "%PYTHON_EXE%" (
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
 "@
 
+$adoptionProofCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\agent-adoption-proof-matrix
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+"@
+
+$sessionCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\contextlattice-session
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+"@
+
+$runtimeDoctorCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\audit-agent-runtime-install
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+"@
+
 $sourceBackfillCmd = @"
 @echo off
 set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
@@ -152,6 +191,9 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_write.cmd") -Value $writeCm
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_orchestration.cmd") -Value $orchCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_adapter.cmd") -Value $adapterCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_runtime_proof.cmd") -Value $proofCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_agent_adoption_proof.cmd") -Value $adoptionProofCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_agent_session.cmd") -Value $sessionCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_agent_runtime_doctor.cmd") -Value $runtimeDoctorCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_source_backfill.cmd") -Value $sourceBackfillCmd -Encoding Ascii
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -175,5 +217,8 @@ Write-Host "Open a new terminal and verify:"
 Write-Host "  contextlattice_search -h"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_agent_adapter profiles"
+Write-Host "  contextlattice_agent_session runtime --pretty"
 Write-Host "  contextlattice_agent_runtime_proof --pretty"
+Write-Host "  contextlattice_agent_adoption_proof --skip-provider-smoke --pretty"
+Write-Host "  contextlattice_agent_runtime_doctor --pretty"
 Write-Host "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"

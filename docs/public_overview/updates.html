@@ -57,6 +57,22 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-09 · v3.4.10 · Seamless Agent Adoption Proofs</span>
+        <h3>One command now proves the agent memory lifecycle across runtimes.</h3>
+        <p class="spotlight">
+          ContextLattice can validate that configured agent profiles share the same bootstrap, context package,
+          checkpoint, handoff, completion, session rollup, and prompt-ready evidence path. The proof reports the
+          skills, context, graph touches, and handoff artifacts that shaped each run.
+        </p>
+        <ul>
+          <li><strong>Matrix proof:</strong> run <code>contextlattice_agent_adoption_proof --pretty</code> after global install, or <code>scripts/agent/agent-adoption-proof-matrix --pretty</code> from the repo.</li>
+          <li><strong>Agent coverage:</strong> profiles include Codex, Claude Code, OpenCode, Hermes Agent, Pi, ChatGPT web/desktop, and Claude web/desktop patterns.</li>
+          <li><strong>Visible inputs:</strong> each case reports Skills Index hits, context-package validation, session events, graph touches, checkpoint counts, handoff counts, and reference-prompt size.</li>
+          <li><strong>Provider check:</strong> optional CLI smoke tests detect available external agent runners without requiring paid provider execution.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-08 · v3.4.x · Session Rollups + Context Packages</span>
         <h3>Agent runs can now package what matters for the next model call.</h3>
         <p class="spotlight">

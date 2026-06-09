@@ -139,6 +139,24 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if raw.get("ok") else 1
 
 
+def cmd_rollup(args: argparse.Namespace) -> int:
+    session_id = args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+    if not session_id:
+        raise SystemExit("session id is required; pass --session-id or set CONTEXTLATTICE_SESSION_ID")
+    raw = request_json("GET", f"/v1/agents/sessions/{session_id}/rollup", None, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
+def cmd_context_package(args: argparse.Namespace) -> int:
+    session_id = args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+    if not session_id:
+        raise SystemExit("session id is required; pass --session-id or set CONTEXTLATTICE_SESSION_ID")
+    raw = request_json("GET", f"/v1/agents/sessions/{session_id}/context-package", None, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     params = {
         "limit": args.limit,
@@ -332,6 +350,14 @@ def main() -> int:
     status = sub.add_parser("status")
     add_common(status)
     status.set_defaults(func=cmd_status)
+
+    rollup = sub.add_parser("rollup")
+    add_common(rollup)
+    rollup.set_defaults(func=cmd_rollup)
+
+    context_package = sub.add_parser("context-package")
+    add_common(context_package)
+    context_package.set_defaults(func=cmd_context_package)
 
     list_cmd = sub.add_parser("list")
     add_common(list_cmd)

@@ -44,7 +44,10 @@ Installed commands:
 | --- | --- |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
-| `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry work end to end. |
+| `contextlattice_agent_session` | Session lifecycle, rollup, context-package, runtime, and cleanup CLI. |
+| `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry work end to end. |
+| `contextlattice_agent_adoption_proof` | Matrix proof that configured agent profiles can use the same memory lifecycle and expose skills/context/session/graph/handoff evidence. |
+| `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
 | `contextlattice_source_backfill` | Bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres into `/memory/write`, with optional graph edge repair. |
 | `contextlattice_codex_session_store_doctor` | Checks Codex transcript storage for symlink, external-volume, cloud-folder, TCC, and read/write traps. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |

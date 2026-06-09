@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""Run live adoption proofs across ContextLattice agent profiles."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from agent_orchestration import AGENT_PREFLIGHT_PROFILES, _resolve_agent_preflight_profile  # noqa: E402
+
+
+PROOF = SCRIPT_DIR / "agent-runtime-proof-pack"
+PROVIDER_SMOKE = SCRIPT_DIR / "audit-external-provider-cli-smoke"
+
+DEFAULT_MATRIX_ORDER = (
+    "codex",
+    "claude-code",
+    "opencode",
+    "hermes-agent",
+    "hermes-ultra",
+    "pi",
+    "chatgpt-web",
+    "chatgpt-desktop",
+    "claude-web",
+    "claude-desktop",
+)
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def compact_command(args: list[str]) -> list[str]:
+    out: list[str] = []
+    for arg in args:
+        text = str(arg)
+        if text.startswith(str(REPO_ROOT)):
+            text = text.replace(str(REPO_ROOT), ".", 1)
+        out.append(text)
+    return out
+
+
+def run_json(name: str, argv: list[str], timeout: float, env: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(REPO_ROOT),
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(10.0, timeout),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {}, {
+            "reason": "command_timeout",
+            "phase": name,
+            "command": compact_command(argv),
+            "timeout": timeout,
+            "stdout": str(exc.stdout or "")[:1200],
+            "stderr": str(exc.stderr or "")[:1200],
+        }
+    if proc.returncode != 0:
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        return payload if isinstance(payload, dict) else {}, {
+            "reason": "command_failed",
+            "phase": name,
+            "command": compact_command(argv),
+            "returncode": proc.returncode,
+            "stdout": proc.stdout[:1200],
+            "stderr": proc.stderr[:1200],
+        }
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        return {}, {
+            "reason": "invalid_json",
+            "phase": name,
+            "command": compact_command(argv),
+            "error": str(exc),
+            "stdout": proc.stdout[:1200],
+            "stderr": proc.stderr[:1200],
+        }
+    return payload if isinstance(payload, dict) else {}, None
+
+
+def selected_agents(raw: str | None) -> list[str]:
+    if raw:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    ordered = [agent for agent in DEFAULT_MATRIX_ORDER if agent in AGENT_PREFLIGHT_PROFILES]
+    extras = sorted(set(AGENT_PREFLIGHT_PROFILES) - set(ordered))
+    return ordered + extras
+
+
+def phase_by_name(phases: list[Any], name: str) -> dict[str, Any]:
+    for phase in phases:
+        if isinstance(phase, dict) and phase.get("name") == name:
+            return phase
+    return {}
+
+
+def summarize_proof(payload: dict[str, Any], agent: str, profile: dict[str, Any]) -> dict[str, Any]:
+    proof = as_dict(payload.get("proof_pack"))
+    phases = as_list(proof.get("phases"))
+    bootstrap = phase_by_name(phases, "bootstrap")
+    status = phase_by_name(phases, "status")
+    context_package = phase_by_name(phases, "context_package")
+    runtime = phase_by_name(phases, "runtime")
+    bootstrap_evidence = as_dict(bootstrap.get("evidence"))
+    status_evidence = as_dict(status.get("evidence"))
+    context_evidence = as_dict(context_package.get("evidence"))
+    artifact_summary = as_dict(context_evidence.get("artifact_summary"))
+    retrieval_summary = as_dict(context_evidence.get("retrieval_summary"))
+    return {
+        "agent": agent,
+        "agent_id": str(profile.get("agent_id") or ""),
+        "topic_path": str(profile.get("topic_path") or ""),
+        "ok": bool(payload.get("ok")),
+        "session_id": proof.get("session_id"),
+        "phase_count": proof.get("phase_count", len(phases)),
+        "phase_names": [phase.get("name") for phase in phases if isinstance(phase, dict)],
+        "skills_index_returned": bootstrap_evidence.get("skills_index_returned"),
+        "skills_index_top": bootstrap_evidence.get("skills_index_top", [])[:5],
+        "status": status_evidence.get("status"),
+        "event_count": status_evidence.get("event_count"),
+        "memory_score": status_evidence.get("memory_score"),
+        "writebacks": status_evidence.get("writebacks"),
+        "handoffs": status_evidence.get("handoffs"),
+        "context_visibility": {
+            "context_package_validation": context_evidence.get("context_package_validation"),
+            "rollup_validation": context_evidence.get("rollup_validation"),
+            "recommended_surface": context_evidence.get("recommended_surface"),
+            "confidence": context_evidence.get("confidence"),
+            "reference_prompt_chars": context_evidence.get("reference_prompt_chars"),
+            "recent_event_count": context_evidence.get("recent_event_count"),
+            "retrieval_summary": retrieval_summary,
+            "artifact_summary": artifact_summary,
+            "graph_touches": artifact_summary.get("graph_touches"),
+            "handoff_count": artifact_summary.get("handoffs"),
+            "checkpoint_count": artifact_summary.get("checkpoints"),
+        },
+        "runtime_visible": bool(as_dict(runtime.get("evidence")).get("session_visible")),
+        "next_command": payload.get("next_command"),
+    }
+
+
+def proof_case(agent: str, args: argparse.Namespace, env: dict[str, str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    profile_key, profile = _resolve_agent_preflight_profile(agent)
+    agent_id = str(profile.get("agent_id") or "").strip()
+    topic_path = str(profile.get("topic_path") or "").strip()
+    query = str(profile.get("query") or args.objective).strip()
+    mode = args.mode or str(profile.get("retrieval_mode") or "fast").strip() or "fast"
+    argv = [
+        str(PROOF),
+        "--agent",
+        profile_key,
+        "--agent-id",
+        agent_id,
+        "--project",
+        args.project,
+        "--mission",
+        args.mission,
+        "--objective",
+        args.objective,
+        "--goal",
+        args.goal,
+        "--topic-path",
+        topic_path,
+        "--query",
+        query,
+        "--mode",
+        mode,
+        "--limit",
+        str(args.limit),
+        "--max-facts",
+        str(args.max_facts),
+        "--runtime-limit",
+        str(args.runtime_limit),
+        "--base-url",
+        args.base_url,
+        "--timeout",
+        str(args.phase_timeout),
+    ]
+    payload, error = run_json(f"proof:{profile_key}", argv, args.proof_timeout, env)
+    case = summarize_proof(payload, profile_key, profile) if payload else {
+        "agent": profile_key,
+        "agent_id": agent_id,
+        "topic_path": topic_path,
+        "ok": False,
+        "phase_count": 0,
+    }
+    case["command"] = compact_command(argv)
+    findings: list[dict[str, Any]] = []
+    if error:
+        findings.append({"agent": profile_key, **error})
+    if not case.get("ok"):
+        findings.append({"agent": profile_key, "reason": "proof_not_ok", "error": str(payload.get("error") or "")[:1200]})
+    if as_int(case.get("skills_index_returned"), -1) < 0:
+        findings.append({"agent": profile_key, "reason": "skills_index_evidence_missing"})
+    if as_dict(case.get("context_visibility")).get("context_package_validation") != "passed":
+        findings.append({"agent": profile_key, "reason": "context_package_validation_not_passed"})
+    if not case.get("runtime_visible"):
+        findings.append({"agent": profile_key, "reason": "session_not_visible_in_runtime"})
+    return case, findings
+
+
+def provider_smoke(args: argparse.Namespace, env: dict[str, str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if args.skip_provider_smoke:
+        return {"skipped": True, "reason": "skip_provider_smoke"}, []
+    argv = [str(PROVIDER_SMOKE), "--timeout", str(args.provider_timeout)]
+    if args.provider_smoke_providers:
+        argv.extend(["--providers", args.provider_smoke_providers])
+    for provider_model in args.provider_model:
+        argv.extend(["--provider-model", provider_model])
+    if args.execute_provider_smoke:
+        argv.append("--execute")
+        if args.provider_retrieval_context:
+            argv.append("--retrieval-context")
+        if args.provider_tool_retrieval:
+            argv.append("--tool-retrieval")
+    if args.strict_provider_missing:
+        argv.append("--strict-missing")
+    payload, error = run_json("provider_smoke", argv, args.provider_smoke_timeout, env)
+    if error:
+        return payload or {"ok": False}, [{"reason": "provider_smoke_failed", **error}]
+    findings = as_list(payload.get("findings"))
+    if findings and args.strict_provider_smoke:
+        return payload, [{"reason": "provider_smoke_findings", "findings": findings[:12]}]
+    return payload, []
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run live ContextLattice adoption proofs across agent profiles.")
+    parser.add_argument("--agents", help="Comma-separated agent profile list. Defaults to all configured profiles.")
+    parser.add_argument("--project", default="contextlattice")
+    parser.add_argument("--mission", default="make ContextLattice seamless for any agent runtime")
+    parser.add_argument("--objective", default="prove ContextLattice agent adoption end to end")
+    parser.add_argument("--goal", default="every profile can bootstrap, retrieve, checkpoint, handoff, complete, and expose prompt-ready evidence")
+    parser.add_argument("--mode", default="fast")
+    parser.add_argument("--limit", type=int, default=4)
+    parser.add_argument("--max-facts", type=int, default=6)
+    parser.add_argument("--runtime-limit", type=int, default=160)
+    parser.add_argument("--base-url", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"))
+    parser.add_argument("--phase-timeout", type=float, default=35.0, help="Per proof phase timeout passed to agent-runtime-proof-pack.")
+    parser.add_argument("--proof-timeout", type=float, default=360.0, help="Subprocess timeout for each full profile proof.")
+    parser.add_argument("--skip-provider-smoke", action="store_true")
+    parser.add_argument("--execute-provider-smoke", action="store_true")
+    parser.add_argument("--provider-retrieval-context", action="store_true")
+    parser.add_argument("--provider-tool-retrieval", action="store_true")
+    parser.add_argument("--provider-smoke-providers", default="")
+    parser.add_argument("--provider-model", action="append", default=[], help="Provider-specific execution model override passed to provider smoke, for example codex=gpt-5.3-codex-spark.")
+    parser.add_argument("--provider-timeout", type=float, default=12.0)
+    parser.add_argument("--provider-smoke-timeout", type=float, default=120.0)
+    parser.add_argument("--strict-provider-missing", action="store_true")
+    parser.add_argument("--strict-provider-smoke", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    env = os.environ.copy()
+    env["CONTEXTLATTICE_ORCHESTRATOR_URL"] = args.base_url
+    env["MEMMCP_ORCHESTRATOR_URL"] = args.base_url
+
+    cases: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    for agent in selected_agents(args.agents):
+        case, case_findings = proof_case(agent, args, env)
+        cases.append(case)
+        findings.extend(case_findings)
+
+    provider_payload, provider_findings = provider_smoke(args, env)
+    findings.extend(provider_findings)
+
+    output = {
+        "ok": not findings,
+        "schema_id": "contextlattice_agent_adoption_proof_matrix.v1",
+        "project": args.project,
+        "base_url": args.base_url,
+        "agents": [case.get("agent") for case in cases],
+        "case_count": len(cases),
+        "passed_count": sum(1 for case in cases if case.get("ok")),
+        "failed_count": sum(1 for case in cases if not case.get("ok")),
+        "provider_smoke": {
+            "ok": provider_payload.get("ok"),
+            "execute": provider_payload.get("execute"),
+            "available_count": provider_payload.get("available_count"),
+            "passed_count": provider_payload.get("passed_count"),
+            "failed_count": provider_payload.get("failed_count"),
+            "providers": provider_payload.get("providers"),
+            "findings": provider_payload.get("findings", [])[:12] if isinstance(provider_payload.get("findings"), list) else [],
+            "skipped": provider_payload.get("skipped", False),
+            "reason": provider_payload.get("reason"),
+        },
+        "cases": cases,
+        "findings": findings,
+    }
+    emit(output, args.pretty)
+    return 0 if output["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

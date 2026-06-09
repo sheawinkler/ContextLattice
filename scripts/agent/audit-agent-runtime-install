@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Check machine-local ContextLattice agent runtime install drift."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from _common import contextlattice_base_url, emit, request_json
+
+
+HOME = Path.home()
+
+
+def run_json(args: list[str], timeout: float) -> tuple[bool, dict[str, Any], str]:
+    try:
+        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+    except Exception as exc:
+        return False, {}, str(exc)
+    if proc.returncode != 0:
+        return False, {}, (proc.stderr or proc.stdout or f"returncode={proc.returncode}")[:1000]
+    try:
+        parsed = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        return False, {}, f"invalid json: {exc}"
+    return True, parsed if isinstance(parsed, dict) else {}, ""
+
+
+def run_text(args: list[str], timeout: float) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+    except Exception as exc:
+        return False, str(exc)
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout or f"returncode={proc.returncode}")[:1000]
+    return True, (proc.stdout or "").strip()[:1000]
+
+
+def record(name: str, ok: bool, detail: str = "", **extra: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {"name": name, "ok": bool(ok)}
+    if detail:
+        out["detail"] = detail
+    out.update(extra)
+    return out
+
+
+def skill_file_count(root: Path) -> int:
+    try:
+        return sum(1 for _ in root.rglob("SKILL.md")) if root.exists() else 0
+    except Exception:
+        return 0
+
+
+def skills_index_results(payload: dict[str, Any]) -> list[Any]:
+    results = payload.get("results")
+    if isinstance(results, list):
+        return results
+    parsed = payload.get("parsed")
+    if isinstance(parsed, dict) and isinstance(parsed.get("results"), list):
+        return parsed["results"]
+    return []
+
+
+def hook_status(hooks_path: Path) -> dict[str, Any]:
+    try:
+        parsed = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)[:500]}
+    hooks = parsed.get("hooks") if isinstance(parsed, dict) else {}
+    required = {
+        "SessionStart": "contextlattice_agent_start.sh",
+        "PreCompact": "contextlattice_pre_compaction_write.sh",
+        "PostCompact": "contextlattice_post_compaction_read.sh",
+    }
+    missing: list[str] = []
+    bad_timeout: list[str] = []
+    for event, suffix in required.items():
+        groups = hooks.get(event) if isinstance(hooks, dict) else None
+        found = False
+        if isinstance(groups, list):
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                for hook in group.get("hooks") or []:
+                    if not isinstance(hook, dict):
+                        continue
+                    command = str(hook.get("command") or "")
+                    if command.endswith(suffix):
+                        found = True
+                        if int(hook.get("timeout") or 0) < 120:
+                            bad_timeout.append(event)
+        if not found:
+            missing.append(event)
+    return {"ok": not missing and not bad_timeout, "missing": missing, "bad_timeout": bad_timeout}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit local ContextLattice agent runtime helper install.")
+    parser.add_argument("--global-home", default=os.getenv("CONTEXTLATTICE_GLOBAL_HOME", str(HOME / ".contextlattice")))
+    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    global_home = Path(args.global_home).expanduser()
+    bin_dir = global_home / "bin"
+    expected = {
+        "contextlattice_agent_adapter": bin_dir / "contextlattice_agent_adapter",
+        "contextlattice_agent_runtime_proof": bin_dir / "contextlattice_agent_runtime_proof",
+        "contextlattice_agent_adoption_proof": bin_dir / "contextlattice_agent_adoption_proof",
+        "contextlattice_agent_session": bin_dir / "contextlattice_agent_session",
+        "contextlattice_agent_runtime_doctor": bin_dir / "contextlattice_agent_runtime_doctor",
+        "contextlattice_source_backfill": bin_dir / "contextlattice_source_backfill",
+        "contextlattice_skills_index": bin_dir / "contextlattice_skills_index",
+    }
+    checks: list[dict[str, Any]] = []
+    for name, path in expected.items():
+        checks.append(record(name, path.is_file() and os.access(path, os.X_OK), path=str(path)))
+
+    adapter = str(expected["contextlattice_agent_adapter"])
+    if expected["contextlattice_agent_adapter"].exists():
+        ok, payload, err = run_json([adapter, "profiles"], args.timeout)
+        validation = ((payload.get("format_contract") or {}).get("validation") or {}).get("status") if isinstance(payload, dict) else ""
+        checks.append(record("adapter_profiles_contract", ok and payload.get("ok") is True and validation == "passed", err, profiles=len(((payload.get("result") or {}).get("profiles") or {})) if isinstance(payload, dict) else 0, validation=validation))
+
+    proof = str(expected["contextlattice_agent_runtime_proof"])
+    if expected["contextlattice_agent_runtime_proof"].exists():
+        ok, detail = run_text([proof, "--help"], args.timeout)
+        checks.append(record("runtime_proof_help", ok, detail))
+
+    adoption_proof = str(expected["contextlattice_agent_adoption_proof"])
+    if expected["contextlattice_agent_adoption_proof"].exists():
+        ok, detail = run_text([adoption_proof, "--help"], args.timeout)
+        checks.append(record("adoption_proof_help", ok, detail))
+
+    hooks = hook_status(HOME / ".codex" / "hooks.json")
+    checks.append(record("codex_hooks", bool(hooks.get("ok")), **{k: v for k, v in hooks.items() if k != "ok"}))
+
+    try:
+        health = request_json("GET", "/health", None, args.timeout)
+    except Exception as exc:
+        health = {"ok": False, "error": str(exc)[:500]}
+    checks.append(record("gateway_health", bool(health.get("ok")), service=str(health.get("service") or ""), base_url=contextlattice_base_url()))
+
+    primary_skills_root = HOME / ".codex" / "skills"
+    primary_count = skill_file_count(primary_skills_root)
+    checks.append(record(
+        "primary_codex_skills_root",
+        True if not primary_skills_root.exists() else primary_count > 0,
+        "optional root absent" if not primary_skills_root.exists() else "",
+        path=str(primary_skills_root),
+        skill_files=primary_count,
+    ))
+    skills_index = str(expected["contextlattice_skills_index"])
+    if primary_count > 0 and expected["contextlattice_skills_index"].exists():
+        ok, payload, err = run_json([skills_index, "search", "objective loop", "--limit", "8"], args.timeout)
+        results = skills_index_results(payload)
+        active_visible = any(
+            "/.codex/skills/" in str((item or {}).get("path") or "")
+            or str((item or {}).get("source") or "") == "active"
+            for item in results
+            if isinstance(item, dict)
+        )
+        checks.append(record(
+            "skills_index_primary_root_visible",
+            ok and active_visible,
+            err,
+            result_count=len(results),
+            expected_root=str(primary_skills_root),
+        ))
+
+    failed = [item for item in checks if not item.get("ok")]
+    payload = {
+        "ok": not failed,
+        "schema_id": "contextlattice_agent_runtime_install_audit.v1",
+        "global_home": str(global_home),
+        "checks": checks,
+        "failed": failed,
+        "repair_command": "scripts/install_global_agent_tools.sh --install-codex-hooks --no-shell-profile --skip-venv && COMPOSE_PROJECT_NAME=contextlattice docker --context orbstack compose --env-file .env -f docker-compose.yml up -d --no-deps --force-recreate gateway-go",
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

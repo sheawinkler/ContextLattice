@@ -120,6 +120,32 @@ def shell_exports(values: dict[str, str]) -> list[str]:
     return out
 
 
+def compact_skills_index(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    raw_results = payload.get("results")
+    results = raw_results if isinstance(raw_results, list) else []
+    top: list[dict[str, Any]] = []
+    for item in results[:5]:
+        if not isinstance(item, dict):
+            continue
+        top.append(
+            {
+                "name": str(item.get("name") or ""),
+                "source": str(item.get("source") or ""),
+                "path": str(item.get("path") or ""),
+                "score": item.get("score"),
+            }
+        )
+    return {
+        "ok": payload.get("ok", True),
+        "index": payload.get("index"),
+        "returned": payload.get("returned", len(results)),
+        "total_matches": payload.get("total_matches"),
+        "top": top,
+    }
+
+
 def adapter_response(
     *,
     command: str,
@@ -204,6 +230,8 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
                 "ok": response.get("ok"),
                 "service": response.get("service"),
                 "orchestrator_url": response.get("orchestrator_url"),
+                "session_id": response.get("session_id"),
+                "skills_index": compact_skills_index(response.get("skills_index")),
             },
         },
         findings=findings,

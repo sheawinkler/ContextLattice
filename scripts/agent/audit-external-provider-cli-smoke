@@ -1,0 +1,744 @@
+#!/usr/bin/env python3
+"""Smoke installed external agent-provider CLIs.
+
+Default discovery mode is network-free: resolve the command, check version, and
+verify the non-interactive CLI surface. Use --execute to make real provider
+calls. Retrieval modes are explicit so normal discovery stays cheap.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import tempfile
+import time
+import uuid
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterator
+
+from _common import contextlattice_api_key, contextlattice_base_url, emit, now_iso
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+DEFAULT_MARKER = "contextlattice-smoke-ok"
+DEFAULT_PROJECT = "context-lattice-private"
+DEFAULT_TOPIC_PATH = "ops/agents/provider-cli-smoke"
+LOCAL_STATE_DIRS = (".opencode",)
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    name: str
+    command_candidates: tuple[str, ...]
+    version_args: tuple[str, ...]
+    help_args: tuple[str, ...]
+    help_markers: tuple[str, ...]
+    exec_args: tuple[str, ...]
+    tool_exec_args: tuple[str, ...] | None = None
+    model_args: tuple[str, ...] = ()
+    model_arg_insert_index: int = 0
+    aliases: tuple[str, ...] = ()
+
+
+PROVIDERS: tuple[ProviderSpec, ...] = (
+    ProviderSpec(
+        name="codex",
+        command_candidates=("codex",),
+        version_args=("--version",),
+        help_args=("exec", "--help"),
+        help_markers=("Usage: codex exec", "--skip-git-repo-check", "--output-last-message"),
+        exec_args=("exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "{prompt}"),
+        tool_exec_args=(
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            "-c",
+            'model_reasoning_effort="low"',
+            "{prompt}",
+        ),
+        model_args=("-m", "{model}"),
+        model_arg_insert_index=1,
+        aliases=("codex-gpt5", "codex_gpt5"),
+    ),
+    ProviderSpec(
+        name="claude-code",
+        command_candidates=("claude",),
+        version_args=("--version",),
+        help_args=("--help",),
+        help_markers=("--print", "--output-format", "--no-session-persistence"),
+        exec_args=(
+            "--print",
+            "--output-format",
+            "text",
+            "--no-session-persistence",
+            "--tools",
+            "",
+            "--max-budget-usd",
+            "0.05",
+            "{prompt}",
+        ),
+        tool_exec_args=(
+            "--print",
+            "--output-format",
+            "text",
+            "--no-session-persistence",
+            "--tools",
+            "Bash",
+            "--max-budget-usd",
+            "0.08",
+            "{prompt}",
+        ),
+        model_args=("--model", "{model}"),
+        aliases=("claude", "claude_cli"),
+    ),
+    ProviderSpec(
+        name="opencode",
+        command_candidates=("opencode",),
+        version_args=("--version",),
+        help_args=("run", "--help"),
+        help_markers=("opencode run", "--format", "--model"),
+        exec_args=("run", "--pure", "--format", "default", "{prompt}"),
+        tool_exec_args=("run", "--pure", "--format", "default", "{prompt}"),
+        model_args=("--model", "{model}"),
+        model_arg_insert_index=1,
+        aliases=("open-code",),
+    ),
+    ProviderSpec(
+        name="hermes-agent",
+        command_candidates=("hermes", "hermes-agent"),
+        version_args=("--version",),
+        help_args=("--help",),
+        help_markers=("--oneshot", "--ignore-user-config"),
+        exec_args=("--oneshot", "{prompt}"),
+        tool_exec_args=("--oneshot", "{prompt}"),
+        aliases=("hermes",),
+    ),
+    ProviderSpec(
+        name="hermes-ultra",
+        command_candidates=("hermes-ultra", "hermes-agent-ultra"),
+        version_args=("--version",),
+        help_args=("--help",),
+        help_markers=("--oneshot", "--ignore-user-config"),
+        exec_args=("--oneshot", "{prompt}"),
+        tool_exec_args=("--oneshot", "{prompt}"),
+        aliases=("hermes_agent_ultra", "hermes-agent-ultra", "hermes_ultra"),
+    ),
+    ProviderSpec(
+        name="pi",
+        command_candidates=("pi",),
+        version_args=("--version",),
+        help_args=("--help",),
+        help_markers=("--print", "--no-session", "--no-tools", "--no-context-files"),
+        exec_args=(
+            "--print",
+            "--mode",
+            "text",
+            "--no-session",
+            "--no-tools",
+            "--no-skills",
+            "--no-context-files",
+            "{prompt}",
+        ),
+        tool_exec_args=(
+            "--print",
+            "--mode",
+            "text",
+            "--no-session",
+            "--tools",
+            "bash",
+            "--no-skills",
+            "--no-context-files",
+            "{prompt}",
+        ),
+        model_args=("--model", "{model}"),
+        aliases=("pi-agent", "pi_agent"),
+    ),
+)
+
+PROVIDER_BY_NAME: dict[str, ProviderSpec] = {}
+for spec in PROVIDERS:
+    PROVIDER_BY_NAME[spec.name] = spec
+    for alias in spec.aliases:
+        PROVIDER_BY_NAME[alias] = spec
+
+
+@dataclass(frozen=True)
+class RetrievalSeed:
+    nonce: str
+    answer_token: str
+    query: str
+    project: str
+    topic_path: str
+    file_name: str
+    write_ok: bool
+    write_error: str = ""
+
+
+@dataclass(frozen=True)
+class PromptPlan:
+    prompt: str
+    expected_markers: tuple[str, ...]
+    retrieval_seed: RetrievalSeed | None = None
+    injected_context: dict[str, Any] | None = None
+    context_error: str = ""
+
+
+def preview(text: str, limit: int = 700) -> str:
+    compact = " ".join((text or "").replace("\r", "\n").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
+def bounded_run(argv: list[str], timeout: float, cwd: Path, *, include_full: bool = False) -> dict[str, Any]:
+    env = os.environ.copy()
+    env.setdefault("NO_COLOR", "1")
+    env.setdefault("CLICOLOR", "0")
+    env.setdefault("TERM", "dumb")
+    env.setdefault("AWS_EC2_METADATA_DISABLED", "true")
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        duration_ms = int((time.monotonic() - started) * 1000)
+        payload: dict[str, Any] = {
+            "returncode": proc.returncode,
+            "duration_ms": duration_ms,
+            "stdout_preview": preview(proc.stdout),
+            "stderr_preview": preview(proc.stderr),
+            "timed_out": False,
+        }
+        if include_full:
+            payload["_stdout_full"] = proc.stdout
+            payload["_stderr_full"] = proc.stderr
+        return payload
+    except subprocess.TimeoutExpired as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        payload = {
+            "returncode": None,
+            "duration_ms": duration_ms,
+            "stdout_preview": preview(stdout),
+            "stderr_preview": preview(stderr),
+            "timed_out": True,
+        }
+        if include_full:
+            payload["_stdout_full"] = stdout
+            payload["_stderr_full"] = stderr
+        return payload
+
+
+def request_json(method: str, path: str, payload: dict[str, Any], timeout: float) -> tuple[dict[str, Any] | None, str]:
+    url = path if path.startswith(("http://", "https://")) else contextlattice_base_url() + path
+    headers = {"content-type": "application/json"}
+    key = contextlattice_api_key()
+    if key:
+        headers["x-api-key"] = key
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw.strip() else {}, ""
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        return None, f"http_{exc.code}:{preview(raw, 500)}"
+    except Exception as exc:
+        return None, str(exc)
+
+
+def resolve_command(spec: ProviderSpec) -> tuple[str | None, str | None]:
+    for candidate in spec.command_candidates:
+        path = shutil.which(candidate)
+        if path:
+            return candidate, path
+    return None, None
+
+
+def stringsafe(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def render_args(template: tuple[str, ...], prompt: str) -> list[str]:
+    return [prompt if token == "{prompt}" else token for token in template]
+
+
+def render_model_args(template: tuple[str, ...], model: str) -> list[str]:
+    return [model if token == "{model}" else token for token in template]
+
+
+def render_provider_exec_args(spec: ProviderSpec, template: tuple[str, ...], prompt: str, model_override: str) -> list[str]:
+    args = render_args(template, prompt)
+    model = stringsafe(model_override)
+    if not model or not spec.model_args:
+        return args
+    model_args = render_model_args(spec.model_args, model)
+    insert_at = min(max(spec.model_arg_insert_index, 0), len(args))
+    return args[:insert_at] + model_args + args[insert_at:]
+
+
+def normalized_output(case: dict[str, Any]) -> str:
+    return " ".join(str(case.get(key) or "").lower() for key in ("stdout_preview", "stderr_preview"))
+
+
+@contextmanager
+def execution_workdir(provider: str, args: argparse.Namespace) -> Iterator[tuple[Path, str]]:
+    if args.no_isolate_provider_cwd:
+        yield Path(args.cwd), "repo_cwd"
+        return
+    if args.keep_provider_workdirs:
+        path = Path(tempfile.mkdtemp(prefix=f"contextlattice-{provider}-"))
+        yield path, "isolated_temp_kept"
+        return
+    with tempfile.TemporaryDirectory(prefix=f"contextlattice-{provider}-") as raw:
+        yield Path(raw), "isolated_temp"
+
+
+def local_state_dirs(cwd: Path) -> list[str]:
+    found: list[str] = []
+    for name in LOCAL_STATE_DIRS:
+        path = cwd / name
+        if path.exists():
+            found.append(name)
+    return found
+
+
+def make_seed(args: argparse.Namespace) -> RetrievalSeed:
+    nonce = f"clx-smoke-{uuid.uuid4().hex[:12]}"
+    answer_token = f"answer-{uuid.uuid4().hex[:16]}"
+    query = f"external provider retrieval smoke nonce {nonce} answer token"
+    file_name = "notes/codex/external-provider-cli-smoke-seed.md"
+    content = "\n".join(
+        [
+            f"# External provider CLI retrieval smoke seed {nonce}",
+            "",
+            f"retrieval_nonce: {nonce}",
+            f"answer_token: {answer_token}",
+            "purpose: prove provider retrieval smoke can recover a ContextLattice-only value",
+        ]
+    )
+    body = {
+        "projectName": args.context_project,
+        "fileName": file_name,
+        "topicPath": args.context_topic_path,
+        "content": content,
+        "agent_id": "codex_gpt5",
+        "session_id": "external-provider-cli-smoke",
+        "created_at": now_iso(),
+        "lifecycle": "ephemeral",
+        "tags": ["agent-writeback", "provider-cli-smoke", "retrieval-seed", "lifecycle:ephemeral"],
+    }
+    payload, error = request_json("POST", "/tools/ephemeral_memory_write", body, args.context_timeout)
+    write_ok = bool(payload and payload.get("ok", True))
+    return RetrievalSeed(
+        nonce=nonce,
+        answer_token=answer_token,
+        query=query,
+        project=args.context_project,
+        topic_path=args.context_topic_path,
+        file_name=file_name,
+        write_ok=write_ok,
+        write_error=error,
+    )
+
+
+def fetch_context(seed: RetrievalSeed, args: argparse.Namespace) -> tuple[dict[str, Any] | None, str]:
+    payload = {
+        "agent_id": "codex_gpt5",
+        "project": seed.project,
+        "projectName": seed.project,
+        "topic_path": seed.topic_path,
+        "topicPath": seed.topic_path,
+        "query": seed.query,
+        "retrieval_mode": args.context_retrieval_mode,
+        "include_retrieval_debug": True,
+        "include_ephemeral": True,
+        "combined_sources": True,
+        "wait_for_slow_sources": False,
+        "sync_slow_sources": False,
+        "limit": args.context_limit,
+        "max_facts": args.context_max_facts,
+    }
+    return request_json("POST", "/memory/context-pack", payload, args.context_timeout)
+
+
+def fetch_seed_context(seed: RetrievalSeed, args: argparse.Namespace) -> tuple[dict[str, Any] | None, str, int]:
+    attempts = max(1, args.context_retries + 1)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        payload, error = fetch_context(seed, args)
+        if payload is not None and seed.answer_token in json.dumps(payload, sort_keys=True):
+            return payload, "", attempt
+        last_error = error or "context_pack_missing_seed_answer"
+        if attempt < attempts:
+            time.sleep(max(0.0, args.context_retry_delay) * attempt)
+    return None, last_error, attempts
+
+
+def compact_retrieval_packet(seed: RetrievalSeed, context_payload: dict[str, Any]) -> dict[str, Any]:
+    pack = context_payload.get("context_pack") or {}
+    coverage = context_payload.get("source_coverage") or pack.get("source_coverage") or {}
+    return {
+        "retrieval_nonce": seed.nonce,
+        "answer_token": seed.answer_token,
+        "query": seed.query,
+        "files_to_read": (pack.get("files_to_read") or pack.get("filesToRead") or [])[:10],
+        "facts": (pack.get("facts") or [])[:5],
+        "results": (pack.get("results") or [])[:5],
+        "source_coverage": {
+            "blocking_slow_sources": coverage.get("blocking_slow_sources"),
+            "returned": coverage.get("returned"),
+            "pending": coverage.get("pending"),
+            "sync_fallback_slow_sources": coverage.get("sync_fallback_slow_sources"),
+            "timed_out": coverage.get("timed_out"),
+        },
+    }
+
+
+def contextlattice_tool_command(seed: RetrievalSeed, args: argparse.Namespace) -> str:
+    payload = {
+        "agent_id": "codex_gpt5",
+        "project": seed.project,
+        "projectName": seed.project,
+        "topic_path": seed.topic_path,
+        "topicPath": seed.topic_path,
+        "query": seed.query,
+        "retrieval_mode": args.context_retrieval_mode,
+        "include_retrieval_debug": True,
+        "include_ephemeral": True,
+        "combined_sources": True,
+        "wait_for_slow_sources": False,
+        "sync_slow_sources": False,
+        "limit": args.context_limit,
+        "max_facts": args.context_max_facts,
+    }
+    code = (
+        "import json,re,urllib.request;"
+        f"payload={json.dumps(payload, sort_keys=True, separators=(',', ':'))!r};"
+        f"url={contextlattice_base_url() + '/memory/context-pack'!r};"
+        "req=urllib.request.Request(url,data=json.dumps(payload).encode(),"
+        "headers={'content-type':'application/json'},method='POST');"
+        f"raw=urllib.request.urlopen(req,timeout={float(args.context_timeout)!r}).read().decode();"
+        "text=json.dumps(json.loads(raw),sort_keys=True);"
+        r"m=re.search(r'answer_token[:=]\s*(answer-[0-9a-f]+)',text);"
+        "print('answer_token='+(m.group(1) if m else 'missing'))"
+    )
+    return "python3 -c " + shlex.quote(code)
+
+
+def build_prompt_plan(args: argparse.Namespace) -> PromptPlan:
+    if not args.retrieval_context and not args.tool_retrieval:
+        return PromptPlan(prompt=args.prompt, expected_markers=(DEFAULT_MARKER,))
+
+    seed = make_seed(args)
+    if not seed.write_ok:
+        return PromptPlan(
+            prompt=args.prompt,
+            expected_markers=(DEFAULT_MARKER,),
+            retrieval_seed=seed,
+            context_error=f"retrieval_seed_write_failed:{seed.write_error}",
+        )
+
+    context_payload, context_error, context_attempts = fetch_seed_context(seed, args)
+    if context_payload is None:
+        return PromptPlan(
+            prompt=args.prompt,
+            expected_markers=(DEFAULT_MARKER,),
+            retrieval_seed=seed,
+            context_error=f"context_pack_seed_readback_failed_after_{context_attempts}_attempts:{context_error}",
+        )
+    if args.retrieval_context:
+        retrieval_packet = compact_retrieval_packet(seed, context_payload)
+        prompt = "\n".join(
+            [
+                "You are running a ContextLattice injected-retrieval smoke.",
+                "A live ContextLattice context-pack was fetched before this prompt.",
+                "Return exactly these two lines and nothing else:",
+                DEFAULT_MARKER,
+                f"answer_token={seed.answer_token}",
+                "",
+                "Retrieved ContextLattice packet:",
+                json.dumps(retrieval_packet, sort_keys=True),
+            ]
+        )
+        return PromptPlan(
+            prompt=prompt,
+            expected_markers=(DEFAULT_MARKER, seed.answer_token),
+            retrieval_seed=seed,
+            injected_context=retrieval_packet,
+        )
+
+    command = contextlattice_tool_command(seed, args)
+    prompt = "\n".join(
+        [
+            "You are running a ContextLattice tool-retrieval smoke.",
+            "Use your shell/bash tool to run this exact command, then inspect its JSON output:",
+            command,
+            "",
+            "Do not guess. The answer_token is not provided in this prompt; it is only in ContextLattice.",
+            "After retrieval, return exactly these two lines and nothing else:",
+            DEFAULT_MARKER,
+            "answer_token=<the answer_token value from ContextLattice>",
+            f"Retrieval nonce to search for: {seed.nonce}",
+        ]
+    )
+    return PromptPlan(prompt=prompt, expected_markers=(DEFAULT_MARKER, seed.answer_token), retrieval_seed=seed)
+
+
+def smoke_provider(
+    spec: ProviderSpec,
+    *,
+    execute: bool,
+    prompt_plan: PromptPlan,
+    timeout: float,
+    probe_cwd: Path,
+    require_marker: bool,
+    strict_missing: bool,
+    tool_retrieval: bool,
+    args: argparse.Namespace,
+    model_override: str = "",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    findings: list[dict[str, Any]] = []
+    command, path = resolve_command(spec)
+    case: dict[str, Any] = {
+        "provider": spec.name,
+        "command": command or spec.command_candidates[0],
+        "path": path,
+        "available": bool(path),
+        "execute_attempted": execute and bool(path),
+        "model_override": stringsafe(model_override),
+        "tool_retrieval": bool(tool_retrieval),
+        "status": "skipped",
+    }
+    if not path:
+        case["reason"] = "command_not_found"
+        if strict_missing:
+            findings.append({"provider": spec.name, "reason": "command_not_found"})
+            case["status"] = "failed"
+        return case, findings
+
+    version = bounded_run([path, *spec.version_args], timeout, probe_cwd)
+    case["version"] = version
+    if version["timed_out"] or version["returncode"] != 0:
+        findings.append(
+            {
+                "provider": spec.name,
+                "reason": "version_probe_failed",
+                "returncode": version["returncode"],
+                "timed_out": version["timed_out"],
+            }
+        )
+
+    help_probe = bounded_run([path, *spec.help_args], timeout, probe_cwd, include_full=True)
+    help_text = f"{help_probe.pop('_stdout_full', '')}\n{help_probe.pop('_stderr_full', '')}"
+    missing_markers = [marker for marker in spec.help_markers if marker not in help_text]
+    case["help"] = {
+        **help_probe,
+        "missing_markers": missing_markers,
+    }
+    if help_probe["timed_out"] or help_probe["returncode"] != 0 or missing_markers:
+        findings.append(
+            {
+                "provider": spec.name,
+                "reason": "noninteractive_surface_probe_failed",
+                "returncode": help_probe["returncode"],
+                "timed_out": help_probe["timed_out"],
+                "missing_markers": missing_markers,
+            }
+        )
+
+    if execute:
+        template = spec.tool_exec_args if tool_retrieval and spec.tool_exec_args is not None else spec.exec_args
+        with execution_workdir(spec.name, args) as (exec_cwd, workdir_mode):
+            exec_argv = [path, *render_provider_exec_args(spec, template, prompt_plan.prompt, model_override)]
+            executed = bounded_run(exec_argv, timeout, exec_cwd)
+            output = normalized_output(executed)
+            missing_expected = [marker for marker in prompt_plan.expected_markers if marker.lower() not in output]
+            local_state = local_state_dirs(exec_cwd)
+            case["execution"] = {
+                **executed,
+                "marker_found": DEFAULT_MARKER in output,
+                "missing_expected_markers": missing_expected,
+                "workdir_mode": workdir_mode,
+                "workdir": str(exec_cwd) if workdir_mode == "isolated_temp_kept" else None,
+                "local_state_dirs": local_state,
+            }
+        if executed["timed_out"] or executed["returncode"] != 0:
+            findings.append(
+                {
+                    "provider": spec.name,
+                    "reason": "execution_failed",
+                    "returncode": executed["returncode"],
+                    "timed_out": executed["timed_out"],
+                }
+            )
+        elif require_marker and missing_expected:
+            reason = "marker_missing"
+            if tool_retrieval and "operation not permitted" in output:
+                reason = "tool_retrieval_network_denied"
+            findings.append({"provider": spec.name, "reason": reason, "missing": missing_expected})
+
+    case["status"] = "failed" if findings else "passed"
+    return case, findings
+
+
+def selected_providers(raw: str | None) -> tuple[list[ProviderSpec], list[dict[str, Any]]]:
+    if not raw:
+        return list(PROVIDERS), []
+    specs: list[ProviderSpec] = []
+    findings: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw.split(","):
+        key = item.strip().lower()
+        if not key:
+            continue
+        spec = PROVIDER_BY_NAME.get(key)
+        if spec is None:
+            findings.append({"provider": key, "reason": "unknown_provider"})
+            continue
+        if spec.name in seen:
+            continue
+        seen.add(spec.name)
+        specs.append(spec)
+    return specs, findings
+
+
+def parse_provider_model_overrides(raw_values: list[str]) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    overrides: dict[str, str] = {}
+    findings: list[dict[str, Any]] = []
+    for raw in raw_values:
+        text = stringsafe(raw)
+        if "=" not in text:
+            findings.append({"reason": "invalid_provider_model_override", "value": text, "expected": "provider=model"})
+            continue
+        provider_raw, model = text.split("=", 1)
+        provider_key = stringsafe(provider_raw).lower()
+        model = stringsafe(model)
+        spec = PROVIDER_BY_NAME.get(provider_key)
+        if spec is None:
+            findings.append({"reason": "unknown_provider_model_override", "provider": provider_key})
+            continue
+        if not model:
+            findings.append({"reason": "empty_provider_model_override", "provider": spec.name})
+            continue
+        if not spec.model_args:
+            findings.append({"reason": "provider_model_override_unsupported", "provider": spec.name})
+            continue
+        overrides[spec.name] = model
+    return overrides, findings
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--providers", help="Comma-separated provider list. Defaults to all known CLI providers.")
+    parser.add_argument("--provider-model", action="append", default=[], help="Provider-specific execution model override, for example codex=gpt-5.3-codex-spark. Repeatable.")
+    parser.add_argument("--execute", action="store_true", help="Make real provider calls with a tiny marker prompt.")
+    parser.add_argument("--retrieval-context", action="store_true", help="Fetch live ContextLattice context and inject it into the provider prompt.")
+    parser.add_argument("--tool-retrieval", action="store_true", help="Ask the provider to use its shell/bash tool to retrieve a seeded ContextLattice value.")
+    parser.add_argument("--timeout", type=float, default=12.0, help="Per-command timeout in seconds.")
+    parser.add_argument("--cwd", default=str(REPO_ROOT), help="Repository/root used for probes and ContextLattice helper paths.")
+    parser.add_argument("--no-isolate-provider-cwd", action="store_true", help="Run provider execution from --cwd instead of a temporary workdir.")
+    parser.add_argument("--keep-provider-workdirs", action="store_true", help="Keep temporary provider workdirs for debugging.")
+    parser.add_argument("--context-project", default=DEFAULT_PROJECT)
+    parser.add_argument("--context-topic-path", default=DEFAULT_TOPIC_PATH)
+    parser.add_argument("--context-retrieval-mode", default="balanced")
+    parser.add_argument("--context-limit", type=int, default=8)
+    parser.add_argument("--context-max-facts", type=int, default=12)
+    parser.add_argument("--context-timeout", type=float, default=10.0)
+    parser.add_argument("--context-retries", type=int, default=3)
+    parser.add_argument("--context-retry-delay", type=float, default=0.5)
+    parser.add_argument(
+        "--prompt",
+        default=f"Reply with exactly: {DEFAULT_MARKER}. No markdown.",
+        help="Prompt used only without retrieval modes.",
+    )
+    parser.add_argument("--no-require-marker", action="store_true", help="Do not require marker text in execution output.")
+    parser.add_argument("--strict-missing", action="store_true", help="Fail when a selected provider CLI is missing.")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    findings: list[dict[str, Any]] = []
+    if (args.retrieval_context or args.tool_retrieval) and not args.execute:
+        findings.append({"reason": "retrieval_modes_require_execute"})
+
+    prompt_plan = build_prompt_plan(args) if not findings else PromptPlan(prompt=args.prompt, expected_markers=(DEFAULT_MARKER,))
+    if prompt_plan.context_error:
+        findings.append({"reason": prompt_plan.context_error})
+
+    specs, selection_findings = selected_providers(args.providers)
+    findings.extend(selection_findings)
+    model_overrides, model_findings = parse_provider_model_overrides(args.provider_model)
+    findings.extend(model_findings)
+    cases: list[dict[str, Any]] = []
+    if not prompt_plan.context_error:
+        for spec in specs:
+            case, case_findings = smoke_provider(
+                spec,
+                execute=args.execute,
+                prompt_plan=prompt_plan,
+                timeout=args.timeout,
+                probe_cwd=Path(args.cwd),
+                require_marker=not args.no_require_marker,
+                strict_missing=args.strict_missing,
+                tool_retrieval=args.tool_retrieval,
+                args=args,
+                model_override=model_overrides.get(spec.name, ""),
+            )
+            cases.append(case)
+            findings.extend(case_findings)
+
+    retrieval_seed_payload: dict[str, Any] | None = None
+    if prompt_plan.retrieval_seed is not None:
+        seed = prompt_plan.retrieval_seed
+        retrieval_seed_payload = {
+            "nonce": seed.nonce,
+            "answer_token": seed.answer_token,
+            "query": seed.query,
+            "project": seed.project,
+            "topic_path": seed.topic_path,
+            "file": seed.file_name,
+            "write_ok": seed.write_ok,
+            "write_error": seed.write_error,
+        }
+
+    summary = {
+        "ok": not findings,
+        "execute": args.execute,
+        "retrieval_context": bool(args.retrieval_context),
+        "tool_retrieval": bool(args.tool_retrieval),
+        "provider_count": len(cases),
+        "available_count": sum(1 for case in cases if case.get("available")),
+        "passed_count": sum(1 for case in cases if case.get("status") == "passed"),
+        "skipped_count": sum(1 for case in cases if case.get("status") == "skipped"),
+        "failed_count": sum(1 for case in cases if case.get("status") == "failed"),
+        "providers": [case["provider"] for case in cases],
+        "provider_model_overrides": model_overrides,
+        "retrieval_seed": retrieval_seed_payload,
+        "injected_context": prompt_plan.injected_context,
+        "findings": findings,
+        "cases": cases,
+    }
+    emit(summary, args.pretty)
+    return 0 if summary["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

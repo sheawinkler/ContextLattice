@@ -21,7 +21,10 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_write
   contextlattice_agent_orchestration
   contextlattice_agent_adapter
+  contextlattice_agent_session
   contextlattice_agent_runtime_proof
+  contextlattice_agent_adoption_proof
+  contextlattice_agent_runtime_doctor
   contextlattice_source_backfill
   contextlattice_skills_index
   contextlattice_codex_session_store_doctor
@@ -217,6 +220,45 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/agent-adoption-proof-matrix"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
+cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_session" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/contextlattice-session"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
+cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/audit-agent-runtime-install"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 cat > "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -262,7 +304,10 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_write" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
+  "${GLOBAL_BIN_DIR}/contextlattice_agent_session" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" \
+  "${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof" \
+  "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" \
   "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
   "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
   "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
@@ -450,7 +495,10 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_session"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skills_index"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
@@ -464,7 +512,10 @@ log "  contextlattice_search -h"
 log "  contextlattice_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
+log "  contextlattice_agent_session runtime --pretty"
 log "  contextlattice_agent_runtime_proof --pretty"
+log "  contextlattice_agent_adoption_proof --skip-provider-smoke --pretty"
+log "  contextlattice_agent_runtime_doctor --pretty"
 log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
 log "  contextlattice_agent_start -h"

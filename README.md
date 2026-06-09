@@ -70,7 +70,13 @@ gmake quickstart
 ```bash
 curl -fsS http://127.0.0.1:8075/health | jq
 scripts/agent/agent-runtime-proof-pack --pretty
+scripts/agent/agent-adoption-proof-matrix --skip-provider-smoke --pretty
 ```
+
+Expected:
+- `/health` returns `{"ok": true, ...}`
+- `agent-runtime-proof-pack` completes bootstrap, scoped recall, checkpoint, handoff, completion, status, prompt context package, and runtime telemetry phases.
+- `agent-adoption-proof-matrix` verifies configured agent profiles and reports the skills, context, session, graph, and handoff evidence shaping each run.
 
 ## Model Runtime
 
@@ -249,6 +255,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes:
+  - `docs/releases/v3.4.10.md`
   - `docs/releases/v3.4.5.md`
   - `docs/releases/v3.4.2.md`
   - `docs/releases/v3.4.1.md`
