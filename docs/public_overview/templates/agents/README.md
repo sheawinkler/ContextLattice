@@ -33,3 +33,5 @@ SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 contextlattice_skills_index search "browser automation" --pretty
 ```
+
+`contextlattice_skills_index` searches active configured skill roots such as `${HOME}/.codex/skills`; quarantined/vendor skill discovery remains separate.

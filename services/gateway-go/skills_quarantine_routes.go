@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type skillsQuarantineSearchRequest struct {
@@ -19,6 +22,17 @@ type skillsQuarantineSearchRequest struct {
 	MinScore  string
 	ShowTerms bool
 	JSON      bool
+}
+
+type skillsIndexSearchResult struct {
+	Score        int      `json:"score"`
+	MatchedTerms []string `json:"matched_terms"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Path         string   `json:"path"`
+	Root         string   `json:"root"`
+	Source       string   `json:"source"`
+	Tags         []string `json:"tags"`
 }
 
 func skillsQuarantineEnabled() bool {
@@ -59,6 +73,52 @@ func skillsQuarantineSearchDefaultLimit() int {
 
 func skillsQuarantineSearchMaxLimit() int {
 	return envInt("ORCH_SKILLS_QUARANTINE_MAX_LIMIT", 100)
+}
+
+func skillsIndexRoots() []string {
+	raw := firstNonEmptyStrings(
+		os.Getenv("ORCH_SKILLS_INDEX_ROOTS"),
+		os.Getenv("CONTEXTLATTICE_SKILLS_INDEX_ROOTS"),
+		os.Getenv("CODEX_SKILLS_INDEX_ROOTS"),
+	)
+	if strings.TrimSpace(raw) == "" {
+		raw = "/opt/contextlattice/skills_active:/opt/contextlattice/skills_system"
+	}
+	seen := map[string]struct{}{}
+	roots := []string{}
+	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == ':' || r == ',' || r == '\n' || r == '\t' }) {
+		root := strings.TrimSpace(item)
+		if root == "" {
+			continue
+		}
+		if strings.HasPrefix(root, "~") {
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				root = filepath.Join(home, strings.TrimPrefix(root, "~"))
+			}
+		}
+		root = filepath.Clean(root)
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
+	}
+	return roots
+}
+
+func skillsIndexRootSource(root string) string {
+	lower := strings.ToLower(filepath.Clean(root))
+	switch {
+	case strings.Contains(lower, "skills_quarantine"):
+		return "quarantine"
+	case strings.Contains(lower, "skills_system"), strings.Contains(lower, ".system"):
+		return "system"
+	case strings.Contains(lower, "skills_active"), strings.Contains(lower, "/.codex/skills"), strings.Contains(lower, "/.agents/skills"):
+		return "active"
+	default:
+		return "configured"
+	}
 }
 
 func clampSkillsQuarantineLimit(value int) int {
@@ -133,6 +193,244 @@ func parseSkillsQuarantineSearchRequest(r *http.Request) (skillsQuarantineSearch
 	}
 	request.Limit = clampSkillsQuarantineLimit(request.Limit)
 	return request, nil
+}
+
+func skillsIndexTerms(query string) []string {
+	seen := map[string]struct{}{}
+	terms := []string{}
+	for _, raw := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_')
+	}) {
+		term := strings.Trim(raw, "-_")
+		if len(term) < 2 {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+		if strings.HasSuffix(term, "s") && len(term) > 3 {
+			base := strings.TrimSuffix(term, "s")
+			if _, ok := seen[base]; !ok {
+				seen[base] = struct{}{}
+				terms = append(terms, base)
+			}
+		} else if len(term) > 3 {
+			plural := term + "s"
+			if _, ok := seen[plural]; !ok {
+				seen[plural] = struct{}{}
+				terms = append(terms, plural)
+			}
+		}
+	}
+	return terms
+}
+
+func parseSkillFrontmatterValue(text string, key string) string {
+	if !strings.HasPrefix(text, "---") {
+		return ""
+	}
+	end := strings.Index(text[3:], "\n---")
+	if end < 0 {
+		return ""
+	}
+	header := text[3 : 3+end]
+	prefix := strings.ToLower(key) + ":"
+	for _, line := range strings.Split(header, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+			return strings.Trim(strings.TrimSpace(trimmed[len(prefix):]), `"'`)
+		}
+	}
+	return ""
+}
+
+func parseSkillFrontmatterList(text string, key string) []string {
+	value := parseSkillFrontmatterValue(text, key)
+	if value == "" {
+		return []string{}
+	}
+	value = strings.Trim(value, "[]")
+	out := []string{}
+	for _, item := range strings.Split(value, ",") {
+		item = strings.Trim(strings.TrimSpace(item), `"'`)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func skillsIndexScore(name string, description string, tags []string, body string, relPath string, source string, terms []string) (int, []string) {
+	score := 0
+	matched := []string{}
+	nameLower := strings.ToLower(name)
+	descLower := strings.ToLower(description)
+	bodyLower := strings.ToLower(body)
+	pathLower := strings.ToLower(relPath)
+	tagLower := strings.ToLower(strings.Join(tags, " "))
+	for _, term := range terms {
+		termScore := 0
+		if strings.Contains(nameLower, term) {
+			termScore += 30
+		}
+		if strings.Contains(tagLower, term) {
+			termScore += 18
+		}
+		if strings.Contains(descLower, term) {
+			termScore += 14
+		}
+		if strings.Contains(pathLower, term) {
+			termScore += 8
+		}
+		if strings.Contains(bodyLower, term) {
+			termScore += 3
+		}
+		if termScore > 0 {
+			score += termScore
+			matched = append(matched, term)
+		}
+	}
+	if source == "active" && score > 0 {
+		score += 12
+	}
+	return score, matched
+}
+
+func nativeSkillsIndexSearch(request skillsQuarantineSearchRequest) map[string]any {
+	terms := skillsIndexTerms(request.Query)
+	results := []skillsIndexSearchResult{}
+	rootStats := []map[string]any{}
+	for _, root := range skillsIndexRoots() {
+		source := skillsIndexRootSource(root)
+		stat := map[string]any{"path": root, "source": source, "exists": false, "skills": 0}
+		info, statErr := os.Stat(root)
+		if statErr != nil || !info.IsDir() {
+			rootStats = append(rootStats, stat)
+			continue
+		}
+		stat["exists"] = true
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry == nil {
+				return nil
+			}
+			if entry.IsDir() {
+				name := entry.Name()
+				if strings.HasPrefix(name, ".") && name != "." {
+					return filepath.SkipDir
+				}
+				if name == "node_modules" || name == "__pycache__" || name == "index" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.Name() != "SKILL.md" {
+				return nil
+			}
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return nil
+			}
+			text := string(raw)
+			name := parseSkillFrontmatterValue(text, "name")
+			if name == "" {
+				name = filepath.Base(filepath.Dir(path))
+			}
+			description := parseSkillFrontmatterValue(text, "description")
+			tags := parseSkillFrontmatterList(text, "tags")
+			relPath, _ := filepath.Rel(root, path)
+			score, matched := skillsIndexScore(name, description, tags, text, relPath, source, terms)
+			if request.MinScore != "" {
+				minScore, _ := strconv.ParseFloat(request.MinScore, 64)
+				if float64(score) < minScore {
+					return nil
+				}
+			} else if score <= 0 {
+				return nil
+			}
+			stat["skills"] = anyToInt(stat["skills"], 0) + 1
+			results = append(results, skillsIndexSearchResult{
+				Score:        score,
+				MatchedTerms: matched,
+				Name:         name,
+				Description:  clipText(description, 700),
+				Path:         path,
+				Root:         root,
+				Source:       source,
+				Tags:         tags,
+			})
+			return nil
+		})
+		rootStats = append(rootStats, stat)
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			if results[i].Source == results[j].Source {
+				return results[i].Name < results[j].Name
+			}
+			return results[i].Source == "active"
+		}
+		return results[i].Score > results[j].Score
+	})
+	total := len(results)
+	if len(results) > request.Limit {
+		results = results[:request.Limit]
+	}
+	resultItems := make([]any, 0, len(results))
+	for _, item := range results {
+		resultItems = append(resultItems, map[string]any{
+			"score":         item.Score,
+			"matched_terms": item.MatchedTerms,
+			"name":          item.Name,
+			"description":   item.Description,
+			"path":          item.Path,
+			"root":          item.Root,
+			"source":        item.Source,
+			"tags":          item.Tags,
+		})
+	}
+	parsed := map[string]any{
+		"query":          request.Query,
+		"expanded_terms": terms,
+		"total_matches":  total,
+		"returned":       len(resultItems),
+		"results":        resultItems,
+		"roots":          rootStats,
+		"index":          "native_active_skills",
+	}
+	payload := map[string]any{
+		"ok":            true,
+		"index":         "native_active_skills",
+		"query":         request.Query,
+		"limit":         request.Limit,
+		"show_terms":    request.ShowTerms,
+		"min_score":     request.MinScore,
+		"json":          request.JSON,
+		"roots":         rootStats,
+		"results":       resultItems,
+		"returned":      len(resultItems),
+		"total_matches": total,
+		"parsed":        parsed,
+	}
+	if request.ShowTerms {
+		payload["expanded_terms"] = terms
+	}
+	return payload
+}
+
+func nativeSkillsIndexStatus() map[string]any {
+	request := skillsQuarantineSearchRequest{Query: "skill", Limit: 1, JSON: true}
+	payload := nativeSkillsIndexSearch(request)
+	roots, _ := payload["roots"].([]map[string]any)
+	totalSkills := 0
+	for _, root := range roots {
+		totalSkills += anyToInt(root["skills"], 0)
+	}
+	payload["reindex_required"] = false
+	payload["reindex_mode"] = "live_native_scan"
+	payload["total_skills_seen"] = totalSkills
+	return payload
 }
 
 func runSkillsQuarantineCommand(ctx context.Context, command string, args []string) (map[string]any, int, error) {
@@ -246,6 +544,33 @@ func (s *server) skillsQuarantineSearchRoute(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *server) skillsIndexSearchRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if !skillsQuarantineEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "skills_index_disabled",
+		})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	request, err := parseSkillsQuarantineSearchRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok":     false,
+			"error":  "invalid_request",
+			"detail": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, nativeSkillsIndexSearch(request))
+}
+
 func (s *server) skillsQuarantineReindexRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -271,6 +596,24 @@ func (s *server) skillsQuarantineReindexRoute(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *server) skillsIndexReindexRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if !skillsQuarantineEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "skills_index_disabled",
+		})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, nativeSkillsIndexStatus())
+}
+
 func (s *server) toolsSkillsQuarantineSearch(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareToolHeaders(w, r, "/tools/skills_quarantine_search"); !ok {
 		return
@@ -283,4 +626,18 @@ func (s *server) toolsSkillsQuarantineReindex(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.skillsQuarantineReindexRoute(w, r)
+}
+
+func (s *server) toolsSkillsIndexSearch(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.prepareToolHeaders(w, r, "/tools/skills_index_search"); !ok {
+		return
+	}
+	s.skillsIndexSearchRoute(w, r)
+}
+
+func (s *server) toolsSkillsIndexReindex(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.prepareToolHeaders(w, r, "/tools/skills_index_reindex"); !ok {
+		return
+	}
+	s.skillsIndexReindexRoute(w, r)
 }

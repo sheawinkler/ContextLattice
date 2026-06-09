@@ -23,6 +23,7 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_agent_adapter
   contextlattice_agent_runtime_proof
   contextlattice_source_backfill
+  contextlattice_skills_index
   contextlattice_codex_session_store_doctor
   contextlattice_agent_start
   contextlattice_checkpoint
@@ -229,6 +230,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_skills_index" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/contextlattice-skills-index"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 cat > "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -250,6 +264,7 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" \
   "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
+  "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
   "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 
 write_hook_wrapper() {
@@ -437,6 +452,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_skills_index"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
@@ -450,4 +466,5 @@ log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_agent_runtime_proof --pretty"
 log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
+log "  contextlattice_skills_index search 'agent runtime' --pretty"
 log "  contextlattice_agent_start -h"

@@ -37,7 +37,7 @@ Agent usage expectations:
 - Use `contextlattice_pack "<task>" --project <project> --pretty` or `POST /memory/context-pack` to compile ranked evidence, files, checks, risks, source coverage, and `reference_prompt` for the next model call.
 - Use `contextlattice_agent_session rollup --session-id <id> --pretty` to summarize a session into reusable state.
 - Use `contextlattice_agent_session context-package --session-id <id> --pretty` when an agent needs to send the next model call with the objective, evidence, risks, source coverage, and next action already organized.
-- Use `contextlattice_skills_index search "<query>" --pretty` to discover relevant skills/capabilities without loading the whole skills tree into prompt context.
+- Use `contextlattice_skills_index search "<query>" --pretty` to discover relevant active skills/capabilities from configured roots such as `~/.codex/skills` without loading the whole skills tree into prompt context.
 - For operator validation, prefer the one-command live proof: `contextlattice_agent_runtime_proof --pretty`.
 - Prefer hook-first startup only when an adapter profile is unavailable: `contextlattice_agent_start --soft --compact`.
 - Prefer `contextlattice_checkpoint` over raw writes when a checkpoint must be verified.

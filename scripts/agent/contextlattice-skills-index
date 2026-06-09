@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Agent-friendly CLI for ContextLattice Skills Index discovery."""
+
+from __future__ import annotations
+
+import argparse
+from typing import Any
+
+from _common import emit, request_json
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    payload: dict[str, Any] = {
+        "query": args.query,
+        "limit": args.limit,
+        "json": True,
+        "show_terms": args.show_terms,
+    }
+    if args.min_score:
+        payload["min_score"] = args.min_score
+    raw = request_json("POST", "/tools/skills_index_search", payload, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok", True) is not False and not raw.get("error") else 1
+
+
+def cmd_reindex(args: argparse.Namespace) -> int:
+    raw = request_json("POST", "/tools/skills_index_reindex", {}, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok", True) is not False and not raw.get("error") else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Search the ContextLattice Skills Index without hand-written curl.")
+    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--pretty", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    search = sub.add_parser("search")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=10)
+    search.add_argument("--min-score", default="")
+    search.add_argument("--show-terms", action="store_true")
+    search.add_argument("--timeout", type=float, default=argparse.SUPPRESS)
+    search.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    search.set_defaults(func=cmd_search)
+
+    reindex = sub.add_parser("reindex")
+    reindex.add_argument("--timeout", type=float, default=argparse.SUPPRESS)
+    reindex.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    reindex.set_defaults(func=cmd_reindex)
+
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

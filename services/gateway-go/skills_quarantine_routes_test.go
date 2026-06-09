@@ -24,6 +24,20 @@ print(json.dumps({"argv": sys.argv[1:]}))
 	return path
 }
 
+func writeSkillIndexFixture(t *testing.T, root string, dirName string, name string, description string) string {
+	t.Helper()
+	dir := filepath.Join(root, dirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir skill fixture: %v", err)
+	}
+	path := filepath.Join(dir, "SKILL.md")
+	body := "---\nname: " + name + "\ndescription: " + description + "\ntags: [contextlattice, agent]\n---\n\n" + description + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write skill fixture: %v", err)
+	}
+	return path
+}
+
 func TestSkillsQuarantineSearchRouteReturnsParsedJSON(t *testing.T) {
 	t.Setenv("ORCH_SKILLS_QUARANTINE_ENABLED", "true")
 	t.Setenv("ORCH_SKILLS_QUARANTINE_SEARCH_CMD", writeSkillsSearchStub(t))
@@ -87,8 +101,11 @@ func TestSkillsQuarantineSearchRouteReturnsParsedJSON(t *testing.T) {
 
 func TestSkillsIndexSearchAliasReturnsParsedJSON(t *testing.T) {
 	t.Setenv("ORCH_SKILLS_QUARANTINE_ENABLED", "true")
-	t.Setenv("ORCH_SKILLS_QUARANTINE_SEARCH_CMD", writeSkillsSearchStub(t))
-	t.Setenv("ORCH_SKILLS_QUARANTINE_TIMEOUT_SECS", "3")
+	activeRoot := t.TempDir()
+	quarantineRoot := t.TempDir()
+	activeSkill := writeSkillIndexFixture(t, activeRoot, "objective-loop", "objective-loop", "Use when an agent needs to stay focused through an objective loop.")
+	writeSkillIndexFixture(t, quarantineRoot, "vendor-loop", "vendor-loop", "Use when searching quarantined vendor skills.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", activeRoot+":"+quarantineRoot)
 	t.Setenv("ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT", "20")
 	t.Setenv("ORCH_SKILLS_QUARANTINE_MAX_LIMIT", "100")
 
@@ -105,7 +122,7 @@ func TestSkillsIndexSearchAliasReturnsParsedJSON(t *testing.T) {
 	req, err := http.NewRequest(
 		http.MethodPost,
 		gateway.URL+"/v1/skills/index/search",
-		strings.NewReader(`{"query":"graph db","limit":4,"show_terms":false,"json":true}`),
+		strings.NewReader(`{"query":"objective loop focus","limit":4,"show_terms":false,"json":true}`),
 	)
 	if err != nil {
 		t.Fatalf("request: %v", err)
@@ -125,6 +142,58 @@ func TestSkillsIndexSearchAliasReturnsParsedJSON(t *testing.T) {
 	}
 	if !anyToBool(payload["ok"]) {
 		t.Fatalf("expected ok=true payload, got %#v", payload)
+	}
+	if strings.TrimSpace(anyToString(payload["index"])) != "native_active_skills" {
+		t.Fatalf("expected native skills index payload, got %#v", payload["index"])
+	}
+	results, _ := payload["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("expected native skill results, got %#v", payload)
+	}
+	first, _ := results[0].(map[string]any)
+	if strings.TrimSpace(anyToString(first["name"])) != "objective-loop" {
+		t.Fatalf("expected active objective-loop first, got %#v", first)
+	}
+	if strings.TrimSpace(anyToString(first["path"])) != activeSkill {
+		t.Fatalf("expected active skill path %s, got %#v", activeSkill, first["path"])
+	}
+}
+
+func TestSkillsIndexReindexReturnsNativeRootStatus(t *testing.T) {
+	t.Setenv("ORCH_SKILLS_QUARANTINE_ENABLED", "true")
+	activeRoot := t.TempDir()
+	writeSkillIndexFixture(t, activeRoot, "objective", "objective", "Use when an agent needs objective focus.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", activeRoot)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	req, err := http.NewRequest(http.MethodPost, gateway.URL+"/v1/skills/index/reindex", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("reindex alias request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if !anyToBool(payload["ok"]) || strings.TrimSpace(anyToString(payload["reindex_mode"])) != "live_native_scan" {
+		t.Fatalf("expected live native scan status, got %#v", payload)
 	}
 }
 
