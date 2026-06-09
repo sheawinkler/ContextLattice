@@ -255,7 +255,10 @@ def repair_project(project: dict[str, Any], args: argparse.Namespace) -> dict[st
     if not project["project"]:
         return {"action": "skipped", "reason": "missing_project"}
     corpus = str(project["recommended_backfill_corpus"] or "history_index")
-    preflight = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, True), args.timeout)
+    try:
+        preflight = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, True), args.timeout)
+    except Exception as exc:
+        return {"action": "preflight_failed", "reason": "request_failed", "error": str(exc)[:1000]}
     preflight_summary = compact_backfill_summary("dry_run_preflight", preflight)
     if not preflight.get("ok", False):
         return {"action": "preflight_failed", "preflight": preflight_summary}
@@ -280,12 +283,18 @@ def repair_project(project: dict[str, Any], args: argparse.Namespace) -> dict[st
         }
     if would_write <= 0:
         return {"action": "no_op", "preflight": preflight_summary}
-    write = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, False), args.timeout)
+    try:
+        write = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, False), args.timeout)
+    except Exception as exc:
+        return {"action": "write_failed", "reason": "request_failed", "error": str(exc)[:1000], "preflight": preflight_summary}
     write_summary = compact_backfill_summary("write", write)
     result: dict[str, Any] = {"action": "wrote" if write.get("ok", False) else "write_failed", "preflight": preflight_summary, "write": write_summary}
     if write.get("ok", False) and not args.skip_verify:
-        verify = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, True), args.timeout)
-        result["verify"] = compact_backfill_summary("post_write_dry_run", verify)
+        try:
+            verify = request_json("POST", "/v1/memory/edges/backfill", backfill_payload(project["project"], corpus, args, True), args.timeout)
+            result["verify"] = compact_backfill_summary("post_write_dry_run", verify)
+        except Exception as exc:
+            result["verify"] = {"stage": "post_write_dry_run", "ok": False, "error": str(exc)[:1000]}
     return result
 
 
@@ -336,10 +345,14 @@ def main() -> int:
     errors: list[dict[str, Any]] = []
     for row in rows:
         project = str(row.get("project") or "")
-        detail = fetch_graph(project, 25, args.stale_inferred_days, args.include_ephemeral, args.timeout) if project else snapshot
-        detailed_rows = project_rows(detail)
-        detailed_row = detailed_rows[0] if detailed_rows else row
-        evaluation = evaluate_project(detailed_row, detail, args, edge_age)
+        try:
+            detail = fetch_graph(project, 25, args.stale_inferred_days, args.include_ephemeral, args.timeout) if project else snapshot
+            detailed_rows = project_rows(detail)
+            detailed_row = detailed_rows[0] if detailed_rows else row
+            evaluation = evaluate_project(detailed_row, detail, args, edge_age)
+        except Exception as exc:
+            evaluation = evaluate_project(row, snapshot, args, edge_age)
+            evaluation["detail_error"] = str(exc)[:1000]
         repair = repair_project(evaluation, args)
         evaluation["repair"] = repair
         if str(repair.get("action") or "").endswith("failed"):

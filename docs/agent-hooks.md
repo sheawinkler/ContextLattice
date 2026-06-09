@@ -45,6 +45,7 @@ Installed commands:
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
 | `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry work end to end. |
+| `contextlattice_source_backfill` | Bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres into `/memory/write`, with optional graph edge repair. |
 | `contextlattice_codex_session_store_doctor` | Checks Codex transcript storage for symlink, external-volume, cloud-folder, TCC, and read/write traps. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
@@ -297,6 +298,22 @@ scripts/agent/project-bootstrap-memory --repo /path/to/repo --project project-na
 This writes compact overview/code-map/next-work notes from high-signal files
 only, then runs memory edge backfill for that project. It is not whole-repo raw
 ingestion.
+
+General external data backfill uses the same bounded write path and stays
+dry-run by default:
+
+```bash
+scripts/agent/source-backfill-memory --source jsonl --path exports/tasks.jsonl --project project-name --pretty
+scripts/agent/source-backfill-memory --source sqlite --path app.db --table notes --project project-name --pretty
+scripts/agent/source-backfill-memory --source parquet --path warehouse/events.parquet --project project-name --pretty
+scripts/agent/source-backfill-memory --source postgres --dsn "$DATABASE_URL" --query "select id,title,body from notes limit 100" --project project-name --pretty
+scripts/agent/source-backfill-memory --source jsonl --path exports/tasks.jsonl --project project-name --write --confirm-write project-name --apply-edges --pretty
+```
+
+Supported adapters are files/directories, JSONL, JSON, CSV, SQLite, DuckDB,
+Parquet via DuckDB, and Postgres via optional `psycopg`. The tool caps records,
+row bytes, document bytes, total bytes, and structured-list items; secret-like
+fields are redacted by default.
 
 Agent ContextLattice wrappers retry and fail non-zero by default when reads or
 writes cannot complete. A compact JSON failure replaces Python tracebacks, but
