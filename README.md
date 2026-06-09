@@ -120,11 +120,13 @@ contextlattice_agent_start --soft --compact
 contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h
+contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty
 ```
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
+- `contextlattice_source_backfill` imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.
 - Hook pack details: `docs/agent-hooks.md`.
 
 ## Agent Runtime Sessions
@@ -175,6 +177,25 @@ Canonical event families include `session.started`, `context_pack.completed`, `d
 ./scripts/agent/memory-edge-inferred-retrofill --project hermes-agent-ultra --corpus disk --profile exploratory
 ```
 
+## Source Backfill
+
+Bring existing data into ContextLattice without changing the ingest boundary.
+Backfill is dry-run by default, writes go through `/memory/write`, and writes
+require `--write --confirm-write <project>`.
+
+```bash
+./scripts/agent/source-backfill-memory --source jsonl --path exports/tasks.jsonl --project my-project --pretty
+./scripts/agent/source-backfill-memory --source sqlite --path app.db --table notes --project my-project --pretty
+./scripts/agent/source-backfill-memory --source parquet --path warehouse/events.parquet --project my-project --pretty
+./scripts/agent/source-backfill-memory --source postgres --dsn "$DATABASE_URL" --query "select id,title,body from notes limit 100" --project my-project --pretty
+./scripts/agent/source-backfill-memory --source jsonl --path exports/tasks.jsonl --project my-project --write --confirm-write my-project --apply-edges --pretty
+```
+
+Supported adapters: files/directories, JSONL, JSON, CSV, SQLite, DuckDB, Parquet
+via DuckDB, and Postgres via optional `psycopg`. Import caps cover records, row
+bytes, document bytes, total bytes, and structured-list items. Secret-like
+fields are redacted by default, and graph edge repair is optional and bounded.
+
 ## Security and Privacy
 
 - Local-first by default.
@@ -194,6 +215,7 @@ Canonical event families include `session.started`, `context_pack.completed`, `d
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes:
+  - `docs/releases/v3.4.5.md`
   - `docs/releases/v3.4.2.md`
   - `docs/releases/v3.4.1.md`
 

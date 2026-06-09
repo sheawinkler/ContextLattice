@@ -1,0 +1,622 @@
+#!/usr/bin/env python3
+"""Backfill bounded external data sources into ContextLattice memory."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import sqlite3
+import sys
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from _common import emit, request_json
+
+
+TEXT_SUFFIXES = {
+    ".cfg",
+    ".conf",
+    ".csv",
+    ".go",
+    ".ini",
+    ".js",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".py",
+    ".rs",
+    ".sql",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+EXCLUDED_DIRS = {
+    ".git",
+    ".next",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+}
+DEFAULT_REDACT_FIELD_RE = r"(?i)(password|secret|token|api[_-]?key|private[_-]?key|credential|authorization|(^|[_-])auth($|[_-]))"
+
+
+@dataclass
+class SourceRecord:
+    source: str
+    source_ref: str
+    row: Any
+    content: str = ""
+    metadata: dict[str, Any] | None = None
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def short_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def slugify(value: Any, fallback: str = "record") -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9._-]+", "-", text)
+    text = text.strip("-._")
+    return (text or fallback)[:96]
+
+
+def utf8_truncate(value: str, max_bytes: int) -> tuple[str, bool]:
+    raw = value.encode("utf-8", errors="replace")
+    if len(raw) <= max_bytes:
+        return value, False
+    trimmed = raw[:max(0, max_bytes)].decode("utf-8", errors="ignore")
+    return trimmed.rstrip() + "\n[truncated]", True
+
+
+def read_text_limited(path: Path, max_bytes: int) -> tuple[str, bool]:
+    raw = path.read_bytes()[: max_bytes + 1]
+    truncated = len(raw) > max_bytes
+    if truncated:
+        raw = raw[:max_bytes]
+    return raw.decode("utf-8", errors="replace"), truncated
+
+
+def field_value(row: Any, field: str) -> Any:
+    if not field:
+        return ""
+    if isinstance(row, dict):
+        current: Any = row
+        for part in field.split("."):
+            if not isinstance(current, dict):
+                return ""
+            current = current.get(part)
+        return current
+    return ""
+
+
+def redact_value(value: Any, field_re: re.Pattern[str], max_list_items: int, field_name: str = "") -> Any:
+    if field_name and field_re.search(field_name):
+        return "[redacted]"
+    if isinstance(value, dict):
+        return {str(k): redact_value(v, field_re, max_list_items, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        redacted = [redact_value(v, field_re, max_list_items, field_name) for v in value[:max_list_items]]
+        if len(value) > max_list_items:
+            redacted.append({"truncated_list_items": len(value) - max_list_items})
+        return redacted
+    return value
+
+
+def row_text(row: Any, content_fields: list[str], max_bytes: int) -> tuple[str, bool]:
+    if content_fields and isinstance(row, dict):
+        parts: list[str] = []
+        for field in content_fields:
+            value = field_value(row, field)
+            if value not in ("", None):
+                parts.append(f"{field}:\n{value}")
+        text = "\n\n".join(parts) if parts else json.dumps(row, ensure_ascii=False, sort_keys=True, indent=2, default=str)
+    elif isinstance(row, str):
+        text = row
+    else:
+        text = json.dumps(row, ensure_ascii=False, sort_keys=True, indent=2, default=str)
+    return utf8_truncate(text, max_bytes)
+
+
+def render_doc(
+    *,
+    args: argparse.Namespace,
+    record: SourceRecord,
+    index: int,
+    redacted_row: Any,
+    content_text: str,
+    content_truncated: bool,
+    record_id: str,
+    topic_path: str,
+) -> tuple[str, bool]:
+    structured = json.dumps(redacted_row, ensure_ascii=False, sort_keys=True, indent=2, default=str)
+    structured, structured_truncated = utf8_truncate(structured, max(2048, args.max_row_bytes // 2))
+    lines = [
+        "# Source Backfill Record",
+        f"project: {args.project}",
+        f"source: {record.source}",
+        f"source_ref: {record.source_ref}",
+        f"record_id: {record_id}",
+        f"record_index: {index}",
+        f"topic_path: {topic_path}",
+        f"imported_at: {now_iso()}",
+        "schema_id: contextlattice_source_backfill.v1",
+        "",
+        "## Content",
+        content_text.strip() or "(empty content)",
+        "",
+        "## Structured fields",
+        "~~~json",
+        structured,
+        "~~~",
+    ]
+    if record.metadata:
+        metadata = json.dumps(record.metadata, ensure_ascii=False, sort_keys=True, indent=2, default=str)
+        metadata, _ = utf8_truncate(metadata, 4096)
+        lines.extend(["", "## Source metadata", "~~~json", metadata, "~~~"])
+    body = "\n".join(lines).strip() + "\n"
+    body, body_truncated = utf8_truncate(body, args.max_doc_bytes)
+    return body, content_truncated or structured_truncated or body_truncated
+
+
+def should_skip_file(path: Path) -> bool:
+    parts = set(path.parts)
+    return bool(parts.intersection(EXCLUDED_DIRS))
+
+
+def iter_files(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    root = Path(args.path).expanduser().resolve()
+    if not root.exists():
+        raise SystemExit(json.dumps({"ok": False, "error": "path_not_found", "path": str(root)}))
+    paths: list[Path]
+    if root.is_file():
+        paths = [root]
+        base = root.parent
+    else:
+        patterns = args.glob or ["**/*"]
+        paths = []
+        base = root
+        for pattern in patterns:
+            paths.extend(sorted(root.glob(pattern)))
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen or not path.is_file() or should_skip_file(path):
+            continue
+        seen.add(path)
+        if not args.all_file_types and path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        text, truncated = read_text_limited(path, args.max_row_bytes)
+        try:
+            rel = str(path.relative_to(base))
+        except ValueError:
+            rel = str(path)
+        yield SourceRecord(
+            source="files",
+            source_ref=rel,
+            row={"path": rel, "content": text},
+            content=text,
+            metadata={"path": str(path), "bytes": path.stat().st_size, "truncated": truncated},
+        )
+
+
+def open_text_path(path_raw: str) -> Iterable[str]:
+    if path_raw == "-":
+        return sys.stdin
+    return open(Path(path_raw).expanduser(), "r", encoding="utf-8", errors="replace", newline="")
+
+
+def iter_jsonl(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    with open_text_path(args.path) as handle:
+        for lineno, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(json.dumps({"ok": False, "error": "invalid_jsonl", "line": lineno, "detail": str(exc)}))
+            yield SourceRecord(source="jsonl", source_ref=f"{args.path}:{lineno}", row=row, metadata={"line": lineno})
+
+
+def iter_json(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    text = sys.stdin.read() if args.path == "-" else Path(args.path).expanduser().read_text(encoding="utf-8", errors="replace")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(json.dumps({"ok": False, "error": "invalid_json", "detail": str(exc)}))
+    if args.json_records_key:
+        rows = field_value(parsed, args.json_records_key)
+    else:
+        rows = parsed
+    if isinstance(rows, list):
+        for index, row in enumerate(rows, start=1):
+            yield SourceRecord(source="json", source_ref=f"{args.path}:{index}", row=row, metadata={"index": index})
+    elif isinstance(rows, dict):
+        if args.json_object_items:
+            for key, value in rows.items():
+                yield SourceRecord(source="json", source_ref=f"{args.path}:{key}", row={"key": key, "value": value}, metadata={"key": key})
+        else:
+            yield SourceRecord(source="json", source_ref=str(args.path), row=rows)
+    else:
+        yield SourceRecord(source="json", source_ref=str(args.path), row={"value": rows})
+
+
+def iter_csv(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    with open_text_path(args.path) as handle:
+        reader = csv.DictReader(handle)
+        for index, row in enumerate(reader, start=1):
+            yield SourceRecord(source="csv", source_ref=f"{args.path}:{index}", row=dict(row), metadata={"index": index})
+
+
+def quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def iter_sqlite(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    if not args.path:
+        raise SystemExit(json.dumps({"ok": False, "error": "sqlite_requires_path"}))
+    if not args.query and not args.table:
+        raise SystemExit(json.dumps({"ok": False, "error": "sqlite_requires_query_or_table"}))
+    conn = sqlite3.connect(str(Path(args.path).expanduser()))
+    conn.row_factory = sqlite3.Row
+    try:
+        query = args.query or f"SELECT * FROM {quote_identifier(args.table)} LIMIT {int(args.max_records)}"
+        cursor = conn.execute(query)
+        for index, row in enumerate(cursor.fetchmany(args.max_records), start=1):
+            yield SourceRecord(source="sqlite", source_ref=f"{args.path}:{args.table or 'query'}:{index}", row=dict(row), metadata={"index": index})
+    finally:
+        conn.close()
+
+
+def iter_duckdb(args: argparse.Namespace, source: str) -> Iterator[SourceRecord]:
+    try:
+        import duckdb  # type: ignore[import-not-found]
+    except Exception as exc:
+        raise SystemExit(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "duckdb_python_missing",
+                    "detail": str(exc),
+                    "install": "python3 -m pip install duckdb",
+                }
+            )
+        )
+    path = Path(args.path).expanduser() if args.path else None
+    db_path = str(path) if path and path.suffix.lower() in {".duckdb", ".db"} and source == "duckdb" else ":memory:"
+    conn = duckdb.connect(db_path, read_only=bool(path and path.exists() and db_path != ":memory:"))
+    try:
+        if source == "parquet":
+            if not path:
+                raise SystemExit(json.dumps({"ok": False, "error": "parquet_requires_path"}))
+            cursor = conn.execute("SELECT * FROM read_parquet(?) LIMIT ?", [str(path), int(args.max_records)])
+        elif args.query:
+            cursor = conn.execute(args.query)
+        elif args.table:
+            cursor = conn.execute(f"SELECT * FROM {quote_identifier(args.table)} LIMIT ?", [int(args.max_records)])
+        elif path and path.suffix.lower() == ".parquet":
+            cursor = conn.execute("SELECT * FROM read_parquet(?) LIMIT ?", [str(path), int(args.max_records)])
+        elif path and path.suffix.lower() == ".csv":
+            cursor = conn.execute("SELECT * FROM read_csv_auto(?) LIMIT ?", [str(path), int(args.max_records)])
+        else:
+            raise SystemExit(json.dumps({"ok": False, "error": "duckdb_requires_query_table_or_readable_path"}))
+        columns = [item[0] for item in cursor.description or []]
+        for index, row in enumerate(cursor.fetchmany(args.max_records), start=1):
+            yield SourceRecord(source=source, source_ref=f"{args.path or 'duckdb'}:{args.table or 'query'}:{index}", row=dict(zip(columns, row)), metadata={"index": index})
+    finally:
+        conn.close()
+
+
+def iter_postgres(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    dsn = args.dsn or os.getenv("DATABASE_URL", "")
+    if not dsn or not args.query:
+        raise SystemExit(json.dumps({"ok": False, "error": "postgres_requires_dsn_and_query"}))
+    try:
+        import psycopg  # type: ignore[import-not-found]
+
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(args.query)
+                columns = [item.name for item in cursor.description or []]
+                for index, row in enumerate(cursor.fetchmany(args.max_records), start=1):
+                    yield SourceRecord(source="postgres", source_ref=f"postgres:query:{index}", row=dict(zip(columns, row)), metadata={"index": index})
+        return
+    except ModuleNotFoundError:
+        pass
+    except Exception as exc:
+        raise SystemExit(json.dumps({"ok": False, "error": "postgres_query_failed", "detail": str(exc)}))
+    try:
+        import psycopg2  # type: ignore[import-not-found]
+    except Exception as exc:
+        raise SystemExit(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "postgres_driver_missing",
+                    "detail": str(exc),
+                    "install": "python3 -m pip install 'psycopg[binary]'",
+                }
+            )
+        )
+    try:
+        conn = psycopg2.connect(dsn)
+        cursor = conn.cursor()
+        cursor.execute(args.query)
+        columns = [item[0] for item in cursor.description or []]
+        for index, row in enumerate(cursor.fetchmany(args.max_records), start=1):
+            yield SourceRecord(source="postgres", source_ref=f"postgres:query:{index}", row=dict(zip(columns, row)), metadata={"index": index})
+    except Exception as exc:
+        raise SystemExit(json.dumps({"ok": False, "error": "postgres_query_failed", "detail": str(exc)}))
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
+
+def iter_source(args: argparse.Namespace) -> Iterator[SourceRecord]:
+    if args.source == "files":
+        yield from iter_files(args)
+    elif args.source == "jsonl":
+        yield from iter_jsonl(args)
+    elif args.source == "json":
+        yield from iter_json(args)
+    elif args.source == "csv":
+        yield from iter_csv(args)
+    elif args.source == "sqlite":
+        yield from iter_sqlite(args)
+    elif args.source in {"duckdb", "parquet"}:
+        yield from iter_duckdb(args, args.source)
+    elif args.source == "postgres":
+        yield from iter_postgres(args)
+    else:
+        raise SystemExit(json.dumps({"ok": False, "error": "unsupported_source", "source": args.source}))
+
+
+def source_record_id(args: argparse.Namespace, record: SourceRecord, index: int) -> str:
+    if args.id_field:
+        value = field_value(record.row, args.id_field)
+        if value not in ("", None):
+            return str(value)
+    return record.source_ref or f"{record.source}:{index}"
+
+
+def source_topic_path(args: argparse.Namespace, record: SourceRecord) -> str:
+    if args.topic_field:
+        value = str(field_value(record.row, args.topic_field) or "").strip()
+        if value:
+            return value[:240]
+    return args.topic_path or f"imports/{args.source}"
+
+
+def source_file_name(args: argparse.Namespace, record: SourceRecord, record_id: str, index: int) -> str:
+    if args.file_field:
+        value = str(field_value(record.row, args.file_field) or "").strip()
+        if value:
+            return value[:240]
+    digest = short_hash(f"{record.source}|{record.source_ref}|{record_id}|{index}")
+    prefix = args.file_prefix.strip("/") or "imports"
+    return f"{prefix}/{args.source}/{slugify(record_id, 'record')}-{digest}.md"
+
+
+def title_for_record(args: argparse.Namespace, record: SourceRecord, record_id: str) -> str:
+    if args.title_field:
+        value = str(field_value(record.row, args.title_field) or "").strip()
+        if value:
+            return value
+    return str(record_id or record.source_ref)
+
+
+def prepare_docs(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    field_re = re.compile(args.redact_field_regex or DEFAULT_REDACT_FIELD_RE)
+    docs: list[dict[str, Any]] = []
+    scanned = 0
+    total_bytes = 0
+    truncated = 0
+    for scanned, record in enumerate(iter_source(args), start=1):
+        if len(docs) >= args.max_records:
+            break
+        redacted_row = record.row if args.allow_sensitive else redact_value(record.row, field_re, args.max_list_items)
+        record_id = source_record_id(args, record, scanned)
+        topic_path = source_topic_path(args, record)
+        file_name = source_file_name(args, record, record_id, scanned)
+        base_row = redacted_row
+        if isinstance(base_row, dict) and record.content:
+            base_row = dict(base_row)
+            base_row.setdefault("content", record.content)
+        content_text, content_truncated = row_text(base_row, args.content_field, args.max_row_bytes)
+        if record.content and not args.content_field:
+            content_text, content_truncated = utf8_truncate(record.content, args.max_row_bytes)
+        title = title_for_record(args, record, record_id)
+        content_text = f"{title}\n\n{content_text}" if title else content_text
+        body, doc_truncated = render_doc(
+            args=args,
+            record=record,
+            index=scanned,
+            redacted_row=redacted_row,
+            content_text=content_text,
+            content_truncated=content_truncated,
+            record_id=record_id,
+            topic_path=topic_path,
+        )
+        body_bytes = len(body.encode("utf-8"))
+        if total_bytes + body_bytes > args.max_total_bytes:
+            break
+        total_bytes += body_bytes
+        if doc_truncated:
+            truncated += 1
+        docs.append(
+            {
+                "projectName": args.project,
+                "fileName": file_name,
+                "topicPath": topic_path,
+                "content": body,
+                "tags": [
+                    "type:source_backfill",
+                    "schema:contextlattice_source_backfill.v1",
+                    f"source:{args.source}",
+                    *args.tag,
+                ],
+                "_preview": {
+                    "source": record.source,
+                    "source_ref": record.source_ref,
+                    "record_id": record_id,
+                    "fileName": file_name,
+                    "topicPath": topic_path,
+                    "bytes": body_bytes,
+                    "truncated": doc_truncated,
+                },
+            }
+        )
+    return docs, {"scanned": scanned, "prepared": len(docs), "prepared_bytes": total_bytes, "truncated_records": truncated}
+
+
+def write_docs(docs: list[dict[str, Any]], timeout: float) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for doc in docs:
+        payload = {key: value for key, value in doc.items() if not key.startswith("_")}
+        try:
+            result = request_json("POST", "/memory/write", payload, timeout)
+            out.append({"ok": bool(result.get("ok")), "fileName": doc["fileName"], "content_ref": ((result.get("write") or {}).get("content_ref") if isinstance(result.get("write"), dict) else None)})
+        except Exception as exc:
+            out.append({"ok": False, "fileName": doc["fileName"], "error": str(exc)[:1000]})
+    return out
+
+
+def edge_profile_payload(profile: str) -> dict[str, Any]:
+    profiles = {
+        "strict": {"min_confidence": 0.90, "inferred_min_score": 0.90, "inferred_peer_limit": 1, "inferred_max_token_postings": 64},
+        "balanced": {"min_confidence": 0.85, "inferred_min_score": 0.85, "inferred_peer_limit": 3, "inferred_max_token_postings": 128},
+        "exploratory": {"min_confidence": 0.80, "inferred_min_score": 0.80, "inferred_peer_limit": 5, "inferred_max_token_postings": 256},
+    }
+    return profiles[profile]
+
+
+def run_edge_backfill(args: argparse.Namespace, dry_run: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "dry_run": dry_run,
+        "project": args.project,
+        "corpus": args.edge_corpus,
+        "relations": ["same_topic", "references", "same_session", "inferred_related"],
+        "include_inferred": True,
+        "include_low_confidence_audit": False,
+        "max_candidates": args.edge_max_candidates,
+        "max_history_lines": args.edge_max_history_lines,
+        "sample_limit": args.edge_sample_limit,
+        "inferred_min_shared_terms": 3,
+        **edge_profile_payload(args.edge_profile),
+    }
+    return request_json("POST", "/v1/memory/edges/backfill", payload, args.timeout)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", required=True, choices=("files", "jsonl", "json", "csv", "sqlite", "duckdb", "parquet", "postgres"))
+    parser.add_argument("--project", required=True)
+    parser.add_argument("--path", default="", help="File, directory, SQLite/DuckDB/parquet path, or '-' for stdin where supported.")
+    parser.add_argument("--dsn", default="", help="Postgres DSN. Defaults to DATABASE_URL for --source postgres.")
+    parser.add_argument("--query", default="", help="SQL query for SQLite, DuckDB, or Postgres.")
+    parser.add_argument("--table", default="", help="Table name for SQLite or DuckDB when --query is omitted.")
+    parser.add_argument("--json-records-key", default="", help="Dotted key to array records inside a JSON object.")
+    parser.add_argument("--json-object-items", action="store_true", help="Treat top-level JSON object entries as records.")
+    parser.add_argument("--glob", action="append", default=[], help="Glob for --source files; repeatable.")
+    parser.add_argument("--all-file-types", action="store_true", help="Allow file source to sample files outside known text suffixes.")
+    parser.add_argument("--topic-path", default="")
+    parser.add_argument("--topic-field", default="")
+    parser.add_argument("--file-prefix", default="imports")
+    parser.add_argument("--file-field", default="")
+    parser.add_argument("--id-field", default="")
+    parser.add_argument("--title-field", default="")
+    parser.add_argument("--content-field", action="append", default=[], help="Field to include as primary content; repeatable.")
+    parser.add_argument("--tag", action="append", default=[])
+    parser.add_argument("--max-records", type=int, default=100)
+    parser.add_argument("--max-row-bytes", type=int, default=12_000)
+    parser.add_argument("--max-doc-bytes", type=int, default=18_000)
+    parser.add_argument("--max-total-bytes", type=int, default=2_000_000)
+    parser.add_argument("--max-list-items", type=int, default=200)
+    parser.add_argument("--redact-field-regex", default=DEFAULT_REDACT_FIELD_RE)
+    parser.add_argument("--allow-sensitive", action="store_true", help="Disable field-name based secret redaction.")
+    parser.add_argument("--write", action="store_true", help="Write prepared records to /memory/write.")
+    parser.add_argument("--confirm-write", default="", help="Required with --write. Must equal the project name.")
+    parser.add_argument("--apply-edges", action="store_true", help="After successful writes, apply graph edge backfill.")
+    parser.add_argument("--edge-profile", choices=("strict", "balanced", "exploratory"), default="balanced")
+    parser.add_argument("--edge-corpus", choices=("history_index", "disk"), default="history_index")
+    parser.add_argument("--edge-max-candidates", type=int, default=20_000)
+    parser.add_argument("--edge-max-history-lines", type=int, default=2_000)
+    parser.add_argument("--edge-sample-limit", type=int, default=12)
+    parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+    args.max_records = max(1, min(args.max_records, 50_000))
+    args.max_row_bytes = max(512, min(args.max_row_bytes, 256_000))
+    args.max_doc_bytes = max(2_048, min(args.max_doc_bytes, 512_000))
+    args.max_total_bytes = max(2_048, min(args.max_total_bytes, 200_000_000))
+    args.max_list_items = max(1, min(args.max_list_items, 50_000))
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    if args.write and args.confirm_write != args.project:
+        emit({"ok": False, "error": "confirm_write_required", "expected": args.project}, args.pretty)
+        return 2
+    docs, stats = prepare_docs(args)
+    previews = [doc["_preview"] for doc in docs[: min(len(docs), 20)]]
+    writes: list[dict[str, Any]] = []
+    edge_preflight: dict[str, Any] | None = None
+    edge_write: dict[str, Any] | None = None
+    edge_error: str | None = None
+    if args.apply_edges:
+        try:
+            edge_preflight = run_edge_backfill(args, True)
+        except Exception as exc:
+            edge_error = str(exc)[:1000]
+    if args.write:
+        writes = write_docs(docs, args.timeout)
+        if args.apply_edges and all(item.get("ok") for item in writes) and not edge_error:
+            try:
+                edge_write = run_edge_backfill(args, False)
+            except Exception as exc:
+                edge_error = str(exc)[:1000]
+    failed_writes = [item for item in writes if not item.get("ok")]
+    edge_failed = bool(edge_error) or bool(args.apply_edges and edge_preflight and not edge_preflight.get("ok")) or bool(args.write and edge_write and not edge_write.get("ok"))
+    payload = {
+        "ok": not failed_writes and not edge_failed,
+        "schema_id": "contextlattice_source_backfill.v1",
+        "mode": "write" if args.write else "dry_run",
+        "source": args.source,
+        "project": args.project,
+        "topic_path_default": args.topic_path or f"imports/{args.source}",
+        "stats": stats,
+        "previews": previews,
+        "writes": writes,
+        "edge_preflight": edge_preflight,
+        "edge_write": edge_write,
+        "edge_error": edge_error,
+        "supported_sources": ["files", "jsonl", "json", "csv", "sqlite", "duckdb", "parquet", "postgres"],
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
