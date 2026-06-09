@@ -3361,6 +3361,7 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	searchCalls := 0
 	contextPackCalls := 0
 	missionContextCalls := 0
+	contextPackControlChecks := 0
 	const missionQuery = "mission objective goal cross-project synthesis longitudinal learning policy context package retrieval discipline"
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -3406,6 +3407,15 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":"missing agent_id"}`))
 				return
 			}
+			for _, key := range []string{"blocking", "wait_for_slow_sources", "sync_slow_sources", "combined_sources"} {
+				value, present := payload[key]
+				if !present || anyToBool(value) {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"missing nonblocking control"}`))
+					return
+				}
+			}
+			contextPackControlChecks += 1
 			if strings.TrimSpace(anyToString(payload["query"])) == missionQuery {
 				missionContextCalls += 1
 				w.WriteHeader(http.StatusOK)
@@ -3426,7 +3436,7 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
 
-	reqBody := `{"project":"contextlattice","topic_path":"runbooks/codex-integration","query":"codex preflight","agent_id":"codex_gpt5_test","mission":"compound release evidence","objective":"ship boundary graph gate","goal":"protect every agent handoff"}`
+	reqBody := `{"project":"contextlattice","topic_path":"runbooks/codex-integration","query":"codex preflight","agent_id":"codex_gpt5_test","mission":"compound release evidence","objective":"ship boundary graph gate","goal":"protect every agent handoff","blocking":false,"wait_for_slow_sources":false,"sync_slow_sources":false,"combined_sources":false}`
 	resp, err := http.Post(gateway.URL+"/v1/codex/preflight", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("preflight request failed: %v", err)
@@ -3454,6 +3464,9 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	}
 	if missionContextCalls != 1 {
 		t.Fatalf("expected one mission context-pack call, got %d", missionContextCalls)
+	}
+	if contextPackControlChecks != 2 {
+		t.Fatalf("expected nonblocking controls on primary and mission context-pack calls, got %d", contextPackControlChecks)
 	}
 	if payload["broadened_search"] == nil {
 		t.Fatalf("expected broadened_search payload, got nil")
