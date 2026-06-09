@@ -75,6 +75,9 @@ def endpoint_cases(timeout: float, agents: list[str]) -> list[dict[str, Any]]:
         "limit": 100,
         "max_facts": 100,
         "include_retrieval_debug": True,
+        "blocking": False,
+        "wait_for_slow_sources": False,
+        "sync_slow_sources": False,
         "agent_id": "codex_gpt5_boundary_canary",
         "objective_context": {
             "mission": "boundary canary mission",
@@ -91,6 +94,9 @@ def endpoint_cases(timeout: float, agents: list[str]) -> list[dict[str, Any]]:
         "mission": "boundary canary mission",
         "objective": "prove ContextLattice clips agent-facing payloads",
         "goal": "no raw provider overflow shape leaves the product boundary",
+        "blocking": False,
+        "wait_for_slow_sources": False,
+        "sync_slow_sources": False,
     }
     cases = [
         {

@@ -1900,6 +1900,22 @@ type agentPreflightRequest struct {
 	Goal          string `json:"goal"`
 }
 
+func applyPreflightContextPackControls(dst map[string]any, src map[string]any) {
+	for _, key := range []string{
+		"blocking",
+		"wait_for_slow_sources",
+		"sync_slow_sources",
+		"combined_sources",
+		"include_ephemeral",
+		"include_ephemeral_memory",
+		"include_test_memory",
+	} {
+		if value, present := src[key]; present {
+			dst[key] = value
+		}
+	}
+}
+
 type agentPreflightProfile struct {
 	AgentID       string `json:"agent_id"`
 	TopicPath     string `json:"topic_path"`
@@ -2080,6 +2096,10 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			return
 		}
 	}
+	rawPayload := map[string]any{}
+	if len(bytes.TrimSpace(rawBody)) > 0 {
+		_ = json.Unmarshal(rawBody, &rawPayload)
+	}
 	if strings.TrimSpace(forcedAgent) != "" {
 		reqBody.Agent = strings.TrimSpace(forcedAgent)
 	}
@@ -2238,6 +2258,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			"session_id":              sessionID,
 			"objective_context":       objectiveCtx.toMap(),
 		}
+		applyPreflightContextPackControls(broadReq, rawPayload)
 		broadenedPayload, broadenedStatus, broadenedErr = s.backendJSONRequest(
 			ctx,
 			http.MethodPost,
@@ -2257,6 +2278,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"session_id":              sessionID,
 		"objective_context":       objectiveCtx.toMap(),
 	}
+	applyPreflightContextPackControls(contextPackReq, rawPayload)
 	contextPackPayload, contextPackStatus, contextPackErr := s.backendJSONRequest(
 		ctx,
 		http.MethodPost,
@@ -2279,6 +2301,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"session_id":              sessionID,
 		"objective_context":       objectiveCtx.toMap(),
 	}
+	applyPreflightContextPackControls(missionPackReq, rawPayload)
 	missionPackPayload, missionPackStatus, missionPackErr := s.backendJSONRequest(
 		ctx,
 		http.MethodPost,
