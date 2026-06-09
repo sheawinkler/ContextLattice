@@ -199,6 +199,37 @@ via DuckDB, and Postgres via optional `psycopg`. Import caps cover records, row
 bytes, document bytes, total bytes, and structured-list items. Secret-like
 fields are redacted by default, and graph edge repair is optional and bounded.
 
+## Skills Index And Quarantine Discovery
+
+ContextLattice exposes active skills as a native Go Skills Index so agents can discover relevant capabilities without loading every `SKILL.md` into prompt context. In local installs, the active index mounts `${HOME}/.codex/skills` read-only by default. Quarantined/vendor skill discovery remains a separate read-only lane and does **not** auto-load quarantined skills.
+
+- Active index endpoint: `GET|POST /v1/skills/index/search`
+- Active index tool: `GET|POST /tools/skills_index_search`
+- Active index status/reindex endpoint: `POST /v1/skills/index/reindex` (live native scan; no prompt loading)
+- Search endpoint: `GET|POST /v1/skills/quarantine/search`
+- Tool alias: `GET|POST /tools/skills_quarantine_search`
+- Reindex endpoint: `POST /v1/skills/quarantine/reindex` (off by default; enable explicitly)
+
+Runtime knobs:
+
+```bash
+ORCH_SKILLS_QUARANTINE_ENABLED=true
+ORCH_SKILLS_QUARANTINE_HOST_BIN_DIR=${HOME}/.local/bin
+ORCH_SKILLS_INDEX_HOST_ACTIVE_ROOT_DIR=${HOME}/.codex/skills
+ORCH_SKILLS_INDEX_HOST_SYSTEM_ROOT_DIR=${HOME}/.codex/skills/.system
+ORCH_SKILLS_INDEX_ROOTS=/opt/contextlattice/skills_active:/opt/contextlattice/skills_system
+ORCH_SKILLS_QUARANTINE_HOST_ROOT_DIR=${HOME}/.codex/skills_quarantine
+ORCH_SKILLS_QUARANTINE_SEARCH_CMD=/opt/contextlattice/skills/bin/codex-skills-quarantine-search
+ORCH_SKILLS_QUARANTINE_REINDEX_CMD=/opt/contextlattice/skills/bin/codex-skills-quarantine-reindex
+ORCH_SKILLS_QUARANTINE_TIMEOUT_SECS=8
+ORCH_SKILLS_QUARANTINE_DEFAULT_LIMIT=20
+ORCH_SKILLS_QUARANTINE_MAX_LIMIT=100
+ORCH_SKILLS_QUARANTINE_REINDEX_ENABLED=false
+CODEX_SKILLS_QUARANTINE_ROOT=/opt/contextlattice/skills_quarantine
+CODEX_SKILLS_QUARANTINE_INDEX_DIR=/opt/contextlattice/skills_quarantine/index
+CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills_index.jsonl
+```
+
 ## Security and Privacy
 
 - Local-first by default.
@@ -206,7 +237,7 @@ fields are redacted by default, and graph edge repair is optional and bounded.
 - Secret-like content redaction controls.
 - Premium billing/provider route maps are intentionally kept out of public docs.
 
-## Docs
+## Docs Index
 
 - Overview: `https://contextlattice.io/`
 - Architecture: `https://contextlattice.io/architecture.html`

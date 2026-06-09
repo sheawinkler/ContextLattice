@@ -2071,6 +2071,20 @@ func resultCount(payload map[string]any) int {
 	return 0
 }
 
+func buildPreflightSkillsIndexPayload(reqBody agentPreflightRequest, profileKey string) map[string]any {
+	return nativeSkillsIndexSearch(skillsQuarantineSearchRequest{
+		Query: strings.TrimSpace(strings.Join([]string{
+			reqBody.Query,
+			reqBody.Mission,
+			reqBody.Objective,
+			reqBody.Goal,
+			profileKey,
+		}, " ")),
+		Limit: 5,
+		JSON:  true,
+	})
+}
+
 func (s *server) codexPreflight(w http.ResponseWriter, r *http.Request) {
 	s.agentPreflight(w, r, "codex")
 }
@@ -2166,6 +2180,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		}
 	}
 	reqBody.SessionID = sessionID
+	skillsIndexPayload := buildPreflightSkillsIndexPayload(reqBody, profileKey)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -2181,6 +2196,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		payload["backend_url"] = s.backendURL
 		payload["objective_context"] = objectiveCtx.toMap()
 		payload["session_id"] = sessionID
+		payload["skills_index"] = skillsIndexPayload
 		if sessionID != "" {
 			objectiveRuntime := anyMap(payload["objective_runtime"])
 			session := s.recordAgentSessionEvent(sessionID, "agent.preflight.completed", map[string]any{
@@ -2189,13 +2205,14 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"project":  reqBody.Project,
 				"summary":  reqBody.Query,
 				"metadata": map[string]any{
-					"endpoint":          r.URL.Path,
-					"retrieval_mode":    reqBody.RetrievalMode,
-					"context_status":    anyToInt(anyMap(payload["context_pack"])["status"], 0),
-					"mission_status":    anyToInt(anyMap(payload["mission_pack"])["status"], 0),
-					"objective_state":   anyToString(objectiveRuntime["objective_state"]),
-					"next_action":       anyToString(objectiveRuntime["next_action"]),
-					"objective_runtime": objectiveRuntime,
+					"endpoint":              r.URL.Path,
+					"retrieval_mode":        reqBody.RetrievalMode,
+					"context_status":        anyToInt(anyMap(payload["context_pack"])["status"], 0),
+					"mission_status":        anyToInt(anyMap(payload["mission_pack"])["status"], 0),
+					"objective_state":       anyToString(objectiveRuntime["objective_state"]),
+					"next_action":           anyToString(objectiveRuntime["next_action"]),
+					"objective_runtime":     objectiveRuntime,
+					"skills_index_returned": anyToInt(skillsIndexPayload["returned"], 0),
 				},
 			})
 			if session != nil {
@@ -2377,6 +2394,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"mission_context_status": missionPackStatus,
 		"mission_context_error":  errString(missionPackErr),
 		"policy_context_package": policyContextPackage,
+		"skills_index":           skillsIndexPayload,
 	}
 	if sessionID != "" {
 		session := s.recordAgentSessionEvent(sessionID, "agent.preflight.completed", map[string]any{
@@ -2397,6 +2415,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"objective_state":        anyToString(objectiveRuntime["objective_state"]),
 				"next_action":            anyToString(objectiveRuntime["next_action"]),
 				"objective_runtime":      objectiveRuntime,
+				"skills_index_returned":  anyToInt(skillsIndexPayload["returned"], 0),
 			},
 		})
 		if session != nil {
@@ -6710,8 +6729,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/retrieval/health", s.retrievalHealth)
 	mux.HandleFunc("/v1/skills/quarantine/search", s.skillsQuarantineSearchRoute)
 	mux.HandleFunc("/v1/skills/quarantine/reindex", s.skillsQuarantineReindexRoute)
-	mux.HandleFunc("/v1/skills/index/search", s.skillsQuarantineSearchRoute)
-	mux.HandleFunc("/v1/skills/index/reindex", s.skillsQuarantineReindexRoute)
+	mux.HandleFunc("/v1/skills/index/search", s.skillsIndexSearchRoute)
+	mux.HandleFunc("/v1/skills/index/reindex", s.skillsIndexReindexRoute)
 	mux.HandleFunc("/memory/search/continuations/", s.memorySearchContinuationsRoute)
 	mux.HandleFunc("/memory/search", s.memorySearch)
 	mux.HandleFunc("/memory/search/async/", s.memorySearchAsyncStatus)
@@ -6766,8 +6785,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)
 	mux.HandleFunc("/tools/skills_quarantine_search", s.toolsSkillsQuarantineSearch)
 	mux.HandleFunc("/tools/skills_quarantine_reindex", s.toolsSkillsQuarantineReindex)
-	mux.HandleFunc("/tools/skills_index_search", s.toolsSkillsQuarantineSearch)
-	mux.HandleFunc("/tools/skills_index_reindex", s.toolsSkillsQuarantineReindex)
+	mux.HandleFunc("/tools/skills_index_search", s.toolsSkillsIndexSearch)
+	mux.HandleFunc("/tools/skills_index_reindex", s.toolsSkillsIndexReindex)
 	mux.HandleFunc("/v1/memory/put", s.memoryPut)
 	mux.HandleFunc("/v1/memory/update", s.memoryV1Update)
 	mux.HandleFunc("/v1/memory/get", s.memoryV1Get)

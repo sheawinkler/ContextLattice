@@ -66,8 +66,9 @@ contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
   - `contextlattice_agent_session rollup --session-id <session_id> --pretty`
   - `contextlattice_agent_session context-package --session-id <session_id> --pretty`
   - Use the returned `reference_prompt`/`context_package` as the bounded factual scaffold instead of raw logs.
-- When the agent needs capabilities but not the whole skills tree, search:
+- When the agent needs capabilities but not the whole skills tree, search the active Skills Index:
   - `contextlattice_skills_index search "<task or tool need>" --pretty`
+  - Local installs index `${HOME}/.codex/skills` by default; use the returned skill names/paths as pointers, not as permission to load every skill body.
 - If memory endpoints degrade, continue task execution but report degraded-memory mode.
 - Optional tool-call key split:
   - `CONTEXTLATTICE_ORCHESTRATOR_API_KEY` for orchestrator/admin tasks.

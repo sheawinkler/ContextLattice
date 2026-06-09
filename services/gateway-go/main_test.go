@@ -859,8 +859,8 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)`,
 		`mux.HandleFunc("/v1/skills/quarantine/search", s.skillsQuarantineSearchRoute)`,
 		`mux.HandleFunc("/v1/skills/quarantine/reindex", s.skillsQuarantineReindexRoute)`,
-		`mux.HandleFunc("/v1/skills/index/search", s.skillsQuarantineSearchRoute)`,
-		`mux.HandleFunc("/v1/skills/index/reindex", s.skillsQuarantineReindexRoute)`,
+		`mux.HandleFunc("/v1/skills/index/search", s.skillsIndexSearchRoute)`,
+		`mux.HandleFunc("/v1/skills/index/reindex", s.skillsIndexReindexRoute)`,
 		`mux.HandleFunc("/v1/memory/get", s.memoryV1Get)`,
 		`mux.HandleFunc("/v1/memory/update", s.memoryV1Update)`,
 		`mux.HandleFunc("/v1/memory/neighbors", s.memoryV1Neighbors)`,
@@ -3363,6 +3363,9 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	missionContextCalls := 0
 	contextPackControlChecks := 0
 	const missionQuery = "mission objective goal cross-project synthesis longitudinal learning policy context package retrieval discipline"
+	activeSkillRoot := filepath.Join(t.TempDir(), "skills_active")
+	writeSkillIndexFixture(t, activeSkillRoot, "boundary-graph-gate", "boundary-graph-gate", "Use when shipping a boundary graph gate for agent handoff protection.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", activeSkillRoot)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -3480,6 +3483,15 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 	if payload["policy_context_package"] == nil {
 		t.Fatalf("expected policy_context_package payload, got nil")
 	}
+	skillsIndex, _ := payload["skills_index"].(map[string]any)
+	skillResults, _ := skillsIndex["results"].([]any)
+	if len(skillResults) == 0 {
+		t.Fatalf("expected preflight skills_index recommendations, got %#v", skillsIndex)
+	}
+	firstSkill, _ := skillResults[0].(map[string]any)
+	if strings.TrimSpace(anyToString(firstSkill["name"])) != "boundary-graph-gate" {
+		t.Fatalf("expected boundary graph skill recommendation, got %#v", firstSkill)
+	}
 	assertObjectiveRuntimeContractPassed(t, payload["objective_runtime"])
 	assertPolicyContextIncludesAntiScheming(t, payload["policy_context_package"])
 	objectiveContext, ok := payload["objective_context"].(map[string]any)
@@ -3491,6 +3503,66 @@ func TestCodexPreflightBroadensScopeAndRequestsContextPack(t *testing.T) {
 		strings.TrimSpace(anyToString(policyContext["objective"])) != "ship boundary graph gate" ||
 		strings.TrimSpace(anyToString(policyContext["goal"])) != "protect every agent handoff" {
 		t.Fatalf("expected policy package to mirror requested mission/objective/goal, got %#v", policyContext)
+	}
+	contracts, ok := payload["format_contracts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected format_contracts object, got %#v", payload["format_contracts"])
+	}
+	validation, _ := contracts["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected preflight format validation passed, got %#v", validation)
+	}
+}
+
+func TestCodexPreflightStrictRuntimeIncludesSkillsIndex(t *testing.T) {
+	activeSkillRoot := filepath.Join(t.TempDir(), "skills_active")
+	writeSkillIndexFixture(t, activeSkillRoot, "objective-loop", "objective-loop", "Use when an agent needs to stay focused through an objective loop.")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", activeSkillRoot)
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "memory_bank")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_MEMORY_BANK_SEARCH_BACKEND", "disabled")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","topic_path":"runbooks/codex-integration","query":"objective loop adoption","agent_id":"codex_gpt5_test","objective":"use objective loop skills","blocking":false,"wait_for_slow_sources":false,"sync_slow_sources":false,"combined_sources":false}`
+	resp, err := http.Post(gateway.URL+"/v1/codex/preflight", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("preflight request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode preflight response: %v", err)
+	}
+	if !anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok=true, got %#v", payload["ok"])
+	}
+	skillsIndex, _ := payload["skills_index"].(map[string]any)
+	skillResults, _ := skillsIndex["results"].([]any)
+	if len(skillResults) == 0 {
+		t.Fatalf("expected strict preflight skills_index recommendations, got %#v", skillsIndex)
+	}
+	firstSkill, _ := skillResults[0].(map[string]any)
+	if strings.TrimSpace(anyToString(firstSkill["name"])) != "objective-loop" {
+		t.Fatalf("expected objective-loop skill recommendation, got %#v", firstSkill)
+	}
+	if strings.TrimSpace(anyToString(firstSkill["source"])) != "active" {
+		t.Fatalf("expected active skill source, got %#v", firstSkill)
 	}
 	contracts, ok := payload["format_contracts"].(map[string]any)
 	if !ok {

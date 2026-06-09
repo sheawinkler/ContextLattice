@@ -103,6 +103,7 @@ contextlattice_checkpoint -h
 contextlattice_agent_start --soft --compact
 contextlattice_search --query "release readiness" --project contextlattice
 printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/setup --file notes/checkpoint.md --stdin</code></pre>
+        <p><code>contextlattice_skills_index</code> searches active configured skill roots such as <code>~/.codex/skills</code>; quarantined/vendor discovery stays separate.</p>
       </article>
     </section>
 
