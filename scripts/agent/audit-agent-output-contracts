@@ -19,6 +19,7 @@ from agent_contracts import (  # noqa: E402
     anti_scheming_protocol,
     attach_format_contract,
     contract_metadata,
+    enforce_contract_limits,
     load_agent_contracts_registry,
     preflight_contracts_summary,
     stamp_validation,
@@ -41,6 +42,8 @@ REQUIRED_CONTRACTS = (
     "context_overflow_recovery.v1",
     "objective_runtime_state.v1",
     "universal_agent_adapter_response.v1",
+    "agent_session_rollup.v1",
+    "agent_prompt_context_package.v1",
 )
 
 
@@ -49,6 +52,27 @@ def sample_context_pack() -> dict[str, Any]:
         "facts": [],
         "results": [],
         "citations": [],
+        "context_compiler": {
+            "schema_id": "contextlattice_context_compiler.v1",
+            "version": 1,
+            "strategy": "audit_fixture",
+            "intended_use": "verify bounded prompt-ready context package contracts",
+            "recommended_surface": "cli_for_local_agents",
+            "ranked_evidence_count": 0,
+        },
+        "prompt_sections": {
+            "objective": "Audit context package contract.",
+            "task": "Audit context package contract.",
+            "next_action": "Verify contract shape and boundary clipping.",
+            "evidence": [],
+            "files_to_inspect": [],
+            "commands": [],
+            "checks": [],
+            "risks": [],
+            "capabilities": [],
+            "constraints": ["Keep output bounded."],
+        },
+        "ranked_evidence": [],
         "relevant_decisions": [],
         "files_to_read": [],
         "files_to_avoid": [],
@@ -61,8 +85,104 @@ def sample_context_pack() -> dict[str, Any]:
     coverage = {"configured": ["postgres_pgvector"], "returned": ["postgres_pgvector"], "complete": True}
     return attach_format_contract(
         "context_pack_response.v1",
-        {"ok": True, "context_pack": pack, "source_coverage": coverage, "writeback_required": True},
+        {
+            "ok": True,
+            "context_pack": pack,
+            "context_compiler": pack["context_compiler"],
+            "reference_prompt": "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
+            "source_coverage": coverage,
+            "writeback_required": True,
+        },
     )
+
+
+def oversized_context_pack_fixture(registry: dict[str, Any]) -> dict[str, Any]:
+    text = "array_above_max_length context length exceeded " * 500
+    rows = [
+        {
+            "text": text,
+            "summary": text,
+            "file": "notes/oversized.md",
+            "source": "fixture",
+            "topic_path": "runbooks/boundary",
+        }
+        for _ in range(140)
+    ]
+    pack = {
+        "facts": rows,
+        "results": rows,
+        "citations": rows,
+        "context_compiler": {
+            "schema_id": "contextlattice_context_compiler.v1",
+            "version": 1,
+            "strategy": "oversized_audit_fixture",
+            "intended_use": text,
+            "recommended_surface": "cli_for_local_agents",
+            "ranked_evidence_count": len(rows),
+        },
+        "prompt_sections": {
+            "objective": text,
+            "task": text,
+            "next_action": text,
+            "evidence": rows,
+            "files_to_inspect": rows,
+            "commands": rows,
+            "checks": rows,
+            "risks": rows,
+            "capabilities": rows,
+            "constraints": rows,
+        },
+        "ranked_evidence": rows,
+        "relevant_decisions": rows,
+        "files_to_read": rows,
+        "files_to_avoid": rows,
+        "capabilities_to_use": rows,
+        "runbooks": rows,
+        "known_failure_modes": rows,
+        "commands": rows,
+        "acceptance_criteria": rows,
+    }
+    return attach_format_contract(
+        "context_pack_response.v1",
+        {
+            "ok": True,
+            "context_pack": pack,
+            "context_compiler": pack["context_compiler"],
+            "reference_prompt": text,
+            "source_coverage": {"configured": rows, "returned": rows, "complete": True},
+            "retrieval": {"debug": text},
+            "writeback_required": True,
+        },
+        registry,
+    )
+
+
+def oversized_boundary_findings(registry: dict[str, Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    payload = oversized_context_pack_fixture(registry)
+    findings.extend({"severity": "error", **item} for item in validate_agent_contract_payload("context_pack_response.v1", payload, registry))
+    contract = (registry.get("contracts") or {}).get("context_pack_response.v1") or {}
+    max_bytes = int(contract.get("max_total_json_bytes") or 0)
+    actual = len(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    if max_bytes <= 0 or actual > max_bytes:
+        findings.append({"severity": "error", "reason": "oversized_fixture_not_clipped", "bytes": actual, "max_bytes": max_bytes})
+    lower = json.dumps(payload, sort_keys=True).lower()
+    for forbidden in ("array_above_max_length", "context length exceeded", "maximum context length"):
+        if forbidden in lower:
+            findings.append({"severity": "error", "reason": "raw_provider_overflow_phrase_leaked", "phrase": forbidden})
+    compact_stdout = enforce_contract_limits(
+        "codex_compact_hook_stdout.v1",
+        {
+            "continue": True,
+            "suppressOutput": False,
+            "systemMessage": "array_above_max_length context length exceeded " * 200,
+        },
+        registry,
+    )
+    findings.extend({"severity": "error", **item} for item in validate_agent_contract_payload("codex_compact_hook_stdout.v1", compact_stdout, registry))
+    if "array_above_max_length" in json.dumps(compact_stdout).lower():
+        findings.append({"severity": "error", "reason": "compact_stdout_raw_provider_overflow_phrase_leaked"})
+    return findings
 
 
 def sample_writeback_result() -> dict[str, Any]:
@@ -317,6 +437,116 @@ def sample_universal_agent_adapter_response(registry: dict[str, Any]) -> dict[st
     )
 
 
+def sample_agent_session_rollup(registry: dict[str, Any]) -> dict[str, Any]:
+    return attach_format_contract(
+        "agent_session_rollup.v1",
+        {
+            "ok": True,
+            "schema_id": "agent_session_rollup.v1",
+            "session_id": "sess_audit",
+            "agent": "codex",
+            "agent_id": "codex_gpt5_test",
+            "project": "contextlattice",
+            "status": "active",
+            "objective": "Audit agent session rollup output contract.",
+            "mission": "Keep agent handoffs evidence-grounded and reusable.",
+            "goal": "Package session state before the next model call.",
+            "objective_state": "active",
+            "next_action": "Run the contract audit and inspect findings.",
+            "started_at": "2026-06-08T00:00:00Z",
+            "updated_at": "2026-06-08T00:00:01Z",
+            "completed_at": "",
+            "duration_secs": 1.0,
+            "last_event_type": "context_pack.completed",
+            "last_event_at": "2026-06-08T00:00:01Z",
+            "last_event_age_secs": 0.0,
+            "event_count": 3,
+            "phase_counts": {"bootstrap": 1, "context": 1, "memory_write": 1},
+            "memory_contribution": {
+                "score": 48,
+                "context_packs": 1,
+                "writebacks": 1,
+                "handoffs": 0,
+                "graph_touches": 0,
+                "dream_outputs": 0,
+                "tests": 1,
+                "prs": 0,
+            },
+            "retrieval_summary": {
+                "memory_hits": 2,
+                "result_count": 3,
+                "returned_sources": ["topic_rollups", "qdrant"],
+                "pending_sources": [],
+                "failed_sources": [],
+            },
+            "artifact_summary": {
+                "checkpoints": 1,
+                "handoffs": 0,
+                "graph_touches": 0,
+                "dream_outputs": 0,
+                "tests": 1,
+                "prs": 0,
+                "recent": [],
+            },
+            "risk_summary": {"missing": [], "risks": []},
+            "prompt_package": {
+                "ready": True,
+                "endpoint": "/v1/agents/sessions/sess_audit/context-package",
+                "cli_command": "contextlattice_agent_session context-package --session-id sess_audit --pretty",
+                "best_surface": "cli_for_local_agents_http_for_apps_mcp_for_tool_calling_hosts",
+            },
+            "confidence": 72,
+            "recent_events": [
+                {
+                    "id": "evt_audit",
+                    "type": "context_pack.completed",
+                    "phase": "context",
+                    "summary": "Context pack returned audit evidence.",
+                    "status": "active",
+                    "created_at": "2026-06-08T00:00:01Z",
+                    "memory_hits": 2,
+                    "result_count": 3,
+                }
+            ],
+        },
+        registry,
+    )
+
+
+def sample_agent_prompt_context_package(registry: dict[str, Any]) -> dict[str, Any]:
+    rollup = sample_agent_session_rollup(registry)
+    return attach_format_contract(
+        "agent_prompt_context_package.v1",
+        {
+            "ok": True,
+            "schema_id": "agent_prompt_context_package.v1",
+            "session_id": "sess_audit",
+            "agent": "codex",
+            "agent_id": "codex_gpt5_test",
+            "project": "contextlattice",
+            "rollup": rollup,
+            "context_package": {
+                "objective": rollup["objective"],
+                "mission": rollup["mission"],
+                "goal": rollup["goal"],
+                "current_state": rollup["objective_state"],
+                "next_action": rollup["next_action"],
+                "retrieval_summary": rollup["retrieval_summary"],
+                "artifact_summary": rollup["artifact_summary"],
+                "risk_summary": rollup["risk_summary"],
+                "recent_events": rollup["recent_events"],
+                "confidence": rollup["confidence"],
+                "source": "contextlattice_agent_session_rollup",
+                "intended_use": "repackage the next agent/model prompt with bounded evidence, state, risks, and next action",
+                "recommended_surface": "cli_for_local_agents",
+                "alternate_surfaces": ["http_for_app_integrations", "mcp_for_tool_calling_hosts"],
+            },
+            "reference_prompt": "Use this ContextLattice session package as the factual context for the next reasoning step.\nSession: sess_audit\nObjective: Audit agent session rollup output contract.\nNext action: Run the contract audit and inspect findings.",
+        },
+        registry,
+    )
+
+
 def validate_expected_failure(contract_id: str, payload: dict[str, Any], reason: str) -> dict[str, Any] | None:
     findings = validate_agent_contract_payload(contract_id, payload)
     if not findings:
@@ -365,6 +595,7 @@ def run_audit() -> list[dict[str, Any]]:
     context_pack = sample_context_pack()
     for item in validate_agent_contract_payload("context_pack_response.v1", context_pack, registry):
         findings.append({"severity": "error", **item})
+    findings.extend(oversized_boundary_findings(registry))
 
     for contract_id, payload in (
         ("writeback_result.v1", sample_writeback_result()),
@@ -376,6 +607,8 @@ def run_audit() -> list[dict[str, Any]]:
         ("context_overflow_recovery.v1", sample_context_overflow_recovery()),
         ("objective_runtime_state.v1", sample_objective_runtime(registry)),
         ("universal_agent_adapter_response.v1", sample_universal_agent_adapter_response(registry)),
+        ("agent_session_rollup.v1", sample_agent_session_rollup(registry)),
+        ("agent_prompt_context_package.v1", sample_agent_prompt_context_package(registry)),
     ):
         for item in validate_agent_contract_payload(contract_id, payload, registry):
             findings.append({"severity": "error", **item})

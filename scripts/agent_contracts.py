@@ -203,6 +203,8 @@ def _compact_context_pack_payload(payload: dict[str, Any], keep: int) -> None:
             "numeric_facts",
             "citations",
             "results",
+            "rankedEvidence",
+            "ranked_evidence",
             "relevantDecisions",
             "relevant_decisions",
             "filesToRead",
@@ -220,6 +222,16 @@ def _compact_context_pack_payload(payload: dict[str, Any], keep: int) -> None:
         ):
             if isinstance(pack.get(key), list):
                 pack[key] = pack[key][:keep]
+        sections = pack.get("prompt_sections")
+        if isinstance(sections, dict):
+            for key in ("evidence", "files_to_inspect", "commands", "checks", "risks", "capabilities", "constraints"):
+                if isinstance(sections.get(key), list):
+                    sections[key] = sections[key][:keep]
+            for key in ("objective", "task", "mission", "goal", "next_action"):
+                if isinstance(sections.get(key), str):
+                    sections[key] = _clip_utf8(_sanitize_provider_overflow_text(sections[key]), 1200)
+    if isinstance(payload.get("reference_prompt"), str):
+        payload["reference_prompt"] = _clip_utf8(_sanitize_provider_overflow_text(payload["reference_prompt"]), 5000)
     if "retrieval" in payload:
         payload["retrieval"] = {"omitted_by_boundary": True}
     if isinstance(payload.get("warnings"), list):
