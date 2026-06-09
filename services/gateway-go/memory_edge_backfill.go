@@ -236,18 +236,24 @@ func (m *memoryStore) memoryBackfillHistoryEntries(maxLines int) []memoryStoreEn
 	return entries
 }
 
-func memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) []memoryEdgeBackfillDoc {
+func (m *memoryStore) memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) ([]memoryEdgeBackfillDoc, int) {
 	out := make([]memoryEdgeBackfillDoc, 0, len(docs))
+	skipped := 0
 	for _, doc := range docs {
 		project, fileName, memoryID, _, err := canonicalMemoryID(doc.Project + "::" + doc.FileName)
 		if err != nil {
+			continue
+		}
+		topicPath := sanitizeTopicPath(doc.TopicPath, fileName)
+		if excluded, _ := m.memoryGraphArtifactExcluded(project, fileName, topicPath); excluded {
+			skipped += 1
 			continue
 		}
 		out = append(out, memoryEdgeBackfillDoc{
 			Project:   project,
 			FileName:  fileName,
 			MemoryID:  memoryID,
-			TopicPath: sanitizeTopicPath(doc.TopicPath, fileName),
+			TopicPath: topicPath,
 			Summary:   strings.TrimSpace(doc.Summary),
 			UpdatedAt: doc.UpdatedAt,
 			LastTouch: doc.UpdatedAt,
@@ -257,7 +263,7 @@ func memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) []memoryEdgeBackfill
 	sort.Slice(out, func(i, j int) bool {
 		return memoryBackfillDocLess(out[i], out[j])
 	})
-	return out
+	return out, skipped
 }
 
 func memoryBackfillDocLess(left memoryEdgeBackfillDoc, right memoryEdgeBackfillDoc) bool {
@@ -349,15 +355,16 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	if err != nil {
 		return nil, err
 	}
-	docs := memoryBackfillDocsFromStoreDocs(storeDocs)
+	docs, skippedLowValueDocs := m.memoryBackfillDocsFromStoreDocs(storeDocs)
 	historyEntries := m.memoryBackfillHistoryEntries(req.MaxHistoryLines)
 	generator := &memoryEdgeBackfillGenerator{
-		store:      m,
-		request:    req,
-		docs:       docs,
-		knownIDs:   map[string]memoryEdgeBackfillDoc{},
-		stats:      map[string]*memoryEdgeBackfillRelationStats{},
-		sampleRows: []map[string]any{},
+		store:               m,
+		request:             req,
+		docs:                docs,
+		knownIDs:            map[string]memoryEdgeBackfillDoc{},
+		stats:               map[string]*memoryEdgeBackfillRelationStats{},
+		sampleRows:          []map[string]any{},
+		skippedLowValueDocs: skippedLowValueDocs,
 	}
 	for _, doc := range docs {
 		generator.knownIDs[strings.ToLower(doc.MemoryID)] = doc
@@ -393,6 +400,8 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"backfill_version":             memoryEdgeBackfillVersion,
 		"project":                      req.Project,
 		"scanned_docs":                 len(docs),
+		"skipped_low_value_docs":       generator.skippedLowValueDocs,
+		"skipped_low_value_history":    generator.skippedLowValueHistory,
 		"scanned_history_entries":      len(historyEntries),
 		"generated":                    totalGenerated,
 		"eligible":                     totalEligible,
@@ -423,17 +432,19 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 }
 
 type memoryEdgeBackfillGenerator struct {
-	store      *memoryStore
-	request    memoryEdgeBackfillRequest
-	docs       []memoryEdgeBackfillDoc
-	knownIDs   map[string]memoryEdgeBackfillDoc
-	stats      map[string]*memoryEdgeBackfillRelationStats
-	sampleRows []map[string]any
-	seen       map[string]struct{}
-	generated  int
-	truncated  bool
-	errorsList []string
-	ctxErr     error
+	store                  *memoryStore
+	request                memoryEdgeBackfillRequest
+	docs                   []memoryEdgeBackfillDoc
+	knownIDs               map[string]memoryEdgeBackfillDoc
+	stats                  map[string]*memoryEdgeBackfillRelationStats
+	sampleRows             []map[string]any
+	seen                   map[string]struct{}
+	generated              int
+	truncated              bool
+	skippedLowValueDocs    int
+	skippedLowValueHistory int
+	errorsList             []string
+	ctxErr                 error
 }
 
 func (g *memoryEdgeBackfillGenerator) stat(relation string) *memoryEdgeBackfillRelationStats {
@@ -896,6 +907,10 @@ func (g *memoryEdgeBackfillGenerator) generateHistorySequenceEdges(
 			continue
 		}
 		topicPath := sanitizeTopicPath(entry.TopicPath, fileName)
+		if excluded, _ := g.store.memoryGraphArtifactExcluded(project, fileName, topicPath); excluded {
+			g.skippedLowValueHistory += 1
+			continue
+		}
 		groupToken := ""
 		switch relation {
 		case "same_session":
@@ -1003,4 +1018,43 @@ func (s *server) memoryV1EdgesBackfill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *server) maintenanceMemoryGraphPruneVolatile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if !s.writeAuthorizedRequest(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
+		return
+	}
+	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "go memory store is disabled"})
+		return
+	}
+	dryRun := true
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "failed to read request body"})
+		return
+	}
+	if strings.TrimSpace(string(bodyBytes)) != "" {
+		payload, err := parseJSONMap(bodyBytes)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid json", "detail": err.Error()})
+			return
+		}
+		if _, exists := payload["dry_run"]; exists {
+			dryRun = anyToBool(payload["dry_run"])
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+	result, err := s.memoryStore.pruneVolatileMemoryGraphEdges(ctx, dryRun)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "memory graph prune failed", "detail": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

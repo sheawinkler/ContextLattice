@@ -135,6 +135,8 @@ def compact_backfill_summary(stage: str, body: dict[str, Any]) -> dict[str, Any]
         "dry_run": bool(body.get("dry_run", False)),
         "corpus": body.get("corpus"),
         "scanned_docs": as_int(body.get("scanned_docs")),
+        "skipped_low_value_docs": as_int(body.get("skipped_low_value_docs")),
+        "skipped_low_value_history": as_int(body.get("skipped_low_value_history")),
         "generated": as_int(body.get("generated")),
         "eligible": as_int(body.get("eligible")),
         "would_write": as_int(body.get("would_write")),

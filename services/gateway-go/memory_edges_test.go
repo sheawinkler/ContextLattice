@@ -394,6 +394,61 @@ func TestMemoryEdgesBackfillDryRunWriteAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestMemoryEdgesBackfillExcludesVolatileSnapshots(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	writes := []normalizedWrite{
+		{
+			project:   "alpha",
+			fileName:  "notes/run-analysis-a.md",
+			content:   "Run analysis A with durable interpretation",
+			topicPath: "analysis/runs",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+		{
+			project:   "alpha",
+			fileName:  "operating_mode__latest.json",
+			content:   `{"mode":"debug","queue":12}`,
+			topicPath: "analysis/runs",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+		{
+			project:   "alpha",
+			fileName:  "notes/run-analysis-b.md",
+			content:   "Run analysis B with durable decision",
+			topicPath: "analysis/runs",
+			agentID:   "agent-a",
+			sessionID: "session-1",
+		},
+	}
+	for _, write := range writes {
+		if _, _, err := s.memoryStore.put(write); err != nil {
+			t.Fatalf("seed memory write %s: %v", write.fileName, err)
+		}
+	}
+
+	dryRun := postEdgeBackfillForTest(t, gateway.URL, `{"project":"alpha","sample_limit":20}`)
+	if got := anyToInt(dryRun["skipped_low_value_docs"], 0); got != 1 {
+		t.Fatalf("expected one volatile doc skipped, got %#v", dryRun)
+	}
+	if got := anyToInt(dryRun["skipped_low_value_history"], 0); got < 1 {
+		t.Fatalf("expected volatile history rows skipped, got %#v", dryRun)
+	}
+	for _, raw := range dryRun["samples"].([]any) {
+		row := raw.(map[string]any)
+		if strings.Contains(anyToString(row["source_id"]), "operating_mode__latest.json") ||
+			strings.Contains(anyToString(row["target_id"]), "operating_mode__latest.json") {
+			t.Fatalf("volatile snapshot leaked into graph sample: %#v", row)
+		}
+	}
+	if got := anyToInt(dryRun["scanned_docs"], 0); got != 2 {
+		t.Fatalf("expected only durable graph docs to be scanned, got %#v", dryRun)
+	}
+}
+
 func TestMemoryEdgesBackfillInferredScoringBounded(t *testing.T) {
 	s, gateway := newMemoryGraphTestServer(t, true)
 	defer gateway.Close()
@@ -541,6 +596,81 @@ func TestMemoryEdgesBackfillDiskCorpusCoversProjectOutsideHotIndex(t *testing.T)
 	}
 	if got := backfillRelationStatInt(diskRun, "inferred_related", "eligible"); got == 0 {
 		t.Fatalf("expected disk corpus inferred candidate, got %#v", diskRun)
+	}
+}
+
+func TestMemoryGraphPruneVolatileCompactsLegacyEdges(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+
+	durable, err := memoryEdgeBackfillCandidateEdge(
+		"alpha::notes/a.md",
+		"alpha::notes/b.md",
+		"same_topic",
+		0.95,
+		"analysis/runs",
+		"unit",
+		"durable_pair",
+	)
+	if err != nil {
+		t.Fatalf("build durable edge: %v", err)
+	}
+	volatile, err := memoryEdgeBackfillCandidateEdge(
+		"alpha::operating_mode__latest.json",
+		"alpha::notes/a.md",
+		"same_topic",
+		0.95,
+		"analysis/runs",
+		"unit",
+		"legacy_snapshot_pair",
+	)
+	if err != nil {
+		t.Fatalf("build volatile edge: %v", err)
+	}
+	for _, edge := range []memoryEdgeEntry{durable.Edge, volatile.Edge, durable.Edge} {
+		if err := s.memoryStore.appendEdge(edge); err != nil {
+			t.Fatalf("append legacy edge: %v", err)
+		}
+		s.memoryStore.mu.Lock()
+		s.memoryStore.recordEdgeLocked(edge)
+		s.memoryStore.mu.Unlock()
+	}
+
+	edges, err := s.memoryStore.listMemoryEdges(context.Background(), memoryEdgeQuery{Project: "alpha", Limit: 10})
+	if err != nil {
+		t.Fatalf("list filtered edges: %v", err)
+	}
+	if len(edges) != 1 || edges[0].EdgeID != durable.Edge.EdgeID {
+		t.Fatalf("expected volatile edge to be filtered before prune, got %#v", edges)
+	}
+
+	dryRun, err := s.memoryStore.pruneVolatileMemoryGraphEdges(context.Background(), true)
+	if err != nil {
+		t.Fatalf("dry-run prune: %v", err)
+	}
+	if anyToInt(dryRun["skipped_volatile"], 0) != 1 || anyToInt(dryRun["skipped_duplicate"], 0) != 1 {
+		t.Fatalf("expected volatile and duplicate skips in dry run, got %#v", dryRun)
+	}
+	writeRun, err := s.memoryStore.pruneVolatileMemoryGraphEdges(context.Background(), false)
+	if err != nil {
+		t.Fatalf("write prune: %v", err)
+	}
+	if anyToInt(writeRun["kept"], 0) != 1 || anyToInt(writeRun["skipped_volatile"], 0) != 1 {
+		t.Fatalf("expected one durable edge kept after prune, got %#v", writeRun)
+	}
+
+	resp, err := http.Post(
+		gateway.URL+"/v1/memory/edges",
+		"application/json",
+		strings.NewReader(`{"source_id":"alpha::operating_mode__latest.json","target_id":"alpha::notes/b.md","relation":"same_topic","confidence":0.95,"topic_path":"analysis/runs"}`),
+	)
+	if err != nil {
+		t.Fatalf("edge write failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected volatile edge write rejection, got %d body=%s", resp.StatusCode, string(raw))
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -272,6 +273,7 @@ func (m *memoryStore) loadEdges() error {
 	}
 
 	loaded := 0
+	skippedPolicy := 0
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, line := range lines {
@@ -280,21 +282,25 @@ func (m *memoryStore) loadEdges() error {
 			continue
 		}
 		if normalized, err := edge.normalized(); err == nil {
+			if excluded, _ := m.memoryGraphEdgeExcluded(normalized); excluded {
+				skippedPolicy += 1
+				continue
+			}
 			m.recordEdgeLocked(normalized)
 			loaded += 1
 		}
 	}
 	if loaded > 0 {
-		logMemoryEdgeLoad(loaded, len(lines), m.policy.edgeStartupMaxLines)
+		logMemoryEdgeLoad(loaded, len(lines), skippedPolicy, m.policy.edgeStartupMaxLines)
 	}
 	return nil
 }
 
-func logMemoryEdgeLoad(loaded int, scanned int, cap int) {
+func logMemoryEdgeLoad(loaded int, scanned int, skippedPolicy int, cap int) {
 	if loaded <= 0 {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "gateway-go memory graph edge startup load: scanned=%d loaded=%d cap=%d\n", scanned, loaded, cap)
+	fmt.Fprintf(os.Stderr, "gateway-go memory graph edge startup load: scanned=%d loaded=%d skipped_policy=%d cap=%d\n", scanned, loaded, skippedPolicy, cap)
 }
 
 func (m *memoryStore) recordEdgeLocked(edge memoryEdgeEntry) {
@@ -359,6 +365,136 @@ func (m *memoryStore) appendEdge(edge memoryEdgeEntry) error {
 	return nil
 }
 
+func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun bool) (map[string]any, error) {
+	if m == nil || !m.policy.enabled {
+		return nil, errors.New("go memory store is disabled")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	path := m.policy.edgePath
+	beforeBytes := int64(0)
+	if stat, err := os.Stat(path); err == nil {
+		beforeBytes = stat.Size()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]any{"ok": true, "dry_run": dryRun, "path": path, "scanned": 0, "kept": 0, "skipped_volatile": 0, "skipped_invalid": 0, "skipped_duplicate": 0, "bytes_before": 0, "bytes_after": 0}, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 1024*64), 1024*1024)
+	kept := []memoryEdgeEntry{}
+	seen := map[string]int{}
+	scanned := 0
+	skippedVolatile := 0
+	skippedInvalid := 0
+	skippedDuplicate := 0
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		scanned += 1
+		var edge memoryEdgeEntry
+		if err := json.Unmarshal([]byte(line), &edge); err != nil {
+			skippedInvalid += 1
+			continue
+		}
+		normalized, err := edge.normalized()
+		if err != nil {
+			skippedInvalid += 1
+			continue
+		}
+		if excluded, _ := m.memoryGraphEdgeExcluded(normalized); excluded {
+			skippedVolatile += 1
+			continue
+		}
+		if idx, exists := seen[normalized.EdgeID]; exists {
+			kept[idx] = normalized
+			skippedDuplicate += 1
+			continue
+		}
+		seen[normalized.EdgeID] = len(kept)
+		kept = append(kept, normalized)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	afterBytes := beforeBytes
+	if !dryRun {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
+		tmpPath := path + ".tmp-" + strings.ReplaceAll(nowUTCISO(), ":", "")
+		out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil, err
+		}
+		enc := json.NewEncoder(out)
+		for _, edge := range kept {
+			select {
+			case <-ctx.Done():
+				_ = out.Close()
+				_ = os.Remove(tmpPath)
+				return nil, ctx.Err()
+			default:
+			}
+			if err := enc.Encode(edge); err != nil {
+				_ = out.Close()
+				_ = os.Remove(tmpPath)
+				return nil, err
+			}
+		}
+		if err := out.Close(); err != nil {
+			_ = os.Remove(tmpPath)
+			return nil, err
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			_ = os.Remove(tmpPath)
+			return nil, err
+		}
+		if stat, err := os.Stat(path); err == nil {
+			afterBytes = stat.Size()
+		}
+		m.mu.Lock()
+		m.edges = map[string]memoryEdgeEntry{}
+		m.edgeOrder = []string{}
+		m.edgeOrdinal = map[string]int64{}
+		m.nextEdgeOrdinal = 0
+		m.edgeAdjacency = map[string]map[string]struct{}{}
+		for _, edge := range kept {
+			m.recordEdgeLocked(edge)
+		}
+		m.mu.Unlock()
+	}
+
+	return map[string]any{
+		"ok":                true,
+		"dry_run":           dryRun,
+		"path":              path,
+		"scanned":           scanned,
+		"kept":              len(kept),
+		"skipped_volatile":  skippedVolatile,
+		"skipped_invalid":   skippedInvalid,
+		"skipped_duplicate": skippedDuplicate,
+		"bytes_before":      beforeBytes,
+		"bytes_after":       afterBytes,
+	}, nil
+}
+
 func (m *memoryStore) upsertMemoryEdge(ctx context.Context, edge memoryEdgeEntry) (memoryEdgeEntry, error) {
 	if m == nil || !m.policy.enabled {
 		return memoryEdgeEntry{}, errors.New("go memory store is disabled")
@@ -371,6 +507,9 @@ func (m *memoryStore) upsertMemoryEdge(ctx context.Context, edge memoryEdgeEntry
 	normalized, err := edge.normalized()
 	if err != nil {
 		return memoryEdgeEntry{}, err
+	}
+	if excluded, reason := m.memoryGraphEdgeExcluded(normalized); excluded {
+		return memoryEdgeEntry{}, fmt.Errorf("memory edge rejected by graph artifact policy: %s", reason)
 	}
 	m.mu.Lock()
 	m.recordEdgeLocked(normalized)
@@ -449,6 +588,9 @@ func (m *memoryStore) listMemoryEdges(ctx context.Context, query memoryEdgeQuery
 			continue
 		}
 		if !query.IncludeEphemeral && !shouldSurfaceMemoryLifecycle(edge.Lifecycle, false) {
+			continue
+		}
+		if excluded, _ := m.memoryGraphEdgeExcluded(edge); excluded {
 			continue
 		}
 		if memoryID != "" {

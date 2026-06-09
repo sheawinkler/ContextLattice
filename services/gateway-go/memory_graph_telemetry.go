@@ -55,6 +55,7 @@ type graphTelemetrySnapshot struct {
 	Corpus                 string                  `json:"corpus"`
 	Status                 string                  `json:"status"`
 	DocCount               int                     `json:"doc_count"`
+	ExcludedDocCount       int                     `json:"excluded_doc_count"`
 	EdgeCount              int                     `json:"edge_count"`
 	ConnectedDocCount      int                     `json:"connected_doc_count"`
 	IsolatedDocCount       int                     `json:"isolated_doc_count"`
@@ -125,6 +126,24 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 		}
 		docStatus = "disk_fallback"
 	}
+	graphDocs := make([]memoryStoreDoc, 0, len(docs))
+	excludedDocs := 0
+	for _, doc := range docs {
+		project, fileName, _, _, err := canonicalMemoryID(doc.Project + "::" + doc.FileName)
+		if err != nil {
+			continue
+		}
+		topicPath := sanitizeTopicPath(doc.TopicPath, fileName)
+		if excluded, _ := m.memoryGraphArtifactExcluded(project, fileName, topicPath); excluded {
+			excludedDocs += 1
+			continue
+		}
+		doc.Project = project
+		doc.FileName = fileName
+		doc.TopicPath = topicPath
+		graphDocs = append(graphDocs, doc)
+	}
+	docs = graphDocs
 
 	docIDs := map[string]struct{}{}
 	projectStats := map[string]*graphTelemetryProjectStats{}
@@ -151,6 +170,9 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 			continue
 		}
 		if !includeEphemeral && !shouldSurfaceMemoryLifecycle(edge.Lifecycle, false) {
+			continue
+		}
+		if excluded, _ := m.memoryGraphEdgeExcluded(edge); excluded {
 			continue
 		}
 		edges = append(edges, edge)
@@ -255,6 +277,7 @@ func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectF
 		Corpus:                 "memory_store",
 		Status:                 status,
 		DocCount:               len(docs),
+		ExcludedDocCount:       excludedDocs,
 		EdgeCount:              len(edges),
 		ConnectedDocCount:      connectedDocCount,
 		IsolatedDocCount:       isolatedDocCount,
