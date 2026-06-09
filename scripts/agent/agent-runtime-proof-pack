@@ -30,6 +30,13 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def validation_status(payload: Any) -> str:
     data = as_dict(payload)
     contract = as_dict(data.get("format_contract"))
@@ -163,6 +170,8 @@ def bootstrap(args: argparse.Namespace, env: dict[str, str]) -> tuple[str, dict[
     session_id = str(payload.get("session_id") or "").strip()
     result = as_dict(payload.get("result"))
     objective_runtime = as_dict(result.get("objective_runtime"))
+    preflight = as_dict(result.get("preflight"))
+    skills_index = as_dict(preflight.get("skills_index"))
     require_phase("bootstrap", bool(payload.get("ok")) and bool(session_id), "missing_ok_or_session_id", payload)
     require_phase("bootstrap", payload.get("findings") in (None, []), "bootstrap_findings_present", payload)
     require_phase(
@@ -171,9 +180,17 @@ def bootstrap(args: argparse.Namespace, env: dict[str, str]) -> tuple[str, dict[
         "objective_runtime_contract_not_passed",
         payload,
     )
+    require_phase(
+        "bootstrap",
+        skills_index.get("ok", True) is not False and bool(skills_index.get("index")),
+        "skills_index_not_available",
+        payload,
+    )
     evidence = {
         "session_id": session_id,
-        "preflight": as_dict(result.get("preflight")),
+        "preflight": preflight,
+        "skills_index_returned": as_int(skills_index.get("returned")),
+        "skills_index_top": as_list(skills_index.get("top"))[:5],
         "objective_runtime_validation": validation_status(objective_runtime),
     }
     return session_id, phase_record("bootstrap", True, payload, evidence)
@@ -331,6 +348,46 @@ def status(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> di
     return phase_record("status", True, payload, evidence)
 
 
+def context_package(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
+    payload = run_json(
+        "context_package",
+        [str(SESSION), "context-package", "--session-id", session_id, "--timeout", str(args.timeout)],
+        args.timeout,
+        env,
+    )
+    context = as_dict(payload.get("context_package"))
+    rollup = as_dict(payload.get("rollup"))
+    retrieval_summary = as_dict(context.get("retrieval_summary"))
+    artifact_summary = as_dict(context.get("artifact_summary"))
+    risk_summary = as_dict(context.get("risk_summary"))
+    require_phase("context_package", bool(payload.get("ok")), "context_package_not_ok", payload)
+    require_phase(
+        "context_package",
+        validation_status(payload) == "passed",
+        "context_package_contract_not_passed",
+        payload,
+    )
+    require_phase(
+        "context_package",
+        bool(str(payload.get("reference_prompt") or "").strip()),
+        "context_package_missing_reference_prompt",
+        payload,
+    )
+    evidence = {
+        "session_id": session_id,
+        "context_package_validation": validation_status(payload),
+        "recommended_surface": context.get("recommended_surface"),
+        "confidence": context.get("confidence"),
+        "rollup_validation": validation_status(rollup),
+        "retrieval_summary": retrieval_summary,
+        "artifact_summary": artifact_summary,
+        "risk_summary": risk_summary,
+        "recent_event_count": len(as_list(context.get("recent_events"))),
+        "reference_prompt_chars": len(str(payload.get("reference_prompt") or "")),
+    }
+    return phase_record("context_package", True, payload, evidence)
+
+
 def runtime(args: argparse.Namespace, session_id: str, env: dict[str, str]) -> dict[str, Any]:
     payload = run_json(
         "runtime",
@@ -390,7 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", "codex_gpt5"))
     parser.add_argument("--mission", default="make ContextLattice coordinate any agent runtime")
     parser.add_argument("--objective", default="prove the ContextLattice agent runtime contract end to end")
-    parser.add_argument("--goal", default="bootstrap, retrieve, checkpoint, handoff, complete, and expose runtime evidence")
+    parser.add_argument("--goal", default="bootstrap, retrieve, checkpoint, handoff, complete, package context, and expose runtime evidence")
     parser.add_argument("--topic-path", default="runbooks/codex-integration")
     parser.add_argument("--query", default="")
     parser.add_argument("--mode", default="balanced")
@@ -424,6 +481,7 @@ def main() -> int:
         phases.append(handoff(args, session_id, env))
         phases.append(complete(args, session_id, env))
         phases.append(status(args, session_id, env))
+        phases.append(context_package(args, session_id, env))
         phases.append(runtime(args, session_id, env))
         output = {
             "ok": True,
