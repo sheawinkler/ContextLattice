@@ -36,6 +36,11 @@ type memoryStorePolicy struct {
 	maxRecent                  int
 	maxEdges                   int
 	maxEdgeNeighbors           int
+	graphExcludeLowValue       bool
+	graphExcludeTopicPrefixes  []string
+	graphExcludeFilePatterns   []string
+	graphExcludeFileSuffixes   []string
+	graphExcludeRootJSON       []string
 	scanLimit                  int
 	maxSummaryChars            int
 	maxRollupSnippets          int
@@ -159,6 +164,11 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		maxRecent:                  clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
 		maxEdges:                   clampInt(envInt("GO_MEMORY_GRAPH_EDGE_MAX", 100000), 100, 1000000),
 		maxEdgeNeighbors:           clampInt(envInt("GO_MEMORY_GRAPH_EDGE_NEIGHBOR_MAX", 200), 1, 1000),
+		graphExcludeLowValue:       envBool("GO_MEMORY_GRAPH_EXCLUDE_LOW_VALUE", true),
+		graphExcludeTopicPrefixes:  memoryGraphCSVEnvWithFallback("GO_MEMORY_GRAPH_EXCLUDE_TOPIC_PREFIXES", "LOW_VALUE_TOPIC_PREFIXES", "telemetry,metrics,signals,overrides,perf,tmp,state,states,snapshots,health,stats,allocations,system_state,logs,log,debug,trace,queue"),
+		graphExcludeFilePatterns:   memoryGraphCSVEnvWithFallback("GO_MEMORY_GRAPH_EXCLUDE_FILE_PATTERNS", "LOW_VALUE_FILE_PATTERNS", "index__*.json,*_agg-latest.json,*_agg-*.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json,*__import-*.json,*__imports__*.json,*.log,*.ndjson,*.jsonl"),
+		graphExcludeFileSuffixes:   memoryGraphCSVEnvWithFallback("GO_MEMORY_GRAPH_EXCLUDE_FILE_SUFFIXES", "LOW_VALUE_FILE_SUFFIXES", "__latest.json,__rollup.json,.log,.ndjson,.jsonl"),
+		graphExcludeRootJSON:       memoryGraphCSVEnvWithFallback("GO_MEMORY_GRAPH_EXCLUDE_ROOT_JSON_PREFIXES", "LETTA_LOW_VALUE_ROOT_JSON_PREFIXES", "arena__,risk__,dex__,operating_mode__,router__,portfolio__,positions__,strategy__,orderbook__,pricing__,discovery__,attribution__,exits__,trades__"),
 		scanLimit:                  clampInt(envInt("GO_MEMORY_STORE_SCAN_LIMIT", 250000), 256, 1000000),
 		maxSummaryChars:            clampInt(envInt("GO_MEMORY_STORE_MAX_SUMMARY_CHARS", 400), 80, 4000),
 		maxRollupSnippets:          clampInt(envInt("GO_MEMORY_STORE_ROLLUP_SNIPPETS", 3), 1, 8),

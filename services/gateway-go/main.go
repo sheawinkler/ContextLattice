@@ -6731,6 +6731,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/trading/history", s.telemetryTradingHistoryRoute)
 	mux.HandleFunc("/telemetry/", s.telemetryRoute)
 	mux.HandleFunc("/maintenance/storage/run", s.storageMaintenanceRun)
+	mux.HandleFunc("/maintenance/memory/graph/prune-volatile", s.maintenanceMemoryGraphPruneVolatile)
 	mux.HandleFunc("/maintenance/telemetry/blob-gc", s.telemetryBlobGC)
 	mux.HandleFunc("/maintenance/", s.maintenanceRoute)
 	mux.HandleFunc("/ops/queue/status", s.opsQueueStatus)

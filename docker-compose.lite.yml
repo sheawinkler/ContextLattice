@@ -655,6 +655,11 @@ services:
       GO_MEMORY_GRAPH_EDGE_STARTUP_MAX_LINES: ${GO_MEMORY_GRAPH_EDGE_STARTUP_MAX_LINES:-50000}
       GO_MEMORY_GRAPH_EDGE_MAX: ${GO_MEMORY_GRAPH_EDGE_MAX:-100000}
       GO_MEMORY_GRAPH_EDGE_NEIGHBOR_MAX: ${GO_MEMORY_GRAPH_EDGE_NEIGHBOR_MAX:-200}
+      GO_MEMORY_GRAPH_EXCLUDE_LOW_VALUE: ${GO_MEMORY_GRAPH_EXCLUDE_LOW_VALUE:-true}
+      GO_MEMORY_GRAPH_EXCLUDE_TOPIC_PREFIXES: ${GO_MEMORY_GRAPH_EXCLUDE_TOPIC_PREFIXES:-telemetry,metrics,signals,overrides,perf,tmp,state,states,snapshots,health,stats,allocations,system_state,logs,log,debug,trace,queue}
+      GO_MEMORY_GRAPH_EXCLUDE_FILE_PATTERNS: ${GO_MEMORY_GRAPH_EXCLUDE_FILE_PATTERNS:-index__*.json,*_agg-latest.json,*_agg-*.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json,*__import-*.json,*__imports__*.json,*.log,*.ndjson,*.jsonl}
+      GO_MEMORY_GRAPH_EXCLUDE_FILE_SUFFIXES: ${GO_MEMORY_GRAPH_EXCLUDE_FILE_SUFFIXES:-__latest.json,__rollup.json,.log,.ndjson,.jsonl}
+      GO_MEMORY_GRAPH_EXCLUDE_ROOT_JSON_PREFIXES: ${GO_MEMORY_GRAPH_EXCLUDE_ROOT_JSON_PREFIXES:-arena__,risk__,dex__,operating_mode__,router__,portfolio__,positions__,strategy__,orderbook__,pricing__,discovery__,attribution__,exits__,trades__}
       GO_MEMORY_STORE_MAX_RECENT: ${GO_MEMORY_STORE_MAX_RECENT:-6000}
       GO_MEMORY_STORE_HISTORY_STARTUP_MAX_LINES: ${GO_MEMORY_STORE_HISTORY_STARTUP_MAX_LINES:-20000}
       GO_MEMORY_STORE_HISTORY_STARTUP_TAIL_MAX_BYTES: ${GO_MEMORY_STORE_HISTORY_STARTUP_TAIL_MAX_BYTES:-67108864}

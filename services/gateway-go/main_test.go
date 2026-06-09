@@ -852,6 +852,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/trading", s.telemetryTradingRoute)`,
 		`mux.HandleFunc("/telemetry/trading/history", s.telemetryTradingHistoryRoute)`,
 		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
+		`mux.HandleFunc("/maintenance/memory/graph/prune-volatile", s.maintenanceMemoryGraphPruneVolatile)`,
 		`mux.HandleFunc("/maintenance/", s.maintenanceRoute)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)`,
