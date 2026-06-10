@@ -157,6 +157,15 @@ def cmd_context_package(args: argparse.Namespace) -> int:
     return 0 if raw.get("ok") else 1
 
 
+def cmd_trace(args: argparse.Namespace) -> int:
+    session_id = args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+    if not session_id:
+        raise SystemExit("session id is required; pass --session-id or set CONTEXTLATTICE_SESSION_ID")
+    raw = request_json("GET", f"/v1/agents/sessions/{session_id}/trace", None, args.timeout)
+    emit(raw, args.pretty)
+    return 0 if raw.get("ok") else 1
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     params = {
         "limit": args.limit,
@@ -358,6 +367,10 @@ def main() -> int:
     context_package = sub.add_parser("context-package")
     add_common(context_package)
     context_package.set_defaults(func=cmd_context_package)
+
+    trace = sub.add_parser("trace")
+    add_common(trace)
+    trace.set_defaults(func=cmd_trace)
 
     list_cmd = sub.add_parser("list")
     add_common(list_cmd)

@@ -93,6 +93,23 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 		t.Fatalf("expected context contribution score, got %#v", contribution)
 	}
 
+	status, preflightEvent := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/events", `{
+		"type":"agent.preflight.completed",
+		"agent_id":"codex_gpt5_test",
+		"project":"contextlattice",
+		"summary":"prepare runtime coordination context",
+		"metadata":{
+			"skills_index_returned":1,
+			"skills_index":{
+				"returned":1,
+				"top":[{"name":"frontend-design","source":"codex-skills","path":"/Users/sheawinkler/.codex/skills/frontend-design/SKILL.md","score":98}]
+			}
+		}
+	}`)
+	if status != http.StatusOK || !anyToBool(preflightEvent["ok"]) {
+		t.Fatalf("expected preflight event ok, status=%d payload=%#v", status, preflightEvent)
+	}
+
 	status, graphEvent := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/events", `{
 		"type":"graph.neighbors_returned",
 		"summary":"contextlattice::notes/a.md",
@@ -104,6 +121,30 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	contribution = anyMap(anyMap(graphEvent["session"])["memory_contribution"])
 	if anyToInt(contribution["graph_touches"], 0) != 1 {
 		t.Fatalf("expected graph contribution, got %#v", contribution)
+	}
+
+	status, traceResponse := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/trace")
+	if status != http.StatusOK || !anyToBool(traceResponse["ok"]) {
+		t.Fatalf("expected trace route ok, status=%d payload=%#v", status, traceResponse)
+	}
+	if anyToString(traceResponse["schema_id"]) != agentRunTraceContractID {
+		t.Fatalf("expected run trace contract, got %#v", traceResponse)
+	}
+	timeline, _ := traceResponse["timeline"].([]any)
+	if len(timeline) == 0 {
+		t.Fatalf("expected trace timeline, got %#v", traceResponse)
+	}
+	runCard := anyMap(traceResponse["run_card"])
+	markdown := anyToString(runCard["markdown"])
+	if !strings.Contains(markdown, "Run-Shaping Evidence") || !strings.Contains(markdown, "Skills That May Be Helpful") {
+		t.Fatalf("expected run card sections, got %q", markdown)
+	}
+	if !strings.Contains(markdown, "frontend-design") {
+		t.Fatalf("expected captured skill in run card, got %q", markdown)
+	}
+	validation := anyMap(anyMap(traceResponse["format_contract"])["validation"])
+	if anyToString(validation["status"]) != "passed" {
+		t.Fatalf("expected trace contract validation to pass, got %#v", traceResponse["format_contract"])
 	}
 
 	status, runtime := getAgentSessionJSON(t, gateway.URL+"/telemetry/agents/runtime?limit=4")

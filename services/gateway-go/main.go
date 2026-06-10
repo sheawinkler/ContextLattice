@@ -2212,6 +2212,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 					"objective_state":       anyToString(objectiveRuntime["objective_state"]),
 					"next_action":           anyToString(objectiveRuntime["next_action"]),
 					"objective_runtime":     objectiveRuntime,
+					"skills_index":          skillsIndexPayload,
 					"skills_index_returned": anyToInt(skillsIndexPayload["returned"], 0),
 				},
 			})
@@ -2415,6 +2416,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"objective_state":        anyToString(objectiveRuntime["objective_state"]),
 				"next_action":            anyToString(objectiveRuntime["next_action"]),
 				"objective_runtime":      objectiveRuntime,
+				"skills_index":           skillsIndexPayload,
 				"skills_index_returned":  anyToInt(skillsIndexPayload["returned"], 0),
 			},
 		})

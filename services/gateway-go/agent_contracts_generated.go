@@ -16,6 +16,7 @@ const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
 const GeneratedAgentContractAgentPreflightResponseV1 = "agent_preflight_response.v1"
 const GeneratedAgentContractAgentPromptContextPackageV1 = "agent_prompt_context_package.v1"
+const GeneratedAgentContractAgentRunTraceV1 = "agent_run_trace.v1"
 const GeneratedAgentContractAgentSessionRollupV1 = "agent_session_rollup.v1"
 const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
@@ -35,6 +36,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentFlightRecorderEventV1,
 	GeneratedAgentContractAgentPreflightResponseV1,
 	GeneratedAgentContractAgentPromptContextPackageV1,
+	GeneratedAgentContractAgentRunTraceV1,
 	GeneratedAgentContractAgentSessionRollupV1,
 	GeneratedAgentContractAgentSpanV1,
 	GeneratedAgentContractAgentTaskResultV1,
@@ -72,6 +74,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractAgentPromptContextPackageV1,
 		PayloadKind:        "agent_prompt_context_package",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentRunTraceV1,
+		PayloadKind:        "agent_run_trace",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

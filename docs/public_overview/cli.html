@@ -92,12 +92,13 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 contextlattice_write -h
 contextlattice_agent_adapter profiles
 contextlattice_agent_session runtime --pretty
+contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
 contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_agent_runtime_proof --pretty
-contextlattice_agent_adoption_proof --skip-provider-smoke --pretty
+contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 contextlattice_skills_index search "browser automation" --pretty
 contextlattice_agent_start -h
 contextlattice_checkpoint -h
@@ -129,7 +130,7 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 contextlattice_agent_runtime_proof --pretty
 
 # prove the same lifecycle across configured profiles
-contextlattice_agent_adoption_proof --skip-provider-smoke --pretty
+contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 
 # start or recover a ContextLattice-owned session
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
@@ -145,8 +146,10 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 
 # package the session for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty</code></pre>
-        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run.</p>
+contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+contextlattice_agent_trace --session-id "$SESSION_ID" --markdown</code></pre>
+        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the trace command turns the same evidence into a terminal view or exportable run card.</p>
       </article>
     </section>
 

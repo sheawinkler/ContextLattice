@@ -42,6 +42,31 @@ func agentSessionsPath() string {
 	return filepath.Clean(path)
 }
 
+func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(bodyBytes)) == "" {
+		return map[string]any{}, nil
+	}
+	return parseJSONMap(bodyBytes)
+}
+
+func parseISOTime(value string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		parsed, err := time.Parse(layout, trimmed)
+		if err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
 func newAgentSessionStoreFromEnv() (*agentSessionStore, error) {
 	store := &agentSessionStore{
 		path:      agentSessionsPath(),
@@ -344,29 +369,84 @@ func normalizeAgentContribution(input map[string]any) map[string]any {
 	return out
 }
 
-func parseISOTime(value string) (time.Time, bool) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return time.Time{}, false
+func agentSessionListLimit[T any](items []T, limit int) []T {
+	if limit < 0 {
+		limit = 0
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		parsed, err := time.Parse(layout, trimmed)
-		if err == nil {
-			return parsed.UTC(), true
-		}
+	if len(items) <= limit {
+		return items
 	}
-	return time.Time{}, false
+	return items[:limit]
 }
 
-func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
-	bodyBytes, err := readRequestBody(r)
-	if err != nil {
-		return nil, err
+func sortedStringSet(values map[string]struct{}, limit int) []any {
+	items := make([]string, 0, len(values))
+	for value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			items = append(items, value)
+		}
 	}
-	if strings.TrimSpace(string(bodyBytes)) == "" {
-		return map[string]any{}, nil
+	sort.Strings(items)
+	items = agentSessionListLimit(items, limit)
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item)
 	}
-	return parseJSONMap(bodyBytes)
+	return out
+}
+
+func addAgentSessionStrings(set map[string]struct{}, value any, limit int) {
+	if len(set) >= limit {
+		return
+	}
+	switch typed := value.(type) {
+	case string:
+		if text := strings.TrimSpace(typed); text != "" {
+			set[clipText(text, 96)] = struct{}{}
+		}
+	case []any:
+		for _, item := range typed {
+			addAgentSessionStrings(set, item, limit)
+			if len(set) >= limit {
+				return
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			addAgentSessionStrings(set, item, limit)
+			if len(set) >= limit {
+				return
+			}
+		}
+	}
+}
+
+func addAgentSessionSourceCoverage(returned map[string]struct{}, pending map[string]struct{}, failed map[string]struct{}, value any, limit int) {
+	coverage := anyMap(value)
+	for _, key := range []string{
+		"returned",
+		"returned_now",
+		"sources",
+	} {
+		addAgentSessionStrings(returned, coverage[key], limit)
+	}
+	for _, key := range []string{
+		"pending",
+		"pending_sources",
+		"warming",
+		"deferred",
+	} {
+		addAgentSessionStrings(pending, coverage[key], limit)
+	}
+	for _, key := range []string{
+		"failed",
+		"failed_sources",
+		"timed_out",
+		"budget_exceeded",
+	} {
+		addAgentSessionStrings(failed, coverage[key], limit)
+	}
 }
 
 func bumpContribution(contribution map[string]any, eventType string, metadata map[string]any, at string) map[string]any {
@@ -409,6 +489,510 @@ func bumpContribution(contribution map[string]any, eventType string, metadata ma
 		out["last_contributed_at"] = at
 	}
 	return out
+}
+
+func agentSessionPhase(eventType string) string {
+	lower := strings.ToLower(strings.TrimSpace(eventType))
+	switch {
+	case lower == "session.started" || strings.Contains(lower, "preflight") || strings.Contains(lower, "bootstrap"):
+		return "bootstrap"
+	case strings.Contains(lower, "context_pack") || strings.Contains(lower, "context.package") || strings.Contains(lower, "context_package") || strings.Contains(lower, "retrieval"):
+		return "context"
+	case strings.Contains(lower, "writeback") || strings.Contains(lower, "checkpoint"):
+		return "memory_write"
+	case strings.Contains(lower, "graph") || strings.Contains(lower, "edge") || strings.Contains(lower, "neighbor"):
+		return "graph"
+	case strings.Contains(lower, "dream"):
+		return "dream"
+	case strings.Contains(lower, "decision"):
+		return "decision"
+	case strings.Contains(lower, "test") || strings.Contains(lower, "verify") || strings.Contains(lower, "check"):
+		return "verification"
+	case strings.Contains(lower, "handoff") || strings.Contains(lower, "compact"):
+		return "handoff"
+	case strings.Contains(lower, "complete"):
+		return "completion"
+	case strings.Contains(lower, "fail") || strings.Contains(lower, "block") || strings.Contains(lower, "risk"):
+		return "risk"
+	default:
+		return "event"
+	}
+}
+
+func compactAgentSessionRecentEvent(event map[string]any) map[string]any {
+	metadata := anyMap(event["metadata"])
+	return map[string]any{
+		"id":         clipText(anyToString(event["id"]), 128),
+		"type":       clipText(anyToString(event["type"]), 96),
+		"phase":      agentSessionPhase(anyToString(event["type"])),
+		"summary":    clipText(anyToString(event["summary"]), 240),
+		"status":     normalizeAgentSessionStatus(anyToString(event["status"])),
+		"created_at": anyToString(event["created_at"]),
+		"memory_hits": func() int {
+			return anyToInt(metadata["memory_hits"], -1)
+		}(),
+		"result_count": func() int {
+			return anyToInt(metadata["result_count"], -1)
+		}(),
+	}
+}
+
+func agentSessionDurationSecs(session map[string]any, now time.Time) float64 {
+	started, ok := parseISOTime(anyToString(session["started_at"]))
+	if !ok {
+		return 0
+	}
+	end := now
+	if completed, ok := parseISOTime(anyToString(session["completed_at"])); ok {
+		end = completed
+	} else if updated, ok := parseISOTime(anyToString(session["updated_at"])); ok {
+		end = updated
+	}
+	if end.Before(started) {
+		return 0
+	}
+	return roundFloat(end.Sub(started).Seconds(), 3)
+}
+
+func agentSessionRollupConfidence(session map[string]any, contribution map[string]any, phaseCounts map[string]int, risks []any) int {
+	score := 10
+	if anyToString(session["objective"]) != "" {
+		score += 10
+	}
+	if phaseCounts["bootstrap"] > 0 {
+		score += 8
+	}
+	if phaseCounts["context"] > 0 {
+		score += 16
+	}
+	if anyToInt(contribution["writebacks"], 0) > 0 || phaseCounts["memory_write"] > 0 {
+		score += 14
+	}
+	if anyToInt(contribution["graph_touches"], 0) > 0 {
+		score += 8
+	}
+	if phaseCounts["verification"] > 0 {
+		score += 10
+	}
+	if phaseCounts["handoff"] > 0 {
+		score += 12
+	}
+	if normalizeAgentSessionStatus(anyToString(session["status"])) == "completed" {
+		score += 12
+	}
+	if len(risks) > 0 {
+		score -= minInt(len(risks)*8, 24)
+	}
+	status := normalizeAgentSessionStatus(anyToString(session["status"]))
+	if status == "failed" || status == "blocked" {
+		score -= 12
+	}
+	return clampInt(score, 0, 100)
+}
+
+func agentSessionPhaseCountsObject(phaseCounts map[string]int) map[string]any {
+	out := make(map[string]any, len(phaseCounts))
+	for key, value := range phaseCounts {
+		out[key] = value
+	}
+	return out
+}
+
+func buildAgentSessionRollup(session map[string]any, events []map[string]any, now time.Time) map[string]any {
+	session = cloneAnyMap(session)
+	contribution := normalizeAgentContribution(anyMap(session["memory_contribution"]))
+	phaseCounts := map[string]int{}
+	returnedSources := map[string]struct{}{}
+	pendingSources := map[string]struct{}{}
+	failedSources := map[string]struct{}{}
+	artifacts := []any{}
+	risks := []any{}
+	recent := []any{}
+	memoryHits := anyToInt(contribution["memory_hits"], 0)
+	resultCount := 0
+	for _, event := range events {
+		eventType := anyToString(event["type"])
+		phase := agentSessionPhase(eventType)
+		phaseCounts[phase]++
+		metadata := anyMap(event["metadata"])
+		if hits := anyToInt(metadata["memory_hits"], -1); hits > memoryHits {
+			memoryHits = hits
+		}
+		if results := anyToInt(metadata["result_count"], -1); results > resultCount {
+			resultCount = results
+		}
+		addAgentSessionSourceCoverage(returnedSources, pendingSources, failedSources, metadata["source_coverage"], 32)
+		addAgentSessionSourceCoverage(returnedSources, pendingSources, failedSources, metadata["retrieval"], 32)
+		addAgentSessionStrings(returnedSources, anyMap(metadata["source_summary"])["returned_now"], 32)
+		addAgentSessionStrings(pendingSources, anyMap(metadata["source_summary"])["pending_sources"], 32)
+		addAgentSessionStrings(failedSources, anyMap(metadata["source_summary"])["failed_sources"], 32)
+		lower := strings.ToLower(eventType + " " + anyToString(event["summary"]))
+		if strings.Contains(lower, "handoff") || strings.Contains(lower, "checkpoint") || strings.Contains(lower, "writeback") || strings.Contains(lower, "pr") || strings.Contains(lower, "test") {
+			artifacts = append(artifacts, map[string]any{
+				"type":       clipText(eventType, 96),
+				"summary":    clipText(anyToString(event["summary"]), 240),
+				"created_at": anyToString(event["created_at"]),
+			})
+		}
+		if phase == "risk" {
+			risks = append(risks, map[string]any{
+				"type":       clipText(eventType, 96),
+				"summary":    clipText(anyToString(event["summary"]), 240),
+				"created_at": anyToString(event["created_at"]),
+			})
+		}
+	}
+	recentStart := maxInt(0, len(events)-8)
+	for _, event := range events[recentStart:] {
+		recent = append(recent, compactAgentSessionRecentEvent(event))
+	}
+	lastAgeSecs := 0.0
+	if lastAt, ok := parseISOTime(anyToString(session["last_event_at"])); ok {
+		lastAgeSecs = roundFloat(now.Sub(lastAt).Seconds(), 3)
+	}
+	missing := []any{}
+	if phaseCounts["context"] == 0 {
+		missing = append(missing, "context_pack")
+	}
+	if anyToInt(contribution["writebacks"], 0) == 0 && phaseCounts["memory_write"] == 0 {
+		missing = append(missing, "checkpoint_or_writeback")
+	}
+	if phaseCounts["handoff"] == 0 && normalizeAgentSessionStatus(anyToString(session["status"])) == "completed" {
+		missing = append(missing, "handoff")
+	}
+	promptReady := phaseCounts["context"] > 0 || memoryHits > 0 || anyToInt(contribution["score"], 0) >= 20
+	if len(risks) > 0 {
+		promptReady = promptReady && normalizeAgentSessionStatus(anyToString(session["status"])) != "failed"
+	}
+	rollup := map[string]any{
+		"ok":                  true,
+		"schema_id":           agentSessionRollupContractID,
+		"session_id":          anyToString(session["id"]),
+		"agent":               anyToString(session["agent"]),
+		"agent_id":            anyToString(session["agent_id"]),
+		"project":             anyToString(session["project"]),
+		"status":              normalizeAgentSessionStatus(anyToString(session["status"])),
+		"objective":           clipText(anyToString(session["objective"]), 1200),
+		"mission":             clipText(anyToString(session["mission"]), 1200),
+		"goal":                clipText(anyToString(session["goal"]), 1200),
+		"objective_state":     clipText(firstNonEmptyStrings(anyToString(session["objective_state"]), anyToString(anyMap(session["objective_runtime"])["objective_state"])), 80),
+		"next_action":         clipText(firstNonEmptyStrings(anyToString(session["next_action"]), anyToString(anyMap(session["objective_runtime"])["next_action"])), 720),
+		"started_at":          anyToString(session["started_at"]),
+		"updated_at":          anyToString(session["updated_at"]),
+		"completed_at":        anyToString(session["completed_at"]),
+		"duration_secs":       agentSessionDurationSecs(session, now),
+		"last_event_type":     anyToString(session["last_event_type"]),
+		"last_event_at":       anyToString(session["last_event_at"]),
+		"last_event_age_secs": lastAgeSecs,
+		"event_count":         anyToInt(session["event_count"], len(events)),
+		"phase_counts":        agentSessionPhaseCountsObject(phaseCounts),
+		"memory_contribution": contribution,
+		"retrieval_summary": map[string]any{
+			"memory_hits":      memoryHits,
+			"result_count":     resultCount,
+			"returned_sources": sortedStringSet(returnedSources, 16),
+			"pending_sources":  sortedStringSet(pendingSources, 16),
+			"failed_sources":   sortedStringSet(failedSources, 8),
+		},
+		"artifact_summary": map[string]any{
+			"checkpoints":   anyToInt(contribution["writebacks"], 0),
+			"handoffs":      anyToInt(contribution["handoffs"], 0),
+			"graph_touches": anyToInt(contribution["graph_touches"], 0),
+			"dream_outputs": anyToInt(contribution["dream_outputs"], 0),
+			"tests":         anyToInt(contribution["tests"], 0),
+			"prs":           anyToInt(contribution["prs"], 0),
+			"recent":        agentSessionListLimit(artifacts, 12),
+		},
+		"risk_summary": map[string]any{
+			"missing": missing,
+			"risks":   agentSessionListLimit(risks, 8),
+		},
+		"prompt_package": map[string]any{
+			"ready":        promptReady,
+			"endpoint":     "/v1/agents/sessions/" + anyToString(session["id"]) + "/context-package",
+			"cli_command":  "contextlattice_agent_session context-package --session-id " + anyToString(session["id"]) + " --pretty",
+			"best_surface": "cli_for_local_agents_http_for_apps_mcp_for_tool_calling_hosts",
+		},
+		"confidence":    agentSessionRollupConfidence(session, contribution, phaseCounts, risks),
+		"recent_events": recent,
+	}
+	return attachPayloadFormatContract(agentSessionRollupContractID, rollup, anyToString(session["agent_id"]), "session_rollup", "/v1/agents/sessions/{session_id}/rollup")
+}
+
+func buildAgentPromptContextPackage(session map[string]any, events []map[string]any, now time.Time) map[string]any {
+	rollup := buildAgentSessionRollup(session, events, now)
+	retrievalSummary := anyMap(rollup["retrieval_summary"])
+	artifactSummary := anyMap(rollup["artifact_summary"])
+	riskSummary := anyMap(rollup["risk_summary"])
+	sessionID := anyToString(rollup["session_id"])
+	objective := firstNonEmptyStrings(anyToString(rollup["objective"]), anyToString(rollup["goal"]), "Continue the agent objective using available evidence.")
+	nextAction := firstNonEmptyStrings(anyToString(rollup["next_action"]), "Inspect the rollup, retrieve missing context, and execute the smallest evidence-backed next action.")
+	referencePrompt := strings.Join([]string{
+		"Use this ContextLattice session package as the factual context for the next reasoning step.",
+		"Session: " + sessionID,
+		"Agent: " + firstNonEmptyStrings(anyToString(rollup["agent"]), anyToString(rollup["agent_id"]), "agent"),
+		"Project: " + anyToString(rollup["project"]),
+		"Objective: " + objective,
+		"Status: " + anyToString(rollup["status"]) + " / last event " + anyToString(rollup["last_event_type"]),
+		"Memory contribution score: " + anyToString(anyMap(rollup["memory_contribution"])["score"]),
+		"Retrieved sources: " + strings.Join(anyToStringList(retrievalSummary["returned_sources"], 16), ", "),
+		"Artifacts: checkpoints=" + anyToString(artifactSummary["checkpoints"]) + ", handoffs=" + anyToString(artifactSummary["handoffs"]) + ", graph=" + anyToString(artifactSummary["graph_touches"]) + ", tests=" + anyToString(artifactSummary["tests"]),
+		"Risks or missing evidence: " + strings.Join(anyToStringList(riskSummary["missing"], 12), ", "),
+		"Next action: " + nextAction,
+		"Do not treat this package as proof beyond the listed evidence; retrieve or inspect artifacts before making new claims.",
+	}, "\n")
+	payload := map[string]any{
+		"ok":         true,
+		"schema_id":  agentPromptContextPackageContractID,
+		"session_id": sessionID,
+		"agent":      anyToString(rollup["agent"]),
+		"agent_id":   anyToString(rollup["agent_id"]),
+		"project":    anyToString(rollup["project"]),
+		"rollup":     rollup,
+		"context_package": map[string]any{
+			"objective":           objective,
+			"mission":             anyToString(rollup["mission"]),
+			"goal":                anyToString(rollup["goal"]),
+			"current_state":       anyToString(rollup["objective_state"]),
+			"next_action":         nextAction,
+			"retrieval_summary":   retrievalSummary,
+			"artifact_summary":    artifactSummary,
+			"risk_summary":        riskSummary,
+			"recent_events":       rollup["recent_events"],
+			"confidence":          rollup["confidence"],
+			"source":              "contextlattice_agent_session_rollup",
+			"intended_use":        "repackage the next agent/model prompt with bounded evidence, state, risks, and next action",
+			"recommended_surface": "cli_for_local_agents",
+			"alternate_surfaces": []any{
+				"http_for_app_integrations",
+				"mcp_for_tool_calling_hosts",
+			},
+		},
+		"reference_prompt": clipText(referencePrompt, 5000),
+	}
+	return attachPayloadFormatContract(agentPromptContextPackageContractID, payload, anyToString(rollup["agent_id"]), "prompt_context_package", "/v1/agents/sessions/{session_id}/context-package")
+}
+
+func compactAgentTraceSourceSummary(metadata map[string]any) map[string]any {
+	returnedSources := map[string]struct{}{}
+	pendingSources := map[string]struct{}{}
+	failedSources := map[string]struct{}{}
+	addAgentSessionSourceCoverage(returnedSources, pendingSources, failedSources, metadata["source_coverage"], 16)
+	addAgentSessionSourceCoverage(returnedSources, pendingSources, failedSources, metadata["retrieval"], 16)
+	addAgentSessionStrings(returnedSources, anyMap(metadata["source_summary"])["returned_now"], 16)
+	addAgentSessionStrings(pendingSources, anyMap(metadata["source_summary"])["pending_sources"], 16)
+	addAgentSessionStrings(failedSources, anyMap(metadata["source_summary"])["failed_sources"], 16)
+	out := map[string]any{}
+	if len(returnedSources) > 0 {
+		out["returned_sources"] = sortedStringSet(returnedSources, 12)
+	}
+	if len(pendingSources) > 0 {
+		out["pending_sources"] = sortedStringSet(pendingSources, 12)
+	}
+	if len(failedSources) > 0 {
+		out["failed_sources"] = sortedStringSet(failedSources, 8)
+	}
+	return out
+}
+
+func compactAgentTraceEvent(event map[string]any) map[string]any {
+	metadata := anyMap(event["metadata"])
+	out := map[string]any{
+		"id":         clipText(anyToString(event["id"]), 96),
+		"type":       clipText(anyToString(event["type"]), 96),
+		"phase":      agentSessionPhase(anyToString(event["type"])),
+		"summary":    clipText(anyToString(event["summary"]), 280),
+		"status":     normalizeAgentSessionStatus(anyToString(event["status"])),
+		"created_at": anyToString(event["created_at"]),
+	}
+	if hits := anyToInt(metadata["memory_hits"], -1); hits >= 0 {
+		out["memory_hits"] = hits
+	}
+	if count := anyToInt(metadata["result_count"], -1); count >= 0 {
+		out["result_count"] = count
+	}
+	if topicPath := clipText(anyToString(metadata["topic_path"]), 180); topicPath != "" {
+		out["topic_path"] = topicPath
+	}
+	if mode := clipText(anyToString(metadata["retrieval_mode"]), 48); mode != "" {
+		out["retrieval_mode"] = mode
+	}
+	if sources := compactAgentTraceSourceSummary(metadata); len(sources) > 0 {
+		out["source_summary"] = sources
+	}
+	if edgeCount := anyToInt(metadata["edge_count"], -1); edgeCount >= 0 {
+		out["edge_count"] = edgeCount
+	}
+	if skillsReturned := anyToInt(metadata["skills_index_returned"], -1); skillsReturned >= 0 {
+		out["skills_index_returned"] = skillsReturned
+	}
+	return out
+}
+
+func agentTraceTimeline(events []map[string]any, limit int) []any {
+	if limit < 1 {
+		limit = 1
+	}
+	start := maxInt(0, len(events)-limit)
+	out := make([]any, 0, len(events)-start)
+	for _, event := range events[start:] {
+		out = append(out, compactAgentTraceEvent(event))
+	}
+	return out
+}
+
+func agentTraceEventsForPhase(events []map[string]any, phase string, limit int) []any {
+	out := []any{}
+	for i := len(events) - 1; i >= 0 && len(out) < limit; i-- {
+		event := events[i]
+		if agentSessionPhase(anyToString(event["type"])) == phase {
+			out = append(out, compactAgentTraceEvent(event))
+		}
+	}
+	return out
+}
+
+func agentTraceHelpfulSkills(events []map[string]any) map[string]any {
+	items := []any{}
+	returned := 0
+	for i := len(events) - 1; i >= 0; i-- {
+		metadata := anyMap(events[i]["metadata"])
+		skillsIndex := anyMap(metadata["skills_index"])
+		if len(skillsIndex) == 0 && anyToInt(metadata["skills_index_returned"], -1) >= 0 {
+			skillsIndex = map[string]any{"returned": metadata["skills_index_returned"]}
+		}
+		if len(skillsIndex) == 0 {
+			continue
+		}
+		returned = maxInt(returned, anyToInt(skillsIndex["returned"], 0))
+		topItems, _ := asAnySlice(skillsIndex["top"])
+		for _, raw := range topItems {
+			row := anyMap(raw)
+			name := clipText(anyToString(row["name"]), 120)
+			if name == "" {
+				continue
+			}
+			items = append(items, map[string]any{
+				"name":   name,
+				"source": clipText(anyToString(row["source"]), 64),
+				"path":   clipText(anyToString(row["path"]), 220),
+				"score":  anyToInt(row["score"], 0),
+			})
+			if len(items) >= 8 {
+				break
+			}
+		}
+		if len(items) >= 8 || returned > 0 {
+			break
+		}
+	}
+	return map[string]any{
+		"label":          "Skills that may be helpful for this work",
+		"returned_count": returned,
+		"items":          items,
+		"lookup_command": "contextlattice_skills_index search '<objective>' --pretty",
+	}
+}
+
+func buildAgentRunCardMarkdown(trace map[string]any) string {
+	session := anyMap(trace["session"])
+	runShaping := anyMap(trace["run_shaping"])
+	skills := anyMap(runShaping["skills"])
+	sources := anyMap(runShaping["sources"])
+	graph := anyMap(runShaping["graph"])
+	handoffs := anyToInt(anyMap(runShaping["handoffs"])["count"], 0)
+	checkpoints := anyToInt(anyMap(runShaping["checkpoints"])["count"], 0)
+	var b strings.Builder
+	b.WriteString("# ContextLattice Agent Run Card\n\n")
+	b.WriteString("- Session: `" + clipText(anyToString(session["id"]), 120) + "`\n")
+	b.WriteString("- Agent: `" + clipText(firstNonEmptyStrings(anyToString(session["agent"]), anyToString(session["agent_id"]), "agent"), 120) + "`\n")
+	b.WriteString("- Project: `" + clipText(anyToString(session["project"]), 120) + "`\n")
+	b.WriteString("- Status: `" + clipText(anyToString(session["status"]), 80) + "`\n")
+	b.WriteString("- Objective: " + clipText(anyToString(session["objective"]), 420) + "\n")
+	b.WriteString("- Next action: " + clipText(anyToString(session["next_action"]), 420) + "\n\n")
+	b.WriteString("## Run-Shaping Evidence\n\n")
+	b.WriteString("- Sources returned: " + strings.Join(anyToStringList(sources["returned_sources"], 12), ", ") + "\n")
+	b.WriteString("- Pending sources: " + strings.Join(anyToStringList(sources["pending_sources"], 12), ", ") + "\n")
+	b.WriteString("- Graph touches: " + anyToString(graph["touches"]) + "\n")
+	b.WriteString("- Checkpoints: " + anyToString(checkpoints) + "\n")
+	b.WriteString("- Handoffs: " + anyToString(handoffs) + "\n\n")
+	b.WriteString("## Skills That May Be Helpful\n\n")
+	skillItems, _ := asAnySlice(skills["items"])
+	if len(skillItems) == 0 {
+		b.WriteString("- No specific skill candidates were captured; run `" + clipText(anyToString(skills["lookup_command"]), 180) + "`.\n")
+	} else {
+		for _, item := range agentSessionListLimit(skillItems, 8) {
+			row := anyMap(item)
+			b.WriteString("- " + clipText(anyToString(row["name"]), 120))
+			if source := clipText(anyToString(row["source"]), 64); source != "" {
+				b.WriteString(" (" + source + ")")
+			}
+			b.WriteString("\n")
+		}
+	}
+	return clipText(b.String(), 6000)
+}
+
+func buildAgentRunTrace(session map[string]any, events []map[string]any, now time.Time) map[string]any {
+	rollup := buildAgentSessionRollup(session, events, now)
+	promptPackage := buildAgentPromptContextPackage(session, events, now)
+	retrievalSummary := anyMap(rollup["retrieval_summary"])
+	artifactSummary := anyMap(rollup["artifact_summary"])
+	prompt := anyMap(rollup["prompt_package"])
+	trace := map[string]any{
+		"ok":        true,
+		"schema_id": agentRunTraceContractID,
+		"session": map[string]any{
+			"id":              anyToString(rollup["session_id"]),
+			"agent":           anyToString(rollup["agent"]),
+			"agent_id":        anyToString(rollup["agent_id"]),
+			"project":         anyToString(rollup["project"]),
+			"status":          anyToString(rollup["status"]),
+			"objective":       anyToString(rollup["objective"]),
+			"objective_state": anyToString(rollup["objective_state"]),
+			"next_action":     anyToString(rollup["next_action"]),
+			"started_at":      anyToString(rollup["started_at"]),
+			"updated_at":      anyToString(rollup["updated_at"]),
+			"completed_at":    anyToString(rollup["completed_at"]),
+			"duration_secs":   rollup["duration_secs"],
+			"event_count":     rollup["event_count"],
+			"confidence":      rollup["confidence"],
+		},
+		"phase_counts":        rollup["phase_counts"],
+		"memory_contribution": rollup["memory_contribution"],
+		"run_shaping": map[string]any{
+			"context": map[string]any{
+				"validation":             anyToString(anyMap(anyMap(promptPackage["format_contract"])["validation"])["status"]),
+				"recommended_surface":    anyToString(anyMap(promptPackage["context_package"])["recommended_surface"]),
+				"reference_prompt_chars": len(anyToString(promptPackage["reference_prompt"])),
+				"prompt_ready":           anyToBool(prompt["ready"]),
+				"endpoint":               anyToString(prompt["endpoint"]),
+				"cli_command":            anyToString(prompt["cli_command"]),
+			},
+			"skills":      agentTraceHelpfulSkills(events),
+			"sources":     retrievalSummary,
+			"graph":       map[string]any{"touches": anyToInt(artifactSummary["graph_touches"], 0), "recent": agentTraceEventsForPhase(events, "graph", 8)},
+			"handoffs":    map[string]any{"count": anyToInt(artifactSummary["handoffs"], 0), "recent": agentTraceEventsForPhase(events, "handoff", 8)},
+			"checkpoints": map[string]any{"count": anyToInt(artifactSummary["checkpoints"], 0), "recent": agentTraceEventsForPhase(events, "memory_write", 8)},
+			"risks":       rollup["risk_summary"],
+		},
+		"timeline": agentTraceTimeline(events, 32),
+		"run_card": map[string]any{
+			"markdown":      "",
+			"json_endpoint": "/v1/agents/sessions/" + anyToString(rollup["session_id"]) + "/trace",
+			"cli_tree":      "contextlattice_agent_trace --session-id " + anyToString(rollup["session_id"]) + " --tree",
+			"cli_markdown":  "contextlattice_agent_trace --session-id " + anyToString(rollup["session_id"]) + " --markdown",
+		},
+		"limits": map[string]any{
+			"timeline_events": 32,
+			"skills":          8,
+			"graph_events":    8,
+			"handoffs":        8,
+			"checkpoints":     8,
+		},
+	}
+	anyMap(trace["run_card"])["markdown"] = buildAgentRunCardMarkdown(trace)
+	return attachPayloadFormatContract(agentRunTraceContractID, trace, anyToString(rollup["agent_id"]), "agent_run_trace", "/v1/agents/sessions/{session_id}/trace")
 }
 
 func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[string]any {
@@ -614,6 +1198,7 @@ func (s *agentSessionStore) list(status string, project string, agent string, li
 	project = strings.TrimSpace(project)
 	agent = strings.TrimSpace(agent)
 	limit = clampInt(limit, 1, 500)
+	now := time.Now().UTC()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows := make([]map[string]any, 0, limit)
@@ -632,7 +1217,9 @@ func (s *agentSessionStore) list(status string, project string, agent string, li
 		if agent != "" && !strings.EqualFold(anyToString(row["agent"]), agent) && !strings.EqualFold(anyToString(row["agent_id"]), agent) {
 			continue
 		}
-		rows = append(rows, cloneAnyMap(row))
+		copyRow := cloneAnyMap(row)
+		copyRow["rollup"] = buildAgentSessionRollup(copyRow, s.events[id], now)
+		rows = append(rows, copyRow)
 		if len(rows) >= limit {
 			break
 		}
@@ -688,6 +1275,7 @@ func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
 			if lastAt, ok := parseISOTime(anyToString(row["last_event_at"])); ok {
 				copyRow["last_event_age_secs"] = roundFloat(now.Sub(lastAt).Seconds(), 3)
 			}
+			copyRow["rollup"] = buildAgentSessionRollup(copyRow, s.events[id], now)
 			active = append(active, copyRow)
 		}
 	}
@@ -752,6 +1340,18 @@ func (s *server) agentsSessionsRoute(w http.ResponseWriter, r *http.Request) {
 			s.agentsSessionsEvent(w, r, sessionID)
 			return
 		}
+		if len(parts) == 2 && parts[1] == "rollup" {
+			s.agentsSessionRollup(w, r, sessionID)
+			return
+		}
+		if len(parts) == 2 && (parts[1] == "context-package" || parts[1] == "prompt-package") {
+			s.agentsSessionContextPackage(w, r, sessionID)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "trace" {
+			s.agentsSessionTrace(w, r, sessionID)
+			return
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session route not found"})
 	}
 }
@@ -809,6 +1409,10 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 	if startedEvent != nil {
 		response["event"] = startedEvent
 	}
+	if refreshed, events, ok := s.agentSessions.get(anyToString(session["id"])); ok {
+		response["session"] = refreshed
+		response["rollup"] = buildAgentSessionRollup(refreshed, events, time.Now().UTC())
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -822,7 +1426,50 @@ func (s *server) agentsSessionItem(w http.ResponseWriter, r *http.Request, sessi
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "events": events})
+	rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "events": events, "rollup": rollup})
+}
+
+func (s *server) agentsSessionRollup(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	session, events, ok := s.agentSessions.get(sessionID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
+		return
+	}
+	rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rollup": rollup})
+}
+
+func (s *server) agentsSessionContextPackage(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	session, events, ok := s.agentSessions.get(sessionID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
+		return
+	}
+	payload := buildAgentPromptContextPackage(session, events, time.Now().UTC())
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *server) agentsSessionTrace(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	session, events, ok := s.agentSessions.get(sessionID)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
+		return
+	}
+	trace := buildAgentRunTrace(session, events, time.Now().UTC())
+	writeJSON(w, http.StatusOK, trace)
 }
 
 func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -837,7 +1484,8 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "events": events})
+		rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "events": events, "rollup": rollup})
 	case http.MethodPost:
 		payload, err := readOptionalJSONBody(r)
 		if err != nil {
@@ -849,7 +1497,9 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "agent session event failed", "detail": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "event": event})
+		_, events, _ := s.agentSessions.get(anyToString(session["id"]))
+		rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "event": event, "rollup": rollup})
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 	}
