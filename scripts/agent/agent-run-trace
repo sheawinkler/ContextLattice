@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Fetch and render a bounded ContextLattice agent run trace."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+from _common import emit, read_agent_session_state, request_json
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def text(value: Any, fallback: str = "") -> str:
+    raw = str(value if value is not None else fallback).strip()
+    return raw if raw else fallback
+
+
+def short(value: Any, limit: int = 160) -> str:
+    raw = text(value)
+    if len(raw) <= limit:
+        return raw
+    return raw[: max(0, limit - 3)].rstrip() + "..."
+
+
+def csv(value: Any, limit: int = 8) -> str:
+    items = [text(item) for item in as_list(value)[:limit] if text(item)]
+    return ", ".join(items) if items else "none"
+
+
+def resolve_session_id(args: argparse.Namespace) -> str:
+    explicit = text(args.session_id) or text(os.getenv("CONTEXTLATTICE_SESSION_ID"))
+    if explicit:
+        return explicit
+    state = read_agent_session_state(args.project)
+    state_session_id = text(state.get("session_id"))
+    if state_session_id:
+        return state_session_id
+    raise SystemExit("session id is required; pass --session-id, set CONTEXTLATTICE_SESSION_ID, or start a ContextLattice agent session")
+
+
+def fetch_trace(args: argparse.Namespace) -> dict[str, Any]:
+    session_id = resolve_session_id(args)
+    return request_json("GET", f"/v1/agents/sessions/{quote(session_id, safe='')}/trace", None, args.timeout)
+
+
+def render_tree(trace: dict[str, Any]) -> str:
+    session = as_dict(trace.get("session"))
+    run_shaping = as_dict(trace.get("run_shaping"))
+    context = as_dict(run_shaping.get("context"))
+    skills = as_dict(run_shaping.get("skills"))
+    sources = as_dict(run_shaping.get("sources"))
+    graph = as_dict(run_shaping.get("graph"))
+    handoffs = as_dict(run_shaping.get("handoffs"))
+    checkpoints = as_dict(run_shaping.get("checkpoints"))
+    phase_counts = as_dict(trace.get("phase_counts"))
+    validation = text(as_dict(as_dict(trace.get("format_contract")).get("validation")).get("status"), "unknown")
+
+    lines = [
+        "ContextLattice Run Trace",
+        f"session {text(session.get('id'), 'unknown')} | {text(session.get('agent'), 'agent')} | {text(session.get('status'), 'unknown')} | confidence {as_int(session.get('confidence'))}",
+        f"objective: {short(session.get('objective'), 220)}",
+        f"next action: {short(session.get('next_action'), 220)}",
+        f"contract: {text(trace.get('schema_id'), 'agent_run_trace.v1')} | validation {validation}",
+        "",
+        "phases:",
+    ]
+    if phase_counts:
+        for name in sorted(phase_counts):
+            lines.append(f"  - {name}: {as_int(phase_counts.get(name))}")
+    else:
+        lines.append("  - none captured")
+
+    lines.extend(
+        [
+            "",
+            "context:",
+            f"  - validation: {text(context.get('validation'), 'unknown')}",
+            f"  - prompt ready: {str(bool(context.get('prompt_ready'))).lower()}",
+            f"  - reference prompt chars: {as_int(context.get('reference_prompt_chars'))}",
+            f"  - surface: {text(context.get('recommended_surface'), 'agent_reference_prompt')}",
+            "",
+            "skills that may be helpful for this work:",
+        ]
+    )
+    skill_items = as_list(skills.get("items"))
+    if skill_items:
+        for item in skill_items[:8]:
+            row = as_dict(item)
+            source = text(row.get("source"))
+            suffix = f" ({source})" if source else ""
+            score = as_int(row.get("score"))
+            score_suffix = f" score {score}" if score else ""
+            lines.append(f"  - {short(row.get('name'), 120)}{suffix}{score_suffix}")
+    else:
+        lines.append(f"  - none captured; search: {short(skills.get('lookup_command'), 180)}")
+
+    lines.extend(
+        [
+            "",
+            "sources:",
+            f"  - returned: {csv(sources.get('returned_sources'), 12)}",
+            f"  - pending: {csv(sources.get('pending_sources'), 12)}",
+            f"  - failed: {csv(sources.get('failed_sources'), 8)}",
+            "",
+            "run shaping:",
+            f"  - graph touches: {as_int(graph.get('touches'))}",
+            f"  - handoffs: {as_int(handoffs.get('count'))}",
+            f"  - checkpoints: {as_int(checkpoints.get('count'))}",
+            "",
+            "timeline:",
+        ]
+    )
+    for event in as_list(trace.get("timeline"))[-16:]:
+        row = as_dict(event)
+        lines.append(
+            "  - "
+            + " | ".join(
+                [
+                    text(row.get("phase"), "other"),
+                    text(row.get("type"), "event"),
+                    text(row.get("status"), "unknown"),
+                    short(row.get("summary"), 160),
+                ]
+            )
+        )
+    if not as_list(trace.get("timeline")):
+        lines.append("  - none captured")
+
+    run_card = as_dict(trace.get("run_card"))
+    lines.extend(
+        [
+            "",
+            "exports:",
+            f"  - json: {short(run_card.get('json_endpoint'), 180)}",
+            f"  - tree: {short(run_card.get('cli_tree'), 180)}",
+            f"  - markdown: {short(run_card.get('cli_markdown'), 180)}",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_markdown(trace: dict[str, Any]) -> str:
+    markdown = text(as_dict(trace.get("run_card")).get("markdown"))
+    if markdown:
+        return markdown.rstrip() + "\n"
+    return "# ContextLattice Agent Run Card\n\nNo run card was returned.\n"
+
+
+def write_or_print(body: str, output: str) -> None:
+    if output:
+        path = Path(output).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        return
+    sys.stdout.write(body)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Render the ContextLattice trace for an agent session.")
+    parser.add_argument("--session-id", default="", help="Agent session id. Defaults to CONTEXTLATTICE_SESSION_ID or persisted state.")
+    parser.add_argument("--project", default=os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice"))
+    parser.add_argument("--timeout", type=float, default=15.0)
+    parser.add_argument("--output", default="", help="Write rendered output to this path instead of stdout.")
+    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON when --json is used.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--json", action="store_true", help="Emit the raw contract-valid trace JSON.")
+    mode.add_argument("--tree", action="store_true", help="Emit a compact terminal tree.")
+    mode.add_argument("--markdown", action="store_true", help="Emit the exportable Markdown run card.")
+    args = parser.parse_args()
+
+    trace = fetch_trace(args)
+    ok = bool(trace.get("ok"))
+    if args.json:
+        if args.output:
+            body = json.dumps(trace, indent=2 if args.pretty else None, sort_keys=args.pretty) + "\n"
+            write_or_print(body, args.output)
+        else:
+            emit(trace, args.pretty)
+        return 0 if ok else 1
+    if args.markdown:
+        write_or_print(render_markdown(trace), args.output)
+    else:
+        write_or_print(render_tree(trace), args.output)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

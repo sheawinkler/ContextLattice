@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Audit ContextLattice memory topology policy and live graph surface."""
+
+from __future__ import annotations
+
+import argparse
+import urllib.parse
+from typing import Any
+
+from _common import contextlattice_base_url, emit, request_json
+
+
+REQUIRED_CLUSTERS = {
+    "base_default",
+    "vector_semantic",
+    "raw_audit",
+    "graph_relationships",
+    "deep_recall",
+    "lexical_acceleration",
+    "agent_runtime",
+    "inference_support",
+    "observability",
+}
+
+REQUIRED_PARTITION_KEYS = {"project", "topic_path", "session_id", "agent_id", "content_hash"}
+REQUIRED_SOURCE_LANES = {"topic_rollups", "qdrant", "mongo_raw", "letta", "memory_bank"}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def string_list(value: Any) -> list[str]:
+    return [str(item).strip() for item in as_list(value) if str(item).strip()]
+
+
+def check(name: str, ok: bool, detail: str = "", **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {"name": name, "ok": bool(ok)}
+    if detail:
+        row["detail"] = detail
+    row.update(extra)
+    return row
+
+
+def cluster_ids(topology: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for raw in as_list(topology.get("clusters")):
+        row = as_dict(raw)
+        cluster_id = str(row.get("id") or "").strip()
+        if cluster_id:
+            ids.add(cluster_id)
+    return ids
+
+
+def source_lane_names(topology: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for raw in as_list(topology.get("source_lanes")):
+        row = as_dict(raw)
+        source = str(row.get("source") or "").strip()
+        if source:
+            names.add(source)
+    return names
+
+
+def deployment_profile(topology: dict[str, Any], profile: str) -> dict[str, Any]:
+    profiles = as_dict(topology.get("deployment_profiles"))
+    return as_dict(profiles.get(profile))
+
+
+def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    topology = as_dict(storage.get("memoryTopology"))
+    checks: list[dict[str, Any]] = []
+    checks.append(
+        check(
+            "topology_schema",
+            topology.get("schema_id") == "contextlattice_memory_topology.v1",
+            schema=str(topology.get("schema_id") or ""),
+        )
+    )
+    checks.append(
+        check(
+            "base_default_profile",
+            topology.get("default_app_profile") == "base_default",
+            profile=str(topology.get("default_app_profile") or ""),
+        )
+    )
+    base_hot_path = string_list(topology.get("base_default_hot_path"))
+    checks.append(
+        check(
+            "base_hot_path",
+            base_hot_path == ["topic_rollups", "qdrant"],
+            hot_path=base_hot_path,
+        )
+    )
+    partitioning = as_dict(topology.get("partitioning"))
+    write_keys = set(string_list(partitioning.get("default_write_partition_keys")))
+    checks.append(
+        check(
+            "write_partition_keys",
+            REQUIRED_PARTITION_KEYS.issubset(write_keys),
+            missing=sorted(REQUIRED_PARTITION_KEYS - write_keys),
+            keys=sorted(write_keys),
+        )
+    )
+    ids = cluster_ids(topology)
+    checks.append(
+        check(
+            "required_clusters",
+            REQUIRED_CLUSTERS.issubset(ids),
+            missing=sorted(REQUIRED_CLUSTERS - ids),
+            clusters=sorted(ids),
+        )
+    )
+    lanes = source_lane_names(topology)
+    checks.append(
+        check(
+            "source_lanes",
+            REQUIRED_SOURCE_LANES.issubset(lanes),
+            missing=sorted(REQUIRED_SOURCE_LANES - lanes),
+            lanes=sorted(lanes),
+        )
+    )
+    if profile != "auto":
+        profile_payload = deployment_profile(topology, profile)
+        checks.append(check("deployment_profile", bool(profile_payload), profile=profile))
+        if profile == "hosted_lite":
+            checks.append(
+                check(
+                    "hosted_lite_hot_path",
+                    string_list(profile_payload.get("hot_path")) == ["topic_rollups"],
+                    hot_path=string_list(profile_payload.get("hot_path")),
+                )
+            )
+        elif profile == "local_lite":
+            checks.append(
+                check(
+                    "local_lite_hot_path",
+                    string_list(profile_payload.get("hot_path")) == ["topic_rollups", "qdrant"],
+                    hot_path=string_list(profile_payload.get("hot_path")),
+                )
+            )
+        elif profile in {"full", "ultra_dev"}:
+            hot_path = set(string_list(profile_payload.get("hot_path")))
+            checks.append(
+                check(
+                    "full_fabric_hot_path",
+                    {"topic_rollups", "qdrant", "weaviate", "postgres_pgvector"}.issubset(hot_path),
+                    hot_path=sorted(hot_path),
+                )
+            )
+    return checks, topology
+
+
+def fetch_graph(project: str, timeout: float) -> dict[str, Any]:
+    query = {"limit": "12", "stale_inferred_days": "14"}
+    if project:
+        query["project"] = project
+    return request_json("GET", "/telemetry/memory/graph?" + urllib.parse.urlencode(query), None, timeout)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit ContextLattice memory topology policy.")
+    parser.add_argument("--profile", choices=["auto", "hosted_lite", "local_lite", "full", "ultra_dev"], default="auto")
+    parser.add_argument("--project", default="")
+    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--graph-timeout", type=float, default=30)
+    parser.add_argument("--graph-required", action="store_true", help="Fail the audit if graph telemetry is unavailable.")
+    parser.add_argument("--skip-graph", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    storage = request_json("GET", "/telemetry/storage", None, args.timeout)
+    checks, topology = audit_topology(storage, args.profile)
+    graph: dict[str, Any] = {}
+    if not args.skip_graph:
+        try:
+            graph = fetch_graph(args.project, args.graph_timeout)
+            checks.append(check("graph_telemetry", bool(graph.get("ok")), status=str(graph.get("status") or "")))
+        except SystemExit:
+            raise
+        except Exception as exc:
+            checks.append(check("graph_telemetry", not args.graph_required, str(exc)[:500], degraded=True))
+
+    failed = [row for row in checks if not row.get("ok")]
+    payload = {
+        "ok": not failed,
+        "schema_id": "contextlattice_memory_topology_audit.v1",
+        "base_url": contextlattice_base_url(),
+        "profile": args.profile,
+        "checks": checks,
+        "failed": failed,
+        "topology": {
+            "schema_id": topology.get("schema_id"),
+            "default_app_profile": topology.get("default_app_profile"),
+            "base_default_hot_path": topology.get("base_default_hot_path"),
+            "cluster_count": len(as_list(topology.get("clusters"))),
+            "source_lanes": sorted(source_lane_names(topology)),
+            "recommendation": topology.get("recommendation"),
+        },
+        "graph": {
+            "ok": graph.get("ok"),
+            "status": graph.get("status"),
+            "quality_score": graph.get("quality_score"),
+            "project_count": len(as_list(graph.get("projects"))),
+            "recommendations": graph.get("recommendations") if isinstance(graph.get("recommendations"), list) else [],
+        },
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

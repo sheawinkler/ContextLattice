@@ -25,6 +25,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Unified write/read contract for memory and context.
 - Durable fanout across retrieval/storage lanes.
 - Staged retrieval (fast now, deep continuation when needed).
+- Agent sessions that turn prior work, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
 - Local-first deployment with optional hosted surfaces.
@@ -70,13 +71,13 @@ gmake quickstart
 ```bash
 curl -fsS http://127.0.0.1:8075/health | jq
 scripts/agent/agent-runtime-proof-pack --pretty
-scripts/agent/agent-adoption-proof-matrix --skip-provider-smoke --pretty
+scripts/agent/agent-adoption-proof-matrix --skip-provider-smoke --progress --pretty
 ```
 
 Expected:
 - `/health` returns `{"ok": true, ...}`
 - `agent-runtime-proof-pack` completes bootstrap, scoped recall, checkpoint, handoff, completion, status, prompt context package, and runtime telemetry phases.
-- `agent-adoption-proof-matrix` verifies configured agent profiles and reports the skills, context, session, graph, and handoff evidence shaping each run.
+- `agent-adoption-proof-matrix` verifies configured agent profiles and reports the skills, context, session, graph, and handoff evidence shaping each run, with trace commands for run-card export.
 
 ## Model Runtime
 
@@ -123,6 +124,7 @@ Installer and quickstart paths install agent helpers under `~/.contextlattice/bi
 ```bash
 contextlattice_agent_adapter profiles
 contextlattice_agent_start --soft --compact
+contextlattice_agent_trace --session-id <session-id> --tree
 contextlattice_pack "what should the next agent know?" --project my-project --pretty
 contextlattice_search -h
 contextlattice_write -h
@@ -132,6 +134,7 @@ contextlattice_source_backfill --source jsonl --path data.jsonl --project my-pro
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
+- `contextlattice_agent_trace` renders the bounded run-shaping trail as a terminal tree, JSON, or Markdown run card.
 - `contextlattice_pack` compiles a bounded prompt-ready packet with ranked evidence, files to inspect, risks, checks, source coverage, and a `reference_prompt`.
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
 - `contextlattice_source_backfill` imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.
@@ -143,12 +146,14 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 
 - Start/list/read sessions through `GET|POST /v1/agents/sessions` and `GET /v1/agents/sessions/{session_id}`.
 - Emit normalized events through `POST /v1/agents/sessions/event` or `POST /v1/agents/sessions/{session_id}/events`.
+- Inspect a bounded run trace through `GET /v1/agents/sessions/{session_id}/trace`; the trace reports context, skills that may be helpful, source coverage, graph touches, handoffs, checkpoints, and timeline events without raw provider payloads.
 - Read live runtime telemetry from `GET /telemetry/agents/runtime`.
 - Compile task context through `POST /memory/context-pack`, `POST /tools/context_pack`, or global `contextlattice_pack`; responses include `context_compiler`, ranked evidence, prompt sections, and a bounded `reference_prompt`.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
-- Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime flows.
+- Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime/trace flows.
+- Use `scripts/agent/agent-run-trace --session-id <id> --tree` or global `contextlattice_agent_trace --session-id <id> --tree` to see the terminal trace, then `--markdown` to export the run card.
 - Use `scripts/agent/contextlattice-session sweep-stale-audits --all-projects --pretty` for dry-run-first cleanup of stale objective-runtime audit/preflight sessions; add `--confirm` only after reviewing matches.
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
 - Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
@@ -255,6 +260,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes:
+  - `docs/releases/v3.4.11.md`
   - `docs/releases/v3.4.10.md`
   - `docs/releases/v3.4.5.md`
   - `docs/releases/v3.4.2.md`

@@ -15,6 +15,7 @@ pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
 pub const AGENT_PREFLIGHT_RESPONSE_V1: &str = "agent_preflight_response.v1";
 pub const AGENT_PROMPT_CONTEXT_PACKAGE_V1: &str = "agent_prompt_context_package.v1";
+pub const AGENT_RUN_TRACE_V1: &str = "agent_run_trace.v1";
 pub const AGENT_SESSION_ROLLUP_V1: &str = "agent_session_rollup.v1";
 pub const AGENT_SPAN_V1: &str = "agent_span.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
@@ -34,6 +35,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_FLIGHT_RECORDER_EVENT_V1,
     AGENT_PREFLIGHT_RESPONSE_V1,
     AGENT_PROMPT_CONTEXT_PACKAGE_V1,
+    AGENT_RUN_TRACE_V1,
     AGENT_SESSION_ROLLUP_V1,
     AGENT_SPAN_V1,
     AGENT_TASK_RESULT_V1,
@@ -71,6 +73,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: AGENT_PROMPT_CONTEXT_PACKAGE_V1,
         payload_kind: "agent_prompt_context_package",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_RUN_TRACE_V1,
+        payload_kind: "agent_run_trace",
         contract_version: 1,
         required_output_mode: "json_object",
     },

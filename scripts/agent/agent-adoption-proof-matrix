@@ -62,6 +62,20 @@ def compact_command(args: list[str]) -> list[str]:
     return out
 
 
+def progress(args: argparse.Namespace, label: str, current: int = 0, total: int = 0, agent: str = "") -> None:
+    if not args.progress:
+        return
+    prefix = "[contextlattice adoption]"
+    if total > 0:
+        width = 20
+        done = max(0, min(width, int(width * max(0, current) / max(1, total))))
+        bar = "#" * done + "-" * (width - done)
+        prefix = f"{prefix} [{bar}] {current}/{total}"
+    if agent:
+        prefix = f"{prefix} {agent}"
+    print(f"{prefix}: {label}", file=sys.stderr, flush=True)
+
+
 def run_json(name: str, argv: list[str], timeout: float, env: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     try:
         proc = subprocess.run(
@@ -127,6 +141,7 @@ def phase_by_name(phases: list[Any], name: str) -> dict[str, Any]:
 def summarize_proof(payload: dict[str, Any], agent: str, profile: dict[str, Any]) -> dict[str, Any]:
     proof = as_dict(payload.get("proof_pack"))
     phases = as_list(proof.get("phases"))
+    session_id = str(proof.get("session_id") or "").strip()
     bootstrap = phase_by_name(phases, "bootstrap")
     status = phase_by_name(phases, "status")
     context_package = phase_by_name(phases, "context_package")
@@ -141,7 +156,7 @@ def summarize_proof(payload: dict[str, Any], agent: str, profile: dict[str, Any]
         "agent_id": str(profile.get("agent_id") or ""),
         "topic_path": str(profile.get("topic_path") or ""),
         "ok": bool(payload.get("ok")),
-        "session_id": proof.get("session_id"),
+        "session_id": session_id,
         "phase_count": proof.get("phase_count", len(phases)),
         "phase_names": [phase.get("name") for phase in phases if isinstance(phase, dict)],
         "skills_index_returned": bootstrap_evidence.get("skills_index_returned"),
@@ -165,6 +180,11 @@ def summarize_proof(payload: dict[str, Any], agent: str, profile: dict[str, Any]
             "checkpoint_count": artifact_summary.get("checkpoints"),
         },
         "runtime_visible": bool(as_dict(runtime.get("evidence")).get("session_visible")),
+        "trace": {
+            "tree_command": f"contextlattice_agent_trace --session-id {session_id} --tree" if session_id else "",
+            "json_command": f"contextlattice_agent_trace --session-id {session_id} --json --pretty" if session_id else "",
+            "run_card_command": f"contextlattice_agent_trace --session-id {session_id} --markdown" if session_id else "",
+        },
         "next_command": payload.get("next_command"),
     }
 
@@ -278,6 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider-smoke-timeout", type=float, default=120.0)
     parser.add_argument("--strict-provider-missing", action="store_true")
     parser.add_argument("--strict-provider-smoke", action="store_true")
+    parser.add_argument("--progress", action="store_true", help="Render live ASCII progress to stderr while preserving JSON stdout.")
     parser.add_argument("--pretty", action="store_true")
     return parser
 
@@ -289,15 +310,28 @@ def main() -> int:
     env["CONTEXTLATTICE_ORCHESTRATOR_URL"] = args.base_url
     env["MEMMCP_ORCHESTRATOR_URL"] = args.base_url
 
+    agents = selected_agents(args.agents)
     cases: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
-    for agent in selected_agents(args.agents):
+    for index, agent in enumerate(agents, start=1):
+        progress(args, "starting proof", index - 1, len(agents), agent)
         case, case_findings = proof_case(agent, args, env)
         cases.append(case)
         findings.extend(case_findings)
+        status = "passed" if case.get("ok") else "failed"
+        visibility = as_dict(case.get("context_visibility"))
+        progress(
+            args,
+            f"{status}; phases={case.get('phase_count')} skills={case.get('skills_index_returned')} context={visibility.get('context_package_validation')} graph={visibility.get('graph_touches')}",
+            index,
+            len(agents),
+            agent,
+        )
 
+    progress(args, "starting provider smoke", len(agents), len(agents), "providers")
     provider_payload, provider_findings = provider_smoke(args, env)
     findings.extend(provider_findings)
+    progress(args, "provider smoke complete", len(agents), len(agents), "providers")
 
     output = {
         "ok": not findings,
