@@ -57,6 +57,22 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-11 · v3.4.13 · Zero-Friction Agent Adoption Kit</span>
+        <h3>One command now tells a new agent whether ContextLattice is ready.</h3>
+        <p class="spotlight">
+          The new adoption front door wraps install checks, runtime doctor output, profile detection, portable agent
+          packs, and profile-template generation so Codex, Claude Code, OpenCode, Hermes, web agents, and custom
+          LLM apps can start from the same local contract.
+        </p>
+        <ul>
+          <li><strong>Status:</strong> run <code>contextlattice_adopt status --pretty</code> to inspect gateway, helper, PATH, storage, session-store, and profile readiness.</li>
+          <li><strong>Install:</strong> run <code>contextlattice_adopt install --pretty</code> from the repo to wire global helpers and Codex hooks.</li>
+          <li><strong>Proof:</strong> run <code>contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty</code> for the bounded lifecycle proof path.</li>
+          <li><strong>Portability:</strong> use <code>contextlattice_adopt export</code>, <code>import</code>, and <code>profile-template</code> when moving to a new account, machine, or agent surface.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-11 · v3.4.12 · Run Advisor + Graph Quality Audit</span>
         <h3>Agent runs now come with a readiness signal, not just a transcript trail.</h3>
         <p class="spotlight">

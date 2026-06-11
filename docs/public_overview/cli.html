@@ -90,6 +90,9 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
         <h3>Installed wrappers for agents/operators</h3>
 <pre><code>contextlattice_search -h
 contextlattice_write -h
+contextlattice_adopt status --pretty
+contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty
+contextlattice_adopt export --dry-run --pretty
 contextlattice_agent_adapter profiles
 contextlattice_agent_session runtime --pretty
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
@@ -128,9 +131,11 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
         <div class="kicker">Agent runtime contract</div>
         <h3>Give every agent the same memory spine</h3>
 <pre><code># one-command live proof
+contextlattice_adopt status --pretty
 contextlattice_agent_runtime_proof --pretty
 
 # prove the same lifecycle across configured profiles
+contextlattice_adopt proof --agents codex,claude-code,opencode --skip-provider-smoke --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 
 # start or recover a ContextLattice-owned session

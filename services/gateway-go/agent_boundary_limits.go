@@ -260,14 +260,15 @@ func shrinkAgentBoundaryPayload(
 	sanitizeOverflow bool,
 	stats *agentBoundaryStats,
 ) int {
-	if jsonByteLen(payload) <= limits.MaxTotalJSONBytes {
+	targetBytes := agentBoundaryTargetJSONBytes(limits)
+	if jsonByteLen(payload) <= targetBytes {
 		return 0
 	}
 	passes := 0
 	shrink := func(maxStringBytes int, maxListItems int) bool {
 		passes++
 		applyAgentBoundaryLimits(payload, maxStringBytes, maxListItems, sanitizeOverflow, stats)
-		return jsonByteLen(payload) <= limits.MaxTotalJSONBytes
+		return jsonByteLen(payload) <= targetBytes
 	}
 
 	switch contractID {
@@ -327,6 +328,19 @@ func shrinkAgentBoundaryPayload(
 	}
 	shrink(minPositive(limits.MaxStringBytes, 384), minPositive(limits.MaxListItems, 8))
 	return passes
+}
+
+func agentBoundaryTargetJSONBytes(limits agentBoundaryLimits) int {
+	if limits.MaxTotalJSONBytes <= 0 {
+		return 0
+	}
+	if limits.MaxTotalJSONBytes > 8192 {
+		return limits.MaxTotalJSONBytes - 2048
+	}
+	if limits.MaxTotalJSONBytes > 1024 {
+		return limits.MaxTotalJSONBytes - 256
+	}
+	return limits.MaxTotalJSONBytes
 }
 
 func minPositive(value int, capValue int) int {

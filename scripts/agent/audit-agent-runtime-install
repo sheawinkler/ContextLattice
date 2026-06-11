@@ -65,6 +65,11 @@ def skills_index_results(payload: dict[str, Any]) -> list[Any]:
     return []
 
 
+def json_payload_schema(payload: dict[str, Any]) -> str:
+    schema = payload.get("schema_id")
+    return str(schema or "")
+
+
 def hook_status(hooks_path: Path) -> dict[str, Any]:
     try:
         parsed = json.loads(hooks_path.read_text(encoding="utf-8"))
@@ -108,6 +113,7 @@ def main() -> int:
     global_home = Path(args.global_home).expanduser()
     bin_dir = global_home / "bin"
     expected = {
+        "contextlattice_adopt": bin_dir / "contextlattice_adopt",
         "contextlattice_agent_adapter": bin_dir / "contextlattice_agent_adapter",
         "contextlattice_agent_runtime_proof": bin_dir / "contextlattice_agent_runtime_proof",
         "contextlattice_agent_adoption_proof": bin_dir / "contextlattice_agent_adoption_proof",
@@ -121,13 +127,46 @@ def main() -> int:
     }
     checks: list[dict[str, Any]] = []
     for name, path in expected.items():
-        checks.append(record(name, path.is_file() and os.access(path, os.X_OK), path=str(path)))
+        installed = path.is_file() and os.access(path, os.X_OK)
+        extra: dict[str, Any] = {"path": str(path)}
+        if not installed:
+            extra["suggested_fix"] = "Run scripts/agent/contextlattice-adopt install --pretty from a ContextLattice checkout."
+        checks.append(record(name, installed, **extra))
 
     adapter = str(expected["contextlattice_agent_adapter"])
     if expected["contextlattice_agent_adapter"].exists():
         ok, payload, err = run_json([adapter, "profiles"], args.timeout)
         validation = ((payload.get("format_contract") or {}).get("validation") or {}).get("status") if isinstance(payload, dict) else ""
         checks.append(record("adapter_profiles_contract", ok and payload.get("ok") is True and validation == "passed", err, profiles=len(((payload.get("result") or {}).get("profiles") or {})) if isinstance(payload, dict) else 0, validation=validation))
+
+    adopt = str(expected["contextlattice_adopt"])
+    if expected["contextlattice_adopt"].exists():
+        ok, detail = run_text([adopt, "--help"], args.timeout)
+        checks.append(record("adopt_help", ok, detail))
+        ok, payload, err = run_json([adopt, "matrix"], args.timeout)
+        checks.append(record(
+            "adopt_matrix_plan",
+            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_adoption_ci_matrix.v1",
+            err,
+            scenarios=len(payload.get("scenarios") or []) if isinstance(payload, dict) else 0,
+            schema=json_payload_schema(payload),
+        ))
+        ok, payload, err = run_json([adopt, "export", "--dry-run"], args.timeout)
+        pack = payload.get("pack") if isinstance(payload, dict) else {}
+        checks.append(record(
+            "adopt_export_dry_run",
+            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_pack.v1",
+            err,
+            profiles=len((pack or {}).get("profiles") or []) if isinstance(pack, dict) else 0,
+            schema=json_payload_schema(payload),
+        ))
+        ok, payload, err = run_json([adopt, "profile-template", "--name", "doctor-smoke", "--kind", "cli"], args.timeout)
+        checks.append(record(
+            "adopt_profile_template",
+            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_profile_template.v1",
+            err,
+            schema=json_payload_schema(payload),
+        ))
 
     proof = str(expected["contextlattice_agent_runtime_proof"])
     if expected["contextlattice_agent_runtime_proof"].exists():
@@ -192,7 +231,7 @@ def main() -> int:
         "global_home": str(global_home),
         "checks": checks,
         "failed": failed,
-        "repair_command": "scripts/install_global_agent_tools.sh --install-codex-hooks --no-shell-profile --skip-venv && COMPOSE_PROJECT_NAME=contextlattice docker --context orbstack compose --env-file .env -f docker-compose.yml up -d --no-deps --force-recreate gateway-go",
+        "repair_command": "scripts/agent/contextlattice-adopt install --pretty",
     }
     emit(payload, args.pretty)
     return 0 if payload["ok"] else 1

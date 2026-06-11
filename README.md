@@ -123,6 +123,7 @@ Installer and quickstart paths install agent helpers under `~/.contextlattice/bi
 
 ```bash
 contextlattice_agent_adapter profiles
+contextlattice_adopt status --pretty
 contextlattice_agent_start --soft --compact
 contextlattice_agent_trace --session-id <session-id> --tree
 contextlattice_pack "what should the next agent know?" --project my-project --pretty
@@ -133,6 +134,7 @@ contextlattice_source_backfill --source jsonl --path data.jsonl --project my-pro
 ```
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
+- `contextlattice_adopt` is the zero-friction front door for local readiness, install repair, lifecycle proof, no-secrets agent packs, and new agent profile templates.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_agent_trace` renders the bounded run-shaping trail as a terminal tree, JSON, or Markdown run card.
 - `contextlattice_pack` compiles a bounded prompt-ready packet with ranked evidence, files to inspect, risks, checks, source coverage, and a `reference_prompt`.
@@ -151,6 +153,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Compile task context through `POST /memory/context-pack`, `POST /tools/context_pack`, or global `contextlattice_pack`; responses include `context_compiler`, ranked evidence, prompt sections, and a bounded `reference_prompt`.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
+- Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; it wraps gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, and runtime-doctor checks into one bounded report.
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
 - Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime/trace flows.
 - Use `scripts/agent/agent-run-trace --session-id <id> --tree` or global `contextlattice_agent_trace --session-id <id> --tree` to see the terminal trace, then `--markdown` to export the run card.
@@ -260,6 +263,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes:
+  - `docs/releases/v3.4.13.md`
   - `docs/releases/v3.4.12.md`
   - `docs/releases/v3.4.11.md`
   - `docs/releases/v3.4.10.md`

@@ -427,6 +427,7 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 	})
 	assertBoundaryContractPassed(t, agentPreflightResponseContractID, response)
 	assertBoundaryJSONUnderLimit(t, agentPreflightResponseContractID, response)
+	assertBoundaryJSONHeadroom(t, agentPreflightResponseContractID, response, 1024)
 	assertNoRawProviderOverflowShape(t, response)
 }
 
@@ -480,6 +481,18 @@ func assertBoundaryJSONUnderLimit(t *testing.T, contractID string, payload map[s
 	}
 	if size := jsonByteLen(payload); size > limits.MaxTotalJSONBytes {
 		t.Fatalf("expected %s JSON bytes <= %d, got %d", contractID, limits.MaxTotalJSONBytes, size)
+	}
+}
+
+func assertBoundaryJSONHeadroom(t *testing.T, contractID string, payload map[string]any, minHeadroom int) {
+	t.Helper()
+	limits := agentBoundaryLimitsForContract(contractID)
+	if limits.MaxTotalJSONBytes <= 0 {
+		t.Fatalf("expected %s to define max_total_json_bytes", contractID)
+	}
+	headroom := limits.MaxTotalJSONBytes - jsonByteLen(payload)
+	if headroom < minHeadroom {
+		t.Fatalf("expected %s JSON headroom >= %d bytes, got %d", contractID, minHeadroom, headroom)
 	}
 }
 

@@ -321,19 +321,24 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention 
           <li><code>POST /telemetry/fanout/letta/auto-prune/run</code> triggers a threshold-gated prune pass and returns <code>ran</code> vs <code>skipped</code>.</li>
           <li><code>/telemetry/retention</code> (with <code>x-api-key</code>) reports retention cadence and sweep activity.</li>
           <li><code>scripts/agent/agent-runtime-proof-pack --pretty</code> completes bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry in one run.</li>
+          <li><code>scripts/agent/contextlattice-adopt status --pretty</code> reports gateway, global helper, shell PATH, storage, session-store, profile, and runtime-doctor readiness in one bounded payload.</li>
           <li><code>scripts/agent/agent-adoption-proof-matrix --progress --pretty</code> proves the same lifecycle across configured agent profiles and reports the skills, context package, graph touches, and handoffs used by each run.</li>
           <li><code>scripts/agent/agent-run-trace --session-id &lt;id&gt; --tree</code> renders the bounded run-shaping trail and <code>--markdown</code> exports a reusable run card.</li>
         </ul>
 <pre><code># agent memory lifecycle proof from the repo
+scripts/agent/contextlattice-adopt status --pretty
 scripts/agent/agent-runtime-proof-pack --pretty
 
 # cross-profile adoption proof from the repo
+scripts/agent/contextlattice-adopt proof --agents codex,claude-code,opencode --skip-provider-smoke --pretty
 scripts/agent/agent-adoption-proof-matrix --skip-provider-smoke --progress --pretty
 
 # verify installed helper wrappers and local hook drift
 contextlattice_agent_runtime_doctor --pretty
 
 # installed shortcut after global helper install
+contextlattice_adopt status --pretty
+contextlattice_adopt export --dry-run --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
