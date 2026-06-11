@@ -597,6 +597,17 @@ func TestMemoryEdgesBackfillDiskCorpusCoversProjectOutsideHotIndex(t *testing.T)
 	if got := backfillRelationStatInt(diskRun, "inferred_related", "eligible"); got == 0 {
 		t.Fatalf("expected disk corpus inferred candidate, got %#v", diskRun)
 	}
+	qualityAudit := anyMap(diskRun["quality_audit"])
+	if anyToString(qualityAudit["schema_id"]) != "memory_edge_quality_audit.v1" {
+		t.Fatalf("expected quality audit payload, got %#v", qualityAudit)
+	}
+	if anyToInt(qualityAudit["inferred_candidates"], 0) == 0 || anyToFloat(qualityAudit["average_confidence"]) <= 0 {
+		t.Fatalf("expected inferred quality counters, got %#v", qualityAudit)
+	}
+	samples, _ := asAnySlice(diskRun["samples"])
+	if len(samples) == 0 || len(anyMap(anyMap(samples[0])["quality"])) == 0 {
+		t.Fatalf("expected sample quality metadata, got %#v", diskRun["samples"])
+	}
 }
 
 func TestMemoryGraphPruneVolatileCompactsLegacyEdges(t *testing.T) {

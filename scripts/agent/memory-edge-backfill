@@ -56,6 +56,7 @@ def main() -> int:
     parser.add_argument("--inferred-min-score", type=float, default=0.90)
     parser.add_argument("--inferred-min-shared-terms", type=int, default=3)
     parser.add_argument("--inferred-max-token-postings", type=int, default=64)
+    parser.add_argument("--corpus", choices=("history_index", "disk"), default="history_index")
     parser.add_argument("--include-ephemeral", action="store_true")
     parser.add_argument("--skip-low-confidence-audit", action="store_true")
     parser.add_argument("--relation", action="append", default=[], help="Restrict to a relation; repeatable.")
@@ -75,6 +76,7 @@ def main() -> int:
         "inferred_min_score": args.inferred_min_score,
         "inferred_min_shared_terms": args.inferred_min_shared_terms,
         "inferred_max_token_postings": args.inferred_max_token_postings,
+        "corpus": args.corpus,
     }
     if args.project:
         payload["project"] = args.project

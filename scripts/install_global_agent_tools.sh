@@ -23,6 +23,7 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_agent_adapter
   contextlattice_agent_session
   contextlattice_agent_trace
+  contextlattice_run_advisor
   contextlattice_agent_runtime_proof
   contextlattice_agent_adoption_proof
   contextlattice_agent_runtime_doctor
@@ -90,7 +91,55 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "${GLOBAL_SCRIPTS_DIR}" "${GLOBAL_BIN_DIR}"
+mkdir -p "${GLOBAL_HOME}/config/model_compat"
 mkdir -p "${GLOBAL_HOME}/config/agent_contracts" "${GLOBAL_HOME}/config/agents"
+
+HOOK_ENV_FILE="${GLOBAL_HOME}/agent_hooks.env"
+
+upsert_hook_env_defaults() {
+  mkdir -p "${GLOBAL_HOME}"
+  python3 - "$HOOK_ENV_FILE" "$ROOT_DIR" <<'PY'
+from __future__ import annotations
+
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+repo_root = sys.argv[2]
+defaults = {
+    "CONTEXTLATTICE_REPO_ROOT": repo_root,
+    "CONTEXTLATTICE_ORCHESTRATOR_URL": "http://127.0.0.1:8075",
+    "MEMMCP_ORCHESTRATOR_URL": "http://127.0.0.1:8075",
+    "CONTEXTLATTICE_AGENT_ID": "codex_gpt5",
+    "MEMMCP_AGENT_ID": "codex_gpt5",
+}
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
+seen: set[str] = set()
+out: list[str] = []
+for line in lines:
+    stripped = line.strip()
+    key = ""
+    if stripped.startswith("export ") and "=" in stripped:
+        key = stripped[len("export ") :].split("=", 1)[0].strip()
+    elif "=" in stripped and not stripped.startswith("#"):
+        key = stripped.split("=", 1)[0].strip()
+    if key in defaults:
+        out.append(f"export {key}={shlex.quote(defaults[key])}")
+        seen.add(key)
+    else:
+        out.append(line)
+if not out:
+    out.append("# Local-only ContextLattice hook policy. Not part of any repo.")
+for key, value in defaults.items():
+    if key not in seen:
+        out.append(f"export {key}={shlex.quote(value)}")
+path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+path.chmod(0o600)
+PY
+}
+
+upsert_hook_env_defaults
 
 copy_script() {
   local src="$1"
@@ -118,6 +167,11 @@ mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent"
 for agent_script in "${ROOT_DIR}"/scripts/agent/*; do
   [[ -f "$agent_script" ]] || continue
   copy_script "$agent_script" "${GLOBAL_SCRIPTS_DIR}/agent/$(basename "$agent_script")"
+done
+for compat_config in "${ROOT_DIR}"/config/model_compat/*.json; do
+  [[ -f "$compat_config" ]] || continue
+  cp "$compat_config" "${GLOBAL_HOME}/config/model_compat/$(basename "$compat_config")"
+  chmod 0644 "${GLOBAL_HOME}/config/model_compat/$(basename "$compat_config")"
 done
 for contract_config in "${ROOT_DIR}"/config/agent_contracts/*.json; do
   [[ -f "$contract_config" ]] || continue
@@ -261,6 +315,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_run_advisor" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/contextlattice-run-advisor"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -334,6 +401,7 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_session" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_trace" \
+  "${GLOBAL_BIN_DIR}/contextlattice_run_advisor" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" \
@@ -353,7 +421,7 @@ SCRIPT_PATH="\${TOOL_HOME}/scripts/agent_hooks/${script_name}"
 for env_file in "\${TOOL_HOME}/agent_hooks.env" "\$HOME/.codex/contextlattice_hooks.env"; do
   if [[ -f "\$env_file" ]]; then
     # shellcheck source=/dev/null
-    source "\$env_file"
+    source "\$env_file" >/dev/null
   fi
 done
 if [[ ! -x "\${SCRIPT_PATH}" ]]; then
@@ -458,9 +526,9 @@ def upsert(event, matcher, command, timeout, status):
             return
     hooks.append({"type": "command", "command": command, "timeout": timeout, "statusMessage": status})
 
-upsert("SessionStart", "startup|resume", agent_start, 90, "Running ContextLattice agent start hooks")
-upsert("PreCompact", ".*", pre_compact, 30, "Writing ContextLattice compaction checkpoint")
-upsert("PostCompact", ".*", post_compact, 30, "Reading ContextLattice compaction checkpoint")
+upsert("SessionStart", "startup|resume", agent_start, 200, "Running ContextLattice agent start hooks")
+upsert("PreCompact", ".*", pre_compact, 200, "Writing ContextLattice compaction checkpoint")
+upsert("PostCompact", ".*", post_compact, 200, "Reading ContextLattice compaction checkpoint")
 hooks_path.write_text(json.dumps(payload, indent=2) + "\n")
 
 def hook_hash(event, matcher, hook):
@@ -527,6 +595,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_session"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_trace"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_run_advisor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor"
@@ -544,12 +613,12 @@ log "  contextlattice_search -h"
 log "  contextlattice_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
-log "  contextlattice_agent_session runtime --pretty"
 log "  contextlattice_agent_runtime_proof --pretty"
 log "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"
+log "  contextlattice_agent_session runtime --pretty"
 log "  contextlattice_agent_trace --session-id <session-id> --tree"
+log "  contextlattice_run_advisor 'current task context' --pretty"
 log "  contextlattice_memory_topology --pretty"
-log "  contextlattice_agent_runtime_doctor --pretty"
 log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
 log "  contextlattice_agent_start -h"

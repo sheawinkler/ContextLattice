@@ -34,6 +34,7 @@ REQUIRED_CONTRACTS = (
     "agent_task_result.v1",
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
+    "run_advisor.v1",
     "contract_acknowledgement.v1",
     "writeback_result.v1",
     "agent_span.v1",
@@ -594,6 +595,8 @@ def run_audit() -> list[dict[str, Any]]:
 
     context_pack = sample_context_pack()
     for item in validate_agent_contract_payload("context_pack_response.v1", context_pack, registry):
+        findings.append({"severity": "error", **item})
+    for item in validate_agent_contract_payload("run_advisor.v1", context_pack.get("run_advisor"), registry):
         findings.append({"severity": "error", **item})
     findings.extend(oversized_boundary_findings(registry))
 

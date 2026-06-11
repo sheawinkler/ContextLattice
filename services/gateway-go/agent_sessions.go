@@ -21,6 +21,30 @@ const (
 	defaultAgentSessionMaxMetadataMap = 48
 )
 
+func parseISOTime(raw string) (time.Time, bool) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, text); err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
+	bodyBytes, err := readRequestBody(r)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(bodyBytes)) == "" {
+		return map[string]any{}, nil
+	}
+	return parseJSONMap(bodyBytes)
+}
+
 type agentSessionStore struct {
 	mu        sync.Mutex
 	path      string
@@ -40,31 +64,6 @@ func agentSessionsPath() string {
 		path = defaultAgentSessionsPathRel
 	}
 	return filepath.Clean(path)
-}
-
-func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
-	bodyBytes, err := readRequestBody(r)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(string(bodyBytes)) == "" {
-		return map[string]any{}, nil
-	}
-	return parseJSONMap(bodyBytes)
-}
-
-func parseISOTime(value string) (time.Time, bool) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return time.Time{}, false
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		parsed, err := time.Parse(layout, trimmed)
-		if err == nil {
-			return parsed.UTC(), true
-		}
-	}
-	return time.Time{}, false
 }
 
 func newAgentSessionStoreFromEnv() (*agentSessionStore, error) {
@@ -897,6 +896,13 @@ func agentTraceHelpfulSkills(events []map[string]any) map[string]any {
 func buildAgentRunCardMarkdown(trace map[string]any) string {
 	session := anyMap(trace["session"])
 	runShaping := anyMap(trace["run_shaping"])
+	advisor := anyMap(trace["run_advisor"])
+	if len(advisor) == 0 {
+		advisor = anyMap(runShaping["run_advisor"])
+	}
+	promptQuality := anyMap(advisor["prompt_quality"])
+	continuation := anyMap(advisor["continuation"])
+	objectiveCoherence := anyMap(advisor["objective_coherence"])
 	skills := anyMap(runShaping["skills"])
 	sources := anyMap(runShaping["sources"])
 	graph := anyMap(runShaping["graph"])
@@ -910,6 +916,17 @@ func buildAgentRunCardMarkdown(trace map[string]any) string {
 	b.WriteString("- Status: `" + clipText(anyToString(session["status"]), 80) + "`\n")
 	b.WriteString("- Objective: " + clipText(anyToString(session["objective"]), 420) + "\n")
 	b.WriteString("- Next action: " + clipText(anyToString(session["next_action"]), 420) + "\n\n")
+	if len(advisor) > 0 {
+		b.WriteString("## Run Advisor\n\n")
+		b.WriteString("- Posture: `" + clipText(anyToString(advisor["posture"]), 80) + "`\n")
+		b.WriteString("- Prompt quality: `" + anyToString(promptQuality["score"]) + "` / `" + clipText(anyToString(promptQuality["state"]), 80) + "`\n")
+		b.WriteString("- Objective coherence: `" + anyToString(objectiveCoherence["score"]) + "` / `" + clipText(anyToString(objectiveCoherence["status"]), 80) + "`\n")
+		b.WriteString("- Continuation: `" + clipText(anyToString(continuation["status"]), 80) + "`\n")
+		if repair := clipText(anyToString(continuation["repair_instruction"]), 420); repair != "" {
+			b.WriteString("- Repair: " + repair + "\n")
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString("## Run-Shaping Evidence\n\n")
 	b.WriteString("- Sources returned: " + strings.Join(anyToStringList(sources["returned_sources"], 12), ", ") + "\n")
 	b.WriteString("- Pending sources: " + strings.Join(anyToStringList(sources["pending_sources"], 12), ", ") + "\n")
@@ -939,6 +956,7 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 	retrievalSummary := anyMap(rollup["retrieval_summary"])
 	artifactSummary := anyMap(rollup["artifact_summary"])
 	prompt := anyMap(rollup["prompt_package"])
+	runAdvisor := buildRunAdvisorFromTraceRollup(session, rollup, events)
 	trace := map[string]any{
 		"ok":        true,
 		"schema_id": agentRunTraceContractID,
@@ -961,6 +979,7 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 		"phase_counts":        rollup["phase_counts"],
 		"memory_contribution": rollup["memory_contribution"],
 		"run_shaping": map[string]any{
+			"run_advisor": runAdvisor,
 			"context": map[string]any{
 				"validation":             anyToString(anyMap(anyMap(promptPackage["format_contract"])["validation"])["status"]),
 				"recommended_surface":    anyToString(anyMap(promptPackage["context_package"])["recommended_surface"]),
@@ -976,7 +995,8 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 			"checkpoints": map[string]any{"count": anyToInt(artifactSummary["checkpoints"], 0), "recent": agentTraceEventsForPhase(events, "memory_write", 8)},
 			"risks":       rollup["risk_summary"],
 		},
-		"timeline": agentTraceTimeline(events, 32),
+		"run_advisor": runAdvisor,
+		"timeline":    agentTraceTimeline(events, 32),
 		"run_card": map[string]any{
 			"markdown":      "",
 			"json_endpoint": "/v1/agents/sessions/" + anyToString(rollup["session_id"]) + "/trace",

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Fetch the bounded ContextLattice run advisor for a query or session."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Any
+from urllib.parse import quote
+
+from _common import emit, read_agent_session_state, request_json
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def text(value: Any, fallback: str = "") -> str:
+    raw = str(value if value is not None else fallback).strip()
+    return raw if raw else fallback
+
+
+def short(value: Any, limit: int = 180) -> str:
+    raw = text(value)
+    return raw if len(raw) <= limit else raw[: max(0, limit - 3)].rstrip() + "..."
+
+
+def csv(value: Any, limit: int = 8) -> str:
+    items = [text(item) for item in as_list(value)[:limit] if text(item)]
+    return ", ".join(items) if items else "none"
+
+
+def resolve_session_id(args: argparse.Namespace) -> str:
+    explicit = text(args.session_id) or text(os.getenv("CONTEXTLATTICE_SESSION_ID"))
+    if explicit:
+        return explicit
+    state = read_agent_session_state(args.project)
+    return text(state.get("session_id"))
+
+
+def advisor_from_trace(args: argparse.Namespace, session_id: str) -> dict[str, Any]:
+    trace = request_json("GET", f"/v1/agents/sessions/{quote(session_id, safe='')}/trace", None, args.timeout)
+    advisor = as_dict(trace.get("run_advisor")) or as_dict(as_dict(trace.get("run_shaping")).get("run_advisor"))
+    if advisor:
+        return advisor
+    return {"ok": False, "error": "run_advisor_missing", "trace_ok": bool(trace.get("ok"))}
+
+
+def advisor_from_context_pack(args: argparse.Namespace, query: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "query": query,
+        "project": args.project,
+        "projectName": args.project,
+        "topic_path": args.topic_path or None,
+        "topicPath": args.topic_path or None,
+        "retrieval_mode": args.mode,
+        "include_grounding": True,
+        "include_retrieval_debug": True,
+        "combined_sources": True,
+        "wait_for_slow_sources": bool(args.blocking),
+        "sync_slow_sources": bool(args.blocking),
+        "limit": args.limit,
+        "max_facts": args.max_facts,
+    }
+    if args.agent_id:
+        payload["agent_id"] = args.agent_id
+    session_id = text(args.session_id)
+    if session_id:
+        payload["session_id"] = session_id
+    raw = request_json("POST", "/memory/context-pack", payload, args.timeout)
+    advisor = as_dict(raw.get("run_advisor")) or as_dict(as_dict(raw.get("context_pack")).get("run_advisor"))
+    if advisor:
+        return advisor
+    return {"ok": False, "error": "run_advisor_missing", "context_pack_ok": bool(raw.get("ok"))}
+
+
+def render(advisor: dict[str, Any]) -> str:
+    prompt_quality = as_dict(advisor.get("prompt_quality"))
+    continuation = as_dict(advisor.get("continuation"))
+    objective = as_dict(advisor.get("objective_coherence"))
+    graph = as_dict(advisor.get("graph_quality"))
+    retrieval = as_dict(advisor.get("retrieval_advice"))
+    lines = [
+        "ContextLattice Run Advisor",
+        f"posture: {text(advisor.get('posture'), 'unknown')}",
+        f"prompt quality: {text(prompt_quality.get('score'), '0')} | {text(prompt_quality.get('state'), 'unknown')}",
+        f"objective coherence: {text(objective.get('score'), '0')} | {text(objective.get('status'), 'unknown')}",
+        f"continuation: {text(continuation.get('status'), 'unknown')} | pending {csv(continuation.get('pending_sources'), 8)}",
+        f"retrieval: {text(retrieval.get('recommended_mode'), 'balanced')} via {text(retrieval.get('recommended_surface'), 'cli_for_local_agents')}",
+        f"graph: {text(graph.get('status'), 'not_sampled')} | {short(graph.get('recommendation'), 220)}",
+        f"repair: {short(continuation.get('repair_instruction') or objective.get('repair_instruction'), 240)}",
+        "",
+        "next actions:",
+    ]
+    actions = as_list(advisor.get("next_actions"))
+    if not actions:
+        lines.append("  - none")
+    for item in actions[:5]:
+        row = as_dict(item)
+        lines.append(f"  - {text(row.get('label'), 'action')}: {short(row.get('command'), 220)}")
+        if text(row.get("reason")):
+            lines.append(f"    {short(row.get('reason'), 220)}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("query", nargs="*", help="Optional query. If omitted, --session-id or persisted session state is used.")
+    parser.add_argument("--session-id", default="", help="Trace session id or session id to attach to context-pack request.")
+    parser.add_argument("--project", default=os.getenv("CONTEXTLATTICE_PROJECT", "contextlattice"))
+    parser.add_argument("--topic-path", default="")
+    parser.add_argument("--mode", default="balanced")
+    parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--max-facts", type=int, default=24)
+    parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", ""))
+    parser.add_argument("--blocking", action="store_true")
+    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    query = " ".join(args.query).strip()
+    if query:
+        advisor = advisor_from_context_pack(args, query)
+    else:
+        session_id = resolve_session_id(args)
+        if not session_id:
+            raise SystemExit("query or session id is required")
+        advisor = advisor_from_trace(args, session_id)
+    if args.json:
+        emit(advisor, args.pretty)
+    else:
+        sys.stdout.write(render(advisor))
+    return 0 if advisor.get("ok", True) is not False else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

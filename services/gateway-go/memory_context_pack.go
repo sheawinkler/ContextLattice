@@ -66,6 +66,10 @@ func (s *server) buildContextPackResponse(
 		"include_grounding":       true,
 	}
 	objectiveCtx := extractObjectiveContext(requestPayload)
+	effectiveObjectiveCtx := objectiveCtx
+	if effectiveObjectiveCtx.empty() {
+		effectiveObjectiveCtx = objectiveCtx.withDefaults()
+	}
 	if !objectiveCtx.empty() {
 		searchRequest["objective_context"] = objectiveCtx.toMap()
 	}
@@ -129,7 +133,7 @@ func (s *server) buildContextPackResponse(
 	sourceCoverage := contextPackSourceCoverage(searchResponse)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
-	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, objectiveCtx)
+	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, effectiveObjectiveCtx)
 	contextPack["rankedEvidence"] = compiled["ranked_evidence"]
 	contextPack["ranked_evidence"] = compiled["ranked_evidence"]
 	contextPack["promptSections"] = compiled["prompt_sections"]
@@ -137,12 +141,30 @@ func (s *server) buildContextPackResponse(
 	contextPack["contextCompiler"] = compiled["context_compiler"]
 	contextPack["context_compiler"] = compiled["context_compiler"]
 	referencePrompt := anyToString(compiled["reference_prompt"])
+	rankedEvidence := contextPackAnyList(compiled["ranked_evidence"])
+	runAdvisor := buildRunAdvisor(runAdvisorInput{
+		Query:           query,
+		Project:         strings.TrimSpace(anyToString(requestPayload["project"])),
+		TopicPath:       strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+		RetrievalMode:   retrievalMode,
+		SessionID:       sessionID,
+		AgentID:         strings.TrimSpace(anyToString(searchResponse["agent_id"])),
+		SourceCoverage:  sourceCoverage,
+		Retrieval:       searchResponse,
+		Objective:       effectiveObjectiveCtx,
+		RankedEvidence:  rankedEvidence,
+		ReferencePrompt: referencePrompt,
+		Surface:         "/memory/context-pack",
+	})
+	contextPack["runAdvisor"] = runAdvisor
+	contextPack["run_advisor"] = runAdvisor
 	response := map[string]any{
 		"ok":                 true,
 		"query":              query,
 		"context_pack":       contextPack,
 		"context_compiler":   compiled["context_compiler"],
 		"reference_prompt":   referencePrompt,
+		"run_advisor":        runAdvisor,
 		"warnings":           parseWarnings(searchResponse["warnings"]),
 		"retrieval_mode":     searchResponse["retrieval_mode"],
 		"retrieval_intent":   searchResponse["retrieval_intent"],
@@ -157,11 +179,11 @@ func (s *server) buildContextPackResponse(
 			response["retrieval"] = retrievalDebug
 		}
 	}
-	if !objectiveCtx.empty() {
-		response["objective_context"] = objectiveCtx.toMap()
+	if !effectiveObjectiveCtx.empty() {
+		response["objective_context"] = effectiveObjectiveCtx.toMap()
 	}
 	objectiveRuntime := map[string]any{}
-	if sessionID != "" || !objectiveCtx.empty() {
+	if sessionID != "" || !effectiveObjectiveCtx.empty() {
 		objectiveRuntime = buildObjectiveRuntimeState(
 			"context-pack",
 			strings.TrimSpace(anyToString(searchResponse["agent_id"])),
@@ -170,7 +192,7 @@ func (s *server) buildContextPackResponse(
 			query,
 			retrievalMode,
 			sessionID,
-			objectiveCtx,
+			effectiveObjectiveCtx,
 			"context_pack.completed",
 		)
 		response["objective_runtime"] = objectiveRuntime
@@ -196,6 +218,7 @@ func (s *server) buildContextPackResponse(
 				"next_action":       anyToString(objectiveRuntime["next_action"]),
 				"objective_runtime": objectiveRuntime,
 				"context_compiler":  compiled["context_compiler"],
+				"run_advisor":       runAdvisor,
 			},
 		})
 		if session != nil {

@@ -238,6 +238,143 @@ def _compact_context_pack_payload(payload: dict[str, Any], keep: int) -> None:
         payload["warnings"] = payload["warnings"][: min(keep, 8)]
 
 
+def _as_text_list(value: Any, limit: int = 16) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value[:limit]:
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _minimal_run_advisor(payload: dict[str, Any], registry: dict[str, Any]) -> dict[str, Any]:
+    pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
+    coverage = payload.get("source_coverage") if isinstance(payload.get("source_coverage"), dict) else None
+    if coverage is None:
+        coverage = pack.get("source_coverage") if isinstance(pack.get("source_coverage"), dict) else {}
+    ranked = pack.get("ranked_evidence") if isinstance(pack.get("ranked_evidence"), list) else pack.get("rankedEvidence")
+    ranked_count = len(ranked) if isinstance(ranked, list) else 0
+    returned = _as_text_list(coverage.get("returned"), 16)
+    pending = _as_text_list(coverage.get("pending"), 16)
+    warming = _as_text_list(coverage.get("warming"), 16)
+    failed = _as_text_list(coverage.get("failed"), 8)
+    timed_out = _as_text_list(coverage.get("timed_out"), 8)
+    complete = bool(coverage.get("complete"))
+    reference_prompt = str(payload.get("reference_prompt") or "")
+    score = 30 + min(30, ranked_count * 5) + min(20, len(returned) * 5)
+    if len(reference_prompt) >= 300:
+        score += 10
+    if complete:
+        score += 10
+    else:
+        score -= min(20, (len(pending) + len(warming) + len(failed) + len(timed_out)) * 4)
+    score = max(0, min(100, score))
+    state = "ready"
+    posture = "ready"
+    if not returned and ranked_count == 0 and (failed or timed_out) and not (pending or warming):
+        state = "blocked"
+        posture = "blocked"
+    elif not returned and ranked_count == 0:
+        state = "needs_context"
+        posture = "needs_retrieval"
+    elif not complete or score < 70:
+        state = "usable_partial"
+        posture = "partial_context"
+    missing: list[str] = []
+    if ranked_count == 0:
+        missing.append("ranked_evidence")
+    if not returned:
+        missing.append("returned_sources")
+    if not complete:
+        missing.append("complete_source_coverage")
+    repair = "Continue with the compiled prompt packet; rerun context retrieval only if the task needs fresher evidence."
+    if pending or warming:
+        repair = "Watch continuation events or rerun with --blocking when complete slow-source evidence is required."
+    elif failed or timed_out:
+        repair = "Retry with a narrower query, longer timeout, or smaller source set before making evidence-backed claims."
+    advisor = {
+        "ok": True,
+        "schema_id": "run_advisor.v1",
+        "posture": posture,
+        "prompt_quality": {
+            "score": score,
+            "state": state,
+            "ranked_evidence_count": ranked_count,
+            "reference_prompt_chars": len(reference_prompt),
+            "returned_source_count": len(returned),
+            "complete": complete,
+            "missing": missing,
+        },
+        "retrieval_advice": {
+            "recommended_mode": "deep" if posture == "needs_retrieval" else str(payload.get("retrieval_mode") or pack.get("retrieval_mode") or "balanced"),
+            "recommended_surface": "cli_for_local_agents",
+            "alternate_surfaces": ["http_for_app_integrations", "mcp_for_tool_calling_hosts"],
+            "rationale": ["bounded_cli_context_pack"],
+            "blocking_recommended": bool(pending or warming),
+        },
+        "continuation": {
+            "status": "partial" if pending or warming else ("failed" if failed or timed_out else "succeeded"),
+            "token": "",
+            "poll_url": "",
+            "events_url": "",
+            "pending_sources": pending,
+            "warming_sources": warming,
+            "failed_sources": failed,
+            "timed_out_sources": timed_out,
+            "budget_exceeded_sources": _as_text_list(coverage.get("budget_exceeded"), 8),
+            "continuation_available": False,
+            "modeled_progress": {},
+            "repair_instruction": repair,
+            "agent_followup_command": "",
+            "agent_followup_endpoint": "",
+            "agent_followup_transport": "none",
+        },
+        "objective_coherence": {
+            "score": 0,
+            "status": "missing",
+            "signals": {
+                "mission_present": False,
+                "objective_present": False,
+                "goal_present": False,
+                "shared_terms": [],
+                "query_token_count": 0,
+                "context_token_count": 0,
+            },
+            "repair_instruction": "Carry the user objective, goal, and mission into the next prompt packet.",
+        },
+        "graph_quality": {
+            "status": "not_sampled",
+            "score": 0,
+            "signals": {"edge_samples": 0},
+            "recommendation": "Run contextlattice_memory_topology when graph evidence matters.",
+        },
+        "next_actions": [
+            {
+                "label": "send_reference_prompt" if state != "needs_context" else "rebuild_context_pack",
+                "command": "use response.reference_prompt for the next model call" if state != "needs_context" else "contextlattice_pack '<query>' --mode deep --pretty",
+                "reason": "The packet is bounded and shaped for agent prompt repackaging.",
+            }
+        ],
+    }
+    return attach_format_contract("run_advisor.v1", advisor, registry)
+
+
+def _ensure_context_pack_run_advisor(payload: dict[str, Any], registry: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    existing = payload.get("run_advisor")
+    if isinstance(existing, dict) and existing:
+        return
+    advisor = _minimal_run_advisor(payload, registry)
+    payload["run_advisor"] = advisor
+    pack = payload.get("context_pack")
+    if isinstance(pack, dict):
+        pack.setdefault("run_advisor", advisor)
+        pack.setdefault("runAdvisor", advisor)
+
+
 def _compact_policy_payload(payload: dict[str, Any], keep: int) -> None:
     for key in ("mission", "objective", "goal", "query"):
         if isinstance(payload.get(key), str):
@@ -299,6 +436,8 @@ def enforce_contract_limits(
 ) -> dict[str, Any]:
     registry = registry or load_agent_contracts_registry()
     contract = _contract(registry, contract_id)
+    if contract_id == "context_pack_response.v1":
+        _ensure_context_pack_run_advisor(payload, registry)
     max_total = int(contract.get("max_total_json_bytes") or 0)
     max_string = int(contract.get("max_string_bytes") or 0)
     max_list = int(contract.get("max_list_items") or 0)
@@ -518,6 +657,8 @@ def attach_format_contract(
 ) -> dict[str, Any]:
     registry = registry or load_agent_contracts_registry()
     stamped = dict(payload)
+    if contract_id == "context_pack_response.v1":
+        _ensure_context_pack_run_advisor(stamped, registry)
     metadata = contract_metadata(contract_id, registry)
     stamped["format_contract"] = metadata
     stamped = enforce_contract_limits(contract_id, stamped, registry)
