@@ -287,16 +287,28 @@ flowchart TD
             <li>Record queue and sink telemetry.</li>
           </ol>
         </article>
-        <article class="card">
-          <div class="kicker">Dynamic View: Retrieval Flow</div>
-          <h3 class="runtime-flow-title">Retrieval Flow</h3>
-          <p class="muted-note">Order of operations</p>
-          <ol class="step-list">
+      <article class="card">
+        <div class="kicker">Dynamic View: Retrieval Flow</div>
+        <h3 class="runtime-flow-title">Retrieval Flow</h3>
+        <p class="muted-note">Order of operations</p>
+        <ol class="step-list">
             <li>Receive scoped query (project/topic aware).</li>
             <li>Run parallel retrieval across sinks.</li>
             <li>Merge and rank candidates for retrieval egress.</li>
             <li>Prompt for context-quality feedback when useful.</li>
-            <li>Write feedback signals to improve future ranking.</li>
+          <li>Write feedback signals to improve future ranking.</li>
+        </ol>
+      </article>
+        <article class="card">
+          <div class="kicker">Dynamic View: Agent Coordination</div>
+          <h3 class="runtime-flow-title">Session Package Flow</h3>
+          <p class="muted-note">Order of operations</p>
+          <ol class="step-list">
+            <li>Bootstrap a typed agent session for the active profile and project.</li>
+            <li>Attach checkpoints, handoffs, source coverage, and risk signals during work.</li>
+            <li>Compute a rollup with objective state, confidence, and missing evidence.</li>
+            <li>Emit a bounded context package before the next hard model call.</li>
+            <li>Preserve contract metadata so CLI, HTTP, MCP, and dashboard surfaces agree.</li>
           </ol>
         </article>
       </div>

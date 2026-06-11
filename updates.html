@@ -57,6 +57,73 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-11 · v3.4.12 · Run Advisor + Graph Quality Audit</span>
+        <h3>Agent runs now come with a readiness signal, not just a transcript trail.</h3>
+        <p class="spotlight">
+          ContextLattice now attaches a bounded Run Advisor to context packs and session traces. Agents can see
+          prompt readiness, continuation state, objective coherence, graph quality, and concrete next actions before
+          handing work to the next model call.
+        </p>
+        <ul>
+          <li><strong>Run Advisor:</strong> <code>contextlattice_run_advisor "current task" --pretty</code> renders prompt quality, retrieval advice, continuation repair, graph status, and next actions.</li>
+          <li><strong>Context packs:</strong> <code>/memory/context-pack</code> now includes <code>run_advisor</code> beside ranked evidence, prompt sections, source coverage, and the reference prompt.</li>
+          <li><strong>Agent Radar:</strong> dashboard traces show Run Advisor posture alongside source coverage, graph touches, handoffs, checkpoints, skills, and timeline evidence.</li>
+          <li><strong>Graph audit:</strong> memory edge backfill now reports confidence posture, review recommendations, and inferred-candidate counts before writes.</li>
+          <li><strong>Safer local launch:</strong> Compose services now use scoped project names instead of global singleton container names for Ollama, Letta, Caddy, and MCP proxy helpers.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-10 · v3.4.11 · Agent Run Trace Visibility</span>
+        <h3>The proof cockpit can now show what shaped an agent run.</h3>
+        <p class="spotlight">
+          Session traces expose bounded evidence about context packages, source coverage, skills, graph touches,
+          handoffs, checkpoints, risks, and recent timeline events without leaking raw prompts or oversized payloads.
+        </p>
+        <ul>
+          <li><strong>Trace endpoint:</strong> <code>/v1/agents/sessions/&lt;id&gt;/trace</code> returns the contract-valid run-shaping package.</li>
+          <li><strong>Terminal view:</strong> <code>contextlattice_agent_trace --session-id &lt;id&gt; --tree</code> renders the session as a compact operator trace.</li>
+          <li><strong>Run cards:</strong> <code>contextlattice_agent_trace --session-id &lt;id&gt; --markdown</code> exports a bounded Markdown handoff for the next agent or model call.</li>
+          <li><strong>Dashboard:</strong> Agent Radar can inspect traces and export the same run card from the app surface.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-09 · v3.4.10 · Seamless Agent Adoption Proofs</span>
+        <h3>One command now proves the agent memory lifecycle across runtimes.</h3>
+        <p class="spotlight">
+          ContextLattice can validate that configured agent profiles share the same bootstrap, context package,
+          checkpoint, handoff, completion, session rollup, and prompt-ready evidence path. The proof reports the
+          skills, context, graph touches, and handoff artifacts that shaped each run.
+        </p>
+        <ul>
+          <li><strong>Matrix proof:</strong> run <code>contextlattice_agent_adoption_proof --pretty</code> after global install, or <code>scripts/agent/agent-adoption-proof-matrix --pretty</code> from the repo.</li>
+          <li><strong>Agent coverage:</strong> profiles include Codex, Claude Code, OpenCode, Hermes Agent, Pi, ChatGPT web/desktop, and Claude web/desktop patterns.</li>
+          <li><strong>Visible inputs:</strong> each case reports Skills Index hits, context-package validation, session events, graph touches, checkpoint counts, handoff counts, and reference-prompt size.</li>
+          <li><strong>Provider check:</strong> optional CLI smoke tests detect available external agent runners without requiring paid provider execution.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-08 · v3.4.x · Session Rollups + Context Packages</span>
+        <h3>Agent runs can now package what matters for the next model call.</h3>
+        <p class="spotlight">
+          ContextLattice now turns a live agent session into a bounded reference package: objective, evidence,
+          source coverage, artifacts, missing checks, risks, and next action. Agents get a sharper handoff than a
+          transcript replay, while operators see prompt readiness in Agent Radar.
+        </p>
+        <ul>
+          <li><strong>Session rollups:</strong> <code>/v1/agents/sessions/&lt;id&gt;/rollup</code> summarizes lifecycle phases, memory contribution, source coverage, artifacts, and risk signals.</li>
+          <li><strong>Context package:</strong> <code>/v1/agents/sessions/&lt;id&gt;/context-package</code> emits a bounded reference prompt and structured package for the next model call.</li>
+          <li><strong>CLI path:</strong> <code>contextlattice_agent_session rollup</code> and <code>contextlattice_agent_session context-package</code> give local agents the lowest-overhead access path.</li>
+          <li><strong>Capability lookup:</strong> <code>contextlattice_skills_index search</code> exposes Skills Index discovery without loading every skill into startup context.</li>
+          <li><strong>Memory topology:</strong> <code>contextlattice_memory_topology</code> validates the base default path, the richer backend fabric, partition keys, clusters, and graph telemetry.</li>
+          <li><strong>Source backfill:</strong> <code>contextlattice_source_backfill</code> imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.</li>
+          <li><strong>Runtime confidence:</strong> Agent Radar shows prompt package readiness, source coverage, missing evidence, and confidence per session.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-06 · v3.4.2 · Agent Runtime Proof Pack</span>
         <h3>The agent memory contract now proves itself in one command.</h3>
         <p class="spotlight">
