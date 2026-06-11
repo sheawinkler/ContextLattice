@@ -249,6 +249,10 @@ func (m *memoryStore) memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) ([]
 			skipped += 1
 			continue
 		}
+		lastTouch := doc.UpdatedAt
+		if lastTouch.IsZero() {
+			lastTouch = doc.UpdatedAt
+		}
 		out = append(out, memoryEdgeBackfillDoc{
 			Project:   project,
 			FileName:  fileName,
@@ -256,7 +260,7 @@ func (m *memoryStore) memoryBackfillDocsFromStoreDocs(docs []memoryStoreDoc) ([]
 			TopicPath: topicPath,
 			Summary:   strings.TrimSpace(doc.Summary),
 			UpdatedAt: doc.UpdatedAt,
-			LastTouch: doc.UpdatedAt,
+			LastTouch: lastTouch,
 			Lifecycle: "durable",
 		})
 	}
@@ -426,6 +430,7 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"corpus":                       req.Corpus,
 		"requested_relations":          req.RequestedRelations,
 		"relations":                    generator.stats,
+		"quality_audit":                generator.qualityAudit(),
 		"samples":                      generator.sampleRows,
 		"errors":                       generator.errorsList,
 	}, nil
@@ -443,6 +448,12 @@ type memoryEdgeBackfillGenerator struct {
 	truncated              bool
 	skippedLowValueDocs    int
 	skippedLowValueHistory int
+	qualityTotal           int
+	qualityHigh            int
+	qualityReview          int
+	qualityLow             int
+	qualityInferred        int
+	qualityConfidenceSum   float64
 	errorsList             []string
 	ctxErr                 error
 }
@@ -482,21 +493,25 @@ func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryE
 	stat := g.stat(candidate.Edge.Relation)
 	stat.Generated += 1
 	g.generated += 1
+	quality := memoryEdgeCandidateQuality(candidate, g.request.MinConfidence)
+	g.recordQualityAudit(candidate, quality)
 	if g.generated > g.request.MaxCandidates {
 		g.truncated = true
 		return
 	}
+	wouldWrite := candidate.Edge.Confidence >= g.request.MinConfidence &&
+		!g.store.memoryEdgeExists(candidate.Edge.EdgeID)
 	if len(g.sampleRows) < g.request.SampleLimit {
 		g.sampleRows = append(g.sampleRows, map[string]any{
-			"edge_id":    candidate.Edge.EdgeID,
-			"source_id":  candidate.Edge.SourceID,
-			"target_id":  candidate.Edge.TargetID,
-			"relation":   candidate.Edge.Relation,
-			"confidence": candidate.Edge.Confidence,
-			"strategy":   candidate.Strategy,
-			"reason":     candidate.Reason,
-			"would_write": candidate.Edge.Confidence >= g.request.MinConfidence &&
-				!g.store.memoryEdgeExists(candidate.Edge.EdgeID),
+			"edge_id":     candidate.Edge.EdgeID,
+			"source_id":   candidate.Edge.SourceID,
+			"target_id":   candidate.Edge.TargetID,
+			"relation":    candidate.Edge.Relation,
+			"confidence":  candidate.Edge.Confidence,
+			"strategy":    candidate.Strategy,
+			"reason":      candidate.Reason,
+			"quality":     quality,
+			"would_write": wouldWrite,
 		})
 	}
 	if candidate.Edge.Confidence < g.request.MinConfidence {
@@ -516,6 +531,96 @@ func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryE
 		return
 	}
 	stat.Written += 1
+}
+
+func (g *memoryEdgeBackfillGenerator) recordQualityAudit(candidate memoryEdgeBackfillCandidate, quality map[string]any) {
+	g.qualityTotal += 1
+	g.qualityConfidenceSum += candidate.Edge.Confidence
+	if anyToBool(candidate.Edge.Metadata["inferred"]) || strings.Contains(strings.ToLower(candidate.Strategy), "inferred") {
+		g.qualityInferred += 1
+	}
+	switch strings.TrimSpace(anyToString(quality["status"])) {
+	case "high_confidence":
+		g.qualityHigh += 1
+	case "low_confidence":
+		g.qualityLow += 1
+	default:
+		g.qualityReview += 1
+	}
+}
+
+func (g *memoryEdgeBackfillGenerator) qualityAudit() map[string]any {
+	avg := 0.0
+	if g.qualityTotal > 0 {
+		avg = g.qualityConfidenceSum / float64(g.qualityTotal)
+	}
+	return map[string]any{
+		"schema_id":           "memory_edge_quality_audit.v1",
+		"scoring_version":     memoryEdgeInferredScoringVersion,
+		"generated":           g.qualityTotal,
+		"high_confidence":     g.qualityHigh,
+		"review_recommended":  g.qualityReview,
+		"low_confidence":      g.qualityLow,
+		"inferred_candidates": g.qualityInferred,
+		"average_confidence":  roundFloat(avg, 4),
+		"min_confidence":      g.request.MinConfidence,
+		"audit_first":         g.request.DryRun,
+		"write_gate":          "confidence_and_existing_edge",
+		"recommendation":      "Use high-confidence same-topic/reference/session edges as retrieval context; treat inferred_related edges as supporting signals until sampled in recall evals.",
+	}
+}
+
+func memoryEdgeCandidateQuality(candidate memoryEdgeBackfillCandidate, minConfidence float64) map[string]any {
+	confidence := clampFloat(candidate.Edge.Confidence, 0, 1)
+	inferred := anyToBool(candidate.Edge.Metadata["inferred"]) || strings.Contains(strings.ToLower(candidate.Strategy), "inferred")
+	status := "review"
+	if confidence < minConfidence {
+		status = "low_confidence"
+	} else if confidence >= 0.95 && !inferred {
+		status = "high_confidence"
+	}
+	impact := "supporting"
+	switch candidate.Edge.Relation {
+	case "references", "same_session":
+		if confidence >= minConfidence {
+			impact = "strong"
+		}
+	case "same_topic", "same_agent":
+		impact = "medium"
+	case "inferred_related":
+		impact = "exploratory"
+	}
+	warnings := []any{}
+	if inferred {
+		warnings = append(warnings, "inferred_edge_requires_sampling")
+	}
+	if confidence < minConfidence {
+		warnings = append(warnings, "below_write_confidence_threshold")
+	}
+	if strings.TrimSpace(candidate.Reason) == "" {
+		warnings = append(warnings, "missing_reason")
+	}
+	signals := map[string]any{
+		"relation":    candidate.Edge.Relation,
+		"strategy":    candidate.Strategy,
+		"reason":      candidate.Reason,
+		"inferred":    inferred,
+		"topic_path":  candidate.Edge.TopicPath,
+		"provenance":  anyMap(candidate.Edge.Provenance),
+		"metadata":    anyMap(candidate.Edge.Metadata),
+		"min_gate":    minConfidence,
+		"write_ready": confidence >= minConfidence,
+	}
+	if shared := anyToInt(candidate.Edge.Metadata["shared_terms"], 0); shared > 0 {
+		signals["shared_terms"] = shared
+	}
+	return map[string]any{
+		"score":            int(roundFloat(confidence*100, 0)),
+		"status":           status,
+		"retrieval_impact": impact,
+		"warnings":         warnings,
+		"signals":          signals,
+	}
 }
 
 func (g *memoryEdgeBackfillGenerator) generateTopicEdges(ctx context.Context) {

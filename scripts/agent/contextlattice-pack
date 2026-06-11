@@ -62,7 +62,68 @@ def slim_source_coverage(value: Any) -> dict[str, Any]:
         "timed_out": as_list(coverage.get("timed_out"))[:4],
         "budget_exceeded": as_list(coverage.get("budget_exceeded"))[:4],
         "complete": bool(coverage.get("complete")),
+        "retrieval_lifecycle": coverage.get("retrieval_lifecycle") if isinstance(coverage.get("retrieval_lifecycle"), dict) else {},
     }
+
+
+def slim_run_advisor(value: Any) -> dict[str, Any]:
+    advisor = value if isinstance(value, dict) else {}
+    prompt_quality = advisor.get("prompt_quality") if isinstance(advisor.get("prompt_quality"), dict) else {}
+    retrieval = advisor.get("retrieval_advice") if isinstance(advisor.get("retrieval_advice"), dict) else {}
+    continuation = advisor.get("continuation") if isinstance(advisor.get("continuation"), dict) else {}
+    objective = advisor.get("objective_coherence") if isinstance(advisor.get("objective_coherence"), dict) else {}
+    graph = advisor.get("graph_quality") if isinstance(advisor.get("graph_quality"), dict) else {}
+    slim = {
+        "ok": bool(advisor.get("ok", True)),
+        "schema_id": "run_advisor.v1",
+        "posture": str(advisor.get("posture") or "needs_retrieval")[:80],
+        "prompt_quality": {
+            "score": int(prompt_quality.get("score") or 0),
+            "state": str(prompt_quality.get("state") or "needs_context")[:80],
+            "ranked_evidence_count": int(prompt_quality.get("ranked_evidence_count") or 0),
+            "reference_prompt_chars": int(prompt_quality.get("reference_prompt_chars") or 0),
+            "returned_source_count": int(prompt_quality.get("returned_source_count") or 0),
+            "complete": bool(prompt_quality.get("complete")),
+            "missing": as_list(prompt_quality.get("missing"))[:8],
+        },
+        "retrieval_advice": {
+            "recommended_mode": str(retrieval.get("recommended_mode") or "balanced")[:80],
+            "recommended_surface": str(retrieval.get("recommended_surface") or "cli_for_local_agents")[:120],
+            "rationale": as_list(retrieval.get("rationale"))[:8],
+            "blocking_recommended": bool(retrieval.get("blocking_recommended")),
+        },
+        "continuation": {
+            "status": str(continuation.get("status") or "unknown")[:80],
+            "token": str(continuation.get("token") or "")[:128],
+            "poll_url": str(continuation.get("poll_url") or "")[:240],
+            "events_url": str(continuation.get("events_url") or "")[:240],
+            "pending_sources": as_list(continuation.get("pending_sources"))[:8],
+            "warming_sources": as_list(continuation.get("warming_sources"))[:8],
+            "failed_sources": as_list(continuation.get("failed_sources"))[:4],
+            "timed_out_sources": as_list(continuation.get("timed_out_sources"))[:4],
+            "budget_exceeded_sources": as_list(continuation.get("budget_exceeded_sources"))[:4],
+            "continuation_available": bool(continuation.get("continuation_available")),
+            "modeled_progress": continuation.get("modeled_progress") if isinstance(continuation.get("modeled_progress"), dict) else {},
+            "repair_instruction": str(continuation.get("repair_instruction") or "Rerun context compilation when evidence is missing.")[:900],
+            "agent_followup_command": str(continuation.get("agent_followup_command") or "")[:300],
+            "agent_followup_endpoint": str(continuation.get("agent_followup_endpoint") or "")[:240],
+            "agent_followup_transport": str(continuation.get("agent_followup_transport") or "none")[:40],
+        },
+        "objective_coherence": {
+            "score": int(objective.get("score") or 0),
+            "status": str(objective.get("status") or "missing")[:80],
+            "signals": objective.get("signals") if isinstance(objective.get("signals"), dict) else {},
+            "repair_instruction": str(objective.get("repair_instruction") or "Carry objective, goal, and mission into the next prompt packet.")[:900],
+        },
+        "graph_quality": {
+            "status": str(graph.get("status") or "not_sampled")[:80],
+            "score": int(graph.get("score") or 0),
+            "signals": graph.get("signals") if isinstance(graph.get("signals"), dict) else {},
+            "recommendation": str(graph.get("recommendation") or "Run contextlattice_memory_topology when graph evidence matters.")[:900],
+        },
+        "next_actions": as_list(advisor.get("next_actions"))[:5],
+    }
+    return attach_format_contract("run_advisor.v1", slim)
 
 
 def trim_context_pack_lists(context_pack: dict[str, Any], limit: int) -> None:
@@ -87,6 +148,9 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
     coverage = slim_source_coverage(payload.get("source_coverage") or context_pack.get("source_coverage"))
     payload["source_coverage"] = coverage
     context_pack["source_coverage"] = coverage
+    advisor = slim_run_advisor(payload.get("run_advisor") or context_pack.get("run_advisor"))
+    payload["run_advisor"] = advisor
+    context_pack["run_advisor"] = advisor
     payload["warnings"] = as_list(payload.get("warnings"))[:3]
     trim_context_pack_lists(context_pack, 3)
     payload = attach_format_contract("context_pack_response.v1", payload)
@@ -102,12 +166,14 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
     if encoded_len(payload) <= budget_chars:
         return payload
 
+    advisor = slim_run_advisor(payload.get("run_advisor") or context_pack.get("run_advisor"))
     minimal_pack = {
         "query": context_pack.get("query") or payload.get("task_summary") or "",
         "retrieval_mode": context_pack.get("retrieval_mode") or "",
         "retrieval_intent": context_pack.get("retrieval_intent") or "",
         "source_coverage": coverage,
         "context_compiler": context_pack.get("context_compiler") or minimal_context_compiler("minimal_payload", 0),
+        "run_advisor": advisor,
         "prompt_sections": minimal_prompt_sections(
             context_pack.get("query") or payload.get("task_summary") or "",
             "ContextLattice clipped this context package to a minimal bounded payload; rerun with a larger budget for ranked evidence.",
@@ -131,12 +197,16 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "task_summary": str(payload.get("task_summary") or "")[:240],
         "context_budget_chars": budget_chars,
         "clipped": True,
+        "session_id": payload.get("session_id") or "",
+        "agent_runtime": payload.get("agent_runtime") if isinstance(payload.get("agent_runtime"), dict) else {},
+        "objective_runtime": payload.get("objective_runtime") if isinstance(payload.get("objective_runtime"), dict) else {},
         "fact_count": int(payload.get("fact_count") or 0),
         "result_count": int(payload.get("result_count") or 0),
         "source_coverage": coverage,
         "warnings": ["ContextLattice context pack clipped to minimal local output budget."],
         "context_pack": minimal_pack,
         "context_compiler": minimal_pack["context_compiler"],
+        "run_advisor": advisor,
         "reference_prompt": "ContextLattice clipped this package to a minimal bounded payload. Rerun with a larger budget before making detailed evidence-backed claims.",
         "writeback_required": True,
     }
@@ -207,12 +277,16 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     reference_prompt = raw.get("reference_prompt")
     if not isinstance(reference_prompt, str) or not reference_prompt.strip():
         reference_prompt = fallback_reference_prompt(query, prompt_sections, ranked_evidence)
+    run_advisor = raw.get("run_advisor") or pack.get("run_advisor") or pack.get("runAdvisor")
+    if not isinstance(run_advisor, dict):
+        run_advisor = {}
     context_pack: dict[str, Any] = {
         "query": pack.get("query") or raw.get("query") or query,
         "retrieval_mode": raw.get("retrieval_mode") or pack.get("retrievalMode"),
         "retrieval_intent": raw.get("retrieval_intent") or pack.get("retrievalIntent"),
         "source_coverage": source_coverage,
         "context_compiler": context_compiler,
+        "run_advisor": run_advisor,
         "prompt_sections": prompt_sections,
         "ranked_evidence": ranked_evidence,
         "facts": facts,
@@ -235,6 +309,7 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "source_coverage": source_coverage,
         "context_compiler": context_compiler,
         "reference_prompt": reference_prompt,
+        "run_advisor": run_advisor,
         "warnings": as_list(raw.get("warnings"))[:10],
         "context_pack": context_pack,
         "writeback_required": True,

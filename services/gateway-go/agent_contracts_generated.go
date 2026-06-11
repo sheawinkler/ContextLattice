@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 6
+const GeneratedAgentContractRegistryVersion = 7
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -28,6 +28,7 @@ const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgemen
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
+const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
 const GeneratedAgentContractUniversalAgentAdapterResponseV1 = "universal_agent_adapter_response.v1"
 const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 
@@ -48,6 +49,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractPolicyContextPackageV1,
+	GeneratedAgentContractRunAdvisorV1,
 	GeneratedAgentContractUniversalAgentAdapterResponseV1,
 	GeneratedAgentContractWritebackResultV1,
 }
@@ -146,6 +148,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPolicyContextPackageV1,
 		PayloadKind:        "agent_policy_context_package",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRunAdvisorV1,
+		PayloadKind:        "run_advisor",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

@@ -113,7 +113,9 @@ def main() -> int:
         "contextlattice_agent_adoption_proof": bin_dir / "contextlattice_agent_adoption_proof",
         "contextlattice_agent_session": bin_dir / "contextlattice_agent_session",
         "contextlattice_agent_trace": bin_dir / "contextlattice_agent_trace",
+        "contextlattice_run_advisor": bin_dir / "contextlattice_run_advisor",
         "contextlattice_agent_runtime_doctor": bin_dir / "contextlattice_agent_runtime_doctor",
+        "contextlattice_memory_topology": bin_dir / "contextlattice_memory_topology",
         "contextlattice_source_backfill": bin_dir / "contextlattice_source_backfill",
         "contextlattice_skills_index": bin_dir / "contextlattice_skills_index",
     }
@@ -141,6 +143,11 @@ def main() -> int:
     if expected["contextlattice_agent_trace"].exists():
         ok, detail = run_text([agent_trace, "--help"], args.timeout)
         checks.append(record("agent_trace_help", ok, detail))
+
+    run_advisor = str(expected["contextlattice_run_advisor"])
+    if expected["contextlattice_run_advisor"].exists():
+        ok, detail = run_text([run_advisor, "--help"], args.timeout)
+        checks.append(record("run_advisor_help", ok, detail))
 
     hooks = hook_status(HOME / ".codex" / "hooks.json")
     checks.append(record("codex_hooks", bool(hooks.get("ok")), **{k: v for k, v in hooks.items() if k != "ok"}))

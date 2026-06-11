@@ -27,6 +27,7 @@ const a2aReadinessProfileContractID = "a2a_readiness_profile.v1"
 const agentSessionRollupContractID = "agent_session_rollup.v1"
 const agentPromptContextPackageContractID = "agent_prompt_context_package.v1"
 const agentRunTraceContractID = "agent_run_trace.v1"
+const runAdvisorContractID = "run_advisor.v1"
 
 type agentContractsRegistry struct {
 	RegistryID       string                    `json:"registry_id"`
@@ -261,6 +262,7 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 		agentSessionRollupContractID,
 		agentPromptContextPackageContractID,
 		agentRunTraceContractID,
+		runAdvisorContractID,
 	}
 	if err == nil {
 		registryID = registry.RegistryID
@@ -326,6 +328,7 @@ func attachPayloadFormatContract(contractID string, payload map[string]any, agen
 }
 
 func attachContextPackFormatContract(payload map[string]any) map[string]any {
+	ensureContextPackRunAdvisor(payload)
 	return attachPayloadFormatContract(
 		contextPackResponseContractID,
 		payload,
@@ -333,6 +336,49 @@ func attachContextPackFormatContract(payload map[string]any) map[string]any {
 		"context_pack",
 		"/memory/context-pack",
 	)
+}
+
+func ensureContextPackRunAdvisor(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	if len(anyMap(payload["run_advisor"])) > 0 {
+		return
+	}
+	contextPack := anyMap(payload["context_pack"])
+	sourceCoverage := anyMap(payload["source_coverage"])
+	if len(sourceCoverage) == 0 {
+		sourceCoverage = anyMap(contextPack["source_coverage"])
+	}
+	objectiveCtx := extractObjectiveContext(payload)
+	if objectiveCtx.empty() {
+		objectiveCtx = extractObjectiveContext(contextPack)
+	}
+	if objectiveCtx.empty() {
+		objectiveCtx = objectiveCtx.withDefaults()
+	}
+	query := firstNonEmptyStrings(
+		anyToString(payload["query"]),
+		anyToString(contextPack["query"]),
+		anyToString(payload["task_summary"]),
+	)
+	advisor := buildRunAdvisor(runAdvisorInput{
+		Query:           query,
+		Project:         anyToString(payload["project"]),
+		TopicPath:       firstNonEmptyStrings(anyToString(payload["topic_path"]), anyToString(contextPack["topic_path"])),
+		RetrievalMode:   firstNonEmptyStrings(anyToString(payload["retrieval_mode"]), anyToString(contextPack["retrieval_mode"])),
+		SessionID:       anyToString(payload["session_id"]),
+		AgentID:         anyToString(payload["agent_id"]),
+		SourceCoverage:  sourceCoverage,
+		Objective:       objectiveCtx,
+		RankedEvidence:  contextPackAnyList(firstPresentAny(contextPack["ranked_evidence"], contextPack["rankedEvidence"])),
+		ReferencePrompt: anyToString(payload["reference_prompt"]),
+		Surface:         "context_pack_contract_attach",
+	})
+	payload["run_advisor"] = advisor
+	contextPack["runAdvisor"] = advisor
+	contextPack["run_advisor"] = advisor
+	payload["context_pack"] = contextPack
 }
 
 func attachWritebackFormatContract(payload map[string]any, item normalizedWrite, endpoint string, status int) map[string]any {

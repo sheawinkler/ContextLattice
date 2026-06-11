@@ -71,6 +71,11 @@ def render_tree(trace: dict[str, Any]) -> str:
     graph = as_dict(run_shaping.get("graph"))
     handoffs = as_dict(run_shaping.get("handoffs"))
     checkpoints = as_dict(run_shaping.get("checkpoints"))
+    advisor = as_dict(trace.get("run_advisor")) or as_dict(run_shaping.get("run_advisor"))
+    prompt_quality = as_dict(advisor.get("prompt_quality"))
+    continuation = as_dict(advisor.get("continuation"))
+    objective_coherence = as_dict(advisor.get("objective_coherence"))
+    retrieval_advice = as_dict(advisor.get("retrieval_advice"))
     phase_counts = as_dict(trace.get("phase_counts"))
     validation = text(as_dict(as_dict(trace.get("format_contract")).get("validation")).get("status"), "unknown")
 
@@ -80,6 +85,14 @@ def render_tree(trace: dict[str, Any]) -> str:
         f"objective: {short(session.get('objective'), 220)}",
         f"next action: {short(session.get('next_action'), 220)}",
         f"contract: {text(trace.get('schema_id'), 'agent_run_trace.v1')} | validation {validation}",
+        "",
+        "run advisor:",
+        f"  - posture: {text(advisor.get('posture'), 'unknown')}",
+        f"  - prompt quality: {as_int(prompt_quality.get('score'))} | {text(prompt_quality.get('state'), 'unknown')}",
+        f"  - objective coherence: {as_int(objective_coherence.get('score'))} | {text(objective_coherence.get('status'), 'unknown')}",
+        f"  - continuation: {text(continuation.get('status'), 'unknown')} | pending {csv(continuation.get('pending_sources'), 8)}",
+        f"  - recommended: {text(retrieval_advice.get('recommended_mode'), 'balanced')} via {text(retrieval_advice.get('recommended_surface'), 'cli_for_local_agents')}",
+        f"  - repair: {short(continuation.get('repair_instruction') or objective_coherence.get('repair_instruction'), 220)}",
         "",
         "phases:",
     ]
