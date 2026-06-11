@@ -206,6 +206,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     }
     payload = {key: value for key, value in payload.items() if value not in ("", None)}
     response = request_json("POST", "/v1/agents/preflight", payload, args.timeout)
+    response = enforce_contract_limits("agent_preflight_response.v1", response)
     session_id = str(response.get("session_id") or "").strip()
     exports = env_exports(args.base_url, profile_key, agent_id, session_id)
     findings = contract_findings_for_bootstrap(response)

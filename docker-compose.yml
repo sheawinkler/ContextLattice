@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-contextlattice}
+
 services:
   qdrant:
     image: qdrant/qdrant:latest
@@ -153,7 +155,6 @@ services:
   # Ollama (local, free LLMs)
   ollama:
     image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.1}
-    container_name: ollama
     ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:11434:11434"]  # expose to host for testing
     volumes: ["${HOME}/.ollama:/root/.ollama"]
     restart: unless-stopped
@@ -173,7 +174,6 @@ services:
   # Letta (MemGPT successor). Ollama is optional and only used when explicitly configured.
   letta:
     image: letta/letta:latest
-    container_name: letta
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Letta uses an OpenAI-compatible client; include /v1 if pointing at Ollama.

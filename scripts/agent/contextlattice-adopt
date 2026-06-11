@@ -1,0 +1,838 @@
+#!/usr/bin/env python3
+"""One-command ContextLattice adoption kit for local and portable agent setup."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from _common import contextlattice_base_url, emit, now_iso, request_json
+
+
+def shell_env_value(path: Path, key: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    prefix = f"{key}="
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if not line.startswith(prefix):
+            continue
+        value = line.split("=", 1)[1].strip()
+        try:
+            parts = shlex.split(value)
+        except ValueError:
+            return value.strip("'\"")
+        return parts[0] if parts else ""
+    return ""
+
+
+def add_candidate(candidates: list[Path], value: str | os.PathLike[str] | None) -> None:
+    if not value:
+        return
+    path = Path(value).expanduser()
+    if path not in candidates:
+        candidates.append(path)
+
+
+def resolve_repo_root(script_root: Path, global_home: Path) -> Path:
+    candidates: list[Path] = []
+    add_candidate(candidates, os.getenv("CONTEXTLATTICE_REPO_ROOT"))
+    for env_path in [
+        script_root / "agent_hooks.env",
+        global_home / "agent_hooks.env",
+        Path.home() / ".codex" / "contextlattice_hooks.env",
+    ]:
+        add_candidate(candidates, shell_env_value(env_path, "CONTEXTLATTICE_REPO_ROOT"))
+    add_candidate(candidates, script_root)
+
+    for candidate in candidates:
+        has_installer = (candidate / "scripts" / "install_global_agent_tools.sh").is_file() or (
+            candidate / "scripts" / "install_global_agent_tools.ps1"
+        ).is_file()
+        if has_installer and (candidate / "config" / "agents" / "agent_profiles.json").is_file():
+            return candidate
+    return script_root
+
+
+def first_existing_path(paths: list[Path]) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[2]
+GLOBAL_HOME = Path(os.getenv("CONTEXTLATTICE_GLOBAL_HOME", str(Path.home() / ".contextlattice"))).expanduser()
+REPO_ROOT = resolve_repo_root(SCRIPT_ROOT, GLOBAL_HOME)
+AGENT_DIR = REPO_ROOT / "scripts" / "agent"
+INSTALLER_SH = REPO_ROOT / "scripts" / "install_global_agent_tools.sh"
+INSTALLER_PS1 = REPO_ROOT / "scripts" / "install_global_agent_tools.ps1"
+ADAPTER = AGENT_DIR / "contextlattice-agent-adapter"
+DOCTOR = AGENT_DIR / "audit-agent-runtime-install"
+SESSION_STORE_DOCTOR = AGENT_DIR / "audit-codex-session-store"
+RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
+ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
+AGENT_CONFIG = first_existing_path(
+    [
+        REPO_ROOT / "config" / "agents" / "agent_profiles.json",
+        GLOBAL_HOME / "config" / "agents" / "agent_profiles.json",
+    ]
+)
+TEMPLATE_DIR = first_existing_path(
+    [
+        REPO_ROOT / "docs" / "public_overview" / "templates" / "agents",
+        GLOBAL_HOME / "docs" / "public_overview" / "templates" / "agents",
+    ]
+)
+
+PACK_SCHEMA = "contextlattice_agent_pack.v1"
+ADOPT_STATUS_SCHEMA = "contextlattice_agent_adoption_status.v1"
+ADOPT_MATRIX_SCHEMA = "contextlattice_agent_adoption_ci_matrix.v1"
+
+AGENT_COMMANDS = {
+    "codex": ["codex"],
+    "claude-code": ["claude"],
+    "opencode": ["opencode"],
+    "hermes-agent": ["hermes", "hermes-agent"],
+    "hermes-ultra": ["hermes-ultra"],
+}
+
+APP_PATHS = {
+    "chatgpt-desktop": ["/Applications/ChatGPT.app", str(Path.home() / "Applications" / "ChatGPT.app")],
+    "claude-desktop": ["/Applications/Claude.app", str(Path.home() / "Applications" / "Claude.app")],
+}
+
+GLOBAL_TOOL_NAMES = [
+    "contextlattice_adopt",
+    "contextlattice_agent_adapter",
+    "contextlattice_agent_runtime_proof",
+    "contextlattice_agent_adoption_proof",
+    "contextlattice_agent_runtime_doctor",
+    "contextlattice_agent_session",
+    "contextlattice_agent_trace",
+    "contextlattice_run_advisor",
+    "contextlattice_skills_index",
+]
+
+SECRET_MARKERS = ("secret", "token", "api_key", "apikey", "password", "credential", "private_key")
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def load_profiles() -> dict[str, Any]:
+    try:
+        parsed = json.loads(AGENT_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    profiles = parsed.get("profiles") if isinstance(parsed, dict) else {}
+    return profiles if isinstance(profiles, dict) else {}
+
+
+def profile_order() -> list[str]:
+    preferred = [
+        "codex",
+        "claude-code",
+        "opencode",
+        "hermes-agent",
+        "hermes-ultra",
+        "pi",
+        "chatgpt-web",
+        "chatgpt-desktop",
+        "claude-web",
+        "claude-desktop",
+    ]
+    profiles = load_profiles()
+    ordered = [item for item in preferred if item in profiles]
+    ordered.extend(sorted(set(profiles) - set(ordered)))
+    return ordered
+
+
+def selected_profiles(raw: str) -> list[str]:
+    if raw.strip():
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return profile_order()
+
+
+def run_command(argv: list[str], timeout: float, env: dict[str, str] | None = None) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(REPO_ROOT),
+            env=env or os.environ.copy(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "reason": "timeout",
+            "command": compact_command(argv),
+            "timeout": timeout,
+            "stdout": str(exc.stdout or "")[:1600],
+            "stderr": str(exc.stderr or "")[:1600],
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "reason": "exec_failed",
+            "command": compact_command(argv),
+            "stderr": str(exc)[:1600],
+        }
+    payload: Any = None
+    if proc.stdout.strip().startswith(("{", "[")):
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            payload = None
+    return {
+        "ok": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "command": compact_command(argv),
+        "stdout": proc.stdout[:2400],
+        "stderr": proc.stderr[:2400],
+        "json": payload,
+    }
+
+
+def compact_command(argv: list[str]) -> list[str]:
+    root = str(REPO_ROOT)
+    home = str(Path.home())
+    out: list[str] = []
+    for item in argv:
+        text = str(item)
+        if text.startswith(root):
+            text = text.replace(root, ".", 1)
+        elif text.startswith(home):
+            text = text.replace(home, "$HOME", 1)
+        out.append(text)
+    return out
+
+
+def compact_path(path: Path) -> str:
+    text = str(path)
+    root = str(REPO_ROOT)
+    home = str(Path.home())
+    if text.startswith(root):
+        return text.replace(root, ".", 1)
+    if text.startswith(home):
+        return text.replace(home, "$HOME", 1)
+    return text
+
+
+def install_argv(global_home: Path, args: argparse.Namespace | None = None) -> list[str]:
+    skip_venv = bool(getattr(args, "skip_venv", False))
+    if platform.system().lower() == "windows":
+        runner = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+        argv = [runner, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(INSTALLER_PS1), "-GlobalHome", str(global_home)]
+        if skip_venv:
+            argv.append("-SkipVenv")
+        return argv
+
+    argv = [str(INSTALLER_SH), "--global-home", str(global_home)]
+    if bool(getattr(args, "no_shell_profile", False)):
+        argv.append("--no-shell-profile")
+    if skip_venv:
+        argv.append("--skip-venv")
+    if bool(getattr(args, "install_codex_hooks", False)) and not bool(getattr(args, "no_codex_hooks", False)):
+        argv.append("--install-codex-hooks")
+    if bool(getattr(args, "quiet", False)):
+        argv.append("--quiet")
+    return argv
+
+
+def tool_status(global_home: Path) -> list[dict[str, Any]]:
+    bin_dir = global_home / "bin"
+    rows: list[dict[str, Any]] = []
+    for name in GLOBAL_TOOL_NAMES:
+        path = bin_dir / name
+        rows.append({"name": name, "path": str(path), "installed": path.is_file(), "executable": os.access(path, os.X_OK)})
+    return rows
+
+
+def detect_agents(home: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    profiles = load_profiles()
+    for profile in profile_order():
+        command_hits = [cmd for cmd in AGENT_COMMANDS.get(profile, []) if shutil.which(cmd)]
+        app_hits = [path for path in APP_PATHS.get(profile, []) if Path(path).exists()]
+        if profile.endswith("-web") or profile in {"pi"}:
+            install_state = "copy_template"
+        elif command_hits or app_hits:
+            install_state = "detected"
+        else:
+            install_state = "not_detected"
+        template = template_path(profile)
+        rows.append(
+            {
+                "profile": profile,
+                "agent_id": str(as_dict(profiles.get(profile)).get("agent_id") or ""),
+                "surfaces": as_list(as_dict(profiles.get(profile)).get("surfaces")),
+                "install_state": install_state,
+                "commands": command_hits,
+                "apps": app_hits,
+                "template": compact_path(template) if template.exists() else "",
+            }
+        )
+    codex_sessions = home / ".codex" / "sessions"
+    if codex_sessions.exists():
+        rows.append({"profile": "codex-session-store", "install_state": "detected", "path": str(codex_sessions)})
+    return rows
+
+
+def template_path(profile: str) -> Path:
+    mapping = {
+        "chatgpt-web": "chatgpt-web-desktop.md",
+        "chatgpt-desktop": "chatgpt-web-desktop.md",
+        "claude-web": "claude-web-desktop.md",
+        "claude-desktop": "claude-web-desktop.md",
+    }
+    return TEMPLATE_DIR / mapping.get(profile, f"{profile}.md")
+
+
+def storage_checks(home: Path) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    candidates = [home / ".codex" / "sessions", home / ".contextlattice"]
+    tcc_markers = ["/Documents/", "/Desktop/", "/Downloads/", "/Library/Mobile Documents/", "/Dropbox/", "/Google Drive/"]
+    for path in candidates:
+        exists = path.exists()
+        try:
+            real = path.resolve(strict=False)
+        except Exception:
+            real = path
+        warnings: list[str] = []
+        real_text = str(real)
+        if path.is_symlink():
+            warnings.append("symlinked_path")
+        if real_text.startswith("/Volumes/"):
+            warnings.append("external_volume")
+        if any(marker in real_text for marker in tcc_markers):
+            warnings.append("macos_tcc_managed_path")
+        access_ok = True
+        detail = ""
+        if exists:
+            access_ok = os.access(real, os.R_OK | os.W_OK | os.X_OK)
+            if path.is_dir() and access_ok:
+                try:
+                    probe = path / f".contextlattice-write-check-{os.getpid()}"
+                    probe.write_text("ok\n", encoding="utf-8")
+                    probe.unlink(missing_ok=True)
+                except Exception as exc:
+                    access_ok = False
+                    detail = str(exc)[:280]
+        checks.append(
+            {
+                "path": str(path),
+                "realpath": real_text,
+                "exists": exists,
+                "access_ok": access_ok,
+                "warnings": warnings,
+                "detail": detail,
+            }
+        )
+    return checks
+
+
+def shell_checks(global_home: Path, home: Path) -> list[dict[str, Any]]:
+    bin_dir = str(global_home / "bin")
+    checks = []
+    for rc in [home / ".zshrc", home / ".bashrc"]:
+        text = rc.read_text(encoding="utf-8", errors="replace") if rc.exists() else ""
+        checks.append({"path": str(rc), "exists": rc.exists(), "path_entry": ".contextlattice/bin" in text or bin_dir in text})
+    checks.append({"path": "PATH", "path_entry_live": bin_dir in os.getenv("PATH", "").split(os.pathsep)})
+    return checks
+
+
+def gateway_check(timeout: float) -> dict[str, Any]:
+    try:
+        health = request_json("GET", "/health", None, timeout)
+    except BaseException as exc:  # request_json may SystemExit on HTTPError.
+        return {"ok": False, "base_url": contextlattice_base_url(), "error": str(exc)[:480]}
+    return {"ok": bool(health.get("ok")), "base_url": contextlattice_base_url(), "service": health.get("service")}
+
+
+def doctor_check(global_home: Path, timeout: float) -> dict[str, Any]:
+    if not DOCTOR.exists():
+        return {"ok": False, "error": "runtime doctor script missing"}
+    result = run_command([str(DOCTOR), "--global-home", str(global_home), "--timeout", str(timeout)], timeout + 10)
+    return {"ok": result.get("ok"), "command": result.get("command"), "payload": result.get("json"), "stderr": result.get("stderr")}
+
+
+def session_store_check(home: Path, timeout: float) -> dict[str, Any]:
+    if not SESSION_STORE_DOCTOR.exists():
+        return {"ok": True, "skipped": True, "reason": "session_store_doctor_missing"}
+    path = home / ".codex" / "sessions"
+    if not path.exists():
+        return {"ok": True, "skipped": True, "reason": "codex_sessions_absent", "path": str(path)}
+    result = run_command([str(SESSION_STORE_DOCTOR), "--pretty"], timeout + 10)
+    payload = as_dict(result.get("json"))
+    return {"ok": result.get("ok"), "path": str(path), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
+
+
+def build_status(args: argparse.Namespace) -> dict[str, Any]:
+    home = Path(args.home).expanduser()
+    global_home = Path(args.global_home).expanduser()
+    tools = tool_status(global_home)
+    storage = storage_checks(home)
+    shell = shell_checks(global_home, home)
+    gateway = gateway_check(args.timeout)
+    doctor = doctor_check(global_home, args.timeout) if args.include_doctor else {"skipped": True}
+    session_store = session_store_check(home, args.timeout) if args.include_session_store else {"skipped": True}
+    profiles = detect_agents(home)
+    required_tools_ok = all(item.get("installed") and item.get("executable") for item in tools if item["name"] != "contextlattice_adopt")
+    warnings = []
+    for item in storage:
+        warnings.extend({"path": item["path"], "warning": warning} for warning in item.get("warnings", []))
+    failures = []
+    if not gateway.get("ok"):
+        failures.append({"reason": "gateway_unhealthy", "detail": gateway})
+    if not required_tools_ok:
+        failures.append({"reason": "global_tools_incomplete"})
+    if any(item.get("exists") and not item.get("access_ok") for item in storage):
+        failures.append({"reason": "storage_access_failed"})
+    if doctor.get("ok") is False:
+        failures.append({"reason": "runtime_doctor_failed"})
+    repair_args = argparse.Namespace(
+        install_codex_hooks=True,
+        no_codex_hooks=False,
+        no_shell_profile=True,
+        skip_venv=True,
+        quiet=False,
+    )
+    payload = {
+        "ok": not failures,
+        "schema_id": ADOPT_STATUS_SCHEMA,
+        "generated_at": now_iso(),
+        "machine": {
+            "platform": platform.platform(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "python": sys.version.split()[0],
+            "home": str(home),
+            "global_home": str(global_home),
+        },
+        "gateway": gateway,
+        "tools": tools,
+        "agents": profiles,
+        "storage": storage,
+        "shell": shell,
+        "doctor": doctor,
+        "session_store": session_store,
+        "warnings": warnings,
+        "failures": failures,
+        "repair_command": " ".join(compact_command(install_argv(global_home, repair_args))),
+    }
+    return payload
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    payload = build_status(args)
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    global_home = Path(args.global_home).expanduser()
+    argv = install_argv(global_home, args)
+    if args.dry_run:
+        install_result = {"ok": True, "dry_run": True, "command": compact_command(argv)}
+    else:
+        install_result = run_command(argv, args.timeout + 180)
+    status_args = argparse.Namespace(
+        home=args.home,
+        global_home=args.global_home,
+        timeout=args.timeout,
+        include_doctor=True,
+        include_session_store=True,
+        pretty=False,
+    )
+    status = build_status(status_args) if not args.dry_run else {"skipped": True, "reason": "dry_run"}
+    proof = {"skipped": True}
+    if args.run_proof and not args.dry_run:
+        proof = run_command(
+            [
+                str(RUNTIME_PROOF),
+                "--agent",
+                args.agent,
+                "--project",
+                args.project,
+                "--timeout",
+                str(args.proof_timeout),
+            ],
+            args.proof_timeout + 120,
+        )
+    payload = {
+        "ok": bool(install_result.get("ok")) and (status.get("ok", True) is not False) and (proof.get("ok", True) is not False),
+        "schema_id": "contextlattice_agent_adoption_install.v1",
+        "generated_at": now_iso(),
+        "install": install_result,
+        "status": status,
+        "proof": proof,
+        "next_commands": [
+            "contextlattice_adopt status --pretty",
+            "contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty",
+            "contextlattice_agent_adapter profiles",
+        ],
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+def cmd_proof(args: argparse.Namespace) -> int:
+    argv = [
+        str(ADOPTION_PROOF),
+        "--project",
+        args.project,
+        "--agents",
+        args.agents,
+        "--base-url",
+        args.base_url,
+        "--proof-timeout",
+        str(args.proof_timeout),
+        "--phase-timeout",
+        str(args.phase_timeout),
+    ]
+    if args.skip_provider_smoke:
+        argv.append("--skip-provider-smoke")
+    if args.progress:
+        argv.append("--progress")
+    result = run_command(argv, args.proof_timeout * max(1, len(selected_profiles(args.agents))) + 180)
+    payload = as_dict(result.get("json")) or {"ok": False, "error": result.get("stderr") or result.get("stdout")}
+    payload["adopt_command"] = compact_command(argv)
+    emit(payload, args.pretty)
+    return 0 if payload.get("ok") else 1
+
+
+def read_template(profile: str) -> str:
+    path = template_path(profile)
+    if path.exists():
+        return path.read_text(encoding="utf-8", errors="replace")
+    return profile_template_text(profile, "cli", f"{profile.replace('-', '_')}_agent")
+
+
+def pack_has_secret(value: Any, path: str = "") -> list[str]:
+    findings: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key).lower()
+            child_path = f"{path}.{key}" if path else str(key)
+            if key_text in {"secrets_policy"}:
+                continue
+            if any(marker in key_text for marker in SECRET_MARKERS):
+                rendered = json.dumps(child)[:80] if not isinstance(child, str) else child[:80]
+                if rendered and rendered not in {"", "<redacted>", "REDACTED", "set-locally"}:
+                    findings.append(child_path)
+            findings.extend(pack_has_secret(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            findings.extend(pack_has_secret(child, f"{path}[{index}]"))
+    return findings
+
+
+def build_pack(args: argparse.Namespace) -> dict[str, Any]:
+    profiles = load_profiles()
+    chosen = selected_profiles(args.profiles)
+    selected = {name: profiles[name] for name in chosen if name in profiles}
+    missing = [name for name in chosen if name not in profiles]
+    templates = {name: read_template(name) for name in chosen}
+    return {
+        "schema_id": PACK_SCHEMA,
+        "version": 1,
+        "created_at": now_iso(),
+        "name": args.name,
+        "source": {
+            "repo": git_value(["git", "config", "--get", "remote.origin.url"]),
+            "commit": git_value(["git", "rev-parse", "--short", "HEAD"]),
+        },
+        "orchestrator": {
+            "default_url": args.base_url,
+            "auth": "set CONTEXTLATTICE_ORCHESTRATOR_API_KEY locally if your gateway requires it",
+        },
+        "profiles": selected,
+        "missing_profiles": missing,
+        "templates": templates,
+        "commands": {
+            "install": "contextlattice_adopt install --pretty",
+            "install_from_repo": "scripts/agent/contextlattice-adopt install --pretty",
+            "status": "contextlattice_adopt status --pretty",
+            "proof": "contextlattice_adopt proof --skip-provider-smoke --pretty",
+            "bootstrap": "contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty",
+            "trace": "contextlattice_agent_trace --session-id <session_id> --tree",
+        },
+        "secrets_policy": "No secrets are embedded. Re-auth each machine/account locally.",
+    }
+
+
+def git_value(args: list[str]) -> str:
+    try:
+        return subprocess.check_output(args, cwd=str(REPO_ROOT), stderr=subprocess.DEVNULL, text=True, timeout=2).strip()
+    except Exception:
+        return ""
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    pack = build_pack(args)
+    secret_findings = pack_has_secret(pack)
+    if secret_findings:
+        payload = {"ok": False, "schema_id": PACK_SCHEMA, "error": "secret_like_fields_detected", "findings": secret_findings}
+        emit(payload, args.pretty)
+        return 1
+    output = Path(args.output).expanduser() if args.output else Path.cwd() / f"{args.name}.agent-pack.json"
+    if not args.dry_run:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = {
+        "ok": True,
+        "schema_id": PACK_SCHEMA,
+        "output": str(output),
+        "dry_run": args.dry_run,
+        "pack": pack if args.include_pack else {
+            "name": pack["name"],
+            "profiles": list(pack["profiles"].keys()),
+            "missing_profiles": pack["missing_profiles"],
+            "template_count": len(pack["templates"]),
+        },
+    }
+    emit(payload, args.pretty)
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    source = Path(args.path).expanduser()
+    try:
+        pack = json.loads(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        emit({"ok": False, "error": str(exc)}, args.pretty)
+        return 1
+    if as_dict(pack).get("schema_id") != PACK_SCHEMA:
+        emit({"ok": False, "error": "unsupported_pack_schema", "schema_id": as_dict(pack).get("schema_id")}, args.pretty)
+        return 1
+    secret_findings = pack_has_secret(pack)
+    if secret_findings:
+        emit({"ok": False, "error": "secret_like_fields_detected", "findings": secret_findings}, args.pretty)
+        return 1
+    global_home = Path(args.global_home).expanduser()
+    pack_dir = global_home / "agent_packs"
+    target = pack_dir / source.name
+    template_dir = pack_dir / source.stem / "templates"
+    if not args.dry_run:
+        pack_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        template_dir.mkdir(parents=True, exist_ok=True)
+        for profile, text in as_dict(pack.get("templates")).items():
+            safe = str(profile).replace("/", "-")
+            (template_dir / f"{safe}.md").write_text(str(text).rstrip() + "\n", encoding="utf-8")
+    payload = {
+        "ok": True,
+        "schema_id": "contextlattice_agent_pack_import.v1",
+        "dry_run": args.dry_run,
+        "source": str(source),
+        "target": str(target),
+        "template_dir": str(template_dir),
+        "profiles": list(as_dict(pack.get("profiles")).keys()),
+        "next_commands": ["contextlattice_adopt status --pretty", "contextlattice_agent_adapter profiles"],
+    }
+    emit(payload, args.pretty)
+    return 0
+
+
+def profile_template_text(name: str, kind: str, agent_id: str) -> str:
+    topic = f"runbooks/{name}-integration"
+    command_surface = {
+        "cli": "Run shell commands directly before/after model calls.",
+        "desktop": "Paste the setup block into the desktop app's custom instructions, then run CLI commands from Terminal when available.",
+        "web": "Paste the setup block into the web agent's instructions; use the HTTP fallback when no local CLI is callable.",
+        "mcp": "Prefer MCP tool calls for search/write/session lifecycle; keep CLI as local recovery path.",
+        "http": "Call the HTTP endpoints directly from the host application.",
+        "repo": "Commit this block into the repo-local AGENTS.md or equivalent runner instruction file.",
+    }.get(kind, "Use the universal ContextLattice contract.")
+    return f"""# ContextLattice Agent Template: {name}
+
+Agent id: `{agent_id}`
+Profile kind: `{kind}`
+Surface rule: {command_surface}
+
+## Mandatory Contract
+
+1. Before planning, call ContextLattice for scoped memory: `contextlattice_agent_adapter bootstrap --agent {name} --agent-id {agent_id} --project <project> --topic-path {topic} --pretty`.
+2. Preserve the returned `CONTEXTLATTICE_SESSION_ID` and reuse it for context packs, checkpoints, traces, and completion.
+3. If CLI is unavailable, use HTTP: `POST http://127.0.0.1:8075/v1/agents/preflight`, then `POST /memory/context-pack`.
+4. During work, checkpoint durable decisions with `contextlattice_agent_adapter checkpoint --session-id <session_id> --content "<decision/evidence>"`.
+5. Before handoff/compaction, run `contextlattice_agent_adapter handoff --session-id <session_id> --summary "<state>"`.
+6. Before the next hard model call, run `contextlattice_run_advisor --session-id <session_id> --pretty`.
+7. To explain the run, run `contextlattice_agent_trace --session-id <session_id> --tree`.
+8. On completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`.
+9. If capabilities are unclear, use `contextlattice_skills_index search "<task/tool need>" --pretty`.
+10. Report degraded memory explicitly; do not pretend recall succeeded.
+
+## Bootstrap Commands
+
+```bash
+contextlattice_adopt status --pretty
+contextlattice_agent_adapter bootstrap --agent {name} --agent-id {agent_id} --project <project> --topic-path {topic} --pretty
+contextlattice_run_advisor "<current task>" --project <project> --agent-id {agent_id} --pretty
+```
+"""
+
+
+def cmd_profile_template(args: argparse.Namespace) -> int:
+    text = profile_template_text(args.name, args.kind, args.agent_id)
+    if args.output:
+        output = Path(args.output).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text.rstrip() + "\n", encoding="utf-8")
+    payload = {
+        "ok": True,
+        "schema_id": "contextlattice_agent_profile_template.v1",
+        "name": args.name,
+        "kind": args.kind,
+        "agent_id": args.agent_id,
+        "output": args.output,
+        "markdown": text if args.include_markdown or not args.output else "",
+    }
+    emit(payload, args.pretty)
+    return 0
+
+
+def cmd_profile_template_with_default(args: argparse.Namespace) -> int:
+    args.agent_id = args.agent_id or f"{args.name.replace('-', '_')}_agent"
+    return cmd_profile_template(args)
+
+
+def cmd_matrix(args: argparse.Namespace) -> int:
+    scenarios = [item.strip() for item in args.scenarios.split(",") if item.strip()]
+    rows: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        if scenario == "current-home":
+            status_args = argparse.Namespace(home=args.home, global_home=args.global_home, timeout=args.timeout, include_doctor=True, include_session_store=True, pretty=False)
+            status = build_status(status_args) if args.execute else {"planned": True, "command": "contextlattice_adopt status --pretty"}
+            rows.append({"scenario": scenario, "ok": status.get("ok", True) is not False, "status": status})
+        elif scenario == "fresh-home":
+            with tempfile.TemporaryDirectory(prefix="contextlattice-adopt-home-") as tmp:
+                gh = str(Path(tmp) / ".contextlattice")
+                if args.execute:
+                    status_args = argparse.Namespace(home=tmp, global_home=gh, timeout=args.timeout, include_doctor=False, include_session_store=False, pretty=False)
+                    status = build_status(status_args)
+                else:
+                    status = {"planned": True, "home": tmp, "global_home": gh, "expected": "missing tools, gateway check only"}
+                rows.append({"scenario": scenario, "ok": True, "status": status})
+        elif scenario == "external-sessions":
+            rows.append({"scenario": scenario, "ok": True, "status": {"planned": True, "checks": ["realpath ~/.codex/sessions", "warn on /Volumes", "warn on symlink", "write probe"]}})
+        elif scenario == "all-profiles-proof":
+            cmd = f"contextlattice_adopt proof --agents {args.agents or ','.join(profile_order())} --skip-provider-smoke --pretty"
+            rows.append({"scenario": scenario, "ok": True, "status": {"planned": True, "command": cmd}})
+        else:
+            rows.append({"scenario": scenario, "ok": False, "status": {"error": "unknown_scenario"}})
+    payload = {"ok": all(row.get("ok") for row in rows), "schema_id": ADOPT_MATRIX_SCHEMA, "generated_at": now_iso(), "scenarios": rows}
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+def add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--home", default=str(Path.home()))
+    parser.add_argument("--global-home", default=os.getenv("CONTEXTLATTICE_GLOBAL_HOME", str(Path.home() / ".contextlattice")))
+    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--pretty", action="store_true")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Adopt ContextLattice into any local agent/account/machine setup.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    status = sub.add_parser("status", help="Inspect local adoption readiness.")
+    add_common(status)
+    status.add_argument("--include-doctor", action=argparse.BooleanOptionalAction, default=True)
+    status.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
+    status.set_defaults(func=cmd_status)
+
+    install = sub.add_parser("install", help="Install global tools, optional hooks, then run adoption status.")
+    add_common(install)
+    install.add_argument("--install-codex-hooks", action=argparse.BooleanOptionalAction, default=True)
+    install.add_argument("--no-codex-hooks", action="store_true")
+    install.add_argument("--no-shell-profile", action="store_true")
+    install.add_argument("--skip-venv", action="store_true")
+    install.add_argument("--quiet", action="store_true")
+    install.add_argument("--dry-run", action="store_true")
+    install.add_argument("--run-proof", action="store_true")
+    install.add_argument("--agent", default="codex")
+    install.add_argument("--project", default="contextlattice")
+    install.add_argument("--proof-timeout", type=float, default=30)
+    install.set_defaults(func=cmd_install)
+
+    proof = sub.add_parser("proof", help="Run adoption proof matrix over selected profiles.")
+    proof.add_argument("--agents", default=",".join(profile_order()))
+    proof.add_argument("--project", default="contextlattice")
+    proof.add_argument("--base-url", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"))
+    proof.add_argument("--proof-timeout", type=float, default=180)
+    proof.add_argument("--phase-timeout", type=float, default=35)
+    proof.add_argument("--skip-provider-smoke", action=argparse.BooleanOptionalAction, default=True)
+    proof.add_argument("--progress", action="store_true")
+    proof.add_argument("--pretty", action="store_true")
+    proof.set_defaults(func=cmd_proof)
+
+    export = sub.add_parser("export", help="Create a portable no-secrets agent pack.")
+    export.add_argument("--name", default="contextlattice-agent-pack")
+    export.add_argument("--profiles", default=",".join(profile_order()))
+    export.add_argument("--base-url", default="http://127.0.0.1:8075")
+    export.add_argument("--output", default="")
+    export.add_argument("--dry-run", action="store_true")
+    export.add_argument("--include-pack", action="store_true")
+    export.add_argument("--pretty", action="store_true")
+    export.set_defaults(func=cmd_export)
+
+    import_cmd = sub.add_parser("import", help="Import a portable no-secrets agent pack.")
+    import_cmd.add_argument("path")
+    import_cmd.add_argument("--global-home", default=os.getenv("CONTEXTLATTICE_GLOBAL_HOME", str(Path.home() / ".contextlattice")))
+    import_cmd.add_argument("--dry-run", action="store_true")
+    import_cmd.add_argument("--pretty", action="store_true")
+    import_cmd.set_defaults(func=cmd_import)
+
+    profile = sub.add_parser("profile-template", help="Generate a template for a generic/new agent.")
+    profile.add_argument("--name", required=True)
+    profile.add_argument("--kind", choices=["cli", "desktop", "web", "mcp", "http", "repo"], default="cli")
+    profile.add_argument("--agent-id", default="")
+    profile.add_argument("--output", default="")
+    profile.add_argument("--include-markdown", action="store_true")
+    profile.add_argument("--pretty", action="store_true")
+    profile.set_defaults(func=cmd_profile_template_with_default)
+
+    matrix = sub.add_parser("matrix", help="Run or plan adoption CI scenarios.")
+    add_common(matrix)
+    matrix.add_argument("--scenarios", default="current-home,fresh-home,external-sessions,all-profiles-proof")
+    matrix.add_argument("--agents", default="")
+    matrix.add_argument("--execute", action="store_true")
+    matrix.set_defaults(func=cmd_matrix)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

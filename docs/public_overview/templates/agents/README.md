@@ -16,6 +16,7 @@ Templates are contract-aware but intentionally light: agents should preserve `fo
 
 Global helper CLI tools are auto-installed by `gmake quickstart` and installer flows:
 - `~/.contextlattice/bin/contextlattice_agent_orchestration`
+- `~/.contextlattice/bin/contextlattice_adopt`
 - `~/.contextlattice/bin/contextlattice_agent_adapter`
 - `~/.contextlattice/bin/contextlattice_search`
 - `~/.contextlattice/bin/contextlattice_write`
@@ -30,6 +31,7 @@ Global helper CLI tools are auto-installed by `gmake quickstart` and installer f
 Preferred startup:
 
 ```bash
+contextlattice_adopt status --pretty
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
@@ -37,5 +39,7 @@ contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_skills_index search "browser automation" --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 ```
+
+For a new machine, account, or custom agent, start with `contextlattice_adopt install --pretty`, then use `contextlattice_adopt profile-template --name <agent> --kind <cli|desktop|web|mcp|http|repo> --pretty`.
 
 `contextlattice_skills_index` searches active configured skill roots such as `${HOME}/.codex/skills`; quarantined/vendor skill discovery remains separate.

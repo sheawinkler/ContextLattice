@@ -1,7 +1,8 @@
+name: ${CADDY_COMPOSE_PROJECT_NAME:-contextlattice-caddy}
+
 services:
   caddy:
     image: caddy:2.9
-    container_name: contextlattice-caddy
     restart: unless-stopped
     mem_limit: ${CADDY_MEMORY_LIMIT:-512m}
     pids_limit: ${CADDY_PIDS_LIMIT:-256}

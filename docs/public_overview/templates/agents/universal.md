@@ -5,6 +5,8 @@ Paste this into your agent/LLM system instruction block.
 ```text
 Use ContextLattice at http://127.0.0.1:8075 as mandatory memory/context orchestration.
 
+Readiness rule: when starting on a new machine, account, or agent surface, run `contextlattice_adopt status --pretty` first.
+
 Operating rules:
 1) If CLI tools are available, run `contextlattice_agent_adapter bootstrap --agent <profile> --project <project>` before planning/inference and preserve the returned exports/session_id.
 2) If CLI tools are unavailable, call POST /v1/agents/preflight with the agent profile, project, topic_path, query, and retrieval_mode.
@@ -33,6 +35,7 @@ Operating rules:
 Universal adapter helper for CLI agents:
 ```bash
 # list supported profiles
+contextlattice_adopt status --pretty
 contextlattice_agent_adapter profiles
 
 # start/recover a ContextLattice-owned session and bounded preflight package
