@@ -23,7 +23,7 @@ Recommended reading order:
 Product positioning (public-safe):
 - Context Lattice is local-first memory infrastructure for AI agents.
 - Context Lattice complements local AI workspaces: workspaces are cockpits, while ContextLattice is the durable memory infrastructure and shared memory spine they can plug into.
-- Current public release baseline is v3.4.2 plus the agent context packaging path: universal agent adapter, native agent runtime sessions, per-session rollups, compiled next-model context packets, objective runtime contract, scoped recall, checkpoints, handoffs, completion flow, runtime telemetry, one-command runtime proof, storage-governance hardening, and local session-store diagnostics behind one local contract.
+- Current public release baseline is v3.4.12 plus the agent context packaging path: universal agent adapter, native agent runtime sessions, per-session rollups, compiled next-model context packets, objective runtime contract, scoped recall, checkpoints, handoffs, completion flow, runtime telemetry, one-command runtime proof, cross-profile adoption proof, run traces, Run Advisor guidance, graph quality audit, storage-governance hardening, and local session-store diagnostics behind one local contract.
 - Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery; full/operator stacks can add pgvector, raw ledger, behavior provenance, deeper async recall lanes, and stronger reliability controls behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, behavior provenance, and retrieval quality over time.
 - Public lane is open-source and installable locally.
@@ -37,6 +37,8 @@ Agent usage expectations:
 - Use `contextlattice_pack "<task>" --project <project> --pretty` or `POST /memory/context-pack` to compile ranked evidence, files, checks, risks, source coverage, and `reference_prompt` for the next model call.
 - Use `contextlattice_agent_session rollup --session-id <id> --pretty` to summarize a session into reusable state.
 - Use `contextlattice_agent_session context-package --session-id <id> --pretty` when an agent needs to send the next model call with the objective, evidence, risks, source coverage, and next action already organized.
+- Use `contextlattice_agent_trace --session-id <id> --tree` to inspect the bounded run-shaping trail and `contextlattice_agent_trace --session-id <id> --markdown` to export a run card.
+- Use `contextlattice_run_advisor "<task>" --pretty` to check prompt readiness, continuation advice, objective coherence, graph quality, and next actions before a hard model call.
 - Use `contextlattice_skills_index search "<query>" --pretty` to discover relevant active skills/capabilities from configured roots such as `~/.codex/skills` without loading the whole skills tree into prompt context.
 - For operator validation, prefer the one-command live proof: `contextlattice_agent_runtime_proof --pretty`.
 - Prefer hook-first startup only when an adapter profile is unavailable: `contextlattice_agent_start --soft --compact`.

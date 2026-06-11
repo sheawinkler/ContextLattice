@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-contextlattice}
+
 services:
   mongo:
     image: mongo:7

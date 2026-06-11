@@ -1,3 +1,5 @@
+name: ${HTTP_STACK_COMPOSE_PROJECT_NAME:-contextlattice-http-stack}
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.7.1

@@ -14,11 +14,32 @@ if [[ -n "${LETTA_API_KEY:-}" ]]; then
 fi
 
 echo "==> Pulling local models into Ollama (may take a while on first run)..."
-if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -q '^ollama$'; then
-  docker exec ollama ollama pull "${LETTA_CHAT_MODEL}" || true
-  docker exec ollama ollama pull "${LETTA_EMBED_MODEL}" || true
+if command -v docker >/dev/null 2>&1; then
+  compose_args=()
+  if [[ -n "${ENV_FILE:-}" ]]; then
+    compose_args+=(--env-file "${ENV_FILE}")
+  fi
+  if [[ -n "${COMPOSE_FILE:-}" ]]; then
+    IFS=':' read -r -a compose_files <<< "${COMPOSE_FILE}"
+    for compose_file in "${compose_files[@]}"; do
+      compose_args+=(-f "${compose_file}")
+    done
+  else
+    compose_args+=(-f docker-compose.yml)
+  fi
+  compose_project_args=()
+  if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    compose_project_args=(-p "${COMPOSE_PROJECT_NAME}")
+  fi
+  ollama_container="$(docker compose "${compose_project_args[@]}" "${compose_args[@]}" ps -q ollama 2>/dev/null || true)"
+  if [[ -n "${ollama_container}" ]]; then
+    docker compose "${compose_project_args[@]}" "${compose_args[@]}" exec -T ollama ollama pull "${LETTA_CHAT_MODEL}" || true
+    docker compose "${compose_project_args[@]}" "${compose_args[@]}" exec -T ollama ollama pull "${LETTA_EMBED_MODEL}" || true
+  else
+    echo "   (compose service 'ollama' not found; skipping docker pulls)"
+  fi
 else
-  echo "   (no 'ollama' container found; skipping docker pulls)"
+  echo "   (docker not found; skipping docker pulls)"
 fi
 
 echo "==> Verifying Letta is up at ${LETTA_BASE} ..."

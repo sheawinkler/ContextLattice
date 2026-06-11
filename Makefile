@@ -23,6 +23,8 @@ BASE_OS := $(if $(filter $(UNAME_S),Darwin),mac,linux)
 
 # Core compose invocation (env-driven)
 ENV_FILE ?= .env
+COMPOSE_PROJECT_NAME ?= contextlattice
+export COMPOSE_PROJECT_NAME
 DC := docker compose -f docker-compose.yml
 PYTEST_FOCUS ?= app
 PYTEST_APP_TESTS := archive/services/orchestrator_legacy_python/tests/test_orchestrator_retrieval.py archive/services/orchestrator_legacy_python/tests/test_migration_runtime.py

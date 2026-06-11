@@ -57,6 +57,38 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-11 · v3.4.12 · Run Advisor + Graph Quality Audit</span>
+        <h3>Agent runs now come with a readiness signal, not just a transcript trail.</h3>
+        <p class="spotlight">
+          ContextLattice now attaches a bounded Run Advisor to context packs and session traces. Agents can see
+          prompt readiness, continuation state, objective coherence, graph quality, and concrete next actions before
+          handing work to the next model call.
+        </p>
+        <ul>
+          <li><strong>Run Advisor:</strong> <code>contextlattice_run_advisor "current task" --pretty</code> renders prompt quality, retrieval advice, continuation repair, graph status, and next actions.</li>
+          <li><strong>Context packs:</strong> <code>/memory/context-pack</code> now includes <code>run_advisor</code> beside ranked evidence, prompt sections, source coverage, and the reference prompt.</li>
+          <li><strong>Agent Radar:</strong> dashboard traces show Run Advisor posture alongside source coverage, graph touches, handoffs, checkpoints, skills, and timeline evidence.</li>
+          <li><strong>Graph audit:</strong> memory edge backfill now reports confidence posture, review recommendations, and inferred-candidate counts before writes.</li>
+          <li><strong>Safer local launch:</strong> Compose services now use scoped project names instead of global singleton container names for Ollama, Letta, Caddy, and MCP proxy helpers.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-10 · v3.4.11 · Agent Run Trace Visibility</span>
+        <h3>The proof cockpit can now show what shaped an agent run.</h3>
+        <p class="spotlight">
+          Session traces expose bounded evidence about context packages, source coverage, skills, graph touches,
+          handoffs, checkpoints, risks, and recent timeline events without leaking raw prompts or oversized payloads.
+        </p>
+        <ul>
+          <li><strong>Trace endpoint:</strong> <code>/v1/agents/sessions/&lt;id&gt;/trace</code> returns the contract-valid run-shaping package.</li>
+          <li><strong>Terminal view:</strong> <code>contextlattice_agent_trace --session-id &lt;id&gt; --tree</code> renders the session as a compact operator trace.</li>
+          <li><strong>Run cards:</strong> <code>contextlattice_agent_trace --session-id &lt;id&gt; --markdown</code> exports a bounded Markdown handoff for the next agent or model call.</li>
+          <li><strong>Dashboard:</strong> Agent Radar can inspect traces and export the same run card from the app surface.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-09 · v3.4.10 · Seamless Agent Adoption Proofs</span>
         <h3>One command now proves the agent memory lifecycle across runtimes.</h3>
         <p class="spotlight">
