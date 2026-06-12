@@ -25,7 +25,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Unified write/read contract for memory and context.
 - Durable fanout across retrieval/storage lanes.
 - Staged retrieval (fast now, deep continuation when needed).
-- Agent sessions that turn prior work, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
+- Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
 - Local-first deployment with optional hosted surfaces.
@@ -78,6 +78,7 @@ Expected:
 - `/health` returns `{"ok": true, ...}`
 - `agent-runtime-proof-pack` completes bootstrap, scoped recall, checkpoint, handoff, completion, status, prompt context package, and runtime telemetry phases.
 - `agent-adoption-proof-matrix` verifies configured agent profiles and reports the skills, context, session, graph, and handoff evidence shaping each run, with trace commands for run-card export.
+
 
 ## Model Runtime
 
@@ -263,6 +264,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes:
+  - `docs/releases/v3.4.14.md`
   - `docs/releases/v3.4.13.md`
   - `docs/releases/v3.4.12.md`
   - `docs/releases/v3.4.11.md`
@@ -270,6 +272,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
   - `docs/releases/v3.4.5.md`
   - `docs/releases/v3.4.2.md`
   - `docs/releases/v3.4.1.md`
+
 
 ## License
 

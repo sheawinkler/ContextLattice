@@ -230,7 +230,14 @@ func runAdvisorRetrievalAdvice(
 }
 
 func runAdvisorObjectiveCoherence(query string, objective objectiveContext) map[string]any {
-	objectiveText := strings.TrimSpace(strings.Join([]string{objective.Mission, objective.Objective, objective.Goal}, " "))
+	objectiveText := strings.TrimSpace(strings.Join(append([]string{
+		objective.Mission,
+		objective.Objective,
+		objective.Goal,
+		objective.ProjectPrimaryObjective,
+		objective.TopicObjective,
+		objective.SessionObjective,
+	}, objective.Subobjectives...), " "))
 	queryTokens := runAdvisorTokenSet(query)
 	objectiveTokens := runAdvisorTokenSet(objectiveText)
 	shared := []string{}
@@ -262,12 +269,16 @@ func runAdvisorObjectiveCoherence(query string, objective objectiveContext) map[
 		"score":  score,
 		"status": status,
 		"signals": map[string]any{
-			"mission_present":     strings.TrimSpace(objective.Mission) != "",
-			"objective_present":   strings.TrimSpace(objective.Objective) != "",
-			"goal_present":        strings.TrimSpace(objective.Goal) != "",
-			"shared_terms":        toAnyStringList(shared, 12),
-			"query_token_count":   len(queryTokens),
-			"context_token_count": len(objectiveTokens),
+			"mission_present":                   strings.TrimSpace(objective.Mission) != "",
+			"objective_present":                 strings.TrimSpace(objective.Objective) != "",
+			"goal_present":                      strings.TrimSpace(objective.Goal) != "",
+			"project_primary_objective_present": strings.TrimSpace(objective.ProjectPrimaryObjective) != "",
+			"topic_objective_present":           strings.TrimSpace(objective.TopicObjective) != "",
+			"session_objective_present":         strings.TrimSpace(objective.SessionObjective) != "",
+			"subobjective_count":                len(objectiveCleanStringList(objective.Subobjectives, 12)),
+			"shared_terms":                      toAnyStringList(shared, 12),
+			"query_token_count":                 len(queryTokens),
+			"context_token_count":               len(objectiveTokens),
 		},
 		"repair_instruction": repair,
 	}
@@ -393,13 +404,21 @@ func buildRunAdvisorFromTraceRollup(session map[string]any, rollup map[string]an
 		"recommendation": "Use trace graph touches as run-shaping evidence, then inspect cited memory before relying on edge semantics.",
 	}
 	return buildRunAdvisor(runAdvisorInput{
-		Query:           firstNonEmptyStrings(anyToString(rollup["objective"]), anyToString(session["objective"])),
-		Project:         firstNonEmptyStrings(anyToString(rollup["project"]), anyToString(session["project"])),
-		RetrievalMode:   "balanced",
-		SessionID:       firstNonEmptyStrings(anyToString(rollup["session_id"]), anyToString(session["id"])),
-		AgentID:         firstNonEmptyStrings(anyToString(rollup["agent_id"]), anyToString(session["agent_id"])),
-		SourceCoverage:  sourceCoverage,
-		Objective:       objectiveContext{Mission: anyToString(rollup["mission"]), Objective: anyToString(rollup["objective"]), Goal: anyToString(rollup["goal"])},
+		Query:          firstNonEmptyStrings(anyToString(rollup["objective"]), anyToString(session["objective"])),
+		Project:        firstNonEmptyStrings(anyToString(rollup["project"]), anyToString(session["project"])),
+		RetrievalMode:  "balanced",
+		SessionID:      firstNonEmptyStrings(anyToString(rollup["session_id"]), anyToString(session["id"])),
+		AgentID:        firstNonEmptyStrings(anyToString(rollup["agent_id"]), anyToString(session["agent_id"])),
+		SourceCoverage: sourceCoverage,
+		Objective: objectiveContext{
+			Mission:                 anyToString(rollup["mission"]),
+			Objective:               anyToString(rollup["objective"]),
+			Goal:                    anyToString(rollup["goal"]),
+			ProjectPrimaryObjective: anyToString(anyMap(anyMap(rollup["objective_hierarchy"])["project"])["primary_objective"]),
+			TopicObjective:          anyToString(anyMap(anyMap(rollup["objective_hierarchy"])["topic"])["objective"]),
+			SessionObjective:        anyToString(anyMap(anyMap(rollup["objective_hierarchy"])["session"])["objective"]),
+			Subobjectives:           anyToStringList(anyMap(rollup["objective_hierarchy"])["subobjectives"], 12),
+		},
 		RankedEvidence:  []any{},
 		ReferencePrompt: referencePrompt,
 		GraphQuality:    graphQuality,

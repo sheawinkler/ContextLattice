@@ -250,6 +250,52 @@ func agentSessionTerminal(status string) bool {
 	}
 }
 
+func agentSessionObjectiveHierarchy(session map[string]any) map[string]any {
+	if hierarchy := anyMap(session["objective_hierarchy"]); len(hierarchy) > 0 {
+		return hierarchy
+	}
+	if runtime := anyMap(session["objective_runtime"]); len(runtime) > 0 {
+		if hierarchy := anyMap(runtime["objective_hierarchy"]); len(hierarchy) > 0 {
+			return hierarchy
+		}
+	}
+	ctx := objectiveContext{
+		Mission:   anyToString(session["mission"]),
+		Objective: anyToString(session["objective"]),
+		Goal:      anyToString(session["goal"]),
+	}.withDefaults()
+	metadata := anyMap(session["metadata"])
+	return ctx.hierarchy(
+		anyToString(session["project"]),
+		anyToString(metadata["topic_path"]),
+		anyToString(session["id"]),
+		anyToString(session["objective"]),
+	)
+}
+
+func agentSessionObjectiveLineage(session map[string]any) map[string]any {
+	if lineage := anyMap(session["objective_lineage"]); len(lineage) > 0 {
+		return lineage
+	}
+	if runtime := anyMap(session["objective_runtime"]); len(runtime) > 0 {
+		if lineage := anyMap(runtime["objective_lineage"]); len(lineage) > 0 {
+			return lineage
+		}
+	}
+	ctx := objectiveContext{
+		Mission:   anyToString(session["mission"]),
+		Objective: anyToString(session["objective"]),
+		Goal:      anyToString(session["goal"]),
+	}.withDefaults()
+	metadata := anyMap(session["metadata"])
+	return ctx.lineage(
+		anyToString(session["project"]),
+		anyToString(metadata["topic_path"]),
+		anyToString(session["id"]),
+		anyToString(session["objective"]),
+	)
+}
+
 func normalizeAgentEventType(raw string) string {
 	text := strings.TrimSpace(strings.ToLower(raw))
 	text = strings.ReplaceAll(text, " ", "_")
@@ -663,6 +709,8 @@ func buildAgentSessionRollup(session map[string]any, events []map[string]any, no
 	if len(risks) > 0 {
 		promptReady = promptReady && normalizeAgentSessionStatus(anyToString(session["status"])) != "failed"
 	}
+	objectiveHierarchy := agentSessionObjectiveHierarchy(session)
+	objectiveLineage := agentSessionObjectiveLineage(session)
 	rollup := map[string]any{
 		"ok":                  true,
 		"schema_id":           agentSessionRollupContractID,
@@ -674,6 +722,8 @@ func buildAgentSessionRollup(session map[string]any, events []map[string]any, no
 		"objective":           clipText(anyToString(session["objective"]), 1200),
 		"mission":             clipText(anyToString(session["mission"]), 1200),
 		"goal":                clipText(anyToString(session["goal"]), 1200),
+		"objective_hierarchy": objectiveHierarchy,
+		"objective_lineage":   objectiveLineage,
 		"objective_state":     clipText(firstNonEmptyStrings(anyToString(session["objective_state"]), anyToString(anyMap(session["objective_runtime"])["objective_state"])), 80),
 		"next_action":         clipText(firstNonEmptyStrings(anyToString(session["next_action"]), anyToString(anyMap(session["objective_runtime"])["next_action"])), 720),
 		"started_at":          anyToString(session["started_at"]),
@@ -726,11 +776,21 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 	sessionID := anyToString(rollup["session_id"])
 	objective := firstNonEmptyStrings(anyToString(rollup["objective"]), anyToString(rollup["goal"]), "Continue the agent objective using available evidence.")
 	nextAction := firstNonEmptyStrings(anyToString(rollup["next_action"]), "Inspect the rollup, retrieve missing context, and execute the smallest evidence-backed next action.")
+	objectiveHierarchy := anyMap(rollup["objective_hierarchy"])
+	objectiveLineage := anyMap(rollup["objective_lineage"])
+	projectPrimary := anyToString(anyMap(objectiveHierarchy["project"])["primary_objective"])
+	topicObjective := anyToString(anyMap(objectiveHierarchy["topic"])["objective"])
+	sessionObjective := anyToString(anyMap(objectiveHierarchy["session"])["objective"])
+	lineageStatus := anyToString(anyMap(objectiveLineage["drift"])["status"])
 	referencePrompt := strings.Join([]string{
 		"Use this ContextLattice session package as the factual context for the next reasoning step.",
 		"Session: " + sessionID,
 		"Agent: " + firstNonEmptyStrings(anyToString(rollup["agent"]), anyToString(rollup["agent_id"]), "agent"),
 		"Project: " + anyToString(rollup["project"]),
+		"Project primary objective: " + projectPrimary,
+		"Topic objective: " + topicObjective,
+		"Session objective: " + firstNonEmptyStrings(sessionObjective, objective),
+		"Objective lineage: " + firstNonEmptyStrings(lineageStatus, "unknown"),
 		"Objective: " + objective,
 		"Status: " + anyToString(rollup["status"]) + " / last event " + anyToString(rollup["last_event_type"]),
 		"Memory contribution score: " + anyToString(anyMap(rollup["memory_contribution"])["score"]),
@@ -752,6 +812,8 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 			"objective":           objective,
 			"mission":             anyToString(rollup["mission"]),
 			"goal":                anyToString(rollup["goal"]),
+			"objective_hierarchy": objectiveHierarchy,
+			"objective_lineage":   objectiveLineage,
 			"current_state":       anyToString(rollup["objective_state"]),
 			"next_action":         nextAction,
 			"retrieval_summary":   retrievalSummary,
@@ -903,6 +965,8 @@ func buildAgentRunCardMarkdown(trace map[string]any) string {
 	promptQuality := anyMap(advisor["prompt_quality"])
 	continuation := anyMap(advisor["continuation"])
 	objectiveCoherence := anyMap(advisor["objective_coherence"])
+	objectiveHierarchy := anyMap(session["objective_hierarchy"])
+	objectiveLineage := anyMap(session["objective_lineage"])
 	skills := anyMap(runShaping["skills"])
 	sources := anyMap(runShaping["sources"])
 	graph := anyMap(runShaping["graph"])
@@ -915,6 +979,17 @@ func buildAgentRunCardMarkdown(trace map[string]any) string {
 	b.WriteString("- Project: `" + clipText(anyToString(session["project"]), 120) + "`\n")
 	b.WriteString("- Status: `" + clipText(anyToString(session["status"]), 80) + "`\n")
 	b.WriteString("- Objective: " + clipText(anyToString(session["objective"]), 420) + "\n")
+	if len(objectiveHierarchy) > 0 {
+		projectObjective := clipText(anyToString(anyMap(objectiveHierarchy["project"])["primary_objective"]), 420)
+		topicObjective := clipText(anyToString(anyMap(objectiveHierarchy["topic"])["objective"]), 420)
+		sessionObjective := clipText(anyToString(anyMap(objectiveHierarchy["session"])["objective"]), 420)
+		b.WriteString("- Project primary objective: " + projectObjective + "\n")
+		b.WriteString("- Topic objective: " + topicObjective + "\n")
+		b.WriteString("- Session objective: " + sessionObjective + "\n")
+	}
+	if drift := anyMap(objectiveLineage["drift"]); len(drift) > 0 {
+		b.WriteString("- Objective lineage: `" + clipText(anyToString(drift["status"]), 80) + "`\n")
+	}
 	b.WriteString("- Next action: " + clipText(anyToString(session["next_action"]), 420) + "\n\n")
 	if len(advisor) > 0 {
 		b.WriteString("## Run Advisor\n\n")
@@ -961,25 +1036,31 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 		"ok":        true,
 		"schema_id": agentRunTraceContractID,
 		"session": map[string]any{
-			"id":              anyToString(rollup["session_id"]),
-			"agent":           anyToString(rollup["agent"]),
-			"agent_id":        anyToString(rollup["agent_id"]),
-			"project":         anyToString(rollup["project"]),
-			"status":          anyToString(rollup["status"]),
-			"objective":       anyToString(rollup["objective"]),
-			"objective_state": anyToString(rollup["objective_state"]),
-			"next_action":     anyToString(rollup["next_action"]),
-			"started_at":      anyToString(rollup["started_at"]),
-			"updated_at":      anyToString(rollup["updated_at"]),
-			"completed_at":    anyToString(rollup["completed_at"]),
-			"duration_secs":   rollup["duration_secs"],
-			"event_count":     rollup["event_count"],
-			"confidence":      rollup["confidence"],
+			"id":                  anyToString(rollup["session_id"]),
+			"agent":               anyToString(rollup["agent"]),
+			"agent_id":            anyToString(rollup["agent_id"]),
+			"project":             anyToString(rollup["project"]),
+			"status":              anyToString(rollup["status"]),
+			"objective":           anyToString(rollup["objective"]),
+			"objective_hierarchy": rollup["objective_hierarchy"],
+			"objective_lineage":   rollup["objective_lineage"],
+			"objective_state":     anyToString(rollup["objective_state"]),
+			"next_action":         anyToString(rollup["next_action"]),
+			"started_at":          anyToString(rollup["started_at"]),
+			"updated_at":          anyToString(rollup["updated_at"]),
+			"completed_at":        anyToString(rollup["completed_at"]),
+			"duration_secs":       rollup["duration_secs"],
+			"event_count":         rollup["event_count"],
+			"confidence":          rollup["confidence"],
 		},
 		"phase_counts":        rollup["phase_counts"],
 		"memory_contribution": rollup["memory_contribution"],
 		"run_shaping": map[string]any{
 			"run_advisor": runAdvisor,
+			"objective": map[string]any{
+				"hierarchy": rollup["objective_hierarchy"],
+				"lineage":   rollup["objective_lineage"],
+			},
 			"context": map[string]any{
 				"validation":             anyToString(anyMap(anyMap(promptPackage["format_contract"])["validation"])["status"]),
 				"recommended_surface":    anyToString(anyMap(promptPackage["context_package"])["recommended_surface"]),
@@ -1039,6 +1120,8 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 		"objective":           clipText(strings.TrimSpace(anyToString(payload["objective"])), 1200),
 		"mission":             clipText(strings.TrimSpace(anyToString(payload["mission"])), 1200),
 		"goal":                clipText(strings.TrimSpace(anyToString(payload["goal"])), 1200),
+		"objective_hierarchy": compactAgentSessionMetadata(anyMap(payload["objective_hierarchy"])),
+		"objective_lineage":   compactAgentSessionMetadata(anyMap(payload["objective_lineage"])),
 		"status":              status,
 		"started_at":          firstNonEmptyStrings(anyToString(payload["started_at"]), anyToString(payload["startedAt"]), now),
 		"updated_at":          now,
@@ -1065,7 +1148,7 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 		eventID = "evt_" + primitive.NewObjectID().Hex()
 	}
 	metadata := compactAgentSessionMetadata(anyMap(payload["metadata"]))
-	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff"} {
+	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff", "objective_hierarchy", "objective_lineage"} {
 		if value, ok := payload[key]; ok {
 			metadata[key] = compactAgentSessionValue(value, 3)
 		}
@@ -1172,6 +1255,18 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	metadata := anyMap(event["metadata"])
 	if runtime := anyMap(metadata["objective_runtime"]); len(runtime) > 0 {
 		session["objective_runtime"] = compactAgentSessionMetadata(runtime)
+		if hierarchy := anyMap(runtime["objective_hierarchy"]); len(hierarchy) > 0 {
+			session["objective_hierarchy"] = compactAgentSessionMetadata(hierarchy)
+		}
+		if lineage := anyMap(runtime["objective_lineage"]); len(lineage) > 0 {
+			session["objective_lineage"] = compactAgentSessionMetadata(lineage)
+		}
+	}
+	if hierarchy := anyMap(metadata["objective_hierarchy"]); len(hierarchy) > 0 {
+		session["objective_hierarchy"] = compactAgentSessionMetadata(hierarchy)
+	}
+	if lineage := anyMap(metadata["objective_lineage"]); len(lineage) > 0 {
+		session["objective_lineage"] = compactAgentSessionMetadata(lineage)
 	}
 	if objectiveState := strings.TrimSpace(anyToString(metadata["objective_state"])); objectiveState != "" {
 		session["objective_state"] = clipText(objectiveState, 80)

@@ -195,6 +195,8 @@ func (s *server) buildDreamModeResponse(
 		"dream.completed",
 	)
 	response["objective_runtime"] = objectiveRuntime
+	response["objective_hierarchy"] = objectiveRuntime["objective_hierarchy"]
+	response["objective_lineage"] = objectiveRuntime["objective_lineage"]
 	if opts.SessionID != "" {
 		session := s.recordAgentSessionEvent(opts.SessionID, "dream.completed", map[string]any{
 			"agent_id": opts.AgentID,
@@ -216,6 +218,8 @@ func (s *server) buildDreamModeResponse(
 				"objective_state":     anyToString(objectiveRuntime["objective_state"]),
 				"next_action":         anyToString(objectiveRuntime["next_action"]),
 				"objective_runtime":   objectiveRuntime,
+				"objective_hierarchy": objectiveRuntime["objective_hierarchy"],
+				"objective_lineage":   objectiveRuntime["objective_lineage"],
 			},
 		})
 		if session != nil {

@@ -135,6 +135,12 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	if findings := validateAgentContractPayload(objectiveRuntimeStateContractID, anyMap(policy["objective_runtime"])); len(findings) != 0 {
 		t.Fatalf("objective runtime should validate: %#v", findings)
 	}
+	if hierarchy := anyMap(policy["objective_hierarchy"]); anyToString(hierarchy["schema_id"]) != "contextlattice_objective_hierarchy.v1" {
+		t.Fatalf("expected policy objective hierarchy, got %#v", policy["objective_hierarchy"])
+	}
+	if lineage := anyMap(policy["objective_lineage"]); anyToString(lineage["schema_id"]) != "contextlattice_objective_lineage.v1" {
+		t.Fatalf("expected policy objective lineage, got %#v", policy["objective_lineage"])
+	}
 
 	badPolicy := cloneContractMap(policy)
 	delete(badPolicy, "format_contract")
@@ -177,6 +183,12 @@ func TestObjectiveRuntimeStateContractValidationPassesAndFails(t *testing.T) {
 	}
 	if findings := validateAgentContractPayload(objectiveRuntimeStateContractID, runtime); len(findings) != 0 {
 		t.Fatalf("objective runtime should validate: %#v", findings)
+	}
+	if hierarchy := anyMap(runtime["objective_hierarchy"]); anyToString(anyMap(hierarchy["project"])["primary_objective"]) == "" {
+		t.Fatalf("expected runtime project primary objective, got %#v", runtime["objective_hierarchy"])
+	}
+	if lineage := anyMap(runtime["objective_lineage"]); anyToString(anyMap(lineage["drift"])["status"]) == "" {
+		t.Fatalf("expected runtime objective lineage drift status, got %#v", runtime["objective_lineage"])
 	}
 	bad := cloneContractMap(runtime)
 	delete(bad, "next_action")

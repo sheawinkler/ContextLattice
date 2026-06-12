@@ -15,10 +15,10 @@ Operating rules:
 5) During execution, checkpoint key decisions/outcomes with `contextlattice_agent_adapter checkpoint`, `contextlattice_checkpoint`, or POST /memory/write.
 6) Before final output, run one final recency retrieval (POST /memory/search or POST /memory/context-pack).
 7) Before handoff or compaction, run `contextlattice_agent_adapter handoff --session-id <session_id> --summary "<objective state>"`.
-8) When preparing a new model/problem-solving request, run `contextlattice_agent_session context-package --session-id <session_id>` and use the returned reference package as the factual context scaffold.
-9) When you need to explain what shaped the run, use `contextlattice_agent_trace --session-id <session_id> --tree` or GET /v1/agents/sessions/{session_id}/trace.
+8) When preparing a new model/problem-solving request, run `contextlattice_agent_session context-package --session-id <session_id>` and use the returned reference package as the factual context scaffold, including the project/topic/session objective lineage.
+9) When you need to explain what shaped the run, use `contextlattice_agent_trace --session-id <session_id> --tree` or GET /v1/agents/sessions/{session_id}/trace; the trace includes objective lineage, context, skills, sources, graph touches, handoffs, and checkpoints.
 10) On normal completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`.
-11) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, and `universal_agent_adapter_response.v1` contract metadata in downstream handoffs.
+11) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, and `universal_agent_adapter_response.v1` contract metadata, including `objective_hierarchy` and `objective_lineage`, in downstream handoffs.
 12) If direct search is needed, call POST /memory/search with include_grounding=true and scoped project/topic when known.
 13) If relevant capabilities are unclear, run `contextlattice_skills_index search "<task or tool need>" --pretty` instead of loading every skill.
 14) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events (or re-query shortly after).
