@@ -127,6 +127,7 @@ func runAdvisorContinuation(
 		lifecycle = anyMap(retrieval["retrieval_lifecycle"])
 	}
 	continuation := anyMap(retrieval["continuation_async"])
+	agentVisibility := anyMap(continuation["agent_visibility"])
 	token := strings.TrimSpace(anyToString(continuation["token"]))
 	status := strings.TrimSpace(anyToString(lifecycle["status"]))
 	if status == "" {
@@ -167,15 +168,20 @@ func runAdvisorContinuation(
 		"budget_exceeded_sources":  toAnyStringList(budgetExceeded, 8),
 		"continuation_available":   token != "",
 		"modeled_progress":         anyMap(firstPresentAny(continuation["modeled_progress"], lifecycle["modeled_progress"])),
+		"retrieval_progress":       anyMap(continuation["retrieval_progress"]),
+		"agent_visibility":         agentVisibility,
 		"repair_instruction":       repair,
 		"agent_followup_command":   "",
 		"agent_followup_endpoint":  "",
 		"agent_followup_transport": "none",
 	}
 	if token != "" {
-		out["agent_followup_command"] = "curl -fsS http://127.0.0.1:8075" + pollURL
+		out["agent_followup_command"] = firstNonEmptyStrings(
+			anyToString(agentVisibility["watch_command"]),
+			"curl -fsS http://127.0.0.1:8075"+pollURL,
+		)
 		out["agent_followup_endpoint"] = pollURL
-		out["agent_followup_transport"] = "http"
+		out["agent_followup_transport"] = "http_or_cli_watch"
 	}
 	return out
 }

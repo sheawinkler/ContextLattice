@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 8;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 9;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -27,7 +27,9 @@ pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const OBJECTIVE_RUNTIME_STATE_V1: &str = "objective_runtime_state.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
+pub const RETRIEVAL_PROGRESS_V1: &str = "retrieval_progress.v1";
 pub const RUN_ADVISOR_V1: &str = "run_advisor.v1";
+pub const STEERING_COMMENT_V1: &str = "steering_comment.v1";
 pub const UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1: &str = "universal_agent_adapter_response.v1";
 pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 
@@ -48,7 +50,9 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     DREAM_MODE_RESPONSE_V1,
     OBJECTIVE_RUNTIME_STATE_V1,
     POLICY_CONTEXT_PACKAGE_V1,
+    RETRIEVAL_PROGRESS_V1,
     RUN_ADVISOR_V1,
+    STEERING_COMMENT_V1,
     UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1,
     WRITEBACK_RESULT_V1,
 ];
@@ -151,8 +155,20 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: RETRIEVAL_PROGRESS_V1,
+        payload_kind: "retrieval_progress",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: RUN_ADVISOR_V1,
         payload_kind: "run_advisor",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: STEERING_COMMENT_V1,
+        payload_kind: "steering_comment",
         contract_version: 1,
         required_output_mode: "json_object",
     },

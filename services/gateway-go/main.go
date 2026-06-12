@@ -5040,19 +5040,23 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		if len(shedDetail) > 0 {
 			payload["queue"] = shedDetail
 		}
+		payload = continuationEventWithRequest(baseRequest, payload)
 		s.publishContinuationEvent(streamToken, payload)
+		s.emitContinuationSteering(baseRequest, streamToken, source, payload)
 		return false, shedReason, shedDetail
 	}
 	select {
 	case s.continuationSem <- struct{}{}:
 	default:
 		log.Printf("continuation warm skipped source=%s reason=%s detail=max_inflight", source, reason)
-		s.publishContinuationEvent(streamToken, map[string]any{
+		payload := continuationEventWithRequest(baseRequest, map[string]any{
 			"event":  "skipped",
 			"status": "max_inflight",
 			"source": source,
 			"reason": reason,
 		})
+		s.publishContinuationEvent(streamToken, payload)
+		s.emitContinuationSteering(baseRequest, streamToken, source, payload)
 		return false, "max_inflight", map[string]any{
 			"pending_count": s.continuationQueueSnapshot().Pending,
 		}
@@ -5070,7 +5074,9 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		if reserveCooldown > 0 {
 			skipPayload["cooldown_remaining_secs"] = roundFloat(reserveCooldown, 3)
 		}
+		skipPayload = continuationEventWithRequest(baseRequest, skipPayload)
 		s.publishContinuationEvent(streamToken, skipPayload)
+		s.emitContinuationSteering(baseRequest, streamToken, source, skipPayload)
 		statusPayload := map[string]any{}
 		if reserveCooldown > 0 {
 			statusPayload["cooldown_remaining_secs"] = roundFloat(reserveCooldown, 3)
@@ -5078,12 +5084,14 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		return false, reserveStatus, statusPayload
 	}
 	s.decrementContinuationRetrying(source)
-	s.publishContinuationEvent(streamToken, map[string]any{
+	queuedPayload := continuationEventWithRequest(baseRequest, map[string]any{
 		"event":  "queued",
 		"status": "queued",
 		"source": source,
 		"reason": reason,
 	})
+	s.publishContinuationEvent(streamToken, queuedPayload)
+	steeringRequest := cloneJSONMap(baseRequest)
 	go func() {
 		defer func() { <-s.continuationSem }()
 		defer s.releaseContinuationSourceSlot(source)
@@ -5117,7 +5125,9 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		if cooldownRemaining > 0 {
 			completePayload["cooldown_remaining_secs"] = roundFloat(cooldownRemaining, 3)
 		}
+		completePayload = continuationEventWithRequest(steeringRequest, completePayload)
 		s.publishContinuationEvent(streamToken, completePayload)
+		s.emitContinuationSteering(steeringRequest, streamToken, source, completePayload)
 	}()
 	return true, "queued", nil
 }
@@ -6518,21 +6528,67 @@ func (s *server) executeRetrieval(
 			query,
 		)
 	}
+	sessionIDForContinuation := strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["session_id"]), anyToString(requestPayload["sessionId"])))
+	agentIDForContinuation := strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["agent_id"]), anyToString(requestPayload["agentId"])))
+	if sessionIDForContinuation != "" {
+		response["session_id"] = sessionIDForContinuation
+	}
+	if agentIDForContinuation != "" {
+		response["agent_id"] = agentIDForContinuation
+	}
+	continuationAgentVisibility := func(token string) map[string]any {
+		watchCommand := "contextlattice_agent_session watch --continuation-token " + token + " --pretty"
+		if sessionIDForContinuation != "" {
+			watchCommand = "contextlattice_agent_session watch --session-id " + sessionIDForContinuation + " --continuation-token " + token + " --pretty"
+		}
+		return map[string]any{
+			"best_surface":       "continuation_sse_for_live_agents_session_watch_for_local_agents_context_pack_for_next_call",
+			"watch_command":      watchCommand,
+			"poll_command":       "curl -fsS http://127.0.0.1:8075/memory/search/continuations/" + token,
+			"session_event_type": "retrieval.continuation.progress",
+		}
+	}
 	if len(continuationSources) > 0 && continuationToken != "" {
+		progressPayload := map[string]any(nil)
+		if statusPayload, ok := s.continuationStatusPayload(continuationToken, false); ok {
+			progressPayload = anyMap(statusPayload["retrieval_progress"])
+			if len(progressPayload) > 0 && sessionIDForContinuation != "" {
+				progressPayload = buildRetrievalProgressPayload(
+					continuationToken,
+					anyToString(progressPayload["status"]),
+					anyToString(progressPayload["result_state"]),
+					anyToString(progressPayload["created_at"]),
+					anyToString(progressPayload["updated_at"]),
+					anyToString(progressPayload["completed_at"]),
+					"/memory/search/continuations/"+continuationToken,
+					"/memory/search/continuations/"+continuationToken+"/events",
+					anyMap(progressPayload["source_summary"]),
+					anyMap(progressPayload["retrieval_lifecycle"]),
+					anyMap(progressPayload["modeled_progress"]),
+					agentIDForContinuation,
+					sessionIDForContinuation,
+				)
+			}
+		}
 		response["continuation_async"] = map[string]any{
 			"token":               continuationToken,
+			"poll_url":            "/memory/search/continuations/" + continuationToken,
 			"events_url":          "/memory/search/continuations/" + continuationToken + "/events",
 			"pending_sources":     continuationSources,
 			"unavailable_sources": continuationUnavailable,
 			"heartbeat_secs":      s.retrieval.continuationSSEHeartbeat.Seconds(),
+			"agent_visibility":    continuationAgentVisibility(continuationToken),
+			"retrieval_progress":  progressPayload,
 		}
 	} else if len(continuationUnavailable) > 0 && continuationToken != "" {
 		response["continuation_async"] = map[string]any{
 			"token":               continuationToken,
+			"poll_url":            "/memory/search/continuations/" + continuationToken,
 			"events_url":          "/memory/search/continuations/" + continuationToken + "/events",
 			"pending_sources":     []string{},
 			"unavailable_sources": continuationUnavailable,
 			"heartbeat_secs":      s.retrieval.continuationSSEHeartbeat.Seconds(),
+			"agent_visibility":    continuationAgentVisibility(continuationToken),
 		}
 	}
 	if includeGrounding {

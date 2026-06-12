@@ -28,6 +28,8 @@ const agentSessionRollupContractID = "agent_session_rollup.v1"
 const agentPromptContextPackageContractID = "agent_prompt_context_package.v1"
 const agentRunTraceContractID = "agent_run_trace.v1"
 const runAdvisorContractID = "run_advisor.v1"
+const retrievalProgressContractID = "retrieval_progress.v1"
+const steeringCommentContractID = "steering_comment.v1"
 
 type agentContractsRegistry struct {
 	RegistryID       string                    `json:"registry_id"`
@@ -263,6 +265,8 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 		agentPromptContextPackageContractID,
 		agentRunTraceContractID,
 		runAdvisorContractID,
+		retrievalProgressContractID,
+		steeringCommentContractID,
 	}
 	if err == nil {
 		registryID = registry.RegistryID

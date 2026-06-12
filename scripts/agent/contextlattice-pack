@@ -104,6 +104,8 @@ def slim_run_advisor(value: Any) -> dict[str, Any]:
             "budget_exceeded_sources": as_list(continuation.get("budget_exceeded_sources"))[:4],
             "continuation_available": bool(continuation.get("continuation_available")),
             "modeled_progress": continuation.get("modeled_progress") if isinstance(continuation.get("modeled_progress"), dict) else {},
+            "retrieval_progress": continuation.get("retrieval_progress") if isinstance(continuation.get("retrieval_progress"), dict) else {},
+            "agent_visibility": continuation.get("agent_visibility") if isinstance(continuation.get("agent_visibility"), dict) else {},
             "repair_instruction": str(continuation.get("repair_instruction") or "Rerun context compilation when evidence is missing.")[:900],
             "agent_followup_command": str(continuation.get("agent_followup_command") or "")[:300],
             "agent_followup_endpoint": str(continuation.get("agent_followup_endpoint") or "")[:240],

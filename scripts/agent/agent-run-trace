@@ -68,6 +68,8 @@ def render_tree(trace: dict[str, Any]) -> str:
     context = as_dict(run_shaping.get("context"))
     skills = as_dict(run_shaping.get("skills"))
     sources = as_dict(run_shaping.get("sources"))
+    agent_inbox = as_dict(run_shaping.get("agent_inbox"))
+    latest_steering = as_dict(agent_inbox.get("latest"))
     graph = as_dict(run_shaping.get("graph"))
     handoffs = as_dict(run_shaping.get("handoffs"))
     checkpoints = as_dict(run_shaping.get("checkpoints"))
@@ -105,6 +107,11 @@ def render_tree(trace: dict[str, Any]) -> str:
         f"  - continuation: {text(continuation.get('status'), 'unknown')} | pending {csv(continuation.get('pending_sources'), 8)}",
         f"  - recommended: {text(retrieval_advice.get('recommended_mode'), 'balanced')} via {text(retrieval_advice.get('recommended_surface'), 'cli_for_local_agents')}",
         f"  - repair: {short(continuation.get('repair_instruction') or objective_coherence.get('repair_instruction'), 220)}",
+        f"  - follow-up: {short(continuation.get('agent_followup_command'), 220)}",
+        "",
+        "agent steering:",
+        f"  - latest: {short(latest_steering.get('message'), 260)}",
+        f"  - action: {short(latest_steering.get('suggested_action'), 260)}",
         "",
         "phases:",
     ]

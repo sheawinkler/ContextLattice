@@ -5501,6 +5501,164 @@ func TestContinuationEventsEndpointStreamsHistoryAndUpdates(t *testing.T) {
 	}
 }
 
+func TestContinuationStatusPayloadIncludesModeledProgress(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	token := "status-progress-token"
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "queued",
+		"status": "queued",
+		"source": "letta",
+	})
+	s.publishContinuationEvent(token, map[string]any{
+		"event":  "completed",
+		"status": "ok",
+		"source": "topic_rollups",
+	})
+
+	payload, ok := s.continuationStatusPayload(token, true)
+	if !ok {
+		t.Fatalf("expected continuation status payload for token %s", token)
+	}
+	progress, ok := payload["modeled_progress"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected modeled_progress map on payload, got %T", payload["modeled_progress"])
+	}
+	if !anyToBool(progress["probabilistic"]) {
+		t.Fatalf("expected probabilistic modeled progress, got %#v", progress)
+	}
+	if anyToFloat64(progress["progress_pct"], 0) <= 0 {
+		t.Fatalf("expected positive progress_pct, got %#v", progress)
+	}
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result payload, got %T", payload["result"])
+	}
+	resultProgress, ok := result["modeled_progress"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected modeled_progress on result payload, got %T", result["modeled_progress"])
+	}
+	if anyToString(resultProgress["confidence_band"]) == "" {
+		t.Fatalf("expected confidence_band in modeled progress, got %#v", resultProgress)
+	}
+	retrievalProgress := anyMap(payload["retrieval_progress"])
+	if anyToString(retrievalProgress["schema_id"]) != retrievalProgressContractID {
+		t.Fatalf("expected retrieval progress contract payload, got %#v", retrievalProgress)
+	}
+	progressValidation := anyMap(anyMap(retrievalProgress["format_contract"])["validation"])
+	if anyToString(progressValidation["status"]) != "passed" {
+		t.Fatalf("expected retrieval progress validation passed, got %#v", retrievalProgress["format_contract"])
+	}
+	visibility := anyMap(retrievalProgress["agent_visibility"])
+	if !strings.Contains(anyToString(visibility["watch_command"]), "contextlattice_agent_session watch") {
+		t.Fatalf("expected agent watch command, got %#v", visibility)
+	}
+	if anyToString(visibility["session_event_type"]) != "retrieval.continuation.progress" {
+		t.Fatalf("expected continuation progress event type, got %#v", visibility)
+	}
+}
+
+func TestContinuationSteeringWritesAgentSessionInbox(t *testing.T) {
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	sessionID := "sess-continuation-steering"
+	token := "cont-steering-token"
+	if _, err := s.agentSessions.start(map[string]any{
+		"session_id": sessionID,
+		"agent":      "codex",
+		"agent_id":   "codex_gpt5_test",
+		"project":    "contextlattice",
+		"objective":  "prove async continuation steering reaches the requesting agent",
+	}); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	request := map[string]any{
+		"session_id": sessionID,
+		"agent_id":   "codex_gpt5_test",
+		"project":    "contextlattice",
+		"topic_path": "contextlattice/async-continuation-agent-steering",
+		"query":      "async continuation steering proof",
+	}
+	s.publishContinuationEvent(token, continuationEventWithRequest(request, map[string]any{
+		"event":  "queued",
+		"status": "queued",
+		"source": sourceLetta,
+	}))
+	completed := continuationEventWithRequest(request, map[string]any{
+		"event":      "completed",
+		"status":     "ok",
+		"source":     sourceLetta,
+		"reason":     "test",
+		"latency_ms": 4,
+	})
+	s.publishContinuationEvent(token, completed)
+	s.emitContinuationSteering(request, token, sourceLetta, completed)
+
+	session, events, ok := s.agentSessions.get(sessionID)
+	if !ok {
+		t.Fatalf("expected session %s", sessionID)
+	}
+	rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
+	inbox := anyMap(rollup["agent_inbox"])
+	latest := anyMap(inbox["latest"])
+	if anyToString(latest["type"]) != "retrieval.continuation.ready" {
+		t.Fatalf("expected ready steering event in inbox, got %#v", latest)
+	}
+	if !strings.Contains(anyToString(latest["message"]), "Async retrieval is ready") {
+		t.Fatalf("expected ready steering message, got %#v", latest)
+	}
+	delivery := anyMap(latest["delivery"])
+	if !strings.Contains(anyToString(delivery["watch_command"]), "--session-id "+sessionID) {
+		t.Fatalf("expected session-specific watch command, got %#v", delivery)
+	}
+	rollupValidation := anyMap(anyMap(rollup["format_contract"])["validation"])
+	if anyToString(rollupValidation["status"]) != "passed" {
+		t.Fatalf("expected rollup validation passed, got %#v", rollup["format_contract"])
+	}
+
+	promptPackage := buildAgentPromptContextPackage(session, events, time.Now().UTC())
+	if !strings.Contains(anyToString(promptPackage["reference_prompt"]), "Latest agent steering: Async retrieval is ready") {
+		t.Fatalf("expected latest steering in reference prompt, got %q", anyToString(promptPackage["reference_prompt"]))
+	}
+	promptValidation := anyMap(anyMap(promptPackage["format_contract"])["validation"])
+	if anyToString(promptValidation["status"]) != "passed" {
+		t.Fatalf("expected prompt context package validation passed, got %#v", promptPackage["format_contract"])
+	}
+
+	trace := buildAgentRunTrace(session, events, time.Now().UTC())
+	traceInbox := anyMap(anyMap(trace["run_shaping"])["agent_inbox"])
+	if anyToString(anyMap(traceInbox["latest"])["token"]) != token {
+		t.Fatalf("expected continuation token in trace inbox, got %#v", traceInbox)
+	}
+	markdown := anyToString(anyMap(trace["run_card"])["markdown"])
+	if !strings.Contains(markdown, "## Agent Steering") {
+		t.Fatalf("expected agent steering run-card section, got %q", markdown)
+	}
+	traceValidation := anyMap(anyMap(trace["format_contract"])["validation"])
+	if anyToString(traceValidation["status"]) != "passed" {
+		t.Fatalf("expected trace validation passed, got %#v", trace["format_contract"])
+	}
+}
+
 func TestAdaptiveTimeoutUsesP95AndBacklogPressure(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_ENABLED", "true")
 	t.Setenv("GO_RETRIEVAL_ADAPTIVE_TIMEOUT_MIN_REQUESTS", "3")

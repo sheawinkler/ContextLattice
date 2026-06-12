@@ -101,6 +101,7 @@ def render(advisor: dict[str, Any]) -> str:
         f"retrieval: {text(retrieval.get('recommended_mode'), 'balanced')} via {text(retrieval.get('recommended_surface'), 'cli_for_local_agents')}",
         f"graph: {text(graph.get('status'), 'not_sampled')} | {short(graph.get('recommendation'), 220)}",
         f"repair: {short(continuation.get('repair_instruction') or objective.get('repair_instruction'), 240)}",
+        f"follow-up: {short(continuation.get('agent_followup_command'), 260)}",
         "",
         "next actions:",
     ]

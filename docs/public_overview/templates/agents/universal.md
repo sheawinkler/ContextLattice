@@ -21,7 +21,7 @@ Operating rules:
 11) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, and `universal_agent_adapter_response.v1` contract metadata, including `objective_hierarchy` and `objective_lineage`, in downstream handoffs.
 12) If direct search is needed, call POST /memory/search with include_grounding=true and scoped project/topic when known.
 13) If relevant capabilities are unclear, run `contextlattice_skills_index search "<task or tool need>" --pretty` instead of loading every skill.
-14) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events (or re-query shortly after).
+14) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events, or run the returned agent_visibility.watch_command so the requesting session receives the completion/degraded steering comment.
 15) Retrieval mode semantics:
    - balanced = fast sync now + slow async continuation.
    - deep = broader/lower-cap retrieval budgets but still fail-open; do not wait forever on one lane.

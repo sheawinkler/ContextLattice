@@ -582,6 +582,49 @@ func compactAgentSessionRecentEvent(event map[string]any) map[string]any {
 	}
 }
 
+func agentSessionSteeringInbox(events []map[string]any) map[string]any {
+	items := []any{}
+	for i := len(events) - 1; i >= 0 && len(items) < 8; i-- {
+		event := events[i]
+		metadata := anyMap(event["metadata"])
+		comment := anyMap(metadata["steering_comment"])
+		if len(comment) == 0 {
+			continue
+		}
+		progress := anyMap(comment["retrieval_progress"])
+		progressModel := anyMap(progress["modeled_progress"])
+		sourceSummary := anyMap(progress["source_summary"])
+		items = append(items, map[string]any{
+			"event_id":         clipText(anyToString(event["id"]), 128),
+			"type":             clipText(anyToString(event["type"]), 96),
+			"created_at":       anyToString(event["created_at"]),
+			"severity":         clipText(anyToString(comment["severity"]), 40),
+			"message":          clipText(anyToString(comment["message"]), 720),
+			"suggested_action": clipText(anyToString(comment["suggested_action"]), 720),
+			"token":            clipText(anyToString(progress["token"]), 128),
+			"status":           clipText(anyToString(progress["status"]), 80),
+			"result_state":     clipText(anyToString(progress["result_state"]), 80),
+			"progress_pct":     progressModel["progress_pct"],
+			"pending_sources":  anyToStringList(sourceSummary["pending_sources"], 8),
+			"failed_sources":   anyToStringList(sourceSummary["failed_sources"], 8),
+			"delivery":         compactAgentSessionValue(comment["delivery"], 2),
+		})
+	}
+	latest := map[string]any{}
+	if len(items) > 0 {
+		latest = anyMap(items[0])
+	}
+	return map[string]any{
+		"label":           "Agent steering inbox",
+		"pending_count":   len(items),
+		"latest":          latest,
+		"items":           items,
+		"watch_command":   "contextlattice_agent_session watch --session-id <session_id> --pretty",
+		"poll_endpoint":   "/v1/agents/sessions/{session_id}/events",
+		"delivery_policy": "live agents should watch session events or continuation SSE; inactive agents read latest steering from rollup/context-package before the next model call",
+	}
+}
+
 func agentSessionDurationSecs(session map[string]any, now time.Time) float64 {
 	started, ok := parseISOTime(anyToString(session["started_at"]))
 	if !ok {
@@ -762,6 +805,7 @@ func buildAgentSessionRollup(session map[string]any, events []map[string]any, no
 			"cli_command":  "contextlattice_agent_session context-package --session-id " + anyToString(session["id"]) + " --pretty",
 			"best_surface": "cli_for_local_agents_http_for_apps_mcp_for_tool_calling_hosts",
 		},
+		"agent_inbox":   agentSessionSteeringInbox(events),
 		"confidence":    agentSessionRollupConfidence(session, contribution, phaseCounts, risks),
 		"recent_events": recent,
 	}
@@ -773,6 +817,8 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 	retrievalSummary := anyMap(rollup["retrieval_summary"])
 	artifactSummary := anyMap(rollup["artifact_summary"])
 	riskSummary := anyMap(rollup["risk_summary"])
+	agentInbox := anyMap(rollup["agent_inbox"])
+	latestSteering := anyMap(agentInbox["latest"])
 	sessionID := anyToString(rollup["session_id"])
 	objective := firstNonEmptyStrings(anyToString(rollup["objective"]), anyToString(rollup["goal"]), "Continue the agent objective using available evidence.")
 	nextAction := firstNonEmptyStrings(anyToString(rollup["next_action"]), "Inspect the rollup, retrieve missing context, and execute the smallest evidence-backed next action.")
@@ -795,6 +841,7 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 		"Status: " + anyToString(rollup["status"]) + " / last event " + anyToString(rollup["last_event_type"]),
 		"Memory contribution score: " + anyToString(anyMap(rollup["memory_contribution"])["score"]),
 		"Retrieved sources: " + strings.Join(anyToStringList(retrievalSummary["returned_sources"], 16), ", "),
+		"Latest agent steering: " + firstNonEmptyStrings(anyToString(latestSteering["message"]), "none"),
 		"Artifacts: checkpoints=" + anyToString(artifactSummary["checkpoints"]) + ", handoffs=" + anyToString(artifactSummary["handoffs"]) + ", graph=" + anyToString(artifactSummary["graph_touches"]) + ", tests=" + anyToString(artifactSummary["tests"]),
 		"Risks or missing evidence: " + strings.Join(anyToStringList(riskSummary["missing"], 12), ", "),
 		"Next action: " + nextAction,
@@ -817,6 +864,7 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 			"current_state":       anyToString(rollup["objective_state"]),
 			"next_action":         nextAction,
 			"retrieval_summary":   retrievalSummary,
+			"agent_inbox":         agentInbox,
 			"artifact_summary":    artifactSummary,
 			"risk_summary":        riskSummary,
 			"recent_events":       rollup["recent_events"],
@@ -967,6 +1015,7 @@ func buildAgentRunCardMarkdown(trace map[string]any) string {
 	objectiveCoherence := anyMap(advisor["objective_coherence"])
 	objectiveHierarchy := anyMap(session["objective_hierarchy"])
 	objectiveLineage := anyMap(session["objective_lineage"])
+	agentInbox := anyMap(runShaping["agent_inbox"])
 	skills := anyMap(runShaping["skills"])
 	sources := anyMap(runShaping["sources"])
 	graph := anyMap(runShaping["graph"])
@@ -999,6 +1048,14 @@ func buildAgentRunCardMarkdown(trace map[string]any) string {
 		b.WriteString("- Continuation: `" + clipText(anyToString(continuation["status"]), 80) + "`\n")
 		if repair := clipText(anyToString(continuation["repair_instruction"]), 420); repair != "" {
 			b.WriteString("- Repair: " + repair + "\n")
+		}
+		b.WriteString("\n")
+	}
+	if latest := anyMap(agentInbox["latest"]); len(latest) > 0 {
+		b.WriteString("## Agent Steering\n\n")
+		b.WriteString("- Latest: " + clipText(anyToString(latest["message"]), 420) + "\n")
+		if action := clipText(anyToString(latest["suggested_action"]), 420); action != "" {
+			b.WriteString("- Suggested action: " + action + "\n")
 		}
 		b.WriteString("\n")
 	}
@@ -1071,6 +1128,7 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 			},
 			"skills":      agentTraceHelpfulSkills(events),
 			"sources":     retrievalSummary,
+			"agent_inbox": anyMap(rollup["agent_inbox"]),
 			"graph":       map[string]any{"touches": anyToInt(artifactSummary["graph_touches"], 0), "recent": agentTraceEventsForPhase(events, "graph", 8)},
 			"handoffs":    map[string]any{"count": anyToInt(artifactSummary["handoffs"], 0), "recent": agentTraceEventsForPhase(events, "handoff", 8)},
 			"checkpoints": map[string]any{"count": anyToInt(artifactSummary["checkpoints"], 0), "recent": agentTraceEventsForPhase(events, "memory_write", 8)},
