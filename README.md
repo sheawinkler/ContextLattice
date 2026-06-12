@@ -152,6 +152,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Inspect a bounded run trace through `GET /v1/agents/sessions/{session_id}/trace`; the trace reports context, skills that may be helpful, source coverage, graph touches, handoffs, checkpoints, and timeline events without raw provider payloads.
 - Read live runtime telemetry from `GET /telemetry/agents/runtime`.
 - Compile task context through `POST /memory/context-pack`, `POST /tools/context_pack`, or global `contextlattice_pack`; responses include `context_compiler`, ranked evidence, prompt sections, and a bounded `reference_prompt`.
+- Watch long-running recall through `scripts/agent/contextlattice-session watch --session-id <id> --continuation-token <token>`; continuation responses include `retrieval_progress.v1`, dashboard status links, and agent-visible steering when async work is ready.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
 - Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; it wraps gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, and runtime-doctor checks into one bounded report.
@@ -162,7 +163,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
 - Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
 
-Canonical event families include `session.started`, `context_pack.completed`, `dream.completed`, `graph.neighbors_returned`, `graph.edge_touched`, `decision.made`, `test.ran`, `handoff.created`, `writeback.completed`, and `session.completed`.
+Canonical event families include `session.started`, `context_pack.completed`, `retrieval.continuation.progress`, `retrieval.continuation.ready`, `retrieval.continuation.degraded`, `dream.completed`, `graph.neighbors_returned`, `graph.edge_touched`, `decision.made`, `test.ran`, `handoff.created`, `writeback.completed`, and `session.completed`.
 
 ## Download Installers
 

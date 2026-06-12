@@ -33,8 +33,40 @@ type RetrievalLifecycle = {
 
 type ContinuationInfo = {
   token?: string;
+  poll_url?: string;
   events_url?: string;
   pending_sources?: string[];
+  retrieval_progress?: RetrievalProgress;
+  agent_visibility?: AgentVisibility;
+};
+
+type ModeledProgress = {
+  progress?: number;
+  progress_pct?: number;
+  eta_secs?: number;
+  confidence?: number;
+  confidence_band?: string;
+  pending_sources?: string[];
+};
+
+type AgentVisibility = {
+  best_surface?: string;
+  watch_command?: string;
+  poll_command?: string;
+  session_event_type?: string;
+};
+
+type RetrievalProgress = {
+  token?: string;
+  status?: string;
+  result_state?: string;
+  updated_at?: string;
+  completed_at?: string;
+  modeled_progress?: ModeledProgress;
+  source_summary?: SourceSummary;
+  poll_url?: string;
+  events_url?: string;
+  agent_visibility?: AgentVisibility;
 };
 
 type SearchResponse = {
@@ -43,6 +75,7 @@ type SearchResponse = {
   source_summary?: SourceSummary;
   retrieval_lifecycle?: RetrievalLifecycle;
   continuation_async?: ContinuationInfo;
+  retrieval_progress?: RetrievalProgress;
   token?: string;
   job_id?: string;
   events_url?: string;
@@ -99,6 +132,85 @@ function SourceChip({ label, value }: { label: string; value: string[] | undefin
   );
 }
 
+function progressPercent(progress: RetrievalProgress | null): number {
+  const raw = progress?.modeled_progress?.progress_pct;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, raw));
+}
+
+function RetrievalLatticeProgress({ progress }: { progress: RetrievalProgress | null }) {
+  const pct = progressPercent(progress);
+  const summary = progress?.source_summary;
+  const returned = normalizeSourceList(summary?.returned_now);
+  const pending = normalizeSourceList(summary?.pending_sources);
+  const failed = normalizeSourceList(summary?.failed_sources);
+  const sources = normalizeSourceList([
+    ...returned,
+    ...pending,
+    ...failed,
+  ]).slice(0, 8);
+  const status = String(progress?.status || "idle");
+  const result = String(progress?.result_state || "--");
+  const command = String(progress?.agent_visibility?.watch_command || "").trim();
+
+  return (
+    <div className="rounded border border-slate-800 bg-slate-950/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">Async lane</div>
+          <div className="text-sm text-slate-100 mt-1">
+            {status} / {result}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-semibold text-cyan-100">{pct.toFixed(1)}%</div>
+          <div className="text-[11px] text-slate-500">
+            confidence {progress?.modeled_progress?.confidence_band || "--"}
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 h-2 rounded bg-slate-900 overflow-hidden">
+        <div
+          className="h-full bg-cyan-300 transition-[width] duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        {(sources.length ? sources : ["fast-now", "slow-lane", "agent"]).map((source) => {
+          const laneState = failed.includes(source)
+            ? "failed"
+            : pending.includes(source)
+              ? "warming"
+              : returned.includes(source)
+                ? "ready"
+                : "idle";
+          const color =
+            laneState === "failed"
+              ? "border-rose-700 bg-rose-950/30 text-rose-100"
+              : laneState === "warming"
+                ? "border-amber-700 bg-amber-950/30 text-amber-100"
+                : laneState === "ready"
+                  ? "border-cyan-700 bg-cyan-950/30 text-cyan-100"
+                  : "border-slate-800 bg-slate-950 text-slate-300";
+          return (
+            <div key={source} className={`min-h-16 rounded border p-2 ${color}`}>
+              <div className="text-[11px] uppercase tracking-wide opacity-70">{laneState}</div>
+              <div className="mt-1 text-sm break-words">{source}</div>
+            </div>
+          );
+        })}
+      </div>
+      {command ? (
+        <div className="mt-3 rounded border border-slate-800 bg-slate-950 p-2 text-[11px] text-slate-300 break-all">
+          {command}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function RetrievalPanel() {
   const [project, setProject] = useState("contextlattice");
   const [query, setQuery] = useState("");
@@ -107,6 +219,7 @@ export function RetrievalPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<SearchResponse | null>(null);
+  const [progress, setProgress] = useState<RetrievalProgress | null>(null);
   const [events, setEvents] = useState<ContinuationEvent[]>([]);
   const [rawById, setRawById] = useState<Record<string, string>>({});
   const [loadingRaw, setLoadingRaw] = useState<Record<string, boolean>>({});
@@ -138,6 +251,28 @@ export function RetrievalPanel() {
     setEvents((prev) => [{ event, payload, at: new Date().toLocaleTimeString() }, ...prev].slice(0, 30));
   }
 
+  async function refreshContinuationStatus(token: string) {
+    const cleanToken = String(token || "").trim();
+    if (!cleanToken) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/memory/search/continuations/${encodeURIComponent(cleanToken)}?include_result=false`, {
+        cache: "no-store",
+      });
+      const data = (await res.json()) as SearchResponse;
+      const nextProgress =
+        data.retrieval_progress ||
+        data.continuation_async?.retrieval_progress ||
+        null;
+      if (nextProgress) {
+        setProgress(nextProgress);
+      }
+    } catch {
+      appendEvent("status_error", "Failed to refresh continuation progress");
+    }
+  }
+
   function closeEventStream() {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
@@ -157,6 +292,7 @@ export function RetrievalPanel() {
       stream.addEventListener(name, (evt) => {
         const message = evt as MessageEvent<string>;
         appendEvent(name, message.data || "");
+        void refreshContinuationStatus(token);
       });
     }
 
@@ -175,6 +311,7 @@ export function RetrievalPanel() {
     setLoading(true);
     setError(null);
     setResponse(null);
+    setProgress(null);
     setEvents([]);
     setRawById({});
     closeEventStream();
@@ -203,6 +340,7 @@ export function RetrievalPanel() {
         throw new Error(detail);
       }
       setResponse(data);
+      setProgress(data.retrieval_progress || data.continuation_async?.retrieval_progress || null);
 
       const token = String(
         data.continuation_async?.token ||
@@ -217,6 +355,7 @@ export function RetrievalPanel() {
             "",
         ).trim();
         openContinuationStream(token, eventsPath);
+        void refreshContinuationStatus(token);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Search failed";
@@ -256,6 +395,8 @@ export function RetrievalPanel() {
           Fast-now retrieval with deep continuation visibility and source-level status.
         </p>
       </div>
+
+      <RetrievalLatticeProgress progress={progress} />
 
       <form className="grid gap-3 md:grid-cols-6" onSubmit={runSearch}>
         <label className="md:col-span-1 text-sm text-slate-300">

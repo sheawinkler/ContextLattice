@@ -1,6 +1,6 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 8,
+  "registry_version": 9,
   "updated_at": "2026-06-12T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
@@ -485,6 +485,160 @@
         "objective_coherence.repair_instruction": 1200
       }
     },
+    "retrieval_progress.v1": {
+      "contract_version": 1,
+      "payload_kind": "retrieval_progress",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_progress_without_raw_retrieval_payload",
+      "max_total_json_bytes": 18000,
+      "max_string_bytes": 1800,
+      "max_list_items": 24,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "token",
+        "status",
+        "result_state",
+        "modeled_progress",
+        "source_summary",
+        "poll_url",
+        "events_url",
+        "agent_visibility",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "token": "string",
+        "status": "string",
+        "result_state": "string",
+        "modeled_progress": "object",
+        "source_summary": "object",
+        "poll_url": "string",
+        "events_url": "string",
+        "agent_visibility": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "modeled_progress": [
+          "progress",
+          "progress_pct",
+          "eta_secs",
+          "confidence",
+          "confidence_band"
+        ],
+        "source_summary": [
+          "returned_now",
+          "pending_sources",
+          "warming_sources",
+          "failed_sources"
+        ],
+        "agent_visibility": [
+          "best_surface",
+          "watch_command",
+          "poll_command",
+          "session_event_type"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "retrieval_progress.v1",
+        "format_contract.schema_id": "retrieval_progress.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "raw_contextlattice_json",
+        "raw_prompt",
+        "secret",
+        "secrets"
+      ],
+      "max_bytes_by_path": {
+        "agent_visibility.watch_command": 600,
+        "agent_visibility.poll_command": 600
+      }
+    },
+    "steering_comment.v1": {
+      "contract_version": 1,
+      "payload_kind": "steering_comment",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_steering_comment_without_raw_prompt_or_retrieval_payload",
+      "max_total_json_bytes": 22000,
+      "max_string_bytes": 1800,
+      "max_list_items": 24,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "audience",
+        "severity",
+        "message",
+        "suggested_action",
+        "reason",
+        "retrieval_progress",
+        "delivery",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "audience": "string",
+        "severity": "string",
+        "message": "string",
+        "suggested_action": "string",
+        "reason": "string",
+        "retrieval_progress": "object",
+        "delivery": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "delivery": [
+          "session_event_type",
+          "best_surface",
+          "watch_command",
+          "poll_command"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "steering_comment.v1",
+        "format_contract.schema_id": "steering_comment.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "raw_contextlattice_json",
+        "raw_prompt",
+        "secret",
+        "secrets"
+      ],
+      "max_bytes_by_path": {
+        "message": 900,
+        "suggested_action": 900,
+        "reason": 900,
+        "delivery.watch_command": 600,
+        "delivery.poll_command": 600
+      }
+    },
     "context_pack_response.v1": {
       "contract_version": 1,
       "payload_kind": "context_pack_response",
@@ -796,6 +950,7 @@
         "artifact_summary",
         "risk_summary",
         "prompt_package",
+        "agent_inbox",
         "confidence",
         "recent_events",
         "format_contract"
@@ -818,6 +973,7 @@
         "artifact_summary": "object",
         "risk_summary": "object",
         "prompt_package": "object",
+        "agent_inbox": "object",
         "confidence": "int",
         "recent_events": "list",
         "format_contract": "object"
@@ -920,6 +1076,7 @@
           "objective",
           "next_action",
           "retrieval_summary",
+          "agent_inbox",
           "artifact_summary",
           "risk_summary",
           "recent_events",
@@ -1007,6 +1164,7 @@
           "context",
           "skills",
           "sources",
+          "agent_inbox",
           "graph",
           "handoffs",
           "checkpoints",

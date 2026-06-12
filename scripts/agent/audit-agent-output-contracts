@@ -45,6 +45,8 @@ REQUIRED_CONTRACTS = (
     "universal_agent_adapter_response.v1",
     "agent_session_rollup.v1",
     "agent_prompt_context_package.v1",
+    "retrieval_progress.v1",
+    "steering_comment.v1",
 )
 
 
@@ -95,6 +97,111 @@ def sample_context_pack() -> dict[str, Any]:
             "writeback_required": True,
         },
     )
+
+
+def sample_retrieval_progress() -> dict[str, Any]:
+    return attach_format_contract(
+        "retrieval_progress.v1",
+        {
+            "ok": True,
+            "schema_id": "retrieval_progress.v1",
+            "token": "cont-test",
+            "status": "completed",
+            "result_state": "ready",
+            "modeled_progress": {
+                "progress": 1.0,
+                "progress_pct": 100.0,
+                "eta_secs": 0,
+                "confidence": 0.82,
+                "confidence_band": "high",
+                "pending_sources": [],
+            },
+            "source_summary": {
+                "returned_now": ["memory_bank"],
+                "pending_sources": [],
+                "warming_sources": [],
+                "failed_sources": [],
+            },
+            "poll_url": "/memory/search/continuations/cont-test",
+            "events_url": "/memory/search/continuations/cont-test/events",
+            "agent_visibility": {
+                "best_surface": "session_watch_for_local_agents_continuation_sse_for_live_hosts",
+                "watch_command": "contextlattice_agent_session watch --continuation-token cont-test --pretty",
+                "poll_command": "curl -fsS http://127.0.0.1:8075/memory/search/continuations/cont-test",
+                "session_event_type": "retrieval.continuation.ready",
+            },
+        },
+    )
+
+
+def sample_steering_comment() -> dict[str, Any]:
+    progress = sample_retrieval_progress()
+    return attach_format_contract(
+        "steering_comment.v1",
+        {
+            "ok": True,
+            "schema_id": "steering_comment.v1",
+            "audience": "requesting_agent",
+            "severity": "info",
+            "message": "Async retrieval is ready; slow-source evidence has finished warming for this request.",
+            "suggested_action": "Rerun context packaging before finalizing claims that depend on complete recall.",
+            "reason": "Continuation completed successfully with no failed slow sources.",
+            "retrieval_progress": progress,
+            "delivery": progress["agent_visibility"],
+        },
+    )
+
+
+def sample_agent_inbox() -> dict[str, Any]:
+    return {
+        "label": "Agent steering inbox",
+        "pending_count": 1,
+        "latest": {
+            "event_id": "evt_steering",
+            "type": "retrieval.continuation.ready",
+            "created_at": "2026-06-08T00:00:02Z",
+            "severity": "info",
+            "message": "Async retrieval is ready; slow-source evidence has finished warming for this request.",
+            "suggested_action": "Rerun context packaging or poll the continuation result before finalizing complete-recall claims.",
+            "token": "cont-test",
+            "status": "completed",
+            "result_state": "ready",
+            "progress_pct": 100.0,
+            "pending_sources": [],
+            "failed_sources": [],
+            "delivery": {
+                "session_event_type": "retrieval.continuation.ready",
+                "best_surface": "session_watch_for_local_agents_continuation_sse_for_live_hosts",
+                "watch_command": "contextlattice_agent_session watch --session-id sess_audit --continuation-token cont-test --pretty",
+                "poll_command": "curl -fsS http://127.0.0.1:8075/memory/search/continuations/cont-test",
+            },
+        },
+        "items": [
+            {
+                "event_id": "evt_steering",
+                "type": "retrieval.continuation.ready",
+                "created_at": "2026-06-08T00:00:02Z",
+                "severity": "info",
+                "message": "Async retrieval is ready; slow-source evidence has finished warming for this request.",
+                "suggested_action": "Rerun context packaging or poll the continuation result before finalizing complete-recall claims.",
+                "token": "cont-test",
+                "status": "completed",
+                "result_state": "ready",
+                "progress_pct": 100.0,
+                "pending_sources": [],
+                "failed_sources": [],
+                "delivery": {
+                    "session_event_type": "retrieval.continuation.ready",
+                    "best_surface": "session_watch_for_local_agents_continuation_sse_for_live_hosts",
+                    "watch_command": "contextlattice_agent_session watch --session-id sess_audit --continuation-token cont-test --pretty",
+                    "poll_command": "curl -fsS http://127.0.0.1:8075/memory/search/continuations/cont-test",
+                },
+            }
+        ],
+        "watch_command": "contextlattice_agent_session watch --session-id <session_id> --pretty",
+        "poll_endpoint": "/v1/agents/sessions/{session_id}/events",
+        "delivery_policy": "live agents should watch session events or continuation SSE; inactive agents read latest steering from rollup/context-package before the next model call",
+    }
 
 
 def oversized_context_pack_fixture(registry: dict[str, Any]) -> dict[str, Any]:
@@ -554,6 +661,7 @@ def sample_agent_session_rollup(registry: dict[str, Any]) -> dict[str, Any]:
                 "cli_command": "contextlattice_agent_session context-package --session-id sess_audit --pretty",
                 "best_surface": "cli_for_local_agents_http_for_apps_mcp_for_tool_calling_hosts",
             },
+            "agent_inbox": sample_agent_inbox(),
             "confidence": 72,
             "recent_events": [
                 {
@@ -593,6 +701,7 @@ def sample_agent_prompt_context_package(registry: dict[str, Any]) -> dict[str, A
                 "current_state": rollup["objective_state"],
                 "next_action": rollup["next_action"],
                 "retrieval_summary": rollup["retrieval_summary"],
+                "agent_inbox": rollup["agent_inbox"],
                 "artifact_summary": rollup["artifact_summary"],
                 "risk_summary": rollup["risk_summary"],
                 "recent_events": rollup["recent_events"],
@@ -672,6 +781,8 @@ def run_audit() -> list[dict[str, Any]]:
         ("universal_agent_adapter_response.v1", sample_universal_agent_adapter_response(registry)),
         ("agent_session_rollup.v1", sample_agent_session_rollup(registry)),
         ("agent_prompt_context_package.v1", sample_agent_prompt_context_package(registry)),
+        ("retrieval_progress.v1", sample_retrieval_progress()),
+        ("steering_comment.v1", sample_steering_comment()),
     ):
         for item in validate_agent_contract_payload(contract_id, payload, registry):
             findings.append({"severity": "error", **item})

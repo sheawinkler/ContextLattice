@@ -54,7 +54,7 @@
       <p class="sub">
         ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and custom MCP agents one durable place to remember decisions, evidence, skills, checkpoints, behavior, and project context.
       </p>
-      <div class="hero-local">CLI + HTTP/MCP + prompt-ready context + Skills Index + behavior provenance</div>
+      <div class="hero-local">CLI + HTTP/MCP + prompt-ready context + async recall progress + agent steering</div>
       <div class="cta-row">
         <a class="cta primary" href="installation.html">Add memory to your agents</a>
         <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">Start Free on GitHub</a>
@@ -283,6 +283,22 @@
               <animate attributeName="opacity" dur="3.9s" begin="-2.2s" repeatCount="indefinite" values="0.64;0.9;1;0.34;0" keyTimes="0;0.62;0.86;0.96;1"></animate>
               <animateTransform attributeName="transform" type="scale" additive="sum" dur="3.9s" begin="-2.2s" repeatCount="indefinite" values="1 1;1.08 1.08;1 1;0.56 0.56;0.2 0.2" keyTimes="0;0.57;0.84;0.96;1"></animateTransform>
             </polygon>
+          </g>
+
+          <g class="hl-progress-panel">
+            <text class="hl-progress-label" x="36" y="181">fast context now</text>
+            <text class="hl-progress-label warm" x="150" y="181">deep recall warming</text>
+            <rect class="hl-progress-back" x="36" y="184" width="224" height="12" rx="2"></rect>
+            <rect class="hl-progress-fill" x="38" y="186" width="146" height="8" rx="1.5">
+              <animate attributeName="width" dur="6.8s" repeatCount="indefinite" values="92;162;184;146;92"></animate>
+            </rect>
+            <circle class="hl-progress-pulse" cx="190" cy="190" r="2.2">
+              <animate attributeName="cx" dur="6.8s" repeatCount="indefinite" values="130;196;222;190;130"></animate>
+              <animate attributeName="opacity" dur="6.8s" repeatCount="indefinite" values="0.3;0.9;1;0.58;0.3"></animate>
+            </circle>
+            <path class="hl-steering-link" d="M260 190 C284 188 298 178 306 160"></path>
+            <rect class="hl-steering-chip" x="244" y="148" width="56" height="16" rx="2"></rect>
+            <text class="hl-progress-label steering" x="250" y="159">agent ping</text>
           </g>
 
           <g class="hl-anomaly-signals">

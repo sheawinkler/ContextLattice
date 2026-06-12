@@ -73,6 +73,22 @@
       </article>
 
       <article class="update-card">
+        <span class="update-meta">2026-06-12 · v3.4.13 · Async Recall Steering</span>
+        <h3>Slow recall can now steer the requesting agent when it finishes.</h3>
+        <p class="spotlight">
+          Staged retrieval still returns fast context first, but continuation progress is now contract-visible across
+          HTTP, CLI, session rollups, traces, and the dashboard. Local agents can watch their own session and receive a
+          bounded steering comment when deeper recall is ready or degraded.
+        </p>
+        <ul>
+          <li><strong>Progress contract:</strong> responses include <code>retrieval_progress.v1</code> with progress, confidence, source state, poll URL, and event URL.</li>
+          <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.ready</code> or <code>retrieval.continuation.degraded</code>.</li>
+          <li><strong>CLI watch:</strong> <code>contextlattice_agent_session watch --session-id &lt;id&gt; --continuation-token &lt;token&gt; --pretty</code> gives agents a compact terminal inbox.</li>
+          <li><strong>Dashboard:</strong> retrieval flow shows the async lane, source states, progress, confidence, and the agent watch command.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-11 · v3.4.12 · Run Advisor + Graph Quality Audit</span>
         <h3>Agent runs now come with a readiness signal, not just a transcript trail.</h3>
         <p class="spotlight">

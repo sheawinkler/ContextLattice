@@ -646,6 +646,54 @@ table.kv-table {
   animation: fxLaneGlint 5.6s ease-in-out infinite 1.4s;
 }
 
+.hero-lattice .hl-progress-panel {
+  opacity: 0.92;
+}
+
+.hero-lattice .hl-progress-back {
+  fill: rgba(8, 12, 20, 0.72);
+  stroke: rgba(228, 236, 250, 0.32);
+  stroke-width: 0.8;
+}
+
+.hero-lattice .hl-progress-fill {
+  fill: rgba(121, 220, 252, 0.78);
+  filter: drop-shadow(0 0 4px rgba(121, 220, 252, 0.38));
+}
+
+.hero-lattice .hl-progress-pulse {
+  fill: rgba(255, 241, 194, 0.96);
+  filter: drop-shadow(0 0 4px rgba(255, 214, 134, 0.42));
+}
+
+.hero-lattice .hl-progress-label {
+  font: 600 6px "IBM Plex Mono", monospace;
+  letter-spacing: 0;
+  fill: rgba(238, 242, 250, 0.78);
+}
+
+.hero-lattice .hl-progress-label.warm {
+  fill: rgba(251, 218, 151, 0.8);
+}
+
+.hero-lattice .hl-progress-label.steering {
+  fill: rgba(245, 248, 255, 0.86);
+}
+
+.hero-lattice .hl-steering-link {
+  fill: none;
+  stroke: rgba(255, 230, 168, 0.72);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  animation: fxLaneFlow 3.6s linear infinite;
+}
+
+.hero-lattice .hl-steering-chip {
+  fill: rgba(17, 22, 34, 0.78);
+  stroke: rgba(255, 230, 168, 0.52);
+  stroke-width: 0.8;
+}
+
 .hero-lattice .hl-node {
   fill: rgba(222, 228, 236, 0.86);
   stroke: rgba(5, 8, 14, 0.95);

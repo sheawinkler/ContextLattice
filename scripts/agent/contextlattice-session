@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
@@ -164,6 +165,134 @@ def cmd_trace(args: argparse.Namespace) -> int:
     raw = request_json("GET", f"/v1/agents/sessions/{session_id}/trace", None, args.timeout)
     emit(raw, args.pretty)
     return 0 if raw.get("ok") else 1
+
+
+def steering_from_event(event: dict[str, Any]) -> dict[str, Any]:
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    comment = metadata.get("steering_comment") if isinstance(metadata.get("steering_comment"), dict) else {}
+    progress = comment.get("retrieval_progress") if isinstance(comment.get("retrieval_progress"), dict) else {}
+    model = progress.get("modeled_progress") if isinstance(progress.get("modeled_progress"), dict) else {}
+    delivery = comment.get("delivery") if isinstance(comment.get("delivery"), dict) else {}
+    return {
+        "event_id": str(event.get("id") or ""),
+        "type": str(event.get("type") or ""),
+        "created_at": str(event.get("created_at") or ""),
+        "severity": str(comment.get("severity") or "info"),
+        "message": str(comment.get("message") or event.get("summary") or ""),
+        "suggested_action": str(comment.get("suggested_action") or ""),
+        "token": str(progress.get("token") or metadata.get("continuation_token") or ""),
+        "status": str(progress.get("status") or ""),
+        "result_state": str(progress.get("result_state") or ""),
+        "progress_pct": model.get("progress_pct"),
+        "delivery": delivery,
+    }
+
+
+def print_watch_item(item: dict[str, Any], *, jsonl: bool) -> None:
+    if jsonl:
+        print(json.dumps(item, sort_keys=True), flush=True)
+        return
+    progress = item.get("progress_pct")
+    progress_text = ""
+    if isinstance(progress, (int, float)):
+        progress_text = f" {progress:.1f}%"
+    status = " / ".join(part for part in [str(item.get("status") or ""), str(item.get("result_state") or "")] if part)
+    if status:
+        status = f" [{status}{progress_text}]"
+    print(f"{item.get('created_at', '')} {item.get('type', 'event')}{status}", flush=True)
+    message = str(item.get("message") or "").strip()
+    if message:
+        print(f"  steering: {message}", flush=True)
+    action = str(item.get("suggested_action") or "").strip()
+    if action:
+        print(f"  action: {action}", flush=True)
+
+
+def continuation_watch_item(raw: dict[str, Any]) -> dict[str, Any]:
+    progress = raw.get("retrieval_progress") if isinstance(raw.get("retrieval_progress"), dict) else {}
+    model = progress.get("modeled_progress") if isinstance(progress.get("modeled_progress"), dict) else {}
+    visibility = progress.get("agent_visibility") if isinstance(progress.get("agent_visibility"), dict) else {}
+    status = str(progress.get("status") or raw.get("status") or "")
+    result_state = str(progress.get("result_state") or "")
+    return {
+        "event_id": f"continuation:{raw.get('token') or raw.get('job_id')}",
+        "type": str(visibility.get("session_event_type") or "retrieval.continuation.progress"),
+        "created_at": str(raw.get("updated_at") or raw.get("created_at") or ""),
+        "severity": "warning" if result_state == "degraded" else "info",
+        "message": "Async retrieval is ready." if status == "completed" and result_state == "ready" else "Async retrieval is still warming.",
+        "suggested_action": "Rerun context packaging or poll the continuation before final claims." if status == "completed" else "Keep watching or continue from fast-now evidence.",
+        "token": str(raw.get("token") or raw.get("job_id") or ""),
+        "status": status,
+        "result_state": result_state,
+        "progress_pct": model.get("progress_pct"),
+        "delivery": visibility,
+    }
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    session_id = args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+    continuation_token = args.continuation_token.strip()
+    if not session_id and not continuation_token:
+        raise SystemExit("session id or --continuation-token is required")
+    deadline = time.monotonic() + args.max_seconds if args.max_seconds > 0 else None
+    seen: set[str] = set()
+    first = True
+    last_continuation_key = ""
+    while True:
+        printed = 0
+        if session_id:
+            raw = request_json("GET", f"/v1/agents/sessions/{session_id}/events", None, args.timeout)
+            events = raw.get("events") if isinstance(raw.get("events"), list) else []
+            selected: list[dict[str, Any]] = []
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+                if not args.all_events and not isinstance(metadata.get("steering_comment"), dict):
+                    continue
+                if continuation_token and str(metadata.get("continuation_token") or "") != continuation_token:
+                    continue
+                selected.append(event)
+            if first and args.history >= 0:
+                selected = selected[-args.history :] if args.history else []
+            for event in selected:
+                event_id = str(event.get("id") or "")
+                if event_id and event_id in seen:
+                    continue
+                if event_id:
+                    seen.add(event_id)
+                item = steering_from_event(event)
+                if args.all_events and not item["message"]:
+                    item["message"] = str(event.get("summary") or "")
+                print_watch_item(item, jsonl=args.jsonl)
+                printed += 1
+        if continuation_token:
+            try:
+                raw = request_json("GET", f"/memory/search/continuations/{continuation_token}?include_result=false", None, args.timeout)
+                item = continuation_watch_item(raw)
+                key = json.dumps(
+                    {
+                        "status": item.get("status"),
+                        "result_state": item.get("result_state"),
+                        "progress_pct": item.get("progress_pct"),
+                    },
+                    sort_keys=True,
+                )
+                if key != last_continuation_key:
+                    print_watch_item(item, jsonl=args.jsonl)
+                    last_continuation_key = key
+                    printed += 1
+            except SystemExit:
+                if not session_id:
+                    raise
+        if args.once:
+            return 0
+        first = False
+        if deadline is not None and time.monotonic() >= deadline:
+            return 0
+        if printed == 0 and args.heartbeat and not args.jsonl:
+            print("watch: no new steering", flush=True)
+        time.sleep(max(0.25, args.interval))
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -371,6 +500,18 @@ def main() -> int:
     trace = sub.add_parser("trace")
     add_common(trace)
     trace.set_defaults(func=cmd_trace)
+
+    watch = sub.add_parser("watch")
+    add_common(watch)
+    watch.add_argument("--continuation-token", default="")
+    watch.add_argument("--interval", type=float, default=2.0)
+    watch.add_argument("--max-seconds", type=float, default=0)
+    watch.add_argument("--history", type=int, default=8)
+    watch.add_argument("--jsonl", action="store_true")
+    watch.add_argument("--once", action="store_true")
+    watch.add_argument("--all-events", action="store_true")
+    watch.add_argument("--heartbeat", action="store_true")
+    watch.set_defaults(func=cmd_watch)
 
     list_cmd = sub.add_parser("list")
     add_common(list_cmd)

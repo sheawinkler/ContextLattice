@@ -216,14 +216,22 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		}
 	}
 
+	startedAt := now
+	if parsed, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+		startedAt = parsed
+	}
+	if startedAt.After(now) {
+		startedAt = now
+	}
+
 	pendingSources := []string{}
 	failedSources := []string{}
 	returnedNow := []string{}
 	for source, state := range sourceState {
-		switch state {
-		case "queued", "running", "pending":
+		switch {
+		case state == "queued" || state == "running" || state == "pending":
 			pendingSources = append(pendingSources, source)
-		case "error", "failed", "max_inflight", "cooldown", "inflight_per_source":
+		case continuationStateFailed(state):
 			failedSources = append(failedSources, source)
 		default:
 			returnedNow = append(returnedNow, source)
@@ -255,6 +263,102 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		}
 	}
 
+	expectedBySource := map[string]float64{}
+	weightedTotal := 0.0
+	weightedProgress := 0.0
+	pendingRemainingSecs := 0.0
+	elapsedSecs := now.Sub(startedAt).Seconds()
+	if elapsedSecs < 0 {
+		elapsedSecs = 0
+	}
+	for source, state := range sourceState {
+		timeout := 8 * time.Second
+		if configured, ok := s.retrieval.sourceTimeouts[source]; ok && configured > 0 {
+			timeout = configured
+		}
+		if continuationTimeout, ok := s.retrieval.continuationTimeoutBySource[source]; ok && continuationTimeout > timeout {
+			timeout = continuationTimeout
+		}
+		_, adaptive := s.adaptiveTimeoutForSource(source, timeout)
+		expected := anyToFloat64(adaptive["adjusted_timeout_secs"], timeout.Seconds())
+		if expected <= 0 {
+			expected = timeout.Seconds()
+		}
+		if expected <= 0 {
+			expected = 1
+		}
+		expectedBySource[source] = roundFloat(expected, 3)
+		weightedTotal += expected
+
+		switch strings.ToLower(strings.TrimSpace(state)) {
+		case "queued", "running", "pending":
+			ratio := 0.0
+			if expected > 0 {
+				ratio = elapsedSecs / expected
+			}
+			if ratio < 0 {
+				ratio = 0
+			}
+			if ratio > 0.95 {
+				ratio = 0.95
+			}
+			weightedProgress += expected * ratio
+			remaining := expected - elapsedSecs
+			if remaining < 0 {
+				remaining = 0
+			}
+			pendingRemainingSecs += remaining
+		default:
+			weightedProgress += expected
+		}
+	}
+	modeledProgress := 0.0
+	if weightedTotal > 0 {
+		modeledProgress = weightedProgress / weightedTotal
+	}
+	if modeledProgress < 0 {
+		modeledProgress = 0
+	}
+	if status == "completed" {
+		modeledProgress = 1.0
+		pendingRemainingSecs = 0
+	} else if modeledProgress >= 1.0 {
+		modeledProgress = 0.999
+	}
+
+	confidence := 0.35
+	if len(sourceState) >= 2 {
+		confidence += 0.1
+	}
+	if len(sourceState) >= 3 {
+		confidence += 0.1
+	}
+	if len(history) >= 4 {
+		confidence += 0.15
+	}
+	if len(pendingSources) == 0 {
+		confidence += 0.2
+	} else if len(pendingSources) > 2 {
+		confidence -= 0.05
+	}
+	if confidence < 0.2 {
+		confidence = 0.2
+	}
+	if confidence > 0.95 {
+		confidence = 0.95
+	}
+	progressModel := map[string]any{
+		"probabilistic":            true,
+		"progress":                 roundFloat(modeledProgress, 4),
+		"progress_pct":             roundFloat(modeledProgress*100.0, 2),
+		"eta_secs":                 roundFloat(pendingRemainingSecs, 3),
+		"confidence":               roundFloat(confidence, 3),
+		"confidence_band":          continuationConfidenceBand(confidence),
+		"elapsed_secs":             roundFloat(elapsedSecs, 3),
+		"pending_sources":          pendingSources,
+		"estimated_by_source_secs": expectedBySource,
+	}
+
 	expiresAtText := ""
 	if expiresOK {
 		expiresAtText = expiresAt.Format(time.RFC3339Nano)
@@ -283,6 +387,22 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		[]string{},
 		[]string{},
 	)
+	lifecycle["modeled_progress"] = progressModel
+	retrievalProgress := buildRetrievalProgressPayload(
+		token,
+		status,
+		resultState,
+		createdAt,
+		updatedAt,
+		completedAt,
+		continuationPollURL,
+		continuationEventsURL,
+		sourceSummary,
+		lifecycle,
+		progressModel,
+		"",
+		"",
+	)
 
 	payload := map[string]any{
 		"ok":                      true,
@@ -301,19 +421,24 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		"continuation_poll_url":   continuationPollURL,
 		"continuation_events_url": continuationEventsURL,
 		"continuation_async": map[string]any{
-			"token":             token,
-			"status":            status,
-			"poll_url":          continuationPollURL,
-			"events_url":        continuationEventsURL,
-			"legacy_poll_url":   jobPollURL,
-			"legacy_events_url": eventsURL,
+			"token":              token,
+			"status":             status,
+			"poll_url":           continuationPollURL,
+			"events_url":         continuationEventsURL,
+			"legacy_poll_url":    jobPollURL,
+			"legacy_events_url":  eventsURL,
+			"modeled_progress":   progressModel,
+			"retrieval_progress": retrievalProgress,
 		},
+		"modeled_progress":    progressModel,
+		"retrieval_progress":  retrievalProgress,
 		"retrieval_lifecycle": lifecycle,
 	}
 	if includeResult {
 		payload["result"] = map[string]any{
 			"result_state":        resultState,
 			"source_summary":      sourceSummary,
+			"modeled_progress":    progressModel,
 			"retrieval_lifecycle": lifecycle,
 			"warnings":            []string{},
 		}
@@ -322,4 +447,94 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		}
 	}
 	return payload, true
+}
+
+func continuationStateFailed(state string) bool {
+	switch strings.TrimSpace(strings.ToLower(state)) {
+	case "error",
+		"failed",
+		"max_inflight",
+		"max_inflight_per_source",
+		"cooldown",
+		"inflight_per_source",
+		"pressure_shed",
+		"queue_pressure",
+		"invalid_source",
+		"skipped":
+		return true
+	default:
+		return false
+	}
+}
+
+func continuationAgentEventType(status string, resultState string) string {
+	normalizedStatus := strings.TrimSpace(strings.ToLower(status))
+	normalizedState := strings.TrimSpace(strings.ToLower(resultState))
+	if normalizedStatus == "completed" {
+		if normalizedState == "ready" {
+			return "retrieval.continuation.ready"
+		}
+		if normalizedState == "degraded" {
+			return "retrieval.continuation.degraded"
+		}
+		return "retrieval.continuation.completed"
+	}
+	return "retrieval.continuation.progress"
+}
+
+func buildRetrievalProgressPayload(
+	token string,
+	status string,
+	resultState string,
+	createdAt string,
+	updatedAt string,
+	completedAt string,
+	pollURL string,
+	eventsURL string,
+	sourceSummary map[string]any,
+	lifecycle map[string]any,
+	progressModel map[string]any,
+	agentID string,
+	sessionID string,
+) map[string]any {
+	token = strings.TrimSpace(token)
+	sessionID = strings.TrimSpace(sessionID)
+	eventType := continuationAgentEventType(status, resultState)
+	watchCommand := "contextlattice_agent_session watch --continuation-token " + token + " --pretty"
+	if sessionID != "" {
+		watchCommand = "contextlattice_agent_session watch --session-id " + sessionID + " --continuation-token " + token + " --pretty"
+	}
+	pollCommand := "curl -fsS http://127.0.0.1:8075" + pollURL
+	payload := map[string]any{
+		"ok":                  true,
+		"schema_id":           retrievalProgressContractID,
+		"token":               token,
+		"status":              strings.TrimSpace(strings.ToLower(status)),
+		"result_state":        strings.TrimSpace(strings.ToLower(resultState)),
+		"created_at":          strings.TrimSpace(createdAt),
+		"updated_at":          strings.TrimSpace(updatedAt),
+		"completed_at":        strings.TrimSpace(completedAt),
+		"modeled_progress":    cloneAnyMap(progressModel),
+		"source_summary":      cloneAnyMap(sourceSummary),
+		"retrieval_lifecycle": cloneAnyMap(lifecycle),
+		"poll_url":            pollURL,
+		"events_url":          eventsURL,
+		"agent_visibility": map[string]any{
+			"best_surface":       "continuation_sse_for_live_agents_session_watch_for_local_agents_context_pack_for_next_call",
+			"watch_command":      watchCommand,
+			"poll_command":       pollCommand,
+			"session_event_type": eventType,
+		},
+	}
+	return attachPayloadFormatContract(retrievalProgressContractID, payload, agentID, "retrieval_progress", "/memory/search/continuations/{token}")
+}
+
+func continuationConfidenceBand(confidence float64) string {
+	if confidence >= 0.75 {
+		return "high"
+	}
+	if confidence >= 0.5 {
+		return "medium"
+	}
+	return "low"
 }
