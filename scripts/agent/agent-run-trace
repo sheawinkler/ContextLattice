@@ -76,6 +76,12 @@ def render_tree(trace: dict[str, Any]) -> str:
     continuation = as_dict(advisor.get("continuation"))
     objective_coherence = as_dict(advisor.get("objective_coherence"))
     retrieval_advice = as_dict(advisor.get("retrieval_advice"))
+    objective_hierarchy = as_dict(session.get("objective_hierarchy")) or as_dict(as_dict(run_shaping.get("objective")).get("hierarchy"))
+    objective_lineage = as_dict(session.get("objective_lineage")) or as_dict(as_dict(run_shaping.get("objective")).get("lineage"))
+    objective_project = as_dict(objective_hierarchy.get("project"))
+    objective_topic = as_dict(objective_hierarchy.get("topic"))
+    objective_session = as_dict(objective_hierarchy.get("session"))
+    objective_drift = as_dict(objective_lineage.get("drift"))
     phase_counts = as_dict(trace.get("phase_counts"))
     validation = text(as_dict(as_dict(trace.get("format_contract")).get("validation")).get("status"), "unknown")
 
@@ -85,6 +91,12 @@ def render_tree(trace: dict[str, Any]) -> str:
         f"objective: {short(session.get('objective'), 220)}",
         f"next action: {short(session.get('next_action'), 220)}",
         f"contract: {text(trace.get('schema_id'), 'agent_run_trace.v1')} | validation {validation}",
+        "",
+        "objective lineage:",
+        f"  - project primary: {short(objective_project.get('primary_objective'), 220)}",
+        f"  - topic: {short(objective_topic.get('topic_path'), 140)} | {short(objective_topic.get('objective'), 220)}",
+        f"  - session: {short(objective_session.get('session_id'), 120)} | {short(objective_session.get('objective'), 220)}",
+        f"  - drift: {text(objective_drift.get('status'), 'unknown')} | project-topic {text(objective_drift.get('project_to_topic'), 'unknown')} | topic-session {text(objective_drift.get('topic_to_session'), 'unknown')}",
         "",
         "run advisor:",
         f"  - posture: {text(advisor.get('posture'), 'unknown')}",

@@ -2142,24 +2142,28 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 	if strings.TrimSpace(reqBody.AgentID) == "" {
 		reqBody.AgentID = "codex_gpt5"
 	}
-	objectiveCtx := objectiveContextFromPreflightRequest(reqBody)
+	objectiveCtx := objectiveContextFromPreflightRequest(reqBody, rawPayload)
 	sessionID := strings.TrimSpace(reqBody.SessionID)
 	var preflightSession map[string]any
 	if s.agentSessions != nil {
 		startPayload := map[string]any{
-			"session_id": sessionID,
-			"agent":      profileKey,
-			"agent_id":   reqBody.AgentID,
-			"project":    reqBody.Project,
-			"objective":  firstNonEmptyStrings(reqBody.Objective, reqBody.Query),
-			"mission":    reqBody.Mission,
-			"goal":       reqBody.Goal,
-			"status":     "active",
+			"session_id":          sessionID,
+			"agent":               profileKey,
+			"agent_id":            reqBody.AgentID,
+			"project":             reqBody.Project,
+			"objective":           firstNonEmptyStrings(objectiveCtx.SessionObjective, objectiveCtx.Objective, reqBody.Query),
+			"mission":             objectiveCtx.Mission,
+			"goal":                objectiveCtx.Goal,
+			"objective_hierarchy": objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
+			"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
+			"status":              "active",
 			"metadata": map[string]any{
-				"topic_path":     reqBody.TopicPath,
-				"retrieval_mode": reqBody.RetrievalMode,
-				"profile":        profileKey,
-				"endpoint":       r.URL.Path,
+				"topic_path":          reqBody.TopicPath,
+				"retrieval_mode":      reqBody.RetrievalMode,
+				"profile":             profileKey,
+				"endpoint":            r.URL.Path,
+				"objective_hierarchy": objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
+				"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 			},
 			"tags": []any{"agent-runtime", "preflight"},
 		}
@@ -2172,9 +2176,11 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"project":  reqBody.Project,
 				"summary":  reqBody.Query,
 				"metadata": map[string]any{
-					"topic_path":     reqBody.TopicPath,
-					"retrieval_mode": reqBody.RetrievalMode,
-					"endpoint":       r.URL.Path,
+					"topic_path":          reqBody.TopicPath,
+					"retrieval_mode":      reqBody.RetrievalMode,
+					"endpoint":            r.URL.Path,
+					"objective_hierarchy": objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
+					"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 				},
 			})
 		}
@@ -2185,7 +2191,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if s.strictNoPythonRuntime {
-		payload := s.agentPreflightNative(ctx, r.Header.Clone(), reqBody)
+		payload := s.agentPreflightNative(ctx, r.Header.Clone(), reqBody, objectiveCtx)
 		payload["service"] = "gateway-go"
 		payload["agent"] = profileKey
 		payload["agent_profile"] = profile
@@ -2197,8 +2203,18 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		payload["objective_context"] = objectiveCtx.toMap()
 		payload["session_id"] = sessionID
 		payload["skills_index"] = skillsIndexPayload
+		objectiveRuntime := anyMap(payload["objective_runtime"])
+		if hierarchy := anyMap(objectiveRuntime["objective_hierarchy"]); len(hierarchy) > 0 {
+			payload["objective_hierarchy"] = hierarchy
+		} else {
+			payload["objective_hierarchy"] = objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query)
+		}
+		if lineage := anyMap(objectiveRuntime["objective_lineage"]); len(lineage) > 0 {
+			payload["objective_lineage"] = lineage
+		} else {
+			payload["objective_lineage"] = objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query)
+		}
 		if sessionID != "" {
-			objectiveRuntime := anyMap(payload["objective_runtime"])
 			session := s.recordAgentSessionEvent(sessionID, "agent.preflight.completed", map[string]any{
 				"agent":    profileKey,
 				"agent_id": reqBody.AgentID,
@@ -2212,6 +2228,8 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 					"objective_state":       anyToString(objectiveRuntime["objective_state"]),
 					"next_action":           anyToString(objectiveRuntime["next_action"]),
 					"objective_runtime":     objectiveRuntime,
+					"objective_hierarchy":   payload["objective_hierarchy"],
+					"objective_lineage":     payload["objective_lineage"],
 					"skills_index":          skillsIndexPayload,
 					"skills_index_returned": anyToInt(skillsIndexPayload["returned"], 0),
 				},
@@ -2376,6 +2394,8 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 		"backend_url":            s.backendURL,
 		"objective_context":      objectiveCtx.toMap(),
 		"objective_runtime":      objectiveRuntime,
+		"objective_hierarchy":    objectiveRuntime["objective_hierarchy"],
+		"objective_lineage":      objectiveRuntime["objective_lineage"],
 		"health":                 healthPayload,
 		"health_status":          healthStatus,
 		"health_error":           errString(healthErr),
@@ -2416,6 +2436,8 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"objective_state":        anyToString(objectiveRuntime["objective_state"]),
 				"next_action":            anyToString(objectiveRuntime["next_action"]),
 				"objective_runtime":      objectiveRuntime,
+				"objective_hierarchy":    objectiveRuntime["objective_hierarchy"],
+				"objective_lineage":      objectiveRuntime["objective_lineage"],
 				"skills_index":           skillsIndexPayload,
 				"skills_index_returned":  anyToInt(skillsIndexPayload["returned"], 0),
 			},
@@ -6483,6 +6505,18 @@ func (s *server) executeRetrieval(
 	}
 	if !objectiveCtx.empty() {
 		response["objective_context"] = objectiveCtx.toMap()
+		response["objective_hierarchy"] = objectiveCtx.withDefaults().hierarchy(
+			strings.TrimSpace(anyToString(requestPayload["project"])),
+			strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+			strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["session_id"]), anyToString(requestPayload["sessionId"]))),
+			query,
+		)
+		response["objective_lineage"] = objectiveCtx.withDefaults().lineage(
+			strings.TrimSpace(anyToString(requestPayload["project"])),
+			strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+			strings.TrimSpace(firstNonEmptyStrings(anyToString(requestPayload["session_id"]), anyToString(requestPayload["sessionId"]))),
+			query,
+		)
 	}
 	if len(continuationSources) > 0 && continuationToken != "" {
 		response["continuation_async"] = map[string]any{

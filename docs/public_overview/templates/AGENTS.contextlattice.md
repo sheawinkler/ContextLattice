@@ -65,7 +65,7 @@ contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 - Before a major model handoff or hard follow-up prompt, package the session:
   - `contextlattice_agent_session rollup --session-id <session_id> --pretty`
   - `contextlattice_agent_session context-package --session-id <session_id> --pretty`
-  - Use the returned `reference_prompt`/`context_package` as the bounded factual scaffold instead of raw logs.
+  - Use the returned `reference_prompt`/`context_package` as the bounded factual scaffold instead of raw logs; preserve project, topic/subtopic, and session objective lineage when handing off.
 - When the agent needs capabilities but not the whole skills tree, search the active Skills Index:
   - `contextlattice_skills_index search "<task or tool need>" --pretty`
   - Local installs index `${HOME}/.codex/skills` by default; use the returned skill names/paths as pointers, not as permission to load every skill body.

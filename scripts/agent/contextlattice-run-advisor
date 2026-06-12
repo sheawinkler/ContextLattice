@@ -84,6 +84,7 @@ def render(advisor: dict[str, Any]) -> str:
     prompt_quality = as_dict(advisor.get("prompt_quality"))
     continuation = as_dict(advisor.get("continuation"))
     objective = as_dict(advisor.get("objective_coherence"))
+    objective_signals = as_dict(objective.get("signals"))
     graph = as_dict(advisor.get("graph_quality"))
     retrieval = as_dict(advisor.get("retrieval_advice"))
     lines = [
@@ -91,6 +92,11 @@ def render(advisor: dict[str, Any]) -> str:
         f"posture: {text(advisor.get('posture'), 'unknown')}",
         f"prompt quality: {text(prompt_quality.get('score'), '0')} | {text(prompt_quality.get('state'), 'unknown')}",
         f"objective coherence: {text(objective.get('score'), '0')} | {text(objective.get('status'), 'unknown')}",
+        "objective signals: "
+        + f"project={str(bool(objective_signals.get('project_primary_objective_present'))).lower()} "
+        + f"topic={str(bool(objective_signals.get('topic_objective_present'))).lower()} "
+        + f"session={str(bool(objective_signals.get('session_objective_present'))).lower()} "
+        + f"subobjectives={text(objective_signals.get('subobjective_count'), '0')}",
         f"continuation: {text(continuation.get('status'), 'unknown')} | pending {csv(continuation.get('pending_sources'), 8)}",
         f"retrieval: {text(retrieval.get('recommended_mode'), 'balanced')} via {text(retrieval.get('recommended_surface'), 'cli_for_local_agents')}",
         f"graph: {text(graph.get('status'), 'not_sampled')} | {short(graph.get('recommendation'), 220)}",

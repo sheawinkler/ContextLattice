@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRunAdvisorDetectsPartialContextAndObjectiveMismatch(t *testing.T) {
 	advisor := buildRunAdvisor(runAdvisorInput{
@@ -43,6 +46,43 @@ func TestRunAdvisorDetectsPartialContextAndObjectiveMismatch(t *testing.T) {
 	objective := anyMap(advisor["objective_coherence"])
 	if anyToString(objective["status"]) != "mismatch" {
 		t.Fatalf("expected objective mismatch, got %#v", objective)
+	}
+}
+
+func TestRunAdvisorObjectiveCoherenceUsesHierarchy(t *testing.T) {
+	advisor := buildRunAdvisor(runAdvisorInput{
+		Query:         "coordinate agent session objective hierarchy and handoff lineage",
+		Project:       "contextlattice",
+		RetrievalMode: "balanced",
+		AgentID:       "codex_gpt5_test",
+		SourceCoverage: map[string]any{
+			"returned": []any{"qdrant"},
+			"complete": true,
+		},
+		Objective: objectiveContext{
+			Mission:                 "Coordinate agents with durable memory.",
+			Objective:               "Ship agent objective hierarchy.",
+			Goal:                    "Improve handoff lineage.",
+			ProjectPrimaryObjective: "Make ContextLattice the runtime coordination layer for agent work.",
+			TopicObjective:          "Represent topic and subtopic objectives for prompt repackaging.",
+			SessionObjective:        "Implement session objective hierarchy and handoff lineage.",
+			Subobjectives:           []string{"Persist project objective", "Expose session lineage"},
+		},
+		RankedEvidence:  []any{map[string]any{"text": "objective hierarchy evidence"}},
+		ReferencePrompt: strings.Repeat("agent objective hierarchy ", 20),
+		Surface:         "/memory/context-pack",
+	})
+	assertBoundaryContractPassed(t, runAdvisorContractID, advisor)
+	objective := anyMap(advisor["objective_coherence"])
+	signals := anyMap(objective["signals"])
+	if !anyToBool(signals["project_primary_objective_present"]) ||
+		!anyToBool(signals["topic_objective_present"]) ||
+		!anyToBool(signals["session_objective_present"]) ||
+		anyToInt(signals["subobjective_count"], 0) != 2 {
+		t.Fatalf("expected hierarchy objective signals, got %#v", signals)
+	}
+	if anyToString(objective["status"]) == "missing" {
+		t.Fatalf("expected hierarchy to contribute objective coherence, got %#v", objective)
 	}
 }
 

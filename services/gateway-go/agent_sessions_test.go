@@ -63,6 +63,21 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 		"agent_id":"codex_gpt5_test",
 		"project":"contextlattice",
 		"objective":"make ContextLattice coordinate parallel agents",
+		"objective_hierarchy":{
+			"schema_id":"contextlattice_objective_hierarchy.v1",
+			"project":{"name":"contextlattice","primary_objective":"make ContextLattice the runtime coordination layer for parallel agents"},
+			"topic":{"topic_path":"contextlattice/runtime","subtopic":"runtime","path_segments":["contextlattice","runtime"],"objective":"coordinate agent runtime handoffs"},
+			"session":{"session_id":"sess-test","objective":"make ContextLattice coordinate parallel agents"},
+			"subobjectives":["preserve objective lineage","surface run shaping evidence"],
+			"current":{"level":"session","objective":"make ContextLattice coordinate parallel agents"}
+		},
+		"objective_lineage":{
+			"schema_id":"contextlattice_objective_lineage.v1",
+			"source":"test",
+			"precedence":["session.objective","topic.objective","project.primary_objective"],
+			"drift":{"status":"aligned","project_to_topic":"aligned","topic_to_session":"aligned","project_to_session":"aligned"},
+			"handoff_rule":"carry objective hierarchy into the next prompt"
+		},
 		"tags":["runtime","test"]
 	}`)
 	if status != http.StatusOK || !anyToBool(started["ok"]) {
@@ -122,6 +137,42 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	if anyToInt(contribution["graph_touches"], 0) != 1 {
 		t.Fatalf("expected graph contribution, got %#v", contribution)
 	}
+	rollup := anyMap(graphEvent["rollup"])
+	if anyToString(rollup["schema_id"]) != agentSessionRollupContractID {
+		t.Fatalf("expected session rollup contract, got %#v", rollup)
+	}
+	if anyToInt(rollup["confidence"], 0) <= 0 {
+		t.Fatalf("expected positive rollup confidence, got %#v", rollup)
+	}
+	if anyToString(anyMap(anyMap(rollup["objective_hierarchy"])["project"])["primary_objective"]) == "" {
+		t.Fatalf("expected objective hierarchy on rollup, got %#v", rollup["objective_hierarchy"])
+	}
+	promptPackage := anyMap(rollup["prompt_package"])
+	if !strings.Contains(anyToString(promptPackage["endpoint"]), "/context-package") {
+		t.Fatalf("expected context package endpoint in rollup, got %#v", promptPackage)
+	}
+
+	status, rollupResponse := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/rollup")
+	if status != http.StatusOK || !anyToBool(rollupResponse["ok"]) {
+		t.Fatalf("expected rollup route ok, status=%d payload=%#v", status, rollupResponse)
+	}
+	if anyToString(anyMap(rollupResponse["rollup"])["session_id"]) != "sess-test" {
+		t.Fatalf("expected rollup session id, got %#v", rollupResponse)
+	}
+
+	status, packageResponse := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/context-package")
+	if status != http.StatusOK || !anyToBool(packageResponse["ok"]) {
+		t.Fatalf("expected context package route ok, status=%d payload=%#v", status, packageResponse)
+	}
+	if anyToString(packageResponse["schema_id"]) != agentPromptContextPackageContractID {
+		t.Fatalf("expected prompt context package contract, got %#v", packageResponse)
+	}
+	if !strings.Contains(anyToString(packageResponse["reference_prompt"]), "ContextLattice session package") {
+		t.Fatalf("expected bounded reference prompt, got %#v", packageResponse["reference_prompt"])
+	}
+	if !strings.Contains(anyToString(packageResponse["reference_prompt"]), "Project primary objective") {
+		t.Fatalf("expected objective hierarchy in reference prompt, got %#v", packageResponse["reference_prompt"])
+	}
 
 	status, traceResponse := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/trace")
 	if status != http.StatusOK || !anyToBool(traceResponse["ok"]) {
@@ -138,6 +189,9 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	markdown := anyToString(runCard["markdown"])
 	if !strings.Contains(markdown, "Run-Shaping Evidence") || !strings.Contains(markdown, "Skills That May Be Helpful") {
 		t.Fatalf("expected run card sections, got %q", markdown)
+	}
+	if !strings.Contains(markdown, "Project primary objective") || !strings.Contains(markdown, "Objective lineage") {
+		t.Fatalf("expected objective lineage in run card, got %q", markdown)
 	}
 	if !strings.Contains(markdown, "frontend-design") {
 		t.Fatalf("expected captured skill in run card, got %q", markdown)

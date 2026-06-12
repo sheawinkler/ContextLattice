@@ -26,7 +26,7 @@ Use this as a reusable skill block for agent frameworks that support skills or t
 5. Before a hard model handoff or problem-solving prompt, package current session state:
    - `GET /v1/agents/sessions/{session_id}/rollup`
    - `GET /v1/agents/sessions/{session_id}/context-package`
-   - Prefer the returned `reference_prompt`/`context_package` over raw logs.
+   - Prefer the returned `reference_prompt`/`context_package` over raw logs, including its project/topic/session objective lineage.
 6. Discover capabilities on demand:
    - `POST /tools/skills_index_search`
    - CLI equivalent: `contextlattice_skills_index search "<task or tool need>" --pretty`

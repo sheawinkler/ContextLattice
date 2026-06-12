@@ -130,6 +130,8 @@ func (s *server) buildContextPackResponse(
 	}
 
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
+	contextPack["project"] = strings.TrimSpace(anyToString(searchRequest["project"]))
+	contextPack["topic_path"] = strings.TrimSpace(anyToString(searchRequest["topic_path"]))
 	sourceCoverage := contextPackSourceCoverage(searchResponse)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
@@ -196,6 +198,8 @@ func (s *server) buildContextPackResponse(
 			"context_pack.completed",
 		)
 		response["objective_runtime"] = objectiveRuntime
+		response["objective_hierarchy"] = objectiveRuntime["objective_hierarchy"]
+		response["objective_lineage"] = objectiveRuntime["objective_lineage"]
 	}
 	if sessionID != "" {
 		facts, _ := asAnySlice(contextPack["facts"])
@@ -205,20 +209,22 @@ func (s *server) buildContextPackResponse(
 			"project":  requestPayload["project"],
 			"summary":  query,
 			"metadata": map[string]any{
-				"endpoint":          "/memory/context-pack",
-				"retrieval_mode":    retrievalMode,
-				"retrieval_intent":  retrievalIntent,
-				"traffic_class":     trafficClass,
-				"source_coverage":   sourceCoverage,
-				"fact_count":        len(facts),
-				"result_count":      len(results),
-				"memory_hits":       len(results),
-				"warnings_count":    len(parseWarnings(response["warnings"])),
-				"objective_state":   anyToString(objectiveRuntime["objective_state"]),
-				"next_action":       anyToString(objectiveRuntime["next_action"]),
-				"objective_runtime": objectiveRuntime,
-				"context_compiler":  compiled["context_compiler"],
-				"run_advisor":       runAdvisor,
+				"endpoint":            "/memory/context-pack",
+				"retrieval_mode":      retrievalMode,
+				"retrieval_intent":    retrievalIntent,
+				"traffic_class":       trafficClass,
+				"source_coverage":     sourceCoverage,
+				"fact_count":          len(facts),
+				"result_count":        len(results),
+				"memory_hits":         len(results),
+				"warnings_count":      len(parseWarnings(response["warnings"])),
+				"objective_state":     anyToString(objectiveRuntime["objective_state"]),
+				"next_action":         anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime":   objectiveRuntime,
+				"objective_hierarchy": objectiveRuntime["objective_hierarchy"],
+				"objective_lineage":   objectiveRuntime["objective_lineage"],
+				"context_compiler":    compiled["context_compiler"],
+				"run_advisor":         runAdvisor,
 			},
 		})
 		if session != nil {
@@ -401,18 +407,32 @@ func contextPackPromptSections(
 	if !objectiveCtx.empty() && strings.TrimSpace(objectiveCtx.Objective) != "" {
 		objective = objectiveCtx.Objective
 	}
+	hierarchy := objectiveCtx.hierarchy(
+		anyToString(contextPack["project"]),
+		anyToString(contextPack["topic_path"]),
+		"",
+		query,
+	)
+	lineage := objectiveCtx.lineage(
+		anyToString(contextPack["project"]),
+		anyToString(contextPack["topic_path"]),
+		"",
+		query,
+	)
 	return map[string]any{
-		"objective":        clipText(objective, 900),
-		"task":             clipText(query, 900),
-		"mission":          clipText(objectiveCtx.Mission, 900),
-		"goal":             clipText(objectiveCtx.Goal, 900),
-		"next_action":      clipText(nextAction, 900),
-		"evidence":         rankedEvidence,
-		"files_to_inspect": files,
-		"commands":         commands,
-		"checks":           checks,
-		"risks":            risks,
-		"capabilities":     capabilities,
+		"objective":           clipText(objective, 900),
+		"task":                clipText(query, 900),
+		"mission":             clipText(objectiveCtx.Mission, 900),
+		"goal":                clipText(objectiveCtx.Goal, 900),
+		"objective_hierarchy": hierarchy,
+		"objective_lineage":   lineage,
+		"next_action":         clipText(nextAction, 900),
+		"evidence":            rankedEvidence,
+		"files_to_inspect":    files,
+		"commands":            commands,
+		"checks":              checks,
+		"risks":               risks,
+		"capabilities":        capabilities,
 		"source_coverage": map[string]any{
 			"returned": anyToStringList(sourceCoverage["returned"], 16),
 			"pending":  anyToStringList(sourceCoverage["pending"], 16),
@@ -439,6 +459,18 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 	}
 	if goal := strings.TrimSpace(anyToString(promptSections["goal"])); goal != "" {
 		lines = append(lines, "Goal: "+goal)
+	}
+	hierarchy := anyMap(promptSections["objective_hierarchy"])
+	projectObjective := anyToString(anyMap(hierarchy["project"])["primary_objective"])
+	topicObjective := anyToString(anyMap(hierarchy["topic"])["objective"])
+	sessionObjective := anyToString(anyMap(hierarchy["session"])["objective"])
+	if strings.TrimSpace(projectObjective+topicObjective+sessionObjective) != "" {
+		lines = append(lines, "Project primary objective: "+projectObjective)
+		lines = append(lines, "Topic objective: "+topicObjective)
+		lines = append(lines, "Session objective: "+sessionObjective)
+	}
+	if subobjectives := anyToStringList(hierarchy["subobjectives"], 8); len(subobjectives) > 0 {
+		lines = append(lines, "Subobjectives: "+strings.Join(subobjectives, "; "))
 	}
 	lines = append(lines, "Next action: "+anyToString(promptSections["next_action"]))
 	lines = append(lines, "", "Ranked evidence:")

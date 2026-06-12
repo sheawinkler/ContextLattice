@@ -37,10 +37,12 @@ func (s *server) statusPayload() map[string]any {
 	}
 }
 
-func (s *server) agentPreflightNative(ctx context.Context, headers http.Header, reqBody agentPreflightRequest) map[string]any {
+func (s *server) agentPreflightNative(ctx context.Context, headers http.Header, reqBody agentPreflightRequest, objectiveCtx objectiveContext) map[string]any {
 	healthPayload := map[string]any{"ok": true, "service": "gateway-go", "timestamp": nowUTCISO()}
 	statusPayload := s.statusPayload()
-	objectiveCtx := objectiveContextFromPreflightRequest(reqBody)
+	if objectiveCtx.empty() {
+		objectiveCtx = objectiveContextFromPreflightRequest(reqBody, nil)
+	}
 	scopedSearchReq := map[string]any{
 		"project":                 reqBody.Project,
 		"query":                   reqBody.Query,
@@ -110,15 +112,17 @@ func (s *server) agentPreflightNative(ctx context.Context, headers http.Header, 
 	)
 	policyPack := buildPolicyContextPackage(reqBody.Agent, reqBody.AgentID, reqBody.Project, reqBody.TopicPath, reqBody.Query, reqBody.RetrievalMode, contextPackPayload, missionPackPayload, missionPackErr, objectiveRuntime, objectiveCtx)
 	return map[string]any{
-		"ok":                true,
-		"agent":             strings.TrimSpace(reqBody.Agent),
-		"agent_id":          reqBody.AgentID,
-		"session_id":        reqBody.SessionID,
-		"orchestrator_url":  "http://127.0.0.1:8075",
-		"objective_context": objectiveCtx.toMap(),
-		"objective_runtime": objectiveRuntime,
-		"health":            healthPayload,
-		"status":            statusPayload,
+		"ok":                  true,
+		"agent":               strings.TrimSpace(reqBody.Agent),
+		"agent_id":            reqBody.AgentID,
+		"session_id":          reqBody.SessionID,
+		"orchestrator_url":    "http://127.0.0.1:8075",
+		"objective_context":   objectiveCtx.toMap(),
+		"objective_runtime":   objectiveRuntime,
+		"objective_hierarchy": objectiveRuntime["objective_hierarchy"],
+		"objective_lineage":   objectiveRuntime["objective_lineage"],
+		"health":              healthPayload,
+		"status":              statusPayload,
 		"scoped_search": map[string]any{
 			"ok":             scopedErr == nil,
 			"query":          reqBody.Query,
