@@ -44,6 +44,44 @@ func TestWritePolicyNonTelemetry(t *testing.T) {
 	}
 }
 
+func TestWritePolicyDurableTopicShieldsTelemetryWords(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled:  true,
+		telemetryTopicPrefixes:     []string{"telemetry", "metrics"},
+		telemetryFilePatterns:      []string{"telemetry__*.json", "*_agg-latest.json"},
+		telemetryMarkers:           []string{"telemetry", "metrics", "__state__"},
+		durableMemoryTopicPrefixes: []string{"decisions", "learnings", "ideas"},
+	}
+	item := normalizedWrite{
+		project:   "project",
+		fileName:  "notes/codex/runtime-metrics-decision.md",
+		content:   "decision: runtime metrics are evidence, not a raw telemetry payload",
+		topicPath: "decisions/runtime-metrics",
+	}
+	if policy.isTelemetryLike(item) {
+		t.Fatalf("expected durable topic to preserve agent memory despite telemetry words")
+	}
+}
+
+func TestWritePolicyDurableTopicDoesNotShieldRawTelemetryArtifact(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled:  true,
+		telemetryTopicPrefixes:     []string{"telemetry", "metrics"},
+		telemetryFilePatterns:      []string{"telemetry__*.json", "*_agg-latest.json"},
+		telemetryMarkers:           []string{"telemetry", "metrics", "__state__"},
+		durableMemoryTopicPrefixes: []string{"decisions", "learnings", "ideas"},
+	}
+	item := normalizedWrite{
+		project:   "project",
+		fileName:  "telemetry__agg-latest.json",
+		content:   `{"latency_ms":12,"event":"heartbeat"}`,
+		topicPath: "decisions/runtime-metrics",
+	}
+	if !policy.isTelemetryLike(item) {
+		t.Fatalf("expected raw telemetry artifact filename to remain telemetry-like")
+	}
+}
+
 func TestWritePolicyRequiredValidation(t *testing.T) {
 	policy := writeIngressPolicy{strictRequiredFields: true}
 	if err := policy.validateWrite(normalizedWrite{project: " ", fileName: "x", content: "x"}); err == nil {
