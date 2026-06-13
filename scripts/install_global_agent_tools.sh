@@ -21,6 +21,7 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_write
   contextlattice_agent_orchestration
   contextlattice_adopt
+  contextlattice_doctor
   contextlattice_agent_adapter
   contextlattice_agent_session
   contextlattice_agent_trace
@@ -277,6 +278,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_doctor" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/contextlattice-adopt"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" doctor "$@"
+EOF
+
 cat > "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -413,6 +427,7 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_write" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
   "${GLOBAL_BIN_DIR}/contextlattice_adopt" \
+  "${GLOBAL_BIN_DIR}/contextlattice_doctor" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adapter" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_session" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_trace" \
@@ -608,6 +623,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_session"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_trace"
@@ -630,6 +646,7 @@ log "  contextlattice_pack 'release readiness' --project contextlattice --pretty
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_adopt status --pretty"
+log "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"
 log "  contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty"
 log "  contextlattice_agent_runtime_proof --pretty"
 log "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"

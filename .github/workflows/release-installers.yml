@@ -29,8 +29,27 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
+      - name: Import macOS signing identity (optional)
+        env:
+          CONTEXTLATTICE_MACOS_CERT_P12_BASE64: ${{ secrets.CONTEXTLATTICE_MACOS_CERT_P12_BASE64 }}
+          CONTEXTLATTICE_MACOS_CERT_P12_PASSWORD: ${{ secrets.CONTEXTLATTICE_MACOS_CERT_P12_PASSWORD }}
+          CONTEXTLATTICE_MACOS_KEYCHAIN_PASSWORD: ${{ secrets.CONTEXTLATTICE_MACOS_KEYCHAIN_PASSWORD }}
+          CONTEXTLATTICE_MACOS_CODESIGN_IDENTITY: ${{ secrets.CONTEXTLATTICE_MACOS_CODESIGN_IDENTITY }}
+          CONTEXTLATTICE_MACOS_SIGNING_REQUIRED: ${{ vars.CONTEXTLATTICE_MACOS_SIGNING_REQUIRED }}
+        run: bash scripts/macos_import_signing_identity.sh
+
       - name: Build DMG
         run: bash scripts/build_macos_dmg.sh
+
+      - name: Sign and notarize macOS artifact (optional)
+        env:
+          CONTEXTLATTICE_MACOS_NOTARY_KEYCHAIN_PROFILE: ${{ secrets.CONTEXTLATTICE_MACOS_NOTARY_KEYCHAIN_PROFILE }}
+          CONTEXTLATTICE_MACOS_NOTARY_APPLE_ID: ${{ secrets.CONTEXTLATTICE_MACOS_NOTARY_APPLE_ID }}
+          CONTEXTLATTICE_MACOS_NOTARY_TEAM_ID: ${{ secrets.CONTEXTLATTICE_MACOS_NOTARY_TEAM_ID }}
+          CONTEXTLATTICE_MACOS_NOTARY_PASSWORD: ${{ secrets.CONTEXTLATTICE_MACOS_NOTARY_PASSWORD }}
+          CONTEXTLATTICE_MACOS_SIGNING_REQUIRED: ${{ vars.CONTEXTLATTICE_MACOS_SIGNING_REQUIRED }}
+          CONTEXTLATTICE_MACOS_NOTARIZATION_REQUIRED: ${{ vars.CONTEXTLATTICE_MACOS_NOTARIZATION_REQUIRED }}
+        run: bash scripts/macos_sign_notarize_release.sh dist/ContextLattice-macOS-universal.dmg
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

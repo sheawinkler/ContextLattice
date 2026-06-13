@@ -18,6 +18,10 @@ APP_BUNDLE_VERSION="${APP_BUNDLE_VERSION:-${RELEASE_TAG:-${GITHUB_REF_NAME:-0.0.
 APP_BUNDLE_VERSION="${APP_BUNDLE_VERSION#v}"
 APP_BUNDLE_VERSION="${APP_BUNDLE_VERSION%%[-+]*}"
 MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-13.0}"
+MACOS_CODESIGN_IDENTITY="${CONTEXTLATTICE_MACOS_CODESIGN_IDENTITY:-${PAID_MACOS_CODESIGN_IDENTITY:-}}"
+MACOS_SIGN_APPS="${CONTEXTLATTICE_MACOS_SIGN_APPS:-auto}"
+MACOS_SIGNING_REQUIRED="${CONTEXTLATTICE_MACOS_SIGNING_REQUIRED:-false}"
+MACOS_CODESIGN_TIMESTAMP="${CONTEXTLATTICE_MACOS_CODESIGN_TIMESTAMP:-true}"
 
 if [[ ! "${APP_BUNDLE_VERSION}" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
   APP_BUNDLE_VERSION="0.0.0"
@@ -29,6 +33,53 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "${DIST_DIR}" "${STAGE_DIR}"
+
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+sign_app_bundle() {
+  local app_path="$1"
+
+  case "${MACOS_SIGN_APPS}" in
+    never|false|FALSE|0|off|OFF)
+      echo "Skipping app bundle signing for ${app_path}."
+      return 0
+      ;;
+  esac
+
+  if [[ -z "${MACOS_CODESIGN_IDENTITY}" ]]; then
+    if is_truthy "${MACOS_SIGNING_REQUIRED}"; then
+      echo "ERROR: macOS app signing is required but CONTEXTLATTICE_MACOS_CODESIGN_IDENTITY is missing." >&2
+      exit 1
+    fi
+    echo "Skipping app bundle signing for ${app_path}: no signing identity configured."
+    return 0
+  fi
+
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo "ERROR: codesign is required to sign app bundle: ${app_path}" >&2
+    exit 1
+  fi
+
+  local timestamp_args=()
+  if is_truthy "${MACOS_CODESIGN_TIMESTAMP}" && [[ "${MACOS_CODESIGN_IDENTITY}" != "-" ]]; then
+    timestamp_args=(--timestamp)
+  fi
+
+  codesign \
+    --force \
+    --deep \
+    --options runtime \
+    "${timestamp_args[@]}" \
+    --sign "${MACOS_CODESIGN_IDENTITY}" \
+    "${app_path}"
+  codesign --verify --deep --strict --verbose=2 "${app_path}"
+  echo "Signed app bundle: ${app_path}"
+}
 
 write_app_bundle() {
   local app_path="$1"
@@ -273,6 +324,9 @@ write_app_bundle \
   "io.contextlattice.ContextLatticeMonitoring" \
   "ContextLatticeMonitoring" \
   "${STAGE_DIR}/Monitoring.command"
+
+sign_app_bundle "${STAGE_DIR}/ContextLattice.app"
+sign_app_bundle "${STAGE_DIR}/ContextLattice Monitoring.app"
 
 if [[ -f "${DMG_PATH}" ]]; then
   rm -f "${DMG_PATH}"

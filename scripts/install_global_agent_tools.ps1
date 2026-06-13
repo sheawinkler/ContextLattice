@@ -162,6 +162,19 @@ if not exist "%PYTHON_EXE%" (
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
 "@
 
+$doctorCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\contextlattice-adopt
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" doctor %*
+"@
+
 $proofCmd = @"
 @echo off
 set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
@@ -297,6 +310,7 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_write.cmd") -Value $writeCm
 Set-Content -Path (Join-Path $BinDir "contextlattice_pack.cmd") -Value $packCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_orchestration.cmd") -Value $orchCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_adopt.cmd") -Value $adoptCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_doctor.cmd") -Value $doctorCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_adapter.cmd") -Value $adapterCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_runtime_proof.cmd") -Value $proofCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_adoption_proof.cmd") -Value $adoptionProofCmd -Encoding Ascii
@@ -331,6 +345,7 @@ Write-Host "  contextlattice_search -h"
 Write-Host "  contextlattice_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_adopt status --pretty"
+Write-Host "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"
 Write-Host "  contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty"
 Write-Host "  contextlattice_agent_adapter profiles"
 Write-Host "  contextlattice_agent_session runtime --pretty"
