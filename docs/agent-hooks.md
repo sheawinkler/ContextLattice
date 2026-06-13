@@ -78,6 +78,8 @@ Installed commands:
 contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
 contextlattice_adopt status --pretty
 contextlattice_doctor --agents codex --skip-provider-smoke --pretty
+contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
+contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_trace --session-id <session-id> --tree
 ```

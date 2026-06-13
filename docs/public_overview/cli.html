@@ -92,6 +92,8 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 contextlattice_write -h
 contextlattice_adopt status --pretty
 contextlattice_doctor --agents codex --skip-provider-smoke --pretty
+contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
+contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty
 contextlattice_adopt export --dry-run --pretty
 contextlattice_agent_adapter profiles
