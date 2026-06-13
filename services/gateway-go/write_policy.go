@@ -9,14 +9,15 @@ import (
 )
 
 type writeIngressPolicy struct {
-	enabled                   bool
-	strictRequiredFields      bool
-	telemetryIsolationEnabled bool
-	telemetryTopicPrefixes    []string
-	telemetryFilePatterns     []string
-	telemetryMarkers          []string
-	fanoutExcludeTargets      []string
-	batchConcurrency          int
+	enabled                    bool
+	strictRequiredFields       bool
+	telemetryIsolationEnabled  bool
+	telemetryTopicPrefixes     []string
+	telemetryFilePatterns      []string
+	telemetryMarkers           []string
+	durableMemoryTopicPrefixes []string
+	fanoutExcludeTargets       []string
+	batchConcurrency           int
 }
 
 type normalizedWrite struct {
@@ -50,6 +51,10 @@ func loadWriteIngressPolicy() writeIngressPolicy {
 		telemetryMarkers: csvLowerListEnv(
 			"GO_WRITE_TELEMETRY_MARKERS",
 			"telemetry,metrics,__state__,__stats__,__snapshots__,__health__,__allocations__,_agg-,queue__",
+		),
+		durableMemoryTopicPrefixes: csvLowerListEnv(
+			"GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES",
+			"decisions,decision,discoveries,discovery,learnings,learning,ideas,notes,runbooks,architecture,projects,knowledge,handoffs,checkpoints,analysis,findings,plans,objectives,missions,skills",
 		),
 		fanoutExcludeTargets: normalizeFanoutTargets(
 			csvLowerListEnv("GO_WRITE_FANOUT_EXCLUDE_TARGETS", "mindsdb"),
@@ -243,6 +248,10 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 		return false
 	}
 	normalizedTopic := normalizeTopic(item.topicPath)
+	hardTelemetryFile := p.isHardTelemetryFile(item.fileName)
+	if normalizedTopic != "" && p.isDurableMemoryTopic(normalizedTopic) && !hardTelemetryFile {
+		return false
+	}
 	if normalizedTopic != "" {
 		for _, prefix := range p.telemetryTopicPrefixes {
 			if normalizedTopic == prefix || strings.HasPrefix(normalizedTopic, prefix+"/") {
@@ -252,10 +261,8 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 	}
 	lowerFile := strings.ToLower(strings.TrimSpace(item.fileName))
 	if lowerFile != "" {
-		for _, pattern := range p.telemetryFilePatterns {
-			if globMatches(pattern, lowerFile) {
-				return true
-			}
+		if hardTelemetryFile {
+			return true
 		}
 		for _, marker := range p.telemetryMarkers {
 			if marker != "" && strings.Contains(lowerFile, marker) {
@@ -266,6 +273,28 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 	lowerTopic := strings.ToLower(normalizedTopic)
 	for _, marker := range p.telemetryMarkers {
 		if marker != "" && strings.Contains(lowerTopic, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p writeIngressPolicy) isDurableMemoryTopic(normalizedTopic string) bool {
+	for _, prefix := range p.durableMemoryTopicPrefixes {
+		if prefix != "" && (normalizedTopic == prefix || strings.HasPrefix(normalizedTopic, prefix+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p writeIngressPolicy) isHardTelemetryFile(fileName string) bool {
+	lowerFile := strings.ToLower(strings.TrimSpace(fileName))
+	if lowerFile == "" {
+		return false
+	}
+	for _, pattern := range p.telemetryFilePatterns {
+		if globMatches(pattern, lowerFile) {
 			return true
 		}
 	}
