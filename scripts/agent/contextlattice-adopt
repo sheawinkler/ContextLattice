@@ -87,6 +87,7 @@ DOCTOR = AGENT_DIR / "audit-agent-runtime-install"
 SESSION_STORE_DOCTOR = AGENT_DIR / "audit-codex-session-store"
 RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
 ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
+TRACE = AGENT_DIR / "agent-run-trace"
 AGENT_CONFIG = first_existing_path(
     [
         REPO_ROOT / "config" / "agents" / "agent_profiles.json",
@@ -103,6 +104,7 @@ TEMPLATE_DIR = first_existing_path(
 PACK_SCHEMA = "contextlattice_agent_pack.v1"
 ADOPT_STATUS_SCHEMA = "contextlattice_agent_adoption_status.v1"
 ADOPT_MATRIX_SCHEMA = "contextlattice_agent_adoption_ci_matrix.v1"
+ADOPT_DOCTOR_SCHEMA = "contextlattice_agent_doctor_proof.v1"
 
 AGENT_COMMANDS = {
     "codex": ["codex"],
@@ -119,6 +121,7 @@ APP_PATHS = {
 
 GLOBAL_TOOL_NAMES = [
     "contextlattice_adopt",
+    "contextlattice_doctor",
     "contextlattice_agent_adapter",
     "contextlattice_agent_runtime_proof",
     "contextlattice_agent_adoption_proof",
@@ -128,6 +131,7 @@ GLOBAL_TOOL_NAMES = [
     "contextlattice_run_advisor",
     "contextlattice_skills_index",
 ]
+FRONT_DOOR_TOOL_NAMES = {"contextlattice_adopt", "contextlattice_doctor"}
 
 SECRET_MARKERS = ("secret", "token", "api_key", "apikey", "password", "credential", "private_key")
 
@@ -138,6 +142,20 @@ def as_dict(value: Any) -> dict[str, Any]:
 
 def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def short_text(value: Any, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def load_profiles() -> dict[str, Any]:
@@ -401,7 +419,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     doctor = doctor_check(global_home, args.timeout) if args.include_doctor else {"skipped": True}
     session_store = session_store_check(home, args.timeout) if args.include_session_store else {"skipped": True}
     profiles = detect_agents(home)
-    required_tools_ok = all(item.get("installed") and item.get("executable") for item in tools if item["name"] != "contextlattice_adopt")
+    required_tools_ok = all(item.get("installed") and item.get("executable") for item in tools if item["name"] not in FRONT_DOOR_TOOL_NAMES)
     warnings = []
     for item in storage:
         warnings.extend({"path": item["path"], "warning": warning} for warning in item.get("warnings", []))
@@ -500,7 +518,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     return 0 if payload["ok"] else 1
 
 
-def cmd_proof(args: argparse.Namespace) -> int:
+def proof_argv(args: argparse.Namespace) -> list[str]:
     argv = [
         str(ADOPTION_PROOF),
         "--project",
@@ -518,11 +536,259 @@ def cmd_proof(args: argparse.Namespace) -> int:
         argv.append("--skip-provider-smoke")
     if args.progress:
         argv.append("--progress")
-    result = run_command(argv, args.proof_timeout * max(1, len(selected_profiles(args.agents))) + 180)
+    return argv
+
+
+def proof_command_timeout(args: argparse.Namespace) -> float:
+    return args.proof_timeout * max(1, len(selected_profiles(args.agents))) + 180
+
+
+def run_adoption_proof(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+    argv = proof_argv(args)
+    result = run_command(argv, proof_command_timeout(args))
     payload = as_dict(result.get("json")) or {"ok": False, "error": result.get("stderr") or result.get("stdout")}
     payload["adopt_command"] = compact_command(argv)
+    return payload, result
+
+
+def cmd_proof(args: argparse.Namespace) -> int:
+    payload, _result = run_adoption_proof(args)
     emit(payload, args.pretty)
     return 0 if payload.get("ok") else 1
+
+
+def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
+    tools = as_list(status.get("tools"))
+    missing_tools = [item.get("name") for item in tools if isinstance(item, dict) and not (item.get("installed") and item.get("executable"))]
+    storage = as_list(status.get("storage"))
+    return {
+        "ok": bool(status.get("ok")),
+        "gateway": status.get("gateway"),
+        "tools": {
+            "installed_count": sum(1 for item in tools if isinstance(item, dict) and item.get("installed") and item.get("executable")),
+            "checked_count": len(tools),
+            "missing_or_not_executable": missing_tools,
+        },
+        "storage_warnings": status.get("warnings", [])[:12],
+        "storage_access": [
+            {
+                "path": item.get("path"),
+                "exists": item.get("exists"),
+                "access_ok": item.get("access_ok"),
+                "warnings": item.get("warnings", []),
+            }
+            for item in storage
+            if isinstance(item, dict)
+        ],
+        "doctor_ok": as_dict(status.get("doctor")).get("ok", as_dict(status.get("doctor")).get("skipped")),
+        "session_store_ok": as_dict(status.get("session_store")).get("ok", as_dict(status.get("session_store")).get("skipped")),
+        "failures": status.get("failures", [])[:12],
+        "repair_command": status.get("repair_command", ""),
+    }
+
+
+def summarize_proof_case_for_doctor(case: dict[str, Any]) -> dict[str, Any]:
+    context_visibility = as_dict(case.get("context_visibility"))
+    return {
+        "agent": case.get("agent"),
+        "agent_id": case.get("agent_id"),
+        "ok": bool(case.get("ok")),
+        "session_id": case.get("session_id"),
+        "phase_count": case.get("phase_count"),
+        "skills_index_returned": case.get("skills_index_returned"),
+        "skills_index_top": as_list(case.get("skills_index_top"))[:5],
+        "context_visibility": {
+            "context_package_validation": context_visibility.get("context_package_validation"),
+            "rollup_validation": context_visibility.get("rollup_validation"),
+            "recommended_surface": context_visibility.get("recommended_surface"),
+            "confidence": context_visibility.get("confidence"),
+            "reference_prompt_chars": context_visibility.get("reference_prompt_chars"),
+            "recent_event_count": context_visibility.get("recent_event_count"),
+            "graph_touches": context_visibility.get("graph_touches"),
+            "handoff_count": context_visibility.get("handoff_count"),
+            "checkpoint_count": context_visibility.get("checkpoint_count"),
+        },
+        "runtime_visible": bool(case.get("runtime_visible")),
+        "trace": case.get("trace"),
+    }
+
+
+def summarize_proof_for_doctor(proof: dict[str, Any]) -> dict[str, Any]:
+    cases = [summarize_proof_case_for_doctor(as_dict(case)) for case in as_list(proof.get("cases"))]
+    return {
+        "ok": bool(proof.get("ok")),
+        "agents": proof.get("agents", []),
+        "case_count": proof.get("case_count", len(cases)),
+        "passed_count": proof.get("passed_count", sum(1 for case in cases if case.get("ok"))),
+        "failed_count": proof.get("failed_count", sum(1 for case in cases if not case.get("ok"))),
+        "provider_smoke": proof.get("provider_smoke"),
+        "findings": as_list(proof.get("findings"))[:20],
+        "cases": cases,
+        "adopt_command": proof.get("adopt_command"),
+    }
+
+
+def proof_session_ids(proof: dict[str, Any], limit: int) -> list[str]:
+    session_ids: list[str] = []
+    if limit <= 0:
+        return session_ids
+    for case in as_list(proof.get("cases")):
+        row = as_dict(case)
+        session_id = str(row.get("session_id") or "").strip()
+        if session_id and session_id not in session_ids:
+            session_ids.append(session_id)
+        if len(session_ids) >= limit:
+            break
+    return session_ids
+
+
+def summarize_trace_for_doctor(trace: dict[str, Any], session_id: str) -> dict[str, Any]:
+    run_shaping = as_dict(trace.get("run_shaping"))
+    context = as_dict(run_shaping.get("context"))
+    skills = as_dict(run_shaping.get("skills"))
+    sources = as_dict(run_shaping.get("sources"))
+    graph = as_dict(run_shaping.get("graph"))
+    handoffs = as_dict(run_shaping.get("handoffs"))
+    checkpoints = as_dict(run_shaping.get("checkpoints"))
+    advisor = as_dict(trace.get("run_advisor")) or as_dict(run_shaping.get("run_advisor"))
+    session = as_dict(trace.get("session"))
+    contract_validation = as_dict(as_dict(trace.get("format_contract")).get("validation"))
+    return {
+        "ok": bool(trace.get("ok")),
+        "schema_id": trace.get("schema_id"),
+        "session_id": session_id,
+        "status": session.get("status"),
+        "objective": short_text(session.get("objective"), 260),
+        "next_action": short_text(session.get("next_action"), 260),
+        "contract_validation": contract_validation.get("status"),
+        "context": {
+            "validation": context.get("validation"),
+            "prompt_ready": bool(context.get("prompt_ready")),
+            "reference_prompt_chars": as_int(context.get("reference_prompt_chars")),
+            "recommended_surface": context.get("recommended_surface"),
+        },
+        "skills_that_may_be_helpful": [
+            {
+                "name": as_dict(item).get("name"),
+                "source": as_dict(item).get("source"),
+                "score": as_dict(item).get("score"),
+            }
+            for item in as_list(skills.get("items"))[:6]
+        ],
+        "sources": {
+            "returned": as_list(sources.get("returned_sources"))[:12],
+            "pending": as_list(sources.get("pending_sources"))[:12],
+            "failed": as_list(sources.get("failed_sources"))[:8],
+        },
+        "run_shaping": {
+            "graph_touches": as_int(graph.get("touches")),
+            "handoffs": as_int(handoffs.get("count")),
+            "checkpoints": as_int(checkpoints.get("count")),
+        },
+        "advisor": {
+            "posture": advisor.get("posture"),
+            "recommended_surface": as_dict(advisor.get("retrieval_advice")).get("recommended_surface"),
+            "recommended_mode": as_dict(advisor.get("retrieval_advice")).get("recommended_mode"),
+            "repair_instruction": short_text(as_dict(advisor.get("continuation")).get("repair_instruction") or as_dict(advisor.get("objective_coherence")).get("repair_instruction"), 260),
+            "followup_command": short_text(as_dict(advisor.get("continuation")).get("agent_followup_command"), 260),
+        },
+        "commands": {
+            "tree": f"contextlattice_agent_trace --session-id {session_id} --tree",
+            "json": f"contextlattice_agent_trace --session-id {session_id} --json --pretty",
+            "markdown": f"contextlattice_agent_trace --session-id {session_id} --markdown",
+        },
+    }
+
+
+def run_trace_summaries(args: argparse.Namespace, proof: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not args.trace:
+        return [], []
+    traces: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    for session_id in proof_session_ids(proof, args.trace_limit):
+        result = run_command(
+            [str(TRACE), "--session-id", session_id, "--json"],
+            args.trace_timeout + 10,
+        )
+        trace_payload = as_dict(result.get("json"))
+        if result.get("ok") and trace_payload:
+            traces.append(summarize_trace_for_doctor(trace_payload, session_id))
+            continue
+        finding = {
+            "reason": "trace_failed",
+            "session_id": session_id,
+            "command": result.get("command"),
+            "stderr": result.get("stderr"),
+            "stdout": result.get("stdout"),
+        }
+        findings.append(finding)
+        traces.append({"ok": False, "session_id": session_id, "finding": finding})
+    if not traces:
+        findings.append({"reason": "no_trace_session_id", "detail": "adoption proof did not return a session_id"})
+    return traces, findings
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    status_args = argparse.Namespace(
+        home=args.home,
+        global_home=args.global_home,
+        timeout=args.timeout,
+        include_doctor=args.include_runtime_doctor,
+        include_session_store=args.include_session_store,
+        pretty=False,
+    )
+    status = build_status(status_args)
+    proof, proof_result = run_adoption_proof(args)
+    traces, trace_findings = run_trace_summaries(args, proof)
+    status_summary = summarize_status_for_doctor(status)
+    proof_summary = summarize_proof_for_doctor(proof)
+    failures: list[dict[str, Any]] = []
+    failures.extend(as_list(status_summary.get("failures")))
+    failures.extend(as_list(proof_summary.get("findings")))
+    failures.extend(trace_findings)
+    ok = bool(status_summary.get("ok")) and bool(proof_summary.get("ok")) and not trace_findings
+    first_session = ""
+    for trace in traces:
+        first_session = str(trace.get("session_id") or "")
+        if first_session:
+            break
+    repair_commands = []
+    if not status_summary.get("ok") and status_summary.get("repair_command"):
+        repair_commands.append(status_summary["repair_command"])
+    if not proof_summary.get("ok"):
+        repair_commands.append(" ".join(compact_command(proof_argv(args))))
+    if trace_findings and first_session:
+        repair_commands.append(f"contextlattice_agent_trace --session-id {first_session} --json --pretty")
+    payload = {
+        "ok": ok,
+        "schema_id": ADOPT_DOCTOR_SCHEMA,
+        "generated_at": now_iso(),
+        "project": args.project,
+        "base_url": args.base_url,
+        "status": status_summary,
+        "proof": proof_summary,
+        "traces": traces,
+        "failures": failures[:30],
+        "repair_commands": repair_commands,
+        "next_commands": [
+            "contextlattice_adopt status --pretty",
+            " ".join(compact_command(proof_argv(args))),
+            f"contextlattice_agent_trace --session-id {first_session} --tree" if first_session else "contextlattice_agent_trace --session-id <session_id> --tree",
+            "contextlattice_skills_index search '<task>' --pretty",
+        ],
+        "commands": {
+            "status": "contextlattice_adopt status --pretty",
+            "proof": " ".join(compact_command(proof_argv(args))),
+            "doctor": f"contextlattice_doctor --agents {args.agents} --skip-provider-smoke --pretty",
+        },
+        "raw": {
+            "status": status if args.include_raw else {"omitted": True},
+            "proof_stdout": proof_result.get("stdout") if args.include_raw else "",
+            "proof_stderr": proof_result.get("stderr") if args.include_raw else "",
+        },
+    }
+    emit(payload, args.pretty)
+    return 0 if ok else 1
 
 
 def read_template(profile: str) -> str:
@@ -791,6 +1057,23 @@ def build_parser() -> argparse.ArgumentParser:
     proof.add_argument("--progress", action="store_true")
     proof.add_argument("--pretty", action="store_true")
     proof.set_defaults(func=cmd_proof)
+
+    doctor = sub.add_parser("doctor", help="Run local readiness, adoption proof, and trace visibility in one bounded report.")
+    add_common(doctor)
+    doctor.add_argument("--agents", default="codex")
+    doctor.add_argument("--project", default="contextlattice")
+    doctor.add_argument("--base-url", default=os.getenv("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:8075"))
+    doctor.add_argument("--proof-timeout", type=float, default=180)
+    doctor.add_argument("--phase-timeout", type=float, default=35)
+    doctor.add_argument("--skip-provider-smoke", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--progress", action="store_true")
+    doctor.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--trace-limit", type=int, default=1)
+    doctor.add_argument("--trace-timeout", type=float, default=20)
+    doctor.add_argument("--include-runtime-doctor", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--include-raw", action="store_true")
+    doctor.set_defaults(func=cmd_doctor)
 
     export = sub.add_parser("export", help="Create a portable no-secrets agent pack.")
     export.add_argument("--name", default="contextlattice-agent-pack")

@@ -47,6 +47,7 @@ Installed commands:
 | `contextlattice_agent_session` | Session lifecycle, rollup, context-package, runtime, and cleanup CLI. |
 | `contextlattice_agent_trace` | Contract-valid run trace and exportable run card showing which context, skills that may be helpful, sources, graph touches, handoffs, and checkpoints shaped a session. |
 | `contextlattice_adopt` | Zero-friction adoption front door for status, install repair, lifecycle proof, portable no-secrets agent packs, profile templates, and CI-style adoption scenarios. |
+| `contextlattice_doctor` | One-command adoption proof for local readiness, lifecycle proof, and trace-visible run shaping evidence. |
 | `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry work end to end. |
 | `contextlattice_agent_adoption_proof` | Matrix proof that configured agent profiles can use the same memory lifecycle and expose skills/context/session/graph/handoff evidence. |
 | `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
@@ -76,6 +77,7 @@ Installed commands:
 ```bash
 contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
 contextlattice_adopt status --pretty
+contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_trace --session-id <session-id> --tree
 ```

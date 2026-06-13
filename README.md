@@ -125,6 +125,7 @@ Installer and quickstart paths install agent helpers under `~/.contextlattice/bi
 ```bash
 contextlattice_agent_adapter profiles
 contextlattice_adopt status --pretty
+contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 contextlattice_agent_start --soft --compact
 contextlattice_agent_trace --session-id <session-id> --tree
 contextlattice_pack "what should the next agent know?" --project my-project --pretty
@@ -135,7 +136,7 @@ contextlattice_source_backfill --source jsonl --path data.jsonl --project my-pro
 ```
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
-- `contextlattice_adopt` is the zero-friction front door for local readiness, install repair, lifecycle proof, no-secrets agent packs, and new agent profile templates.
+- `contextlattice_adopt` is the zero-friction front door for local readiness, install repair, lifecycle proof, no-secrets agent packs, and new agent profile templates; `contextlattice_doctor` combines readiness, proof, and trace evidence in one bounded report.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_agent_trace` renders the bounded run-shaping trail as a terminal tree, JSON, or Markdown run card.
 - `contextlattice_pack` compiles a bounded prompt-ready packet with ranked evidence, files to inspect, risks, checks, source coverage, and a `reference_prompt`.
@@ -155,7 +156,8 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Watch long-running recall through `scripts/agent/contextlattice-session watch --session-id <id> --continuation-token <token>`; continuation responses include `retrieval_progress.v1`, dashboard status links, and agent-visible steering when async work is ready.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
-- Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; it wraps gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, and runtime-doctor checks into one bounded report.
+- Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; `doctor` combines gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, runtime-doctor checks, lifecycle proof, and run trace evidence into one bounded report.
+- Run `contextlattice_doctor --agents codex --skip-provider-smoke --pretty` for the fastest new-agent adoption proof.
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
 - Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime/trace flows.
 - Use `scripts/agent/agent-run-trace --session-id <id> --tree` or global `contextlattice_agent_trace --session-id <id> --tree` to see the terminal trace, then `--markdown` to export the run card.
@@ -168,6 +170,7 @@ Canonical event families include `session.started`, `context_pack.completed`, `r
 ## Download Installers
 
 - macOS DMG: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg`
+- macOS signing/notarization operator notes: `docs/releases/macos-signing-notarization.md`
 - Homebrew cask: `brew tap sheawinkler/contextlattice && brew install --cask contextlattice`
 - Windows MSI: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi`
 - Linux bundle: `https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz`

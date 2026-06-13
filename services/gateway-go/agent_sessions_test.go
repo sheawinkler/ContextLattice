@@ -117,7 +117,7 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 			"skills_index_returned":1,
 			"skills_index":{
 				"returned":1,
-				"top":[{"name":"frontend-design","source":"codex-skills","path":"/Users/sheawinkler/.codex/skills/frontend-design/SKILL.md","score":98}]
+					"top":[{"name":"frontend-design","source":"codex-skills","path":"/home/user/.codex/skills/frontend-design/SKILL.md","score":98}]
 			}
 		}
 	}`)
