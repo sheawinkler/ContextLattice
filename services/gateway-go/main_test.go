@@ -844,6 +844,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
 		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
+		`mux.HandleFunc("/telemetry/memory", s.telemetryMemoryRoute)`,
 		`mux.HandleFunc("/telemetry/memory/graph", s.telemetryMemoryGraphRoute)`,
 		`mux.HandleFunc("/telemetry/agent-contracts", s.agentContractTelemetryRoute)`,
 		`mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)`,
@@ -895,6 +896,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
+		`mux.HandleFunc("/telemetry/memory", s.proxy)`,
 		`mux.HandleFunc("/telemetry/memory/graph", s.proxy)`,
 		`mux.HandleFunc("/telemetry/recall", s.proxy)`,
 		`mux.HandleFunc("/telemetry/recall/monitor", s.proxy)`,
@@ -2368,6 +2370,42 @@ func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
 	}
 	if anyToInt(metricsPayload["queueDepth"], 0) != 3 {
 		t.Fatalf("expected queueDepth=3, got %#v", metricsPayload["queueDepth"])
+	}
+
+	backendCallsBeforeMemoryTelemetry := backendCalls
+	memoryResp, err := http.Get(gateway.URL + "/telemetry/memory")
+	if err != nil {
+		t.Fatalf("memory telemetry failed: %v", err)
+	}
+	defer memoryResp.Body.Close()
+	if memoryResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(memoryResp.Body)
+		t.Fatalf("expected 200 for /telemetry/memory, got %d body=%s", memoryResp.StatusCode, string(body))
+	}
+	var memoryPayload map[string]any
+	if err := json.NewDecoder(memoryResp.Body).Decode(&memoryPayload); err != nil {
+		t.Fatalf("decode memory telemetry payload: %v", err)
+	}
+	if !anyToBool(memoryPayload["ok"]) {
+		t.Fatalf("expected ok memory telemetry payload, got %#v", memoryPayload)
+	}
+	if anyToString(memoryPayload["runtimeOwner"]) != sourceOwnerGoNative {
+		t.Fatalf("expected go-native memory telemetry owner, got %#v", memoryPayload["runtimeOwner"])
+	}
+	if !anyToBool(memoryPayload["strictRuntimeCompatible"]) {
+		t.Fatalf("expected strict-runtime-compatible memory telemetry payload, got %#v", memoryPayload)
+	}
+	memoryBank, _ := memoryPayload["memoryBank"].(map[string]any)
+	if anyToInt(memoryBank["queueDepth"], -1) != 3 {
+		t.Fatalf("expected memory telemetry queue depth to reflect native metrics snapshot, got %#v", memoryBank)
+	}
+	fanoutMemory, _ := memoryPayload["fanout"].(map[string]any)
+	targets, _ := fanoutMemory["targets"].(map[string]any)
+	if targets[sourceQdrant] == nil || targets[sourcePgvector] == nil {
+		t.Fatalf("expected native vector fanout targets in memory telemetry, got %#v", fanoutMemory)
+	}
+	if backendCalls != backendCallsBeforeMemoryTelemetry {
+		t.Fatalf("expected /telemetry/memory to stay native in strict runtime, backend calls before=%d after=%d", backendCallsBeforeMemoryTelemetry, backendCalls)
 	}
 
 	retrievalResp, err := http.Get(gateway.URL + "/telemetry/retrieval?traffic_class=user")

@@ -7,6 +7,7 @@ import { RetrievalPanel } from "@/components/RetrievalPanel";
 test("RetrievalPanel renders async lane visibility and controls", () => {
   const html = renderToStaticMarkup(<RetrievalPanel />);
 
+  assert.match(html, /id="retrieval-flow"/);
   assert.match(html, /Retrieval flow/);
   assert.match(html, /Async lane/);
   assert.match(html, /Project/);

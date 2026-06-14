@@ -169,6 +169,167 @@ func (s *server) telemetryMetricsRoute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func (s *server) recordMemoryWriteTelemetry(startedAt time.Time, succeeded int, dropped int) {
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	if succeeded < 0 {
+		succeeded = 0
+	}
+	if dropped < 0 {
+		dropped = 0
+	}
+	latencyMs := float64(time.Since(startedAt).Microseconds()) / 1000.0
+	if latencyMs < 0 {
+		latencyMs = 0
+	}
+
+	s.memoryTelemetryMu.Lock()
+	defer s.memoryTelemetryMu.Unlock()
+	s.memoryTelemetryLastWriteAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.memoryTelemetryLastWriteLatency = roundFloat(latencyMs, 3)
+	s.memoryTelemetryProcessed += int64(succeeded)
+	s.memoryTelemetryDropped += int64(dropped)
+}
+
+func (s *server) memoryWriteTelemetrySnapshot() (map[string]any, int, int) {
+	s.memoryTelemetryMu.Lock()
+	defer s.memoryTelemetryMu.Unlock()
+	lastWriteAt := any(nil)
+	lastWriteLatency := any(nil)
+	if strings.TrimSpace(s.memoryTelemetryLastWriteAt) != "" {
+		lastWriteAt = s.memoryTelemetryLastWriteAt
+		lastWriteLatency = s.memoryTelemetryLastWriteLatency
+	}
+	return map[string]any{
+		"lastWriteAt":        lastWriteAt,
+		"lastWriteLatencyMs": lastWriteLatency,
+		"processed":          s.memoryTelemetryProcessed,
+		"dropped":            s.memoryTelemetryDropped,
+	}, int(s.memoryTelemetryProcessed), int(s.memoryTelemetryDropped)
+}
+
+func fanoutSemaphoreDepth(sem chan struct{}) (int, int) {
+	if sem == nil {
+		return 0, 0
+	}
+	return len(sem), cap(sem)
+}
+
+func (s *server) telemetryMemoryPayload() map[string]any {
+	metricsSnapshot := s.telemetryMetricsSnapshot()
+	totals, _ := metricsSnapshot["totals"].(map[string]any)
+	writeSnapshot, writeProcessed, writeDropped := s.memoryWriteTelemetrySnapshot()
+
+	qdrantDepth, qdrantMax := fanoutSemaphoreDepth(s.qdrantWriteFanoutSem)
+	pgvectorDepth, pgvectorMax := fanoutSemaphoreDepth(s.pgvectorWriteFanoutSem)
+	qdrantPreflightStatus, qdrantPreflightEnabled := qdrantWriteFanoutPreflightStatus()
+	pgvectorPreflightStatus, pgvectorPreflightEnabled := pgvectorWriteFanoutPreflightStatus()
+	if qdrantPreflightStatus == "" && qdrantPreflightEnabled {
+		qdrantPreflightStatus = "ready"
+	}
+	if pgvectorPreflightStatus == "" && pgvectorPreflightEnabled {
+		pgvectorPreflightStatus = "ready"
+	}
+
+	queueDepth := maxInt(0, anyToInt(metricsSnapshot["queueDepth"], 0))
+	queueMax := maxInt(0, anyToInt(metricsSnapshot["batchSize"], 0))
+	if queueMax == 0 && s.retrieval.telemetryBatchSize > 0 {
+		queueMax = s.retrieval.telemetryBatchSize
+	}
+	processed := writeProcessed
+	if processed == 0 {
+		processed = maxInt(0, anyToInt(totals["flushedEvents"], 0))
+	}
+	dropped := writeDropped
+	if dropped == 0 {
+		dropped = maxInt(0, anyToInt(totals["dropped"], 0))
+	}
+
+	fanoutTargets := map[string]any{
+		sourceQdrant: map[string]any{
+			"mode":          writeQdrantFanoutMode(),
+			"enabled":       qdrantPreflightEnabled && writeQdrantFanoutMode() != "disabled",
+			"status":        qdrantPreflightStatus,
+			"queueDepth":    qdrantDepth,
+			"queueMax":      qdrantMax,
+			"timeoutSecs":   writeQdrantFanoutTimeout().Seconds(),
+			"runtimeOwner":  sourceOwnerGoNative,
+			"adapterSource": sourceQdrant,
+		},
+		sourcePgvector: map[string]any{
+			"mode":          writePgvectorFanoutMode(),
+			"enabled":       pgvectorPreflightEnabled && writePgvectorFanoutMode() != "disabled",
+			"status":        pgvectorPreflightStatus,
+			"queueDepth":    pgvectorDepth,
+			"queueMax":      pgvectorMax,
+			"timeoutSecs":   writePgvectorFanoutTimeout().Seconds(),
+			"runtimeOwner":  sourceOwnerGoNative,
+			"adapterSource": sourcePgvector,
+		},
+	}
+
+	lastWriteAt := writeSnapshot["lastWriteAt"]
+	lastWriteLatency := writeSnapshot["lastWriteLatencyMs"]
+	updatedAt := nowUTCISO()
+	if lastWriteAt != nil {
+		updatedAt = anyToString(lastWriteAt)
+	} else if timestamp := strings.TrimSpace(anyToString(metricsSnapshot["updatedAt"])); timestamp != "" {
+		updatedAt = timestamp
+	}
+
+	return map[string]any{
+		"ok":                      true,
+		"source":                  "gateway-go",
+		"runtimeOwner":            sourceOwnerGoNative,
+		"runtime":                 sourceOwnerGoNative,
+		"strictRuntimeCompatible": true,
+		"updatedAt":               updatedAt,
+		"lastWriteAt":             lastWriteAt,
+		"lastWriteLatencyMs":      lastWriteLatency,
+		"memoryBank": map[string]any{
+			"queueDepth": queueDepth,
+			"queueMax":   queueMax,
+			"workers":    maxInt(1, s.writePolicy.batchConcurrency),
+			"processed":  processed,
+			"dropped":    dropped,
+		},
+		"fanout": map[string]any{
+			"queueDepth": qdrantDepth + pgvectorDepth,
+			"queueMax":   qdrantMax + pgvectorMax,
+			"workers":    qdrantMax + pgvectorMax,
+			"processed":  0,
+			"dropped":    0,
+			"targets":    fanoutTargets,
+		},
+		"queues": map[string]any{
+			"memory": map[string]any{
+				"depth":    queueDepth,
+				"capacity": queueMax,
+				"owner":    sourceOwnerGoNative,
+			},
+			"fanout": map[string]any{
+				"depth":    qdrantDepth + pgvectorDepth,
+				"capacity": qdrantMax + pgvectorMax,
+				"owner":    sourceOwnerGoNative,
+				"targets":  fanoutTargets,
+			},
+		},
+		"telemetryMetrics": metricsSnapshot,
+	}
+}
+
+func (s *server) telemetryMemoryRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.telemetryMemoryPayload())
+}
+
 type sourceTelemetryStats struct {
 	Requests       int
 	Timeouts       int

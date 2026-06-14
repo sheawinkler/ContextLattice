@@ -388,7 +388,7 @@ export function RetrievalPanel() {
   const lifecycle = response?.retrieval_lifecycle;
 
   return (
-    <section className="card space-y-4">
+    <section id="retrieval-flow" className="card space-y-4">
       <div>
         <h3 className="text-lg font-semibold">Retrieval flow</h3>
         <p className="text-sm text-slate-400 mt-1">

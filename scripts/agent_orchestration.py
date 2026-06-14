@@ -562,6 +562,27 @@ class ContextLatticeOrchestrator:
         initial = resp.json()
         lifecycle = self._lifecycle_summary(initial)
         results = initial.get("results") if isinstance(initial.get("results"), list) else []
+        continuation = (
+            initial.get("continuation_async")
+            if isinstance(initial.get("continuation_async"), dict)
+            else {}
+        )
+        token = (
+            continuation.get("token")
+            or initial.get("token")
+            or initial.get("job_id")
+        )
+        poll_url = (
+            continuation.get("poll_url")
+            or initial.get("continuation_poll_url")
+            or initial.get("job_poll_url")
+            or initial.get("poll_url")
+        )
+        events_url = (
+            continuation.get("events_url")
+            or initial.get("continuation_events_url")
+            or initial.get("events_url")
+        )
         output: Dict[str, Any] = {
             "ok": True,
             "query": query,
@@ -569,10 +590,11 @@ class ContextLatticeOrchestrator:
             "retrieval_mode": mode,
             "results": results,
             "lifecycle": lifecycle,
-            "async": bool(initial.get("async")),
-            "token": initial.get("token") or initial.get("job_id"),
-            "poll_url": initial.get("job_poll_url") or initial.get("poll_url"),
-            "events_url": initial.get("events_url"),
+            "async": bool(initial.get("async") or token or continuation),
+            "continuation_async": continuation,
+            "token": token,
+            "poll_url": poll_url,
+            "events_url": events_url,
             "warnings": initial.get("warnings") if isinstance(initial.get("warnings"), list) else [],
             "initial_response": initial,
             "final_response": None,
