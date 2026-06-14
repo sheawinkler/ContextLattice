@@ -32,6 +32,7 @@ func maybeAttachWritebackContract(path string, payload map[string]any, item norm
 }
 
 func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path string) {
+	startedAt := time.Now()
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
@@ -71,6 +72,9 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			}, item, http.StatusBadGateway))
 			return
 		}
+		if status >= 200 && status < 400 {
+			s.recordMemoryWriteTelemetry(startedAt, 1, 0)
+		}
 		writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
 		return
 	}
@@ -92,6 +96,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		for source, status := range vectorFanout {
 			fanout[source] = status
 		}
+		s.recordMemoryWriteTelemetry(startedAt, 1, 0)
 		writeJSON(w, http.StatusOK, maybeAttachWritebackContract(path, map[string]any{
 			"ok":                    true,
 			"event_id":              entry.EventID,
@@ -123,6 +128,9 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		}, item, http.StatusBadGateway))
 		return
 	}
+	if status >= 200 && status < 400 {
+		s.recordMemoryWriteTelemetry(startedAt, 1, 0)
+	}
 	writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
 }
 
@@ -140,6 +148,7 @@ func (s *server) handleWriteBatchIngress(
 	batchPath string,
 	singlePath string,
 ) {
+	startedAt := time.Now()
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
@@ -341,6 +350,9 @@ func (s *server) handleWriteBatchIngress(
 		} else {
 			failed += 1
 		}
+	}
+	if succeeded > 0 || failed > 0 {
+		s.recordMemoryWriteTelemetry(startedAt, succeeded, failed)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":        failed == 0,

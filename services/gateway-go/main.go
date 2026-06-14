@@ -316,6 +316,11 @@ type server struct {
 	telemetryRing                   *telemetryRing
 	telemetryMetricsMu              sync.Mutex
 	telemetryMetricsState           map[string]any
+	memoryTelemetryMu               sync.Mutex
+	memoryTelemetryLastWriteAt      string
+	memoryTelemetryLastWriteLatency float64
+	memoryTelemetryProcessed        int64
+	memoryTelemetryDropped          int64
 	tradingMu                       sync.Mutex
 	tradingState                    map[string]any
 	tradingHistory                  []map[string]any
@@ -6855,6 +6860,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
 	mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)
+	mux.HandleFunc("/telemetry/memory", s.telemetryMemoryRoute)
 	mux.HandleFunc("/telemetry/memory/graph", s.telemetryMemoryGraphRoute)
 	mux.HandleFunc("/telemetry/agent-contracts", s.agentContractTelemetryRoute)
 	mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)
