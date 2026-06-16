@@ -129,6 +129,7 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected policy validation passed, got %#v", validation)
 	}
+	assertBoundaryMetadata(t, policy, "format_contract", false)
 	if findings := validateAgentContractPayload(policyContextPackageContractID, policy); len(findings) != 0 {
 		t.Fatalf("policy package should validate: %#v", findings)
 	}
@@ -181,6 +182,7 @@ func TestObjectiveRuntimeStateContractValidationPassesAndFails(t *testing.T) {
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected objective runtime validation passed, got %#v", validation)
 	}
+	assertBoundaryMetadata(t, runtime, "format_contract", false)
 	if findings := validateAgentContractPayload(objectiveRuntimeStateContractID, runtime); len(findings) != 0 {
 		t.Fatalf("objective runtime should validate: %#v", findings)
 	}
@@ -239,6 +241,7 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected preflight validation passed, got %#v", validation)
 	}
+	assertBoundaryMetadata(t, response, "format_contracts", false)
 
 	bad := cloneContractMap(response)
 	delete(bad, "policy_context_package")
@@ -265,6 +268,7 @@ func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
 	if strings.TrimSpace(anyToString(contextValidation["status"])) != "passed" {
 		t.Fatalf("expected context-pack validation passed, got %#v", contextValidation)
 	}
+	assertBoundaryMetadata(t, contextResponse, "format_contract", false)
 
 	dream := attachPayloadFormatContract(dreamModeResponseContractID, map[string]any{
 		"ok":             true,
@@ -294,6 +298,7 @@ func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
 	if strings.TrimSpace(anyToString(dreamValidation["status"])) != "passed" {
 		t.Fatalf("expected dream validation passed, got %#v", dreamValidation)
 	}
+	assertBoundaryMetadata(t, dream, "format_contract", false)
 
 	writeback := attachWritebackFormatContract(
 		map[string]any{"ok": true, "event_id": "evt_test"},
@@ -341,6 +346,7 @@ func TestAgentBoundaryContractClipsOversizedContextPackPayload(t *testing.T) {
 	assertBoundaryContractPassed(t, contextPackResponseContractID, payload)
 	assertBoundaryJSONUnderLimit(t, contextPackResponseContractID, payload)
 	assertNoRawProviderOverflowShape(t, payload)
+	assertBoundaryMetadata(t, payload, "format_contract", true)
 	clippedPack, _ := payload["context_pack"].(map[string]any)
 	if results, _ := clippedPack["results"].([]any); len(results) > agentBoundaryLimitsForContract(contextPackResponseContractID).MaxListItems {
 		t.Fatalf("expected context_pack.results clipped, got %d", len(results))
@@ -390,6 +396,7 @@ func TestAgentBoundaryContractClipsOversizedDreamPayload(t *testing.T) {
 	assertBoundaryContractPassed(t, dreamModeResponseContractID, payload)
 	assertBoundaryJSONUnderLimit(t, dreamModeResponseContractID, payload)
 	assertNoRawProviderOverflowShape(t, payload)
+	assertBoundaryMetadata(t, payload, "format_contract", true)
 	if hypotheses, _ := payload["hypotheses"].([]any); len(hypotheses) > agentBoundaryLimitsForContract(dreamModeResponseContractID).MaxListItems {
 		t.Fatalf("expected dream hypotheses clipped, got %d", len(hypotheses))
 	}
@@ -441,6 +448,7 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 	assertBoundaryJSONUnderLimit(t, agentPreflightResponseContractID, response)
 	assertBoundaryJSONHeadroom(t, agentPreflightResponseContractID, response, 1024)
 	assertNoRawProviderOverflowShape(t, response)
+	assertBoundaryMetadata(t, response, "format_contracts", true)
 }
 
 func TestAgentPreflightBoundarySanitizesProviderOverflowSearchTextUnderBudget(t *testing.T) {
@@ -475,6 +483,86 @@ func TestAgentPreflightBoundarySanitizesProviderOverflowSearchTextUnderBudget(t 
 	})
 	assertBoundaryContractPassed(t, agentPreflightResponseContractID, response)
 	assertNoRawProviderOverflowShape(t, response)
+	assertBoundaryMetadata(t, response, "format_contracts", false)
+}
+
+func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {
+	payload := contextBoundaryPayload()
+	if !anyToBool(payload["ok"]) || anyToInt(payload["violationCount"], -1) != 0 {
+		t.Fatalf("expected clean context boundary payload, got %#v", payload)
+	}
+	routes, _ := payload["routes"].([]map[string]any)
+	if len(routes) == 0 {
+		rawRoutes, ok := payload["routes"].([]any)
+		if !ok || len(rawRoutes) == 0 {
+			t.Fatalf("expected context boundary routes, got %#v", payload["routes"])
+		}
+		for _, raw := range rawRoutes {
+			routes = append(routes, anyMap(raw))
+		}
+	}
+	byPath := map[string]map[string]any{}
+	for _, route := range routes {
+		byPath[anyToString(route["path"])] = route
+		if anyToBool(route["required"]) && !anyToBool(route["bounded"]) {
+			t.Fatalf("expected required boundary route bounded, got %#v", route)
+		}
+	}
+	for _, path := range []string{
+		"/memory/context-pack",
+		"/tools/context_pack",
+		"/v1/agents/preflight",
+		"/v1/codex/preflight",
+		"policy_context_package",
+		"scripts/agent/contextlattice-pack",
+		"scripts/agent/compaction-handoff-payload",
+		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh",
+		"scripts/agent_hooks/contextlattice_post_compaction_read.sh",
+	} {
+		route := byPath[path]
+		if route == nil {
+			t.Fatalf("expected context boundary path %s in payload %#v", path, payload["routes"])
+		}
+		if anyToInt(route["max_total_json_bytes"], 0) <= 0 || anyToInt(route["max_string_bytes"], 0) <= 0 || anyToInt(route["max_list_items"], 0) <= 0 {
+			t.Fatalf("expected boundary limits for %s, got %#v", path, route)
+		}
+	}
+}
+
+func assertBoundaryMetadata(t *testing.T, payload map[string]any, key string, wantTruncated bool) {
+	t.Helper()
+	metadata, ok := payload[key].(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s metadata object, got %#v", key, payload[key])
+	}
+	if anyToBool(metadata["contract_valid"]) != true {
+		t.Fatalf("expected %s contract_valid=true, got %#v", key, metadata)
+	}
+	if anyToBool(metadata["truncated"]) != wantTruncated {
+		t.Fatalf("expected %s truncated=%v, got %#v", key, wantTruncated, metadata)
+	}
+	if anyToInt(metadata["max_total_json_bytes"], 0) <= 0 {
+		t.Fatalf("expected %s max_total_json_bytes, got %#v", key, metadata)
+	}
+	if anyToInt(metadata["max_string_bytes"], 0) <= 0 {
+		t.Fatalf("expected %s max_string_bytes, got %#v", key, metadata)
+	}
+	if anyToInt(metadata["max_list_items"], 0) <= 0 {
+		t.Fatalf("expected %s max_list_items, got %#v", key, metadata)
+	}
+	if anyToInt(metadata["actual_json_bytes"], 0) <= 0 {
+		t.Fatalf("expected %s actual_json_bytes, got %#v", key, metadata)
+	}
+	counts, ok := metadata["omitted_counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s omitted_counts object, got %#v", key, metadata["omitted_counts"])
+	}
+	if wantTruncated {
+		total := anyToInt(counts["strings_clipped"], 0) + anyToInt(counts["lists_clipped"], 0) + anyToInt(counts["optional_fields_compacted"], 0) + anyToInt(counts["boundary_passes"], 0) + anyToInt(counts["json_bytes_reduced"], 0)
+		if total <= 0 {
+			t.Fatalf("expected %s omitted_counts to record clipping, got %#v", key, counts)
+		}
+	}
 }
 
 func assertBoundaryContractPassed(t *testing.T, contractID string, payload map[string]any) {

@@ -175,6 +175,58 @@ def _walk_list_items(value: Any, max_items: int, contract_id: str, path: str = "
     return findings
 
 
+def _empty_boundary_counts() -> dict[str, int]:
+    return {
+        "strings_clipped": 0,
+        "lists_clipped": 0,
+        "optional_fields_compacted": 0,
+        "boundary_passes": 0,
+        "json_bytes_reduced": 0,
+    }
+
+
+def _merge_boundary_counts(*items: dict[str, Any] | None) -> dict[str, int]:
+    merged = _empty_boundary_counts()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for key in merged:
+            try:
+                merged[key] += int(item.get(key) or 0)
+            except Exception:
+                continue
+    return merged
+
+
+def _boundary_omitted_counts(value: Any) -> dict[str, int]:
+    counts = _empty_boundary_counts()
+
+    def walk(item: Any) -> None:
+        if isinstance(item, dict):
+            for raw_key, nested in item.items():
+                key = str(raw_key)
+                if key == "omitted_by_boundary" and nested is True:
+                    counts["optional_fields_compacted"] += 1
+                elif key in {"clipped", "output_truncated", "_contextlattice_input_truncated"} and bool(nested):
+                    counts["optional_fields_compacted"] += 1
+                elif key in {"_truncated_items", "_truncated_keys"}:
+                    try:
+                        counts["lists_clipped"] += max(1, int(nested))
+                    except Exception:
+                        counts["lists_clipped"] += 1
+                elif key == "_truncated":
+                    counts["optional_fields_compacted"] += 1
+                walk(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                walk(nested)
+        elif isinstance(item, str) and item.endswith("... [truncated]"):
+            counts["strings_clipped"] += 1
+
+    walk(value)
+    return counts
+
+
 def _enforce_value_limits(value: Any, max_string_bytes: int, max_list_items: int, sanitize_overflow: bool) -> Any:
     if isinstance(value, dict):
         return {
@@ -624,6 +676,9 @@ def contract_metadata(contract_id: str, registry: dict[str, Any] | None = None) 
         "required_output_mode": str(contract.get("required_output_mode") or "json_object"),
         "validator": str(registry.get("default_validator") or "contextlattice.boundary.v1"),
         "forbidden_fields": [str(item) for item in contract.get("forbidden_fields") or []],
+        "contract_valid": False,
+        "truncated": False,
+        "omitted_counts": _empty_boundary_counts(),
         "validation": {"status": "pending", "errors": []},
     }
     for key in ("max_total_json_bytes", "max_string_bytes", "max_list_items"):
@@ -635,12 +690,33 @@ def contract_metadata(contract_id: str, registry: dict[str, Any] | None = None) 
     return metadata
 
 
-def stamp_validation(metadata: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
+def stamp_validation(
+    metadata: dict[str, Any],
+    findings: list[dict[str, Any]],
+    payload: dict[str, Any] | None = None,
+    original_json_bytes: int = 0,
+    bounded_json_bytes: int = 0,
+    previous_counts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     stamped = deepcopy(metadata)
+    observed_counts = _boundary_omitted_counts(payload) if isinstance(payload, dict) else _empty_boundary_counts()
+    if original_json_bytes > 0 and bounded_json_bytes > 0 and original_json_bytes > bounded_json_bytes:
+        observed_counts["json_bytes_reduced"] += original_json_bytes - bounded_json_bytes
+        observed_counts["boundary_passes"] += 1
+    counts = _merge_boundary_counts(previous_counts, observed_counts)
+    truncated = any(value > 0 for value in counts.values())
     stamped["validation"] = {
         "status": "failed" if findings else "passed",
         "errors": findings[:12],
     }
+    stamped["contract_valid"] = not bool(findings)
+    stamped["truncated"] = truncated
+    stamped["omitted_counts"] = counts
+    if original_json_bytes > 0:
+        stamped["json_bytes_before_boundary"] = original_json_bytes
+    if bounded_json_bytes > 0:
+        stamped["json_bytes_after_boundary"] = bounded_json_bytes
+        stamped["actual_json_bytes"] = bounded_json_bytes
     return stamped
 
 
@@ -661,28 +737,62 @@ def attach_format_contract(
         _ensure_context_pack_run_advisor(stamped, registry)
     metadata = contract_metadata(contract_id, registry)
     stamped["format_contract"] = metadata
+    before = _json_bytes(stamped)
     stamped = enforce_contract_limits(contract_id, stamped, registry)
+    after = _json_bytes(stamped)
     findings = validate_agent_contract_payload(contract_id, stamped, registry)
-    stamped["format_contract"] = stamp_validation(metadata, findings)
+    stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after)
+    previous_counts = stamped["format_contract"].get("omitted_counts") if isinstance(stamped.get("format_contract"), dict) else None
+    before = _json_bytes(stamped)
     stamped = enforce_contract_limits(contract_id, stamped, registry)
+    after = _json_bytes(stamped)
     findings = validate_agent_contract_payload(contract_id, stamped, registry)
-    stamped["format_contract"] = stamp_validation(metadata, findings)
+    stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after, previous_counts)
+    previous_counts = stamped["format_contract"].get("omitted_counts") if isinstance(stamped.get("format_contract"), dict) else previous_counts
+    before = _json_bytes(stamped)
+    stamped = enforce_contract_limits(contract_id, stamped, registry)
+    after = _json_bytes(stamped)
+    findings = validate_agent_contract_payload(contract_id, stamped, registry)
+    stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after, previous_counts)
     return stamped
 
 
-def preflight_contracts_summary(findings: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def preflight_contracts_summary(
+    findings: list[dict[str, Any]] | None = None,
+    payload: dict[str, Any] | None = None,
+    original_json_bytes: int = 0,
+    bounded_json_bytes: int = 0,
+    previous_counts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     registry = load_agent_contracts_registry()
     errors = findings or []
     preflight_contract = _contract(registry, "agent_preflight_response.v1")
-    return {
+    observed_counts = _boundary_omitted_counts(payload) if isinstance(payload, dict) else _empty_boundary_counts()
+    if original_json_bytes > 0 and bounded_json_bytes > 0 and original_json_bytes > bounded_json_bytes:
+        observed_counts["json_bytes_reduced"] += original_json_bytes - bounded_json_bytes
+        observed_counts["boundary_passes"] += 1
+    counts = _merge_boundary_counts(previous_counts, observed_counts)
+    truncated = any(value > 0 for value in counts.values())
+    summary = {
         "registry_id": str(registry.get("registry_id") or "contextlattice_agent_output_contracts"),
         "registry_version": int(registry.get("registry_version") or 0),
         "contracts": agent_contract_ids(registry),
         "max_total_json_bytes": int(preflight_contract.get("max_total_json_bytes") or 0),
         "max_string_bytes": int(preflight_contract.get("max_string_bytes") or 0),
         "max_list_items": int(preflight_contract.get("max_list_items") or 0),
+        "contract_valid": not bool(errors),
+        "truncated": truncated,
+        "omitted_counts": counts,
         "validation": {
             "status": "failed" if errors else "passed",
             "errors": errors[:12],
         },
+    }
+    if original_json_bytes > 0:
+        summary["json_bytes_before_boundary"] = original_json_bytes
+    if bounded_json_bytes > 0:
+        summary["json_bytes_after_boundary"] = bounded_json_bytes
+        summary["actual_json_bytes"] = bounded_json_bytes
+    return {
+        **summary,
     }

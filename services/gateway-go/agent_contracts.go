@@ -179,6 +179,9 @@ func contractMetadata(contractID string) map[string]any {
 			"required_output_mode": "json_object",
 			"validator":            "contextlattice.boundary.v1",
 			"forbidden_fields":     []any{},
+			"contract_valid":       false,
+			"truncated":            false,
+			"omitted_counts":       agentBoundaryOmittedCounts(agentBoundaryStats{}),
 			"validation": map[string]any{
 				"status": "failed",
 				"errors": []any{map[string]any{"reason": "registry_unavailable", "detail": err.Error()}},
@@ -202,6 +205,9 @@ func contractMetadata(contractID string) map[string]any {
 		"required_output_mode": mode,
 		"validator":            registry.DefaultValidator,
 		"forbidden_fields":     agentContractStringList(contract["forbidden_fields"]),
+		"contract_valid":       false,
+		"truncated":            false,
+		"omitted_counts":       agentBoundaryOmittedCounts(agentBoundaryStats{}),
 		"validation": map[string]any{
 			"status": "pending",
 			"errors": []any{},
@@ -223,7 +229,7 @@ func contractMetadata(contractID string) map[string]any {
 	return metadata
 }
 
-func stampContractValidation(metadata map[string]any, findings []map[string]any) map[string]any {
+func stampContractValidation(metadata map[string]any, findings []map[string]any, stats agentBoundaryStats, payload map[string]any, metadataKey string) map[string]any {
 	stamped := cloneContractMap(metadata)
 	status := "passed"
 	if len(findings) > 0 {
@@ -240,10 +246,28 @@ func stampContractValidation(metadata map[string]any, findings []map[string]any)
 		"status": status,
 		"errors": trimmed,
 	}
+	stamped["contract_valid"] = len(findings) == 0
+	stamped["truncated"] = agentBoundaryStatsTruncated(stats)
+	stamped["omitted_counts"] = agentBoundaryOmittedCounts(stats)
+	if stats.JSONBytesBefore > 0 {
+		stamped["json_bytes_before_boundary"] = stats.JSONBytesBefore
+	}
+	if stats.JSONBytesAfter > 0 {
+		stamped["json_bytes_after_boundary"] = stats.JSONBytesAfter
+	}
+	if payload != nil && metadataKey != "" {
+		probe := cloneContractMap(payload)
+		probe[metadataKey] = stamped
+		if size := jsonByteLen(probe); size > 0 {
+			stamped["actual_json_bytes"] = size
+		}
+	} else if stats.JSONBytesAfter > 0 {
+		stamped["actual_json_bytes"] = stats.JSONBytesAfter
+	}
 	return stamped
 }
 
-func preflightContractsSummary(findings []map[string]any) map[string]any {
+func preflightContractsSummary(findings []map[string]any, stats agentBoundaryStats, payload map[string]any) map[string]any {
 	registry, err := loadAgentContractsRegistry()
 	registryID := "contextlattice_agent_output_contracts"
 	registryVersion := 0
@@ -295,7 +319,7 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 		}
 		errors = append(errors, cloneContractMap(finding))
 	}
-	return map[string]any{
+	summary := map[string]any{
 		"registry_id":      registryID,
 		"registry_version": registryVersion,
 		"contracts":        contractIDs,
@@ -311,22 +335,42 @@ func preflightContractsSummary(findings []map[string]any) map[string]any {
 			limits := agentBoundaryLimitsForContract(agentPreflightResponseContractID)
 			return limits.MaxListItems
 		}(),
+		"contract_valid": len(findings) == 0 && err == nil,
+		"truncated":      agentBoundaryStatsTruncated(stats),
+		"omitted_counts": agentBoundaryOmittedCounts(stats),
 		"validation": map[string]any{
 			"status": status,
 			"errors": errors,
 		},
 	}
+	if stats.JSONBytesBefore > 0 {
+		summary["json_bytes_before_boundary"] = stats.JSONBytesBefore
+	}
+	if stats.JSONBytesAfter > 0 {
+		summary["json_bytes_after_boundary"] = stats.JSONBytesAfter
+	}
+	if payload != nil {
+		probe := cloneContractMap(payload)
+		probe["format_contracts"] = summary
+		if size := jsonByteLen(probe); size > 0 {
+			summary["actual_json_bytes"] = size
+		}
+	}
+	return summary
 }
 
 func attachPayloadFormatContract(contractID string, payload map[string]any, agentID string, lane string, endpoint string) map[string]any {
 	metadata := contractMetadata(contractID)
 	payload["format_contract"] = metadata
-	enforceAgentBoundaryContract(contractID, payload)
+	stats := enforceAgentBoundaryContract(contractID, payload)
 	findings := validateAgentContractPayload(contractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings)
-	enforceAgentBoundaryContract(contractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(contractID, payload))
 	findings = validateAgentContractPayload(contractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings)
+	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(contractID, payload))
+	findings = validateAgentContractPayload(contractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
 	recordAgentContractBoundary(agentID, contractID, lane, endpoint, findings)
 	return payload
 }
@@ -396,15 +440,18 @@ func attachWritebackFormatContract(payload map[string]any, item normalizedWrite,
 }
 
 func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any {
-	payload["format_contracts"] = preflightContractsSummary(nil)
+	payload["format_contracts"] = preflightContractsSummary(nil, agentBoundaryStats{}, payload)
 	sanitizePreflightSearchBoundary(payload)
-	enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
+	stats := enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
 	findings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
-	payload["format_contracts"] = preflightContractsSummary(findings)
+	payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
 	sanitizePreflightSearchBoundary(payload)
-	enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(agentPreflightResponseContractID, payload))
 	findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
-	payload["format_contracts"] = preflightContractsSummary(findings)
+	payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(agentPreflightResponseContractID, payload))
+	findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
+	payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
 	recordAgentContractBoundary(anyToString(payload["agent_id"]), agentPreflightResponseContractID, "preflight", "/v1/agents/preflight", findings)
 	return payload
 }

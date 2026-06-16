@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 9,
-  "updated_at": "2026-06-12T00:00:00Z",
+  "registry_version": 10,
+  "updated_at": "2026-06-16T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -170,6 +170,13 @@
           "required_output_mode",
           "validator",
           "forbidden_fields",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },
@@ -260,6 +267,13 @@
           "registry_id",
           "registry_version",
           "contracts",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },
@@ -363,6 +377,13 @@
           "contract_version",
           "required_output_mode",
           "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },
@@ -463,6 +484,13 @@
           "contract_version",
           "required_output_mode",
           "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },
@@ -711,6 +739,13 @@
           "contract_version",
           "required_output_mode",
           "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },
@@ -801,6 +836,13 @@
           "contract_version",
           "required_output_mode",
           "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },
@@ -986,6 +1028,13 @@
           "contract_version",
           "required_output_mode",
           "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ],
         "prompt_package": [
@@ -1091,6 +1140,13 @@
           "contract_version",
           "required_output_mode",
           "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
           "validation"
         ]
       },

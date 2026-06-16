@@ -86,6 +86,7 @@ ADAPTER = AGENT_DIR / "contextlattice-agent-adapter"
 DOCTOR = AGENT_DIR / "audit-agent-runtime-install"
 SESSION_STORE_DOCTOR = AGENT_DIR / "audit-codex-session-store"
 NATIVE_OWNERSHIP_DOCTOR = AGENT_DIR / "audit-strict-runtime-native-ownership"
+CONTEXT_BOUNDARY_DOCTOR = AGENT_DIR / "audit-context-boundary"
 RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
 ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
 TRACE = AGENT_DIR / "agent-run-trace"
@@ -128,6 +129,7 @@ GLOBAL_TOOL_NAMES = [
     "contextlattice_agent_adoption_proof",
     "contextlattice_agent_runtime_doctor",
     "contextlattice_strict_runtime_native_ownership",
+    "contextlattice_context_boundary",
     "contextlattice_agent_session",
     "contextlattice_agent_trace",
     "contextlattice_run_advisor",
@@ -419,6 +421,14 @@ def native_ownership_check(timeout: float) -> dict[str, Any]:
     return {"ok": result.get("ok"), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
 
 
+def context_boundary_check(timeout: float) -> dict[str, Any]:
+    if not CONTEXT_BOUNDARY_DOCTOR.exists():
+        return {"ok": False, "error": "context boundary audit script missing"}
+    result = run_command([str(CONTEXT_BOUNDARY_DOCTOR), "--timeout", str(timeout)], timeout + 10)
+    payload = as_dict(result.get("json"))
+    return {"ok": result.get("ok"), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
+
+
 def build_status(args: argparse.Namespace) -> dict[str, Any]:
     home = Path(args.home).expanduser()
     global_home = Path(args.global_home).expanduser()
@@ -429,6 +439,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     doctor = doctor_check(global_home, args.timeout) if args.include_doctor else {"skipped": True}
     session_store = session_store_check(home, args.timeout) if args.include_session_store else {"skipped": True}
     native_ownership = native_ownership_check(args.timeout) if getattr(args, "include_native_ownership", True) else {"skipped": True}
+    context_boundary = context_boundary_check(args.timeout) if getattr(args, "include_context_boundary", True) else {"skipped": True}
     profiles = detect_agents(home)
     required_tools_ok = all(item.get("installed") and item.get("executable") for item in tools if item["name"] not in FRONT_DOOR_TOOL_NAMES)
     warnings = []
@@ -445,6 +456,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         failures.append({"reason": "runtime_doctor_failed"})
     if native_ownership.get("ok") is False:
         failures.append({"reason": "native_ownership_failed", "detail": as_list(as_dict(native_ownership.get("payload")).get("findings"))[:8]})
+    if context_boundary.get("ok") is False:
+        failures.append({"reason": "context_boundary_failed", "detail": as_list(as_dict(context_boundary.get("payload")).get("findings"))[:8]})
     repair_args = argparse.Namespace(
         install_codex_hooks=True,
         no_codex_hooks=False,
@@ -472,6 +485,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "doctor": doctor,
         "session_store": session_store,
         "native_ownership": native_ownership,
+        "context_boundary": context_boundary,
         "warnings": warnings,
         "failures": failures,
         "repair_command": " ".join(compact_command(install_argv(global_home, repair_args))),
@@ -499,6 +513,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         include_doctor=True,
         include_session_store=True,
         include_native_ownership=True,
+        include_context_boundary=True,
         pretty=False,
     )
     status = build_status(status_args) if not args.dry_run else {"skipped": True, "reason": "dry_run"}
@@ -578,6 +593,8 @@ def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
     storage = as_list(status.get("storage"))
     native_ownership = as_dict(status.get("native_ownership"))
     native_payload = as_dict(native_ownership.get("payload"))
+    context_boundary = as_dict(status.get("context_boundary"))
+    boundary_payload = as_dict(context_boundary.get("payload"))
     return {
         "ok": bool(status.get("ok")),
         "gateway": status.get("gateway"),
@@ -609,6 +626,15 @@ def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
             "pythonHotPathFallbacks": as_int(as_dict(native_payload.get("pythonHotPathOwnership")).get("fallbacks")),
             "findings": as_list(native_payload.get("findings"))[:8],
             "command": native_ownership.get("command"),
+        },
+        "context_boundary": {
+            "ok": context_boundary.get("ok", context_boundary.get("skipped")),
+            "status": boundary_payload.get("status"),
+            "requiredSurfaceCount": boundary_payload.get("requiredSurfaceCount"),
+            "boundedSurfaceCount": boundary_payload.get("boundedSurfaceCount"),
+            "violationCount": boundary_payload.get("violationCount"),
+            "findings": as_list(boundary_payload.get("findings"))[:8],
+            "command": context_boundary.get("command"),
         },
         "failures": status.get("failures", [])[:12],
         "repair_command": status.get("repair_command", ""),
@@ -764,6 +790,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         include_doctor=args.include_runtime_doctor,
         include_session_store=args.include_session_store,
         include_native_ownership=args.include_native_ownership,
+        include_context_boundary=args.include_context_boundary,
         pretty=False,
     )
     status = build_status(status_args)
@@ -790,6 +817,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         repair_commands.append(f"contextlattice_agent_trace --session-id {first_session} --json --pretty")
     if as_dict(status_summary.get("native_ownership")).get("ok") is False:
         repair_commands.append("contextlattice_strict_runtime_native_ownership --pretty")
+    if as_dict(status_summary.get("context_boundary")).get("ok") is False:
+        repair_commands.append("contextlattice_context_boundary --pretty")
     payload = {
         "ok": ok,
         "schema_id": ADOPT_DOCTOR_SCHEMA,
@@ -804,6 +833,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "next_commands": [
             "contextlattice_adopt status --pretty",
             "contextlattice_strict_runtime_native_ownership --pretty",
+            "contextlattice_context_boundary --pretty",
             " ".join(compact_command(proof_argv(args))),
             f"contextlattice_agent_trace --session-id {first_session} --tree" if first_session else "contextlattice_agent_trace --session-id <session_id> --tree",
             "contextlattice_skills_index search '<task>' --pretty",
@@ -1031,6 +1061,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
                 include_doctor=True,
                 include_session_store=True,
                 include_native_ownership=True,
+                include_context_boundary=True,
                 pretty=False,
             )
             status = build_status(status_args) if args.execute else {"planned": True, "command": "contextlattice_adopt status --pretty"}
@@ -1046,6 +1077,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
                         include_doctor=False,
                         include_session_store=False,
                         include_native_ownership=True,
+                        include_context_boundary=True,
                         pretty=False,
                     )
                     status = build_status(status_args)
@@ -1080,6 +1112,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--include-doctor", action=argparse.BooleanOptionalAction, default=True)
     status.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
     status.add_argument("--include-native-ownership", action=argparse.BooleanOptionalAction, default=True)
+    status.add_argument("--include-context-boundary", action=argparse.BooleanOptionalAction, default=True)
     status.set_defaults(func=cmd_status)
 
     install = sub.add_parser("install", help="Install global tools, optional hooks, then run adoption status.")
@@ -1122,6 +1155,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--include-runtime-doctor", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-native-ownership", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--include-context-boundary", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-raw", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 

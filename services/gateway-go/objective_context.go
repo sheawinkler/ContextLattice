@@ -805,12 +805,15 @@ func buildObjectiveRuntimeState(
 	}
 	metadata := contractMetadata(objectiveRuntimeStateContractID)
 	payload["format_contract"] = metadata
-	enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload)
+	stats := enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload)
 	findings := validateAgentContractPayload(objectiveRuntimeStateContractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings)
-	enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload))
 	findings = validateAgentContractPayload(objectiveRuntimeStateContractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings)
+	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(objectiveRuntimeStateContractID, payload))
+	findings = validateAgentContractPayload(objectiveRuntimeStateContractID, payload)
+	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
 	return payload
 }
 
@@ -906,8 +909,17 @@ func buildPolicyContextPackage(
 		policyEvidence, _ := policy["evidence"].(map[string]any)
 		policyEvidence["mission_pack_error"] = missionPackError.Error()
 	}
+	stats := enforceAgentBoundaryContract(policyContextPackageContractID, policy)
 	findings := validateAgentContractPayload(antiSchemingContractID, policy["anti_scheming_protocol"])
 	findings = append(findings, validateAgentContractPayload(policyContextPackageContractID, policy)...)
-	policy["format_contract"] = stampContractValidation(formatContract, findings)
+	policy["format_contract"] = stampContractValidation(formatContract, findings, stats, policy, "format_contract")
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(policyContextPackageContractID, policy))
+	findings = validateAgentContractPayload(antiSchemingContractID, policy["anti_scheming_protocol"])
+	findings = append(findings, validateAgentContractPayload(policyContextPackageContractID, policy)...)
+	policy["format_contract"] = stampContractValidation(formatContract, findings, stats, policy, "format_contract")
+	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(policyContextPackageContractID, policy))
+	findings = validateAgentContractPayload(antiSchemingContractID, policy["anti_scheming_protocol"])
+	findings = append(findings, validateAgentContractPayload(policyContextPackageContractID, policy)...)
+	policy["format_contract"] = stampContractValidation(formatContract, findings, stats, policy, "format_contract")
 	return policy
 }
