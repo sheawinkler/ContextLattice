@@ -27,6 +27,11 @@ from agent_contracts import (  # noqa: E402
 )
 from _common import emit  # noqa: E402
 
+
+def json_bytes(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
 REQUIRED_CONTRACTS = (
     "anti_scheming_protocol.v1",
     "policy_context_package.v1",
@@ -554,9 +559,19 @@ def sample_policy_package(registry: dict[str, Any]) -> dict[str, Any]:
         "evidence": {"primary_facts": [], "mission_facts": [], "mission_pack_error": None},
         "format_contract": metadata,
     }
+    before = json_bytes(policy)
+    policy = enforce_contract_limits("policy_context_package.v1", policy, registry)
+    after = json_bytes(policy)
     findings = validate_agent_contract_payload("anti_scheming_protocol.v1", protocol, registry)
     findings.extend(validate_agent_contract_payload("policy_context_package.v1", policy, registry))
-    policy["format_contract"] = stamp_validation(metadata, findings)
+    policy["format_contract"] = stamp_validation(metadata, findings, policy, before, after)
+    previous_counts = policy["format_contract"].get("omitted_counts") if isinstance(policy.get("format_contract"), dict) else None
+    before = json_bytes(policy)
+    policy = enforce_contract_limits("policy_context_package.v1", policy, registry)
+    after = json_bytes(policy)
+    findings = validate_agent_contract_payload("anti_scheming_protocol.v1", policy.get("anti_scheming_protocol"), registry)
+    findings.extend(validate_agent_contract_payload("policy_context_package.v1", policy, registry))
+    policy["format_contract"] = stamp_validation(metadata, findings, policy, before, after, previous_counts)
     return policy
 
 
@@ -811,8 +826,17 @@ def run_audit() -> list[dict[str, Any]]:
         "policy_context_package": policy,
         "format_contracts": preflight_contracts_summary(),
     }
+    before = json_bytes(preflight)
+    preflight = enforce_contract_limits("agent_preflight_response.v1", preflight, registry)
+    after = json_bytes(preflight)
     preflight_errors = validate_agent_contract_payload("agent_preflight_response.v1", preflight, registry)
-    preflight["format_contracts"] = preflight_contracts_summary(preflight_errors)
+    preflight["format_contracts"] = preflight_contracts_summary(preflight_errors, preflight, before, after)
+    previous_counts = preflight["format_contracts"].get("omitted_counts") if isinstance(preflight.get("format_contracts"), dict) else None
+    before = json_bytes(preflight)
+    preflight = enforce_contract_limits("agent_preflight_response.v1", preflight, registry)
+    after = json_bytes(preflight)
+    preflight_errors = validate_agent_contract_payload("agent_preflight_response.v1", preflight, registry)
+    preflight["format_contracts"] = preflight_contracts_summary(preflight_errors, preflight, before, after, previous_counts)
     for item in preflight_errors:
         findings.append({"severity": "error", **item})
 

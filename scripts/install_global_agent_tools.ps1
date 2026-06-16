@@ -253,6 +253,19 @@ if not exist "%PYTHON_EXE%" (
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
 "@
 
+$contextBoundaryCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\audit-context-boundary
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+"@
+
 $memoryTopologyCmd = @"
 @echo off
 set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
@@ -318,6 +331,7 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_agent_session.cmd") -Value 
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_trace.cmd") -Value $traceCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_run_advisor.cmd") -Value $runAdvisorCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_agent_runtime_doctor.cmd") -Value $runtimeDoctorCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_context_boundary.cmd") -Value $contextBoundaryCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_memory_topology.cmd") -Value $memoryTopologyCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_source_backfill.cmd") -Value $sourceBackfillCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_skills_index.cmd") -Value $skillsIndexCmd -Encoding Ascii
@@ -351,6 +365,7 @@ Write-Host "  contextlattice_agent_adapter profiles"
 Write-Host "  contextlattice_agent_session runtime --pretty"
 Write-Host "  contextlattice_agent_runtime_proof --pretty"
 Write-Host "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"
+Write-Host "  contextlattice_context_boundary --pretty"
 Write-Host "  contextlattice_agent_trace --session-id <session-id> --tree"
 Write-Host "  contextlattice_run_advisor --session-id <session-id> --pretty"
 Write-Host "  contextlattice_memory_topology --pretty"

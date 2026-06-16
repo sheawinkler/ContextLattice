@@ -46,6 +46,12 @@ DEFAULT_AGENT_ID = (
     or os.getenv("MEMMCP_AGENT_ID", "").strip()
     or "codex_gpt5"
 )
+
+
+def json_bytes(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
 DEFAULT_AGENT_PREFLIGHT_PROFILES: Dict[str, Dict[str, str]] = {
     "codex": {
         "agent_id": "codex_gpt5",
@@ -102,6 +108,7 @@ AGENT_PREFLIGHT_ALIASES = {
     "claude_code": "claude-code",
     "opencode": "opencode",
     "hermes": "hermes-agent",
+    "hermes_agent": "hermes-agent",
     "hermes-agent": "hermes-agent",
     "chatgpt": "chatgpt-web",
     "chatgpt-web": "chatgpt-web",
@@ -123,6 +130,46 @@ DEFAULT_CONTEXTLATTICE_GOAL = (
     os.getenv("CONTEXTLATTICE_GOAL", "").strip()
     or "Maximize useful context per token while preserving correctness, provenance, and latency discipline."
 )
+
+
+def objective_hierarchy(project: str, topic_path: str, session_id: str, mission: str, objective: str, goal: str) -> dict[str, Any]:
+    return {
+        "schema_id": "contextlattice_objective_hierarchy.v1",
+        "project": {
+            "name": str(project or "").strip(),
+            "primary_objective": str(objective or "").strip(),
+            "mission": str(mission or "").strip(),
+        },
+        "topic": {
+            "path": str(topic_path or "").strip(),
+            "objective": str(objective or "").strip(),
+        },
+        "session": {
+            "id": str(session_id or "").strip(),
+            "objective": str(objective or "").strip(),
+            "goal": str(goal or "").strip(),
+        },
+        "current": {
+            "mission": str(mission or "").strip(),
+            "objective": str(objective or "").strip(),
+            "goal": str(goal or "").strip(),
+        },
+    }
+
+
+def objective_lineage(source: str = "agent_orchestration") -> dict[str, Any]:
+    return {
+        "schema_id": "contextlattice_objective_lineage.v1",
+        "source": source,
+        "precedence": ["user_request", "project_primary_objective", "topic_objective", "session_objective"],
+        "drift": {
+            "status": "not_detected",
+            "reason": "offline policy package preserves the default ContextLattice mission, objective, and goal.",
+        },
+        "handoff_rule": "Carry mission, objective, goal, evidence, risks, and next action into the next bounded agent handoff.",
+    }
+
+
 DEFAULT_COMPACTION_TOPIC_PATH = (
     os.getenv("CONTEXTLATTICE_COMPACTION_TOPIC_PATH", "").strip()
     or "runbooks/context-compaction-handoff"
@@ -395,6 +442,12 @@ class ContextLatticeOrchestrator:
                 session_id=session_id,
                 action_executed=action_executed,
             )
+        hierarchy = objective_runtime.get("objective_hierarchy") if isinstance(objective_runtime, dict) else None
+        if not isinstance(hierarchy, dict):
+            hierarchy = objective_hierarchy(project, topic_path, session_id, mission, objective, goal)
+        lineage = objective_runtime.get("objective_lineage") if isinstance(objective_runtime, dict) else None
+        if not isinstance(lineage, dict):
+            lineage = objective_lineage("agent_policy_context_package")
         package = {
             "version": "2026-05-10",
             "agent": agent,
@@ -406,6 +459,8 @@ class ContextLatticeOrchestrator:
             "mission": mission,
             "objective": objective,
             "goal": goal,
+            "objective_hierarchy": hierarchy,
+            "objective_lineage": lineage,
             "skills": {
                 "required": ["objective", "goal"],
                 "optional": ["mission"],
@@ -443,9 +498,26 @@ class ContextLatticeOrchestrator:
             },
             "format_contract": format_contract,
         }
+        before = json_bytes(package)
+        package = enforce_contract_limits("policy_context_package.v1", package, registry)
+        after = json_bytes(package)
         contract_findings = validate_agent_contract_payload("anti_scheming_protocol.v1", protocol, registry)
         contract_findings.extend(validate_agent_contract_payload("policy_context_package.v1", package, registry))
-        package["format_contract"] = stamp_validation(format_contract, contract_findings)
+        package["format_contract"] = stamp_validation(format_contract, contract_findings, package, before, after)
+        previous_counts = package["format_contract"].get("omitted_counts") if isinstance(package.get("format_contract"), dict) else None
+        before = json_bytes(package)
+        package = enforce_contract_limits("policy_context_package.v1", package, registry)
+        after = json_bytes(package)
+        contract_findings = validate_agent_contract_payload("anti_scheming_protocol.v1", package.get("anti_scheming_protocol"), registry)
+        contract_findings.extend(validate_agent_contract_payload("policy_context_package.v1", package, registry))
+        package["format_contract"] = stamp_validation(format_contract, contract_findings, package, before, after, previous_counts)
+        previous_counts = package["format_contract"].get("omitted_counts") if isinstance(package.get("format_contract"), dict) else previous_counts
+        before = json_bytes(package)
+        package = enforce_contract_limits("policy_context_package.v1", package, registry)
+        after = json_bytes(package)
+        contract_findings = validate_agent_contract_payload("anti_scheming_protocol.v1", package.get("anti_scheming_protocol"), registry)
+        contract_findings.extend(validate_agent_contract_payload("policy_context_package.v1", package, registry))
+        package["format_contract"] = stamp_validation(format_contract, contract_findings, package, before, after, previous_counts)
         return package
 
     @staticmethod
@@ -471,6 +543,15 @@ class ContextLatticeOrchestrator:
             "mission": DEFAULT_CONTEXTLATTICE_MISSION,
             "objective": DEFAULT_CONTEXTLATTICE_OBJECTIVE,
             "goal": DEFAULT_CONTEXTLATTICE_GOAL,
+            "objective_hierarchy": objective_hierarchy(
+                project,
+                topic_path,
+                session_id,
+                DEFAULT_CONTEXTLATTICE_MISSION,
+                DEFAULT_CONTEXTLATTICE_OBJECTIVE,
+                DEFAULT_CONTEXTLATTICE_GOAL,
+            ),
+            "objective_lineage": objective_lineage("objective_runtime_state"),
             "scoreboard": {
                 "primary_kpi": os.getenv("CONTEXTLATTICE_PRIMARY_KPI", "").strip()
                 or "agent makes measurable progress toward the requested objective",
@@ -508,12 +589,23 @@ class ContextLatticeOrchestrator:
         }
         metadata = contract_metadata("objective_runtime_state.v1", registry)
         payload["format_contract"] = metadata
+        before = json_bytes(payload)
         payload = enforce_contract_limits("objective_runtime_state.v1", payload, registry)
+        after = json_bytes(payload)
         findings = validate_agent_contract_payload("objective_runtime_state.v1", payload, registry)
-        payload["format_contract"] = stamp_validation(metadata, findings)
+        payload["format_contract"] = stamp_validation(metadata, findings, payload, before, after)
+        previous_counts = payload["format_contract"].get("omitted_counts") if isinstance(payload.get("format_contract"), dict) else None
+        before = json_bytes(payload)
         payload = enforce_contract_limits("objective_runtime_state.v1", payload, registry)
+        after = json_bytes(payload)
         findings = validate_agent_contract_payload("objective_runtime_state.v1", payload, registry)
-        payload["format_contract"] = stamp_validation(metadata, findings)
+        payload["format_contract"] = stamp_validation(metadata, findings, payload, before, after, previous_counts)
+        previous_counts = payload["format_contract"].get("omitted_counts") if isinstance(payload.get("format_contract"), dict) else previous_counts
+        before = json_bytes(payload)
+        payload = enforce_contract_limits("objective_runtime_state.v1", payload, registry)
+        after = json_bytes(payload)
+        findings = validate_agent_contract_payload("objective_runtime_state.v1", payload, registry)
+        payload["format_contract"] = stamp_validation(metadata, findings, payload, before, after, previous_counts)
         return payload
 
     def search_with_lifecycle(
@@ -1039,8 +1131,23 @@ class ContextLatticeOrchestrator:
             "policy_context_package": policy_context_package,
             "format_contracts": preflight_contracts_summary(),
         }
+        before = json_bytes(response)
+        response = enforce_contract_limits("agent_preflight_response.v1", response)
+        after = json_bytes(response)
         preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
-        response["format_contracts"] = preflight_contracts_summary(preflight_findings)
+        response["format_contracts"] = preflight_contracts_summary(preflight_findings, response, before, after)
+        previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else None
+        before = json_bytes(response)
+        response = enforce_contract_limits("agent_preflight_response.v1", response)
+        after = json_bytes(response)
+        preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
+        response["format_contracts"] = preflight_contracts_summary(preflight_findings, response, before, after, previous_counts)
+        previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else previous_counts
+        before = json_bytes(response)
+        response = enforce_contract_limits("agent_preflight_response.v1", response)
+        after = json_bytes(response)
+        preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
+        response["format_contracts"] = preflight_contracts_summary(preflight_findings, response, before, after, previous_counts)
         return response
 
     def status(self) -> Dict[str, Any]:

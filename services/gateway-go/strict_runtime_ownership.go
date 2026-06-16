@@ -21,6 +21,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/status", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "strict runtime status and service health", Required: true},
 		{Path: "/migration/runtime", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "Go/Rust migration flags", Required: true},
 		{Path: "/ops/capabilities", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent-facing capability map", Required: true},
+		{Path: "/ops/context-boundary", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent-facing context boundary audit", Required: true},
 		{Path: "/ops/native-ownership", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "strict runtime native route audit", Required: true},
 		{Path: "/ops/queue/status", Surface: "async", Owner: sourceOwnerGoNative, Status: "native", Detail: "continuation queue and deadletter status", Required: true},
 		{Path: "/memory/search", Surface: "retrieval", Owner: sourceOwnerGoNative, Status: "native", Detail: "staged retrieval with continuation lifecycle", Required: true},

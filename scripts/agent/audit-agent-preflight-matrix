@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Audit agent preflight contracts across configured agent profiles.
+
+Default mode is network-free: it builds the same preflight envelope shape each
+profile should receive and validates it against the shared contract registry.
+Use --live to exercise the local /v1/agents/preflight route for each profile.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from _common import emit  # noqa: E402
+from agent_contracts import (  # noqa: E402
+    attach_format_contract,
+    enforce_contract_limits,
+    load_agent_contracts_registry,
+    preflight_contracts_summary,
+    validate_agent_contract_payload,
+)
+from agent_orchestration import (  # noqa: E402
+    AGENT_PREFLIGHT_ALIASES,
+    AGENT_PREFLIGHT_PROFILES,
+    ContextLatticeOrchestrator,
+    _resolve_agent_preflight_profile,
+)
+
+DEFAULT_MATRIX_ORDER = (
+    "codex",
+    "claude-code",
+    "opencode",
+    "hermes-agent",
+    "hermes-ultra",
+    "pi",
+    "chatgpt-web",
+    "chatgpt-desktop",
+    "claude-web",
+    "claude-desktop",
+)
+
+REQUIRED_ALIASES = {
+    "codex_gpt5": "codex",
+    "hermes": "hermes-agent",
+    "hermes_agent": "hermes-agent",
+    "hermes-agent": "hermes-agent",
+    "hermes-ultra": "hermes-ultra",
+    "hermes_ultra": "hermes-ultra",
+    "hermes-agent-ultra": "hermes-ultra",
+    "hermes_agent_ultra": "hermes-ultra",
+    "hermes_ultra_agent": "hermes-ultra",
+    "pi": "pi",
+    "pi-agent": "pi",
+    "pi_agent": "pi",
+}
+
+
+def json_bytes(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def sample_context_pack(agent_id: str) -> dict[str, Any]:
+    pack = {
+        "facts": [{"text": "offline preflight matrix fact", "source": "audit-agent-preflight-matrix"}],
+        "results": [{"file": "notes/audit-agent-preflight-matrix.md", "source": "offline_fixture"}],
+        "citations": [],
+        "relevant_decisions": [],
+        "files_to_read": [],
+        "files_to_avoid": [],
+        "capabilities_to_use": [],
+        "runbooks": [],
+        "known_failure_modes": [],
+        "commands": [],
+        "acceptance_criteria": [],
+    }
+    coverage = {"configured": ["offline_fixture"], "returned": ["offline_fixture"], "complete": True}
+    return attach_format_contract(
+        "context_pack_response.v1",
+        {
+            "ok": True,
+            "agent_id": agent_id,
+            "context_pack": pack,
+            "source_coverage": coverage,
+            "writeback_required": True,
+        },
+    )
+
+
+def profile_matrix_agents(raw_agents: str | None) -> list[str]:
+    if raw_agents:
+        agents = [item.strip() for item in raw_agents.split(",") if item.strip()]
+    else:
+        ordered = [agent for agent in DEFAULT_MATRIX_ORDER if agent in AGENT_PREFLIGHT_PROFILES]
+        extras = sorted(set(AGENT_PREFLIGHT_PROFILES) - set(ordered))
+        agents = ordered + extras
+    return agents
+
+
+def matrix_case(agent: str) -> dict[str, Any]:
+    profile_key, profile = _resolve_agent_preflight_profile(agent)
+    agent_id = str(profile.get("agent_id") or "").strip()
+    topic_path = str(profile.get("topic_path") or "").strip()
+    query = str(profile.get("query") or "").strip()
+    retrieval_mode = str(profile.get("retrieval_mode") or "balanced").strip().lower() or "balanced"
+    findings: list[dict[str, Any]] = []
+
+    for field, value in (
+        ("agent_id", agent_id),
+        ("topic_path", topic_path),
+        ("query", query),
+        ("retrieval_mode", retrieval_mode),
+    ):
+        if not value:
+            findings.append({"reason": "profile_missing_required_field", "field": field})
+
+    context_pack = sample_context_pack(agent_id)
+    objective_runtime = ContextLatticeOrchestrator._build_objective_runtime_state(
+        agent=profile_key,
+        agent_id=agent_id,
+        project="contextlattice",
+        topic_path=topic_path,
+        retrieval_mode=retrieval_mode,
+        query=query,
+        session_id="sess_preflight_matrix",
+        action_executed="agent.preflight.completed",
+    )
+    policy = ContextLatticeOrchestrator._build_agent_policy_context_package(
+        agent=profile_key,
+        agent_id=agent_id,
+        project="contextlattice",
+        topic_path=topic_path,
+        retrieval_mode=retrieval_mode,
+        query=query,
+        primary_pack=context_pack,
+        mission_pack=context_pack,
+        mission_pack_error=None,
+        objective_runtime=objective_runtime,
+        session_id="sess_preflight_matrix",
+    )
+    policy_format = policy.get("format_contract") if isinstance(policy, dict) else {}
+    policy_validation = policy_format.get("validation") if isinstance(policy_format, dict) else {}
+    if policy_validation.get("status") != "passed":
+        findings.append(
+            {
+                "reason": "policy_contract_validation_not_passed",
+                "validation": policy_validation,
+            }
+        )
+
+    response = {
+        "ok": True,
+        "service": "offline-agent-preflight-matrix",
+        "agent": profile_key,
+        "agent_profile": profile,
+        "agent_id": agent_id,
+        "project": "contextlattice",
+        "query": query,
+        "topic_path": topic_path,
+        "retrieval_mode": retrieval_mode,
+        "health": {"ok": True},
+        "status": {"service": {"ok": True}},
+        "context_pack": context_pack,
+        "objective_runtime": objective_runtime,
+        "policy_context_package": policy,
+        "format_contracts": preflight_contracts_summary(),
+    }
+    before = json_bytes(response)
+    response = enforce_contract_limits("agent_preflight_response.v1", response)
+    after = json_bytes(response)
+    contract_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
+    response["format_contracts"] = preflight_contracts_summary(contract_findings, response, before, after)
+    previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else None
+    before = json_bytes(response)
+    response = enforce_contract_limits("agent_preflight_response.v1", response)
+    after = json_bytes(response)
+    contract_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
+    response["format_contracts"] = preflight_contracts_summary(contract_findings, response, before, after, previous_counts)
+    findings.extend(contract_findings)
+    validation = response["format_contracts"]["validation"]
+    if validation.get("status") != "passed":
+        findings.append({"reason": "preflight_contract_validation_not_passed", "validation": validation})
+
+    return {
+        "agent": agent,
+        "profile_key": profile_key,
+        "agent_id": agent_id,
+        "topic_path": topic_path,
+        "query": query,
+        "retrieval_mode": retrieval_mode,
+        "ok": not findings,
+        "findings": findings,
+    }
+
+
+def check_aliases() -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for alias, expected in REQUIRED_ALIASES.items():
+        if expected not in AGENT_PREFLIGHT_PROFILES:
+            continue
+        actual = AGENT_PREFLIGHT_ALIASES.get(alias)
+        if actual != expected:
+            findings.append(
+                {
+                    "reason": "alias_resolution_mismatch",
+                    "alias": alias,
+                    "expected": expected,
+                    "actual": actual,
+                }
+            )
+    return findings
+
+
+def post_json(url: str, payload: dict[str, Any], timeout: float) -> tuple[int, dict[str, Any]]:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            return int(resp.status), json.loads(raw.decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            payload = {"error": raw[:1000]}
+        return int(exc.code), payload
+    except Exception as exc:
+        return 0, {"error": "request_failed", "detail": str(exc)[:1000], "exception_type": type(exc).__name__}
+
+
+def live_case(base_url: str, agent: str, timeout: float, live_retrieval_mode: str) -> dict[str, Any]:
+    profile_key, profile = _resolve_agent_preflight_profile(agent)
+    expected_agent_id = str(profile.get("agent_id") or "").strip()
+    findings: list[dict[str, Any]] = []
+    request_payload: dict[str, Any] = {"agent": agent, "project": "contextlattice"}
+    mode = str(live_retrieval_mode or "").strip().lower()
+    if mode and mode != "profile-default":
+        request_payload["retrieval_mode"] = mode
+    status, payload = post_json(
+        base_url.rstrip("/") + "/v1/agents/preflight",
+        request_payload,
+        timeout,
+    )
+    if status != 200:
+        findings.append({"reason": "live_preflight_non_200", "status": status, "payload": payload})
+    if str(payload.get("agent") or "").strip() != profile_key:
+        findings.append(
+            {
+                "reason": "live_agent_profile_mismatch",
+                "expected": profile_key,
+                "actual": payload.get("agent"),
+            }
+        )
+    if str(payload.get("agent_id") or "").strip() != expected_agent_id:
+        findings.append(
+            {
+                "reason": "live_agent_id_mismatch",
+                "expected": expected_agent_id,
+                "actual": payload.get("agent_id"),
+            }
+        )
+    contract_findings = validate_agent_contract_payload("agent_preflight_response.v1", payload)
+    findings.extend(contract_findings)
+    contracts = payload.get("format_contracts") if isinstance(payload, dict) else {}
+    validation = contracts.get("validation") if isinstance(contracts, dict) else {}
+    if validation.get("status") != "passed":
+        findings.append({"reason": "live_format_contract_validation_not_passed", "validation": validation})
+    return {
+        "agent": agent,
+        "profile_key": profile_key,
+        "retrieval_mode": payload.get("retrieval_mode"),
+        "status": status,
+        "agent_id": payload.get("agent_id"),
+        "ok": not findings,
+        "findings": findings,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--agents", help="Comma-separated canonical or alias agent names to audit.")
+    parser.add_argument("--live", action="store_true", help="Call the local /v1/agents/preflight route for each profile.")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8075")
+    parser.add_argument(
+        "--live-retrieval-mode",
+        default="fast",
+        help="Retrieval mode for live smoke; use profile-default to avoid overriding profile defaults.",
+    )
+    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    findings = check_aliases()
+    try:
+        registry = load_agent_contracts_registry()
+    except Exception as exc:
+        findings.append({"reason": "registry_load_failed", "detail": str(exc)[:240]})
+        registry = {}
+
+    agents = profile_matrix_agents(args.agents)
+    cases = [matrix_case(agent) for agent in agents]
+    for case in cases:
+        findings.extend({"agent": case["agent"], **item} for item in case.get("findings") or [])
+
+    live_cases: list[dict[str, Any]] = []
+    if args.live:
+        for agent in agents:
+            case = live_case(args.base_url, agent, args.timeout, args.live_retrieval_mode)
+            live_cases.append(case)
+            findings.extend({"agent": case["agent"], **item} for item in case.get("findings") or [])
+
+    output = {
+        "ok": not findings,
+        "registry": {
+            "registry_id": registry.get("registry_id") if isinstance(registry, dict) else None,
+            "registry_version": registry.get("registry_version") if isinstance(registry, dict) else None,
+        },
+        "agents": agents,
+        "case_count": len(cases),
+        "cases": cases,
+        "live": bool(args.live),
+        "live_cases": live_cases,
+        "findings": findings,
+    }
+    emit(output, args.pretty)
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

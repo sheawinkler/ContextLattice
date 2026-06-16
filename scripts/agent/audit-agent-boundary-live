@@ -60,6 +60,43 @@ def format_validation(payload: dict[str, Any]) -> str:
     return ""
 
 
+def boundary_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    format_contract = payload.get("format_contract")
+    if isinstance(format_contract, dict):
+        return format_contract
+    format_contracts = payload.get("format_contracts")
+    if isinstance(format_contracts, dict):
+        return format_contracts
+    return {}
+
+
+def boundary_metadata_findings(case: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = boundary_metadata(payload)
+    findings: list[dict[str, Any]] = []
+    if not metadata:
+        return [{"severity": "error", "case": case, "reason": "boundary_metadata_missing"}]
+    if metadata.get("contract_valid") is not True:
+        findings.append({"severity": "error", "case": case, "reason": "contract_valid_not_true", "metadata": metadata})
+    if not isinstance(metadata.get("truncated"), bool):
+        findings.append({"severity": "error", "case": case, "reason": "truncated_flag_missing", "metadata": metadata})
+    if not isinstance(metadata.get("omitted_counts"), dict):
+        findings.append({"severity": "error", "case": case, "reason": "omitted_counts_missing", "metadata": metadata})
+    for key in ("max_total_json_bytes", "max_string_bytes", "max_list_items"):
+        try:
+            value = int(metadata.get(key) or 0)
+        except Exception:
+            value = 0
+        if value <= 0:
+            findings.append({"severity": "error", "case": case, "reason": "boundary_limit_missing", "field": key, "metadata": metadata})
+    try:
+        actual = int(metadata.get("actual_json_bytes") or 0)
+    except Exception:
+        actual = 0
+    if actual <= 0:
+        findings.append({"severity": "error", "case": case, "reason": "actual_json_bytes_missing", "metadata": metadata})
+    return findings
+
+
 def adversarial_text() -> str:
     seed = "array_above_max_length context length exceeded maximum context length oversized input "
     return (seed * 360).strip()
@@ -210,17 +247,34 @@ def main() -> int:
     agents = [item.strip() for item in str(args.agents or "").split(",") if item.strip()]
 
     if not args.skip_live:
+        boundary_payload = request_json("GET", "/ops/context-boundary", None, args.timeout)
+        cases.append(
+            {
+                "name": "ops_context_boundary",
+                "path": "/ops/context-boundary",
+                "contract": "contextlattice_context_boundary.v1",
+                "json_bytes": json_bytes(boundary_payload),
+                "status": boundary_payload.get("status"),
+                "violationCount": boundary_payload.get("violationCount"),
+            }
+        )
+        if boundary_payload.get("ok") is not True or int(boundary_payload.get("violationCount") or 0) != 0:
+            findings.append({"severity": "error", "case": "ops_context_boundary", "reason": "context_boundary_not_ok", "payload": boundary_payload})
         for case in endpoint_cases(args.timeout, agents):
             payload = case["payload"]
+            metadata = boundary_metadata(payload)
             case_summary = {
                 "name": case["name"],
                 "path": case["path"],
                 "contract": case["contract"],
                 "json_bytes": json_bytes(payload),
                 "format_validation": format_validation(payload),
+                "contract_valid": metadata.get("contract_valid"),
+                "truncated": metadata.get("truncated"),
             }
             cases.append(case_summary)
             findings.extend(validate_contract(case["name"], case["contract"], payload, registry))
+            findings.extend(boundary_metadata_findings(case["name"], payload))
             if format_validation(payload) not in {"", "passed"}:
                 findings.append(
                     {

@@ -18,6 +18,11 @@ type agentBoundaryStats struct {
 	ListsClipped            int
 	OptionalFieldsCompacted int
 	TotalPasses             int
+	JSONBytesBefore         int
+	JSONBytesAfter          int
+	MaxTotalJSONBytes       int
+	MaxStringBytes          int
+	MaxListItems            int
 }
 
 func agentBoundaryLimitsFromContract(contract map[string]any) agentBoundaryLimits {
@@ -41,8 +46,14 @@ func agentBoundaryLimitsForContract(contractID string) agentBoundaryLimits {
 
 func enforceAgentBoundaryContract(contractID string, payload map[string]any) agentBoundaryStats {
 	limits := agentBoundaryLimitsForContract(contractID)
-	stats := agentBoundaryStats{}
+	stats := agentBoundaryStats{
+		JSONBytesBefore:   jsonByteLen(payload),
+		MaxTotalJSONBytes: limits.MaxTotalJSONBytes,
+		MaxStringBytes:    limits.MaxStringBytes,
+		MaxListItems:      limits.MaxListItems,
+	}
 	if limits.MaxTotalJSONBytes <= 0 && limits.MaxStringBytes <= 0 && limits.MaxListItems <= 0 {
+		stats.JSONBytesAfter = stats.JSONBytesBefore
 		return stats
 	}
 	sanitizeOverflow := contractID != GeneratedAgentContractContextOverflowRecoveryV1
@@ -50,7 +61,53 @@ func enforceAgentBoundaryContract(contractID string, payload map[string]any) age
 	if limits.MaxTotalJSONBytes > 0 {
 		stats.TotalPasses += shrinkAgentBoundaryPayload(contractID, payload, limits, sanitizeOverflow, &stats)
 	}
+	stats.JSONBytesAfter = jsonByteLen(payload)
 	return stats
+}
+
+func mergeAgentBoundaryStats(left agentBoundaryStats, right agentBoundaryStats) agentBoundaryStats {
+	if left.JSONBytesBefore == 0 {
+		left.JSONBytesBefore = right.JSONBytesBefore
+	}
+	if right.JSONBytesAfter > 0 {
+		left.JSONBytesAfter = right.JSONBytesAfter
+	}
+	if left.MaxTotalJSONBytes == 0 {
+		left.MaxTotalJSONBytes = right.MaxTotalJSONBytes
+	}
+	if left.MaxStringBytes == 0 {
+		left.MaxStringBytes = right.MaxStringBytes
+	}
+	if left.MaxListItems == 0 {
+		left.MaxListItems = right.MaxListItems
+	}
+	left.StringsClipped += right.StringsClipped
+	left.ListsClipped += right.ListsClipped
+	left.OptionalFieldsCompacted += right.OptionalFieldsCompacted
+	left.TotalPasses += right.TotalPasses
+	return left
+}
+
+func agentBoundaryStatsTruncated(stats agentBoundaryStats) bool {
+	return stats.StringsClipped > 0 ||
+		stats.ListsClipped > 0 ||
+		stats.OptionalFieldsCompacted > 0 ||
+		stats.TotalPasses > 0 ||
+		(stats.JSONBytesBefore > 0 && stats.JSONBytesAfter > 0 && stats.JSONBytesAfter < stats.JSONBytesBefore)
+}
+
+func agentBoundaryOmittedCounts(stats agentBoundaryStats) map[string]any {
+	reduced := 0
+	if stats.JSONBytesBefore > 0 && stats.JSONBytesAfter > 0 && stats.JSONBytesBefore > stats.JSONBytesAfter {
+		reduced = stats.JSONBytesBefore - stats.JSONBytesAfter
+	}
+	return map[string]any{
+		"strings_clipped":           stats.StringsClipped,
+		"lists_clipped":             stats.ListsClipped,
+		"optional_fields_compacted": stats.OptionalFieldsCompacted,
+		"boundary_passes":           stats.TotalPasses,
+		"json_bytes_reduced":        reduced,
+	}
 }
 
 func positiveListLimit(value int) int {

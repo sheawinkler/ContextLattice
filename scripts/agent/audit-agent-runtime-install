@@ -121,6 +121,7 @@ def main() -> int:
         "contextlattice_agent_trace": bin_dir / "contextlattice_agent_trace",
         "contextlattice_run_advisor": bin_dir / "contextlattice_run_advisor",
         "contextlattice_agent_runtime_doctor": bin_dir / "contextlattice_agent_runtime_doctor",
+        "contextlattice_context_boundary": bin_dir / "contextlattice_context_boundary",
         "contextlattice_memory_topology": bin_dir / "contextlattice_memory_topology",
         "contextlattice_source_backfill": bin_dir / "contextlattice_source_backfill",
         "contextlattice_skills_index": bin_dir / "contextlattice_skills_index",

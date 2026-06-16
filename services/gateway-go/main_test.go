@@ -858,6 +858,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
 		`mux.HandleFunc("/maintenance/memory/graph/prune-volatile", s.maintenanceMemoryGraphPruneVolatile)`,
 		`mux.HandleFunc("/maintenance/", s.maintenanceRoute)`,
+		`mux.HandleFunc("/ops/context-boundary", s.opsContextBoundary)`,
 		`mux.HandleFunc("/ops/native-ownership", s.opsNativeOwnership)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)`,
@@ -912,6 +913,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/trading/history", s.proxy)`,
 		`mux.HandleFunc("/telemetry/", s.proxy)`,
 		`mux.HandleFunc("/maintenance/", s.proxy)`,
+		`mux.HandleFunc("/ops/context-boundary", s.proxy)`,
 		`mux.HandleFunc("/ops/native-ownership", s.proxy)`,
 		`mux.HandleFunc("/migration/runtime", s.proxy)`,
 		`registerEntitled("/migration/runtime", s.proxy)`,
@@ -2582,6 +2584,23 @@ func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
 	}
 	if !anyToBool(ownershipPayload["ok"]) || anyToInt(ownershipPayload["violationCount"], -1) != 0 {
 		t.Fatalf("expected clean native ownership payload, got %#v", ownershipPayload)
+	}
+
+	boundaryResp, err := http.Get(gateway.URL + "/ops/context-boundary")
+	if err != nil {
+		t.Fatalf("context boundary audit failed: %v", err)
+	}
+	defer boundaryResp.Body.Close()
+	if boundaryResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(boundaryResp.Body)
+		t.Fatalf("expected 200 for /ops/context-boundary, got %d body=%s", boundaryResp.StatusCode, string(body))
+	}
+	var boundaryPayload map[string]any
+	if err := json.NewDecoder(boundaryResp.Body).Decode(&boundaryPayload); err != nil {
+		t.Fatalf("decode context boundary payload: %v", err)
+	}
+	if !anyToBool(boundaryPayload["ok"]) || anyToInt(boundaryPayload["violationCount"], -1) != 0 {
+		t.Fatalf("expected clean context boundary payload, got %#v", boundaryPayload)
 	}
 
 	toolsResp, err := http.Get(gateway.URL + "/telemetry/tools/invocations?limit=10&status_min=400")

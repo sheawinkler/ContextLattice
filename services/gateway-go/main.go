@@ -6879,6 +6879,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/maintenance/", s.maintenanceRoute)
 	mux.HandleFunc("/ops/queue/status", s.opsQueueStatus)
 	mux.HandleFunc("/ops/capabilities", s.opsCapabilities)
+	mux.HandleFunc("/ops/context-boundary", s.opsContextBoundary)
 	mux.HandleFunc("/ops/native-ownership", s.opsNativeOwnership)
 	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
