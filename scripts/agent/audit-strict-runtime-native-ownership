@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Audit strict-runtime native ownership for agent-facing ContextLattice surfaces."""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+from typing import Any
+
+from _common import emit, request_json
+
+
+SCHEMA_ID = "strict_runtime_native_ownership.v1"
+REQUIRED_PATHS = (
+    "/health",
+    "/status",
+    "/migration/runtime",
+    "/ops/native-ownership",
+    "/memory/context-pack",
+    "/tools/context_pack",
+    "/v1/agents/preflight",
+    "/v1/codex/preflight",
+    "/telemetry/sidecar-health",
+    "/telemetry/strategies",
+    "/telemetry/strategies/history",
+)
+NATIVE_OWNERS = {"go_native", "rust_native"}
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def payload_without_marker_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    redacted = copy.deepcopy(payload)
+    redacted["forbidden_error_markers"] = []
+    agent_ready = as_dict(redacted.get("agent_ready"))
+    if agent_ready:
+        agent_ready.pop("recommended", None)
+        redacted["agent_ready"] = agent_ready
+    return redacted
+
+
+def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    if payload.get("schema_id") != SCHEMA_ID:
+        findings.append({"reason": "schema_id_mismatch", "expected": SCHEMA_ID, "actual": payload.get("schema_id")})
+    if payload.get("ok") is not True:
+        findings.append({"reason": "native_ownership_not_ok", "status": payload.get("status")})
+    if as_int(payload.get("violationCount")) != 0:
+        findings.append({"reason": "route_violations_present", "count": as_int(payload.get("violationCount"))})
+
+    ownership = as_dict(payload.get("pythonHotPathOwnership"))
+    fallbacks = as_int(ownership.get("fallbacks"))
+    if fallbacks != 0:
+        findings.append({"reason": "python_hot_path_fallbacks_present", "count": fallbacks, "byPath": ownership.get("byPath")})
+
+    routes = [as_dict(route) for route in as_list(payload.get("routes"))]
+    by_path = {str(route.get("path") or ""): route for route in routes}
+    missing = [path for path in REQUIRED_PATHS if path not in by_path]
+    if missing:
+        findings.append({"reason": "required_routes_missing", "paths": missing})
+    for path in REQUIRED_PATHS:
+        route = by_path.get(path)
+        if not route:
+            continue
+        owner = str(route.get("owner") or "").strip()
+        status = str(route.get("status") or "").strip()
+        if owner not in NATIVE_OWNERS or status != "native" or route.get("strictRuntimeCompatible") is not True:
+            findings.append({"reason": "required_route_not_native", "path": path, "owner": owner, "status": status})
+
+    marker_source = json.dumps(payload_without_marker_manifest(payload), sort_keys=True).lower()
+    marker_hits = [
+        marker
+        for marker in as_list(payload.get("forbidden_error_markers"))
+        if isinstance(marker, str) and marker.strip() and marker.lower() in marker_source
+    ]
+    if marker_hits:
+        findings.append({"reason": "forbidden_error_markers_leaked", "markers": marker_hits})
+
+    return {
+        "ok": not findings,
+        "schema_id": "contextlattice_strict_runtime_native_ownership_audit.v1",
+        "source_schema_id": payload.get("schema_id"),
+        "status": payload.get("status"),
+        "strictNoPython": payload.get("strictNoPython"),
+        "routeOwnerClass": payload.get("routeOwnerClass"),
+        "requiredRouteCount": payload.get("requiredRouteCount"),
+        "nativeRouteCount": payload.get("nativeRouteCount"),
+        "violationCount": payload.get("violationCount"),
+        "pythonHotPathOwnership": ownership,
+        "checkedRequiredPaths": list(REQUIRED_PATHS),
+        "findings": findings,
+        "raw": payload,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit strict-runtime native route ownership.")
+    parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    payload = request_json("GET", "/ops/native-ownership", None, args.timeout)
+    result = audit_payload(payload)
+    emit(result, args.pretty)
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

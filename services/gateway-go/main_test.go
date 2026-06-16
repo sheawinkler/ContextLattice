@@ -846,6 +846,9 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
 		`mux.HandleFunc("/telemetry/memory", s.telemetryMemoryRoute)`,
 		`mux.HandleFunc("/telemetry/memory/graph", s.telemetryMemoryGraphRoute)`,
+		`mux.HandleFunc("/telemetry/sidecar-health", s.telemetrySidecarHealthRoute)`,
+		`mux.HandleFunc("/telemetry/strategies", s.telemetryStrategiesRoute)`,
+		`mux.HandleFunc("/telemetry/strategies/history", s.telemetryStrategiesHistoryRoute)`,
 		`mux.HandleFunc("/telemetry/agent-contracts", s.agentContractTelemetryRoute)`,
 		`mux.HandleFunc("/telemetry/recall", s.telemetryRecallRoute)`,
 		`mux.HandleFunc("/telemetry/recall/monitor", s.telemetryRecallMonitorRoute)`,
@@ -855,6 +858,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/", s.telemetryRoute)`,
 		`mux.HandleFunc("/maintenance/memory/graph/prune-volatile", s.maintenanceMemoryGraphPruneVolatile)`,
 		`mux.HandleFunc("/maintenance/", s.maintenanceRoute)`,
+		`mux.HandleFunc("/ops/native-ownership", s.opsNativeOwnership)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.retrievalQuery)`,
 		`mux.HandleFunc("/v1/retrieval/query-with-grounding", s.retrievalQueryWithGrounding)`,
 		`mux.HandleFunc("/v1/retrieval/batch-query", s.retrievalBatchQuery)`,
@@ -898,6 +902,9 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
 		`mux.HandleFunc("/telemetry/memory", s.proxy)`,
 		`mux.HandleFunc("/telemetry/memory/graph", s.proxy)`,
+		`mux.HandleFunc("/telemetry/sidecar-health", s.proxy)`,
+		`mux.HandleFunc("/telemetry/strategies", s.proxy)`,
+		`mux.HandleFunc("/telemetry/strategies/history", s.proxy)`,
 		`mux.HandleFunc("/telemetry/recall", s.proxy)`,
 		`mux.HandleFunc("/telemetry/recall/monitor", s.proxy)`,
 		`mux.HandleFunc("/telemetry/tools/invocations", s.proxy)`,
@@ -905,6 +912,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/trading/history", s.proxy)`,
 		`mux.HandleFunc("/telemetry/", s.proxy)`,
 		`mux.HandleFunc("/maintenance/", s.proxy)`,
+		`mux.HandleFunc("/ops/native-ownership", s.proxy)`,
 		`mux.HandleFunc("/migration/runtime", s.proxy)`,
 		`registerEntitled("/migration/runtime", s.proxy)`,
 		`mux.HandleFunc("/v1/retrieval/query", s.proxy)`,
@@ -2497,6 +2505,83 @@ func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
 	fanoutByStatus, _ := fanoutSummary["by_status"].(map[string]any)
 	if fanoutByStatus == nil {
 		t.Fatalf("expected fanout by_status payload, got %#v", fanoutPayload)
+	}
+
+	sidecarResp, err := http.Get(gateway.URL + "/telemetry/sidecar-health")
+	if err != nil {
+		t.Fatalf("sidecar health telemetry failed: %v", err)
+	}
+	defer sidecarResp.Body.Close()
+	if sidecarResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(sidecarResp.Body)
+		t.Fatalf("expected 200 for /telemetry/sidecar-health, got %d body=%s", sidecarResp.StatusCode, string(body))
+	}
+	var sidecarPayload map[string]any
+	if err := json.NewDecoder(sidecarResp.Body).Decode(&sidecarPayload); err != nil {
+		t.Fatalf("decode sidecar health payload: %v", err)
+	}
+	if anyToString(sidecarPayload["runtimeOwner"]) != sourceOwnerGoNative {
+		t.Fatalf("expected go-native sidecar health telemetry owner, got %#v", sidecarPayload)
+	}
+	if sidecarPayload["gateway-go"] == nil {
+		t.Fatalf("expected gateway-go sidecar health row, got %#v", sidecarPayload)
+	}
+
+	strategyResp, err := http.Get(gateway.URL + "/telemetry/strategies")
+	if err != nil {
+		t.Fatalf("strategy telemetry failed: %v", err)
+	}
+	defer strategyResp.Body.Close()
+	if strategyResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(strategyResp.Body)
+		t.Fatalf("expected 200 for /telemetry/strategies, got %d body=%s", strategyResp.StatusCode, string(body))
+	}
+	var strategyPayload map[string]any
+	if err := json.NewDecoder(strategyResp.Body).Decode(&strategyPayload); err != nil {
+		t.Fatalf("decode strategy telemetry payload: %v", err)
+	}
+	if anyToString(strategyPayload["runtimeOwner"]) != sourceOwnerGoNative {
+		t.Fatalf("expected go-native strategy telemetry owner, got %#v", strategyPayload)
+	}
+	if _, ok := strategyPayload["strategies"].([]any); !ok {
+		t.Fatalf("expected strategy telemetry strategies array, got %#v", strategyPayload)
+	}
+
+	strategyHistoryResp, err := http.Get(gateway.URL + "/telemetry/strategies/history?limit=5")
+	if err != nil {
+		t.Fatalf("strategy history telemetry failed: %v", err)
+	}
+	defer strategyHistoryResp.Body.Close()
+	if strategyHistoryResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(strategyHistoryResp.Body)
+		t.Fatalf("expected 200 for /telemetry/strategies/history, got %d body=%s", strategyHistoryResp.StatusCode, string(body))
+	}
+	var strategyHistoryPayload map[string]any
+	if err := json.NewDecoder(strategyHistoryResp.Body).Decode(&strategyHistoryPayload); err != nil {
+		t.Fatalf("decode strategy history payload: %v", err)
+	}
+	if anyToString(strategyHistoryPayload["runtimeOwner"]) != sourceOwnerGoNative {
+		t.Fatalf("expected go-native strategy history owner, got %#v", strategyHistoryPayload)
+	}
+	if _, ok := strategyHistoryPayload["history"].([]any); !ok {
+		t.Fatalf("expected strategy history array, got %#v", strategyHistoryPayload)
+	}
+
+	ownershipResp, err := http.Get(gateway.URL + "/ops/native-ownership")
+	if err != nil {
+		t.Fatalf("native ownership audit failed: %v", err)
+	}
+	defer ownershipResp.Body.Close()
+	if ownershipResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(ownershipResp.Body)
+		t.Fatalf("expected 200 for /ops/native-ownership, got %d body=%s", ownershipResp.StatusCode, string(body))
+	}
+	var ownershipPayload map[string]any
+	if err := json.NewDecoder(ownershipResp.Body).Decode(&ownershipPayload); err != nil {
+		t.Fatalf("decode native ownership payload: %v", err)
+	}
+	if !anyToBool(ownershipPayload["ok"]) || anyToInt(ownershipPayload["violationCount"], -1) != 0 {
+		t.Fatalf("expected clean native ownership payload, got %#v", ownershipPayload)
 	}
 
 	toolsResp, err := http.Get(gateway.URL + "/telemetry/tools/invocations?limit=10&status_min=400")

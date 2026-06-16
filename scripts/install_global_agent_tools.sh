@@ -29,6 +29,7 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_agent_runtime_proof
   contextlattice_agent_adoption_proof
   contextlattice_agent_runtime_doctor
+  contextlattice_strict_runtime_native_ownership
   contextlattice_memory_topology
   contextlattice_source_backfill
   contextlattice_skills_index
@@ -369,6 +370,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/audit-strict-runtime-native-ownership"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 cat > "${GLOBAL_BIN_DIR}/contextlattice_memory_topology" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -435,6 +449,7 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof" \
   "${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor" \
+  "${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership" \
   "${GLOBAL_BIN_DIR}/contextlattice_memory_topology" \
   "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
   "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
@@ -631,6 +646,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_run_advisor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adoption_proof"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_memory_topology"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skills_index"
@@ -650,6 +666,7 @@ log "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"
 log "  contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty"
 log "  contextlattice_agent_runtime_proof --pretty"
 log "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"
+log "  contextlattice_strict_runtime_native_ownership --pretty"
 log "  contextlattice_agent_session runtime --pretty"
 log "  contextlattice_agent_trace --session-id <session-id> --tree"
 log "  contextlattice_run_advisor 'current task context' --pretty"
