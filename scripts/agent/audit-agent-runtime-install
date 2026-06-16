@@ -70,6 +70,36 @@ def json_payload_schema(payload: dict[str, Any]) -> str:
     return str(schema or "")
 
 
+def as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def go_native_wrapper(path: Path, go_tool: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        if path.samefile(go_tool):
+            return True
+    except Exception:
+        pass
+    if path.is_symlink():
+        try:
+            target = os.readlink(path)
+        except OSError:
+            target = ""
+        if Path(target).name == go_tool.name:
+            return True
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+    lowered = text.lower()
+    return go_tool.name.lower() in lowered and "python" not in lowered and "venv-agent-tools" not in lowered
+
+
 def hook_status(hooks_path: Path) -> dict[str, Any]:
     try:
         parsed = json.loads(hooks_path.read_text(encoding="utf-8"))
@@ -112,8 +142,14 @@ def main() -> int:
 
     global_home = Path(args.global_home).expanduser()
     bin_dir = global_home / "bin"
+    go_tool = bin_dir / "contextlattice-agent-tools"
     expected = {
+        "contextlattice-agent-tools": go_tool,
+        "contextlattice_search": bin_dir / "contextlattice_search",
+        "contextlattice_pack": bin_dir / "contextlattice_pack",
+        "contextlattice_write": bin_dir / "contextlattice_write",
         "contextlattice_adopt": bin_dir / "contextlattice_adopt",
+        "contextlattice_doctor": bin_dir / "contextlattice_doctor",
         "contextlattice_agent_adapter": bin_dir / "contextlattice_agent_adapter",
         "contextlattice_agent_runtime_proof": bin_dir / "contextlattice_agent_runtime_proof",
         "contextlattice_agent_adoption_proof": bin_dir / "contextlattice_agent_adoption_proof",
@@ -121,51 +157,67 @@ def main() -> int:
         "contextlattice_agent_trace": bin_dir / "contextlattice_agent_trace",
         "contextlattice_run_advisor": bin_dir / "contextlattice_run_advisor",
         "contextlattice_agent_runtime_doctor": bin_dir / "contextlattice_agent_runtime_doctor",
+        "contextlattice_strict_runtime_native_ownership": bin_dir / "contextlattice_strict_runtime_native_ownership",
         "contextlattice_context_boundary": bin_dir / "contextlattice_context_boundary",
         "contextlattice_memory_topology": bin_dir / "contextlattice_memory_topology",
-        "contextlattice_source_backfill": bin_dir / "contextlattice_source_backfill",
         "contextlattice_skills_index": bin_dir / "contextlattice_skills_index",
+    }
+    optional_dev = {
+        "contextlattice_agent_orchestration": bin_dir / "contextlattice_agent_orchestration",
+        "contextlattice_source_backfill": bin_dir / "contextlattice_source_backfill",
+        "contextlattice_codex_session_store_doctor": bin_dir / "contextlattice_codex_session_store_doctor",
     }
     checks: list[dict[str, Any]] = []
     for name, path in expected.items():
         installed = path.is_file() and os.access(path, os.X_OK)
-        extra: dict[str, Any] = {"path": str(path)}
+        native = True if name == "contextlattice-agent-tools" else go_native_wrapper(path, go_tool)
+        extra: dict[str, Any] = {"path": str(path), "go_native": native}
         if not installed:
-            extra["suggested_fix"] = "Run scripts/agent/contextlattice-adopt install --pretty from a ContextLattice checkout."
-        checks.append(record(name, installed, **extra))
+            extra["suggested_fix"] = "Run scripts/install_global_agent_tools.sh from a ContextLattice checkout."
+        checks.append(record(name, installed and native, **extra))
+
+    for name, path in optional_dev.items():
+        installed = path.is_file() and os.access(path, os.X_OK)
+        checks.append(record(
+            name,
+            True,
+            "development-only Python helper not installed by default" if not installed else "development-only Python helper installed",
+            path=str(path),
+            installed=installed,
+            dev_python_tool=True,
+        ))
 
     adapter = str(expected["contextlattice_agent_adapter"])
     if expected["contextlattice_agent_adapter"].exists():
         ok, payload, err = run_json([adapter, "profiles"], args.timeout)
-        validation = ((payload.get("format_contract") or {}).get("validation") or {}).get("status") if isinstance(payload, dict) else ""
-        checks.append(record("adapter_profiles_contract", ok and payload.get("ok") is True and validation == "passed", err, profiles=len(((payload.get("result") or {}).get("profiles") or {})) if isinstance(payload, dict) else 0, validation=validation))
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        checks.append(record(
+            "adapter_profiles_contract",
+            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_universal_agent_adapter_profiles.v1",
+            err,
+            profiles=len((result or {}).get("profiles") or {}) if isinstance(result, dict) else 0,
+            schema=json_payload_schema(payload),
+        ))
 
     adopt = str(expected["contextlattice_adopt"])
     if expected["contextlattice_adopt"].exists():
         ok, detail = run_text([adopt, "--help"], args.timeout)
         checks.append(record("adopt_help", ok, detail))
-        ok, payload, err = run_json([adopt, "matrix"], args.timeout)
+        ok, payload, err = run_json([adopt, "status"], args.timeout)
         checks.append(record(
-            "adopt_matrix_plan",
-            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_adoption_ci_matrix.v1",
+            "adopt_status",
+            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_adoption_status.v1",
             err,
-            scenarios=len(payload.get("scenarios") or []) if isinstance(payload, dict) else 0,
+            profiles=as_int(payload.get("profile_count")) if isinstance(payload, dict) else 0,
             schema=json_payload_schema(payload),
         ))
-        ok, payload, err = run_json([adopt, "export", "--dry-run"], args.timeout)
-        pack = payload.get("pack") if isinstance(payload, dict) else {}
+        ok, payload, err = run_json([adopt, "profiles"], args.timeout)
+        result = payload.get("result") if isinstance(payload, dict) else {}
         checks.append(record(
-            "adopt_export_dry_run",
-            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_pack.v1",
+            "adopt_profiles",
+            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_universal_agent_adapter_profiles.v1",
             err,
-            profiles=len((pack or {}).get("profiles") or []) if isinstance(pack, dict) else 0,
-            schema=json_payload_schema(payload),
-        ))
-        ok, payload, err = run_json([adopt, "profile-template", "--name", "doctor-smoke", "--kind", "cli"], args.timeout)
-        checks.append(record(
-            "adopt_profile_template",
-            ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_profile_template.v1",
-            err,
+            profiles=len((result or {}).get("profiles") or {}) if isinstance(result, dict) else 0,
             schema=json_payload_schema(payload),
         ))
 
@@ -232,7 +284,7 @@ def main() -> int:
         "global_home": str(global_home),
         "checks": checks,
         "failed": failed,
-        "repair_command": "scripts/agent/contextlattice-adopt install --pretty",
+        "repair_command": "scripts/install_global_agent_tools.sh --no-shell-profile",
     }
     emit(payload, args.pretty)
     return 0 if payload["ok"] else 1

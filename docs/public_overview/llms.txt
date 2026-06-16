@@ -32,7 +32,7 @@ Product positioning (public-safe):
 
 Agent usage expectations:
 - Prefer exact CLI commands from /cli.html and /installation.html.
-- Start new machines, accounts, or agent surfaces with `contextlattice_adopt status --pretty`; use `contextlattice_adopt install`, `proof`, `export`, and `profile-template` before dropping into lower-level adapter commands.
+- Start new machines, accounts, or agent surfaces with `contextlattice_adopt status --pretty`; use `contextlattice_adopt install`, `profiles`, and `proof` before dropping into lower-level adapter commands.
 - Prefer universal adapter startup when local CLI tools are installed: `contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty`.
 - Use the same adapter session for recall, checkpoint, handoff, and completion: `contextlattice_agent_adapter context-pack|checkpoint|handoff|complete`.
 - Use `contextlattice_pack "<task>" --project <project> --pretty` or `POST /memory/context-pack` to compile ranked evidence, files, checks, risks, source coverage, and `reference_prompt` for the next model call.

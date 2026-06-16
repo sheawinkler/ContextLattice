@@ -9,17 +9,18 @@ GLOBAL_VENV_DIR="${GLOBAL_HOME}/venv-agent-tools"
 UPDATE_SHELL_PROFILE=1
 INSTALL_CODEX_HOOKS=0
 SKIP_VENV=0
+INCLUDE_DEV_PYTHON_TOOLS=0
 QUIET=0
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/install_global_agent_tools.sh [options]
 
-Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
+Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates:
+  contextlattice-agent-tools
   contextlattice_search
   contextlattice_pack
   contextlattice_write
-  contextlattice_agent_orchestration
   contextlattice_adopt
   contextlattice_doctor
   contextlattice_agent_adapter
@@ -32,20 +33,26 @@ Installs ContextLattice agent helper scripts to ~/.contextlattice and creates:
   contextlattice_strict_runtime_native_ownership
   contextlattice_context_boundary
   contextlattice_memory_topology
-  contextlattice_source_backfill
   contextlattice_skills_index
-  contextlattice_codex_session_store_doctor
   contextlattice_agent_start
   contextlattice_checkpoint
   contextlattice_*_guard wrappers
   contextlattice_pre_compaction_write
   contextlattice_post_compaction_read
 
+Optional development-only Python helpers are installed only with
+--include-dev-python-tools:
+  contextlattice_agent_orchestration
+  contextlattice_source_backfill
+  contextlattice_codex_session_store_doctor
+
 Options:
   --global-home <path>    Override installation root (default: ~/.contextlattice)
   --no-shell-profile      Do not modify shell startup files
   --install-codex-hooks   Install Codex SessionStart hooks into ~/.codex/hooks.json
-  --skip-venv             Skip Python venv/httpx setup (wrappers expect existing venv)
+  --include-dev-python-tools
+                         Also install development-only Python helper wrappers
+  --skip-venv             Skip Python venv/httpx setup for dev Python helpers
   --quiet                 Reduce output noise
   -h, --help              Show this help
 USAGE
@@ -78,6 +85,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_VENV=1
       shift
       ;;
+    --include-dev-python-tools)
+      INCLUDE_DEV_PYTHON_TOOLS=1
+      shift
+      ;;
     --quiet)
       QUIET=1
       shift
@@ -102,45 +113,25 @@ HOOK_ENV_FILE="${GLOBAL_HOME}/agent_hooks.env"
 
 upsert_hook_env_defaults() {
   mkdir -p "${GLOBAL_HOME}"
-  python3 - "$HOOK_ENV_FILE" "$ROOT_DIR" <<'PY'
-from __future__ import annotations
-
-from pathlib import Path
-import shlex
-import sys
-
-path = Path(sys.argv[1])
-repo_root = sys.argv[2]
-defaults = {
-    "CONTEXTLATTICE_REPO_ROOT": repo_root,
-    "CONTEXTLATTICE_ORCHESTRATOR_URL": "http://127.0.0.1:8075",
-    "MEMMCP_ORCHESTRATOR_URL": "http://127.0.0.1:8075",
-    "CONTEXTLATTICE_AGENT_ID": "codex_gpt5",
-    "MEMMCP_AGENT_ID": "codex_gpt5",
-}
-lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
-seen: set[str] = set()
-out: list[str] = []
-for line in lines:
-    stripped = line.strip()
-    key = ""
-    if stripped.startswith("export ") and "=" in stripped:
-        key = stripped[len("export ") :].split("=", 1)[0].strip()
-    elif "=" in stripped and not stripped.startswith("#"):
-        key = stripped.split("=", 1)[0].strip()
-    if key in defaults:
-        out.append(f"export {key}={shlex.quote(defaults[key])}")
-        seen.add(key)
-    else:
-        out.append(line)
-if not out:
-    out.append("# Local-only ContextLattice hook policy. Not part of any repo.")
-for key, value in defaults.items():
-    if key not in seen:
-        out.append(f"export {key}={shlex.quote(value)}")
-path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
-path.chmod(0o600)
-PY
+  local tmp="${HOOK_ENV_FILE}.tmp"
+  local existing=""
+  [[ -f "$HOOK_ENV_FILE" ]] && existing="$(cat "$HOOK_ENV_FILE")"
+  {
+    echo "# Local-only ContextLattice hook policy. Not part of any repo."
+    printf 'export CONTEXTLATTICE_REPO_ROOT=%q\n' "$ROOT_DIR"
+    printf 'export CONTEXTLATTICE_ORCHESTRATOR_URL=%q\n' "http://127.0.0.1:8075"
+    printf 'export MEMMCP_ORCHESTRATOR_URL=%q\n' "http://127.0.0.1:8075"
+    printf 'export CONTEXTLATTICE_AGENT_ID=%q\n' "codex_gpt5"
+    printf 'export MEMMCP_AGENT_ID=%q\n' "codex_gpt5"
+    if [[ -n "$existing" ]]; then
+      printf '%s\n' "$existing" | awk '
+        /^[[:space:]]*(export[[:space:]]+)?(CONTEXTLATTICE_REPO_ROOT|CONTEXTLATTICE_ORCHESTRATOR_URL|MEMMCP_ORCHESTRATOR_URL|CONTEXTLATTICE_AGENT_ID|MEMMCP_AGENT_ID)=/ { next }
+        { print }
+      '
+    fi
+  } > "$tmp"
+  mv "$tmp" "$HOOK_ENV_FILE"
+  chmod 0600 "$HOOK_ENV_FILE"
 }
 
 upsert_hook_env_defaults
@@ -156,11 +147,13 @@ copy_script() {
   chmod +x "$dst"
 }
 
-copy_script "${ROOT_DIR}/scripts/agent_orchestration.py" "${GLOBAL_SCRIPTS_DIR}/agent_orchestration.py"
-copy_script "${ROOT_DIR}/scripts/agent_contracts.py" "${GLOBAL_SCRIPTS_DIR}/agent_contracts.py"
-copy_script "${ROOT_DIR}/scripts/contextlattice_client.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_client.py"
-copy_script "${ROOT_DIR}/scripts/contextlattice_search.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_search.py"
-copy_script "${ROOT_DIR}/scripts/contextlattice_write.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_write.py"
+if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
+  copy_script "${ROOT_DIR}/scripts/agent_orchestration.py" "${GLOBAL_SCRIPTS_DIR}/agent_orchestration.py"
+  copy_script "${ROOT_DIR}/scripts/agent_contracts.py" "${GLOBAL_SCRIPTS_DIR}/agent_contracts.py"
+  copy_script "${ROOT_DIR}/scripts/contextlattice_client.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_client.py"
+  copy_script "${ROOT_DIR}/scripts/contextlattice_search.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_search.py"
+  copy_script "${ROOT_DIR}/scripts/contextlattice_write.py" "${GLOBAL_SCRIPTS_DIR}/contextlattice_write.py"
+fi
 rm -rf "${GLOBAL_SCRIPTS_DIR}/agent_hooks"
 mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent_hooks"
 for hook_script in "${ROOT_DIR}"/scripts/agent_hooks/*.sh; do
@@ -168,10 +161,12 @@ for hook_script in "${ROOT_DIR}"/scripts/agent_hooks/*.sh; do
 done
 rm -rf "${GLOBAL_SCRIPTS_DIR}/agent"
 mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent"
-for agent_script in "${ROOT_DIR}"/scripts/agent/*; do
-  [[ -f "$agent_script" ]] || continue
-  copy_script "$agent_script" "${GLOBAL_SCRIPTS_DIR}/agent/$(basename "$agent_script")"
-done
+if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
+  for agent_script in "${ROOT_DIR}"/scripts/agent/*; do
+    [[ -f "$agent_script" ]] || continue
+    copy_script "$agent_script" "${GLOBAL_SCRIPTS_DIR}/agent/$(basename "$agent_script")"
+  done
+fi
 for compat_config in "${ROOT_DIR}"/config/model_compat/*.json; do
   [[ -f "$compat_config" ]] || continue
   cp "$compat_config" "${GLOBAL_HOME}/config/model_compat/$(basename "$compat_config")"
@@ -188,7 +183,7 @@ for agent_config in "${ROOT_DIR}"/config/agents/*.json; do
   chmod 0644 "${GLOBAL_HOME}/config/agents/$(basename "$agent_config")"
 done
 
-if [[ "$SKIP_VENV" != "1" ]]; then
+if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" && "$SKIP_VENV" != "1" ]]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 is required to install global agent tools." >&2
     exit 1
@@ -201,6 +196,21 @@ if [[ "$SKIP_VENV" != "1" ]]; then
     "${GLOBAL_VENV_DIR}/bin/python" -m pip install --disable-pip-version-check --quiet "httpx>=0.27,<1.0"
   fi
 fi
+
+build_go_agent_tools() {
+  if ! command -v go >/dev/null 2>&1; then
+    echo "go is required to install Go-native ContextLattice agent tools." >&2
+    exit 1
+  fi
+  rm -f "${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
+  (cd "${ROOT_DIR}/services/gateway-go" && go build -o "${GLOBAL_BIN_DIR}/contextlattice-agent-tools" ./cmd/contextlattice-agent-tools)
+  chmod +x "${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
+}
+
+install_go_native_link() {
+  local command_name="$1"
+  ln -sf contextlattice-agent-tools "${GLOBAL_BIN_DIR}/${command_name}"
+}
 
 cat > "${GLOBAL_BIN_DIR}/contextlattice_search" <<'EOF'
 #!/usr/bin/env bash
@@ -470,6 +480,38 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
   "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 
+build_go_agent_tools
+
+GO_NATIVE_COMMANDS=(
+  contextlattice_search
+  contextlattice_pack
+  contextlattice_write
+  contextlattice_adopt
+  contextlattice_doctor
+  contextlattice_agent_adapter
+  contextlattice_agent_session
+  contextlattice_agent_trace
+  contextlattice_run_advisor
+  contextlattice_agent_runtime_proof
+  contextlattice_agent_adoption_proof
+  contextlattice_agent_runtime_doctor
+  contextlattice_strict_runtime_native_ownership
+  contextlattice_context_boundary
+  contextlattice_memory_topology
+  contextlattice_skills_index
+)
+
+for command_name in "${GO_NATIVE_COMMANDS[@]}"; do
+  install_go_native_link "$command_name"
+done
+
+if [[ "$INCLUDE_DEV_PYTHON_TOOLS" != "1" ]]; then
+  rm -f \
+    "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
+    "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
+    "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
+fi
+
 write_hook_wrapper() {
   local command_name="$1"
   local script_name="$2"
@@ -648,10 +690,10 @@ PY
 fi
 
 log "Installed global ContextLattice tools:"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
-log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
@@ -664,13 +706,16 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_strict_runtime_native_ownership"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_context_boundary"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_memory_topology"
-log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skills_index"
-log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pre_compaction_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_post_compaction_read"
+if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
+  log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
+  log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
+  log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
+fi
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
@@ -688,6 +733,8 @@ log "  contextlattice_agent_session runtime --pretty"
 log "  contextlattice_agent_trace --session-id <session-id> --tree"
 log "  contextlattice_run_advisor 'current task context' --pretty"
 log "  contextlattice_memory_topology --pretty"
-log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
+if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
+  log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
+fi
 log "  contextlattice_agent_start -h"

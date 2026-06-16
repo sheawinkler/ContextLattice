@@ -34,7 +34,6 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 - Global helper CLIs (auto-installed by quickstart/installers):
   - `contextlattice_agent_start` (hook-first startup guard)
-  - `contextlattice_agent_orchestration` (preflight/task helpers)
   - `contextlattice_agent_adapter` (profile bootstrap, context-pack, checkpoint, handoff)
   - `contextlattice_agent_session` (runtime, rollup, context-package, completion)
   - `contextlattice_search` (lifecycle-aware search helper)
@@ -60,8 +59,8 @@ contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 - Preserve `format_contract`, `format_contracts`, and `policy_context_package` fields returned by ContextLattice in downstream handoffs; do not invent or strip contract metadata.
 - When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
 - Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
-- Before any context-compaction handoff, persist and read back objective state:
-  - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
+- Before any context-compaction handoff, persist objective state through the adapter:
+  - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`
 - Before a major model handoff or hard follow-up prompt, package the session:
   - `contextlattice_agent_session rollup --session-id <session_id> --pretty`
   - `contextlattice_agent_session context-package --session-id <session_id> --pretty`

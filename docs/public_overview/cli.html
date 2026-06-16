@@ -95,14 +95,12 @@ contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
 contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty
-contextlattice_adopt export --dry-run --pretty
 contextlattice_agent_adapter profiles
 contextlattice_agent_session runtime --pretty
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
 contextlattice_run_advisor "what should this agent know before solving the task?" --pretty
 contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
-contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty

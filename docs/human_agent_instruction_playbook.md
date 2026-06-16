@@ -51,8 +51,8 @@ Supported profiles:
 4. During execution: `POST /memory/write` checkpoints.
 5. Prefer scripted checkpoint+readback:
    - `contextlattice_checkpoint --project contextlattice --topic-path runbooks/codex-integration --file notes/<agent>/checkpoint.md --stdin`
-6. Before context compaction/summarization: run compaction handoff write+readback:
-   - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
+6. Before context compaction/summarization: persist handoff state through the adapter:
+   - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`
 7. Before final output: one recency retrieval (`/memory/search` or `/memory/context-pack`).
 8. For graph relationships: `POST /v1/memory/neighbors`.
 9. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`) or alias `GET|POST /v1/skills/index/search`.

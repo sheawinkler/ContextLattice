@@ -32,8 +32,8 @@ Use this as a reusable skill block for agent frameworks that support skills or t
    - CLI equivalent: `contextlattice_skills_index search "<task or tool need>" --pretty`
 7. Submit explicit retrieval feedback for learning/rerank:
    - `POST /tools/feedback_submit` (include `idempotencyKey`)
-8. Before context compaction/summarization, persist objective continuity and read it back:
-   - `contextlattice_agent_orchestration compaction-handoff contextlattice "<objective summary>" runbooks/context-compaction-handoff balanced`
+8. Before context compaction/summarization, persist objective continuity through the adapter:
+   - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`
 9. Before completion, run one recency retrieval pass:
    - `POST /memory/search` or `POST /memory/context-pack`
 10. Set caller timeout to match retrieval mode:

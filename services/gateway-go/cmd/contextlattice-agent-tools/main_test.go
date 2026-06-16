@@ -1,0 +1,252 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestParseArgsAllowsFlagsAfterPositionalQuery(t *testing.T) {
+	parsed := parseArgs(
+		[]string{"release readiness", "--project", "contextlattice", "--mode=fast", "-l", "7", "--pretty"},
+		mergeStringFlags(commonStringFlags(), map[string]string{"limit": "limit", "l": "limit"}),
+		commonBoolFlags(),
+	)
+	if got := parsed.string("project", ""); got != "contextlattice" {
+		t.Fatalf("project=%q", got)
+	}
+	if got := parsed.string("mode", ""); got != "fast" {
+		t.Fatalf("mode=%q", got)
+	}
+	if got := parsed.int("limit", 0); got != 7 {
+		t.Fatalf("limit=%d", got)
+	}
+	if !parsed.bool("pretty") {
+		t.Fatalf("expected pretty flag")
+	}
+	if len(parsed.pos) != 1 || parsed.pos[0] != "release readiness" {
+		t.Fatalf("unexpected positional args: %#v", parsed.pos)
+	}
+}
+
+func TestSearchCommandUsesGoNativeHTTPPayload(t *testing.T) {
+	var captured map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memory/search" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"results": []map[string]any{
+				{"text": "result"},
+			},
+			"retrieval_lifecycle": map[string]any{"status": "succeeded"},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_search", "native cli", "--project", "alpha", "--mode", "fast", "--limit", "3", "--raw"}); err != nil {
+		t.Fatalf("run search: %v", err)
+	}
+	if captured["query"] != "native cli" || captured["project"] != "alpha" || captured["retrieval_mode"] != "fast" {
+		t.Fatalf("unexpected search payload: %#v", captured)
+	}
+	if int(captured["limit"].(float64)) != 3 {
+		t.Fatalf("unexpected limit payload: %#v", captured)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["ok"] != true {
+		t.Fatalf("expected ok output: %#v", output)
+	}
+}
+
+func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
+	var packPayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/sessions/start":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-test"}})
+		case "/memory/context-pack":
+			if err := json.NewDecoder(r.Body).Decode(&packPayload); err != nil {
+				t.Fatalf("decode pack request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"context_pack": map[string]any{
+					"facts": []any{},
+				},
+				"format_contract": map[string]any{
+					"schema_id":         "context_pack_response.v1",
+					"contract_valid":    true,
+					"actual_json_bytes": 512,
+					"validation":        map[string]any{"status": "passed"},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", "native pack", "--project", "alpha", "--mode", "fast", "--raw"}); err != nil {
+		t.Fatalf("run pack: %v", err)
+	}
+	if packPayload["native_cli_implementation"] != true {
+		t.Fatalf("expected native_cli_implementation marker: %#v", packPayload)
+	}
+	if packPayload["session_id"] != "sess-test" {
+		t.Fatalf("expected session id from auto session: %#v", packPayload)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["ok"] != true {
+		t.Fatalf("expected ok output: %#v", output)
+	}
+}
+
+func TestSkillsIndexCommandUsesNativeEndpoint(t *testing.T) {
+	var captured map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tools/skills_index_search" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode skills request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"returned": 1,
+			"results":  []map[string]any{{"name": "playwright", "source": "active"}},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_skills_index", "search", "browser automation", "--limit", "4"}); err != nil {
+		t.Fatalf("run skills index: %v", err)
+	}
+	if captured["query"] != "browser automation" || int(captured["limit"].(float64)) != 4 || captured["json"] != true {
+		t.Fatalf("unexpected skills payload: %#v", captured)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["returned"] != float64(1) {
+		t.Fatalf("expected returned count: %#v", output)
+	}
+}
+
+func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/preflight" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":             true,
+			"agent":          "codex",
+			"agent_id":       "codex_gpt5",
+			"project":        "alpha",
+			"query":          "bootstrap smoke",
+			"retrieval_mode": "fast",
+			"session_id":     "sess-bootstrap",
+			"agent_profile":  map[string]any{"large": strings.Repeat("x", 1000)},
+			"objective_runtime": map[string]any{
+				"objective_state": "active",
+				"next_action":     "continue",
+				"format_contract": map[string]any{"validation": map[string]any{"status": "passed"}},
+			},
+			"policy_context_package": map[string]any{
+				"format_contract": map[string]any{"validation": map[string]any{"status": "passed"}},
+			},
+			"skills_index": map[string]any{
+				"ok":       true,
+				"returned": 1,
+				"results":  []map[string]any{{"name": "research", "source": "active", "path": "/skills/research/SKILL.md", "score": 9}},
+			},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_agent_adapter", "bootstrap", "--agent", "codex", "--project", "alpha", "--query", "bootstrap smoke", "--mode", "fast"}); err != nil {
+		t.Fatalf("run adapter bootstrap: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["ok"] != true || output["session_id"] != "sess-bootstrap" {
+		t.Fatalf("unexpected bootstrap output: %#v", output)
+	}
+	preflight := output["result"].(map[string]any)["preflight"].(map[string]any)
+	if preflight["raw_omitted"] != true {
+		t.Fatalf("expected compact preflight output: %#v", preflight)
+	}
+	if _, ok := preflight["agent_profile"]; ok {
+		t.Fatalf("compact preflight leaked raw agent profile: %#v", preflight)
+	}
+}
+
+func TestTraceCommandRendersTree(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/sessions/sess-trace/trace" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":        true,
+			"schema_id": "agent_run_trace.v1",
+			"session": map[string]any{
+				"id":          "sess-trace",
+				"agent":       "codex",
+				"status":      "active",
+				"objective":   "trace smoke",
+				"next_action": "continue",
+			},
+			"format_contract": map[string]any{"validation": map[string]any{"status": "passed"}},
+			"run_shaping": map[string]any{
+				"context": map[string]any{"validation": "passed", "prompt_ready": true, "reference_prompt_chars": 120},
+				"skills":  map[string]any{"items": []any{}},
+				"sources": map[string]any{"returned_sources": []any{"qdrant"}},
+			},
+			"timeline": []map[string]any{{"phase": "context", "type": "context_pack.completed", "status": "completed", "summary": "packed"}},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_agent_trace", "--session-id", "sess-trace", "--tree"}); err != nil {
+		t.Fatalf("run trace: %v", err)
+	}
+	rendered := stdout.String()
+	if !strings.Contains(rendered, "ContextLattice Run Trace") || !strings.Contains(rendered, "sess-trace") {
+		t.Fatalf("unexpected trace render:\n%s", rendered)
+	}
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }

@@ -58,8 +58,7 @@ contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 # discover capabilities without bloating the prompt
 contextlattice_skills_index search "browser automation" --pretty
 
-# legacy direct helpers remain available
-contextlattice_agent_orchestration preflight contextlattice runbooks/codex-integration
+# direct helpers remain available
 contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h
