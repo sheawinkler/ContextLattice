@@ -132,16 +132,17 @@ contextlattice_pack "what should the next agent know?" --project my-project --pr
 contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h
-contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty
+contextlattice_skills_index search "browser automation" --pretty
 ```
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
-- `contextlattice_adopt` is the zero-friction front door for local readiness, install repair, lifecycle proof, no-secrets agent packs, and new agent profile templates; `contextlattice_doctor` combines readiness, proof, and trace evidence in one bounded report.
+- `contextlattice_adopt` is the zero-friction front door for local readiness, install guidance, profiles, and lifecycle proof; `contextlattice_doctor` combines readiness, proof, and trace evidence in one bounded report.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_agent_trace` renders the bounded run-shaping trail as a terminal tree, JSON, or Markdown run card.
 - `contextlattice_pack` compiles a bounded prompt-ready packet with ranked evidence, files to inspect, risks, checks, source coverage, and a `reference_prompt`.
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
-- `contextlattice_source_backfill` imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.
+- `contextlattice_skills_index` discovers capabilities without loading every skill into startup context.
+- `contextlattice_source_backfill` is an optional development helper, installed with `scripts/install_global_agent_tools.sh --include-dev-python-tools`, for bounded data imports.
 - Hook pack details: `docs/agent-hooks.md`.
 
 ## Agent Runtime Sessions

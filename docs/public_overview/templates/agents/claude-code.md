@@ -21,9 +21,6 @@ contextlattice_agent_adapter context-pack --agent claude-code --project contextl
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_skills_index search "repo conventions testing release" --pretty
-
-# Compatibility wrapper:
-contextlattice_agent_orchestration preflight-agent claude-code contextlattice
 ```
 
 Behavior contract:

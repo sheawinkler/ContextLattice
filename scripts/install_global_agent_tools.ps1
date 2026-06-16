@@ -1,6 +1,7 @@
 Param(
     [string]$GlobalHome = "$env:USERPROFILE\.contextlattice",
-    [switch]$SkipVenv
+    [switch]$SkipVenv,
+    [switch]$IncludeDevPythonTools
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,24 +35,26 @@ $hookEnvLines = @(
 )
 Set-Content -Path $HookEnvFile -Value $hookEnvLines -Encoding Ascii
 
-$sourceScripts = @(
-    "agent_orchestration.py",
-    "agent_contracts.py",
-    "contextlattice_client.py",
-    "contextlattice_search.py",
-    "contextlattice_write.py"
-)
+if ($IncludeDevPythonTools.IsPresent) {
+    $sourceScripts = @(
+        "agent_orchestration.py",
+        "agent_contracts.py",
+        "contextlattice_client.py",
+        "contextlattice_search.py",
+        "contextlattice_write.py"
+    )
 
-foreach ($name in $sourceScripts) {
-    $src = Join-Path $RepoRoot "scripts\$name"
-    if (-not (Test-Path $src)) {
-        throw "Missing required source script: $src"
+    foreach ($name in $sourceScripts) {
+        $src = Join-Path $RepoRoot "scripts\$name"
+        if (-not (Test-Path $src)) {
+            throw "Missing required source script: $src"
+        }
+        Copy-Item -Path $src -Destination (Join-Path $ScriptsDir $name) -Force
     }
-    Copy-Item -Path $src -Destination (Join-Path $ScriptsDir $name) -Force
-}
 
-Get-ChildItem -Path (Join-Path $RepoRoot "scripts\agent") -File | ForEach-Object {
-    Copy-Item -Path $_.FullName -Destination (Join-Path $AgentScriptsDir $_.Name) -Force
+    Get-ChildItem -Path (Join-Path $RepoRoot "scripts\agent") -File | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination (Join-Path $AgentScriptsDir $_.Name) -Force
+    }
 }
 
 Get-ChildItem -Path (Join-Path $RepoRoot "config\agent_contracts") -Filter "*.json" -File | ForEach-Object {
@@ -64,7 +67,7 @@ Get-ChildItem -Path (Join-Path $RepoRoot "config\model_compat") -Filter "*.json"
     Copy-Item -Path $_.FullName -Destination (Join-Path $GlobalHome "config\model_compat\$($_.Name)") -Force
 }
 
-if (-not $SkipVenv.IsPresent) {
+if ($IncludeDevPythonTools.IsPresent -and -not $SkipVenv.IsPresent) {
     $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
     if ($null -eq $pythonCmd) {
         $pythonCmd = Get-Command py -ErrorAction SilentlyContinue
@@ -82,6 +85,21 @@ if (-not $SkipVenv.IsPresent) {
     }
     & $VenvPython -m pip install --disable-pip-version-check --quiet --upgrade pip
     & $VenvPython -m pip install --disable-pip-version-check --quiet "httpx>=0.27,<1.0"
+}
+
+$GoCmd = Get-Command go -ErrorAction SilentlyContinue
+if ($null -eq $GoCmd) {
+    throw "go is required to install Go-native ContextLattice agent tools."
+}
+$GoTool = Join-Path $BinDir "contextlattice-agent-tools.exe"
+if (Test-Path $GoTool) {
+    Remove-Item $GoTool -Force
+}
+Push-Location (Join-Path $RepoRoot "services\gateway-go")
+try {
+    & go build -o $GoTool .\cmd\contextlattice-agent-tools
+} finally {
+    Pop-Location
 }
 
 $searchCmd = @"
@@ -337,6 +355,57 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_source_backfill.cmd") -Valu
 Set-Content -Path (Join-Path $BinDir "contextlattice_skills_index.cmd") -Value $skillsIndexCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_codex_session_store_doctor.cmd") -Value $codexSessionStoreDoctorCmd -Encoding Ascii
 
+function Write-GoNativeCmd {
+    param([string]$Name)
+    $cmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set GO_TOOL=%TOOL_HOME%\bin\contextlattice-agent-tools.exe
+if not exist "%GO_TOOL%" (
+  echo Missing %GO_TOOL%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%GO_TOOL%" %*
+"@
+    Set-Content -Path (Join-Path $BinDir "$Name.cmd") -Value $cmd -Encoding Ascii
+}
+
+$goNativeCommands = @(
+    "contextlattice_search",
+    "contextlattice_pack",
+    "contextlattice_write",
+    "contextlattice_adopt",
+    "contextlattice_doctor",
+    "contextlattice_agent_adapter",
+    "contextlattice_agent_session",
+    "contextlattice_agent_trace",
+    "contextlattice_run_advisor",
+    "contextlattice_agent_runtime_proof",
+    "contextlattice_agent_adoption_proof",
+    "contextlattice_agent_runtime_doctor",
+    "contextlattice_strict_runtime_native_ownership",
+    "contextlattice_context_boundary",
+    "contextlattice_memory_topology",
+    "contextlattice_skills_index"
+)
+foreach ($name in $goNativeCommands) {
+    Write-GoNativeCmd $name
+}
+
+if (-not $IncludeDevPythonTools.IsPresent) {
+    foreach ($name in @(
+        "contextlattice_agent_orchestration",
+        "contextlattice_source_backfill",
+        "contextlattice_codex_session_store_doctor"
+    )) {
+        $path = Join-Path $BinDir "$name.cmd"
+        if (Test-Path $path) {
+            Remove-Item $path -Force
+        }
+    }
+}
+
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($null -eq $userPath) { $userPath = "" }
 $normalizedBin = $BinDir.ToLowerInvariant()
@@ -370,6 +439,8 @@ Write-Host "  contextlattice_agent_trace --session-id <session-id> --tree"
 Write-Host "  contextlattice_run_advisor --session-id <session-id> --pretty"
 Write-Host "  contextlattice_memory_topology --pretty"
 Write-Host "  contextlattice_agent_runtime_doctor --pretty"
-Write-Host "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
 Write-Host "  contextlattice_skills_index search agent --pretty"
-Write-Host "  contextlattice_codex_session_store_doctor --pretty"
+if ($IncludeDevPythonTools.IsPresent) {
+    Write-Host "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
+    Write-Host "  contextlattice_codex_session_store_doctor --pretty"
+}

@@ -44,17 +44,17 @@ Installed commands:
 | --- | --- |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
-| `contextlattice_agent_session` | Session lifecycle, rollup, context-package, runtime, and cleanup CLI. |
+| `contextlattice_agent_session` | Session lifecycle, rollup, context-package, trace, runtime, and cleanup CLI. |
 | `contextlattice_agent_trace` | Contract-valid run trace and exportable run card showing which context, skills that may be helpful, sources, graph touches, handoffs, and checkpoints shaped a session. |
-| `contextlattice_adopt` | Zero-friction adoption front door for status, install repair, lifecycle proof, portable no-secrets agent packs, profile templates, and CI-style adoption scenarios. |
+| `contextlattice_adopt` | Zero-friction adoption front door for status, install guidance, proof, profiles, and CI-style adoption scenarios. |
 | `contextlattice_doctor` | One-command adoption proof for local readiness, lifecycle proof, and trace-visible run shaping evidence. |
 | `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry work end to end. |
 | `contextlattice_agent_adoption_proof` | Matrix proof that configured agent profiles can use the same memory lifecycle and expose skills/context/session/graph/handoff evidence. |
 | `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
-| `contextlattice_memory_topology` | Validates the base memory path, richer backend fabric, partition keys, retrieval clusters, and graph telemetry. |
-| `contextlattice_source_backfill` | Bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres into `/memory/write`, with optional graph edge repair. |
-| `contextlattice_skills_index` | Searches active local skills without loading every skill file into startup context. |
-| `contextlattice_codex_session_store_doctor` | Checks Codex transcript storage for symlink, external-volume, cloud-folder, TCC, and read/write traps. |
+| `contextlattice_memory_topology` | Memory topology audit for base/default lanes, full backend fabric, partition keys, clusters, and graph health. |
+| `contextlattice_skills_index` | Skills Index search CLI for discovering capabilities without bloating startup context. |
+| `contextlattice_source_backfill` | Optional development helper, installed with `--include-dev-python-tools`, for bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres. |
+| `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
 | `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |
@@ -191,10 +191,11 @@ Run the doctor when Codex resume looks like transcript corruption or when a
 machine uses external session storage:
 
 ```bash
-contextlattice_codex_session_store_doctor --pretty
+contextlattice_agent_runtime_doctor --pretty
 ```
 
-The doctor resolves `~/.codex/sessions`, checks read/write/traverse access,
+The optional `contextlattice_codex_session_store_doctor` helper is installed with
+`scripts/install_global_agent_tools.sh --include-dev-python-tools`. It resolves `~/.codex/sessions`, checks read/write/traverse access,
 warns when the real path crosses `/Volumes/*` or a cloud/TCC-managed folder,
 samples transcript readability, and prints the exact failing path with a
 suggested fix. Warnings do not fail the aggregate agent context audit; hard
