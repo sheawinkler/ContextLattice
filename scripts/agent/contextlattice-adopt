@@ -85,6 +85,7 @@ INSTALLER_PS1 = REPO_ROOT / "scripts" / "install_global_agent_tools.ps1"
 ADAPTER = AGENT_DIR / "contextlattice-agent-adapter"
 DOCTOR = AGENT_DIR / "audit-agent-runtime-install"
 SESSION_STORE_DOCTOR = AGENT_DIR / "audit-codex-session-store"
+NATIVE_OWNERSHIP_DOCTOR = AGENT_DIR / "audit-strict-runtime-native-ownership"
 RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
 ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
 TRACE = AGENT_DIR / "agent-run-trace"
@@ -126,6 +127,7 @@ GLOBAL_TOOL_NAMES = [
     "contextlattice_agent_runtime_proof",
     "contextlattice_agent_adoption_proof",
     "contextlattice_agent_runtime_doctor",
+    "contextlattice_strict_runtime_native_ownership",
     "contextlattice_agent_session",
     "contextlattice_agent_trace",
     "contextlattice_run_advisor",
@@ -409,6 +411,14 @@ def session_store_check(home: Path, timeout: float) -> dict[str, Any]:
     return {"ok": result.get("ok"), "path": str(path), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
 
 
+def native_ownership_check(timeout: float) -> dict[str, Any]:
+    if not NATIVE_OWNERSHIP_DOCTOR.exists():
+        return {"ok": False, "error": "native ownership audit script missing"}
+    result = run_command([str(NATIVE_OWNERSHIP_DOCTOR), "--timeout", str(timeout)], timeout + 10)
+    payload = as_dict(result.get("json"))
+    return {"ok": result.get("ok"), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
+
+
 def build_status(args: argparse.Namespace) -> dict[str, Any]:
     home = Path(args.home).expanduser()
     global_home = Path(args.global_home).expanduser()
@@ -418,6 +428,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     gateway = gateway_check(args.timeout)
     doctor = doctor_check(global_home, args.timeout) if args.include_doctor else {"skipped": True}
     session_store = session_store_check(home, args.timeout) if args.include_session_store else {"skipped": True}
+    native_ownership = native_ownership_check(args.timeout) if getattr(args, "include_native_ownership", True) else {"skipped": True}
     profiles = detect_agents(home)
     required_tools_ok = all(item.get("installed") and item.get("executable") for item in tools if item["name"] not in FRONT_DOOR_TOOL_NAMES)
     warnings = []
@@ -432,6 +443,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         failures.append({"reason": "storage_access_failed"})
     if doctor.get("ok") is False:
         failures.append({"reason": "runtime_doctor_failed"})
+    if native_ownership.get("ok") is False:
+        failures.append({"reason": "native_ownership_failed", "detail": as_list(as_dict(native_ownership.get("payload")).get("findings"))[:8]})
     repair_args = argparse.Namespace(
         install_codex_hooks=True,
         no_codex_hooks=False,
@@ -458,6 +471,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "shell": shell,
         "doctor": doctor,
         "session_store": session_store,
+        "native_ownership": native_ownership,
         "warnings": warnings,
         "failures": failures,
         "repair_command": " ".join(compact_command(install_argv(global_home, repair_args))),
@@ -484,6 +498,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         include_doctor=True,
         include_session_store=True,
+        include_native_ownership=True,
         pretty=False,
     )
     status = build_status(status_args) if not args.dry_run else {"skipped": True, "reason": "dry_run"}
@@ -561,6 +576,8 @@ def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
     tools = as_list(status.get("tools"))
     missing_tools = [item.get("name") for item in tools if isinstance(item, dict) and not (item.get("installed") and item.get("executable"))]
     storage = as_list(status.get("storage"))
+    native_ownership = as_dict(status.get("native_ownership"))
+    native_payload = as_dict(native_ownership.get("payload"))
     return {
         "ok": bool(status.get("ok")),
         "gateway": status.get("gateway"),
@@ -582,6 +599,17 @@ def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
         ],
         "doctor_ok": as_dict(status.get("doctor")).get("ok", as_dict(status.get("doctor")).get("skipped")),
         "session_store_ok": as_dict(status.get("session_store")).get("ok", as_dict(status.get("session_store")).get("skipped")),
+        "native_ownership": {
+            "ok": native_ownership.get("ok", native_ownership.get("skipped")),
+            "status": native_payload.get("status"),
+            "routeOwnerClass": native_payload.get("routeOwnerClass"),
+            "requiredRouteCount": native_payload.get("requiredRouteCount"),
+            "nativeRouteCount": native_payload.get("nativeRouteCount"),
+            "violationCount": native_payload.get("violationCount"),
+            "pythonHotPathFallbacks": as_int(as_dict(native_payload.get("pythonHotPathOwnership")).get("fallbacks")),
+            "findings": as_list(native_payload.get("findings"))[:8],
+            "command": native_ownership.get("command"),
+        },
         "failures": status.get("failures", [])[:12],
         "repair_command": status.get("repair_command", ""),
     }
@@ -735,6 +763,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         include_doctor=args.include_runtime_doctor,
         include_session_store=args.include_session_store,
+        include_native_ownership=args.include_native_ownership,
         pretty=False,
     )
     status = build_status(status_args)
@@ -759,6 +788,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         repair_commands.append(" ".join(compact_command(proof_argv(args))))
     if trace_findings and first_session:
         repair_commands.append(f"contextlattice_agent_trace --session-id {first_session} --json --pretty")
+    if as_dict(status_summary.get("native_ownership")).get("ok") is False:
+        repair_commands.append("contextlattice_strict_runtime_native_ownership --pretty")
     payload = {
         "ok": ok,
         "schema_id": ADOPT_DOCTOR_SCHEMA,
@@ -772,6 +803,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "repair_commands": repair_commands,
         "next_commands": [
             "contextlattice_adopt status --pretty",
+            "contextlattice_strict_runtime_native_ownership --pretty",
             " ".join(compact_command(proof_argv(args))),
             f"contextlattice_agent_trace --session-id {first_session} --tree" if first_session else "contextlattice_agent_trace --session-id <session_id> --tree",
             "contextlattice_skills_index search '<task>' --pretty",
@@ -992,14 +1024,30 @@ def cmd_matrix(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     for scenario in scenarios:
         if scenario == "current-home":
-            status_args = argparse.Namespace(home=args.home, global_home=args.global_home, timeout=args.timeout, include_doctor=True, include_session_store=True, pretty=False)
+            status_args = argparse.Namespace(
+                home=args.home,
+                global_home=args.global_home,
+                timeout=args.timeout,
+                include_doctor=True,
+                include_session_store=True,
+                include_native_ownership=True,
+                pretty=False,
+            )
             status = build_status(status_args) if args.execute else {"planned": True, "command": "contextlattice_adopt status --pretty"}
             rows.append({"scenario": scenario, "ok": status.get("ok", True) is not False, "status": status})
         elif scenario == "fresh-home":
             with tempfile.TemporaryDirectory(prefix="contextlattice-adopt-home-") as tmp:
                 gh = str(Path(tmp) / ".contextlattice")
                 if args.execute:
-                    status_args = argparse.Namespace(home=tmp, global_home=gh, timeout=args.timeout, include_doctor=False, include_session_store=False, pretty=False)
+                    status_args = argparse.Namespace(
+                        home=tmp,
+                        global_home=gh,
+                        timeout=args.timeout,
+                        include_doctor=False,
+                        include_session_store=False,
+                        include_native_ownership=True,
+                        pretty=False,
+                    )
                     status = build_status(status_args)
                 else:
                     status = {"planned": True, "home": tmp, "global_home": gh, "expected": "missing tools, gateway check only"}
@@ -1031,6 +1079,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(status)
     status.add_argument("--include-doctor", action=argparse.BooleanOptionalAction, default=True)
     status.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
+    status.add_argument("--include-native-ownership", action=argparse.BooleanOptionalAction, default=True)
     status.set_defaults(func=cmd_status)
 
     install = sub.add_parser("install", help="Install global tools, optional hooks, then run adoption status.")
@@ -1072,6 +1121,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--trace-timeout", type=float, default=20)
     doctor.add_argument("--include-runtime-doctor", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--include-native-ownership", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-raw", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
