@@ -131,6 +131,7 @@ func (s *server) capabilityMapPayload() map[string]any {
 		},
 		"tools": map[string]any{
 			"dream":                     true,
+			"review":                    true,
 			"memory_write_batch":        true,
 			"ops_queue_status":          true,
 			"feedback_submit":           true,

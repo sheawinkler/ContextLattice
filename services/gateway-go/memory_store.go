@@ -26,6 +26,7 @@ type memoryStorePolicy struct {
 	rootPath                   string
 	historyPath                string
 	edgePath                   string
+	agentEdgePath              string
 	contentAddressed           bool
 	contentBlobsPath           string
 	contentLinkMode            string
@@ -33,8 +34,10 @@ type memoryStorePolicy struct {
 	historyStartupMaxLines     int
 	historyStartupTailMaxBytes int64
 	edgeStartupMaxLines        int
+	agentEdgeStartupMaxLines   int
 	maxRecent                  int
 	maxEdges                   int
+	maxAgentEdges              int
 	maxEdgeNeighbors           int
 	graphExcludeLowValue       bool
 	graphExcludeTopicPrefixes  []string
@@ -60,6 +63,8 @@ type memoryStoreEntry struct {
 	Summary     string   `json:"summary,omitempty"`
 	ContentHash string   `json:"content_hash,omitempty"`
 	ContentRef  string   `json:"content_ref,omitempty"`
+	Lifecycle   string   `json:"lifecycle,omitempty"`
+	DiffState   string   `json:"diff_state,omitempty"`
 	CreatedAt   string   `json:"created_at"`
 	RawBytes    int      `json:"raw_bytes,omitempty"`
 	Source      string   `json:"source,omitempty"`
@@ -70,7 +75,10 @@ type memoryStoreDoc struct {
 	FileName  string
 	TopicPath string
 	Summary   string
+	AgentID   string
+	SessionID string
 	UpdatedAt time.Time
+	RawBytes  int
 }
 
 type topicRollupAggregate struct {
@@ -79,11 +87,24 @@ type topicRollupAggregate struct {
 	depth          int
 	eventCount     int
 	recentCount    int
+	writeCount     int
 	uniqueFiles    map[string]struct{}
+	uniqueAgents   map[string]struct{}
+	uniqueSessions map[string]struct{}
+	rawBytes       int
 	latestAt       time.Time
 	summarySnips   []string
 	children       map[string]struct{}
 	filePartitions []map[string]any
+}
+
+type topicRollupSignal struct {
+	writeCount     int
+	recentCount    int
+	rawBytes       int
+	latestAt       time.Time
+	uniqueAgents   map[string]struct{}
+	uniqueSessions map[string]struct{}
 }
 
 type memoryStore struct {
@@ -98,6 +119,8 @@ type memoryStore struct {
 	edgeOrdinal     map[string]int64
 	nextEdgeOrdinal int64
 	edgeAdjacency   map[string]map[string]struct{}
+	agentEdges      map[string]AgentEventEdge
+	agentEdgeOrder  []string
 }
 
 type topicRollupCacheEntry struct {
@@ -124,6 +147,10 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	if edgePath == "" {
 		edgePath = filepath.Join(root, "_contextlattice", "memory_edges.ndjson")
 	}
+	agentEdgePath := strings.TrimSpace(os.Getenv("GO_MEMORY_AGENT_EDGE_PATH"))
+	if agentEdgePath == "" {
+		agentEdgePath = filepath.Join(root, "_contextlattice", "memory_agent_event_edges.ndjson")
+	}
 	contentBlobsPath := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH"))
 	if contentBlobsPath == "" {
 		contentBlobsPath = filepath.Join(root, "_contextlattice", "content_blobs")
@@ -149,11 +176,16 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	if edgeStartupMaxLines < 0 {
 		edgeStartupMaxLines = 0
 	}
+	agentEdgeStartupMaxLines := envInt("GO_MEMORY_AGENT_EDGE_STARTUP_MAX_LINES", 50000)
+	if agentEdgeStartupMaxLines < 0 {
+		agentEdgeStartupMaxLines = 0
+	}
 	return memoryStorePolicy{
 		enabled:                    envBool("GO_MEMORY_STORE_ENABLED", true),
 		rootPath:                   root,
 		historyPath:                filepath.Clean(historyPath),
 		edgePath:                   filepath.Clean(edgePath),
+		agentEdgePath:              filepath.Clean(agentEdgePath),
 		contentAddressed:           envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
 		contentBlobsPath:           filepath.Clean(contentBlobsPath),
 		contentLinkMode:            contentLinkMode,
@@ -161,8 +193,10 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		historyStartupMaxLines:     historyStartupMaxLines,
 		historyStartupTailMaxBytes: historyStartupTailMaxBytes,
 		edgeStartupMaxLines:        edgeStartupMaxLines,
+		agentEdgeStartupMaxLines:   agentEdgeStartupMaxLines,
 		maxRecent:                  clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
 		maxEdges:                   clampInt(envInt("GO_MEMORY_GRAPH_EDGE_MAX", 100000), 100, 1000000),
+		maxAgentEdges:              clampInt(envInt("GO_MEMORY_AGENT_EDGE_MAX", 100000), 100, 1000000),
 		maxEdgeNeighbors:           clampInt(envInt("GO_MEMORY_GRAPH_EDGE_NEIGHBOR_MAX", 200), 1, 1000),
 		graphExcludeLowValue:       envBool("GO_MEMORY_GRAPH_EXCLUDE_LOW_VALUE", true),
 		graphExcludeTopicPrefixes:  memoryGraphCSVEnvWithFallback("GO_MEMORY_GRAPH_EXCLUDE_TOPIC_PREFIXES", "LOW_VALUE_TOPIC_PREFIXES", "telemetry,metrics,signals,overrides,perf,tmp,state,states,snapshots,health,stats,allocations,system_state,logs,log,debug,trace,queue"),
@@ -189,15 +223,17 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 func newMemoryStoreFromEnv() (*memoryStore, error) {
 	policy := loadMemoryStorePolicy()
 	store := &memoryStore{
-		policy:        policy,
-		recent:        make([]memoryStoreEntry, 0, policy.maxRecent),
-		latestTopic:   map[string]string{},
-		latestHash:    map[string]string{},
-		rollupCache:   map[string]topicRollupCacheEntry{},
-		edges:         map[string]memoryEdgeEntry{},
-		edgeOrder:     []string{},
-		edgeOrdinal:   map[string]int64{},
-		edgeAdjacency: map[string]map[string]struct{}{},
+		policy:         policy,
+		recent:         make([]memoryStoreEntry, 0, policy.maxRecent),
+		latestTopic:    map[string]string{},
+		latestHash:     map[string]string{},
+		rollupCache:    map[string]topicRollupCacheEntry{},
+		edges:          map[string]memoryEdgeEntry{},
+		edgeOrder:      []string{},
+		edgeOrdinal:    map[string]int64{},
+		edgeAdjacency:  map[string]map[string]struct{}{},
+		agentEdges:     map[string]AgentEventEdge{},
+		agentEdgeOrder: []string{},
 	}
 	if !policy.enabled {
 		return store, nil
@@ -211,6 +247,9 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 	if err := os.MkdirAll(filepath.Dir(policy.edgePath), 0o755); err != nil {
 		return nil, fmt.Errorf("create memory graph edge directory: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(policy.agentEdgePath), 0o755); err != nil {
+		return nil, fmt.Errorf("create memory agent edge directory: %w", err)
+	}
 	if policy.contentAddressed {
 		if err := os.MkdirAll(policy.contentBlobsPath, 0o755); err != nil {
 			return nil, fmt.Errorf("create memory store content blobs directory: %w", err)
@@ -220,6 +259,9 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 		return nil, err
 	}
 	if err := store.loadEdges(); err != nil {
+		return nil, err
+	}
+	if err := store.loadAgentEventEdges(); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -769,6 +811,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 			Summary:     clipSummary(content, m.policy.maxSummaryChars),
 			ContentHash: contentHash,
 			ContentRef:  "sha256:" + contentHash,
+			Lifecycle:   normalizeMemoryLifecycle(item.lifecycle),
 			CreatedAt:   nowUTCISO(),
 			RawBytes:    len(content),
 			Source:      "go_memory_store",
@@ -806,6 +849,9 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	m.mu.Unlock()
 	if err := m.appendHistory(entry); err != nil {
 		return memoryStoreEntry{}, false, err
+	}
+	if err := m.storeAgentEdges(entry); err != nil {
+		log.Printf("memory agent edge fanout skipped: %v", err)
 	}
 	return entry, deduped, nil
 }
@@ -1095,8 +1141,11 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 		return nil, false
 	}
 	type recentMeta struct {
-		summary string
-		updated time.Time
+		summary   string
+		updated   time.Time
+		agentID   string
+		sessionID string
+		rawBytes  int
 	}
 	metadataByKey := map[string]recentMeta{}
 	for i := len(recent) - 1; i >= 0; i-- {
@@ -1113,8 +1162,11 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 			updated = parsed.UTC()
 		}
 		metadataByKey[key] = recentMeta{
-			summary: strings.TrimSpace(entry.Summary),
-			updated: updated,
+			summary:   strings.TrimSpace(entry.Summary),
+			updated:   updated,
+			agentID:   strings.TrimSpace(entry.AgentID),
+			sessionID: strings.TrimSpace(entry.SessionID),
+			rawBytes:  entry.RawBytes,
 		}
 	}
 	docs := make([]memoryStoreDoc, 0, len(latestTopic))
@@ -1141,7 +1193,10 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 			FileName:  fileName,
 			TopicPath: topic,
 			Summary:   clipSummary(meta.summary, m.policy.maxSummaryChars),
+			AgentID:   meta.agentID,
+			SessionID: meta.sessionID,
 			UpdatedAt: meta.updated,
+			RawBytes:  meta.rawBytes,
 		})
 	}
 	return docs, true
@@ -1170,6 +1225,56 @@ func topicDepth(topic string) int {
 
 func (m *memoryStore) topicRollups(project string, minCount int, limit int, offset int) map[string]any {
 	return m.topicRollupsWithContext(context.Background(), project, minCount, limit, offset)
+}
+
+func (m *memoryStore) topicRollupSignals(project string) map[string]topicRollupSignal {
+	signals := map[string]topicRollupSignal{}
+	if m == nil || !m.policy.enabled {
+		return signals
+	}
+	normalizedProject := strings.TrimSpace(project)
+	m.mu.RLock()
+	entries := append([]memoryStoreEntry(nil), m.recent...)
+	m.mu.RUnlock()
+	for _, entry := range entries {
+		if normalizedProject != "" && !strings.EqualFold(strings.TrimSpace(entry.Project), normalizedProject) {
+			continue
+		}
+		if !shouldSurfaceMemoryLifecycle(entry.Lifecycle, false) {
+			continue
+		}
+		topic := strings.Trim(strings.TrimSpace(entry.TopicPath), "/")
+		if topic == "" {
+			topic = deriveTopicFromFile(entry.FileName)
+		}
+		createdAt := time.Time{}
+		if parsed, ok := parseTimeBestEffort(entry.CreatedAt); ok {
+			createdAt = parsed
+		}
+		for _, prefix := range topicPrefixes(topic) {
+			signal := signals[prefix]
+			if signal.uniqueAgents == nil {
+				signal.uniqueAgents = map[string]struct{}{}
+			}
+			if signal.uniqueSessions == nil {
+				signal.uniqueSessions = map[string]struct{}{}
+			}
+			signal.writeCount += 1
+			signal.recentCount += 1
+			signal.rawBytes += entry.RawBytes
+			if !createdAt.IsZero() && (signal.latestAt.IsZero() || createdAt.After(signal.latestAt)) {
+				signal.latestAt = createdAt
+			}
+			if strings.TrimSpace(entry.AgentID) != "" {
+				signal.uniqueAgents[strings.TrimSpace(entry.AgentID)] = struct{}{}
+			}
+			if strings.TrimSpace(entry.SessionID) != "" {
+				signal.uniqueSessions[strings.TrimSpace(entry.SessionID)] = struct{}{}
+			}
+			signals[prefix] = signal
+		}
+	}
+	return signals
 }
 
 func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project string, minCount int, limit int, offset int) map[string]any {
@@ -1234,6 +1339,8 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 					project:        doc.Project,
 					depth:          topicDepth(prefix),
 					uniqueFiles:    map[string]struct{}{},
+					uniqueAgents:   map[string]struct{}{},
+					uniqueSessions: map[string]struct{}{},
 					children:       map[string]struct{}{},
 					summarySnips:   []string{},
 					filePartitions: []map[string]any{},
@@ -1241,7 +1348,15 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 				aggs[prefix] = agg
 			}
 			agg.eventCount += 1
+			agg.writeCount += 1
+			agg.rawBytes += doc.RawBytes
 			agg.uniqueFiles[doc.FileName] = struct{}{}
+			if strings.TrimSpace(doc.AgentID) != "" {
+				agg.uniqueAgents[strings.TrimSpace(doc.AgentID)] = struct{}{}
+			}
+			if strings.TrimSpace(doc.SessionID) != "" {
+				agg.uniqueSessions[strings.TrimSpace(doc.SessionID)] = struct{}{}
+			}
 			if !doc.UpdatedAt.IsZero() && (agg.latestAt.IsZero() || doc.UpdatedAt.After(agg.latestAt)) {
 				agg.latestAt = doc.UpdatedAt
 			}
@@ -1274,6 +1389,39 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 		}
 	}
 
+	signals := m.topicRollupSignals(project)
+	for path, signal := range signals {
+		agg := aggs[path]
+		if agg == nil {
+			agg = &topicRollupAggregate{
+				path:           path,
+				project:        project,
+				depth:          topicDepth(path),
+				uniqueFiles:    map[string]struct{}{},
+				uniqueAgents:   map[string]struct{}{},
+				uniqueSessions: map[string]struct{}{},
+				children:       map[string]struct{}{},
+				summarySnips:   []string{},
+				filePartitions: []map[string]any{},
+			}
+			aggs[path] = agg
+		}
+		agg.writeCount = maxInt(agg.writeCount, signal.writeCount)
+		agg.recentCount = maxInt(agg.recentCount, signal.recentCount)
+		if signal.rawBytes > agg.rawBytes {
+			agg.rawBytes = signal.rawBytes
+		}
+		if !signal.latestAt.IsZero() && (agg.latestAt.IsZero() || signal.latestAt.After(agg.latestAt)) {
+			agg.latestAt = signal.latestAt
+		}
+		for agent := range signal.uniqueAgents {
+			agg.uniqueAgents[agent] = struct{}{}
+		}
+		for session := range signal.uniqueSessions {
+			agg.uniqueSessions[session] = struct{}{}
+		}
+	}
+
 	topics := make([]map[string]any, 0, len(aggs))
 	for _, agg := range aggs {
 		if agg.eventCount < minCount {
@@ -1289,21 +1437,39 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 			children = append(children, child)
 		}
 		sort.Strings(children)
+		uniqueAgents := make([]string, 0, len(agg.uniqueAgents))
+		for agent := range agg.uniqueAgents {
+			uniqueAgents = append(uniqueAgents, agent)
+		}
+		sort.Strings(uniqueAgents)
+		uniqueSessions := make([]string, 0, len(agg.uniqueSessions))
+		for session := range agg.uniqueSessions {
+			uniqueSessions = append(uniqueSessions, session)
+		}
+		sort.Strings(uniqueSessions)
 		latest := any(nil)
 		if !agg.latestAt.IsZero() {
 			latest = agg.latestAt.UTC().Format(time.RFC3339Nano)
 		}
+		intensity := minInt(100, agg.writeCount*8+len(uniqueAgents)*12+len(uniqueSessions)*5)
 		topics = append(topics, map[string]any{
-			"project":          agg.project,
-			"path":             agg.path,
-			"depth":            agg.depth,
-			"eventCount":       agg.eventCount,
-			"recentEventCount": 0,
-			"uniqueFileCount":  len(uniqueFiles),
-			"uniqueFiles":      uniqueFiles,
-			"latestTimestamp":  latest,
-			"summarySnippets":  agg.summarySnips,
-			"numericFacts":     []any{},
+			"project":             agg.project,
+			"path":                agg.path,
+			"depth":               agg.depth,
+			"eventCount":          agg.eventCount,
+			"recentEventCount":    agg.recentCount,
+			"writeCount":          agg.writeCount,
+			"rawBytes":            agg.rawBytes,
+			"uniqueFileCount":     len(uniqueFiles),
+			"uniqueFiles":         uniqueFiles,
+			"uniqueAgentCount":    len(uniqueAgents),
+			"uniqueAgents":        uniqueAgents,
+			"uniqueSessionCount":  len(uniqueSessions),
+			"uniqueSessions":      uniqueSessions,
+			"agentIntensityScore": intensity,
+			"latestTimestamp":     latest,
+			"summarySnippets":     agg.summarySnips,
+			"numericFacts":        []any{},
 			"inference": []string{
 				"Go memory-store rollup generated from project files and write history.",
 			},
@@ -1348,6 +1514,12 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 		"generatedAt":           nowUTCISO(),
 		"cache":                 "miss",
 	}
+}
+
+func (m *memoryStore) topicRollupsWithOptions(ctx context.Context, project string, minCount int, limit int, offset int, includeCold bool, includeEphemeral bool) map[string]any {
+	_ = includeCold
+	_ = includeEphemeral
+	return m.topicRollupsWithContext(ctx, project, minCount, limit, offset)
 }
 
 func buildTopicTree(counts map[string]int) map[string]any {

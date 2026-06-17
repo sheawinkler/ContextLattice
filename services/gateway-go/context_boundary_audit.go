@@ -22,6 +22,8 @@ func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 	return []contextBoundarySurface{
 		{Name: "memory_context_pack", Path: "/memory/context-pack", Surface: "agent_http", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "prompt-ready context package"},
 		{Name: "tools_context_pack", Path: "/tools/context_pack", Surface: "agent_tool", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "MCP/tool context package wrapper"},
+		{Name: "memory_review", Path: "/memory/review", Surface: "agent_http", ContractID: reviewModeResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "deterministic repeat-pattern review mode"},
+		{Name: "tools_review", Path: "/tools/review", Surface: "agent_tool", ContractID: reviewModeResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "MCP/tool review mode wrapper"},
 		{Name: "agents_preflight", Path: "/v1/agents/preflight", Surface: "agent_http", ContractID: agentPreflightResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "generic agent preflight"},
 		{Name: "codex_preflight", Path: "/v1/codex/preflight", Surface: "agent_http", ContractID: agentPreflightResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "Codex-compatible preflight"},
 		{Name: "policy_context_package", Path: "policy_context_package", Surface: "contract", ContractID: policyContextPackageContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "policy/anti-scheming context package"},

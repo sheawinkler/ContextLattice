@@ -27,6 +27,27 @@ type MindMapPayload = {
   error?: string;
 };
 
+type ReviewPattern = {
+  id?: string;
+  severity?: string;
+  signal_count?: number;
+  agent_guidance?: string;
+  mitigation?: string[];
+};
+
+type ReviewPayload = {
+  ok?: boolean;
+  summary?: {
+    posture?: string;
+    pressure_score?: number;
+    pattern_count?: number;
+  };
+  patterns?: ReviewPattern[];
+  agent_guidance?: string[];
+  warnings?: string[];
+  error?: string;
+};
+
 type PositionedSource = SourceRow & {
   angle: number;
   sourceX: number;
@@ -85,6 +106,9 @@ export function SourceMindMap() {
   const [error, setError] = useState<string | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [focusedSource, setFocusedSource] = useState<string | null>(null);
+  const [reviewPayload, setReviewPayload] = useState<ReviewPayload | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   const load = useCallback(async (initial = false) => {
     if (initial) {
@@ -205,6 +229,48 @@ export function SourceMindMap() {
     },
     [sources],
   );
+
+  const runReview = useCallback(async () => {
+    const source = focusedSource?.trim();
+    if (!source) {
+      return;
+    }
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const response = await fetch("/api/telemetry/review", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          project: "contextlattice",
+          query: `review repeated memory patterns and mitigation guidance for ${source}`,
+          window_hours: 168,
+          max_patterns: 3,
+          limit: 120,
+        }),
+      });
+      const data = (await response.json()) as ReviewPayload;
+      if (!response.ok) {
+        throw new Error(typeof data === "object" ? JSON.stringify(data) : "review failed");
+      }
+      setReviewPayload(data);
+      if (typeof data.error === "string" && data.error.trim()) {
+        setReviewError(data.error.trim());
+      }
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [focusedSource]);
+
+  useEffect(() => {
+    if (!focusedSource) {
+      setReviewPayload(null);
+      return;
+    }
+    void runReview();
+  }, [focusedSource, runReview]);
 
   return (
     <div className="ops-shell">
@@ -428,6 +494,43 @@ export function SourceMindMap() {
               Snapshot: {payload?.capturedAt ? new Date(payload.capturedAt).toLocaleTimeString() : "--"} ·
               retrieval: {payload?.retrievalUpdatedAt ? new Date(payload.retrievalUpdatedAt).toLocaleTimeString() : "--"}
             </p>
+          </div>
+
+          <div className="ops-card ops-mindmap-detail">
+            <div className="ops-review-head">
+              <h4 className="ops-card-title">Review Mode</h4>
+              <button type="button" className="ops-refresh" onClick={() => void runReview()} disabled={reviewLoading || !focusedSource}>
+                {reviewLoading ? "Reviewing..." : "Review"}
+              </button>
+            </div>
+            <div className="ops-runtime-grid">
+              <div className="ops-runtime-item">
+                <span className="ops-runtime-label">Posture</span>
+                <span className="ops-runtime-value">{reviewPayload?.summary?.posture || (reviewLoading ? "running" : "--")}</span>
+              </div>
+              <div className="ops-runtime-item">
+                <span className="ops-runtime-label">Pressure</span>
+                <span className="ops-runtime-value">{reviewPayload?.summary?.pressure_score ?? 0}/100</span>
+              </div>
+              <div className="ops-runtime-item">
+                <span className="ops-runtime-label">Patterns</span>
+                <span className="ops-runtime-value">{formatCount(reviewPayload?.summary?.pattern_count ?? 0)}</span>
+              </div>
+            </div>
+            {reviewError ? <div className="ops-mindmap-error">{reviewError}</div> : null}
+            {Array.isArray(reviewPayload?.patterns) && reviewPayload.patterns.length > 0 ? (
+              <ul className="ops-mindmap-list">
+                {reviewPayload.patterns.slice(0, 3).map((pattern, index) => (
+                  <li key={`${pattern.id || "pattern"}-${index}`}>
+                    {(pattern.severity || "low").toUpperCase()} · {pattern.agent_guidance || pattern.id || "review pattern"}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="ops-card-text">
+                {reviewLoading ? "Reviewing selected source." : "No review patterns returned for the selected source."}
+              </p>
+            )}
           </div>
         </div>
       </section>

@@ -836,6 +836,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.memoryTopicTree)`,
 		`mux.HandleFunc("/memory/topics/list", s.memoryTopicList)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)`,
+		`mux.HandleFunc("/memory/review", s.memoryReview)`,
 		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
@@ -893,6 +894,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.proxy)`,
 		`mux.HandleFunc("/memory/topics/list", s.proxy)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.proxy)`,
+		`mux.HandleFunc("/memory/review", s.proxy)`,
 		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
@@ -1914,6 +1916,73 @@ func TestMemoryDreamBuildsEvidenceLinkedHypothesesWithoutLLM(t *testing.T) {
 	if retrievalCalls < 1 {
 		t.Fatalf("expected retrieval backend call, got %d", retrievalCalls)
 	}
+}
+
+func TestMemoryReviewReturnsBoundedMitigationPatterns(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	writes := []normalizedWrite{
+		{project: "contextlattice", fileName: "notes/review-1.md", content: "overflow retry blocked mitigation one", topicPath: "runbooks/review", agentID: "agent-a", sessionID: "session-a"},
+		{project: "contextlattice", fileName: "notes/review-2.md", content: "overflow retry blocked mitigation two", topicPath: "runbooks/review", agentID: "agent-b", sessionID: "session-b"},
+		{project: "contextlattice", fileName: "notes/review-3.md", content: "overflow retry blocked mitigation three", topicPath: "runbooks/review", agentID: "agent-a", sessionID: "session-a"},
+		{project: "contextlattice", fileName: "notes/review-4.md", content: "checkpoint handoff preflight", topicPath: "runbooks/review", agentID: "agent-c", sessionID: "session-c"},
+	}
+	for _, item := range writes {
+		if _, _, err := store.put(item); err != nil {
+			t.Fatalf("put failed: %v", err)
+		}
+	}
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"review should be native"}`))
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	s.memoryStore = store
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","topic_path":"runbooks/review","query":"review repeat patterns","max_patterns":4,"window_hours":168,"agent_id":"agent-a","session_id":"session-a"}`
+	resp, err := http.Post(gateway.URL+"/memory/review", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("review request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode review payload: %v", err)
+	}
+	if !anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok review payload, got %#v", payload)
+	}
+	patterns, _ := payload["patterns"].([]any)
+	if len(patterns) == 0 {
+		t.Fatalf("expected review patterns, got %#v", payload)
+	}
+	format, _ := payload["format_contract"].(map[string]any)
+	if strings.TrimSpace(anyToString(format["schema_id"])) != reviewModeResponseContractID {
+		t.Fatalf("expected review format contract, got %#v", format)
+	}
+	validation, _ := format["validation"].(map[string]any)
+	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
+		t.Fatalf("expected review validation passed, got %#v", validation)
+	}
+	assertBoundaryJSONUnderLimit(t, reviewModeResponseContractID, payload)
+	assertNoRawProviderOverflowShape(t, payload)
 }
 
 func TestMemoryDreamUsesBackendLLMWhenRequested(t *testing.T) {

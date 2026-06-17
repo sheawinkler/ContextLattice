@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 10
+const GeneratedAgentContractRegistryVersion = 11
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -29,6 +29,7 @@ const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
 const GeneratedAgentContractRetrievalProgressV1 = "retrieval_progress.v1"
+const GeneratedAgentContractReviewModeResponseV1 = "review_mode_response.v1"
 const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
 const GeneratedAgentContractUniversalAgentAdapterResponseV1 = "universal_agent_adapter_response.v1"
@@ -52,6 +53,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractPolicyContextPackageV1,
 	GeneratedAgentContractRetrievalProgressV1,
+	GeneratedAgentContractReviewModeResponseV1,
 	GeneratedAgentContractRunAdvisorV1,
 	GeneratedAgentContractSteeringCommentV1,
 	GeneratedAgentContractUniversalAgentAdapterResponseV1,
@@ -158,6 +160,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractRetrievalProgressV1,
 		PayloadKind:        "retrieval_progress",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractReviewModeResponseV1,
+		PayloadKind:        "review_mode_response",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
