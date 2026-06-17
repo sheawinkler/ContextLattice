@@ -86,6 +86,65 @@ func TestRunAdvisorObjectiveCoherenceUsesHierarchy(t *testing.T) {
 	}
 }
 
+func TestRunAdvisorGraphQualityActions(t *testing.T) {
+	sampled := buildRunAdvisor(runAdvisorInput{
+		Query:           "graph neighbor context",
+		Project:         "contextlattice",
+		RetrievalMode:   "balanced",
+		SourceCoverage:  map[string]any{"returned": []any{"qdrant", memoryEdgeSource}, "complete": true},
+		RankedEvidence:  []any{map[string]any{"kind": "graph_neighbor", "text": "target graph evidence"}},
+		ReferencePrompt: strings.Repeat("graph evidence ", 40),
+		GraphQuality: map[string]any{
+			"status": "sampled",
+			"used":   true,
+			"score":  80,
+			"signals": map[string]any{
+				"added_evidence_count": 1,
+			},
+		},
+		Surface: "/memory/context-pack",
+	})
+	assertBoundaryContractPassed(t, runAdvisorContractID, sampled)
+	graphQuality := anyMap(sampled["graph_quality"])
+	if !anyToBool(graphQuality["used"]) || anyToString(graphQuality["status"]) != "sampled" {
+		t.Fatalf("expected sampled graph quality to be preserved, got %#v", graphQuality)
+	}
+	for _, raw := range contextPackAnyList(sampled["next_actions"]) {
+		action := anyMap(raw)
+		if anyToString(action["label"]) == "repair_graph_edges" {
+			t.Fatalf("sampled graph evidence should not request graph repair, got %#v", sampled["next_actions"])
+		}
+	}
+
+	empty := buildRunAdvisor(runAdvisorInput{
+		Query:           "graph neighbor context",
+		Project:         "contextlattice",
+		RetrievalMode:   "balanced",
+		SourceCoverage:  map[string]any{"returned": []any{"qdrant"}, "complete": true},
+		RankedEvidence:  []any{map[string]any{"kind": "memory", "text": "seed evidence"}},
+		ReferencePrompt: strings.Repeat("seed evidence ", 40),
+		GraphQuality: map[string]any{
+			"status":         "empty",
+			"used":           false,
+			"score":          35,
+			"recommendation": "Run memory-edge-backfill for older projects.",
+		},
+		Surface: "/memory/context-pack",
+	})
+	assertBoundaryContractPassed(t, runAdvisorContractID, empty)
+	foundRepair := false
+	for _, raw := range contextPackAnyList(empty["next_actions"]) {
+		action := anyMap(raw)
+		if anyToString(action["label"]) == "repair_graph_edges" {
+			foundRepair = strings.Contains(anyToString(action["command"]), "memory-edge-backfill")
+			break
+		}
+	}
+	if !foundRepair {
+		t.Fatalf("expected empty graph quality to produce graph repair action, got %#v", empty["next_actions"])
+	}
+}
+
 func TestContextPackContractSynthesizesRunAdvisor(t *testing.T) {
 	pack := testContextPackFixture([]any{map[string]any{"text": "graph quality edge audit", "source": "fixture"}})
 	payload := attachContextPackFormatContract(map[string]any{

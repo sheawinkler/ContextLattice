@@ -117,6 +117,10 @@ def main() -> int:
     if leaked_advanced:
         ok = False
         findings.append({"severity": "error", "reason": "advanced_services_in_core_lite", "services": leaked_advanced})
+    leaked_graph_db = sorted(service for service in core_services | advanced_services if service.lower() in {"cozo", "cozodb"})
+    if leaked_graph_db:
+        ok = False
+        findings.append({"severity": "error", "reason": "graph_database_in_lite_profile", "services": leaked_graph_db})
 
     missing_advanced = sorted(ADVANCED_SERVICES - advanced_services)
     if missing_advanced:
@@ -135,6 +139,12 @@ def main() -> int:
     if "ORCH_MEMORY_BANK_SEARCH_BACKEND: shodh_spike\n" not in advanced_config:
         ok = False
         findings.append({"severity": "error", "reason": "advanced_lite_shodh_not_enabled"})
+    if "ORCH_PGVECTOR_ENABLED: \"false\"\n" not in core_config:
+        ok = False
+        findings.append({"severity": "error", "reason": "core_lite_pgvector_not_disabled"})
+    if "ORCH_COZO_ENABLED" in core_config or "COZO_URL" in core_config:
+        ok = False
+        findings.append({"severity": "error", "reason": "core_lite_graph_db_env_present"})
 
     payload = {
         "ok": ok,

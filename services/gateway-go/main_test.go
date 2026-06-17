@@ -1329,6 +1329,212 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
 	}
 }
 
+func TestMemoryContextPackIncludesBoundedGraphNeighbors(t *testing.T) {
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBORS_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_SEED_MAX", "2")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_MAX", "2")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_PER_SEED", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_MEMORY_GRAPH_EDGE_PATH", filepath.Join(root, "_contextlattice", "memory_edges.ndjson"))
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/seed.md","summary":"seed memory qdrant result","source":"qdrant","score":0.91,"topic_path":"graph/test"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	seedGraphContextMemory(t, s)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/memory/context-pack", "application/json", strings.NewReader(`{"project":"alpha","topic_path":"graph/test","query":"target by neighbor","limit":5,"include_retrieval_debug":true,"retrieval_mode":"balanced"}`))
+	if err != nil {
+		t.Fatalf("context-pack request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode context-pack response: %v", err)
+	}
+	assertBoundaryContractPassed(t, contextPackResponseContractID, payload)
+	assertBoundaryJSONUnderLimit(t, contextPackResponseContractID, payload)
+	pack := anyMap(payload["context_pack"])
+	graphNeighbors := contextPackAnyList(pack["graph_neighbors"])
+	if len(graphNeighbors) != 1 {
+		t.Fatalf("expected one graph neighbor, got %#v", graphNeighbors)
+	}
+	neighbor := anyMap(graphNeighbors[0])
+	if anyToString(neighbor["file"]) != "notes/target.md" || anyToString(neighbor["relation"]) != "supports" {
+		t.Fatalf("expected target graph neighbor, got %#v", neighbor)
+	}
+	rankedEvidence := contextPackAnyList(pack["ranked_evidence"])
+	foundGraphEvidence := false
+	for _, raw := range rankedEvidence {
+		item := anyMap(raw)
+		if anyToString(item["kind"]) == "graph_neighbor" && anyToString(item["file"]) == "notes/target.md" {
+			foundGraphEvidence = true
+			break
+		}
+	}
+	if !foundGraphEvidence {
+		t.Fatalf("expected graph neighbor ranked evidence, got %#v", rankedEvidence)
+	}
+	sourceCoverage := anyMap(payload["source_coverage"])
+	if !testStringSliceContains(anyToStringList(sourceCoverage["returned"], 16), memoryEdgeSource) {
+		t.Fatalf("expected source coverage to include memory_edges, got %#v", sourceCoverage)
+	}
+	runAdvisor := anyMap(payload["run_advisor"])
+	graphQuality := anyMap(runAdvisor["graph_quality"])
+	if anyToString(graphQuality["status"]) != "sampled" || !anyToBool(graphQuality["used"]) {
+		t.Fatalf("expected sampled graph quality, got %#v", graphQuality)
+	}
+	signals := anyMap(graphQuality["signals"])
+	if anyToInt(signals["added_evidence_count"], 0) != 1 {
+		t.Fatalf("expected one added graph evidence signal, got %#v", signals)
+	}
+}
+
+func TestCodexPreflightCarriesGraphContextPackEvidence(t *testing.T) {
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true")
+	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
+	t.Setenv("QDRANT_LOCAL_URL", "")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBORS_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_SEED_MAX", "2")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_MAX", "2")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_PER_SEED", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_MEMORY_GRAPH_EDGE_PATH", filepath.Join(root, "_contextlattice", "memory_edges.ndjson"))
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health", "/status":
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/collections/contextlattice_notes":
+			_, _ = w.Write([]byte(`{"result":{"config":{"params":{"vectors":{"size":768,"distance":"Cosine"}}}}}`))
+		case "/collections/contextlattice_notes/points/search":
+			_, _ = w.Write([]byte(`{"result":[{"score":0.91,"payload":{"project":"alpha","file":"notes/seed.md","summary":"seed memory qdrant result","topic_path":"graph/test","created_at":"2026-06-17T00:00:00Z"}}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+	t.Setenv("QDRANT_URL", backend.URL)
+
+	s := newServer()
+	seedGraphContextMemory(t, s)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(gateway.URL+"/v1/codex/preflight", "application/json", strings.NewReader(`{"project":"alpha","topic_path":"graph/test","query":"target by neighbor","agent_id":"codex_gpt5_test","retrieval_mode":"balanced","objective":"prove graph context handoff","blocking":false,"wait_for_slow_sources":false,"sync_slow_sources":false,"combined_sources":false}`))
+	if err != nil {
+		t.Fatalf("preflight request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode preflight response: %v", err)
+	}
+	assertBoundaryContractPassed(t, agentPreflightResponseContractID, payload)
+	contextPackEnvelope := anyMap(payload["context_pack"])
+	contextPackPayload := anyMap(contextPackEnvelope["payload"])
+	contextPack := anyMap(contextPackPayload["context_pack"])
+	graphNeighbors := contextPackAnyList(contextPack["graph_neighbors"])
+	if len(graphNeighbors) != 1 {
+		t.Fatalf("expected preflight context pack graph neighbor, got %#v", graphNeighbors)
+	}
+	runAdvisor := anyMap(contextPackPayload["run_advisor"])
+	graphQuality := anyMap(runAdvisor["graph_quality"])
+	if anyToString(graphQuality["status"]) != "sampled" || !anyToBool(graphQuality["used"]) {
+		t.Fatalf("expected preflight graph quality used, got %#v", graphQuality)
+	}
+}
+
+func seedGraphContextMemory(t *testing.T, s *server) {
+	t.Helper()
+	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+		t.Fatalf("expected enabled memory store")
+	}
+	for _, item := range []normalizedWrite{
+		{project: "alpha", fileName: "notes/seed.md", content: "seed memory", topicPath: "graph/test"},
+		{project: "alpha", fileName: "notes/target.md", content: "target memory", topicPath: "graph/test"},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory store: %v", err)
+		}
+	}
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		SourceID:   "alpha::notes/seed.md",
+		TargetID:   "alpha::notes/target.md",
+		Relation:   "supports",
+		Project:    "alpha",
+		TopicPath:  "graph/test",
+		Confidence: 0.94,
+		CreatedAt:  nowUTCISO(),
+		Source:     memoryEdgeSource,
+	}); err != nil {
+		t.Fatalf("seed memory edge: %v", err)
+	}
+}
+
+func testStringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
 	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
 	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")

@@ -132,7 +132,9 @@ func (s *server) buildContextPackResponse(
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
 	contextPack["project"] = strings.TrimSpace(anyToString(searchRequest["project"]))
 	contextPack["topic_path"] = strings.TrimSpace(anyToString(searchRequest["topic_path"]))
+	graphQuality := s.enrichContextPackWithGraph(ctx, contextPack, requestPayload)
 	sourceCoverage := contextPackSourceCoverage(searchResponse)
+	sourceCoverage = contextPackSourceCoverageWithGraph(sourceCoverage, graphQuality)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
 	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, effectiveObjectiveCtx)
@@ -156,6 +158,7 @@ func (s *server) buildContextPackResponse(
 		Objective:       effectiveObjectiveCtx,
 		RankedEvidence:  rankedEvidence,
 		ReferencePrompt: referencePrompt,
+		GraphQuality:    graphQuality,
 		Surface:         "/memory/context-pack",
 	})
 	contextPack["runAdvisor"] = runAdvisor
@@ -225,6 +228,7 @@ func (s *server) buildContextPackResponse(
 				"objective_lineage":   objectiveRuntime["objective_lineage"],
 				"context_compiler":    compiled["context_compiler"],
 				"run_advisor":         runAdvisor,
+				"graph_quality":       graphQuality,
 			},
 		})
 		if session != nil {
@@ -241,6 +245,236 @@ func (s *server) buildContextPackResponse(
 func contextPackBlocksSlowSourcesByDefault() bool {
 	return envBool("GO_CONTEXT_PACK_BLOCKING_SLOW_DEFAULT", true) ||
 		envBool("GO_CONTEXT_PACK_SYNC_SLOW_SOURCES_DEFAULT", false)
+}
+
+func contextPackGraphSeedMax() int {
+	return clampInt(envInt("GO_CONTEXT_PACK_GRAPH_SEED_MAX", 3), 0, 8)
+}
+
+func contextPackGraphNeighborMax() int {
+	return clampInt(envInt("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_MAX", 4), 0, 12)
+}
+
+func contextPackGraphNeighborPerSeed() int {
+	return clampInt(envInt("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_PER_SEED", 2), 1, 6)
+}
+
+func (s *server) enrichContextPackWithGraph(
+	ctx context.Context,
+	contextPack map[string]any,
+	requestPayload map[string]any,
+) map[string]any {
+	signals := map[string]any{
+		"seed_count":           0,
+		"candidate_count":      0,
+		"added_evidence_count": 0,
+		"relations":            map[string]any{},
+	}
+	quality := map[string]any{
+		"status":         "not_sampled",
+		"score":          0,
+		"used":           false,
+		"signals":        signals,
+		"recommendation": "Run contextlattice_memory_topology when graph evidence matters.",
+	}
+	if !envBool("GO_CONTEXT_PACK_GRAPH_NEIGHBORS_ENABLED", true) {
+		quality["status"] = "disabled"
+		quality["skipped_reason"] = "GO_CONTEXT_PACK_GRAPH_NEIGHBORS_ENABLED=false"
+		quality["recommendation"] = "Graph-neighbor context enrichment is disabled by configuration."
+		contextPack["graph_context"] = quality
+		contextPack["graphContext"] = quality
+		return quality
+	}
+	backend := s.memoryGraphBackend()
+	if backend == nil {
+		quality["status"] = "unavailable"
+		quality["skipped_reason"] = "memory graph backend unavailable"
+		quality["recommendation"] = "Enable the Go memory store to sample graph neighbors for context packs."
+		contextPack["graph_context"] = quality
+		contextPack["graphContext"] = quality
+		return quality
+	}
+	seedLimit := contextPackGraphSeedMax()
+	totalLimit := contextPackGraphNeighborMax()
+	if seedLimit == 0 || totalLimit == 0 {
+		quality["status"] = "disabled"
+		quality["skipped_reason"] = "graph seed or neighbor cap is zero"
+		quality["recommendation"] = "Raise graph context caps if first-hop memory-edge evidence should be sampled."
+		contextPack["graph_context"] = quality
+		contextPack["graphContext"] = quality
+		return quality
+	}
+
+	results := contextPackAnyList(contextPack["results"])
+	topicFilter := strings.Trim(strings.TrimSpace(anyToString(requestPayload["topic_path"])), "/")
+	includeEphemeral := requestIncludesEphemeralMemory(requestPayload)
+	perSeed := contextPackGraphNeighborPerSeed()
+	seenNeighbors := map[string]struct{}{}
+	relationCounts := map[string]int{}
+	graphRows := []any{}
+	seeds := 0
+	candidates := 0
+	for _, raw := range results {
+		if seeds >= seedLimit || len(graphRows) >= totalLimit {
+			break
+		}
+		seed := anyMap(raw)
+		memoryID := contextPackGraphMemoryID(seed)
+		if memoryID == "" {
+			continue
+		}
+		if _, _, canonicalSeed, _, err := canonicalMemoryID(memoryID); err == nil {
+			memoryID = canonicalSeed
+		} else {
+			continue
+		}
+		seeds += 1
+		rows, err := backend.memoryGraphNeighbors(ctx, memoryGraphNeighborQuery{
+			MemoryID:         memoryID,
+			Limit:            perSeed,
+			IncludeEphemeral: includeEphemeral,
+			TopicPath:        topicFilter,
+		})
+		if err != nil {
+			continue
+		}
+		candidates += len(rows)
+		for _, row := range rows {
+			if len(graphRows) >= totalLimit {
+				break
+			}
+			rendered := renderContextPackGraphNeighbor(memoryID, row)
+			if len(rendered) == 0 {
+				continue
+			}
+			key := strings.ToLower(strings.Join([]string{
+				anyToString(rendered["memory_id"]),
+				anyToString(rendered["relation"]),
+				anyToString(rendered["edge_direction"]),
+			}, "\x1f"))
+			if key == "" {
+				continue
+			}
+			if _, exists := seenNeighbors[key]; exists {
+				continue
+			}
+			seenNeighbors[key] = struct{}{}
+			relation := anyToString(rendered["relation"])
+			if relation != "" {
+				relationCounts[relation] += 1
+			}
+			graphRows = append(graphRows, rendered)
+		}
+	}
+	signals["seed_count"] = seeds
+	signals["candidate_count"] = candidates
+	signals["added_evidence_count"] = len(graphRows)
+	relationSignals := map[string]any{}
+	for relation, count := range relationCounts {
+		relationSignals[relation] = count
+	}
+	signals["relations"] = relationSignals
+
+	if len(graphRows) == 0 {
+		quality["status"] = "empty"
+		quality["score"] = 35
+		quality["skipped_reason"] = "no first-hop graph neighbors for ranked seed memories"
+		quality["recommendation"] = "Run memory-edge-backfill or disk-corpus inferred retrofill for older projects when graph recall should help."
+		contextPack["graph_neighbors"] = []any{}
+		contextPack["graphNeighbors"] = []any{}
+		contextPack["graph_context"] = quality
+		contextPack["graphContext"] = quality
+		return quality
+	}
+
+	contextPack["graph_neighbors"] = graphRows
+	contextPack["graphNeighbors"] = graphRows
+	contextPack["results"] = append(contextPackAnyList(contextPack["results"]), graphRows...)
+	contextPack["files_to_read"] = mergeContextPackFiles(contextPack["files_to_read"], graphRows, 12)
+	contextPack["filesToRead"] = contextPack["files_to_read"]
+	quality["status"] = "sampled"
+	quality["score"] = clampInt(70+len(graphRows)*5, 70, 95)
+	quality["used"] = true
+	quality["recommendation"] = "Use high-confidence first-hop memory edges as supporting context, then inspect cited files before making code claims."
+	contextPack["graph_context"] = quality
+	contextPack["graphContext"] = quality
+	return quality
+}
+
+func contextPackGraphMemoryID(row map[string]any) string {
+	if row == nil {
+		return ""
+	}
+	if memoryID := strings.TrimSpace(anyToString(row["memory_id"])); memoryID != "" {
+		return memoryID
+	}
+	project := strings.TrimSpace(anyToString(row["project"]))
+	fileName := strings.TrimSpace(firstNonEmptyStrings(anyToString(row["file"]), anyToString(row["file_name"])))
+	if project == "" || fileName == "" {
+		return ""
+	}
+	return project + "::" + fileName
+}
+
+func renderContextPackGraphNeighbor(seedMemoryID string, row map[string]any) map[string]any {
+	if row == nil {
+		return nil
+	}
+	memoryID := strings.TrimSpace(anyToString(row["memory_id"]))
+	project := strings.TrimSpace(anyToString(row["project"]))
+	fileName := strings.TrimSpace(anyToString(row["file"]))
+	if memoryID == "" || project == "" || fileName == "" {
+		return nil
+	}
+	relation := strings.TrimSpace(anyToString(row["relation"]))
+	direction := strings.TrimSpace(anyToString(row["edge_direction"]))
+	score := clampFloat(anyToFloat(row["score"]), 0.1, 0.99)
+	summary := "Graph neighbor via " + relation + ": " + memoryID
+	if direction != "" {
+		summary += " (" + direction + " edge from " + seedMemoryID + ")"
+	}
+	return map[string]any{
+		"memory_id":      memoryID,
+		"project":        project,
+		"file":           fileName,
+		"topic_path":     strings.Trim(strings.TrimSpace(anyToString(row["topic_path"])), "/"),
+		"summary":        clipText(summary, 360),
+		"score":          roundFloat(score, 3),
+		"source":         memoryEdgeSource,
+		"source_owner":   sourceOwnerGoNative,
+		"relation":       relation,
+		"edge_id":        strings.TrimSpace(anyToString(row["edge_id"])),
+		"edge_direction": direction,
+		"seed_memory_id": seedMemoryID,
+	}
+}
+
+func mergeContextPackFiles(existing any, graphRows []any, limit int) []any {
+	if limit < 1 {
+		limit = 1
+	}
+	limit = clampInt(limit, 1, 32)
+	out := []any{}
+	seen := map[string]struct{}{}
+	add := func(fileName string) {
+		fileName = strings.TrimSpace(fileName)
+		if fileName == "" || len(out) >= limit {
+			return
+		}
+		key := strings.ToLower(fileName)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, fileName)
+	}
+	for _, raw := range contextPackAnyList(existing) {
+		add(anyToString(raw))
+	}
+	for _, raw := range graphRows {
+		add(anyToString(anyMap(raw)["file"]))
+	}
+	return out
 }
 
 func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext) map[string]any {
@@ -347,8 +581,15 @@ func contextPackRankedEvidence(contextPack map[string]any) []any {
 		text := firstNonEmptyStrings(anyToString(source["text"]), anyToString(source["summary"]), anyToString(source["claim"]))
 		add("fact", 72, "grounded fact returned by retrieval", text, source)
 	}
+	for _, item := range contextPackAnyList(contextPack["graph_neighbors"]) {
+		source := anyMap(item)
+		add("graph_neighbor", 70, "first-hop memory edge expands the ranked seed context", anyToString(source["summary"]), source)
+	}
 	for _, item := range contextPackAnyList(contextPack["results"]) {
 		source := anyMap(item)
+		if strings.TrimSpace(anyToString(source["source"])) == memoryEdgeSource {
+			continue
+		}
 		add("memory", 64, "retrieved memory result matched the task", anyToString(source["summary"]), source)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -703,6 +944,35 @@ func contextPackSourceCoverage(searchResponse map[string]any) map[string]any {
 		"continuation_durable":           summary["continuation_durable"],
 		"retrieval_lifecycle":            searchResponse["retrieval_lifecycle"],
 	}
+}
+
+func contextPackSourceCoverageWithGraph(sourceCoverage map[string]any, graphQuality map[string]any) map[string]any {
+	if !anyToBool(graphQuality["used"]) {
+		return sourceCoverage
+	}
+	coverage := cloneAnyMap(sourceCoverage)
+	addSource := func(key string) {
+		values := anyToStringList(coverage[key], 100)
+		for _, value := range values {
+			if strings.EqualFold(value, memoryEdgeSource) {
+				coverage[key] = values
+				return
+			}
+		}
+		values = append(values, memoryEdgeSource)
+		sort.Strings(values)
+		coverage[key] = values
+	}
+	addSource("returned")
+	addSource("queried")
+	rowCounts := cloneAnyMap(anyMap(coverage["row_counts"]))
+	signals := anyMap(graphQuality["signals"])
+	rowCounts[memoryEdgeSource] = anyToInt(signals["added_evidence_count"], 0)
+	coverage["row_counts"] = rowCounts
+	sourceOwners := cloneAnyMap(anyMap(coverage["source_owners"]))
+	sourceOwners[memoryEdgeSource] = sourceOwnerGoNative
+	coverage["source_owners"] = sourceOwners
+	return coverage
 }
 
 func contextPackAgentSections(facts []any, results []map[string]any) map[string]any {

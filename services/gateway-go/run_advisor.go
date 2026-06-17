@@ -295,6 +295,7 @@ func runAdvisorGraphQuality(input map[string]any) map[string]any {
 		return map[string]any{
 			"status":         "not_sampled",
 			"score":          0,
+			"used":           false,
 			"signals":        map[string]any{"edge_samples": 0},
 			"recommendation": "Run contextlattice_memory_topology or memory-edge-backfill with inferred audit when graph evidence matters.",
 		}
@@ -311,12 +312,17 @@ func runAdvisorGraphQuality(input map[string]any) map[string]any {
 	if recommendation == "" {
 		recommendation = "Use high-confidence edges as supporting context, not sole authority."
 	}
-	return map[string]any{
+	payload := map[string]any{
 		"status":         status,
 		"score":          score,
+		"used":           anyToBool(input["used"]),
 		"signals":        anyMap(input["signals"]),
 		"recommendation": recommendation,
 	}
+	if skipped := strings.TrimSpace(anyToString(input["skipped_reason"])); skipped != "" {
+		payload["skipped_reason"] = skipped
+	}
+	return payload
 }
 
 func runAdvisorNextActions(
@@ -364,6 +370,12 @@ func runAdvisorNextActions(
 			"label":   "sample_graph_edges",
 			"command": "contextlattice_memory_topology --pretty",
 			"reason":  "Graph contribution was not sampled for this run trace.",
+		})
+	} else if !anyToBool(graphQuality["used"]) && anyToString(graphQuality["status"]) != "disabled" {
+		actions = append(actions, map[string]any{
+			"label":   "repair_graph_edges",
+			"command": "contextlattice_memory_topology --pretty && scripts/agent/memory-edge-backfill --project " + shellQuoteForAdvisor(firstNonEmptyStrings(input.Project, "contextlattice")),
+			"reason":  anyToString(graphQuality["recommendation"]),
 		})
 	}
 	if len(actions) > 5 {
