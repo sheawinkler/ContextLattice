@@ -56,6 +56,14 @@ def cluster_ids(topology: dict[str, Any]) -> set[str]:
     return ids
 
 
+def cluster_by_id(topology: dict[str, Any], wanted: str) -> dict[str, Any]:
+    for raw in as_list(topology.get("clusters")):
+        row = as_dict(raw)
+        if str(row.get("id") or "").strip() == wanted:
+            return row
+    return {}
+
+
 def source_lane_names(topology: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for raw in as_list(topology.get("source_lanes")):
@@ -124,6 +132,28 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
             lanes=sorted(lanes),
         )
     )
+    vector_cluster = cluster_by_id(topology, "vector_semantic")
+    vector_active = string_list(vector_cluster.get("active_sources"))
+    vector_available = set(string_list(vector_cluster.get("available_fabric")))
+    checks.append(
+        check(
+            "qdrant_primary_vector_lane",
+            vector_active == ["qdrant"] and {"qdrant", "postgres_pgvector"}.issubset(vector_available),
+            active=vector_active,
+            available=sorted(vector_available),
+        )
+    )
+    graph_cluster = cluster_by_id(topology, "graph_relationships")
+    graph_active = string_list(graph_cluster.get("active_sources"))
+    graph_available = set(string_list(graph_cluster.get("available_fabric")))
+    checks.append(
+        check(
+            "bounded_local_graph_lane",
+            graph_active == ["memory_edges"] and "cozo" not in graph_available,
+            active=graph_active,
+            available=sorted(graph_available),
+        )
+    )
     if profile != "auto":
         profile_payload = deployment_profile(topology, profile)
         checks.append(check("deployment_profile", bool(profile_payload), profile=profile))
@@ -135,12 +165,27 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
                     hot_path=string_list(profile_payload.get("hot_path")),
                 )
             )
+            checks.append(
+                check(
+                    "hosted_lite_sidecar_free",
+                    set(string_list(profile_payload.get("hot_path"))) == {"topic_rollups"},
+                    hot_path=string_list(profile_payload.get("hot_path")),
+                )
+            )
         elif profile == "local_lite":
+            default_sources = set(string_list(profile_payload.get("default_sources")))
             checks.append(
                 check(
                     "local_lite_hot_path",
                     string_list(profile_payload.get("hot_path")) == ["topic_rollups", "qdrant"],
                     hot_path=string_list(profile_payload.get("hot_path")),
+                )
+            )
+            checks.append(
+                check(
+                    "local_lite_excludes_pgvector",
+                    "postgres_pgvector" not in default_sources,
+                    default_sources=sorted(default_sources),
                 )
             )
         elif profile in {"full", "ultra_dev"}:

@@ -42,7 +42,20 @@ def compact_items(value: Any, limit: int) -> list[Any]:
     for item in as_list(value)[:limit]:
         if isinstance(item, dict):
             compact = {}
-            for key in ("text", "file", "source", "topic_path", "project", "score", "summary", "timestamp"):
+            for key in (
+                "text",
+                "file",
+                "source",
+                "topic_path",
+                "project",
+                "score",
+                "summary",
+                "timestamp",
+                "memory_id",
+                "relation",
+                "edge_direction",
+                "seed_memory_id",
+            ):
                 if key in item and item[key] not in ("", None):
                     compact[key] = item[key]
             out.append(compact or item)
@@ -120,6 +133,8 @@ def slim_run_advisor(value: Any) -> dict[str, Any]:
         "graph_quality": {
             "status": str(graph.get("status") or "not_sampled")[:80],
             "score": int(graph.get("score") or 0),
+            "used": bool(graph.get("used")),
+            "skipped_reason": str(graph.get("skipped_reason") or "")[:240],
             "signals": graph.get("signals") if isinstance(graph.get("signals"), dict) else {},
             "recommendation": str(graph.get("recommendation") or "Run contextlattice_memory_topology when graph evidence matters.")[:900],
         },
@@ -129,7 +144,16 @@ def slim_run_advisor(value: Any) -> dict[str, Any]:
 
 
 def trim_context_pack_lists(context_pack: dict[str, Any], limit: int) -> None:
-    for key in ("facts", "numeric_facts", "citations", "results", "ranked_evidence", *CAMEL_TO_SNAKE.values()):
+    for key in (
+        "facts",
+        "numeric_facts",
+        "citations",
+        "results",
+        "ranked_evidence",
+        "graph_neighbors",
+        "graphNeighbors",
+        *CAMEL_TO_SNAKE.values(),
+    ):
         if isinstance(context_pack.get(key), list):
             context_pack[key] = context_pack[key][: max(0, limit)]
     prompt_sections = context_pack.get("prompt_sections")
@@ -185,6 +209,7 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "numeric_facts": [],
         "citations": [],
         "results": [],
+        "graph_neighbors": [],
         "relevant_decisions": [],
         "files_to_read": [],
         "files_to_avoid": [],
@@ -270,6 +295,10 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     numeric_facts = compact_items(pack.get("numericFacts"), 8)
     results = compact_items(pack.get("results"), 10)
     ranked_evidence = compact_items(pack.get("ranked_evidence") or pack.get("rankedEvidence"), 16)
+    graph_neighbors = compact_items(pack.get("graph_neighbors") or pack.get("graphNeighbors"), 6)
+    graph_context = pack.get("graph_context") or pack.get("graphContext")
+    if not isinstance(graph_context, dict):
+        graph_context = {}
     prompt_sections = pack.get("prompt_sections") or pack.get("promptSections")
     if not isinstance(prompt_sections, dict):
         prompt_sections = minimal_prompt_sections(query, "Use the retrieved evidence, inspect files when necessary, and execute the smallest verifiable step.")
@@ -291,6 +320,8 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "run_advisor": run_advisor,
         "prompt_sections": prompt_sections,
         "ranked_evidence": ranked_evidence,
+        "graph_neighbors": graph_neighbors,
+        "graph_context": graph_context,
         "facts": facts,
         "numeric_facts": numeric_facts,
         "citations": compact_items(pack.get("citations"), 12),
@@ -324,10 +355,12 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
     context_pack["numeric_facts"] = numeric_facts[:4]
     context_pack["citations"] = context_pack["citations"][:6]
     context_pack["results"] = results[:5]
+    context_pack["graph_neighbors"] = graph_neighbors[:3]
     for snake in CAMEL_TO_SNAKE.values():
         context_pack[snake] = context_pack[snake][:6]
     if encoded_len(payload) > budget_chars:
         context_pack["ranked_evidence"] = context_pack["ranked_evidence"][:3]
+        context_pack["graph_neighbors"] = context_pack["graph_neighbors"][:1]
         if isinstance(context_pack.get("prompt_sections"), dict):
             context_pack["prompt_sections"]["evidence"] = as_list(context_pack["prompt_sections"].get("evidence"))[:3]
         context_pack["results"] = []
@@ -356,6 +389,8 @@ def failure_payload(query: str, budget_chars: int, error: str, attempts: int) ->
                 "Recover ContextLattice availability, then rerun context package compilation.",
             ),
             "ranked_evidence": [],
+            "graph_neighbors": [],
+            "graph_context": {},
             "source_coverage": {"configured": [], "returned": [], "complete": False},
             "facts": [],
             "numeric_facts": [],
