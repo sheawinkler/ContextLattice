@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 10,
-  "updated_at": "2026-06-16T00:00:00Z",
+  "registry_version": 11,
+  "updated_at": "2026-06-17T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -863,6 +863,93 @@
       },
       "required_string_contains": {
         "format_contract.schema_id": "dream_mode_response.v1"
+      }
+    },
+    "review_mode_response.v1": {
+      "contract_version": 1,
+      "payload_kind": "review_mode_response",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_deterministic_review_without_raw_history_or_provider_payload",
+      "max_total_json_bytes": 80000,
+      "max_string_bytes": 4000,
+      "max_list_items": 48,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "mode",
+        "project",
+        "query",
+        "topic_path",
+        "window_hours",
+        "summary",
+        "patterns",
+        "agent_guidance",
+        "source_coverage",
+        "writeback_required",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "mode": "string",
+        "project": "string",
+        "query": "string",
+        "topic_path": "string",
+        "window_hours": "int",
+        "summary": "object",
+        "patterns": "list",
+        "agent_guidance": "list",
+        "source_coverage": "object",
+        "writeback_required": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "summary": [
+          "posture",
+          "recent_writes",
+          "pattern_count",
+          "pressure_score"
+        ],
+        "source_coverage": [
+          "configured",
+          "returned",
+          "complete"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "raw_contextlattice_json",
+        "raw_prompt",
+        "raw_history",
+        "secret",
+        "secrets"
+      ],
+      "max_bytes_by_path": {
+        "query": 1600,
+        "patterns.agent_guidance": 900
+      },
+      "required_string_contains": {
+        "schema_id": "review_mode_response.v1",
+        "format_contract.schema_id": "review_mode_response.v1"
       }
     },
     "writeback_result.v1": {

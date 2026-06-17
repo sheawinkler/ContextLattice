@@ -48,6 +48,7 @@ Dream Mode:
 Typed memory tools:
 - `POST /tools/context_pack`: agent-facing wrapper around `/memory/context-pack`.
 - `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked Dream Mode synthesis with deterministic hypotheses and optional backend LLM augmentation.
+- `GET|POST /memory/review` and `/tools/review`: bounded deterministic review mode for repeated memory patterns, agent write intensity, and mitigation guidance.
 - `POST /tools/checkpoint_write`: durable checkpoint write with lifecycle metadata.
 - `POST /tools/ephemeral_memory_write`: scratch/test write that is hidden from normal retrieval.
 - `POST /tools/ephemeral_memory_purge`: safe-prefix purge with `dry_run=true` by default and `confirm=true` required for deletion.

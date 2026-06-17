@@ -1103,6 +1103,14 @@ textarea {
   gap: 0.52rem;
 }
 
+.ops-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
 .ops-mindmap-list {
   margin: 0;
   padding-left: 1rem;

@@ -30,6 +30,8 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/tools/context_pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool context package wrapper", Required: true},
 		{Path: "/memory/dream", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "dream mode runtime", Required: true},
 		{Path: "/tools/dream", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool dream mode wrapper", Required: true},
+		{Path: "/memory/review", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "deterministic review mode runtime", Required: true},
+		{Path: "/tools/review", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool review mode wrapper", Required: true},
 		{Path: "/v1/agents/preflight", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "generic agent preflight", Required: true},
 		{Path: "/v1/codex/preflight", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "Codex-compatible preflight", Required: true},
 		{Path: "/v1/agents/sessions", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent runtime session ledger", Required: true},

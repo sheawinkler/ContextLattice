@@ -301,3 +301,78 @@ func TestMemoryStoreContentAddressedBlobHardlinkMode(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryStoreAgentEdgesAndReviewSignals(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	agentEdgePath := filepath.Join(root, "_contextlattice", "memory_agent_event_edges.ndjson")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+	t.Setenv("GO_MEMORY_AGENT_EDGE_PATH", agentEdgePath)
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	writes := []normalizedWrite{
+		{project: "contextlattice", fileName: "notes/review-a.md", content: "first review signal", topicPath: "runbooks/review", agentID: "agent-a", sessionID: "session-1", tags: []string{"tool:edit"}},
+		{project: "contextlattice", fileName: "notes/review-b.md", content: "second review signal", topicPath: "runbooks/review", agentID: "agent-b", sessionID: "session-2"},
+		{project: "contextlattice", fileName: "notes/review-a.md", content: "finding: rewritten review signal with mitigation", topicPath: "runbooks/review", agentID: "agent-a", sessionID: "session-1"},
+	}
+	for _, item := range writes {
+		if _, _, err := store.put(item); err != nil {
+			t.Fatalf("put failed: %v", err)
+		}
+	}
+
+	store.mu.RLock()
+	edgeCount := len(store.agentEdges)
+	store.mu.RUnlock()
+	if edgeCount == 0 {
+		t.Fatalf("expected agent event edges to be recorded")
+	}
+	if raw, err := os.ReadFile(agentEdgePath); err != nil {
+		t.Fatalf("read agent edge log failed: %v", err)
+	} else if countNonEmptyLines(string(raw)) == 0 {
+		t.Fatalf("expected persisted agent edge log rows")
+	}
+
+	rollups := store.topicRollupsWithOptions(context.Background(), "contextlattice", 1, 100, 0, false, false)
+	topic := findRollupTopicForTest(rollups, "runbooks/review")
+	if anyToInt(topic["writeCount"], 0) < 3 {
+		t.Fatalf("expected writeCount from history, topic=%#v payload=%#v", topic, rollups)
+	}
+	if anyToInt(topic["uniqueAgentCount"], 0) != 2 {
+		t.Fatalf("expected uniqueAgentCount=2, topic=%#v", topic)
+	}
+	if anyToInt(topic["uniqueSessionCount"], 0) != 2 {
+		t.Fatalf("expected uniqueSessionCount=2, topic=%#v", topic)
+	}
+	if anyToInt(topic["agentIntensityScore"], 0) <= 0 {
+		t.Fatalf("expected positive intensity score, topic=%#v", topic)
+	}
+
+	opts := reviewModeOptions{Project: "contextlattice", TopicPath: "runbooks/review", WindowHours: 168, MaxPatterns: 5, Limit: 100}
+	topics := reviewTopicRows(asAnySliceForTest(rollups["topics"]), opts.TopicPath)
+	patterns := buildReviewPatterns(opts, store.reviewEntries(opts), topics, rollups)
+	if len(patterns) == 0 {
+		t.Fatalf("expected review patterns from agent intensity")
+	}
+}
+
+func findRollupTopicForTest(payload map[string]any, path string) map[string]any {
+	rawTopics, _ := payload["topics"].([]any)
+	for _, raw := range rawTopics {
+		row, _ := raw.(map[string]any)
+		if anyToString(row["path"]) == path {
+			return row
+		}
+	}
+	return map[string]any{}
+}
+
+func asAnySliceForTest(value any) []any {
+	rows, _ := value.([]any)
+	return rows
+}

@@ -1412,6 +1412,7 @@ func isProxyPath(path string) bool {
 		"/memory/browser-context",
 		"/memory/context-pack",
 		"/memory/dream",
+		"/memory/review",
 		"/memory/continuity/snapshot",
 		"/memory/continuity/snapshots",
 		"/memory/recent",
@@ -1426,6 +1427,7 @@ func isProxyPath(path string) bool {
 		"/tools/capability_map",
 		"/tools/ops_queue_status",
 		"/tools/dream",
+		"/tools/review",
 		"/tools/memory_write_batch",
 		"/tools/feedback_submit",
 		"/tools/skills_quarantine_search",
@@ -6851,6 +6853,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/preferences", s.preferencesRoute)
 	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
 	mux.HandleFunc("/memory/dream", s.memoryDream)
+	mux.HandleFunc("/memory/review", s.memoryReview)
 	mux.HandleFunc("/feedback", s.feedbackRoute)
 	mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)
 	mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)
@@ -6884,6 +6887,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
 	mux.HandleFunc("/tools/dream", s.toolsDream)
+	mux.HandleFunc("/tools/review", s.toolsReview)
 	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)
 	mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)
 	mux.HandleFunc("/tools/skills_quarantine_search", s.toolsSkillsQuarantineSearch)

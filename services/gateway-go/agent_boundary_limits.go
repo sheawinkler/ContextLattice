@@ -333,6 +333,8 @@ func shrinkAgentBoundaryPayload(
 		compactContextPackResponseBoundary(payload, 16, stats)
 	case dreamModeResponseContractID:
 		compactDreamModeResponseBoundary(payload, 16, stats)
+	case reviewModeResponseContractID:
+		compactReviewModeResponseBoundary(payload, 16, stats)
 	case agentPreflightResponseContractID:
 		compactPreflightResponseBoundary(payload, 16, stats)
 	case policyContextPackageContractID:
@@ -349,6 +351,9 @@ func shrinkAgentBoundaryPayload(
 	case dreamModeResponseContractID:
 		dropDreamModeOptionalBoundary(payload, stats)
 		compactDreamModeResponseBoundary(payload, 8, stats)
+	case reviewModeResponseContractID:
+		dropReviewModeOptionalBoundary(payload, stats)
+		compactReviewModeResponseBoundary(payload, 8, stats)
 	case agentPreflightResponseContractID:
 		compactPreflightResponseBoundary(payload, 8, stats)
 		dropPreflightOptionalBoundary(payload, stats)
@@ -364,6 +369,8 @@ func shrinkAgentBoundaryPayload(
 		compactContextPackResponseBoundary(payload, 3, stats)
 	case dreamModeResponseContractID:
 		compactDreamModeResponseBoundary(payload, 4, stats)
+	case reviewModeResponseContractID:
+		compactReviewModeResponseBoundary(payload, 4, stats)
 	case agentPreflightResponseContractID:
 		compactPreflightResponseBoundary(payload, 4, stats)
 	case policyContextPackageContractID:
@@ -378,6 +385,8 @@ func shrinkAgentBoundaryPayload(
 		forceMinimalContextPackResponseBoundary(payload, stats)
 	case dreamModeResponseContractID:
 		forceMinimalDreamModeResponseBoundary(payload, stats)
+	case reviewModeResponseContractID:
+		forceMinimalReviewModeResponseBoundary(payload, stats)
 	case agentPreflightResponseContractID:
 		forceMinimalPreflightResponseBoundary(payload, stats)
 	case policyContextPackageContractID:
@@ -555,6 +564,45 @@ func dropDreamModeOptionalBoundary(payload map[string]any, stats *agentBoundaryS
 	if llm, ok := payload["llm"].(map[string]any); ok {
 		if _, exists := llm["parsed"]; exists {
 			delete(llm, "parsed")
+			if stats != nil {
+				stats.OptionalFieldsCompacted++
+			}
+		}
+	}
+}
+
+func compactReviewModeResponseBoundary(payload map[string]any, keep int, stats *agentBoundaryStats) {
+	if _, ok := payload["patterns"]; ok {
+		payload["patterns"] = trimBoundaryList(payload["patterns"], keep, stats)
+	}
+	if _, ok := payload["agent_guidance"]; ok {
+		payload["agent_guidance"] = trimBoundaryList(payload["agent_guidance"], minInt(keep, 8), stats)
+	}
+	if _, ok := payload["warnings"]; ok {
+		payload["warnings"] = trimBoundaryList(payload["warnings"], minInt(keep, 8), stats)
+	}
+	if sourceCoverage, ok := payload["source_coverage"].(map[string]any); ok {
+		compactSourceCoverageBoundary(sourceCoverage, keep, stats)
+	}
+	if patterns, ok := payload["patterns"].([]any); ok {
+		for _, raw := range patterns {
+			pattern, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			pattern["evidence"] = trimBoundaryList(pattern["evidence"], minInt(keep, 6), stats)
+			pattern["mitigation"] = trimBoundaryList(pattern["mitigation"], minInt(keep, 6), stats)
+			if text := strings.TrimSpace(anyToString(pattern["agent_guidance"])); text != "" {
+				pattern["agent_guidance"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 900)
+			}
+		}
+	}
+}
+
+func dropReviewModeOptionalBoundary(payload map[string]any, stats *agentBoundaryStats) {
+	for _, key := range []string{"review_context", "agent_runtime"} {
+		if _, ok := payload[key]; ok {
+			payload[key] = map[string]any{"omitted_by_boundary": true}
 			if stats != nil {
 				stats.OptionalFieldsCompacted++
 			}
@@ -755,6 +803,18 @@ func forceMinimalDreamModeResponseBoundary(payload map[string]any, stats *agentB
 			llm["synthesis_text"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 1000)
 		}
 	}
+	if stats != nil {
+		stats.OptionalFieldsCompacted++
+	}
+}
+
+func forceMinimalReviewModeResponseBoundary(payload map[string]any, stats *agentBoundaryStats) {
+	dropReviewModeOptionalBoundary(payload, stats)
+	sourceCoverage := anyMap(payload["source_coverage"])
+	payload["patterns"] = trimBoundaryList(payload["patterns"], 2, stats)
+	payload["agent_guidance"] = trimBoundaryList(payload["agent_guidance"], 2, stats)
+	payload["source_coverage"] = minimalSourceCoverageBoundary(sourceCoverage)
+	payload["warnings"] = []any{"ContextLattice Review Mode was clipped to the output boundary budget."}
 	if stats != nil {
 		stats.OptionalFieldsCompacted++
 	}
