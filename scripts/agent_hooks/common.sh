@@ -82,8 +82,8 @@ curl_json() {
     auth_args=(-H "x-api-key: ${CONTEXTLATTICE_ORCHESTRATOR_API_KEY}")
   fi
   if [[ -n "$data" ]]; then
-    curl -fsS -m "$timeout" -X "$method" "$url" -H 'Content-Type: application/json' "${auth_args[@]}" --data-binary "$data"
+    curl -fsS -m "$timeout" -X "$method" "$url" -H 'Content-Type: application/json' ${auth_args[@]+"${auth_args[@]}"} --data-binary "$data"
   else
-    curl -fsS -m "$timeout" -X "$method" "$url" "${auth_args[@]}"
+    curl -fsS -m "$timeout" -X "$method" "$url" ${auth_args[@]+"${auth_args[@]}"}
   fi
 }
