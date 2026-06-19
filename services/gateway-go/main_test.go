@@ -400,6 +400,127 @@ func TestMemoryWriteSyncsQdrantFanout(t *testing.T) {
 	}
 }
 
+func TestDreamModePersistSyncsQdrantFanout(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("GO_WRITE_QDRANT_FANOUT_MODE", "sync")
+	t.Setenv("GO_WRITE_QDRANT_FANOUT_TIMEOUT_SECS", "2")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "true")
+	t.Setenv("QDRANT_LOCAL_URL", "")
+	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
+	t.Setenv("ORCH_PGVECTOR_ENABLED", "false")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "false")
+	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
+		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	}
+	searchCalls := 0
+	upsertCalls := 0
+	var upsertPayload map[string]any
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/health":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/contextlattice_notes":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":{"config":{"params":{"vectors":{"size":768,"distance":"Cosine"}}}}}`))
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/contextlattice_notes/points/search":
+			searchCalls += 1
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":[{"score":0.91,"payload":{"project":"alpha","file":"notes/evidence.md","summary":"qdrant evidence for dream persistence","topic_path":"runbooks/testing","created_at":"2026-06-18T00:00:00Z"}}]}`))
+			return
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/contextlattice_notes/points":
+			upsertCalls += 1
+			if r.URL.Query().Get("wait") != "true" {
+				t.Fatalf("expected wait=true on qdrant upsert, got raw query %q", r.URL.RawQuery)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
+				t.Fatalf("decode qdrant upsert payload: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"result":{"operation_id":1,"status":"completed"}}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer qdrant.Close()
+	t.Setenv("BACKEND_URL", qdrant.URL)
+	t.Setenv("QDRANT_URL", qdrant.URL)
+
+	s := newServer()
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	resp, err := http.Post(
+		gateway.URL+"/memory/dream",
+		"application/json",
+		strings.NewReader(`{"project":"alpha","goal":"prove qdrant dream writeback","topic_path":"runbooks/testing","retrieval_mode":"fast","use_llm":false,"persist":true}`),
+	)
+	if err != nil {
+		t.Fatalf("memory/dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream payload: %v", err)
+	}
+	if !anyToBool(payload["persisted"]) {
+		t.Fatalf("expected persisted=true, got %#v", payload)
+	}
+	writeback, _ := payload["writeback"].(map[string]any)
+	if !anyToBool(writeback["ok"]) {
+		t.Fatalf("expected writeback ok=true, got %#v", writeback)
+	}
+	fanout, ok := writeback["fanout"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected writeback fanout payload, got %#v", writeback["fanout"])
+	}
+	if got := anyToString(fanout["qdrant"]); got != "succeeded" {
+		t.Fatalf("expected qdrant fanout succeeded, got %q writeback=%#v", got, writeback)
+	}
+	if got := anyToString(fanout["postgres_pgvector"]); got != "skipped_source_disabled" {
+		t.Fatalf("expected pgvector skipped_source_disabled for Lite-style tool write, got %q fanout=%#v", got, fanout)
+	}
+	if searchCalls != 1 {
+		t.Fatalf("expected one qdrant search call before writeback, got %d", searchCalls)
+	}
+	if upsertCalls != 1 {
+		t.Fatalf("expected one qdrant upsert call, got %d", upsertCalls)
+	}
+	points, _ := upsertPayload["points"].([]any)
+	if len(points) != 1 {
+		t.Fatalf("expected one qdrant point, got %#v", upsertPayload["points"])
+	}
+	point, _ := points[0].(map[string]any)
+	pointPayload, _ := point["payload"].(map[string]any)
+	if got := anyToString(pointPayload["lifecycle"]); got != "durable" {
+		t.Fatalf("expected qdrant payload lifecycle=durable, got %#v", pointPayload["lifecycle"])
+	}
+	if got := anyToString(writeback["writeback_source"]); got != "dream_mode" {
+		t.Fatalf("expected dream_mode writeback source, got %#v", writeback["writeback_source"])
+	}
+}
+
 func TestProxyForwardsQueryParams(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	var capturedRawQuery string
