@@ -736,24 +736,30 @@ def attach_format_contract(
     if contract_id == "context_pack_response.v1":
         _ensure_context_pack_run_advisor(stamped, registry)
     metadata = contract_metadata(contract_id, registry)
+    previous_metadata = stamped.get("format_contract") if isinstance(stamped.get("format_contract"), dict) else {}
     stamped["format_contract"] = metadata
+    previous_counts: dict[str, Any] | None = previous_metadata.get("omitted_counts") if isinstance(previous_metadata, dict) else None
+    findings: list[dict[str, Any]] = []
     before = _json_bytes(stamped)
-    stamped = enforce_contract_limits(contract_id, stamped, registry)
-    after = _json_bytes(stamped)
-    findings = validate_agent_contract_payload(contract_id, stamped, registry)
-    stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after)
-    previous_counts = stamped["format_contract"].get("omitted_counts") if isinstance(stamped.get("format_contract"), dict) else None
-    before = _json_bytes(stamped)
-    stamped = enforce_contract_limits(contract_id, stamped, registry)
-    after = _json_bytes(stamped)
-    findings = validate_agent_contract_payload(contract_id, stamped, registry)
-    stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after, previous_counts)
-    previous_counts = stamped["format_contract"].get("omitted_counts") if isinstance(stamped.get("format_contract"), dict) else previous_counts
-    before = _json_bytes(stamped)
-    stamped = enforce_contract_limits(contract_id, stamped, registry)
-    after = _json_bytes(stamped)
-    findings = validate_agent_contract_payload(contract_id, stamped, registry)
-    stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after, previous_counts)
+    after = before
+    for _ in range(5):
+        before = _json_bytes(stamped)
+        stamped = enforce_contract_limits(contract_id, stamped, registry)
+        after = _json_bytes(stamped)
+        findings = validate_agent_contract_payload(contract_id, stamped, registry)
+        stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after, previous_counts)
+        previous_counts = stamped["format_contract"].get("omitted_counts") if isinstance(stamped.get("format_contract"), dict) else previous_counts
+        post_stamp_findings = validate_agent_contract_payload(contract_id, stamped, registry)
+        if not post_stamp_findings:
+            stamped["format_contract"] = stamp_validation(metadata, post_stamp_findings, stamped, before, after, previous_counts)
+            previous_counts = stamped["format_contract"].get("omitted_counts") if isinstance(stamped.get("format_contract"), dict) else previous_counts
+            findings = validate_agent_contract_payload(contract_id, stamped, registry)
+            if findings:
+                continue
+            break
+        findings = post_stamp_findings
+    if findings:
+        stamped["format_contract"] = stamp_validation(metadata, findings, stamped, before, after, previous_counts)
     return stamped
 
 
@@ -796,3 +802,36 @@ def preflight_contracts_summary(
     return {
         **summary,
     }
+
+
+def attach_preflight_contracts(
+    payload: dict[str, Any],
+    registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    registry = registry or load_agent_contracts_registry()
+    response = dict(payload)
+    previous_metadata = response.get("format_contracts") if isinstance(response.get("format_contracts"), dict) else {}
+    response["format_contracts"] = preflight_contracts_summary()
+    previous_counts: dict[str, Any] | None = previous_metadata.get("omitted_counts") if isinstance(previous_metadata, dict) else None
+    findings: list[dict[str, Any]] = []
+    before = _json_bytes(response)
+    after = before
+    for _ in range(5):
+        before = _json_bytes(response)
+        response = enforce_contract_limits("agent_preflight_response.v1", response, registry)
+        after = _json_bytes(response)
+        findings = validate_agent_contract_payload("agent_preflight_response.v1", response, registry)
+        response["format_contracts"] = preflight_contracts_summary(findings, response, before, after, previous_counts)
+        previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else previous_counts
+        post_stamp_findings = validate_agent_contract_payload("agent_preflight_response.v1", response, registry)
+        if not post_stamp_findings:
+            response["format_contracts"] = preflight_contracts_summary(post_stamp_findings, response, before, after, previous_counts)
+            previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else previous_counts
+            findings = validate_agent_contract_payload("agent_preflight_response.v1", response, registry)
+            if findings:
+                continue
+            break
+        findings = post_stamp_findings
+    if findings:
+        response["format_contracts"] = preflight_contracts_summary(findings, response, before, after, previous_counts)
+    return response

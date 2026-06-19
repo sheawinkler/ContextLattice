@@ -596,6 +596,25 @@ func assertBoundaryJSONHeadroom(t *testing.T, contractID string, payload map[str
 	}
 }
 
+func assertBoundaryMetadataActualUnderLimit(t *testing.T, contractID string, payload map[string]any, metadataKey string) {
+	t.Helper()
+	limits := agentBoundaryLimitsForContract(contractID)
+	if limits.MaxTotalJSONBytes <= 0 {
+		t.Fatalf("expected %s to define max_total_json_bytes", contractID)
+	}
+	metadata, ok := payload[metadataKey].(map[string]any)
+	if !ok {
+		t.Fatalf("expected %s metadata object, got %#v", metadataKey, payload[metadataKey])
+	}
+	actual := anyToInt(metadata["actual_json_bytes"], 0)
+	if actual <= 0 {
+		t.Fatalf("expected %s actual_json_bytes > 0, got %#v", metadataKey, metadata["actual_json_bytes"])
+	}
+	if actual > limits.MaxTotalJSONBytes {
+		t.Fatalf("expected %s actual_json_bytes <= %d, got %d", contractID, limits.MaxTotalJSONBytes, actual)
+	}
+}
+
 func assertNoRawProviderOverflowShape(t *testing.T, payload any) {
 	t.Helper()
 	encoded, err := json.Marshal(payload)

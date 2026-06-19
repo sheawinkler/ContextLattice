@@ -6886,6 +6886,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/ops/native-ownership", s.opsNativeOwnership)
 	mux.HandleFunc("/tools/capability_map", s.toolsCapabilityMap)
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
+	mux.HandleFunc("/tools/context_pack", s.toolsContextPack)
 	mux.HandleFunc("/tools/dream", s.toolsDream)
 	mux.HandleFunc("/tools/review", s.toolsReview)
 	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)

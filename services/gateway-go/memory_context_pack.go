@@ -36,6 +36,30 @@ func (s *server) memoryContextPack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, response)
 }
 
+func (s *server) toolsContextPack(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/context_pack")
+	if !ok {
+		return
+	}
+	payload, err := readOptionalJSONBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	response, status, execErr := s.buildContextPackResponse(r.Context(), incomingHeaders, payload)
+	if execErr != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "context_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
+		return
+	}
+	response["tool"] = "context_pack"
+	response = attachPayloadFormatContract(contextPackResponseContractID, response, anyToString(response["agent_id"]), "context_pack", "/tools/context_pack")
+	writeJSON(w, status, response)
+}
+
 func (s *server) buildContextPackResponse(
 	ctx context.Context,
 	incomingHeaders http.Header,

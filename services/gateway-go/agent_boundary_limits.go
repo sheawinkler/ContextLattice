@@ -110,6 +110,25 @@ func agentBoundaryOmittedCounts(stats agentBoundaryStats) map[string]any {
 	}
 }
 
+func agentBoundaryStatsFromMetadata(value any) agentBoundaryStats {
+	metadata, ok := value.(map[string]any)
+	if !ok {
+		return agentBoundaryStats{}
+	}
+	counts := anyMap(metadata["omitted_counts"])
+	return agentBoundaryStats{
+		StringsClipped:          anyToInt(counts["strings_clipped"], 0),
+		ListsClipped:            anyToInt(counts["lists_clipped"], 0),
+		OptionalFieldsCompacted: anyToInt(counts["optional_fields_compacted"], 0),
+		TotalPasses:             anyToInt(counts["boundary_passes"], 0),
+		JSONBytesBefore:         anyToInt(metadata["json_bytes_before_boundary"], 0),
+		JSONBytesAfter:          anyToInt(metadata["json_bytes_after_boundary"], 0),
+		MaxTotalJSONBytes:       anyToInt(metadata["max_total_json_bytes"], 0),
+		MaxStringBytes:          anyToInt(metadata["max_string_bytes"], 0),
+		MaxListItems:            anyToInt(metadata["max_list_items"], 0),
+	}
+}
+
 func positiveListLimit(value int) int {
 	if value <= 0 {
 		return -1

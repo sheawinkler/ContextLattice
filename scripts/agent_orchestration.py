@@ -20,10 +20,10 @@ try:
     )
     from scripts.agent_contracts import (
         anti_scheming_protocol,
+        attach_preflight_contracts,
         contract_metadata,
         enforce_contract_limits,
         load_agent_contracts_registry,
-        preflight_contracts_summary,
         stamp_validation,
         validate_agent_contract_payload,
     )
@@ -34,10 +34,10 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
     )
     from agent_contracts import (  # type: ignore[no-redef]
         anti_scheming_protocol,
+        attach_preflight_contracts,
         contract_metadata,
         enforce_contract_limits,
         load_agent_contracts_registry,
-        preflight_contracts_summary,
         stamp_validation,
         validate_agent_contract_payload,
     )
@@ -1129,26 +1129,8 @@ class ContextLatticeOrchestrator:
             "mission_context_pack": mission_pack,
             "objective_runtime": objective_runtime,
             "policy_context_package": policy_context_package,
-            "format_contracts": preflight_contracts_summary(),
         }
-        before = json_bytes(response)
-        response = enforce_contract_limits("agent_preflight_response.v1", response)
-        after = json_bytes(response)
-        preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
-        response["format_contracts"] = preflight_contracts_summary(preflight_findings, response, before, after)
-        previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else None
-        before = json_bytes(response)
-        response = enforce_contract_limits("agent_preflight_response.v1", response)
-        after = json_bytes(response)
-        preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
-        response["format_contracts"] = preflight_contracts_summary(preflight_findings, response, before, after, previous_counts)
-        previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else previous_counts
-        before = json_bytes(response)
-        response = enforce_contract_limits("agent_preflight_response.v1", response)
-        after = json_bytes(response)
-        preflight_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
-        response["format_contracts"] = preflight_contracts_summary(preflight_findings, response, before, after, previous_counts)
-        return response
+        return attach_preflight_contracts(response)
 
     def status(self) -> Dict[str, Any]:
         """Get orchestrator + service status."""
