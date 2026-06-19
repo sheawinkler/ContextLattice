@@ -1514,9 +1514,9 @@ func (s *server) commitDreamMemoryWrite(
 			"go_memory_store": "succeeded",
 			"python_backend":  "disabled",
 		}
-		fanoutStatus, warnings := s.handlePgvectorWriteFanout(item, entry.EventID)
-		if strings.TrimSpace(fanoutStatus) != "" {
-			fanout["postgres_pgvector"] = fanoutStatus
+		vectorFanout, warnings := s.handleNativeVectorWriteFanout(item, entry.EventID)
+		for source, status := range vectorFanout {
+			fanout[source] = status
 		}
 		return map[string]any{
 			"ok":               true,
