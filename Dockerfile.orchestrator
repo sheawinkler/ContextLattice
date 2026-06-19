@@ -1,4 +1,4 @@
-FROM golang:1.23-bookworm AS gateway-builder
+FROM golang:1.26.4-bookworm AS gateway-builder
 WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./services/gateway-go/
 RUN cd services/gateway-go && go mod download

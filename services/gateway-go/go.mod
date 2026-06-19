@@ -1,6 +1,8 @@
 module github.com/contextlattice/gateway-go
 
-go 1.24.0
+go 1.26
+
+toolchain go1.26.4
 
 require (
 	github.com/klauspost/compress v1.16.7
