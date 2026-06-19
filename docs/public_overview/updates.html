@@ -57,6 +57,21 @@
 
     <section class="section timeline">
       <article class="update-card">
+        <span class="update-meta">2026-06-19 · v3.4.25 · Go 1.26.4 Build Surface + Qdrant Writeback</span>
+        <h3>The public build lane now targets Go 1.26.4 end to end.</h3>
+        <p class="spotlight">
+          This release updates the Go module and Docker builder surface while packaging the post-v3.4.24 agent/runtime train:
+          Go helper binaries, graph-aware context packs, Review Mode, bounded output contracts, and Qdrant-first writeback closure.
+        </p>
+        <ul>
+          <li><strong>Go toolchain:</strong> gateway and orchestrator modules now declare <code>go 1.26</code> with <code>toolchain go1.26.4</code>.</li>
+          <li><strong>Container builders:</strong> Go builder stages now use exact <code>golang:1.26.4</code> Alpine/Bookworm tags.</li>
+          <li><strong>Lite boundary:</strong> local Lite keeps <code>topic_rollups + qdrant</code>; hosted/Glama Lite remains topic-rollups-only and sidecar-free.</li>
+          <li><strong>Memory writeback:</strong> Qdrant is first-class for native writeback surfaces; pgvector remains a Full/operator SQL-co-located vector lane.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
         <span class="update-meta">2026-06-11 · v3.4.13 · Zero-Friction Agent Adoption Kit</span>
         <h3>One command now tells a new agent whether ContextLattice is ready.</h3>
         <p class="spotlight">
