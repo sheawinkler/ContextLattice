@@ -7,7 +7,7 @@ toolchain go1.26.4
 require (
 	github.com/klauspost/compress v1.16.7
 	github.com/lib/pq v1.10.9
-	go.mongodb.org/mongo-driver v1.17.4
+	go.mongodb.org/mongo-driver v1.17.7
 )
 
 require (
