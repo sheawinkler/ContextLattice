@@ -143,6 +143,44 @@ def slim_run_advisor(value: Any) -> dict[str, Any]:
     return attach_format_contract("run_advisor.v1", slim)
 
 
+def ultra_slim_run_advisor() -> dict[str, Any]:
+    return {
+        "schema_id": "run_advisor.v1",
+        "posture": "minimal_context",
+        "prompt_quality": {
+            "score": 0,
+            "state": "minimal",
+            "ranked_evidence_count": 0,
+            "reference_prompt_chars": 0,
+            "returned_source_count": 0,
+            "complete": False,
+            "missing": ["ranked_evidence"],
+        },
+        "retrieval_advice": {
+            "recommended_mode": "balanced",
+            "recommended_surface": "cli_for_local_agents",
+            "rationale": ["local_budget_boundary"],
+            "blocking_recommended": False,
+        },
+        "continuation": {
+            "status": "minimal",
+            "pending_sources": [],
+            "warming_sources": [],
+            "failed_sources": [],
+            "timed_out_sources": [],
+            "budget_exceeded_sources": [],
+            "continuation_available": False,
+            "repair_instruction": "Rerun with a larger budget when detailed evidence is required.",
+        },
+        "objective_coherence": {
+            "score": 0,
+            "status": "minimal",
+            "signals": {},
+            "repair_instruction": "Carry objective, goal, and mission into the next prompt packet.",
+        },
+    }
+
+
 def trim_context_pack_lists(context_pack: dict[str, Any], limit: int) -> None:
     for key in (
         "facts",
@@ -237,7 +275,60 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "reference_prompt": "ContextLattice clipped this package to a minimal bounded payload. Rerun with a larger budget before making detailed evidence-backed claims.",
         "writeback_required": True,
     }
-    return attach_format_contract("context_pack_response.v1", minimal)
+    minimal = attach_format_contract("context_pack_response.v1", minimal)
+    if encoded_len(minimal) <= budget_chars:
+        return minimal
+
+    tiny_coverage = {
+        "configured": as_list(coverage.get("configured"))[:3] if isinstance(coverage, dict) else [],
+        "returned": as_list(coverage.get("returned"))[:3] if isinstance(coverage, dict) else [],
+        "complete": bool(coverage.get("complete")) if isinstance(coverage, dict) else False,
+    }
+    tiny_compiler = minimal_context_compiler("minimal_local_budget", 0)
+    tiny_pack = {
+        "query": str(context_pack.get("query") or payload.get("task_summary") or "")[:240],
+        "retrieval_mode": str(context_pack.get("retrieval_mode") or "")[:80],
+        "retrieval_intent": str(context_pack.get("retrieval_intent") or "")[:80],
+        "source_coverage": tiny_coverage,
+        "context_compiler": tiny_compiler,
+        "run_advisor": ultra_slim_run_advisor(),
+        "prompt_sections": minimal_prompt_sections(
+            str(context_pack.get("query") or payload.get("task_summary") or "")[:240],
+            "ContextLattice returned a minimal bounded package. Rerun with a larger budget for evidence.",
+        ),
+        "ranked_evidence": [],
+        "facts": [],
+        "numeric_facts": [],
+        "citations": [],
+        "results": [],
+        "relevant_decisions": [],
+        "files_to_read": [],
+        "files_to_avoid": [],
+        "capabilities_to_use": [],
+        "runbooks": [],
+        "known_failure_modes": [],
+        "commands": [],
+        "acceptance_criteria": [],
+    }
+    tiny = {
+        "ok": bool(payload.get("ok", True)),
+        "task_summary": str(payload.get("task_summary") or "")[:120],
+        "context_budget_chars": budget_chars,
+        "clipped": True,
+        "source_coverage": tiny_coverage,
+        "warnings": ["ContextLattice context pack clipped to minimal local output budget."],
+        "context_pack": tiny_pack,
+        "context_compiler": tiny_compiler,
+        "run_advisor": tiny_pack["run_advisor"],
+        "reference_prompt": "ContextLattice returned a minimal bounded context package. Rerun with a larger budget before making evidence-backed claims.",
+        "writeback_required": True,
+    }
+    tiny = attach_format_contract("context_pack_response.v1", tiny)
+    if encoded_len(tiny) <= budget_chars:
+        return tiny
+    for key in ("task_summary", "context_budget_chars", "clipped", "warnings"):
+        tiny.pop(key, None)
+    return attach_format_contract("context_pack_response.v1", tiny)
 
 
 def minimal_context_compiler(strategy: str, ranked_count: int) -> dict[str, Any]:

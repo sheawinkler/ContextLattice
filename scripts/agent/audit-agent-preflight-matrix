@@ -25,9 +25,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from _common import emit  # noqa: E402
 from agent_contracts import (  # noqa: E402
     attach_format_contract,
-    enforce_contract_limits,
+    attach_preflight_contracts,
     load_agent_contracts_registry,
-    preflight_contracts_summary,
     validate_agent_contract_payload,
 )
 from agent_orchestration import (  # noqa: E402
@@ -64,11 +63,6 @@ REQUIRED_ALIASES = {
     "pi-agent": "pi",
     "pi_agent": "pi",
 }
-
-
-def json_bytes(value: Any) -> int:
-    return len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-
 
 def sample_context_pack(agent_id: str) -> dict[str, Any]:
     pack = {
@@ -173,19 +167,9 @@ def matrix_case(agent: str) -> dict[str, Any]:
         "context_pack": context_pack,
         "objective_runtime": objective_runtime,
         "policy_context_package": policy,
-        "format_contracts": preflight_contracts_summary(),
     }
-    before = json_bytes(response)
-    response = enforce_contract_limits("agent_preflight_response.v1", response)
-    after = json_bytes(response)
+    response = attach_preflight_contracts(response)
     contract_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
-    response["format_contracts"] = preflight_contracts_summary(contract_findings, response, before, after)
-    previous_counts = response["format_contracts"].get("omitted_counts") if isinstance(response.get("format_contracts"), dict) else None
-    before = json_bytes(response)
-    response = enforce_contract_limits("agent_preflight_response.v1", response)
-    after = json_bytes(response)
-    contract_findings = validate_agent_contract_payload("agent_preflight_response.v1", response)
-    response["format_contracts"] = preflight_contracts_summary(contract_findings, response, before, after, previous_counts)
     findings.extend(contract_findings)
     validation = response["format_contracts"]["validation"]
     if validation.get("status") != "passed":

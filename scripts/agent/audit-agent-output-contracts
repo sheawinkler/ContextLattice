@@ -18,10 +18,10 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from agent_contracts import (  # noqa: E402
     anti_scheming_protocol,
     attach_format_contract,
+    attach_preflight_contracts,
     contract_metadata,
     enforce_contract_limits,
     load_agent_contracts_registry,
-    preflight_contracts_summary,
     stamp_validation,
     validate_agent_contract_payload,
 )
@@ -824,19 +824,9 @@ def run_audit() -> list[dict[str, Any]]:
         "context_pack": context_pack,
         "objective_runtime": policy.get("objective_runtime"),
         "policy_context_package": policy,
-        "format_contracts": preflight_contracts_summary(),
     }
-    before = json_bytes(preflight)
-    preflight = enforce_contract_limits("agent_preflight_response.v1", preflight, registry)
-    after = json_bytes(preflight)
+    preflight = attach_preflight_contracts(preflight, registry)
     preflight_errors = validate_agent_contract_payload("agent_preflight_response.v1", preflight, registry)
-    preflight["format_contracts"] = preflight_contracts_summary(preflight_errors, preflight, before, after)
-    previous_counts = preflight["format_contracts"].get("omitted_counts") if isinstance(preflight.get("format_contracts"), dict) else None
-    before = json_bytes(preflight)
-    preflight = enforce_contract_limits("agent_preflight_response.v1", preflight, registry)
-    after = json_bytes(preflight)
-    preflight_errors = validate_agent_contract_payload("agent_preflight_response.v1", preflight, registry)
-    preflight["format_contracts"] = preflight_contracts_summary(preflight_errors, preflight, before, after, previous_counts)
     for item in preflight_errors:
         findings.append({"severity": "error", **item})
 

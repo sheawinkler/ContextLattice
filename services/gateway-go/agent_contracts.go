@@ -363,16 +363,27 @@ func preflightContractsSummary(findings []map[string]any, stats agentBoundarySta
 
 func attachPayloadFormatContract(contractID string, payload map[string]any, agentID string, lane string, endpoint string) map[string]any {
 	metadata := contractMetadata(contractID)
+	stats := agentBoundaryStatsFromMetadata(payload["format_contract"])
 	payload["format_contract"] = metadata
-	stats := enforceAgentBoundaryContract(contractID, payload)
-	findings := validateAgentContractPayload(contractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
-	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(contractID, payload))
-	findings = validateAgentContractPayload(contractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
-	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(contractID, payload))
-	findings = validateAgentContractPayload(contractID, payload)
-	payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+	findings := []map[string]any{}
+	for pass := 0; pass < 5; pass++ {
+		stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(contractID, payload))
+		findings = validateAgentContractPayload(contractID, payload)
+		payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+		postStampFindings := validateAgentContractPayload(contractID, payload)
+		if len(postStampFindings) == 0 {
+			payload["format_contract"] = stampContractValidation(metadata, postStampFindings, stats, payload, "format_contract")
+			findings = validateAgentContractPayload(contractID, payload)
+			if len(findings) != 0 {
+				continue
+			}
+			break
+		}
+		findings = postStampFindings
+	}
+	if len(findings) > 0 {
+		payload["format_contract"] = stampContractValidation(metadata, findings, stats, payload, "format_contract")
+	}
 	recordAgentContractBoundary(agentID, contractID, lane, endpoint, findings)
 	return payload
 }
@@ -442,18 +453,28 @@ func attachWritebackFormatContract(payload map[string]any, item normalizedWrite,
 }
 
 func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any {
+	stats := agentBoundaryStatsFromMetadata(payload["format_contracts"])
 	payload["format_contracts"] = preflightContractsSummary(nil, agentBoundaryStats{}, payload)
-	sanitizePreflightSearchBoundary(payload)
-	stats := enforceAgentBoundaryContract(agentPreflightResponseContractID, payload)
-	findings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
-	payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
-	sanitizePreflightSearchBoundary(payload)
-	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(agentPreflightResponseContractID, payload))
-	findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
-	payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
-	stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(agentPreflightResponseContractID, payload))
-	findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
-	payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
+	findings := []map[string]any{}
+	for pass := 0; pass < 5; pass++ {
+		sanitizePreflightSearchBoundary(payload)
+		stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(agentPreflightResponseContractID, payload))
+		findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
+		payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
+		postStampFindings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
+		if len(postStampFindings) == 0 {
+			payload["format_contracts"] = preflightContractsSummary(postStampFindings, stats, payload)
+			findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
+			if len(findings) != 0 {
+				continue
+			}
+			break
+		}
+		findings = postStampFindings
+	}
+	if len(findings) > 0 {
+		payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
+	}
 	recordAgentContractBoundary(anyToString(payload["agent_id"]), agentPreflightResponseContractID, "preflight", "/v1/agents/preflight", findings)
 	return payload
 }

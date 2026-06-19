@@ -1837,6 +1837,242 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	}
 }
 
+func TestContextPackAgentRoutesClipOversizedBackendPayloads(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/retrieval/query":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(oversizedBoundarySearchResponse())
+			return
+		case "/memory/context-pack":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"proxy path should not be called"}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	for _, path := range []string{"/memory/context-pack", "/tools/context_pack"} {
+		t.Run(path, func(t *testing.T) {
+			reqBody := `{"project":"contextlattice","query":"route boundary canary","topic_path":"runbooks/boundary","limit":100,"max_facts":100,"include_retrieval_debug":true,"retrieval_mode":"balanced","agent_id":"codex_gpt5_boundary_test"}`
+			resp, err := http.Post(gateway.URL+path, "application/json", strings.NewReader(reqBody))
+			if err != nil {
+				t.Fatalf("context-pack request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode context-pack payload: %v", err)
+			}
+			assertBoundaryContractPassed(t, contextPackResponseContractID, payload)
+			assertBoundaryJSONUnderLimit(t, contextPackResponseContractID, payload)
+			assertNoRawProviderOverflowShape(t, payload)
+			assertBoundaryMetadata(t, payload, "format_contract", true)
+			assertBoundaryMetadataActualUnderLimit(t, contextPackResponseContractID, payload, "format_contract")
+			if path == "/tools/context_pack" && strings.TrimSpace(anyToString(payload["tool"])) != "context_pack" {
+				t.Fatalf("expected tool marker on /tools/context_pack, got %#v", payload["tool"])
+			}
+		})
+	}
+}
+
+func TestPreflightRoutesClipOversizedBackendPayloads(t *testing.T) {
+	const missionQuery = "mission objective goal cross-project synthesis longitudinal learning policy context package retrieval discipline"
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		case "/status":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"service":{"ok":true}}`))
+			return
+		case "/memory/search":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(oversizedBoundarySearchResponse())
+			return
+		case "/memory/context-pack":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			envelope := oversizedBoundaryContextPackEnvelope()
+			if strings.TrimSpace(anyToString(payload["query"])) == missionQuery {
+				envelope["query"] = "mission policy package boundary canary"
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(envelope)
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "codex",
+			path: "/v1/codex/preflight",
+			body: `{"project":"contextlattice","topic_path":"runbooks/boundary","query":"preflight boundary canary","agent_id":"codex_gpt5_boundary_test","mission":"boundary mission","objective":"clip oversized backend payloads","goal":"no raw provider overflow shape leaves preflight","blocking":false,"wait_for_slow_sources":false,"sync_slow_sources":false,"combined_sources":false}`,
+		},
+		{
+			name: "agents",
+			path: "/v1/agents/preflight",
+			body: `{"agent":"codex","project":"contextlattice","topic_path":"runbooks/boundary","query":"agents preflight boundary canary","agent_id":"codex_gpt5_boundary_test","mission":"boundary mission","objective":"clip oversized backend payloads","goal":"no raw provider overflow shape leaves preflight","blocking":false,"wait_for_slow_sources":false,"sync_slow_sources":false,"combined_sources":false}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Post(gateway.URL+tc.path, "application/json", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("preflight request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode preflight payload: %v", err)
+			}
+			assertBoundaryContractPassed(t, agentPreflightResponseContractID, payload)
+			assertBoundaryJSONUnderLimit(t, agentPreflightResponseContractID, payload)
+			assertNoRawProviderOverflowShape(t, payload)
+			assertBoundaryMetadata(t, payload, "format_contracts", true)
+			assertBoundaryMetadataActualUnderLimit(t, agentPreflightResponseContractID, payload, "format_contracts")
+			policy := anyMap(payload["policy_context_package"])
+			assertBoundaryContractPassed(t, policyContextPackageContractID, policy)
+			assertBoundaryJSONUnderLimit(t, policyContextPackageContractID, policy)
+			assertNoRawProviderOverflowShape(t, policy)
+		})
+	}
+}
+
+func oversizedBoundaryText() string {
+	return strings.Repeat("array_above_max_length context length exceeded maximum context length oversized input ", 240)
+}
+
+func oversizedBoundaryItems(count int) []any {
+	text := oversizedBoundaryText()
+	items := make([]any, 0, count)
+	for idx := 0; idx < count; idx++ {
+		items = append(items, map[string]any{
+			"text":       text,
+			"summary":    text,
+			"file":       "notes/oversized-boundary.md",
+			"source":     "fixture",
+			"topic_path": "runbooks/boundary",
+			"score":      0.9,
+		})
+	}
+	return items
+}
+
+func oversizedBoundarySearchResponse() map[string]any {
+	text := oversizedBoundaryText()
+	items := oversizedBoundaryItems(140)
+	return map[string]any{
+		"degraded": false,
+		"results":  items,
+		"warnings": []any{text, text},
+		"retrieval_debug": map[string]any{
+			"raw":     text,
+			"results": items,
+		},
+	}
+}
+
+func oversizedBoundaryContextPackEnvelope() map[string]any {
+	text := oversizedBoundaryText()
+	items := oversizedBoundaryItems(140)
+	compiler := map[string]any{
+		"schema_id":              "contextlattice_context_compiler.v1",
+		"version":                1,
+		"strategy":               "oversized_route_fixture",
+		"intended_use":           "test boundary clipping",
+		"recommended_surface":    "cli_for_local_agents",
+		"ranked_evidence_count":  len(items),
+		"retrieval_debug_detail": text,
+	}
+	promptSections := map[string]any{
+		"objective":        text,
+		"task":             text,
+		"next_action":      text,
+		"evidence":         items,
+		"files_to_inspect": items,
+		"commands":         items,
+		"checks":           items,
+		"risks":            items,
+		"capabilities":     items,
+		"constraints":      items,
+	}
+	contextPack := map[string]any{
+		"query":               "oversized backend context pack",
+		"retrieval_mode":      "balanced",
+		"facts":               items,
+		"numericFacts":        items,
+		"numeric_facts":       items,
+		"citations":           items,
+		"results":             items,
+		"rankedEvidence":      items,
+		"ranked_evidence":     items,
+		"relevantDecisions":   items,
+		"relevant_decisions":  items,
+		"filesToRead":         items,
+		"files_to_read":       items,
+		"filesToAvoid":        items,
+		"files_to_avoid":      items,
+		"capabilitiesToUse":   items,
+		"capabilities_to_use": items,
+		"runbooks":            items,
+		"knownFailureModes":   items,
+		"known_failure_modes": items,
+		"commands":            items,
+		"acceptanceCriteria":  items,
+		"acceptance_criteria": items,
+		"promptSections":      promptSections,
+		"prompt_sections":     promptSections,
+		"contextCompiler":     compiler,
+		"context_compiler":    compiler,
+	}
+	return map[string]any{
+		"ok":                 true,
+		"query":              text,
+		"context_pack":       contextPack,
+		"context_compiler":   compiler,
+		"reference_prompt":   text,
+		"source_coverage":    map[string]any{"configured": items, "returned": items, "pending": items, "complete": false},
+		"warnings":           items,
+		"retrieval":          map[string]any{"debug": text, "results": items},
+		"writeback_required": true,
+	}
+}
+
 func TestMemoryDreamBuildsEvidenceLinkedHypothesesWithoutLLM(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")

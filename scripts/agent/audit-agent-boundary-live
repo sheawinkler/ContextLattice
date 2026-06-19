@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +214,25 @@ def compact_cases(timeout: float) -> list[dict[str, Any]]:
             "stderr": stderr,
         }
     )
+    cli_budget = 9_000
+    try:
+        context_pack_payload = contextlattice_pack_fixture(cli_budget)
+        context_pack_rc = 0
+        context_pack_stderr = ""
+    except Exception as exc:
+        context_pack_payload = {"ok": False, "error": str(exc)[:500]}
+        context_pack_rc = 1
+        context_pack_stderr = str(exc)[:1000]
+    cases.append(
+        {
+            "name": "contextlattice_pack_cli_fixture",
+            "contract": "context_pack_response.v1",
+            "returncode": context_pack_rc,
+            "payload": context_pack_payload,
+            "stderr": context_pack_stderr,
+            "local_budget_bytes": cli_budget,
+        }
+    )
     for name, hook, env_key in (
         ("precompact_stdout", pre_hook, "CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE"),
         ("postcompact_stdout", post_hook, "CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE"),
@@ -227,6 +248,74 @@ def compact_cases(timeout: float) -> list[dict[str, Any]]:
             }
         )
     return cases
+
+
+def contextlattice_pack_fixture(local_budget: int) -> dict[str, Any]:
+    helper = REPO_ROOT / "scripts" / "agent" / "contextlattice-pack"
+    loader = SourceFileLoader("contextlattice_pack_cli", str(helper))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed_to_load_contextlattice_pack_helper")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    text = adversarial_text()
+    items = [
+        {
+            "text": text,
+            "summary": text,
+            "file": f"notes/oversized-{idx}.md",
+            "source": "offline_fixture",
+            "topic_path": "runbooks/boundary",
+            "score": 0.9,
+        }
+        for idx in range(140)
+    ]
+    raw = {
+        "ok": True,
+        "query": text,
+        "session_id": "boundary-fixture-session",
+        "retrieval_mode": "balanced",
+        "source_coverage": {
+            "configured": ["offline_fixture"],
+            "returned": ["offline_fixture"],
+            "pending": [text for _ in range(80)],
+            "complete": False,
+        },
+        "reference_prompt": text,
+        "warnings": [text for _ in range(80)],
+        "context_pack": {
+            "query": text,
+            "retrieval_mode": "balanced",
+            "source_coverage": {"configured": ["offline_fixture"], "returned": ["offline_fixture"], "complete": False},
+            "prompt_sections": {
+                "objective": text,
+                "task": text,
+                "next_action": text,
+                "evidence": items,
+                "files_to_inspect": [text for _ in range(80)],
+                "commands": [text for _ in range(80)],
+                "checks": [text for _ in range(80)],
+                "risks": [text for _ in range(80)],
+                "capabilities": [text for _ in range(80)],
+                "constraints": [text for _ in range(80)],
+            },
+            "ranked_evidence": items,
+            "graph_neighbors": items,
+            "facts": items,
+            "numericFacts": items,
+            "citations": items,
+            "results": items,
+            "relevantDecisions": items,
+            "filesToRead": items,
+            "filesToAvoid": items,
+            "capabilitiesToUse": items,
+            "runbooks": items,
+            "knownFailureModes": items,
+            "commands": items,
+            "acceptanceCriteria": items,
+        },
+    }
+    return module.compact_context_pack(raw, text, local_budget)
 
 
 def main() -> int:
@@ -293,12 +382,27 @@ def main() -> int:
                 "contract": case["contract"],
                 "returncode": case["returncode"],
                 "json_bytes": json_bytes(payload),
+                "local_budget_bytes": case.get("local_budget_bytes"),
             }
         )
         if case["returncode"] != 0:
             findings.append({"severity": "error", "case": case["name"], "reason": "command_failed", "stderr": case["stderr"]})
         if case["contract"] == "codex_compact_hook_stdout.v1":
             findings.extend(validate_contract(case["name"], case["contract"], payload, registry))
+        elif case["contract"] == "context_pack_response.v1":
+            findings.extend(validate_contract(case["name"], case["contract"], payload, registry))
+            findings.extend(boundary_metadata_findings(case["name"], payload))
+            local_budget = int(case.get("local_budget_bytes") or 0)
+            if local_budget > 0 and json_bytes(payload) > local_budget:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "case": case["name"],
+                        "reason": "contextlattice_pack_cli_exceeds_local_budget",
+                        "bytes": json_bytes(payload),
+                        "max_bytes": local_budget,
+                    }
+                )
         else:
             findings.extend(raw_provider_phrase_findings(payload, case["name"]))
             if json_bytes(payload) > 12_000:
