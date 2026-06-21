@@ -420,7 +420,7 @@ func TestDreamModePersistSyncsQdrantFanout(t *testing.T) {
 	t.Setenv("QDRANT_LOCAL_URL", "")
 	t.Setenv("ORCH_FASTEMBED_RS_BASE_URL", "")
 	t.Setenv("ORCH_PGVECTOR_ENABLED", "false")
-	t.Setenv("GO_DREAM_LLM_ENABLED", "false")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "true")
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 	}
@@ -463,6 +463,18 @@ func TestDreamModePersistSyncsQdrantFanout(t *testing.T) {
 	t.Setenv("BACKEND_URL", qdrant.URL)
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/chat" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":{"content":"{\"hypotheses\":[{\"title\":\"Use qdrant writeback as Dream Mode's durable proof\",\"claim\":\"A successful qdrant writeback proves Dream Mode can persist LLM synthesis without pgvector.\",\"supporting_evidence\":[\"e1\"],\"experiment\":\"Run Dream Mode with sync qdrant fanout and assert the durable point lands in qdrant.\",\"expected_signal\":\"The Dream response is persisted and qdrant fanout reports succeeded.\"}],\"experiments\":[],\"next_best_action\":\"keep qdrant as the Lite durable vector path\"}"}}`))
+	}))
+	defer llmServer.Close()
+
 	s := newServer()
 	gateway := httptest.NewServer(buildMux(s))
 	defer gateway.Close()
@@ -470,7 +482,7 @@ func TestDreamModePersistSyncsQdrantFanout(t *testing.T) {
 	resp, err := http.Post(
 		gateway.URL+"/memory/dream",
 		"application/json",
-		strings.NewReader(`{"project":"alpha","goal":"prove qdrant dream writeback","topic_path":"runbooks/testing","retrieval_mode":"fast","use_llm":false,"persist":true}`),
+		strings.NewReader(`{"project":"alpha","goal":"prove qdrant dream writeback","topic_path":"runbooks/testing","retrieval_mode":"fast","use_llm":true,"provider":"ollama","base_url":"`+llmServer.URL+`","model":"dream-test","persist":true}`),
 	)
 	if err != nil {
 		t.Fatalf("memory/dream request failed: %v", err)
@@ -483,6 +495,9 @@ func TestDreamModePersistSyncsQdrantFanout(t *testing.T) {
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode dream payload: %v", err)
+	}
+	if source := strings.TrimSpace(anyToString(payload["intelligence_source"])); source != "llm_synthesis" {
+		t.Fatalf("expected llm_synthesis intelligence source, got %q payload=%#v", source, payload)
 	}
 	if !anyToBool(payload["persisted"]) {
 		t.Fatalf("expected persisted=true, got %#v", payload)
