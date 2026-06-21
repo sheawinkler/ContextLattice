@@ -38,7 +38,7 @@ Env:
 - `ORCH_STORAGE_LEDGER_READ_LIMIT_MAX` (default `5000`)
 
 Dream Mode:
-- `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked synthesis with deterministic hypotheses and optional backend LLM augmentation.
+- `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked synthesis that requires successful structured LLM output. Non-LLM evidence packaging belongs to context-pack or review.
 - `GO_DREAM_LLM_ENABLED` (default `true`)
 - `GO_DREAM_MODEL` (explicit override; deprecated `qwen2.5-coder` is replaced for Dream Mode)
 - `GO_DREAM_LLM_TIMEOUT_SECS` (default `600`)
@@ -47,14 +47,14 @@ Dream Mode:
 
 Typed memory tools:
 - `POST /tools/context_pack`: agent-facing wrapper around `/memory/context-pack`.
-- `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked Dream Mode synthesis with deterministic hypotheses and optional backend LLM augmentation.
+- `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked Dream Mode synthesis. Dream Mode requires successful structured LLM synthesis; non-LLM evidence packaging belongs to context-pack or review.
 - `GET|POST /memory/review` and `/tools/review`: bounded deterministic review mode for repeated memory patterns, agent write intensity, and mitigation guidance.
 - `POST /tools/checkpoint_write`: durable checkpoint write with lifecycle metadata.
 - `POST /tools/ephemeral_memory_write`: scratch/test write that is hidden from normal retrieval.
 - `POST /tools/ephemeral_memory_purge`: safe-prefix purge with `dry_run=true` by default and `confirm=true` required for deletion.
 - `GET|POST /tools/memory_file_get`: exact file read by `project` + `file`.
 
-Dream Mode defaults to `GO_DREAM_LLM_ENABLED=true`. Explicit request `model` and `GO_DREAM_MODEL` are honored unless they name deprecated `qwen2.5-coder`; otherwise Ollama routes can auto-select the best installed local Qwen 3.x model, preferring Qwen3.7/Qwen3.6 over `TASK_MODEL` and excluding abliterated/uncensored variants unless `CONTEXTLATTICE_DREAM_ALLOW_PRIVATE_EVAL_MODELS=true` (`GO_DREAM_ALLOW_UNCENSORED_MODELS=true` is a legacy alias). Qwen3.7-Max is API/proprietary as of May 2026, so use it through `sglang`, `vllm`, `mlx`, `mtplx`, `llama-cpp`, `tgi`, `tensorrt-llm`, or another OpenAI-compatible provider/base URL rather than expecting a local Ollama tag. Large Qwen3.6 local models are advisory opt-in targets only; the default GGUF recommendation is `mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF`, while abliterated variants remain explicit private-eval only. If the backend LLM is unavailable, the route still returns a contract-valid deterministic synthesis.
+Dream Mode defaults to `GO_DREAM_LLM_ENABLED=true`. Explicit request `model` and `GO_DREAM_MODEL` are honored unless they name deprecated `qwen2.5-coder`; otherwise Ollama routes can auto-select the best installed local Qwen 3.x model, preferring Qwen3.7/Qwen3.6 over `TASK_MODEL` and excluding abliterated/uncensored variants unless `CONTEXTLATTICE_DREAM_ALLOW_PRIVATE_EVAL_MODELS=true` (`GO_DREAM_ALLOW_UNCENSORED_MODELS=true` is a legacy alias). Qwen3.7-Max is API/proprietary as of May 2026, so use it through `sglang`, `vllm`, `mlx`, `mtplx`, `llama-cpp`, `tgi`, `tensorrt-llm`, or another OpenAI-compatible provider/base URL rather than expecting a local Ollama tag. Large Qwen3.6 local models are advisory opt-in targets only; the default GGUF recommendation is `mudler/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-APEX-MTP-GGUF`, while abliterated variants remain explicit private-eval only. If structured backend LLM synthesis is disabled, unavailable, or unparseable, Dream Mode returns a contract-valid `dream_unavailable` response with zero hypotheses and zero experiments.
 
 Dream Mode reflection is enabled by default. The gateway scores the strongest hypothesis for novelty, evidence linkage, and actionability; if it misses `GO_DREAM_REFLECTION_MIN_SCORE` and LLM use is enabled, one bounded deepening pass asks the backend model for a stronger final JSON synthesis. OpenAI-compatible and Ollama responses must contain final assistant content. Reasoning-only outputs fail with instructions to fix the runtime template; `scripts/inference_template_conformance.sh` checks that contract, and `scripts/inference_mlx_server.sh --template-profile qwen-final-content` starts MLX with a Qwen final-content template.
 
