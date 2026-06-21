@@ -2194,29 +2194,14 @@ func oversizedBoundaryContextPackEnvelope() map[string]any {
 	}
 }
 
-func TestMemoryDreamBuildsEvidenceLinkedHypothesesWithoutLLM(t *testing.T) {
+func TestMemoryDreamRejectsWithoutLLM(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
 	t.Setenv("GO_DREAM_LLM_ENABLED", "false")
-	retrievalCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/retrieval/query":
-			retrievalCalls += 1
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/graph.md","source":"qdrant","score":0.92,"summary":"graph edges enable shared memory interpretation and cross-agent synthesis","topic_path":"contextlattice/graph"},{"project":"contextlattice","file":"notes/llm.md","source":"qdrant","score":0.87,"summary":"backend llm should produce bounded nonlinear hypotheses from retrieved evidence","topic_path":"contextlattice/dream-mode"}],"warnings":[]}`))
-			return
-		case "/memory/dream":
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(`{"error":"proxy path should not be called"}`))
-			return
-		default:
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		t.Fatalf("Dream Mode without LLM must not call backend path %s", r.URL.Path)
 	}))
 	defer backend.Close()
 
@@ -2230,33 +2215,40 @@ func TestMemoryDreamBuildsEvidenceLinkedHypothesesWithoutLLM(t *testing.T) {
 		t.Fatalf("dream request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusFailedDependency {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+		t.Fatalf("expected 424, got %d body=%s", resp.StatusCode, string(body))
 	}
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode dream payload: %v", err)
 	}
-	if !anyToBool(payload["ok"]) {
-		t.Fatalf("expected ok=true, got %#v", payload)
+	if anyToBool(payload["ok"]) {
+		t.Fatalf("expected ok=false, got %#v", payload)
+	}
+	if mode := strings.TrimSpace(anyToString(payload["mode"])); mode != "dream_unavailable" {
+		t.Fatalf("expected dream_unavailable mode, got %q payload=%#v", mode, payload)
+	}
+	if anyToBool(payload["dream_available"]) {
+		t.Fatalf("expected dream_available=false, got %#v", payload)
+	}
+	if source := strings.TrimSpace(anyToString(payload["intelligence_source"])); source != "none" {
+		t.Fatalf("expected no intelligence source, got %q payload=%#v", source, payload)
+	}
+	if errCode := strings.TrimSpace(anyToString(payload["error"])); errCode != "llm_synthesis_required" {
+		t.Fatalf("expected llm_synthesis_required, got %q payload=%#v", errCode, payload)
 	}
 	hypotheses, _ := payload["hypotheses"].([]any)
-	if len(hypotheses) == 0 {
-		t.Fatalf("expected hypotheses, got %#v", payload["hypotheses"])
-	}
-	firstHypothesis, _ := hypotheses[0].(map[string]any)
-	if support, _ := firstHypothesis["supporting_evidence"].([]any); len(support) == 0 {
-		t.Fatalf("expected evidence-linked hypothesis, got %#v", firstHypothesis)
+	if len(hypotheses) != 0 {
+		t.Fatalf("expected no hypotheses without LLM synthesis, got %#v", hypotheses)
 	}
 	experiments, _ := payload["experiments"].([]any)
-	if len(experiments) == 0 {
-		t.Fatalf("expected experiments, got %#v", payload["experiments"])
+	if len(experiments) != 0 {
+		t.Fatalf("expected no experiments without LLM synthesis, got %#v", experiments)
 	}
 	evidence, _ := payload["evidence"].(map[string]any)
-	results, _ := evidence["results"].([]any)
-	if len(results) == 0 {
-		t.Fatalf("expected rendered evidence results, got %#v", evidence)
+	if results, _ := evidence["results"].([]any); len(results) != 0 {
+		t.Fatalf("expected no Dream evidence payload without LLM synthesis, got %#v", evidence)
 	}
 	llm, _ := payload["llm"].(map[string]any)
 	if anyToBool(llm["enabled"]) || anyToBool(llm["used"]) {
@@ -2269,9 +2261,6 @@ func TestMemoryDreamBuildsEvidenceLinkedHypothesesWithoutLLM(t *testing.T) {
 	validation, _ := format["validation"].(map[string]any)
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected dream validation passed, got %#v", validation)
-	}
-	if retrievalCalls < 1 {
-		t.Fatalf("expected retrieval backend call, got %d", retrievalCalls)
 	}
 }
 
@@ -2390,6 +2379,15 @@ func TestMemoryDreamUsesBackendLLMWhenRequested(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode dream payload: %v", err)
 	}
+	if mode := strings.TrimSpace(anyToString(payload["mode"])); mode != "dream" {
+		t.Fatalf("expected dream mode, got %q payload=%#v", mode, payload)
+	}
+	if !anyToBool(payload["dream_available"]) {
+		t.Fatalf("expected dream_available=true, got %#v", payload)
+	}
+	if source := strings.TrimSpace(anyToString(payload["intelligence_source"])); source != "llm_synthesis" {
+		t.Fatalf("expected llm_synthesis intelligence source, got %q payload=%#v", source, payload)
+	}
 	llm, _ := payload["llm"].(map[string]any)
 	if !anyToBool(llm["enabled"]) || !anyToBool(llm["used"]) {
 		t.Fatalf("expected llm used, got %#v", llm)
@@ -2411,6 +2409,79 @@ func TestMemoryDreamUsesBackendLLMWhenRequested(t *testing.T) {
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected dream validation passed, got %#v", validation)
 	}
+}
+
+func TestMemoryDreamRejectsUnstructuredLLMOutput(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_DREAM_LLM_ENABLED", "true")
+
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/chat" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":{"content":"I cannot produce structured hypotheses."}}`))
+	}))
+	defer llmServer.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/edges.md","source":"qdrant","score":0.91,"summary":"memory edges make related agent decisions visible to synthesis","topic_path":"contextlattice/graph"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","goal":"use the backend llm for nonlinear memory synthesis","topic_path":"contextlattice/dream-mode","use_llm":true,"provider":"ollama","base_url":"` + llmServer.URL + `","model":"dream-test"}`
+	resp, err := http.Post(gateway.URL+"/memory/dream", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("dream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFailedDependency {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 424, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode dream payload: %v", err)
+	}
+	if anyToBool(payload["ok"]) || anyToBool(payload["dream_available"]) {
+		t.Fatalf("expected unavailable dream response, got %#v", payload)
+	}
+	if mode := strings.TrimSpace(anyToString(payload["mode"])); mode != "dream_unavailable" {
+		t.Fatalf("expected dream_unavailable mode, got %q payload=%#v", mode, payload)
+	}
+	if source := strings.TrimSpace(anyToString(payload["intelligence_source"])); source != "none" {
+		t.Fatalf("expected no intelligence source, got %q payload=%#v", source, payload)
+	}
+	if errCode := strings.TrimSpace(anyToString(payload["error"])); errCode != "llm_synthesis_unstructured" {
+		t.Fatalf("expected llm_synthesis_unstructured, got %q payload=%#v", errCode, payload)
+	}
+	if hypotheses, _ := payload["hypotheses"].([]any); len(hypotheses) != 0 {
+		t.Fatalf("expected no hypotheses for unstructured LLM output, got %#v", hypotheses)
+	}
+	if experiments, _ := payload["experiments"].([]any); len(experiments) != 0 {
+		t.Fatalf("expected no experiments for unstructured LLM output, got %#v", experiments)
+	}
+	evidence, _ := payload["evidence"].(map[string]any)
+	if results, _ := evidence["results"].([]any); len(results) != 0 {
+		t.Fatalf("expected no Dream evidence payload on unavailable response, got %#v", evidence)
+	}
+	assertBoundaryContractPassed(t, dreamModeResponseContractID, payload)
 }
 
 func TestMemoryDreamDeepensWhenReflectionFindsWeakOutput(t *testing.T) {
@@ -2595,6 +2666,15 @@ func TestMemoryDreamRejectsMissingGoalWithInstructions(t *testing.T) {
 	}
 	if strings.TrimSpace(anyToString(payload["error"])) != "goal_or_query_required" {
 		t.Fatalf("expected goal_or_query_required, got %#v", payload)
+	}
+	if mode := strings.TrimSpace(anyToString(payload["mode"])); mode != "dream_unavailable" {
+		t.Fatalf("expected dream_unavailable mode, got %q payload=%#v", mode, payload)
+	}
+	if anyToBool(payload["dream_available"]) {
+		t.Fatalf("expected dream_available=false, got %#v", payload)
+	}
+	if source := strings.TrimSpace(anyToString(payload["intelligence_source"])); source != "none" {
+		t.Fatalf("expected no intelligence source, got %q payload=%#v", source, payload)
 	}
 	if !strings.Contains(anyToString(payload["instructions"]), "goal or query") {
 		t.Fatalf("expected repair instructions, got %#v", payload["instructions"])

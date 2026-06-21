@@ -141,6 +141,14 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"skills_index_reindex":      skillsQuarantineEnabled(),
 			"browser_context_ingest":    envBoolAny(true, "GO_BROWSER_CONTEXT_INGEST_ENABLED", "ORCH_BROWSER_CONTEXT_INGEST_ENABLED"),
 		},
+		"toolRequirements": map[string]any{
+			"dream": map[string]any{
+				"requiresLLM":           true,
+				"requiresStructuredLLM": true,
+				"unavailableMode":       "dream_unavailable",
+				"nonLLMAlternatives":    []string{"context_pack", "review"},
+			},
+		},
 		"integrations": map[string]any{
 			"openclaw":              envBoolAny(false, "MESSAGING_INTEGRATIONS_ENABLED"),
 			"ironclaw":              envBoolAny(false, "IRONCLAW_INTEGRATION_ENABLED"),

@@ -7,9 +7,11 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from typing import Any
 
-from _common import REPO_ROOT, emit, ensure_agent_session, request_json
+from _common import REPO_ROOT, contextlattice_api_key, contextlattice_base_url, emit, ensure_agent_session
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from agent_contracts import attach_format_contract  # noqa: E402
@@ -55,6 +57,28 @@ def compact_dream(raw: dict[str, Any], budget_chars: int) -> dict[str, Any]:
             evidence[key] = evidence[key][:2]
     payload["warnings"] = ["ContextLattice Dream Mode clipped to local output budget."]
     return attach_format_contract("dream_mode_response.v1", payload)
+
+
+def request_dream_json(payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    url = contextlattice_base_url() + "/memory/dream"
+    headers = {"content-type": "application/json"}
+    key = contextlattice_api_key()
+    if key:
+        headers["x-api-key"] = key
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            parsed = {"ok": False, "status": exc.code, "error": raw[:2000]}
+        parsed.setdefault("ok", False)
+        parsed.setdefault("status", exc.code)
+        return parsed
+    return json.loads(raw) if raw.strip() else {}
 
 
 def main() -> int:
@@ -128,7 +152,7 @@ def main() -> int:
     request_timeout = args.timeout
     if request_timeout is None:
         request_timeout = max(75.0, float(args.llm_timeout_secs or 600) + 60.0)
-    raw = request_json("POST", "/memory/dream", payload, request_timeout)
+    raw = request_dream_json(payload, request_timeout)
     emit(compact_dream(raw, args.budget_chars), args.pretty)
     return 0 if raw.get("ok", False) else 1
 

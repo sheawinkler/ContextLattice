@@ -97,6 +97,10 @@ func (s *server) buildDreamModeResponse(
 	if strings.TrimSpace(opts.Goal) == "" && strings.TrimSpace(opts.Query) == "" {
 		return attachDreamModeFormatContract(dreamModeMissingGoalResponse(opts), endpoint), http.StatusUnprocessableEntity
 	}
+	if !opts.UseLLM {
+		response := dreamModeUnavailableResponse(opts, nil, nil, nil, "llm_synthesis_required", "Dream Mode requires successful LLM synthesis. Use /memory/context-pack or /tools/review for non-LLM evidence packaging.")
+		return attachDreamModeFormatContract(response, endpoint), http.StatusFailedDependency
+	}
 
 	contextPayload := dreamContextPackRequest(opts, payload)
 	contextResponse, contextStatus, contextErr := s.buildContextPackResponse(ctx, incomingHeaders, contextPayload)
@@ -111,13 +115,24 @@ func (s *server) buildDreamModeResponse(
 	}
 
 	evidence := dreamEvidenceFromContextPack(contextResponse, opts.MaxFacts, opts.Limit)
-	hypotheses := dreamDeterministicHypotheses(opts, evidence)
-	experiments := dreamExperimentsFromHypotheses(hypotheses)
+	hypotheses := []any{}
+	experiments := []any{}
 	llm := s.dreamLLMSynthesis(opts, evidence, hypotheses)
-	if suggestions := dreamHypothesesFromLLM(llm, opts); len(suggestions) > 0 {
-		hypotheses = dreamApplyLLMSuggestions(hypotheses, suggestions, opts.MaxHypotheses, true)
-		experiments = dreamExperimentsFromHypotheses(hypotheses)
+	suggestions := dreamHypothesesFromLLM(llm, opts)
+	if !anyToBool(llm["used"]) || len(suggestions) == 0 {
+		reason := "llm_synthesis_unavailable"
+		detail := "Dream Mode did not receive structured LLM synthesis. No hypotheses or experiments were generated."
+		if errText := strings.TrimSpace(anyToString(llm["error"])); errText != "" {
+			detail = "Dream Mode LLM synthesis failed: " + errText
+		} else if anyToBool(llm["used"]) && len(suggestions) == 0 {
+			reason = "llm_synthesis_unstructured"
+			detail = "Dream Mode requires structured LLM hypotheses; the backend returned no usable hypothesis objects."
+		}
+		response := dreamModeUnavailableResponse(opts, nil, nil, llm, reason, detail)
+		return attachDreamModeFormatContract(response, endpoint), http.StatusFailedDependency
 	}
+	hypotheses = dreamApplyLLMSuggestions(hypotheses, suggestions, opts.MaxHypotheses, true)
+	experiments = dreamExperimentsFromHypotheses(hypotheses)
 	reflection := dreamReflectHypotheses(opts, evidence, hypotheses, llm)
 	if anyToBool(reflection["deepen_required"]) && opts.UseLLM && opts.DeepenOnWeakOutput && opts.ReflectionMaxPasses > 0 {
 		deepLLM := s.dreamLLMDeepeningSynthesis(opts, evidence, hypotheses, reflection)
@@ -143,30 +158,33 @@ func (s *server) buildDreamModeResponse(
 		}
 	}
 	response := map[string]any{
-		"ok":                 contextErr == nil,
-		"mode":               "dream",
-		"project":            opts.Project,
-		"goal":               opts.Goal,
-		"query":              opts.Query,
-		"topic_path":         opts.TopicPath,
-		"retrieval_mode":     opts.RetrievalMode,
-		"novelty_level":      opts.NoveltyLevel,
-		"risk_tolerance":     opts.RiskTolerance,
-		"agent_id":           opts.AgentID,
-		"session_id":         opts.SessionID,
-		"hypotheses":         hypotheses,
-		"experiments":        experiments,
-		"evidence":           evidence,
-		"source_coverage":    sourceCoverage,
-		"llm":                llm,
-		"reflection":         reflection,
-		"warnings":           warnings,
-		"writeback_required": true,
-		"persisted":          false,
+		"ok":                  contextErr == nil,
+		"mode":                "dream",
+		"dream_available":     true,
+		"intelligence_source": "llm_synthesis",
+		"project":             opts.Project,
+		"goal":                opts.Goal,
+		"query":               opts.Query,
+		"topic_path":          opts.TopicPath,
+		"retrieval_mode":      opts.RetrievalMode,
+		"novelty_level":       opts.NoveltyLevel,
+		"risk_tolerance":      opts.RiskTolerance,
+		"agent_id":            opts.AgentID,
+		"session_id":          opts.SessionID,
+		"hypotheses":          hypotheses,
+		"experiments":         experiments,
+		"evidence":            evidence,
+		"source_coverage":     sourceCoverage,
+		"llm":                 llm,
+		"reflection":          reflection,
+		"warnings":            warnings,
+		"writeback_required":  true,
+		"persisted":           false,
 		"tool_use": map[string]any{
 			"memory_context_pack": true,
 			"backend_llm":         anyToBool(llm["enabled"]),
 			"llm_used":            anyToBool(llm["used"]),
+			"dream_mode":          true,
 			"retrieval_sources":   sourceCoverage["configured"],
 		},
 	}
@@ -235,6 +253,64 @@ func (s *server) buildDreamModeResponse(
 		status = http.StatusBadGateway
 	}
 	return attachDreamModeFormatContract(response, endpoint), status
+}
+
+func dreamModeUnavailableResponse(
+	opts dreamModeOptions,
+	evidence map[string]any,
+	sourceCoverage map[string]any,
+	llm map[string]any,
+	reason string,
+	detail string,
+) map[string]any {
+	if evidence == nil {
+		evidence = map[string]any{
+			"facts":     []any{},
+			"results":   []any{},
+			"citations": []any{},
+			"combined":  []any{},
+			"counts":    map[string]any{},
+		}
+	}
+	if sourceCoverage == nil {
+		sourceCoverage = map[string]any{"configured": []any{}, "returned": []any{}, "complete": false}
+	}
+	if llm == nil {
+		llm = map[string]any{"enabled": opts.UseLLM, "used": false, "provider": opts.Provider, "model": opts.Model}
+	}
+	return map[string]any{
+		"ok":                  false,
+		"mode":                "dream_unavailable",
+		"dream_available":     false,
+		"intelligence_source": "none",
+		"project":             opts.Project,
+		"goal":                opts.Goal,
+		"query":               opts.Query,
+		"topic_path":          opts.TopicPath,
+		"retrieval_mode":      opts.RetrievalMode,
+		"novelty_level":       opts.NoveltyLevel,
+		"risk_tolerance":      opts.RiskTolerance,
+		"agent_id":            opts.AgentID,
+		"session_id":          opts.SessionID,
+		"error":               reason,
+		"detail":              clipText(detail, 1000),
+		"instructions":        "Configure a working LLM provider for Dream Mode, or call /memory/context-pack for non-LLM evidence packaging.",
+		"hypotheses":          []any{},
+		"experiments":         []any{},
+		"evidence":            evidence,
+		"source_coverage":     sourceCoverage,
+		"llm":                 llm,
+		"warnings":            []any{clipText(detail, 1000)},
+		"writeback_required":  true,
+		"persisted":           false,
+		"tool_use": map[string]any{
+			"memory_context_pack": false,
+			"backend_llm":         anyToBool(llm["enabled"]),
+			"llm_used":            false,
+			"dream_mode":          false,
+			"retrieval_sources":   sourceCoverage["configured"],
+		},
+	}
 }
 
 func normalizeDreamModeOptions(payload map[string]any) dreamModeOptions {
@@ -1428,24 +1504,26 @@ func renderDreamReportMarkdown(response map[string]any) string {
 
 func dreamModeMissingGoalResponse(opts dreamModeOptions) map[string]any {
 	return map[string]any{
-		"ok":                 false,
-		"mode":               "dream",
-		"project":            opts.Project,
-		"goal":               "",
-		"query":              "",
-		"topic_path":         opts.TopicPath,
-		"retrieval_mode":     opts.RetrievalMode,
-		"novelty_level":      opts.NoveltyLevel,
-		"risk_tolerance":     opts.RiskTolerance,
-		"agent_id":           opts.AgentID,
-		"error":              "goal_or_query_required",
-		"instructions":       "Send JSON with a non-empty goal or query. Optional fields: project, topic_path, novelty_level, risk_tolerance, use_llm, max_hypotheses.",
-		"hypotheses":         []any{},
-		"experiments":        []any{},
-		"evidence":           map[string]any{"facts": []any{}, "results": []any{}, "citations": []any{}, "counts": map[string]any{}},
-		"source_coverage":    map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
-		"llm":                map[string]any{"enabled": opts.UseLLM, "used": false, "provider": opts.Provider, "model": opts.Model},
-		"writeback_required": true,
+		"ok":                  false,
+		"mode":                "dream_unavailable",
+		"dream_available":     false,
+		"intelligence_source": "none",
+		"project":             opts.Project,
+		"goal":                "",
+		"query":               "",
+		"topic_path":          opts.TopicPath,
+		"retrieval_mode":      opts.RetrievalMode,
+		"novelty_level":       opts.NoveltyLevel,
+		"risk_tolerance":      opts.RiskTolerance,
+		"agent_id":            opts.AgentID,
+		"error":               "goal_or_query_required",
+		"instructions":        "Send JSON with a non-empty goal or query. Optional fields: project, topic_path, novelty_level, risk_tolerance, max_hypotheses, provider, model, base_url.",
+		"hypotheses":          []any{},
+		"experiments":         []any{},
+		"evidence":            map[string]any{"facts": []any{}, "results": []any{}, "citations": []any{}, "counts": map[string]any{}},
+		"source_coverage":     map[string]any{"configured": []any{}, "returned": []any{}, "complete": false},
+		"llm":                 map[string]any{"enabled": opts.UseLLM, "used": false, "provider": opts.Provider, "model": opts.Model},
+		"writeback_required":  true,
 	}
 }
 
