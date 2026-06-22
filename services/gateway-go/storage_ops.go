@@ -93,6 +93,249 @@ func defaultTrackedPaths() map[string]string {
 	}
 }
 
+func sourceLaneRow(s *server, source string) map[string]any {
+	status, owner, detail := s.strictRuntimeLaneStatus(source)
+	return map[string]any{
+		"source": source,
+		"status": status,
+		"owner":  owner,
+		"detail": detail,
+	}
+}
+
+func memoryTopologyCluster(id string, role string, active []string, available []string, partitionKeys []string, notes []string) map[string]any {
+	return map[string]any{
+		"id":               id,
+		"role":             role,
+		"active_sources":   active,
+		"available_fabric": available,
+		"partition_keys":   partitionKeys,
+		"notes":            notes,
+	}
+}
+
+func memoryTopologyPolicyPayload(s *server, memoryPolicy memoryStorePolicy) map[string]any {
+	rustBackendPolicy := defaultRustBackendPolicy()
+	baseDefaultSources := []string{sourceTopicRollup, sourceQdrant}
+	coreBoundarySurfaces := []string{
+		"context_pack",
+		"preflight",
+		"policy_context_package",
+		"memory_writes",
+		"checkpoints",
+		"review",
+		"agent_guidance",
+		"memory_edges",
+		"graph_neighbors",
+		"topic_rollups",
+	}
+	localInferenceConnectors := []string{"mlx", "llama-cpp", "ollama", "lmstudio", "vllm", "openai-compatible"}
+	onboardingConnectors := []string{"obsidian_import_export", "source_backfill", "browser_context_ingest"}
+	writePartitionKeys := []string{
+		"project",
+		"topic_path",
+		"session_id",
+		"agent_id",
+		"data_class",
+		"lifecycle",
+		"content_hash",
+		"object_id",
+		"created_at",
+		"horizon_days",
+	}
+	sourceLanes := []map[string]any{
+		sourceLaneRow(s, sourceTopicRollup),
+		sourceLaneRow(s, sourceQdrant),
+		sourceLaneRow(s, sourceWeaviate),
+		sourceLaneRow(s, sourcePgvector),
+		sourceLaneRow(s, sourceMongoRaw),
+		sourceLaneRow(s, sourceLetta),
+		sourceLaneRow(s, sourceMemoryBank),
+		sourceLaneRow(s, sourceMindsdb),
+	}
+	return map[string]any{
+		"schema_id":             "contextlattice_memory_topology.v1",
+		"default_app_profile":   "base_default",
+		"base_default_hot_path": baseDefaultSources,
+		"active_retrieval_policy": map[string]any{
+			"default_sources":                s.retrieval.defaultSources,
+			"fast_sources":                   s.retrieval.fastSources,
+			"slow_sources":                   s.retrieval.slowSources,
+			"sync_fallback_sources":          s.retrieval.syncFallbackSources,
+			"fail_open_continuation_sources": mapKeysSorted(s.retrieval.failOpenContinuationSources),
+			"rust_quality_fallback_sources":  s.retrieval.rustQualityFallbackSources,
+			"rust_backend_policy":            rustBackendPolicy,
+			"staged_fetch_enabled":           s.retrieval.enabled,
+			"deep_blocking":                  s.retrieval.deepBlocking,
+		},
+		"partitioning": map[string]any{
+			"default_write_partition_keys": writePartitionKeys,
+			"default_read_cluster_keys": []string{
+				"retrieval_mode",
+				"retrieval_intent",
+				"topic_prefix",
+				"session_rollup",
+				"memory_edge_relation",
+				"source_lane",
+				"traffic_class",
+			},
+			"topic_tree": map[string]any{
+				"strategy":         "prefix rollups over topic_path",
+				"history_index":    memoryPolicy.rollupUseHistoryIndex,
+				"cache_ttl_secs":   memoryPolicy.rollupCacheTTL.Seconds(),
+				"hot_horizon_days": envInt("GO_MEMORY_STORE_HOT_INDEX_MAX_AGE_DAYS", 0),
+			},
+			"graph_edges": map[string]any{
+				"strategy":           "bounded local edge log with neighbor expansion",
+				"edge_path":          memoryPolicy.edgePath,
+				"max_edges":          memoryPolicy.maxEdges,
+				"max_edge_neighbors": memoryPolicy.maxEdgeNeighbors,
+				"relations":          []string{"same_topic", "references", "same_session", "same_agent", "inferred_related"},
+			},
+			"content_addressing": map[string]any{
+				"enabled":           memoryPolicy.contentAddressed,
+				"content_blobs":     memoryPolicy.contentBlobsPath,
+				"content_link_mode": memoryPolicy.contentLinkMode,
+				"history_path":      memoryPolicy.historyPath,
+			},
+		},
+		"clusters": []map[string]any{
+			memoryTopologyCluster(
+				"base_default",
+				"lowest-overhead local agent recall path",
+				baseDefaultSources,
+				[]string{sourceTopicRollup, sourceQdrant, sourceMongoRaw},
+				[]string{"project", "topic_path", "created_at", "content_hash"},
+				[]string{"This is the base app default, not the full backend fabric."},
+			),
+			memoryTopologyCluster(
+				"vector_semantic",
+				"parallel semantic recall and vector fanout",
+				[]string{sourceQdrant},
+				[]string{sourceQdrant, sourceWeaviate, sourcePgvector},
+				[]string{"project", "topic_path", "content_hash", "embedding_dimension"},
+				[]string{"Qdrant is first-class by default; pgvector and Weaviate remain first-class full/operator lanes when enabled."},
+			),
+			memoryTopologyCluster(
+				"raw_audit",
+				"durable write truth, raw telemetry, and cold backpointers",
+				[]string{sourceMongoRaw},
+				[]string{sourceMongoRaw, "memory_write_history", "content_blobs", "telemetry_spool"},
+				[]string{"project", "session_id", "agent_id", "data_class", "created_at"},
+				[]string{"Raw lanes stay separate from compact prompt surfaces so bounded context stays clean."},
+			),
+			memoryTopologyCluster(
+				"graph_relationships",
+				"typed relationships for neighbor recall and shared-memory interpretation",
+				[]string{"memory_edges"},
+				[]string{"memory_edges", "neighbors", "same_topic", "same_session", "references", "inferred_related"},
+				[]string{"source_id", "target_id", "relation", "project", "topic_path"},
+				[]string{"Graph edges are bounded and local; they add relational structure without requiring a heavyweight graph database."},
+			),
+			memoryTopologyCluster(
+				"deep_recall",
+				"slower recall lanes that enrich work without blocking the first answer",
+				[]string{sourceLetta, sourceMemoryBank},
+				[]string{sourceLetta, sourceMemoryBank, sourceMindsdb, "mcp_hub"},
+				[]string{"project", "agent_id", "session_id", "topic_path"},
+				[]string{"Deep lanes should normally warm asynchronously or run under explicit deep mode."},
+			),
+			memoryTopologyCluster(
+				"lexical_acceleration",
+				"Rust and search-index accelerators for memory-bank breadth",
+				[]string{"memory-bank-spike-rs"},
+				[]string{"memory-bank-spike-rs", "meilisearch", "quickwit_spike", "tantivy_lexical", "lancedb_spike", "trieve_spike", "helixdb_spike", "icm_spike", "shodh_spike", "memvid_spike", "surrealdb_spike"},
+				[]string{"project", "topic_path", "file", "term_posting"},
+				[]string{"Spike/adaptor lanes stay profile-gated unless promoted by measured quality and tail-latency evidence."},
+			),
+			memoryTopologyCluster(
+				"agent_runtime",
+				"coordination state for sessions, handoffs, prompt packages, and Skills Index discovery",
+				[]string{"agent_sessions", "skills_index"},
+				[]string{"agent_sessions", "agent_contracts", "skills_index", "context_packages", "compaction_handoffs"},
+				[]string{"session_id", "agent_id", "project", "objective", "topic_path"},
+				[]string{"This cluster lets any agent repackage prior work into a bounded reference packet."},
+			),
+			memoryTopologyCluster(
+				"inference_support",
+				"local model/runtime selection for synthesis, dream mode, and embeddings",
+				[]string{"fastembed"},
+				[]string{"fastembed", "mlx", "llama-cpp", "ollama", "lmstudio", "vllm", "openai_compatible"},
+				[]string{"runtime", "model", "capability", "resource_class"},
+				[]string{"Inference lanes support synthesis; they are not memory truth stores."},
+			),
+			memoryTopologyCluster(
+				"observability",
+				"health, quality, retention, and trace surfaces",
+				[]string{"storage_governance", "retrieval_telemetry"},
+				[]string{"storage_governance", "retrieval_telemetry", "memory_graph_quality", "langfuse", "storage_ledger"},
+				[]string{"service", "source", "project", "captured_at"},
+				[]string{"Observability is intentionally optional in local runs when disk pressure matters."},
+			),
+		},
+		"deployment_profiles": map[string]any{
+			"hosted_lite": map[string]any{
+				"hot_path":          []string{sourceTopicRollup},
+				"core_surfaces":     coreBoundarySurfaces,
+				"excluded_services": []string{sourceQdrant, sourcePgvector, sourceMemoryBank, sourceLetta, "cozo", "observability", "local_llm_runtimes"},
+				"notes": []string{
+					"Single-container/container-constrained surfaces keep the retrieval contract small and avoid nested service assumptions.",
+					"Memory edges remain core when backed by the gateway memory store rather than an external graph database.",
+				},
+			},
+			"local_lite": map[string]any{
+				"hot_path":                          baseDefaultSources,
+				"default_sources":                   []string{sourceQdrant, sourceMongoRaw, sourceTopicRollup},
+				"core_surfaces":                     append(append([]string{}, coreBoundarySurfaces...), sourceQdrant, sourceMongoRaw, "fastembed"),
+				"connector_surfaces":                onboardingConnectors,
+				"connector_only_inference_runtimes": localInferenceConnectors,
+				"excluded_default_sources":          []string{sourcePgvector, sourceMemoryBank, sourceLetta, sourceMindsdb, "cozo", "observability", "agent_prime_pack"},
+				"optional":                          []string{sourceMemoryBank, "meilisearch", "spike_adapters"},
+			},
+			"full": map[string]any{
+				"hot_path":                          []string{sourceTopicRollup, sourceQdrant, sourcePgvector},
+				"default_sources":                   []string{sourceQdrant, sourcePgvector, sourceMongoRaw, sourceTopicRollup, sourceMemoryBank, "meilisearch"},
+				"core_surfaces":                     append(append([]string{}, coreBoundarySurfaces...), sourceQdrant, sourcePgvector, sourceMongoRaw, "fastembed"),
+				"connector_surfaces":                append(append([]string{}, onboardingConnectors...), sourceLetta, sourceWeaviate, "honcho_style_external_memory", "mcp_qdrant"),
+				"connector_only_inference_runtimes": localInferenceConnectors,
+				"deep":                              []string{sourceMongoRaw, sourceLetta, sourceMemoryBank, sourceMindsdb},
+				"optional":                          []string{"observability", "local_llm_runtimes", "adapter_lab"},
+			},
+			"paid_local": map[string]any{
+				"hot_path":         []string{sourceTopicRollup, sourceQdrant, sourcePgvector},
+				"default_sources":  []string{sourceQdrant, sourcePgvector, sourceMongoRaw, sourceTopicRollup, sourceMemoryBank, "meilisearch"},
+				"core_surfaces":    append(append([]string{}, coreBoundarySurfaces...), sourceQdrant, sourcePgvector, sourceMongoRaw, "fastembed", "premium_policy_packs"),
+				"premium_surfaces": []string{"agent_prime_pack", "agent_prime_mandatory_rules", "premium_policy_packs", "operator_runbooks", "paid_entitlement_gates"},
+				"agent_policy": map[string]any{
+					"agent_prime_required": true,
+					"injection_mode":       "mandatory_runtime_rules",
+					"applies_to":           []string{"codex", "claude-code", "gemini-cli", "opencode", "shell-env", "contextlattice-hooks-env"},
+					"public_contents":      false,
+				},
+				"connector_surfaces":                append(append([]string{}, onboardingConnectors...), sourceLetta, sourceWeaviate, "honcho_style_external_memory", "mcp_qdrant"),
+				"connector_only_inference_runtimes": localInferenceConnectors,
+				"deep":                              []string{sourceMongoRaw, sourceLetta, sourceMemoryBank, sourceMindsdb},
+				"optional":                          []string{"observability", "local_llm_runtimes", "adapter_lab"},
+			},
+			"ultra_dev": map[string]any{
+				"hot_path":      []string{sourceTopicRollup, sourceQdrant, sourceWeaviate, sourcePgvector},
+				"core_surfaces": append(append([]string{}, coreBoundarySurfaces...), sourceQdrant, sourcePgvector, sourceMongoRaw, "fastembed", "premium_policy_packs", "agent_prime_pack"),
+				"deep":          []string{sourceMongoRaw, sourceLetta, sourceMemoryBank, sourceMindsdb},
+				"lab":           []string{"lancedb_spike", "trieve_spike", "helixdb_spike", "icm_spike", "shodh_spike", "memvid_spike", "surrealdb_spike"},
+			},
+		},
+		"source_lanes": sourceLanes,
+		"recommendation": map[string]any{
+			"default":    "Keep topic_rollups + qdrant as the base default app path.",
+			"lite":       "Keep memory edges core, but treat llama.cpp and other local LLM runtimes as connector-only in Lite.",
+			"full":       "Use pgvector as a first-class Full/Paid vector lane beside Qdrant; keep Weaviate, Letta, and Honcho-style providers as connector lanes unless explicitly configured.",
+			"paid":       "Require Agent Prime as a mandatory runtime rules layer for paid ContextLattice agents without leaking private behavior policy into public Lite.",
+			"connectors": "Use Obsidian as an import/export onboarding connector, not as a replacement for the native dashboard or memory store.",
+			"agents":     "Agents should consume the CLI or HTTP context-package surface instead of choosing stores directly.",
+		},
+	}
+}
+
 func fileOrDirSize(path string, maxFiles int) (int64, bool, error) {
 	if strings.TrimSpace(path) == "" {
 		return 0, false, nil
@@ -345,6 +588,7 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 			telemetrySummary = summary
 		}
 	}
+	memoryPolicy := loadMemoryStorePolicy()
 	tracked := collectTrackedStorage(defaultTrackedPaths(), 200000)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
@@ -381,6 +625,7 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 				"cold_policy":        "compressed blob refs",
 			},
 		},
+		"memoryTopology":   memoryTopologyPolicyPayload(s, memoryPolicy),
 		"disk":             disk,
 		"diskStatus":       diskStatus,
 		"trackedArtifacts": tracked,

@@ -23,7 +23,32 @@ REQUIRED_CLUSTERS = {
 }
 
 REQUIRED_PARTITION_KEYS = {"project", "topic_path", "session_id", "agent_id", "content_hash"}
-REQUIRED_SOURCE_LANES = {"topic_rollups", "qdrant", "mongo_raw", "letta", "memory_bank"}
+REQUIRED_SOURCE_LANES = {"topic_rollups", "qdrant", "postgres_pgvector", "mongo_raw", "letta", "memory_bank"}
+REQUIRED_BOUNDARY_SURFACES = {
+    "context_pack",
+    "preflight",
+    "policy_context_package",
+    "memory_writes",
+    "checkpoints",
+    "review",
+    "agent_guidance",
+    "memory_edges",
+    "graph_neighbors",
+    "topic_rollups",
+}
+LOCAL_LITE_DEFAULT_SOURCES = {"qdrant", "mongo_raw", "topic_rollups"}
+LOCAL_LITE_EXCLUDED_DEFAULTS = {
+    "postgres_pgvector",
+    "memory_bank",
+    "letta",
+    "mindsdb",
+    "cozo",
+    "observability",
+    "agent_prime_pack",
+}
+FULL_PAID_FIRST_CLASS_SOURCES = {"topic_rollups", "qdrant", "postgres_pgvector"}
+PAID_PREMIUM_SURFACES = {"agent_prime_pack", "agent_prime_mandatory_rules", "premium_policy_packs"}
+CONNECTOR_SURFACES = {"obsidian_import_export"}
 
 
 def as_list(value: Any) -> list[Any]:
@@ -77,6 +102,10 @@ def source_lane_names(topology: dict[str, Any]) -> set[str]:
 def deployment_profile(topology: dict[str, Any], profile: str) -> dict[str, Any]:
     profiles = as_dict(topology.get("deployment_profiles"))
     return as_dict(profiles.get(profile))
+
+
+def profile_strings(profile_payload: dict[str, Any], key: str) -> set[str]:
+    return set(string_list(profile_payload.get(key)))
 
 
 def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -157,6 +186,16 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
     if profile != "auto":
         profile_payload = deployment_profile(topology, profile)
         checks.append(check("deployment_profile", bool(profile_payload), profile=profile))
+        core_surfaces = profile_strings(profile_payload, "core_surfaces")
+        if profile_payload:
+            checks.append(
+                check(
+                    "profile_core_boundary_surfaces",
+                    REQUIRED_BOUNDARY_SURFACES.issubset(core_surfaces),
+                    missing=sorted(REQUIRED_BOUNDARY_SURFACES - core_surfaces),
+                    core_surfaces=sorted(core_surfaces),
+                )
+            )
         if profile == "hosted_lite":
             checks.append(
                 check(
@@ -172,8 +211,23 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
                     hot_path=string_list(profile_payload.get("hot_path")),
                 )
             )
+            excluded_services = profile_strings(profile_payload, "excluded_services")
+            checks.append(
+                check(
+                    "hosted_lite_excludes_sidecars",
+                    {"qdrant", "postgres_pgvector", "memory_bank", "letta", "cozo", "local_llm_runtimes"}.issubset(excluded_services),
+                    missing=sorted(
+                        {"qdrant", "postgres_pgvector", "memory_bank", "letta", "cozo", "local_llm_runtimes"}
+                        - excluded_services
+                    ),
+                    excluded=sorted(excluded_services),
+                )
+            )
         elif profile == "local_lite":
             default_sources = set(string_list(profile_payload.get("default_sources")))
+            connector_runtimes = profile_strings(profile_payload, "connector_only_inference_runtimes")
+            excluded_defaults = profile_strings(profile_payload, "excluded_default_sources")
+            connector_surfaces = profile_strings(profile_payload, "connector_surfaces")
             checks.append(
                 check(
                     "local_lite_hot_path",
@@ -183,11 +237,93 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
             )
             checks.append(
                 check(
-                    "local_lite_excludes_pgvector",
-                    "postgres_pgvector" not in default_sources,
+                    "local_lite_default_sources",
+                    default_sources == LOCAL_LITE_DEFAULT_SOURCES,
                     default_sources=sorted(default_sources),
                 )
             )
+            checks.append(
+                check(
+                    "local_lite_excludes_heavy_defaults",
+                    LOCAL_LITE_EXCLUDED_DEFAULTS.issubset(excluded_defaults)
+                    and not (default_sources & LOCAL_LITE_EXCLUDED_DEFAULTS),
+                    missing=sorted(LOCAL_LITE_EXCLUDED_DEFAULTS - excluded_defaults),
+                    leaked=sorted(default_sources & LOCAL_LITE_EXCLUDED_DEFAULTS),
+                    excluded=sorted(excluded_defaults),
+                )
+            )
+            checks.append(
+                check(
+                    "local_lite_llama_cpp_connector_only",
+                    "llama-cpp" in connector_runtimes and "llama-cpp" not in default_sources,
+                    connector_only_inference_runtimes=sorted(connector_runtimes),
+                    default_sources=sorted(default_sources),
+                )
+            )
+            checks.append(
+                check(
+                    "local_lite_obsidian_connector",
+                    CONNECTOR_SURFACES.issubset(connector_surfaces),
+                    missing=sorted(CONNECTOR_SURFACES - connector_surfaces),
+                    connector_surfaces=sorted(connector_surfaces),
+                )
+            )
+        elif profile in {"full", "paid_local"}:
+            hot_path = set(string_list(profile_payload.get("hot_path")))
+            default_sources = profile_strings(profile_payload, "default_sources")
+            connector_surfaces = profile_strings(profile_payload, "connector_surfaces")
+            connector_runtimes = profile_strings(profile_payload, "connector_only_inference_runtimes")
+            checks.append(
+                check(
+                    f"{profile}_qdrant_pgvector_hot_path",
+                    FULL_PAID_FIRST_CLASS_SOURCES.issubset(hot_path),
+                    missing=sorted(FULL_PAID_FIRST_CLASS_SOURCES - hot_path),
+                    hot_path=sorted(hot_path),
+                )
+            )
+            checks.append(
+                check(
+                    f"{profile}_qdrant_pgvector_default_sources",
+                    {"qdrant", "postgres_pgvector"}.issubset(default_sources),
+                    missing=sorted({"qdrant", "postgres_pgvector"} - default_sources),
+                    default_sources=sorted(default_sources),
+                )
+            )
+            checks.append(
+                check(
+                    f"{profile}_obsidian_connector",
+                    CONNECTOR_SURFACES.issubset(connector_surfaces),
+                    missing=sorted(CONNECTOR_SURFACES - connector_surfaces),
+                    connector_surfaces=sorted(connector_surfaces),
+                )
+            )
+            checks.append(
+                check(
+                    f"{profile}_llama_cpp_connector",
+                    "llama-cpp" in connector_runtimes,
+                    connector_only_inference_runtimes=sorted(connector_runtimes),
+                )
+            )
+            if profile == "paid_local":
+                premium_surfaces = profile_strings(profile_payload, "premium_surfaces")
+                agent_policy = as_dict(profile_payload.get("agent_policy"))
+                checks.append(
+                    check(
+                        "paid_local_agent_prime_pack",
+                        PAID_PREMIUM_SURFACES.issubset(premium_surfaces),
+                        missing=sorted(PAID_PREMIUM_SURFACES - premium_surfaces),
+                        premium_surfaces=sorted(premium_surfaces),
+                    )
+                )
+                checks.append(
+                    check(
+                        "paid_local_agent_prime_mandatory_injection",
+                        bool(agent_policy.get("agent_prime_required"))
+                        and str(agent_policy.get("injection_mode") or "") == "mandatory_runtime_rules"
+                        and agent_policy.get("public_contents") is False,
+                        agent_policy=agent_policy,
+                    )
+                )
         elif profile in {"full", "ultra_dev"}:
             hot_path = set(string_list(profile_payload.get("hot_path")))
             checks.append(
@@ -209,7 +345,11 @@ def fetch_graph(project: str, timeout: float) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit ContextLattice memory topology policy.")
-    parser.add_argument("--profile", choices=["auto", "hosted_lite", "local_lite", "full", "ultra_dev"], default="auto")
+    parser.add_argument(
+        "--profile",
+        choices=["auto", "hosted_lite", "local_lite", "full", "paid_local", "ultra_dev"],
+        default="auto",
+    )
     parser.add_argument("--project", default="")
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--graph-timeout", type=float, default=30)
