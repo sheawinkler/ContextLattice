@@ -47,6 +47,7 @@ Dream Mode:
 
 Typed memory tools:
 - `POST /tools/context_pack`: agent-facing wrapper around `/memory/context-pack`.
+- `/memory/context-pack` and `/tools/context_pack` include bounded `agent_guidance` with deterministic evidence themes, risk markers, candidate attention links, missing-evidence signals, and prompt hints. These hints are attention scaffolding for agents/LLMs, not Dream Mode synthesis or final claims.
 - `POST /memory/dream` and `POST /tools/dream`: bounded evidence-linked Dream Mode synthesis. Dream Mode requires successful structured LLM synthesis; non-LLM evidence packaging belongs to context-pack or review.
 - `GET|POST /memory/review` and `/tools/review`: bounded deterministic review mode for repeated memory patterns, agent write intensity, and mitigation guidance.
 - `POST /tools/checkpoint_write`: durable checkpoint write with lifecycle metadata.

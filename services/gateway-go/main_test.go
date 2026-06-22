@@ -1949,6 +1949,9 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	if prompt := anyToString(payload["reference_prompt"]); !strings.Contains(prompt, "Ranked evidence") || !strings.Contains(prompt, "notes/a.md") {
 		t.Fatalf("expected prompt-ready reference prompt with ranked evidence, got %q", prompt)
 	}
+	if prompt := anyToString(payload["reference_prompt"]); !strings.Contains(prompt, "Agent guidance hints") {
+		t.Fatalf("expected reference prompt to include agent guidance hints, got %q", prompt)
+	}
 	ranked, _ := asAnySlice(contextPack["ranked_evidence"])
 	if len(ranked) == 0 {
 		t.Fatalf("expected ranked evidence in context pack, got %#v", contextPack["ranked_evidence"])
@@ -1960,6 +1963,27 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	promptSections := anyMap(contextPack["prompt_sections"])
 	if !strings.Contains(anyToString(promptSections["next_action"]), "ranked evidence") {
 		t.Fatalf("expected prompt sections next action, got %#v", promptSections)
+	}
+	agentGuidance := anyMap(payload["agent_guidance"])
+	if strings.TrimSpace(anyToString(agentGuidance["schema_id"])) != "contextlattice_agent_guidance.v1" {
+		t.Fatalf("expected root agent guidance schema, got %#v", agentGuidance)
+	}
+	if anyToBool(agentGuidance["authoritative"]) || !anyToBool(agentGuidance["not_dream_mode"]) {
+		t.Fatalf("expected deterministic non-authoritative non-Dream guidance, got %#v", agentGuidance)
+	}
+	if themes := contextPackAnyList(agentGuidance["themes"]); len(themes) == 0 {
+		t.Fatalf("expected guidance themes, got %#v", agentGuidance)
+	}
+	if hints := anyToStringList(agentGuidance["prompt_hints"], 10); len(hints) == 0 || strings.Contains(strings.ToLower(strings.Join(hints, " ")), "hypothesis") {
+		t.Fatalf("expected bounded non-hypothesis prompt hints, got %#v", agentGuidance["prompt_hints"])
+	}
+	packGuidance := anyMap(contextPack["agent_guidance"])
+	if strings.TrimSpace(anyToString(packGuidance["schema_id"])) != "contextlattice_agent_guidance.v1" {
+		t.Fatalf("expected nested agent guidance schema, got %#v", packGuidance)
+	}
+	sectionGuidance := anyMap(promptSections["agent_guidance"])
+	if strings.TrimSpace(anyToString(sectionGuidance["source"])) != "deterministic_evidence_analysis" {
+		t.Fatalf("expected prompt section guidance, got %#v", sectionGuidance)
 	}
 	contextCompiler := anyMap(contextPack["context_compiler"])
 	if anyToString(contextCompiler["recommended_surface"]) != "cli_for_local_agents" {
@@ -2341,6 +2365,16 @@ func TestMemoryReviewReturnsBoundedMitigationPatterns(t *testing.T) {
 	validation, _ := format["validation"].(map[string]any)
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected review validation passed, got %#v", validation)
+	}
+	analysis := anyMap(payload["evidence_analysis"])
+	if strings.TrimSpace(anyToString(analysis["schema_id"])) != "contextlattice_agent_guidance.v1" {
+		t.Fatalf("expected review evidence analysis guidance schema, got %#v", analysis)
+	}
+	if anyToBool(analysis["authoritative"]) || !anyToBool(analysis["not_dream_mode"]) {
+		t.Fatalf("expected review evidence analysis to be non-authoritative and non-Dream, got %#v", analysis)
+	}
+	if risks := contextPackAnyList(analysis["risk_markers"]); len(risks) == 0 {
+		t.Fatalf("expected review evidence analysis risk markers, got %#v", analysis)
 	}
 	assertBoundaryJSONUnderLimit(t, reviewModeResponseContractID, payload)
 	assertNoRawProviderOverflowShape(t, payload)

@@ -494,6 +494,11 @@ func compactContextPackLists(pack map[string]any, keep int, stats *agentBoundary
 			compactSourceCoverageBoundary(coverage, keep, stats)
 		}
 	}
+	for _, key := range []string{"agentGuidance", "agent_guidance"} {
+		if guidance, ok := pack[key].(map[string]any); ok {
+			pack[key] = compactAgentEvidenceGuidanceBoundary(guidance, minInt(keep, 8), stats)
+		}
+	}
 }
 
 func compactSourceCoverageBoundary(coverage map[string]any, keep int, stats *agentBoundaryStats) {
@@ -523,10 +528,28 @@ func compactSourceCoverageBoundary(coverage map[string]any, keep int, stats *age
 
 func compactContextPackResponseBoundary(payload map[string]any, keep int, stats *agentBoundaryStats) {
 	compactContextPackLists(anyMap(payload["context_pack"]), keep, stats)
+	if guidance, ok := payload["agent_guidance"].(map[string]any); ok {
+		payload["agent_guidance"] = compactAgentEvidenceGuidanceBoundary(guidance, minInt(keep, 8), stats)
+	}
 	compactSourceCoverageBoundary(anyMap(payload["source_coverage"]), keep, stats)
 	if warnings, ok := payload["warnings"]; ok {
 		payload["warnings"] = trimBoundaryList(warnings, minInt(keep, 8), stats)
 	}
+}
+
+func compactAgentEvidenceGuidanceBoundary(guidance map[string]any, keep int, stats *agentBoundaryStats) map[string]any {
+	if guidance == nil {
+		return guidance
+	}
+	for _, key := range []string{"themes", "risk_markers", "candidate_links", "missing_evidence", "prompt_hints"} {
+		if _, ok := guidance[key]; ok {
+			guidance[key] = trimBoundaryList(guidance[key], keep, stats)
+		}
+	}
+	if text := strings.TrimSpace(anyToString(guidance["intended_use"])); text != "" {
+		guidance["intended_use"] = clipUTF8Bytes(sanitizeProviderOverflowText(text), 240)
+	}
+	return guidance
 }
 
 func dropContextPackDebugBoundary(payload map[string]any, stats *agentBoundaryStats) {
@@ -596,6 +619,9 @@ func compactReviewModeResponseBoundary(payload map[string]any, keep int, stats *
 	}
 	if _, ok := payload["agent_guidance"]; ok {
 		payload["agent_guidance"] = trimBoundaryList(payload["agent_guidance"], minInt(keep, 8), stats)
+	}
+	if guidance, ok := payload["evidence_analysis"].(map[string]any); ok {
+		payload["evidence_analysis"] = compactAgentEvidenceGuidanceBoundary(guidance, minInt(keep, 8), stats)
 	}
 	if _, ok := payload["warnings"]; ok {
 		payload["warnings"] = trimBoundaryList(payload["warnings"], minInt(keep, 8), stats)
@@ -832,6 +858,7 @@ func forceMinimalReviewModeResponseBoundary(payload map[string]any, stats *agent
 	sourceCoverage := anyMap(payload["source_coverage"])
 	payload["patterns"] = trimBoundaryList(payload["patterns"], 2, stats)
 	payload["agent_guidance"] = trimBoundaryList(payload["agent_guidance"], 2, stats)
+	payload["evidence_analysis"] = compactAgentEvidenceGuidanceBoundary(anyMap(payload["evidence_analysis"]), 2, stats)
 	payload["source_coverage"] = minimalSourceCoverageBoundary(sourceCoverage)
 	payload["warnings"] = []any{"ContextLattice Review Mode was clipped to the output boundary budget."}
 	if stats != nil {
@@ -862,6 +889,8 @@ func minimalContextPackBoundary(existing map[string]any) map[string]any {
 		"commands":            []any{},
 		"acceptanceCriteria":  []any{},
 		"acceptance_criteria": []any{},
+		"agentGuidance":       map[string]any{"schema_id": "contextlattice_agent_guidance.v1", "source": "deterministic_evidence_analysis", "authoritative": false, "themes": []any{}, "risk_markers": []any{}, "candidate_links": []any{}, "missing_evidence": []any{}, "prompt_hints": []any{}},
+		"agent_guidance":      map[string]any{"schema_id": "contextlattice_agent_guidance.v1", "source": "deterministic_evidence_analysis", "authoritative": false, "themes": []any{}, "risk_markers": []any{}, "candidate_links": []any{}, "missing_evidence": []any{}, "prompt_hints": []any{}},
 	}
 }
 

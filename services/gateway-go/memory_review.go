@@ -103,6 +103,16 @@ func (s *server) buildReviewModeResponse(ctx context.Context, payload map[string
 		patterns = patterns[:opts.MaxPatterns]
 	}
 	guidance := reviewAgentGuidance(patterns, opts)
+	evidenceAnalysis := buildAgentEvidenceGuidance(agentEvidenceGuidanceInput{
+		Query:          opts.Query,
+		Surface:        strings.TrimPrefix(endpoint, "/"),
+		SourceCoverage: reviewSourceCoverage(true, []any{"memory_write_history", "topic_rollups"}),
+		Patterns:       patterns,
+		MaxThemes:      5,
+		MaxRiskMarkers: 6,
+		MaxLinks:       0,
+		MaxHints:       8,
+	})
 	summary := reviewSummary(opts, entries, topics, patterns, rollups)
 	response := map[string]any{
 		"ok":                 true,
@@ -117,6 +127,7 @@ func (s *server) buildReviewModeResponse(ctx context.Context, payload map[string
 		"summary":            summary,
 		"patterns":           patterns,
 		"agent_guidance":     guidance,
+		"evidence_analysis":  evidenceAnalysis,
 		"source_coverage":    reviewSourceCoverage(true, []any{"memory_write_history", "topic_rollups"}),
 		"writeback_required": true,
 		"review_context": map[string]any{
@@ -543,18 +554,27 @@ func reviewAgentGuidance(patterns []any, opts reviewModeOptions) []any {
 
 func reviewModeUnavailableResponse(opts reviewModeOptions, reason string) map[string]any {
 	return map[string]any{
-		"ok":                 false,
-		"schema_id":          reviewModeResponseContractID,
-		"mode":               "review",
-		"project":            opts.Project,
-		"query":              opts.Query,
-		"topic_path":         opts.TopicPath,
-		"window_hours":       opts.WindowHours,
-		"agent_id":           opts.AgentID,
-		"session_id":         opts.SessionID,
-		"summary":            map[string]any{"posture": "unavailable", "recent_writes": 0, "pattern_count": 0, "pressure_score": 0},
-		"patterns":           []any{},
-		"agent_guidance":     []any{"Enable the Go memory store or rerun against a gateway with memory write history available."},
+		"ok":             false,
+		"schema_id":      reviewModeResponseContractID,
+		"mode":           "review",
+		"project":        opts.Project,
+		"query":          opts.Query,
+		"topic_path":     opts.TopicPath,
+		"window_hours":   opts.WindowHours,
+		"agent_id":       opts.AgentID,
+		"session_id":     opts.SessionID,
+		"summary":        map[string]any{"posture": "unavailable", "recent_writes": 0, "pattern_count": 0, "pressure_score": 0},
+		"patterns":       []any{},
+		"agent_guidance": []any{"Enable the Go memory store or rerun against a gateway with memory write history available."},
+		"evidence_analysis": buildAgentEvidenceGuidance(agentEvidenceGuidanceInput{
+			Query:          opts.Query,
+			Surface:        "review",
+			SourceCoverage: reviewSourceCoverage(false, []any{}),
+			MaxThemes:      3,
+			MaxRiskMarkers: 3,
+			MaxLinks:       0,
+			MaxHints:       4,
+		}),
 		"source_coverage":    reviewSourceCoverage(false, []any{}),
 		"writeback_required": true,
 		"review_context":     map[string]any{"generated_at": nowUTCISO(), "deterministic_only": true},
