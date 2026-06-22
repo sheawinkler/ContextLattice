@@ -162,18 +162,18 @@ func TestStorageTelemetryReturnsSnapshot(t *testing.T) {
 	}
 	paidProfile := profiles["paid_local"].(map[string]any)
 	paidPremiumSurfaces := anyToStringList(paidProfile["premium_surfaces"], 20)
-	if !storageTestStringSliceContains(paidPremiumSurfaces, "agent_prime_pack") {
-		t.Fatalf("paid profile missing agent prime premium surface in %v", paidPremiumSurfaces)
+	if !storageTestStringSliceContains(paidPremiumSurfaces, "premium_behavior_pack") {
+		t.Fatalf("paid profile missing premium behavior surface in %v", paidPremiumSurfaces)
 	}
-	if !storageTestStringSliceContains(paidPremiumSurfaces, "agent_prime_mandatory_rules") {
-		t.Fatalf("paid profile missing mandatory Agent Prime rules surface in %v", paidPremiumSurfaces)
+	if !storageTestStringSliceContains(paidPremiumSurfaces, "premium_runtime_policy") {
+		t.Fatalf("paid profile missing premium runtime policy surface in %v", paidPremiumSurfaces)
 	}
 	agentPolicy, ok := paidProfile["agent_policy"].(map[string]any)
 	if !ok {
 		t.Fatalf("paid profile missing agent policy payload=%v", paidProfile)
 	}
-	if !anyToBool(agentPolicy["agent_prime_required"]) || anyToString(agentPolicy["injection_mode"]) != "mandatory_runtime_rules" || anyToBool(agentPolicy["public_contents"]) {
-		t.Fatalf("paid profile agent policy is not mandatory/private Agent Prime injection: %v", agentPolicy)
+	if !anyToBool(agentPolicy["premium_behavior_required"]) || anyToString(agentPolicy["policy_mode"]) != "paid_runtime_policy" || anyToBool(agentPolicy["public_contents"]) {
+		t.Fatalf("paid profile agent policy exposes invalid premium behavior boundary: %v", agentPolicy)
 	}
 	paidConnectors := anyToStringList(paidProfile["connector_surfaces"], 20)
 	if !storageTestStringSliceContains(paidConnectors, "obsidian_import_export") {

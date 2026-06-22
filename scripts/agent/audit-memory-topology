@@ -44,10 +44,10 @@ LOCAL_LITE_EXCLUDED_DEFAULTS = {
     "mindsdb",
     "cozo",
     "observability",
-    "agent_prime_pack",
+    "premium_behavior_pack",
 }
 FULL_PAID_FIRST_CLASS_SOURCES = {"topic_rollups", "qdrant", "postgres_pgvector"}
-PAID_PREMIUM_SURFACES = {"agent_prime_pack", "agent_prime_mandatory_rules", "premium_policy_packs"}
+PAID_PREMIUM_SURFACES = {"premium_behavior_pack", "premium_runtime_policy", "premium_policy_packs"}
 CONNECTOR_SURFACES = {"obsidian_import_export"}
 
 
@@ -309,7 +309,7 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
                 agent_policy = as_dict(profile_payload.get("agent_policy"))
                 checks.append(
                     check(
-                        "paid_local_agent_prime_pack",
+                        "paid_local_premium_behavior_pack",
                         PAID_PREMIUM_SURFACES.issubset(premium_surfaces),
                         missing=sorted(PAID_PREMIUM_SURFACES - premium_surfaces),
                         premium_surfaces=sorted(premium_surfaces),
@@ -317,9 +317,9 @@ def audit_topology(storage: dict[str, Any], profile: str) -> tuple[list[dict[str
                 )
                 checks.append(
                     check(
-                        "paid_local_agent_prime_mandatory_injection",
-                        bool(agent_policy.get("agent_prime_required"))
-                        and str(agent_policy.get("injection_mode") or "") == "mandatory_runtime_rules"
+                        "paid_local_premium_behavior_policy",
+                        bool(agent_policy.get("premium_behavior_required"))
+                        and str(agent_policy.get("policy_mode") or "") == "paid_runtime_policy"
                         and agent_policy.get("public_contents") is False,
                         agent_policy=agent_policy,
                     )
