@@ -9,6 +9,15 @@ import (
 	"testing"
 )
 
+func storageTestStringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestStorageTelemetryAllowsMissingAPIKeyWhenGatewayHasConfiguredKey(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "false")
 	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
@@ -77,6 +86,116 @@ func TestStorageTelemetryReturnsSnapshot(t *testing.T) {
 	}
 	if anyToString(storageGov["pressureBand"]) == "" {
 		t.Fatalf("expected pressureBand in payload=%v", payload)
+	}
+	topology, ok := payload["memoryTopology"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing memoryTopology payload=%v", payload)
+	}
+	if anyToString(topology["schema_id"]) != "contextlattice_memory_topology.v1" {
+		t.Fatalf("unexpected memory topology schema payload=%v", topology)
+	}
+	if anyToString(topology["default_app_profile"]) != "base_default" {
+		t.Fatalf("expected base_default topology profile payload=%v", topology)
+	}
+	hotPath := anyToStringList(topology["base_default_hot_path"], 10)
+	if len(hotPath) != 2 || hotPath[0] != "topic_rollups" || hotPath[1] != "qdrant" {
+		t.Fatalf("expected base hot path topic_rollups/qdrant, got %v", hotPath)
+	}
+	partitioning, ok := topology["partitioning"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing partitioning payload=%v", topology)
+	}
+	writeKeys := anyToStringList(partitioning["default_write_partition_keys"], 20)
+	for _, required := range []string{"project", "topic_path", "session_id", "agent_id", "content_hash"} {
+		if !storageTestStringSliceContains(writeKeys, required) {
+			t.Fatalf("missing topology write partition key %q in %v", required, writeKeys)
+		}
+	}
+	clusters, ok := topology["clusters"].([]any)
+	if !ok || len(clusters) == 0 {
+		t.Fatalf("missing topology clusters payload=%v", topology)
+	}
+	clusterIDs := []string{}
+	for _, raw := range clusters {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		clusterIDs = append(clusterIDs, anyToString(row["id"]))
+	}
+	for _, required := range []string{"base_default", "vector_semantic", "raw_audit", "graph_relationships", "deep_recall", "agent_runtime"} {
+		if !storageTestStringSliceContains(clusterIDs, required) {
+			t.Fatalf("missing topology cluster %q in %v", required, clusterIDs)
+		}
+	}
+	profiles, ok := topology["deployment_profiles"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing deployment profiles payload=%v", topology)
+	}
+	for _, profileName := range []string{"hosted_lite", "local_lite", "full", "paid_local"} {
+		profile, ok := profiles[profileName].(map[string]any)
+		if !ok {
+			t.Fatalf("missing deployment profile %q in %v", profileName, profiles)
+		}
+		coreSurfaces := anyToStringList(profile["core_surfaces"], 40)
+		for _, required := range []string{"context_pack", "preflight", "policy_context_package", "memory_edges", "graph_neighbors"} {
+			if !storageTestStringSliceContains(coreSurfaces, required) {
+				t.Fatalf("profile %q missing core surface %q in %v", profileName, required, coreSurfaces)
+			}
+		}
+	}
+	localLite := profiles["local_lite"].(map[string]any)
+	localDefaults := anyToStringList(localLite["default_sources"], 20)
+	if storageTestStringSliceContains(localDefaults, "postgres_pgvector") || storageTestStringSliceContains(localDefaults, "llama-cpp") {
+		t.Fatalf("local lite should not default pgvector or llama.cpp, got %v", localDefaults)
+	}
+	localConnectors := anyToStringList(localLite["connector_only_inference_runtimes"], 20)
+	if !storageTestStringSliceContains(localConnectors, "llama-cpp") {
+		t.Fatalf("expected llama.cpp as local lite connector runtime, got %v", localConnectors)
+	}
+	fullProfile := profiles["full"].(map[string]any)
+	fullHotPath := anyToStringList(fullProfile["hot_path"], 20)
+	for _, required := range []string{"topic_rollups", "qdrant", "postgres_pgvector"} {
+		if !storageTestStringSliceContains(fullHotPath, required) {
+			t.Fatalf("full profile missing hot path source %q in %v", required, fullHotPath)
+		}
+	}
+	paidProfile := profiles["paid_local"].(map[string]any)
+	paidPremiumSurfaces := anyToStringList(paidProfile["premium_surfaces"], 20)
+	if !storageTestStringSliceContains(paidPremiumSurfaces, "agent_prime_pack") {
+		t.Fatalf("paid profile missing agent prime premium surface in %v", paidPremiumSurfaces)
+	}
+	if !storageTestStringSliceContains(paidPremiumSurfaces, "agent_prime_mandatory_rules") {
+		t.Fatalf("paid profile missing mandatory Agent Prime rules surface in %v", paidPremiumSurfaces)
+	}
+	agentPolicy, ok := paidProfile["agent_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("paid profile missing agent policy payload=%v", paidProfile)
+	}
+	if !anyToBool(agentPolicy["agent_prime_required"]) || anyToString(agentPolicy["injection_mode"]) != "mandatory_runtime_rules" || anyToBool(agentPolicy["public_contents"]) {
+		t.Fatalf("paid profile agent policy is not mandatory/private Agent Prime injection: %v", agentPolicy)
+	}
+	paidConnectors := anyToStringList(paidProfile["connector_surfaces"], 20)
+	if !storageTestStringSliceContains(paidConnectors, "obsidian_import_export") {
+		t.Fatalf("paid profile missing Obsidian connector surface in %v", paidConnectors)
+	}
+}
+
+func TestPressureBandUsesConfiguredMinimumFreeSpaceAsHighThresholdOnly(t *testing.T) {
+	policy := storageGovernancePolicy{
+		warnUsedRatio: 0.85,
+		highUsedRatio: 0.92,
+		minFreeBytes:  40 * 1024 * 1024 * 1024,
+	}
+
+	if got := pressureBand(0.45, 50*1024*1024*1024, policy); got != "healthy" {
+		t.Fatalf("expected healthy above configured minimum free space, got %q", got)
+	}
+	if got := pressureBand(0.86, 50*1024*1024*1024, policy); got != "warn" {
+		t.Fatalf("expected warn above used-ratio threshold, got %q", got)
+	}
+	if got := pressureBand(0.45, 40*1024*1024*1024, policy); got != "high" {
+		t.Fatalf("expected high at configured minimum free space, got %q", got)
 	}
 }
 

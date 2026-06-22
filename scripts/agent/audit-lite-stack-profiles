@@ -41,6 +41,18 @@ ADVANCED_SERVICES = {
     "surrealdb-spike-adapter",
 }
 
+LITE_FORBIDDEN_SERVICES = {
+    "pgvector-db",
+    "letta",
+    "ollama",
+    "llama-cpp",
+    "llamacpp",
+    "vllm",
+    "vllm-metal",
+    "cozo",
+    "cozodb",
+}
+
 
 def run_compose(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     merged_env = os.environ.copy()
@@ -121,6 +133,14 @@ def main() -> int:
     if leaked_graph_db:
         ok = False
         findings.append({"severity": "error", "reason": "graph_database_in_lite_profile", "services": leaked_graph_db})
+    leaked_core_forbidden = sorted(LITE_FORBIDDEN_SERVICES & core_services)
+    if leaked_core_forbidden:
+        ok = False
+        findings.append({"severity": "error", "reason": "forbidden_services_in_core_lite", "services": leaked_core_forbidden})
+    leaked_advanced_forbidden = sorted(LITE_FORBIDDEN_SERVICES & advanced_services)
+    if leaked_advanced_forbidden:
+        ok = False
+        findings.append({"severity": "error", "reason": "forbidden_services_in_advanced_lite", "services": leaked_advanced_forbidden})
 
     missing_advanced = sorted(ADVANCED_SERVICES - advanced_services)
     if missing_advanced:
