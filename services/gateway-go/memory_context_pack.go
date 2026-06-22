@@ -162,8 +162,11 @@ func (s *server) buildContextPackResponse(
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
 	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, effectiveObjectiveCtx)
+	agentGuidance := anyMap(compiled["agent_guidance"])
 	contextPack["rankedEvidence"] = compiled["ranked_evidence"]
 	contextPack["ranked_evidence"] = compiled["ranked_evidence"]
+	contextPack["agentGuidance"] = agentGuidance
+	contextPack["agent_guidance"] = agentGuidance
 	contextPack["promptSections"] = compiled["prompt_sections"]
 	contextPack["prompt_sections"] = compiled["prompt_sections"]
 	contextPack["contextCompiler"] = compiled["context_compiler"]
@@ -192,6 +195,7 @@ func (s *server) buildContextPackResponse(
 		"query":              query,
 		"context_pack":       contextPack,
 		"context_compiler":   compiled["context_compiler"],
+		"agent_guidance":     agentGuidance,
 		"reference_prompt":   referencePrompt,
 		"run_advisor":        runAdvisor,
 		"warnings":           parseWarnings(searchResponse["warnings"]),
@@ -503,7 +507,17 @@ func mergeContextPackFiles(existing any, graphRows []any, limit int) []any {
 
 func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext) map[string]any {
 	rankedEvidence := contextPackRankedEvidence(contextPack)
-	promptSections := contextPackPromptSections(query, contextPack, sourceCoverage, objectiveCtx, rankedEvidence)
+	agentGuidance := buildAgentEvidenceGuidance(agentEvidenceGuidanceInput{
+		Query:          query,
+		Surface:        "context_pack",
+		SourceCoverage: sourceCoverage,
+		RankedEvidence: rankedEvidence,
+		MaxThemes:      6,
+		MaxRiskMarkers: 6,
+		MaxLinks:       5,
+		MaxHints:       8,
+	})
+	promptSections := contextPackPromptSections(query, contextPack, sourceCoverage, objectiveCtx, rankedEvidence, agentGuidance)
 	compiler := map[string]any{
 		"schema_id":           "contextlattice_context_compiler.v1",
 		"version":             1,
@@ -515,6 +529,7 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 			"mcp_for_tool_calling_hosts",
 		},
 		"ranked_evidence_count": len(rankedEvidence),
+		"agent_guidance":        true,
 		"source_count":          len(anyToStringList(sourceCoverage["returned"], 64)),
 		"complete":              anyToBool(sourceCoverage["complete"]),
 		"guardrails": []any{
@@ -527,6 +542,7 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 	return map[string]any{
 		"context_compiler": compiler,
 		"ranked_evidence":  rankedEvidence,
+		"agent_guidance":   agentGuidance,
 		"prompt_sections":  promptSections,
 		"reference_prompt": contextPackReferencePrompt(promptSections),
 	}
@@ -661,6 +677,7 @@ func contextPackPromptSections(
 	sourceCoverage map[string]any,
 	objectiveCtx objectiveContext,
 	rankedEvidence []any,
+	agentGuidance map[string]any,
 ) map[string]any {
 	files := anyToStringList(contextPack["files_to_read"], 12)
 	commands := contextPackTextList(contextPack["commands"], 8)
@@ -693,6 +710,7 @@ func contextPackPromptSections(
 		"objective_lineage":   lineage,
 		"next_action":         clipText(nextAction, 900),
 		"evidence":            rankedEvidence,
+		"agent_guidance":      agentGuidance,
 		"files_to_inspect":    files,
 		"commands":            commands,
 		"checks":              checks,
@@ -771,6 +789,14 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 		lines = append(lines, "", "Known risks:")
 		for _, risk := range risks {
 			lines = append(lines, "- "+risk)
+		}
+	}
+	if guidance := anyMap(promptSections["agent_guidance"]); len(guidance) > 0 {
+		if hints := anyToStringList(guidance["prompt_hints"], 6); len(hints) > 0 {
+			lines = append(lines, "", "Agent guidance hints:")
+			for _, hint := range hints {
+				lines = append(lines, "- "+hint)
+			}
 		}
 	}
 	lines = append(lines, "", "Rules: cite evidence, inspect current files for code claims, avoid raw logs/volatile telemetry, and keep output bounded.")

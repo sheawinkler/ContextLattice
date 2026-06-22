@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 11,
-  "updated_at": "2026-06-17T00:00:00Z",
+  "registry_version": 12,
+  "updated_at": "2026-06-21T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -690,6 +690,7 @@
         "ok": "bool",
         "writeback_required": "bool",
         "context_compiler": "object",
+        "agent_guidance": "object",
         "reference_prompt": "string",
         "run_advisor": "object",
         "format_contract": "object"
@@ -758,6 +759,10 @@
       "max_bytes_by_path": {
         "query": 2000,
         "task_summary": 1000,
+        "agent_guidance.intended_use": 300,
+        "agent_guidance.prompt_hints": 1600,
+        "context_pack.agent_guidance.intended_use": 300,
+        "context_pack.agent_guidance.prompt_hints": 1600,
         "reference_prompt": 5000,
         "context_pack.prompt_sections.objective": 1200,
         "context_pack.prompt_sections.next_action": 1200,
@@ -771,7 +776,7 @@
       "contract_version": 1,
       "payload_kind": "dream_mode_response",
       "required_output_mode": "json_object",
-      "safe_failure_behavior": "return_bounded_json_with_deterministic_synthesis_when_llm_unavailable",
+      "safe_failure_behavior": "return_bounded_dream_unavailable_json_when_structured_llm_synthesis_is_unavailable",
       "max_total_json_bytes": 120000,
       "max_string_bytes": 6000,
       "max_list_items": 64,
@@ -899,6 +904,7 @@
         "summary": "object",
         "patterns": "list",
         "agent_guidance": "list",
+        "evidence_analysis": "object",
         "source_coverage": "object",
         "writeback_required": "bool",
         "format_contract": "object"
@@ -945,7 +951,9 @@
       ],
       "max_bytes_by_path": {
         "query": 1600,
-        "patterns.agent_guidance": 900
+        "patterns.agent_guidance": 900,
+        "evidence_analysis.intended_use": 300,
+        "evidence_analysis.prompt_hints": 1400
       },
       "required_string_contains": {
         "schema_id": "review_mode_response.v1",
