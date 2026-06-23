@@ -75,6 +75,7 @@ func TestSearchCommandUsesGoNativeHTTPPayload(t *testing.T) {
 }
 
 func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	var packPayload map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -108,6 +109,8 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 					"validation":        map[string]any{"status": "passed"},
 				},
 			})
+		case "/v1/agents/sessions/sess-test/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -280,7 +283,12 @@ func TestRunnerQualityCommandUsesNativeTelemetryEndpoint(t *testing.T) {
 }
 
 func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/agents/sessions/sess-bootstrap/rollup" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+			return
+		}
 		if r.URL.Path != "/v1/agents/preflight" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

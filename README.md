@@ -25,6 +25,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Unified write/read contract for memory and context.
 - Durable fanout across retrieval/storage lanes.
 - Staged retrieval (fast now, deep continuation when needed).
+- Bounded async inbox delivery that reports queued work as warming and surfaces terminal continuation results at normal CLI boundaries.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
