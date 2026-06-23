@@ -531,6 +531,75 @@ func TestInferenceRuntimePolicyIncludesOptInQwen36ModelPolicy(t *testing.T) {
 	if repo := strings.TrimSpace(anyToString(privateEval["repoIfEnabled"])); !strings.Contains(repo, "Huihui-Qwen3.6") {
 		t.Fatalf("expected Huihui private-eval repo metadata, got %q", repo)
 	}
+	localOpenSource, _ := modelPolicy["localOpenSource"].(map[string]any)
+	if anyToBool(localOpenSource["downloadByDefault"]) {
+		t.Fatalf("local open-source shortlist must never download by default, got %#v", localOpenSource)
+	}
+	selectionRules := anyToStringList(localOpenSource["selectionRules"], 20)
+	foundConnectorRule := false
+	for _, rule := range selectionRules {
+		if strings.Contains(rule, "connector-only") && strings.Contains(rule, "LLAMA_CPP_BASE_URL") {
+			foundConnectorRule = true
+			break
+		}
+	}
+	if !foundConnectorRule {
+		t.Fatalf("expected llama.cpp connector-only rule, got %v", selectionRules)
+	}
+	foundQwableSmall := false
+	for _, raw := range localOpenSource["small"].([]any) {
+		model, _ := raw.(map[string]any)
+		repo := strings.TrimSpace(anyToString(model["repo"]))
+		if repo == "useremma/qwable-9b-claude-fable-mlx-8bit" {
+			t.Fatalf("shortlist used unreachable useremma spelling: %#v", model)
+		}
+		if repo == "usermma/Qwable-9B-Claude-Fable-5-mlx-8Bit" {
+			foundQwableSmall = true
+			if anyToBool(model["downloadByDefault"]) || !anyToBool(model["optInRequired"]) {
+				t.Fatalf("expected Qwable small model to be opt-in/no-download, got %#v", model)
+			}
+		}
+	}
+	if !foundQwableSmall {
+		t.Fatalf("expected corrected Qwable 9B MLX model in small shortlist, got %#v", localOpenSource["small"])
+	}
+	foundNexMedium := false
+	for _, raw := range localOpenSource["medium"].([]any) {
+		model, _ := raw.(map[string]any)
+		if strings.TrimSpace(anyToString(model["repo"])) == "nex-agi/Nex-N2-mini" {
+			foundNexMedium = true
+			if provider := strings.TrimSpace(anyToString(model["primaryProvider"])); provider != "sglang" {
+				t.Fatalf("expected Nex-N2-mini to prefer backend-native HF serving, got %#v", model)
+			}
+		}
+	}
+	if !foundNexMedium {
+		t.Fatalf("expected Nex-N2-mini in medium shortlist, got %#v", localOpenSource["medium"])
+	}
+	foundHarness := false
+	foundPrivacyFilter := false
+	for _, raw := range localOpenSource["boundaryModels"].([]any) {
+		model, _ := raw.(map[string]any)
+		switch strings.TrimSpace(anyToString(model["repo"])) {
+		case "pat-jj/harness-1":
+			foundHarness = true
+		case "openai/privacy-filter":
+			foundPrivacyFilter = true
+			if strings.TrimSpace(anyToString(model["primaryProvider"])) != "local_classifier" {
+				t.Fatalf("expected privacy-filter to be modeled as classifier, got %#v", model)
+			}
+		}
+		if anyToBool(model["downloadByDefault"]) {
+			t.Fatalf("boundary model must not download by default: %#v", model)
+		}
+	}
+	if !foundHarness || !foundPrivacyFilter {
+		t.Fatalf("expected harness/privacy boundary models, got %#v", localOpenSource["boundaryModels"])
+	}
+	frontierProviders, _ := modelPolicy["frontierProviders"].(map[string]any)
+	if strings.TrimSpace(anyToString(frontierProviders["policy"])) == "" {
+		t.Fatalf("expected frontier provider connection guidance, got %#v", frontierProviders)
+	}
 	templateConformance, _ := modelPolicy["templateConformance"].(map[string]any)
 	if !anyToBool(templateConformance["finalContentRequired"]) || !anyToBool(templateConformance["reasoningOnlyRejected"]) {
 		t.Fatalf("expected final-content template conformance policy, got %#v", templateConformance)

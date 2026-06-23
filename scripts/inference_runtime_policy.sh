@@ -65,7 +65,7 @@ main() {
   priority="${ORCH_INFER_PROVIDER_PRIORITY:-$(priority_for_profile "$profile")}"
   selected="${ORCH_INFER_PROVIDER:-auto}"
   cat <<EOF
-{"ok":false,"source":"local-host-probe","error":"gateway runtime policy unavailable","gateway":"$(json_escape "$endpoint")","hardware":{"profile":"$(json_escape "$profile")"},"recommendedPriority":"$(json_escape "$priority")","selected":"$(json_escape "$selected")","embeddingRecommendation":"fastembed-rs","recommendation":{"modelStrategy":"Use MLX on Apple Silicon, SGLang/vLLM on CUDA or ROCm, and llama.cpp/LM Studio/Ollama GGUF when resources are unknown or smaller.","fallbackWhenBlind":"Start with Q4/IQ4 7B-9B models and benchmark before moving to 27B/35B-A3B."},"note":"Start ContextLattice gateway-go to get live health-ranked provider candidates."}
+{"ok":false,"source":"local-host-probe","error":"gateway runtime policy unavailable","gateway":"$(json_escape "$endpoint")","hardware":{"profile":"$(json_escape "$profile")"},"recommendedPriority":"$(json_escape "$priority")","selected":"$(json_escape "$selected")","embeddingRecommendation":"fastembed-rs","recommendation":{"modelStrategy":"Use MLX on Apple Silicon, SGLang/vLLM on CUDA or ROCm, and llama.cpp/LM Studio/Ollama GGUF when resources are unknown or smaller.","fallbackWhenBlind":"Start with Q4/IQ4 7B-9B models and benchmark before moving to 27B/35B-A3B.","shortlistDoc":"docs/runtime/local-model-options.md"},"note":"Start ContextLattice gateway-go to get live health-ranked provider candidates."}
 EOF
 }
 

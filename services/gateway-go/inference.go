@@ -1496,6 +1496,107 @@ func _inferencePrivateEvalGGUFModelRepo() string {
 	return envStringAny(defaultDreamPrivateEvalGGUFRepo, "GO_DREAM_PRIVATE_EVAL_GGUF_MODEL_REPO", "CONTEXTLATTICE_PRIVATE_EVAL_GGUF_MODEL_REPO")
 }
 
+func _inferenceOpenSourceModel(repo string, tier string, format string, provider string, role string, resourceClass string, availability string, note string, privateEval bool) map[string]any {
+	return map[string]any{
+		"repo":                  repo,
+		"url":                   "https://huggingface.co/" + repo,
+		"tier":                  tier,
+		"format":                format,
+		"primaryProvider":       provider,
+		"role":                  role,
+		"resourceClass":         resourceClass,
+		"availability":          availability,
+		"optInRequired":         true,
+		"downloadByDefault":     false,
+		"privateEvalRequired":   privateEval,
+		"templateCheckRequired": true,
+		"note":                  note,
+	}
+}
+
+func _inferenceLocalOpenSourceModels() map[string]any {
+	return map[string]any{
+		"policy":              "advisory opt-in shortlist only; ContextLattice never bundles, pulls, or auto-downloads local LLM weights",
+		"availabilityChecked": "2026-06-23 via Hugging Face model API",
+		"downloadByDefault":   false,
+		"selectionRules": []any{
+			"prefer MLX on Apple Silicon",
+			"treat llama.cpp as a connector-only runtime: start llama-server separately, then set LLAMA_CPP_BASE_URL",
+			"prefer llama.cpp or LM Studio connectors for GGUF on small local boxes",
+			"prefer SGLang or vLLM for backend-native HF/safetensors on CUDA or ROCm",
+			"run template conformance before using any thinking/Qwen-style model for Dream Mode",
+			"abliterated or uncensored variants require explicit private-eval opt-in and are never defaults",
+		},
+		"small": []any{
+			_inferenceOpenSourceModel("usermma/Qwable-9B-Claude-Fable-5-mlx-8Bit", "small", "MLX", "mlx", "fast Apple Silicon coding/synthesis", "9B 8-bit", "public_hf_api_200", "Corrected reachable repo for the user-facing Qwable 9B MLX 8-bit candidate.", false),
+			_inferenceOpenSourceModel("usermma/Qwable-9B-Claude-Fable-5-mlx-FP16", "small", "MLX", "mlx", "quality Apple Silicon coding/synthesis", "9B FP16", "public_hf_api_200", "Use only when unified memory is sufficient; prefer the 8-bit variant first on smaller machines.", false),
+			_inferenceOpenSourceModel("yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF", "small", "GGUF", "llama-cpp", "small local coder/composer", "12B GGUF", "public_hf_api_200", "Good llama.cpp/LM Studio candidate when MLX is not the selected runtime.", false),
+			_inferenceOpenSourceModel("Jackrong/Qwopus3.5-9B-Coder-MTP-GGUF", "small", "GGUF", "llama-cpp", "small local coder", "9B GGUF", "public_hf_api_200", "Good small GGUF candidate for fast local iteration.", false),
+			_inferenceOpenSourceModel("usermma/LFM2.5-8B-A1B-Abliterated-Q3", "small", "local quant", "llama-cpp", "experimental private eval", "8B/A1B Q3", "auth_required_or_unverified_hf_api_401", "Keep in watch/eval only until availability, license, template, and behavior are verified.", true),
+		},
+		"medium": []any{
+			_inferenceOpenSourceModel("Jiunsong/supergemma4-26b-uncensored-gguf-v2", "medium", "GGUF", "llama-cpp", "experimental private eval", "26B GGUF", "public_hf_api_200", "Private-eval only; never a default recommendation.", true),
+			_inferenceOpenSourceModel("huihui-ai/Huihui-Qwable-3.6-27b-abliterated-GGUF", "medium", "GGUF", "llama-cpp", "experimental private eval", "27B GGUF", "public_hf_api_200", "Private-eval only; never a default recommendation.", true),
+			_inferenceOpenSourceModel("DJLougen/Qwable-5-27B-Coder-GGUF", "medium", "GGUF", "llama-cpp", "medium coder", "27B GGUF", "public_hf_api_200", "Good medium GGUF candidate when local memory is adequate.", false),
+			_inferenceOpenSourceModel("Jackrong/Qwopus3.6-27B-v2-MTP-GGUF", "medium", "GGUF", "llama-cpp", "medium coding/synthesis", "27B GGUF", "public_hf_api_200", "Good medium llama.cpp candidate for higher-quality local synthesis.", false),
+			_inferenceOpenSourceModel("nightmedia/Qwen3.6-35B-A3B-Qwable-Holo3-Qwopus-qx64-hi-mlx", "medium", "MLX", "mlx", "Apple Silicon MoE synthesis", "35B-A3B MLX", "public_hf_api_200", "MLX candidate for higher-memory Apple Silicon machines.", false),
+			_inferenceOpenSourceModel("nex-agi/Nex-N2-mini", "medium", "HF/safetensors", "sglang", "backend-native agentic synthesis", "mini MoE", "public_hf_api_200", "Prefer SGLang/vLLM or another backend-native HF server rather than GGUF fallback.", false),
+			_inferenceOpenSourceModel("Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX", "medium", "MLX", "mlx", "Apple Silicon creative synthesis", "26B-A4B MLX", "public_hf_api_200", "Evaluate against Dream Mode template conformance before promotion.", false),
+			_inferenceOpenSourceModel("XALIEN8881/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX", "medium", "MLX", "mlx", "Apple Silicon creative synthesis", "26B-A4B MLX", "public_hf_api_200", "Alternative MYTHOS MLX candidate; benchmark before choosing over Ex0bit.", false),
+		},
+		"watchlist": []any{
+			_inferenceOpenSourceModel("maidacundo/open-mythos-hf", "watchlist", "HF/safetensors", "sglang", "research watchlist", "HF", "public_hf_api_200", "Worth benchmarking, but not promoted until runtime/template behavior is known.", false),
+			_inferenceOpenSourceModel("mradermacher/MYTHOS28BLORA-GGUF", "watchlist", "GGUF", "llama-cpp", "research watchlist", "28B GGUF", "public_hf_api_200", "Worth benchmarking as a GGUF MYTHOS lane.", false),
+			_inferenceOpenSourceModel("alphakek/gemma-4-E4B-it-heretic-mythos-v1", "watchlist", "HF/safetensors", "sglang", "research watchlist", "E4B HF", "public_hf_api_200", "Keep as a watchlist item until license, template, and quality are verified.", false),
+		},
+		"boundaryModels": []any{
+			map[string]any{
+				"repo":              "pat-jj/harness-1",
+				"url":               "https://huggingface.co/pat-jj/harness-1",
+				"format":            "HF/safetensors",
+				"primaryProvider":   "sglang",
+				"role":              "research: retrieval/search harness and tiny problem-solving loop candidate",
+				"availability":      "public_hf_api_200",
+				"downloadByDefault": false,
+				"promotionGate":     "must beat deterministic retrieval planning baselines and stay bounded before becoming a ContextLattice feature",
+			},
+			map[string]any{
+				"repo":              "openai/privacy-filter",
+				"url":               "https://huggingface.co/openai/privacy-filter",
+				"format":            "token-classification",
+				"primaryProvider":   "local_classifier",
+				"role":              "optional privacy classifier for write-boundary and harness-side redaction",
+				"availability":      "public_hf_api_200",
+				"downloadByDefault": false,
+				"promotionGate":     "must augment, not replace, deterministic secret detectors and SECRETS_STORAGE_MODE block/redact enforcement",
+			},
+		},
+	}
+}
+
+func _inferenceFrontierProviderConnectionGuidance() map[string]any {
+	return map[string]any{
+		"policy": "Frontier and large hosted models should connect through an explicit provider or OpenAI-compatible proxy; ContextLattice does not require users to run those weights locally.",
+		"agents": []any{
+			map[string]any{
+				"name": "Codex, ChatGPT, Claude, Claude Code, and other managed-agent clients",
+				"mode": "use the agent's native frontier provider while ContextLattice remains the sidecar memory/context service",
+				"note": "Point the agent at ContextLattice CLI/HTTP memory tools; do not route provider secrets through memory writes.",
+			},
+			map[string]any{
+				"name": "OpenAI-compatible hosted or proxy providers",
+				"mode": "set ORCH_INFER_PROVIDER=openai-compatible, OPENAI_API_BASE=<provider /v1>, TASK_API_KEY=<key>, and TASK_MODEL=<model>",
+				"note": "Use this for OpenAI, Claude-through-proxy, OpenRouter, LiteLLM, or any provider exposing /v1/chat/completions.",
+			},
+			map[string]any{
+				"name": "Local large models",
+				"mode": "follow the same medium-model runtime lanes: MLX on Apple Silicon, SGLang/vLLM on accelerators, external llama.cpp/LM Studio connectors for GGUF",
+				"note": "If a user can serve a large model locally, the medium instructions already cover the ContextLattice connection contract.",
+			},
+		},
+	}
+}
+
 func _inferenceProviderModelRecommendations(provider string, hardware map[string]any) []any {
 	normalized := _inferenceNormalizeProvider(provider)
 	memoryGB := anyToFloat64(hardware["memoryGB"], 0)
@@ -1592,6 +1693,8 @@ func _inferenceDreamModelPolicy(hardware map[string]any) map[string]any {
 		"qwen36GGUFDefault": _inferenceQwen36GGUFModelRepo(),
 		"qwen36DefaultRole": "advanced opt-in GGUF target for llama.cpp-compatible runtimes",
 		"privateEval":       privateEval,
+		"localOpenSource":   _inferenceLocalOpenSourceModels(),
+		"frontierProviders": _inferenceFrontierProviderConnectionGuidance(),
 		"providerGuidance":  _inferenceProviderModelRecommendations(_inferenceDefaultModelPolicyProvider(hardware), hardware),
 		"templateConformance": map[string]any{
 			"required":                true,
