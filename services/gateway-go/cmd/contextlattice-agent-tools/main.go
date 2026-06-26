@@ -1723,7 +1723,11 @@ func renderAsyncInboxDrainText(result map[string]any) string {
 			label = "degraded"
 		case strings.Contains(status, "completed") || strings.Contains(status, "succeeded"):
 			label = "completed"
-		case strings.Contains(status, "progress") || strings.Contains(status, "running"):
+		case strings.Contains(status, "progress") ||
+			strings.Contains(status, "running") ||
+			strings.Contains(status, "pending") ||
+			strings.Contains(status, "queued") ||
+			strings.Contains(status, "active"):
 			label = "warming"
 		}
 		lines = append(lines,

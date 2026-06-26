@@ -6383,8 +6383,16 @@ func TestStagedRetrievalTopicRollupsTimeoutIsNonDegradable(t *testing.T) {
 
 	summary, _ := payload["source_summary"].(map[string]any)
 	timedOut := anyToStringSlice(summary["timed_out_sources"])
-	if len(timedOut) != 1 || timedOut[0] != "topic_rollups" {
-		t.Fatalf("expected timed_out_sources=[topic_rollups], got %v", timedOut)
+	if len(timedOut) != 0 {
+		t.Fatalf("expected agent-facing timed_out_sources to exclude warming continuation sources, got %v", timedOut)
+	}
+	deferredTimeouts := anyToStringSlice(summary["deferred_timeout_sources"])
+	if len(deferredTimeouts) != 1 || deferredTimeouts[0] != "topic_rollups" {
+		t.Fatalf("expected deferred_timeout_sources=[topic_rollups], got %v", deferredTimeouts)
+	}
+	syncTimeouts := anyToStringSlice(summary["sync_timed_out_sources"])
+	if len(syncTimeouts) != 1 || syncTimeouts[0] != "topic_rollups" {
+		t.Fatalf("expected sync_timed_out_sources=[topic_rollups], got %v", syncTimeouts)
 	}
 
 	continuation, _ := payload["continuation_async"].(map[string]any)
@@ -6399,6 +6407,108 @@ func TestStagedRetrievalTopicRollupsTimeoutIsNonDegradable(t *testing.T) {
 	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
 	if !strings.Contains(warnings, "non-degradable lane") {
 		t.Fatalf("expected non-degradable warning context, got %v", payload["warnings"])
+	}
+}
+
+func TestStagedRetrievalFastTimeoutQueuedForContinuationIsPending(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "0.2")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", "0.2")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES", "qdrant")
+	t.Setenv("GO_RETRIEVAL_PROTECTED_SOURCES", "qdrant")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		sources, _ := request["sources"].([]any)
+		if len(sources) > 0 && strings.TrimSpace(strings.ToLower(anyToString(sources[0]))) == "qdrant" {
+			time.Sleep(450 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"slow protected vector source","limit":5,"retrieval_mode":"balanced","sources":["qdrant"]}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := strings.TrimSpace(strings.ToLower(anyToString(payload["result_state"]))); got != "pending" {
+		t.Fatalf("expected result_state=pending for warming continuation source, got %q payload=%#v", got, payload)
+	}
+	if degraded, _ := payload["degraded"].(bool); degraded {
+		t.Fatalf("expected degraded=false while qdrant continuation is warming")
+	}
+
+	lifecycle, _ := payload["retrieval_lifecycle"].(map[string]any)
+	if got := strings.TrimSpace(strings.ToLower(anyToString(lifecycle["status"]))); got != "partial" {
+		t.Fatalf("expected lifecycle status partial, got %q lifecycle=%#v", got, lifecycle)
+	}
+	if got := strings.TrimSpace(strings.ToLower(anyToString(lifecycle["result_state"]))); got != "pending" {
+		t.Fatalf("expected lifecycle result_state pending, got %q lifecycle=%#v", got, lifecycle)
+	}
+
+	summary, _ := payload["source_summary"].(map[string]any)
+	if timedOut := anyToStringSlice(summary["timed_out_sources"]); len(timedOut) != 0 {
+		t.Fatalf("expected no terminal timed_out_sources while qdrant is warming, got %v", timedOut)
+	}
+	deferredTimeouts := anyToStringSlice(summary["deferred_timeout_sources"])
+	if len(deferredTimeouts) != 1 || deferredTimeouts[0] != "qdrant" {
+		t.Fatalf("expected deferred_timeout_sources=[qdrant], got %v", deferredTimeouts)
+	}
+	if failed := anyToStringSlice(summary["failed_sources"]); len(failed) != 0 {
+		t.Fatalf("expected no terminal failed_sources while qdrant is warming, got %v", failed)
+	}
+	deferredFailed := anyToStringSlice(summary["deferred_failed_sources"])
+	if len(deferredFailed) != 1 || deferredFailed[0] != "qdrant" {
+		t.Fatalf("expected deferred_failed_sources=[qdrant], got %v", deferredFailed)
+	}
+
+	continuation, _ := payload["continuation_async"].(map[string]any)
+	if continuation == nil {
+		t.Fatalf("expected continuation_async for qdrant timeout")
+	}
+	pending := anyToStringSlice(continuation["pending_sources"])
+	if len(pending) != 1 || pending[0] != "qdrant" {
+		t.Fatalf("expected continuation pending source qdrant, got %v", pending)
+	}
+	progress := anyMap(continuation["retrieval_progress"])
+	visibility := anyMap(progress["agent_visibility"])
+	if got := anyToString(visibility["session_event_type"]); got != "retrieval.continuation.progress" {
+		t.Fatalf("expected progress event type while qdrant is warming, got %#v", visibility)
 	}
 }
 

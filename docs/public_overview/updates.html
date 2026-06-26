@@ -249,11 +249,11 @@
         <p class="spotlight">
           Staged retrieval still returns fast context first, but continuation progress is now contract-visible across
           HTTP, CLI, session rollups, traces, and the dashboard. Local agents can watch their own session and receive a
-          bounded steering comment when deeper recall is ready or degraded.
+          bounded steering comment when deeper recall is warming, ready, or terminally degraded.
         </p>
         <ul>
           <li><strong>Progress contract:</strong> responses include <code>retrieval_progress.v1</code> with progress, confidence, source state, poll URL, and event URL.</li>
-          <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.ready</code> or <code>retrieval.continuation.degraded</code>.</li>
+          <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.progress</code>, <code>retrieval.continuation.ready</code>, or terminal <code>retrieval.continuation.degraded</code>.</li>
           <li><strong>CLI watch:</strong> <code>contextlattice_agent_session watch --session-id &lt;id&gt; --continuation-token &lt;token&gt; --pretty</code> gives agents a compact terminal inbox.</li>
           <li><strong>Dashboard:</strong> retrieval flow shows the async lane, source states, progress, confidence, and the agent watch command.</li>
         </ul>

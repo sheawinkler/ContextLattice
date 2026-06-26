@@ -5638,7 +5638,11 @@ func buildRetrievalLifecyclePayload(
 	}
 	switch normalizedResultState {
 	case "degraded":
-		status = "failed"
+		if len(pending) > 0 || len(warming) > 0 {
+			status = "partial"
+		} else {
+			status = "failed"
+		}
 	case "pending":
 		status = "partial"
 	default:
@@ -6236,11 +6240,15 @@ func (s *server) executeRetrieval(
 		deferredCandidates = append(deferredCandidates, source)
 	}
 	sort.Strings(deferredCandidates)
+	continuationSet := toSourceSet(continuationSources)
 	materialErrorSources := map[string]struct{}{}
 	for source, payload := range sourceErrors {
 		kind := strings.TrimSpace(strings.ToLower(anyToString(payload["kind"])))
 		if kind == "" {
 			kind = "error"
+		}
+		if _, warming := continuationSet[source]; warming {
+			continue
 		}
 		if s.isNonDegradableSource(source) {
 			continue
@@ -6331,15 +6339,33 @@ func (s *server) executeRetrieval(
 		failedSources = append(failedSources, source)
 	}
 	sort.Strings(failedSources)
-	timedOutForLifecycle := make([]string, 0, len(timedOutList))
+	deferredTimedOutList := make([]string, 0, len(timedOutList))
+	terminalTimedOutList := make([]string, 0, len(timedOutList))
 	for _, source := range timedOutList {
+		if _, warming := continuationSet[source]; warming {
+			deferredTimedOutList = append(deferredTimedOutList, source)
+			continue
+		}
+		terminalTimedOutList = append(terminalTimedOutList, source)
+	}
+	deferredFailedList := make([]string, 0, len(failedSources))
+	terminalFailedList := make([]string, 0, len(failedSources))
+	for _, source := range failedSources {
+		if _, warming := continuationSet[source]; warming {
+			deferredFailedList = append(deferredFailedList, source)
+			continue
+		}
+		terminalFailedList = append(terminalFailedList, source)
+	}
+	timedOutForLifecycle := make([]string, 0, len(terminalTimedOutList))
+	for _, source := range terminalTimedOutList {
 		if s.isNonDegradableSource(source) {
 			continue
 		}
 		timedOutForLifecycle = append(timedOutForLifecycle, source)
 	}
-	failedForLifecycle := make([]string, 0, len(failedSources))
-	for _, source := range failedSources {
+	failedForLifecycle := make([]string, 0, len(terminalFailedList))
+	for _, source := range terminalFailedList {
 		if s.isNonDegradableSource(source) {
 			continue
 		}
@@ -6513,6 +6539,8 @@ func (s *server) executeRetrieval(
 			"continuation_durable":             continuationDurable,
 			"timeout_adaptive_skipped_sources": skippedList,
 			"timed_out_sources":                timedOutList,
+			"deferred_timeout_sources":         deferredTimedOutList,
+			"terminal_timed_out_sources":       terminalTimedOutList,
 			"budget_exceeded_sources":          budgetExceededList,
 			"lexical_backend":                  lexicalBackend,
 			"lexical_guard_applied":            lexicalGuardApplied,
@@ -6549,8 +6577,12 @@ func (s *server) executeRetrieval(
 			"warming_sources":                  warmingSources,
 			"continuation_unavailable_sources": continuationUnavailable,
 			"continuation_durable":             continuationDurable,
-			"timed_out_sources":                timedOutList,
-			"failed_sources":                   failedSources,
+			"timed_out_sources":                terminalTimedOutList,
+			"deferred_timeout_sources":         deferredTimedOutList,
+			"sync_timed_out_sources":           timedOutList,
+			"failed_sources":                   terminalFailedList,
+			"deferred_failed_sources":          deferredFailedList,
+			"sync_failed_sources":              failedSources,
 			"budget_exceeded_sources":          budgetExceededList,
 			"skipped_sources":                  skippedList,
 			"source_owners":                    sourceOwnerBySource,
