@@ -186,6 +186,8 @@ Canonical event families include `session.started`, `context_pack.completed`, `r
 | Lite advanced | `4-6` vCPU | `12-16 GB` | `80-140 GB` |
 | Full | `6-8` vCPU | `12-20 GB` | `100-180 GB` |
 
+Optional constrained-disk guard: set `QDRANT_HOT_STORAGE_MAX_BYTES` to make launch/storage verification fail before the Qdrant hot lane exceeds your chosen byte ceiling. This is a guardrail, not a filesystem quota.
+
 ## Memory Graph
 
 - `GET|POST /v1/memory/edges` persists explicit typed relationships.
