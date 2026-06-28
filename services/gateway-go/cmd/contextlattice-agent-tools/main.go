@@ -259,6 +259,17 @@ func commonStringFlags() map[string]string {
 	}
 }
 
+func contextPackTokenBudgetStringFlags() map[string]string {
+	return map[string]string{
+		"agent-context-budget-tokens": "agent_context_budget_tokens",
+		"model-context-window-tokens": "model_context_window_tokens",
+		"reserved-response-tokens":    "reserved_response_tokens",
+		"already-loaded-tokens":       "already_loaded_tokens",
+		"target-context-pack-tokens":  "target_context_pack_tokens",
+		"budget-tokens":               "target_context_pack_tokens",
+	}
+}
+
 func commonBoolFlags() map[string]string {
 	return map[string]string{
 		"h":      "help",
@@ -599,7 +610,7 @@ func resolveContent(parsed parsedArgs) (string, error) {
 }
 
 func (c *cli) cmdPack(args []string) error {
-	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
 		"budget-chars": "budget_chars",
 		"limit":        "limit",
 		"max-facts":    "max_facts",
@@ -648,6 +659,7 @@ func (c *cli) cmdPack(args []string) error {
 		"session_id":                emptyToNil(sessionID),
 		"native_cli_implementation": true,
 	}
+	addContextPackTokenBudgetArgs(payload, parsed)
 	raw, err := c.requestWithRetries("/memory/context-pack", payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
 	if err != nil {
 		if parsed.bool("soft") {
@@ -705,10 +717,38 @@ func normalizePackOutput(raw map[string]any, query string, budget int) map[strin
 	if _, ok := raw["context_pack"]; !ok {
 		return raw
 	}
+	pack := asMap(raw["context_pack"])
+	if _, ok := raw["token_budget"]; !ok {
+		if tokenBudget := asMap(firstMap(pack["token_budget"], pack["tokenBudget"])); len(tokenBudget) > 0 {
+			raw["token_budget"] = tokenBudget
+		}
+	}
+	if _, ok := raw["omitted_high_value_refs"]; !ok {
+		if omitted := firstList(pack["omitted_high_value_refs"], pack["omittedHighValueRefs"]); len(omitted) > 0 {
+			raw["omitted_high_value_refs"] = omitted
+		}
+	}
 	raw["task_summary"] = query
 	raw["context_budget_chars"] = budget
 	raw["writeback_required"] = true
 	return raw
+}
+
+func addContextPackTokenBudgetArgs(payload map[string]any, parsed parsedArgs) {
+	for _, field := range []struct {
+		key string
+		arg string
+	}{
+		{"agent_context_budget_tokens", "agent_context_budget_tokens"},
+		{"model_context_window_tokens", "model_context_window_tokens"},
+		{"reserved_response_tokens", "reserved_response_tokens"},
+		{"already_loaded_tokens", "already_loaded_tokens"},
+		{"target_context_pack_tokens", "target_context_pack_tokens"},
+	} {
+		if value := parsed.int(field.arg, 0); value > 0 {
+			payload[field.key] = value
+		}
+	}
 }
 
 func failurePack(query string, budget int, err error) map[string]any {
@@ -1345,7 +1385,7 @@ func (c *cli) adapterBootstrap(args []string) error {
 }
 
 func adapterStringFlags() map[string]string {
-	return mergeStringFlags(commonStringFlags(), map[string]string{
+	return mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
 		"agent":         "agent",
 		"agent-id":      "agent_id",
 		"session-id":    "session_id",
@@ -1526,6 +1566,7 @@ func (c *cli) adapterContextPack(args []string) error {
 		"traffic_class":             "user",
 		"native_cli_implementation": true,
 	})
+	addContextPackTokenBudgetArgs(request, parsed)
 	contextPack, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-pack", request, parsed.float("timeout", 30))
 	if err != nil {
 		return err

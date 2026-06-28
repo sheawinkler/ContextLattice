@@ -33,6 +33,26 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def first_dict(*values: Any) -> dict[str, Any]:
+    for value in values:
+        row = as_dict(value)
+        if row:
+            return row
+    return {}
+
+
+def first_list(*values: Any) -> list[Any]:
+    for value in values:
+        items = as_list(value)
+        if items:
+            return items
+    return []
+
+
 def encoded_len(value: Any) -> int:
     return len((json.dumps(value) + "\n").encode("utf-8"))
 
@@ -49,6 +69,15 @@ def compact_items(value: Any, limit: int) -> list[Any]:
                 "topic_path",
                 "project",
                 "score",
+                "impact_score",
+                "value_density",
+                "estimated_tokens",
+                "confidence",
+                "rank",
+                "kind",
+                "reason",
+                "why_selected",
+                "omitted_reason",
                 "summary",
                 "timestamp",
                 "memory_id",
@@ -203,6 +232,26 @@ def trim_context_pack_lists(context_pack: dict[str, Any], limit: int) -> None:
 
 def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) -> dict[str, Any]:
     budget_chars = max(1024, int(budget_chars or 0))
+    context_pack = payload.get("context_pack") if isinstance(payload.get("context_pack"), dict) else {}
+    token_budget = first_dict(payload.get("token_budget"), context_pack.get("token_budget"), context_pack.get("tokenBudget"))
+    omitted_high_value_refs = compact_items(
+        first_list(
+            payload.get("omitted_high_value_refs"),
+            context_pack.get("omitted_high_value_refs"),
+            context_pack.get("omittedHighValueRefs"),
+        ),
+        8,
+    )
+    ranked_evidence = compact_items(
+        first_list(context_pack.get("ranked_evidence"), context_pack.get("rankedEvidence")),
+        4,
+    )
+    if token_budget:
+        payload["token_budget"] = token_budget
+        context_pack["token_budget"] = token_budget
+    if omitted_high_value_refs:
+        payload["omitted_high_value_refs"] = omitted_high_value_refs
+        context_pack["omitted_high_value_refs"] = omitted_high_value_refs
     payload = attach_format_contract("context_pack_response.v1", payload)
     if encoded_len(payload) <= budget_chars:
         return payload
@@ -236,13 +285,15 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "retrieval_mode": context_pack.get("retrieval_mode") or "",
         "retrieval_intent": context_pack.get("retrieval_intent") or "",
         "source_coverage": coverage,
+        "token_budget": token_budget,
+        "omitted_high_value_refs": omitted_high_value_refs[:4],
         "context_compiler": context_pack.get("context_compiler") or minimal_context_compiler("minimal_payload", 0),
         "run_advisor": advisor,
         "prompt_sections": minimal_prompt_sections(
             context_pack.get("query") or payload.get("task_summary") or "",
             "ContextLattice clipped this context package to a minimal bounded payload; rerun with a larger budget for ranked evidence.",
         ),
-        "ranked_evidence": [],
+        "ranked_evidence": ranked_evidence[:2],
         "facts": [],
         "numeric_facts": [],
         "citations": [],
@@ -268,6 +319,8 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "fact_count": int(payload.get("fact_count") or 0),
         "result_count": int(payload.get("result_count") or 0),
         "source_coverage": coverage,
+        "token_budget": token_budget,
+        "omitted_high_value_refs": omitted_high_value_refs[:4],
         "warnings": ["ContextLattice context pack clipped to minimal local output budget."],
         "context_pack": minimal_pack,
         "context_compiler": minimal_pack["context_compiler"],
@@ -290,13 +343,15 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "retrieval_mode": str(context_pack.get("retrieval_mode") or "")[:80],
         "retrieval_intent": str(context_pack.get("retrieval_intent") or "")[:80],
         "source_coverage": tiny_coverage,
+        "token_budget": token_budget,
+        "omitted_high_value_refs": omitted_high_value_refs[:2],
         "context_compiler": tiny_compiler,
         "run_advisor": ultra_slim_run_advisor(),
         "prompt_sections": minimal_prompt_sections(
             str(context_pack.get("query") or payload.get("task_summary") or "")[:240],
             "ContextLattice returned a minimal bounded package. Rerun with a larger budget for evidence.",
         ),
-        "ranked_evidence": [],
+        "ranked_evidence": ranked_evidence[:1],
         "facts": [],
         "numeric_facts": [],
         "citations": [],
@@ -316,6 +371,8 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "context_budget_chars": budget_chars,
         "clipped": True,
         "source_coverage": tiny_coverage,
+        "token_budget": token_budget,
+        "omitted_high_value_refs": omitted_high_value_refs[:2],
         "warnings": ["ContextLattice context pack clipped to minimal local output budget."],
         "context_pack": tiny_pack,
         "context_compiler": tiny_compiler,
@@ -382,6 +439,11 @@ def fallback_reference_prompt(query: str, prompt_sections: dict[str, Any], ranke
 def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> dict[str, Any]:
     pack = raw.get("context_pack") if isinstance(raw.get("context_pack"), dict) else {}
     source_coverage = raw.get("source_coverage") or pack.get("sourceCoverage") or {}
+    token_budget = first_dict(raw.get("token_budget"), pack.get("token_budget"), pack.get("tokenBudget"))
+    omitted_high_value_refs = compact_items(
+        first_list(raw.get("omitted_high_value_refs"), pack.get("omitted_high_value_refs"), pack.get("omittedHighValueRefs")),
+        8,
+    )
     facts = compact_items(pack.get("facts"), 8)
     numeric_facts = compact_items(pack.get("numericFacts"), 8)
     results = compact_items(pack.get("results"), 10)
@@ -407,6 +469,8 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "retrieval_mode": raw.get("retrieval_mode") or pack.get("retrievalMode"),
         "retrieval_intent": raw.get("retrieval_intent") or pack.get("retrievalIntent"),
         "source_coverage": source_coverage,
+        "token_budget": token_budget,
+        "omitted_high_value_refs": omitted_high_value_refs,
         "context_compiler": context_compiler,
         "run_advisor": run_advisor,
         "prompt_sections": prompt_sections,
@@ -431,6 +495,8 @@ def compact_context_pack(raw: dict[str, Any], query: str, budget_chars: int) -> 
         "fact_count": len(as_list(pack.get("facts"))),
         "result_count": len(as_list(pack.get("results"))),
         "source_coverage": source_coverage,
+        "token_budget": token_budget,
+        "omitted_high_value_refs": omitted_high_value_refs,
         "context_compiler": context_compiler,
         "reference_prompt": reference_prompt,
         "run_advisor": run_advisor,
@@ -544,6 +610,11 @@ def main() -> int:
     parser.add_argument("--topic-path", default="")
     parser.add_argument("--mode", default="balanced")
     parser.add_argument("--budget-chars", type=int, default=10000)
+    parser.add_argument("--agent-context-budget-tokens", type=int, default=0)
+    parser.add_argument("--model-context-window-tokens", type=int, default=0)
+    parser.add_argument("--reserved-response-tokens", type=int, default=0)
+    parser.add_argument("--already-loaded-tokens", type=int, default=0)
+    parser.add_argument("--target-context-pack-tokens", "--budget-tokens", type=int, default=0, dest="target_context_pack_tokens")
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--max-facts", type=int, default=24)
     parser.add_argument("--agent-id", default=os.getenv("CONTEXTLATTICE_AGENT_ID", ""))
@@ -575,6 +646,15 @@ def main() -> int:
         "limit": args.limit,
         "max_facts": args.max_facts,
     }
+    for key, value in (
+        ("agent_context_budget_tokens", args.agent_context_budget_tokens),
+        ("model_context_window_tokens", args.model_context_window_tokens),
+        ("reserved_response_tokens", args.reserved_response_tokens),
+        ("already_loaded_tokens", args.already_loaded_tokens),
+        ("target_context_pack_tokens", args.target_context_pack_tokens),
+    ):
+        if int(value or 0) > 0:
+            payload[key] = int(value)
     session_id = args.session_id
     if not session_id and args.auto_session:
         ensured = ensure_agent_session(

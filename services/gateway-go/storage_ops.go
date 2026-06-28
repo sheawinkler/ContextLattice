@@ -308,9 +308,9 @@ func memoryTopologyPolicyPayload(s *server, memoryPolicy memoryStorePolicy) map[
 				"premium_surfaces": []string{"premium_behavior_pack", "premium_runtime_policy", "premium_policy_packs", "operator_runbooks", "paid_entitlement_gates"},
 				"agent_policy": map[string]any{
 					"premium_behavior_required": true,
-					"policy_mode":                "paid_runtime_policy",
-					"applies_to":           []string{"codex", "claude-code", "gemini-cli", "opencode", "shell-env", "contextlattice-hooks-env"},
-					"public_contents":      false,
+					"policy_mode":               "paid_runtime_policy",
+					"applies_to":                []string{"codex", "claude-code", "gemini-cli", "opencode", "shell-env", "contextlattice-hooks-env"},
+					"public_contents":           false,
 				},
 				"connector_surfaces":                append(append([]string{}, onboardingConnectors...), sourceLetta, sourceWeaviate, "honcho_style_external_memory", "mcp_qdrant"),
 				"connector_only_inference_runtimes": localInferenceConnectors,
@@ -452,9 +452,6 @@ func pressureBand(usedRatio float64, freeBytes uint64, policy storageGovernanceP
 		return "high"
 	}
 	if usedRatio >= policy.warnUsedRatio {
-		return "warn"
-	}
-	if policy.minFreeBytes > 0 && freeBytes <= uint64(float64(policy.minFreeBytes)*1.5) {
 		return "warn"
 	}
 	return "healthy"
