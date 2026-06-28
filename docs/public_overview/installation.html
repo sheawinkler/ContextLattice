@@ -250,6 +250,7 @@ brew info --cask sheawinkler/contextlattice/contextlattice</code></pre>
           <li>Supported host environments: macOS, Linux, or Windows (WSL2)</li>
           <li>Host machine sized for selected profile (<code>lite core</code>, <code>lite advanced</code>, or <code>full</code>) with enough CPU, RAM, and disk</li>
           <li>Recommended guardrail: keep at least <code>40 GB</code> free at storage-governance root to avoid pressure-band throttling</li>
+          <li>Optional constrained-SSD guard: set <code>QDRANT_HOT_STORAGE_MAX_BYTES</code> to make startup/storage verification fail before the Qdrant hot lane exceeds your chosen byte ceiling. This is not a filesystem quota.</li>
           <li><code>gmake</code>, <code>jq</code>, <code>rg</code>, <code>python3</code>, and <code>curl</code></li>
           <li>Tested baseline: macOS 13+ with Docker Desktop</li>
           <li>Project root initialized with <code>.env</code> and compose env symlink</li>
