@@ -15,7 +15,7 @@ from _common import emit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROFILE_PATH = "config/agents/agent_profiles.json"
 TEMPLATE_DIR = "docs/public_overview/templates/agents"
-DEFAULT_REFS = "WORKTREE,origin/main,public/main,public-paid/main,origin/public-paid/main"
+DEFAULT_REFS = "WORKTREE,refs/remotes/origin/main,refs/remotes/public/main,refs/remotes/public-paid/main,refs/remotes/origin/public-paid/main"
 TEMPLATE_COVERAGE = {
     "codex": "codex.md",
     "claude-code": "claude-code.md",
@@ -38,6 +38,16 @@ def split_csv(raw: str) -> list[str]:
 def git_output(args: list[str]) -> tuple[bool, str]:
     proc = subprocess.run(["git", *args], cwd=str(REPO_ROOT), check=False, capture_output=True, text=True)
     return proc.returncode == 0, proc.stdout
+
+
+def normalize_ref(ref: str) -> str:
+    if ref == "WORKTREE" or ref.startswith("refs/"):
+        return ref
+    remote_ref = f"refs/remotes/{ref}"
+    ok, _ = git_output(["show-ref", "--verify", remote_ref])
+    if ok:
+        return remote_ref
+    return ref
 
 
 def load_file(ref: str, path: str) -> tuple[bool, str]:
@@ -64,18 +74,19 @@ def list_templates(ref: str) -> tuple[bool, set[str]]:
 
 
 def inspect_ref(ref: str) -> dict[str, Any]:
-    ok, raw = load_file(ref, PROFILE_PATH)
+    git_ref = normalize_ref(ref)
+    ok, raw = load_file(git_ref, PROFILE_PATH)
     if not ok:
-        return {"ref": ref, "ok": False, "skipped": True, "reason": "profile_config_unavailable"}
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "skipped": True, "reason": "profile_config_unavailable"}
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        return {"ref": ref, "ok": False, "reason": "profile_config_invalid_json", "detail": str(exc)}
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "reason": "profile_config_invalid_json", "detail": str(exc)}
     profiles = parsed.get("profiles") if isinstance(parsed, dict) else None
     if not isinstance(profiles, dict):
-        return {"ref": ref, "ok": False, "reason": "profiles_not_object"}
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "reason": "profiles_not_object"}
     profile_keys = sorted(str(key) for key in profiles.keys())
-    templates_ok, templates = list_templates(ref)
+    templates_ok, templates = list_templates(git_ref)
     findings: list[dict[str, Any]] = []
     if not templates_ok:
         findings.append({"reason": "template_dir_unavailable", "ref": ref, "path": TEMPLATE_DIR})
@@ -88,6 +99,7 @@ def inspect_ref(ref: str) -> dict[str, Any]:
             findings.append({"reason": "profile_template_missing", "ref": ref, "profile": profile, "template": expected})
     return {
         "ref": ref,
+        "git_ref": git_ref,
         "ok": not findings,
         "profile_count": len(profile_keys),
         "profiles": profile_keys,
