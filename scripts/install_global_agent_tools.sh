@@ -129,6 +129,7 @@ upsert_hook_env_defaults() {
     printf 'export MEMMCP_AGENT_ID=%q\n' "codex_gpt5"
     if [[ -n "$existing" ]]; then
       printf '%s\n' "$existing" | awk '
+        /^[[:space:]]*#[[:space:]]*Local-only ContextLattice hook policy\. Not part of any repo\.[[:space:]]*$/ { next }
         /^[[:space:]]*(export[[:space:]]+)?(CONTEXTLATTICE_REPO_ROOT|CONTEXTLATTICE_ORCHESTRATOR_URL|MEMMCP_ORCHESTRATOR_URL|CONTEXTLATTICE_AGENT_ID|MEMMCP_AGENT_ID)=/ { next }
         { print }
       '

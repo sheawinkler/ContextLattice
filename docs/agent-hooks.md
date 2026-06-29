@@ -27,7 +27,8 @@ Bad hook targets:
 ```bash
 scripts/install_global_agent_tools.sh --install-codex-hooks
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_doctor --agents codex --skip-provider-smoke --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
+contextlattice_doctor --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --skip-provider-smoke --pretty
 ```
 
 Optional machine-local hook policy belongs outside git:

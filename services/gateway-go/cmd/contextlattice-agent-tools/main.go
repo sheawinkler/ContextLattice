@@ -202,9 +202,9 @@ var agentInstructionTargets = map[string]integrationTarget{
 }
 
 func (c *cli) cmdAdoptIntegrate(args []string) error {
-	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"repo": "repo", "agents": "agents"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"dry-run": "dry_run"}))
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"repo": "repo", "agents": "agents"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"dry-run": "dry_run", "check": "check"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty")
+		return c.emitUsage("contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid [--check] --pretty")
 	}
 	repo := parsed.string("repo", ".")
 	if repo == "" {
@@ -216,6 +216,16 @@ func (c *cli) cmdAdoptIntegrate(args []string) error {
 	}
 	profiles := loadAgentProfiles()
 	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid"))
+	if parsed.bool("check") {
+		audit := auditRepoIntegration(absRepo, agents)
+		if err := c.emit(audit, parsed.bool("pretty")); err != nil {
+			return err
+		}
+		if !asBool(audit["ok"]) {
+			return errors.New("repo integration check failed")
+		}
+		return nil
+	}
 	byFile := map[string][]string{}
 	findings := []map[string]any{}
 	for _, agent := range agents {
@@ -248,6 +258,75 @@ func (c *cli) cmdAdoptIntegrate(args []string) error {
 		"findings":   findings,
 		"next_steps": []string{"contextlattice_adopt status --pretty", "contextlattice_doctor --agents " + strings.Join(agents, ",") + " --skip-provider-smoke --pretty"},
 	}, parsed.bool("pretty"))
+}
+
+func auditRepoIntegration(repo string, agents []string) map[string]any {
+	const begin = "<!-- >>> contextlattice-agent-integration >>>"
+	const end = "<!-- <<< contextlattice-agent-integration <<< -->"
+	requiredSnippets := []string{
+		"ContextLattice Agent Integration",
+		"contextlattice_adopt install --pretty",
+		"contextlattice_adopt status --pretty",
+		"contextlattice_agent_adapter bootstrap",
+		"contextlattice_agent_adapter context-pack",
+		"contextlattice_checkpoint",
+		"degraded-memory mode",
+	}
+	byFile := map[string][]string{}
+	findings := []map[string]any{}
+	for _, agent := range agents {
+		target, ok := agentInstructionTargets[agent]
+		if !ok {
+			findings = append(findings, map[string]any{"reason": "unsupported_agent_instruction_target", "agent": agent})
+			continue
+		}
+		byFile[target.file] = append(byFile[target.file], agent)
+	}
+	files := []map[string]any{}
+	for file, fileAgents := range byFile {
+		sort.Strings(fileAgents)
+		path := filepath.Join(repo, file)
+		fileFindings := []map[string]any{}
+		data, err := os.ReadFile(path)
+		exists := err == nil
+		text := string(data)
+		if err != nil {
+			fileFindings = append(fileFindings, map[string]any{"reason": "instruction_file_missing", "path": path})
+		} else {
+			beginCount := strings.Count(text, begin)
+			endCount := strings.Count(text, end)
+			if beginCount != 1 {
+				fileFindings = append(fileFindings, map[string]any{"reason": "managed_begin_marker_count", "path": path, "count": beginCount})
+			}
+			if endCount != 1 {
+				fileFindings = append(fileFindings, map[string]any{"reason": "managed_end_marker_count", "path": path, "count": endCount})
+			}
+			if beginCount == 1 && endCount == 1 && strings.Index(text, begin) > strings.Index(text, end) {
+				fileFindings = append(fileFindings, map[string]any{"reason": "managed_markers_reversed", "path": path})
+			}
+			for _, snippet := range requiredSnippets {
+				if !strings.Contains(text, snippet) {
+					fileFindings = append(fileFindings, map[string]any{"reason": "required_snippet_missing", "path": path, "snippet": snippet})
+				}
+			}
+			for _, agent := range fileAgents {
+				if !strings.Contains(text, "profile `"+agent+"`") {
+					fileFindings = append(fileFindings, map[string]any{"reason": "agent_profile_entry_missing", "path": path, "agent": agent})
+				}
+			}
+		}
+		findings = append(findings, fileFindings...)
+		files = append(files, map[string]any{"file": file, "path": path, "agents": fileAgents, "exists": exists, "ok": len(fileFindings) == 0, "findings": fileFindings})
+	}
+	sort.Slice(files, func(i, j int) bool { return firstString(files[i]["file"]) < firstString(files[j]["file"]) })
+	return map[string]any{
+		"ok":        len(findings) == 0,
+		"schema_id": "contextlattice_agent_repo_integration_audit.v1",
+		"repo":      repo,
+		"agents":    agents,
+		"files":     files,
+		"findings":  findings,
+	}
 }
 
 func renderAgentInstructionBlock(agents []string, profiles map[string]any, project string) string {
@@ -1413,7 +1492,7 @@ func auditNativeOwnership(payload map[string]any) map[string]any {
 }
 
 func (c *cli) cmdRuntimeDoctor(args []string) error {
-	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"global-home": "global_home"}), commonBoolFlags())
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"global-home": "global_home", "repo": "repo", "agents": "agents"}), commonBoolFlags())
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
@@ -1435,6 +1514,14 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	ownership, _, ownershipErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/native-ownership", nil, parsed.float("timeout", 10))
 	hotPath := asMap(ownership["pythonHotPathOwnership"])
 	checks = append(checks, map[string]any{"name": "native_ownership", "ok": ownershipErr == nil && asBool(ownership["ok"]) && asInt(hotPath["fallbacks"]) == 0, "nativeRouteCount": ownership["nativeRouteCount"], "python_fallbacks": hotPath["fallbacks"]})
+	if repo := parsed.string("repo", ""); repo != "" {
+		absRepo, err := filepath.Abs(repo)
+		repoAudit := map[string]any{"ok": false, "schema_id": "contextlattice_agent_repo_integration_audit.v1", "repo": repo, "findings": []map[string]any{{"reason": "repo_path_invalid", "detail": errString(err)}}}
+		if err == nil {
+			repoAudit = auditRepoIntegration(absRepo, splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid")))
+		}
+		checks = append(checks, map[string]any{"name": "repo_integration", "ok": asBool(repoAudit["ok"]), "repo": absRepo, "audit": repoAudit})
+	}
 	findings := []map[string]any{}
 	for _, check := range checks {
 		if !asBool(check["ok"]) {
@@ -2324,6 +2411,13 @@ func errorFinding(err error) []map[string]any {
 		return []map[string]any{}
 	}
 	return []map[string]any{{"reason": "request_failed", "detail": truncate(err.Error(), 500)}}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func writeSessionState(project, sessionID, objective, agentID string) {

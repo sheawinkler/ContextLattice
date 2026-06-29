@@ -80,6 +80,7 @@ Expected:
 - `agent-adoption-proof-matrix` verifies configured agent profiles and reports the skills, context, session, graph, and handoff evidence shaping each run, with trace commands for run-card export.
 
 
+
 ## Model Runtime
 
 Task inference defaults to `ORCH_INFER_PROVIDER=auto`. `gateway-go` detects the host profile and probes local backends before selecting a route.

@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Audit repo-local ContextLattice managed instruction blocks."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+
+BEGIN = "<!-- >>> contextlattice-agent-integration >>>"
+END = "<!-- <<< contextlattice-agent-integration <<< -->"
+DEFAULT_AGENTS = "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid"
+INSTRUCTION_TARGETS = {
+    "codex": ("AGENTS.md", "Codex"),
+    "claude-code": ("CLAUDE.md", "Claude Code"),
+    "opencode": ("AGENTS.md", "OpenCode"),
+    "hermes-agent": ("HERMES.md", "Hermes Agent"),
+    "hermes-ultra": ("HERMES.md", "Hermes Ultra"),
+    "pi": ("PI.md", "Pi"),
+    "droid": ("DROID.md", "Droid"),
+}
+REQUIRED_SNIPPETS = [
+    "ContextLattice Agent Integration",
+    "contextlattice_adopt install --pretty",
+    "contextlattice_adopt status --pretty",
+    "contextlattice_agent_adapter bootstrap",
+    "contextlattice_agent_adapter context-pack",
+    "contextlattice_checkpoint",
+    "degraded-memory mode",
+]
+
+
+def split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def check_file(repo: Path, file_name: str, agents: list[str]) -> dict[str, Any]:
+    path = repo / file_name
+    findings: list[dict[str, Any]] = []
+    text = ""
+    if not path.exists():
+        findings.append({"reason": "instruction_file_missing", "path": str(path)})
+    else:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        begin_count = text.count(BEGIN)
+        end_count = text.count(END)
+        if begin_count != 1:
+            findings.append({"reason": "managed_begin_marker_count", "path": str(path), "count": begin_count})
+        if end_count != 1:
+            findings.append({"reason": "managed_end_marker_count", "path": str(path), "count": end_count})
+        if begin_count == 1 and end_count == 1 and text.index(BEGIN) > text.index(END):
+            findings.append({"reason": "managed_markers_reversed", "path": str(path)})
+        for snippet in REQUIRED_SNIPPETS:
+            if snippet not in text:
+                findings.append({"reason": "required_snippet_missing", "path": str(path), "snippet": snippet})
+        for agent in agents:
+            if f"profile `{agent}`" not in text:
+                findings.append({"reason": "agent_profile_entry_missing", "path": str(path), "agent": agent})
+    return {
+        "file": file_name,
+        "path": str(path),
+        "agents": agents,
+        "exists": path.exists(),
+        "ok": not findings,
+        "findings": findings,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit ContextLattice repo-local agent integration blocks.")
+    parser.add_argument("--repo", default=".")
+    parser.add_argument("--agents", default=DEFAULT_AGENTS)
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    repo = Path(args.repo).expanduser().resolve()
+    agents = split_csv(args.agents)
+    by_file: dict[str, list[str]] = {}
+    findings: list[dict[str, Any]] = []
+    for agent in agents:
+        target = INSTRUCTION_TARGETS.get(agent)
+        if not target:
+            findings.append({"reason": "unsupported_agent_instruction_target", "agent": agent})
+            continue
+        by_file.setdefault(target[0], []).append(agent)
+
+    files = [check_file(repo, file_name, sorted(file_agents)) for file_name, file_agents in sorted(by_file.items())]
+    for row in files:
+        findings.extend(row["findings"])
+
+    payload = {
+        "ok": not findings,
+        "schema_id": "contextlattice_agent_repo_integration_audit.v1",
+        "repo": str(repo),
+        "agents": agents,
+        "files": files,
+        "findings": findings,
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

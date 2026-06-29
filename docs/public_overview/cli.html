@@ -92,7 +92,8 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 contextlattice_write -h
 contextlattice_adopt status --pretty
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_doctor --agents codex --skip-provider-smoke --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
+contextlattice_doctor --repo . --agents codex --skip-provider-smoke --pretty
 contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
 contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty
