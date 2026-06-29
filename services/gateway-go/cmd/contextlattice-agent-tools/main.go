@@ -157,7 +157,7 @@ other contextlattice_* commands.`)
 
 func (c *cli) cmdAdopt(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		return c.emitUsage("contextlattice_adopt {status|doctor|proof|profiles|install} [options]")
+		return c.emitUsage("contextlattice_adopt {status|doctor|proof|profiles|install|integrate} [options]")
 	}
 	sub := args[0]
 	args = args[1:]
@@ -179,14 +179,154 @@ func (c *cli) cmdAdopt(args []string) error {
 			"install_status": "already_managed_by_scripts_install_global_agent_tools",
 			"message":        "Run scripts/install_global_agent_tools.sh from the checkout to refresh Go-native global tools.",
 		}, parsed.bool("pretty"))
+	case "integrate":
+		return c.cmdAdoptIntegrate(args)
 	default:
 		return fmt.Errorf("unknown contextlattice_adopt command %q", sub)
 	}
 }
 
+type integrationTarget struct {
+	file  string
+	label string
+}
+
+var agentInstructionTargets = map[string]integrationTarget{
+	"codex":        {file: "AGENTS.md", label: "Codex"},
+	"claude-code":  {file: "CLAUDE.md", label: "Claude Code"},
+	"opencode":     {file: "AGENTS.md", label: "OpenCode"},
+	"hermes-agent": {file: "HERMES.md", label: "Hermes Agent"},
+	"hermes-ultra": {file: "HERMES.md", label: "Hermes Ultra"},
+	"pi":           {file: "PI.md", label: "Pi"},
+	"droid":        {file: "DROID.md", label: "Droid"},
+}
+
+func (c *cli) cmdAdoptIntegrate(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"repo": "repo", "agents": "agents"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"dry-run": "dry_run"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty")
+	}
+	repo := parsed.string("repo", ".")
+	if repo == "" {
+		repo = "."
+	}
+	absRepo, err := filepath.Abs(repo)
+	if err != nil {
+		return err
+	}
+	profiles := loadAgentProfiles()
+	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid"))
+	byFile := map[string][]string{}
+	findings := []map[string]any{}
+	for _, agent := range agents {
+		target, ok := agentInstructionTargets[agent]
+		if !ok {
+			findings = append(findings, map[string]any{"reason": "unsupported_agent_instruction_target", "agent": agent})
+			continue
+		}
+		byFile[target.file] = append(byFile[target.file], agent)
+	}
+	writes := []map[string]any{}
+	for file, fileAgents := range byFile {
+		path := filepath.Join(absRepo, file)
+		block := renderAgentInstructionBlock(fileAgents, profiles, parsed.string("project", "contextlattice"))
+		changed, err := upsertManagedBlock(path, block, parsed.bool("dry_run"))
+		if err != nil {
+			findings = append(findings, map[string]any{"reason": "write_failed", "path": path, "detail": err.Error()})
+			continue
+		}
+		writes = append(writes, map[string]any{"path": path, "agents": fileAgents, "changed": changed, "dry_run": parsed.bool("dry_run")})
+	}
+	sort.Slice(writes, func(i, j int) bool { return firstString(writes[i]["path"]) < firstString(writes[j]["path"]) })
+	ok := len(findings) == 0
+	return c.emit(map[string]any{
+		"ok":         ok,
+		"schema_id":  "contextlattice_agent_repo_integration.v1",
+		"repo":       absRepo,
+		"agents":     agents,
+		"writes":     writes,
+		"findings":   findings,
+		"next_steps": []string{"contextlattice_adopt status --pretty", "contextlattice_doctor --agents " + strings.Join(agents, ",") + " --skip-provider-smoke --pretty"},
+	}, parsed.bool("pretty"))
+}
+
+func renderAgentInstructionBlock(agents []string, profiles map[string]any, project string) string {
+	sort.Strings(agents)
+	var b strings.Builder
+	b.WriteString("<!-- >>> contextlattice-agent-integration >>>\n")
+	b.WriteString("# ContextLattice Agent Integration\n\n")
+	b.WriteString("Use ContextLattice as the local memory and context layer for non-trivial work in this repo.\n\n")
+	b.WriteString("Install or repair once per machine:\n\n")
+	b.WriteString("```bash\n")
+	b.WriteString("contextlattice_adopt install --pretty\n")
+	b.WriteString("contextlattice_adopt status --pretty\n")
+	b.WriteString("```\n\n")
+	b.WriteString("Agent profiles for this repo:\n\n")
+	for _, agent := range agents {
+		profile := asMap(profiles[agent])
+		target := agentInstructionTargets[agent]
+		agentID := firstString(profile["agent_id"], strings.ReplaceAll(agent, "-", "_")+"_agent")
+		topicPath := firstString(profile["topic_path"], "runbooks/"+agent+"-integration")
+		b.WriteString(fmt.Sprintf("- %s: profile `%s`, agent id `%s`, topic `%s`.\n", target.label, agent, agentID, topicPath))
+	}
+	b.WriteString("\nBefore planning or coding, run a scoped bootstrap/context pack when CLI tools are available:\n\n")
+	b.WriteString("```bash\n")
+	b.WriteString(fmt.Sprintf("contextlattice_agent_adapter bootstrap --agent <profile> --project %s --pretty\n", shellQuote(project)))
+	b.WriteString(fmt.Sprintf("contextlattice_agent_adapter context-pack --agent <profile> --project %s --pretty\n", shellQuote(project)))
+	b.WriteString("```\n\n")
+	b.WriteString("During long work, checkpoint decisions or blockers with `contextlattice_checkpoint` or `contextlattice_agent_adapter checkpoint`.\n")
+	b.WriteString("For compaction or handoff, write a concise handoff. Post-compaction readback is bounded and opportunistic; do not paste large readbacks into the prompt unless the previous state is actually needed.\n")
+	b.WriteString("If CLI tools are unavailable, use HTTP against `http://127.0.0.1:8075`: `POST /v1/agents/preflight`, `POST /memory/context-pack`, and `POST /memory/write`.\n")
+	b.WriteString("If memory is unreachable or degraded, continue from local evidence and state `degraded-memory mode` explicitly.\n")
+	b.WriteString("<!-- <<< contextlattice-agent-integration <<< -->\n")
+	return b.String()
+}
+
+func upsertManagedBlock(path, block string, dryRun bool) (bool, error) {
+	const begin = "<!-- >>> contextlattice-agent-integration >>>"
+	const end = "<!-- <<< contextlattice-agent-integration <<< -->"
+	currentRaw, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	current := string(currentRaw)
+	next := ""
+	if start := strings.Index(current, begin); start >= 0 {
+		if stopRel := strings.Index(current[start:], end); stopRel >= 0 {
+			stop := start + stopRel + len(end)
+			next = strings.TrimRight(current[:start], "\n") + "\n\n" + strings.TrimRight(block, "\n") + "\n" + strings.TrimLeft(current[stop:], "\n")
+		}
+	}
+	if next == "" {
+		if strings.TrimSpace(current) == "" {
+			next = strings.TrimRight(block, "\n") + "\n"
+		} else {
+			next = strings.TrimRight(current, "\n") + "\n\n" + strings.TrimRight(block, "\n") + "\n"
+		}
+	}
+	if next == current {
+		return false, nil
+	}
+	if dryRun {
+		return true, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, []byte(next), 0644)
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "contextlattice"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 func (c *cli) adoptStatus(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"global-home": "global_home"}), commonBoolFlags())
 	c.applyBaseURL(parsed)
+	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	profiles := loadAgentProfiles()
 	profileNames := make([]string, 0, len(profiles))
 	for name := range profiles {
@@ -196,18 +336,64 @@ func (c *cli) adoptStatus(args []string) error {
 	health, _, healthErr := c.requestJSON(context.Background(), http.MethodGet, "/health", nil, parsed.float("timeout", 10))
 	boundary, _, boundaryErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/context-boundary", nil, parsed.float("timeout", 10))
 	ownership, _, ownershipErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/native-ownership", nil, parsed.float("timeout", 10))
-	ok := healthErr == nil && boundaryErr == nil && ownershipErr == nil && asBool(health["ok"]) && asBool(boundary["ok"]) && asBool(ownership["ok"])
+	installChecks := adoptionInstallChecks(globalHome)
+	ok := healthErr == nil && boundaryErr == nil && ownershipErr == nil && asBool(health["ok"]) && asBool(boundary["ok"]) && asBool(ownership["ok"]) && asBool(installChecks["ok"])
 	return c.emit(map[string]any{
 		"ok":              ok,
 		"schema_id":       "contextlattice_agent_adoption_status.v1",
 		"native_cli":      true,
 		"base_url":        c.baseURL,
+		"global_home":     globalHome,
 		"profile_count":   len(profileNames),
 		"profiles":        profileNames,
 		"health":          health,
 		"contextBoundary": map[string]any{"ok": boundary["ok"], "violationCount": boundary["violationCount"], "boundedSurfaceCount": boundary["boundedSurfaceCount"]},
 		"nativeOwnership": map[string]any{"ok": ownership["ok"], "violationCount": ownership["violationCount"], "nativeRouteCount": ownership["nativeRouteCount"], "pythonHotPathOwnership": ownership["pythonHotPathOwnership"]},
+		"install":         installChecks,
+		"repair_command":  "scripts/install_global_agent_tools.sh --install-codex-hooks --no-shell-profile",
 	}, parsed.bool("pretty"))
+}
+
+func adoptionInstallChecks(globalHome string) map[string]any {
+	binDir := filepath.Join(globalHome, "bin")
+	toolNames := []string{
+		"contextlattice-agent-tools",
+		"contextlattice_search",
+		"contextlattice_pack",
+		"contextlattice_write",
+		"contextlattice_adopt",
+		"contextlattice_doctor",
+		"contextlattice_agent_adapter",
+		"contextlattice_agent_session",
+		"contextlattice_agent_start",
+		"contextlattice_checkpoint",
+		"contextlattice_pre_compaction_write",
+		"contextlattice_post_compaction_read",
+	}
+	runtimeFiles := []string{
+		filepath.Join(globalHome, "scripts", "agent", "_common.py"),
+		filepath.Join(globalHome, "scripts", "agent", "audit-codex-session-store"),
+		filepath.Join(globalHome, "scripts", "agent", "compaction-handoff-payload"),
+		filepath.Join(globalHome, "scripts", "agent", "contextlattice-session"),
+		filepath.Join(globalHome, "scripts", "agent_contracts.py"),
+		filepath.Join(globalHome, "scripts", "agent_orchestration.py"),
+		filepath.Join(globalHome, "scripts", "contextlattice_client.py"),
+	}
+	checks := []map[string]any{}
+	ok := true
+	for _, name := range toolNames {
+		path := filepath.Join(binDir, name)
+		installed := executableExists(path)
+		ok = ok && installed
+		checks = append(checks, map[string]any{"name": name, "path": path, "ok": installed, "kind": "tool"})
+	}
+	for _, path := range runtimeFiles {
+		info, err := os.Stat(path)
+		installed := err == nil && !info.IsDir()
+		ok = ok && installed
+		checks = append(checks, map[string]any{"name": strings.TrimPrefix(path, globalHome+string(os.PathSeparator)), "path": path, "ok": installed, "kind": "hook_runtime"})
+	}
+	return map[string]any{"ok": ok, "checks": checks}
 }
 
 func parseArgs(args []string, stringNames map[string]string, boolNames map[string]string) parsedArgs {
@@ -1294,7 +1480,7 @@ func (c *cli) cmdAdoptionProof(args []string) error {
 		return c.emitUsage("contextlattice_agent_adoption_proof --agents codex,claude-code --pretty")
 	}
 	c.applyBaseURL(parsed)
-	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,chatgpt-web,chatgpt-desktop,claude-web,claude-desktop"))
+	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid,chatgpt-web,chatgpt-desktop,claude-web,claude-desktop"))
 	cases := []map[string]any{}
 	for _, agent := range agents {
 		payload := map[string]any{"agent": agent, "project": parsed.string("project", "contextlattice"), "retrieval_mode": parsed.string("mode", "fast")}
@@ -2090,20 +2276,29 @@ func containsProviderOverflowPayload(payload any) bool {
 
 func loadAgentProfiles() map[string]any {
 	paths := []string{
-		filepath.Join(repoRoot(), "config", "agents", "agent_profiles.json"),
 		filepath.Join(envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")), "config", "agents", "agent_profiles.json"),
+		filepath.Join(repoRoot(), "config", "agents", "agent_profiles.json"),
 	}
+	profiles := map[string]any{}
+	seen := map[string]bool{}
 	for _, path := range paths {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
 		parsed := map[string]any{}
-		if json.Unmarshal(data, &parsed) == nil {
-			return asMap(parsed["profiles"])
+		if json.Unmarshal(data, &parsed) != nil {
+			continue
+		}
+		for key, value := range asMap(parsed["profiles"]) {
+			profiles[key] = value
 		}
 	}
-	return map[string]any{}
+	return profiles
 }
 
 func executableExists(path string) bool {

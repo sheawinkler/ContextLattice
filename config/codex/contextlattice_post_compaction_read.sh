@@ -15,7 +15,7 @@ if [[ -x "$HOME/.contextlattice/scripts/agent_hooks/contextlattice_post_compacti
 elif [[ -n "$REPO_ROOT" && -x "$REPO_ROOT/scripts/agent_hooks/contextlattice_post_compaction_read.sh" ]]; then
   HOOK_SCRIPT="$REPO_ROOT/scripts/agent_hooks/contextlattice_post_compaction_read.sh"
 else
-  for candidate in "$HOME/Documents/Projects/context-lattice-private" "$HOME/Documents/Projects/ContextLattice" "$HOME/ContextLattice"; do
+  for candidate in "$HOME/Documents/Projects/ContextLattice" "$HOME/ContextLattice"; do
     if [[ -x "$candidate/scripts/agent_hooks/contextlattice_post_compaction_read.sh" ]]; then
       HOOK_SCRIPT="$candidate/scripts/agent_hooks/contextlattice_post_compaction_read.sh"
       break
@@ -24,7 +24,7 @@ else
 fi
 
 if [[ -z "$HOOK_SCRIPT" ]]; then
-  echo '{"ok":false,"hook":"post_compaction_read","reason":"ContextLattice hook pack not found"}'
+  echo '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PostCompact hook pack not found; run contextlattice_adopt install --pretty from a current ContextLattice checkout"}'
   exit 0
 fi
 

@@ -251,6 +251,50 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 	}
 }
 
+func TestAgentPreflightProfileMatrixCoversLocalAgents(t *testing.T) {
+	cases := []struct {
+		agent   string
+		key     string
+		agentID string
+		topic   string
+	}{
+		{"codex", "codex", "codex_gpt5", "runbooks/codex-integration"},
+		{"claude-code", "claude-code", "claude_code_agent", "runbooks/claude-code-integration"},
+		{"opencode", "opencode", "opencode_agent", "runbooks/opencode-integration"},
+		{"hermes", "hermes-agent", "hermes_agent", "runbooks/hermes-agent-integration"},
+		{"hermes-ultra", "hermes-ultra", "hermes_ultra_agent", "runbooks/hermes-ultra-integration"},
+		{"hermes-agent-ultra", "hermes-ultra", "hermes_ultra_agent", "runbooks/hermes-ultra-integration"},
+		{"pi", "pi", "pi_agent", "runbooks/pi-integration"},
+		{"pi-agent", "pi", "pi_agent", "runbooks/pi-integration"},
+		{"droid", "droid", "droid_agent", "runbooks/droid-integration"},
+		{"droid-agent", "droid", "droid_agent", "runbooks/droid-integration"},
+		{"chatgpt-web", "chatgpt-web", "chatgpt_web_agent", "runbooks/chatgpt-web-integration"},
+		{"chatgpt-desktop", "chatgpt-desktop", "chatgpt_desktop_agent", "runbooks/chatgpt-desktop-integration"},
+		{"claude-web", "claude-web", "claude_web_agent", "runbooks/claude-web-integration"},
+		{"claude-desktop", "claude-desktop", "claude_desktop_agent", "runbooks/claude-desktop-integration"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			key, profile := resolveAgentPreflightProfile(tc.agent)
+			if key != tc.key {
+				t.Fatalf("expected key=%q, got %q", tc.key, key)
+			}
+			if profile.AgentID != tc.agentID {
+				t.Fatalf("expected agent_id=%q, got %q", tc.agentID, profile.AgentID)
+			}
+			if profile.TopicPath != tc.topic {
+				t.Fatalf("expected topic=%q, got %q", tc.topic, profile.TopicPath)
+			}
+			if strings.TrimSpace(profile.Query) == "" {
+				t.Fatalf("expected non-empty query")
+			}
+			if profile.RetrievalMode != "balanced" {
+				t.Fatalf("expected balanced retrieval mode, got %q", profile.RetrievalMode)
+			}
+		})
+	}
+}
+
 func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
 	pack := testContextPackFixture([]any{})
 	coverage := map[string]any{"configured": []any{"postgres_pgvector"}, "returned": []any{"postgres_pgvector"}, "complete": true}

@@ -27,7 +27,7 @@ else
 fi
 
 if [[ -z "$HOOK_SCRIPT" ]]; then
-  echo '{"ok":false,"hook":"contextlattice_agent_start","reason":"ContextLattice hook pack not found"}'
+  echo '{"ok":false,"hook":"contextlattice_agent_start","reason":"ContextLattice hook pack not found; run contextlattice_adopt install --pretty from a current ContextLattice checkout"}'
   exit 0
 fi
 

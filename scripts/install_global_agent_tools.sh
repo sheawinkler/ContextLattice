@@ -46,6 +46,10 @@ Optional development-only Python helpers are installed only with
   contextlattice_source_backfill
   contextlattice_codex_session_store_doctor
 
+The compact hook runtime installs its minimal Python helpers by default because
+PreCompact/PostCompact/SessionStart hooks use them even when the public CLI
+surface is Go-native.
+
 Options:
   --global-home <path>    Override installation root (default: ~/.contextlattice)
   --no-shell-profile      Do not modify shell startup files
@@ -147,6 +151,21 @@ copy_script() {
   chmod +x "$dst"
 }
 
+copy_runtime_python_script() {
+  local rel_path="$1"
+  copy_script "${ROOT_DIR}/${rel_path}" "${GLOBAL_SCRIPTS_DIR}/${rel_path#scripts/}"
+}
+
+HOOK_RUNTIME_PYTHON_FILES=(
+  scripts/agent/_common.py
+  scripts/agent/audit-codex-session-store
+  scripts/agent/compaction-handoff-payload
+  scripts/agent/contextlattice-session
+  scripts/agent_contracts.py
+  scripts/agent_orchestration.py
+  scripts/contextlattice_client.py
+)
+
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   copy_script "${ROOT_DIR}/scripts/agent_orchestration.py" "${GLOBAL_SCRIPTS_DIR}/agent_orchestration.py"
   copy_script "${ROOT_DIR}/scripts/agent_contracts.py" "${GLOBAL_SCRIPTS_DIR}/agent_contracts.py"
@@ -161,6 +180,9 @@ for hook_script in "${ROOT_DIR}"/scripts/agent_hooks/*.sh; do
 done
 rm -rf "${GLOBAL_SCRIPTS_DIR}/agent"
 mkdir -p "${GLOBAL_SCRIPTS_DIR}/agent"
+for runtime_script in "${HOOK_RUNTIME_PYTHON_FILES[@]}"; do
+  copy_runtime_python_script "$runtime_script"
+done
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   for agent_script in "${ROOT_DIR}"/scripts/agent/*; do
     [[ -f "$agent_script" ]] || continue

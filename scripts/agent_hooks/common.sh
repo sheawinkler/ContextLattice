@@ -7,11 +7,43 @@ hook_name() {
   basename "$0" .sh
 }
 
+hook_source_root() {
+  cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
+}
+
+is_contextlattice_root() {
+  local root="$1"
+  [[ -n "$root" ]] || return 1
+  [[ -f "${root}/config/agents/agent_profiles.json" && -d "${root}/scripts/agent_hooks" ]]
+}
+
+contextlattice_root() {
+  local source_root
+  source_root="$(hook_source_root)"
+  if [[ -n "${CONTEXTLATTICE_REPO_ROOT:-}" ]] && is_contextlattice_root "$CONTEXTLATTICE_REPO_ROOT"; then
+    cd "$CONTEXTLATTICE_REPO_ROOT" && pwd
+    return 0
+  fi
+  if is_contextlattice_root "$source_root"; then
+    printf '%s\n' "$source_root"
+    return 0
+  fi
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    local git_root
+    git_root="$(git rev-parse --show-toplevel)"
+    if is_contextlattice_root "$git_root"; then
+      printf '%s\n' "$git_root"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$source_root"
+}
+
 repo_root() {
   if git rev-parse --show-toplevel >/dev/null 2>&1; then
     git rev-parse --show-toplevel
   else
-    cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
+    contextlattice_root
   fi
 }
 
@@ -62,7 +94,7 @@ contextlattice_env() {
   export MEMMCP_AGENT_ID="${MEMMCP_AGENT_ID:-$CONTEXTLATTICE_AGENT_ID}"
   if [[ -z "${CONTEXTLATTICE_ORCHESTRATOR_API_KEY:-}" ]]; then
     local repo_env key_value
-    repo_env="$(repo_root)/.env"
+    repo_env="$(contextlattice_root)/.env"
     if [[ -f "$repo_env" ]]; then
       key_value="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1); exit}' "$repo_env")"
       if [[ -n "$key_value" ]]; then

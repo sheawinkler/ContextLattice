@@ -24,7 +24,8 @@ contextlattice_skills_index search "repo conventions testing release" --pretty
 ```
 
 Behavior contract:
-- Paste `docs/public_overview/templates/agents/universal.md` into system instructions.
+- Run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty` to install repo-local instruction files, or paste `docs/public_overview/templates/agents/universal.md` into system instructions when the runtime has no repo instruction file.
 - Codex SessionStart hook template: `config/codex/contextlattice_agent_start.sh`
 - Install Codex hooks: `scripts/install_global_agent_tools.sh --install-codex-hooks`
+- Verify hooks and repo instructions: `contextlattice_adopt status --pretty && contextlattice_doctor --agents codex --skip-provider-smoke --pretty`
 - Before a difficult model call, use the session context package as the bounded factual scaffold; use the run trace when you need to see which context, skills, graph touches, and handoffs shaped the work.

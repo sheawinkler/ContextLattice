@@ -5,7 +5,7 @@ Paste this into your agent/LLM system instruction block.
 ```text
 Use ContextLattice at http://127.0.0.1:8075 as mandatory memory/context orchestration.
 
-Readiness rule: when starting on a new machine, account, or agent surface, run `contextlattice_adopt status --pretty` first.
+Readiness rule: when starting on a new machine, account, or agent surface, run `contextlattice_adopt status --pretty` first. If local repo instructions are missing, run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty`.
 
 Operating rules:
 1) If CLI tools are available, run `contextlattice_agent_adapter bootstrap --agent <profile> --project <project>` before planning/inference and preserve the returned exports/session_id.
@@ -13,9 +13,9 @@ Operating rules:
 3) For scoped recall, use `contextlattice_agent_adapter context-pack --agent <profile> --project <project> --session-id <session_id>` or POST /memory/context-pack.
 4) If scoped search/context is empty or degraded, run one broader project query before concluding there is no context.
 5) During execution, checkpoint key decisions/outcomes with `contextlattice_agent_adapter checkpoint`, `contextlattice_checkpoint`, or POST /memory/write.
-6) Before final output, run one final recency retrieval (POST /memory/search or POST /memory/context-pack).
+6) Before final output, run a final recency retrieval only when the work was long-running, high-risk, or likely affected by recent memory.
 7) Before handoff or compaction, run `contextlattice_agent_adapter handoff --session-id <session_id> --summary "<objective state>"`.
-8) When preparing a new model/problem-solving request, run `contextlattice_agent_session context-package --session-id <session_id>` and use the returned reference package as the factual context scaffold, including the project/topic/session objective lineage.
+8) When preparing a difficult new model/problem-solving request, run `contextlattice_agent_session context-package --session-id <session_id>` and use the returned reference package as the factual context scaffold, including the project/topic/session objective lineage.
 9) When you need to explain what shaped the run, use `contextlattice_agent_trace --session-id <session_id> --tree` or GET /v1/agents/sessions/{session_id}/trace; the trace includes objective lineage, context, skills, sources, graph touches, handoffs, and checkpoints.
 10) On normal completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`.
 11) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, and `universal_agent_adapter_response.v1` contract metadata, including `objective_hierarchy` and `objective_lineage`, in downstream handoffs.
@@ -25,7 +25,7 @@ Operating rules:
 15) Retrieval mode semantics:
    - balanced = fast sync now + slow async continuation.
    - deep = broader/lower-cap retrieval budgets but still fail-open; do not wait forever on one lane.
-16) If a transport call times out with zero bytes, immediately retry once, then check continuation events and re-read.
+16) If a transport call times out with zero bytes, immediately retry once, then check continuation events. Use readback only when recovering prior objective state.
 17) Use POST /v1/memory/neighbors for relationship recall when graph-neighbor context is useful.
 18) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
 19) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
@@ -36,6 +36,7 @@ Universal adapter helper for CLI agents:
 ```bash
 # list supported profiles
 contextlattice_adopt status --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
 contextlattice_agent_adapter profiles
 
 # start/recover a ContextLattice-owned session and bounded preflight package

@@ -26,6 +26,8 @@ Bad hook targets:
 
 ```bash
 scripts/install_global_agent_tools.sh --install-codex-hooks
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
+contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 ```
 
 Optional machine-local hook policy belongs outside git:
@@ -37,6 +39,15 @@ export CONTEXTLATTICE_PUBLIC_FORBIDDEN_PATH_RE='(/Volumes/<external-data-volume>
 EOF
 chmod 600 ~/.contextlattice/agent_hooks.env
 ```
+
+Shell-only `export CONTEXTLATTICE_REPO_ROOT=...` is not enough for Codex hooks;
+persist it in `~/.contextlattice/agent_hooks.env` or reinstall from the intended
+checkout so the installer writes it.
+
+The installer copies a minimal Python hook runtime by default. That runtime is
+not the optional development Python tool suite; it is the compact glue used by
+SessionStart, PreCompact, and PostCompact for session recovery, handoff payload
+shaping, and provider-neutral compaction prompts.
 
 Installed commands:
 
@@ -194,8 +205,10 @@ machine uses external session storage:
 contextlattice_agent_runtime_doctor --pretty
 ```
 
-The optional `contextlattice_codex_session_store_doctor` helper is installed with
-`scripts/install_global_agent_tools.sh --include-dev-python-tools`. It resolves `~/.codex/sessions`, checks read/write/traverse access,
+The global runtime doctor checks Codex session storage from the installed hook
+runtime. The optional `contextlattice_codex_session_store_doctor` front-door
+wrapper is installed only with `scripts/install_global_agent_tools.sh --include-dev-python-tools`.
+The checker resolves `~/.codex/sessions`, checks read/write/traverse access,
 warns when the real path crosses `/Volumes/*` or a cloud/TCC-managed folder,
 samples transcript readability, and prints the exact failing path with a
 suggested fix. Warnings do not fail the aggregate agent context audit; hard
@@ -212,7 +225,7 @@ manual hook review when commands are unchanged.
 
 ```bash
 contextlattice_pre_compaction_write "current objective, blockers, next actions"
-contextlattice_post_compaction_read
+contextlattice_post_compaction_read  # optional manual readback; Codex hooks run a bounded read automatically
 ```
 
 Codex compact hook stdout is intentionally stricter than SessionStart or tool
@@ -227,7 +240,9 @@ The pre/post compaction hooks derive a compact handoff payload with
 `scripts/agent/compaction-handoff-payload`. The payload records session id, cwd,
 branch, changed files, commands, blockers, and next action when the hook input
 contains them. Post-compaction reads use those terms first so resume context is
-scoped to the interrupted session instead of broad historical notes.
+scoped to the interrupted session instead of broad historical notes. The
+readback path is fail-open and bounded; agents should use it to recover state
+after compaction, not paste large retrieved packages into every prompt.
 
 Compaction handoff prompts must stay model-provider neutral. The source of truth
 is `config/model_compat/compaction_prompt_contract.json`, not any Python hook
