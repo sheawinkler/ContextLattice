@@ -324,12 +324,14 @@ curl -fsS -H "x-api-key: ${ORCH_KEY}" http://127.0.0.1:8075/telemetry/retention 
           <li><code>scripts/agent/agent-runtime-proof-pack --pretty</code> completes bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry in one run.</li>
           <li><code>scripts/agent/contextlattice-adopt status --pretty</code> reports gateway, global helper, shell PATH, storage, session-store, profile, and runtime-doctor readiness in one bounded payload.</li>
           <li><code>contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty</code> writes managed repo instruction blocks for the agent files each runtime actually reads.</li>
+          <li><code>contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty</code> verifies those managed blocks before handing the repo to another agent.</li>
           <li><code>scripts/agent/agent-adoption-proof-matrix --progress --pretty</code> proves the same lifecycle across configured agent profiles and reports the skills, context package, graph touches, and handoffs used by each run.</li>
           <li><code>scripts/agent/agent-run-trace --session-id &lt;id&gt; --tree</code> renders the bounded run-shaping trail and <code>--markdown</code> exports a reusable run card.</li>
         </ul>
 <pre><code># agent memory lifecycle proof from the repo
 scripts/agent/contextlattice-adopt status --pretty
 scripts/agent/contextlattice-adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
+scripts/agent/contextlattice-adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
 scripts/agent/agent-runtime-proof-pack --pretty
 
 # cross-profile adoption proof from the repo
@@ -342,7 +344,8 @@ contextlattice_agent_runtime_doctor --pretty
 # installed shortcut after global helper install
 contextlattice_adopt status --pretty
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_doctor --agents codex --skip-provider-smoke --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
+contextlattice_doctor --repo . --agents codex --skip-provider-smoke --pretty
 contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
 contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_agent_runtime_proof --pretty

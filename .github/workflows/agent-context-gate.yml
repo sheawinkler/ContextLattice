@@ -11,6 +11,8 @@ on:
       - "scripts/agent_contracts.py"
       - "scripts/agent/**"
       - "scripts/agent_hooks/**"
+      - "scripts/install_global_agent_tools.sh"
+      - "scripts/install_global_agent_tools.ps1"
       - ".github/workflows/agent-context-gate.yml"
 
 permissions:
@@ -22,6 +24,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/gateway-go/go.mod
 
       - name: Run agent context gate
         run: scripts/agent/audit-agent-context

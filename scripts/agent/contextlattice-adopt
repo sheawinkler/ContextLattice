@@ -51,6 +51,7 @@ def add_candidate(candidates: list[Path], value: str | os.PathLike[str] | None) 
 
 def resolve_repo_root(script_root: Path, global_home: Path) -> Path:
     candidates: list[Path] = []
+    add_candidate(candidates, script_root)
     add_candidate(candidates, os.getenv("CONTEXTLATTICE_REPO_ROOT"))
     for env_path in [
         script_root / "agent_hooks.env",
@@ -58,7 +59,6 @@ def resolve_repo_root(script_root: Path, global_home: Path) -> Path:
         Path.home() / ".codex" / "contextlattice_hooks.env",
     ]:
         add_candidate(candidates, shell_env_value(env_path, "CONTEXTLATTICE_REPO_ROOT"))
-    add_candidate(candidates, script_root)
 
     for candidate in candidates:
         has_installer = (candidate / "scripts" / "install_global_agent_tools.sh").is_file() or (
@@ -90,6 +90,7 @@ CONTEXT_BOUNDARY_DOCTOR = AGENT_DIR / "audit-context-boundary"
 RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
 ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
 TRACE = AGENT_DIR / "agent-run-trace"
+REPO_INTEGRATION_AUDIT = AGENT_DIR / "audit-agent-repo-integration"
 AGENT_CONFIG_PATHS = [
     GLOBAL_HOME / "config" / "agents" / "agent_profiles.json",
     REPO_ROOT / "config" / "agents" / "agent_profiles.json",
@@ -459,6 +460,19 @@ def context_boundary_check(timeout: float) -> dict[str, Any]:
     if not CONTEXT_BOUNDARY_DOCTOR.exists():
         return {"ok": False, "error": "context boundary audit script missing"}
     result = run_command([str(CONTEXT_BOUNDARY_DOCTOR), "--timeout", str(timeout)], timeout + 10)
+    payload = as_dict(result.get("json"))
+    return {"ok": result.get("ok"), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
+
+
+def repo_integration_check(repo: str, agents: str, timeout: float) -> dict[str, Any]:
+    if not repo:
+        return {"ok": True, "skipped": True, "reason": "repo_integration_not_requested"}
+    if not REPO_INTEGRATION_AUDIT.exists():
+        return {"ok": False, "error": "repo integration audit script missing"}
+    result = run_command(
+        [str(REPO_INTEGRATION_AUDIT), "--repo", repo, "--agents", agents],
+        timeout + 10,
+    )
     payload = as_dict(result.get("json"))
     return {"ok": result.get("ok"), "command": result.get("command"), "payload": payload, "stderr": result.get("stderr")}
 
@@ -841,15 +855,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         pretty=False,
     )
     status = build_status(status_args)
+    repo_integration = repo_integration_check(args.repo, args.agents, args.timeout) if args.include_repo_integration or args.repo else {"ok": True, "skipped": True}
     proof, proof_result = run_adoption_proof(args)
     traces, trace_findings = run_trace_summaries(args, proof)
     status_summary = summarize_status_for_doctor(status)
     proof_summary = summarize_proof_for_doctor(proof)
     failures: list[dict[str, Any]] = []
     failures.extend(as_list(status_summary.get("failures")))
+    if repo_integration.get("ok") is False:
+        failures.extend(as_list(as_dict(repo_integration.get("payload")).get("findings")) or [{"reason": "repo_integration_failed", "detail": repo_integration}])
     failures.extend(as_list(proof_summary.get("findings")))
     failures.extend(trace_findings)
-    ok = bool(status_summary.get("ok")) and bool(proof_summary.get("ok")) and not trace_findings
+    ok = bool(status_summary.get("ok")) and bool(proof_summary.get("ok")) and repo_integration.get("ok") is not False and not trace_findings
     first_session = ""
     for trace in traces:
         first_session = str(trace.get("session_id") or "")
@@ -862,6 +879,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         repair_commands.append(" ".join(compact_command(proof_argv(args))))
     if trace_findings and first_session:
         repair_commands.append(f"contextlattice_agent_trace --session-id {first_session} --json --pretty")
+    if repo_integration.get("ok") is False and args.repo:
+        repair_commands.append(f"contextlattice_adopt integrate --repo {shlex.quote(args.repo)} --agents {shlex.quote(args.agents)} --project {shlex.quote(args.project)} --pretty")
     if as_dict(status_summary.get("native_ownership")).get("ok") is False:
         repair_commands.append("contextlattice_strict_runtime_native_ownership --pretty")
     if as_dict(status_summary.get("context_boundary")).get("ok") is False:
@@ -873,6 +892,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "project": args.project,
         "base_url": args.base_url,
         "status": status_summary,
+        "repo_integration": repo_integration,
         "proof": proof_summary,
         "traces": traces,
         "failures": failures[:30],
@@ -1115,6 +1135,15 @@ def upsert_managed_block(path: Path, block: str, dry_run: bool) -> bool:
 def cmd_integrate(args: argparse.Namespace) -> int:
     repo = Path(args.repo).expanduser().resolve()
     agents = selected_profiles(args.agents)
+    if args.check:
+        result = run_command(
+            [str(REPO_INTEGRATION_AUDIT), "--repo", str(repo), "--agents", ",".join(agents)],
+            args.timeout + 10,
+        )
+        payload = as_dict(result.get("json")) or {"ok": False, "error": result.get("stderr") or result.get("stdout")}
+        payload["command"] = result.get("command")
+        emit(payload, args.pretty)
+        return 0 if payload.get("ok") else 1
     by_file: dict[str, list[str]] = {}
     findings: list[dict[str, Any]] = []
     for agent in agents:
@@ -1318,6 +1347,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--include-session-store", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-native-ownership", action=argparse.BooleanOptionalAction, default=True)
     doctor.add_argument("--include-context-boundary", action=argparse.BooleanOptionalAction, default=True)
+    doctor.add_argument("--include-repo-integration", action=argparse.BooleanOptionalAction, default=False)
+    doctor.add_argument("--repo", default="")
     doctor.add_argument("--include-raw", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
@@ -1342,6 +1373,8 @@ def build_parser() -> argparse.ArgumentParser:
     integrate.add_argument("--repo", default=".")
     integrate.add_argument("--agents", default="codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid")
     integrate.add_argument("--project", default="contextlattice")
+    integrate.add_argument("--timeout", type=float, default=10)
+    integrate.add_argument("--check", action="store_true", help="Verify existing managed instruction blocks instead of writing them.")
     integrate.add_argument("--dry-run", action="store_true")
     integrate.add_argument("--pretty", action="store_true")
     integrate.set_defaults(func=cmd_integrate)

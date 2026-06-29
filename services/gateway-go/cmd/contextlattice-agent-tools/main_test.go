@@ -265,3 +265,46 @@ func TestTraceCommandRendersTree(t *testing.T) {
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestAdoptIntegrateCheckValidatesManagedBlocks(t *testing.T) {
+	repo := t.TempDir()
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,claude-code,hermes-agent,pi,droid", "--project", "smoke", "--pretty"}); err != nil {
+		t.Fatalf("run integrate: %v", err)
+	}
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,claude-code,hermes-agent,pi,droid", "--check", "--pretty"}); err != nil {
+		t.Fatalf("run integrate check: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["ok"] != true {
+		t.Fatalf("expected repo integration check to pass: %#v", output)
+	}
+	files := output["files"].([]any)
+	if len(files) != 5 {
+		t.Fatalf("expected five instruction files, got %#v", files)
+	}
+}
+
+func TestAdoptIntegrateCheckFailsMissingBlocks(t *testing.T) {
+	repo := t.TempDir()
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,droid", "--check", "--pretty"}); err == nil {
+		t.Fatalf("expected integrate check to return an error when blocks are missing")
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["ok"] == true {
+		t.Fatalf("expected missing repo integration to fail: %#v", output)
+	}
+	if findings := output["findings"].([]any); len(findings) == 0 {
+		t.Fatalf("expected findings: %#v", output)
+	}
+}

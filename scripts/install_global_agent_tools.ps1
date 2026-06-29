@@ -26,13 +26,40 @@ New-Item -ItemType Directory -Path (Join-Path $GlobalHome "config\agent_contract
 New-Item -ItemType Directory -Path (Join-Path $GlobalHome "config\agents") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $GlobalHome "config\model_compat") -Force | Out-Null
 
+$managedHookEnvKeys = @(
+    "CONTEXTLATTICE_REPO_ROOT",
+    "CONTEXTLATTICE_ORCHESTRATOR_URL",
+    "MEMMCP_ORCHESTRATOR_URL",
+    "CONTEXTLATTICE_AGENT_ID",
+    "MEMMCP_AGENT_ID"
+)
+$existingHookEnvLines = @()
+if (Test-Path $HookEnvFile) {
+    $existingHookEnvLines = Get-Content -Path $HookEnvFile | Where-Object {
+        $line = [string]$_
+        if ($line -match '^\s*#\s*Local-only ContextLattice hook policy\. Not part of any repo\.\s*$') {
+            return $false
+        }
+        foreach ($key in $managedHookEnvKeys) {
+            if ($line -match "^\s*(export\s+)?$([regex]::Escape($key))=") {
+                return $false
+            }
+        }
+        return $true
+    }
+}
+
 $hookEnvLines = @(
+    "# Local-only ContextLattice hook policy. Not part of any repo.",
     "export CONTEXTLATTICE_REPO_ROOT=$(ConvertTo-ShellDoubleQuoted $RepoRoot)",
     "export CONTEXTLATTICE_ORCHESTRATOR_URL=""http://127.0.0.1:8075""",
     "export MEMMCP_ORCHESTRATOR_URL=""http://127.0.0.1:8075""",
     "export CONTEXTLATTICE_AGENT_ID=""codex_gpt5""",
     "export MEMMCP_AGENT_ID=""codex_gpt5"""
 )
+if ($existingHookEnvLines.Count -gt 0) {
+    $hookEnvLines += $existingHookEnvLines
+}
 Set-Content -Path $HookEnvFile -Value $hookEnvLines -Encoding Ascii
 
 $hookRuntimePythonFiles = @(

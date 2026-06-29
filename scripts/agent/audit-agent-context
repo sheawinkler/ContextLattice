@@ -105,6 +105,37 @@ def summarize_check(check: dict[str, Any], include_details: bool) -> dict[str, A
                 "findings": findings[:10],
             }
         )
+
+    elif name == "agent_preflight_matrix":
+        findings = payload.get("findings") or []
+        summary.update(
+            {
+                "case_count": payload.get("case_count", 0),
+                "agents": payload.get("agents", []),
+                "finding_count": len(findings),
+                "findings": findings[:10],
+            }
+        )
+    elif name == "agent_profile_parity":
+        findings = payload.get("findings") or []
+        summary.update(
+            {
+                "available_refs": payload.get("available_refs", []),
+                "skipped_ref_count": len(payload.get("skipped_refs") or []),
+                "finding_count": len(findings),
+                "findings": findings[:10],
+            }
+        )
+    elif name == "agent_global_install_smoke":
+        failed = payload.get("failed") or []
+        summary.update(
+            {
+                "global_home": payload.get("global_home"),
+                "check_count": len(payload.get("checks") or []),
+                "failed_count": len(failed),
+                "failed": failed[:10],
+            }
+        )
     elif name == "universal_agent_adapter":
         findings = payload.get("findings") or []
         summary.update(
@@ -157,6 +188,10 @@ def main() -> int:
         run_json("context_pack_schema", [str(SCRIPT_DIR / "audit-context-pack-schema")]),
         run_json("agent_output_contracts", [str(SCRIPT_DIR / "audit-agent-output-contracts")]),
         run_json("context_overflow_recovery", [str(SCRIPT_DIR / "audit-context-overflow-recovery")]),
+
+        run_json("agent_preflight_matrix", [str(SCRIPT_DIR / "audit-agent-preflight-matrix")]),
+        run_json("agent_profile_parity", [str(SCRIPT_DIR / "audit-agent-profile-parity"), "--refs", "WORKTREE"]),
+        run_json("agent_global_install_smoke", [str(SCRIPT_DIR / "audit-agent-global-install-smoke")]),
         run_json("universal_agent_adapter", [str(SCRIPT_DIR / "audit-universal-agent-adapter")]),
         run_json("skill_policy_eval", [str(SCRIPT_DIR / "eval-skill-policy")]),
         run_json("instruction_conflicts", [str(SCRIPT_DIR / "audit-conflicts")]),
@@ -172,6 +207,10 @@ def main() -> int:
         "context_pack_schema",
         "agent_output_contracts",
         "context_overflow_recovery",
+
+        "agent_preflight_matrix",
+        "agent_profile_parity",
+        "agent_global_install_smoke",
         "universal_agent_adapter",
         "skill_policy_eval",
     }

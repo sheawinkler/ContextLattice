@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Audit agent profile/template parity in this checkout and optional git refs."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROFILE_PATH = "config/agents/agent_profiles.json"
+TEMPLATE_DIR = "docs/public_overview/templates/agents"
+DEFAULT_REFS = "WORKTREE,refs/remotes/origin/main,refs/remotes/public/main,refs/remotes/public-paid/main,refs/remotes/origin/public-paid/main"
+TEMPLATE_COVERAGE = {
+    "codex": "codex.md",
+    "claude-code": "claude-code.md",
+    "opencode": "opencode.md",
+    "hermes-agent": "hermes-agent.md",
+    "hermes-ultra": "hermes-agent.md",
+    "pi": "pi.md",
+    "droid": "droid.md",
+    "chatgpt-web": "chatgpt-web-desktop.md",
+    "chatgpt-desktop": "chatgpt-web-desktop.md",
+    "claude-web": "claude-web-desktop.md",
+    "claude-desktop": "claude-web-desktop.md",
+}
+
+
+def split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def git_output(args: list[str]) -> tuple[bool, str]:
+    proc = subprocess.run(["git", *args], cwd=str(REPO_ROOT), check=False, capture_output=True, text=True)
+    return proc.returncode == 0, proc.stdout
+
+
+def normalize_ref(ref: str) -> str:
+    if ref == "WORKTREE" or ref.startswith("refs/"):
+        return ref
+    remote_ref = f"refs/remotes/{ref}"
+    ok, _ = git_output(["show-ref", "--verify", remote_ref])
+    if ok:
+        return remote_ref
+    return ref
+
+
+def load_file(ref: str, path: str) -> tuple[bool, str]:
+    if ref == "WORKTREE":
+        file_path = REPO_ROOT / path
+        if not file_path.exists():
+            return False, ""
+        return True, file_path.read_text(encoding="utf-8", errors="replace")
+    ok, out = git_output(["show", f"{ref}:{path}"])
+    return ok, out
+
+
+def list_templates(ref: str) -> tuple[bool, set[str]]:
+    if ref == "WORKTREE":
+        root = REPO_ROOT / TEMPLATE_DIR
+        if not root.exists():
+            return False, set()
+        return True, {path.name for path in root.glob("*.md") if path.is_file()}
+    ok, out = git_output(["ls-tree", "-r", "--name-only", ref, TEMPLATE_DIR])
+    if not ok:
+        return False, set()
+    names = {Path(line.strip()).name for line in out.splitlines() if line.strip().endswith(".md")}
+    return True, names
+
+
+def inspect_ref(ref: str) -> dict[str, Any]:
+    git_ref = normalize_ref(ref)
+    ok, raw = load_file(git_ref, PROFILE_PATH)
+    if not ok:
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "skipped": True, "reason": "profile_config_unavailable"}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "reason": "profile_config_invalid_json", "detail": str(exc)}
+    profiles = parsed.get("profiles") if isinstance(parsed, dict) else None
+    if not isinstance(profiles, dict):
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "reason": "profiles_not_object"}
+    profile_keys = sorted(str(key) for key in profiles.keys())
+    templates_ok, templates = list_templates(git_ref)
+    findings: list[dict[str, Any]] = []
+    if not templates_ok:
+        findings.append({"reason": "template_dir_unavailable", "ref": ref, "path": TEMPLATE_DIR})
+    for profile in profile_keys:
+        expected = TEMPLATE_COVERAGE.get(profile)
+        if not expected:
+            findings.append({"reason": "profile_template_mapping_missing", "ref": ref, "profile": profile})
+            continue
+        if expected not in templates:
+            findings.append({"reason": "profile_template_missing", "ref": ref, "profile": profile, "template": expected})
+    return {
+        "ref": ref,
+        "git_ref": git_ref,
+        "ok": not findings,
+        "profile_count": len(profile_keys),
+        "profiles": profile_keys,
+        "templates": sorted(templates),
+        "findings": findings,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit agent profile parity across current checkout and optional refs.")
+    parser.add_argument("--refs", default=DEFAULT_REFS)
+    parser.add_argument("--strict-missing-refs", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    refs = split_csv(args.refs)
+    results = [inspect_ref(ref) for ref in refs]
+    available = [item for item in results if not item.get("skipped")]
+    findings: list[dict[str, Any]] = []
+    skipped = [item for item in results if item.get("skipped")]
+    if args.strict_missing_refs:
+        findings.extend({"reason": "ref_unavailable", "ref": item.get("ref"), "detail": item.get("reason")} for item in skipped)
+    for item in available:
+        findings.extend(item.get("findings") or [])
+    if available:
+        baseline = available[0]
+        baseline_profiles = set(baseline.get("profiles") or [])
+        for item in available[1:]:
+            profiles = set(item.get("profiles") or [])
+            if profiles != baseline_profiles:
+                findings.append(
+                    {
+                        "reason": "profile_keys_drift",
+                        "baseline_ref": baseline.get("ref"),
+                        "ref": item.get("ref"),
+                        "missing_from_ref": sorted(baseline_profiles - profiles),
+                        "extra_in_ref": sorted(profiles - baseline_profiles),
+                    }
+                )
+    else:
+        findings.append({"reason": "no_refs_available"})
+
+    payload = {
+        "ok": not findings,
+        "schema_id": "contextlattice_agent_profile_parity_audit.v1",
+        "refs": refs,
+        "available_refs": [item.get("ref") for item in available],
+        "skipped_refs": skipped,
+        "results": results,
+        "findings": findings,
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
