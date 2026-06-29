@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
-REPO_ROOT="$(repo_root)"
+TOOL_ROOT="$(contextlattice_root)"
 
 emit_codex_postcompact_output() {
   local status="${1:-0}"
@@ -61,7 +61,7 @@ if len(encoded.encode("utf-8")) > max_bytes:
     }
     encoded = json.dumps(out, separators=(",", ":"))
 print(encoded)
-' "$status" "$REPO_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PostCompact checkpoint output emitter failed."}'
+' "$status" "$TOOL_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PostCompact checkpoint output emitter failed."}'
 }
 
 if [[ "${CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE:-}" == "1" ]]; then
@@ -75,7 +75,7 @@ topic="${CONTEXTLATTICE_COMPACTION_TOPIC_PATH:-runbooks/context-compaction-hando
 query="${CONTEXTLATTICE_COMPACTION_QUERY:-}"
 if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
   set +e
-  session_out="$(python3 "${REPO_ROOT}/scripts/agent/contextlattice-session" ensure \
+  session_out="$(python3 "${TOOL_ROOT}/scripts/agent/contextlattice-session" ensure \
     "Post-compaction objective readback for ${project}" \
     --project "$project" \
     --agent "${CONTEXTLATTICE_AGENT:-compact-hook}" \
@@ -102,7 +102,7 @@ PY
 fi
 if [[ -z "${query}" && ! -t 0 ]]; then
   set +e
-  query="$(python3 "${SCRIPT_DIR}/../agent/compaction-handoff-payload" --query)"
+  query="$(python3 "${TOOL_ROOT}/scripts/agent/compaction-handoff-payload" --query)"
   query_status=$?
   set -e
   if [[ "$query_status" -ne 0 ]]; then

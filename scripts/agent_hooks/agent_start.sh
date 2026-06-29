@@ -40,10 +40,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 contextlattice_env
-REPO_ROOT="$(repo_root)"
+TOOL_ROOT="$(contextlattice_root)"
 if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
   set +e
-  session_out="$(python3 "${REPO_ROOT}/scripts/agent/contextlattice-session" ensure \
+  session_out="$(python3 "${TOOL_ROOT}/scripts/agent/contextlattice-session" ensure \
     "Agent startup for ${PROJECT} at ${TOPIC}" \
     --project "$PROJECT" \
     --agent "$AGENT" \
@@ -96,8 +96,8 @@ PY
 results=()
 soft_arg=()
 [[ "$SOFT" == "1" ]] && soft_arg=(--soft)
-results+=("$(run_hook codex_session_store "${REPO_ROOT}/scripts/agent/audit-codex-session-store")")
-results+=("$(run_hook resource_pressure "${SCRIPT_DIR}/resource_pressure_guard.sh" ${soft_arg[@]+"${soft_arg[@]}"})")
+results+=("$(run_hook codex_session_store "${TOOL_ROOT}/scripts/agent/audit-codex-session-store")")
+results+=("$(run_hook resource_pressure "${SCRIPT_DIR}/resource_pressure_guard.sh" "${soft_arg[@]}")")
 results+=("$(run_hook git_lane "${SCRIPT_DIR}/git_lane_guard.sh")")
 results+=("$(run_hook orbstack_forward "${SCRIPT_DIR}/orbstack_forward_guard.sh")")
 results+=("$(run_hook native_smoke "${SCRIPT_DIR}/native_endpoint_smoke.sh" --project "$PROJECT" ${soft_arg[@]+"${soft_arg[@]}"})")

@@ -7,11 +7,13 @@ These files provide copy-ready instruction blocks for common agents.
 - `claude-code.md`
 - `opencode.md`
 - `hermes-agent.md`
+- `pi.md`
+- `droid.md`
 - `chatgpt-web-desktop.md`
 - `claude-web-desktop.md`
 
 All templates pin the orchestrator endpoint to `http://127.0.0.1:8075` and enforce retrieval-before-inference.
-They also enforce the default context-compaction handoff (`compaction-handoff`) so objective state is persisted and immediately re-read around compaction events.
+They also enforce the default context-compaction handoff (`compaction-handoff`) so objective state is persisted; post-compaction readback is bounded and used for recovery, not prompt filler.
 Templates are contract-aware but intentionally light: agents should preserve `format_contract` metadata from ContextLattice, not echo it in every human-facing answer.
 
 Global helper CLI tools are auto-installed by `gmake quickstart` and installer flows:
@@ -31,6 +33,7 @@ Preferred startup:
 
 ```bash
 contextlattice_adopt status --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty

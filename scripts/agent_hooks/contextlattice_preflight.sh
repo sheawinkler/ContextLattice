@@ -24,7 +24,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 contextlattice_env
-ROOT="$(repo_root)"
+ROOT="$(contextlattice_root)"
 AGENT="${1:-codex}"
 PROJECT="${2:-contextlattice}"
 TOPIC="${3:-runbooks/codex-integration}"

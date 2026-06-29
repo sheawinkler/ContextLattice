@@ -62,6 +62,34 @@
         "hermes-agent-runtime"
       ]
     },
+    "hermes-ultra": {
+      "agent_id": "hermes_ultra_agent",
+      "topic_path": "runbooks/hermes-ultra-integration",
+      "query": "hermes ultra preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "hermes-ultra",
+        "hermes-agent-ultra"
+      ]
+    },
+    "pi": {
+      "agent_id": "pi_agent",
+      "topic_path": "runbooks/pi-integration",
+      "query": "pi agent preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "pi"
+      ]
+    },
+    "droid": {
+      "agent_id": "droid_agent",
+      "topic_path": "runbooks/droid-integration",
+      "query": "droid agent preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "droid"
+      ]
+    },
     "chatgpt-web": {
       "agent_id": "chatgpt_web_agent",
       "topic_path": "runbooks/chatgpt-web-integration",

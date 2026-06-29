@@ -90,12 +90,10 @@ CONTEXT_BOUNDARY_DOCTOR = AGENT_DIR / "audit-context-boundary"
 RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
 ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
 TRACE = AGENT_DIR / "agent-run-trace"
-AGENT_CONFIG = first_existing_path(
-    [
-        REPO_ROOT / "config" / "agents" / "agent_profiles.json",
-        GLOBAL_HOME / "config" / "agents" / "agent_profiles.json",
-    ]
-)
+AGENT_CONFIG_PATHS = [
+    GLOBAL_HOME / "config" / "agents" / "agent_profiles.json",
+    REPO_ROOT / "config" / "agents" / "agent_profiles.json",
+]
 TEMPLATE_DIR = first_existing_path(
     [
         REPO_ROOT / "docs" / "public_overview" / "templates" / "agents",
@@ -114,6 +112,8 @@ AGENT_COMMANDS = {
     "opencode": ["opencode"],
     "hermes-agent": ["hermes", "hermes-agent"],
     "hermes-ultra": ["hermes-ultra"],
+    "pi": ["pi"],
+    "droid": ["droid"],
 }
 
 APP_PATHS = {
@@ -134,6 +134,11 @@ GLOBAL_TOOL_NAMES = [
     "contextlattice_agent_trace",
     "contextlattice_run_advisor",
     "contextlattice_skills_index",
+    "contextlattice_agent_start",
+    "contextlattice_checkpoint",
+    "contextlattice_pre_compaction_write",
+    "contextlattice_post_compaction_read",
+    "contextlattice_async_inbox_hook",
 ]
 FRONT_DOOR_TOOL_NAMES = {"contextlattice_adopt", "contextlattice_doctor"}
 
@@ -163,12 +168,20 @@ def short_text(value: Any, limit: int = 240) -> str:
 
 
 def load_profiles() -> dict[str, Any]:
-    try:
-        parsed = json.loads(AGENT_CONFIG.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    profiles = parsed.get("profiles") if isinstance(parsed, dict) else {}
-    return profiles if isinstance(profiles, dict) else {}
+    merged: dict[str, Any] = {}
+    seen: set[Path] = set()
+    for path in AGENT_CONFIG_PATHS:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        profiles = parsed.get("profiles") if isinstance(parsed, dict) else {}
+        if isinstance(profiles, dict):
+            merged.update(profiles)
+    return merged
 
 
 def profile_order() -> list[str]:
@@ -179,6 +192,7 @@ def profile_order() -> list[str]:
         "hermes-agent",
         "hermes-ultra",
         "pi",
+        "droid",
         "chatgpt-web",
         "chatgpt-desktop",
         "claude-web",
@@ -294,13 +308,33 @@ def tool_status(global_home: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def hook_runtime_status(global_home: Path) -> list[dict[str, Any]]:
+    required = [
+        global_home / "scripts" / "agent" / "_common.py",
+        global_home / "scripts" / "agent" / "audit-codex-session-store",
+        global_home / "scripts" / "agent" / "compaction-handoff-payload",
+        global_home / "scripts" / "agent" / "contextlattice-session",
+        global_home / "scripts" / "agent_contracts.py",
+        global_home / "scripts" / "agent_orchestration.py",
+        global_home / "scripts" / "contextlattice_client.py",
+    ]
+    return [
+        {
+            "path": str(path),
+            "installed": path.is_file(),
+            "executable": os.access(path, os.X_OK) or path.suffix == ".py",
+        }
+        for path in required
+    ]
+
+
 def detect_agents(home: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     profiles = load_profiles()
     for profile in profile_order():
         command_hits = [cmd for cmd in AGENT_COMMANDS.get(profile, []) if shutil.which(cmd)]
         app_hits = [path for path in APP_PATHS.get(profile, []) if Path(path).exists()]
-        if profile.endswith("-web") or profile in {"pi"}:
+        if profile.endswith("-web") or profile in {"pi", "droid"}:
             install_state = "copy_template"
         elif command_hits or app_hits:
             install_state = "detected"
@@ -433,6 +467,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     home = Path(args.home).expanduser()
     global_home = Path(args.global_home).expanduser()
     tools = tool_status(global_home)
+    hook_runtime = hook_runtime_status(global_home)
     storage = storage_checks(home)
     shell = shell_checks(global_home, home)
     gateway = gateway_check(args.timeout)
@@ -442,6 +477,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     context_boundary = context_boundary_check(args.timeout) if getattr(args, "include_context_boundary", True) else {"skipped": True}
     profiles = detect_agents(home)
     required_tools_ok = all(item.get("installed") and item.get("executable") for item in tools if item["name"] not in FRONT_DOOR_TOOL_NAMES)
+    hook_runtime_ok = all(item.get("installed") and item.get("executable") for item in hook_runtime)
     warnings = []
     for item in storage:
         warnings.extend({"path": item["path"], "warning": warning} for warning in item.get("warnings", []))
@@ -450,6 +486,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         failures.append({"reason": "gateway_unhealthy", "detail": gateway})
     if not required_tools_ok:
         failures.append({"reason": "global_tools_incomplete"})
+    if not hook_runtime_ok:
+        failures.append({"reason": "hook_runtime_incomplete"})
     if any(item.get("exists") and not item.get("access_ok") for item in storage):
         failures.append({"reason": "storage_access_failed"})
     if doctor.get("ok") is False:
@@ -479,6 +517,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         },
         "gateway": gateway,
         "tools": tools,
+        "hook_runtime": hook_runtime,
         "agents": profiles,
         "storage": storage,
         "shell": shell,
@@ -540,6 +579,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         "proof": proof,
         "next_commands": [
             "contextlattice_adopt status --pretty",
+            "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty",
             "contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty",
             "contextlattice_agent_adapter profiles",
         ],
@@ -590,6 +630,8 @@ def cmd_proof(args: argparse.Namespace) -> int:
 def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
     tools = as_list(status.get("tools"))
     missing_tools = [item.get("name") for item in tools if isinstance(item, dict) and not (item.get("installed") and item.get("executable"))]
+    hook_runtime = as_list(status.get("hook_runtime"))
+    missing_hook_runtime = [item.get("path") for item in hook_runtime if isinstance(item, dict) and not (item.get("installed") and item.get("executable"))]
     storage = as_list(status.get("storage"))
     native_ownership = as_dict(status.get("native_ownership"))
     native_payload = as_dict(native_ownership.get("payload"))
@@ -602,6 +644,11 @@ def summarize_status_for_doctor(status: dict[str, Any]) -> dict[str, Any]:
             "installed_count": sum(1 for item in tools if isinstance(item, dict) and item.get("installed") and item.get("executable")),
             "checked_count": len(tools),
             "missing_or_not_executable": missing_tools,
+        },
+        "hook_runtime": {
+            "installed_count": sum(1 for item in hook_runtime if isinstance(item, dict) and item.get("installed") and item.get("executable")),
+            "checked_count": len(hook_runtime),
+            "missing_or_not_executable": missing_hook_runtime,
         },
         "storage_warnings": status.get("warnings", [])[:12],
         "storage_access": [
@@ -904,6 +951,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
         "commands": {
             "install": "contextlattice_adopt install --pretty",
             "install_from_repo": "scripts/agent/contextlattice-adopt install --pretty",
+            "integrate": "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty",
             "status": "contextlattice_adopt status --pretty",
             "proof": "contextlattice_adopt proof --skip-provider-smoke --pretty",
             "bootstrap": "contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty",
@@ -984,6 +1032,120 @@ def cmd_import(args: argparse.Namespace) -> int:
     }
     emit(payload, args.pretty)
     return 0
+
+
+INSTRUCTION_TARGETS = {
+    "codex": ("AGENTS.md", "Codex"),
+    "claude-code": ("CLAUDE.md", "Claude Code"),
+    "opencode": ("AGENTS.md", "OpenCode"),
+    "hermes-agent": ("HERMES.md", "Hermes Agent"),
+    "hermes-ultra": ("HERMES.md", "Hermes Ultra"),
+    "pi": ("PI.md", "Pi"),
+    "droid": ("DROID.md", "Droid"),
+}
+
+
+def render_instruction_block(agents: list[str], project: str) -> str:
+    profiles = load_profiles()
+    lines = [
+        "<!-- >>> contextlattice-agent-integration >>>",
+        "# ContextLattice Agent Integration",
+        "",
+        "Use ContextLattice as the local memory and context layer for non-trivial work in this repo.",
+        "",
+        "Install or repair once per machine:",
+        "",
+        "```bash",
+        "contextlattice_adopt install --pretty",
+        "contextlattice_adopt status --pretty",
+        "```",
+        "",
+        "Agent profiles for this repo:",
+        "",
+    ]
+    for agent in sorted(agents):
+        profile = as_dict(profiles.get(agent))
+        file_name, label = INSTRUCTION_TARGETS[agent]
+        _ = file_name
+        agent_id = str(profile.get("agent_id") or f"{agent.replace('-', '_')}_agent")
+        topic = str(profile.get("topic_path") or f"runbooks/{agent}-integration")
+        lines.append(f"- {label}: profile `{agent}`, agent id `{agent_id}`, topic `{topic}`.")
+    quoted_project = shlex.quote(project or "contextlattice")
+    lines.extend(
+        [
+            "",
+            "Before planning or coding, run a scoped bootstrap/context pack when CLI tools are available:",
+            "",
+            "```bash",
+            f"contextlattice_agent_adapter bootstrap --agent <profile> --project {quoted_project} --pretty",
+            f"contextlattice_agent_adapter context-pack --agent <profile> --project {quoted_project} --pretty",
+            "```",
+            "",
+            "During long work, checkpoint decisions or blockers with `contextlattice_checkpoint` or `contextlattice_agent_adapter checkpoint`.",
+            "For compaction or handoff, write a concise handoff. Post-compaction readback is bounded and opportunistic; do not paste large readbacks into the prompt unless the previous state is actually needed.",
+            "If CLI tools are unavailable, use HTTP against `http://127.0.0.1:8075`: `POST /v1/agents/preflight`, `POST /memory/context-pack`, and `POST /memory/write`.",
+            "If memory is unreachable or degraded, continue from local evidence and state `degraded-memory mode` explicitly.",
+            "<!-- <<< contextlattice-agent-integration <<< -->",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def upsert_managed_block(path: Path, block: str, dry_run: bool) -> bool:
+    begin = "<!-- >>> contextlattice-agent-integration >>>"
+    end = "<!-- <<< contextlattice-agent-integration <<< -->"
+    current = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    replacement = ""
+    start = current.find(begin)
+    if start >= 0:
+        stop_rel = current[start:].find(end)
+        if stop_rel >= 0:
+            stop = start + stop_rel + len(end)
+            replacement = current[:start].rstrip() + "\n\n" + block.rstrip() + "\n" + current[stop:].lstrip("\n")
+    if not replacement:
+        replacement = block if not current.strip() else current.rstrip() + "\n\n" + block
+    if replacement == current:
+        return False
+    if not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(replacement, encoding="utf-8")
+    return True
+
+
+def cmd_integrate(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).expanduser().resolve()
+    agents = selected_profiles(args.agents)
+    by_file: dict[str, list[str]] = {}
+    findings: list[dict[str, Any]] = []
+    for agent in agents:
+        target = INSTRUCTION_TARGETS.get(agent)
+        if not target:
+            findings.append({"reason": "unsupported_agent_instruction_target", "agent": agent})
+            continue
+        by_file.setdefault(target[0], []).append(agent)
+    writes: list[dict[str, Any]] = []
+    for file_name, file_agents in sorted(by_file.items()):
+        path = repo / file_name
+        try:
+            changed = upsert_managed_block(path, render_instruction_block(file_agents, args.project), args.dry_run)
+        except Exception as exc:
+            findings.append({"reason": "write_failed", "path": str(path), "detail": str(exc)[:400]})
+            continue
+        writes.append({"path": str(path), "agents": file_agents, "changed": changed, "dry_run": args.dry_run})
+    payload = {
+        "ok": not findings,
+        "schema_id": "contextlattice_agent_repo_integration.v1",
+        "repo": str(repo),
+        "agents": agents,
+        "writes": writes,
+        "findings": findings,
+        "next_steps": [
+            "contextlattice_adopt status --pretty",
+            f"contextlattice_doctor --agents {','.join(agents)} --skip-provider-smoke --pretty",
+        ],
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
 
 
 def profile_template_text(name: str, kind: str, agent_id: str) -> str:
@@ -1175,6 +1337,14 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument("--dry-run", action="store_true")
     import_cmd.add_argument("--pretty", action="store_true")
     import_cmd.set_defaults(func=cmd_import)
+
+    integrate = sub.add_parser("integrate", help="Write repo-local managed instruction blocks for selected agents.")
+    integrate.add_argument("--repo", default=".")
+    integrate.add_argument("--agents", default="codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid")
+    integrate.add_argument("--project", default="contextlattice")
+    integrate.add_argument("--dry-run", action="store_true")
+    integrate.add_argument("--pretty", action="store_true")
+    integrate.set_defaults(func=cmd_integrate)
 
     profile = sub.add_parser("profile-template", help="Generate a template for a generic/new agent.")
     profile.add_argument("--name", required=True)

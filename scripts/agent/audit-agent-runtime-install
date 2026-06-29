@@ -16,9 +16,9 @@ from _common import contextlattice_base_url, emit, request_json
 HOME = Path.home()
 
 
-def run_json(args: list[str], timeout: float) -> tuple[bool, dict[str, Any], str]:
+def run_json(args: list[str], timeout: float, env: dict[str, str] | None = None) -> tuple[bool, dict[str, Any], str]:
     try:
-        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout, env=env)
     except Exception as exc:
         return False, {}, str(exc)
     if proc.returncode != 0:
@@ -30,9 +30,9 @@ def run_json(args: list[str], timeout: float) -> tuple[bool, dict[str, Any], str
     return True, parsed if isinstance(parsed, dict) else {}, ""
 
 
-def run_text(args: list[str], timeout: float) -> tuple[bool, str]:
+def run_text(args: list[str], timeout: float, env: dict[str, str] | None = None) -> tuple[bool, str]:
     try:
-        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout, env=env)
     except Exception as exc:
         return False, str(exc)
     if proc.returncode != 0:
@@ -143,6 +143,9 @@ def main() -> int:
     global_home = Path(args.global_home).expanduser()
     bin_dir = global_home / "bin"
     go_tool = bin_dir / "contextlattice-agent-tools"
+    runtime_env = os.environ.copy()
+    runtime_env["CONTEXTLATTICE_GLOBAL_HOME"] = str(global_home)
+    runtime_env["PATH"] = f"{bin_dir}:{runtime_env.get('PATH', '')}"
     expected = {
         "contextlattice-agent-tools": go_tool,
         "contextlattice_search": bin_dir / "contextlattice_search",
@@ -162,6 +165,22 @@ def main() -> int:
         "contextlattice_memory_topology": bin_dir / "contextlattice_memory_topology",
         "contextlattice_skills_index": bin_dir / "contextlattice_skills_index",
     }
+    shell_wrappers = {
+        "contextlattice_agent_start": bin_dir / "contextlattice_agent_start",
+        "contextlattice_async_inbox_hook": bin_dir / "contextlattice_async_inbox_hook",
+        "contextlattice_checkpoint": bin_dir / "contextlattice_checkpoint",
+        "contextlattice_pre_compaction_write": bin_dir / "contextlattice_pre_compaction_write",
+        "contextlattice_post_compaction_read": bin_dir / "contextlattice_post_compaction_read",
+    }
+    hook_runtime_files = {
+        "scripts/agent/_common.py": global_home / "scripts" / "agent" / "_common.py",
+        "scripts/agent/audit-codex-session-store": global_home / "scripts" / "agent" / "audit-codex-session-store",
+        "scripts/agent/compaction-handoff-payload": global_home / "scripts" / "agent" / "compaction-handoff-payload",
+        "scripts/agent/contextlattice-session": global_home / "scripts" / "agent" / "contextlattice-session",
+        "scripts/agent_contracts.py": global_home / "scripts" / "agent_contracts.py",
+        "scripts/agent_orchestration.py": global_home / "scripts" / "agent_orchestration.py",
+        "scripts/contextlattice_client.py": global_home / "scripts" / "contextlattice_client.py",
+    }
     optional_dev = {
         "contextlattice_agent_orchestration": bin_dir / "contextlattice_agent_orchestration",
         "contextlattice_source_backfill": bin_dir / "contextlattice_source_backfill",
@@ -176,6 +195,20 @@ def main() -> int:
             extra["suggested_fix"] = "Run scripts/install_global_agent_tools.sh from a ContextLattice checkout."
         checks.append(record(name, installed and native, **extra))
 
+    for name, path in shell_wrappers.items():
+        installed = path.is_file() and os.access(path, os.X_OK)
+        extra = {"path": str(path), "shell_wrapper": True}
+        if not installed:
+            extra["suggested_fix"] = "Run scripts/install_global_agent_tools.sh from a current ContextLattice checkout."
+        checks.append(record(name, installed, **extra))
+
+    for label, path in hook_runtime_files.items():
+        installed = path.is_file() and (os.access(path, os.X_OK) or path.suffix == ".py")
+        extra = {"path": str(path), "runtime_dependency": True}
+        if not installed:
+            extra["suggested_fix"] = "Run scripts/install_global_agent_tools.sh from a current ContextLattice checkout."
+        checks.append(record(f"hook_runtime:{label}", installed, **extra))
+
     for name, path in optional_dev.items():
         installed = path.is_file() and os.access(path, os.X_OK)
         checks.append(record(
@@ -189,7 +222,7 @@ def main() -> int:
 
     adapter = str(expected["contextlattice_agent_adapter"])
     if expected["contextlattice_agent_adapter"].exists():
-        ok, payload, err = run_json([adapter, "profiles"], args.timeout)
+        ok, payload, err = run_json([adapter, "profiles"], args.timeout, runtime_env)
         result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
         checks.append(record(
             "adapter_profiles_contract",
@@ -201,9 +234,9 @@ def main() -> int:
 
     adopt = str(expected["contextlattice_adopt"])
     if expected["contextlattice_adopt"].exists():
-        ok, detail = run_text([adopt, "--help"], args.timeout)
+        ok, detail = run_text([adopt, "--help"], args.timeout, runtime_env)
         checks.append(record("adopt_help", ok, detail))
-        ok, payload, err = run_json([adopt, "status"], args.timeout)
+        ok, payload, err = run_json([adopt, "status"], args.timeout, runtime_env)
         checks.append(record(
             "adopt_status",
             ok and payload.get("ok") is True and json_payload_schema(payload) == "contextlattice_agent_adoption_status.v1",
@@ -211,7 +244,7 @@ def main() -> int:
             profiles=as_int(payload.get("profile_count")) if isinstance(payload, dict) else 0,
             schema=json_payload_schema(payload),
         ))
-        ok, payload, err = run_json([adopt, "profiles"], args.timeout)
+        ok, payload, err = run_json([adopt, "profiles"], args.timeout, runtime_env)
         result = payload.get("result") if isinstance(payload, dict) else {}
         checks.append(record(
             "adopt_profiles",
@@ -223,22 +256,22 @@ def main() -> int:
 
     proof = str(expected["contextlattice_agent_runtime_proof"])
     if expected["contextlattice_agent_runtime_proof"].exists():
-        ok, detail = run_text([proof, "--help"], args.timeout)
+        ok, detail = run_text([proof, "--help"], args.timeout, runtime_env)
         checks.append(record("runtime_proof_help", ok, detail))
 
     adoption_proof = str(expected["contextlattice_agent_adoption_proof"])
     if expected["contextlattice_agent_adoption_proof"].exists():
-        ok, detail = run_text([adoption_proof, "--help"], args.timeout)
+        ok, detail = run_text([adoption_proof, "--help"], args.timeout, runtime_env)
         checks.append(record("adoption_proof_help", ok, detail))
 
     agent_trace = str(expected["contextlattice_agent_trace"])
     if expected["contextlattice_agent_trace"].exists():
-        ok, detail = run_text([agent_trace, "--help"], args.timeout)
+        ok, detail = run_text([agent_trace, "--help"], args.timeout, runtime_env)
         checks.append(record("agent_trace_help", ok, detail))
 
     run_advisor = str(expected["contextlattice_run_advisor"])
     if expected["contextlattice_run_advisor"].exists():
-        ok, detail = run_text([run_advisor, "--help"], args.timeout)
+        ok, detail = run_text([run_advisor, "--help"], args.timeout, runtime_env)
         checks.append(record("run_advisor_help", ok, detail))
 
     hooks = hook_status(HOME / ".codex" / "hooks.json")
@@ -261,7 +294,7 @@ def main() -> int:
     ))
     skills_index = str(expected["contextlattice_skills_index"])
     if primary_count > 0 and expected["contextlattice_skills_index"].exists():
-        ok, payload, err = run_json([skills_index, "search", "objective loop", "--limit", "8"], args.timeout)
+        ok, payload, err = run_json([skills_index, "search", "objective loop", "--limit", "8"], args.timeout, runtime_env)
         results = skills_index_results(payload)
         active_visible = any(
             "/.codex/skills/" in str((item or {}).get("path") or "")

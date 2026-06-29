@@ -35,6 +35,26 @@ $hookEnvLines = @(
 )
 Set-Content -Path $HookEnvFile -Value $hookEnvLines -Encoding Ascii
 
+$hookRuntimePythonFiles = @(
+    "scripts\agent\_common.py",
+    "scripts\agent\audit-codex-session-store",
+    "scripts\agent\compaction-handoff-payload",
+    "scripts\agent\contextlattice-session",
+    "scripts\agent_contracts.py",
+    "scripts\agent_orchestration.py",
+    "scripts\contextlattice_client.py"
+)
+foreach ($relPath in $hookRuntimePythonFiles) {
+    $src = Join-Path $RepoRoot $relPath
+    if (-not (Test-Path $src)) {
+        throw "Missing required hook runtime script: $src"
+    }
+    $dstRel = $relPath -replace '^scripts\\', ''
+    $dst = Join-Path $ScriptsDir $dstRel
+    New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
+    Copy-Item -Path $src -Destination $dst -Force
+}
+
 if ($IncludeDevPythonTools.IsPresent) {
     $sourceScripts = @(
         "agent_orchestration.py",

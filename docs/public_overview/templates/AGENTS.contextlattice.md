@@ -30,7 +30,7 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `POST /v1/agents/preflight`
   - `POST /v1/codex/preflight` (compatibility alias)
 - Common profile keys:
-  - `codex`, `claude-code`, `opencode`, `hermes-agent`
+  - `codex`, `claude-code`, `opencode`, `hermes-agent`, `hermes-ultra`, `pi`, `droid`
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 - Global helper CLIs (auto-installed by quickstart/installers):
   - `contextlattice_agent_start` (hook-first startup guard)
@@ -53,12 +53,12 @@ SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 ```
 
-## 3) Checkpoints and Final Recency Pass
+## 3) Checkpoints and Conditional Recency Pass
 - During long tasks, write concise checkpoints via `POST /memory/write`.
-- Prefer `contextlattice_checkpoint` so every checkpoint also proves readback.
+- Prefer `contextlattice_checkpoint` when you need write verification; otherwise keep checkpoints concise and avoid unnecessary readback context.
 - Preserve `format_contract`, `format_contracts`, and `policy_context_package` fields returned by ContextLattice in downstream handoffs; do not invent or strip contract metadata.
 - When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
-- Before final output, run one recency retrieval pass (`/memory/search` or `/memory/context-pack`).
+- Before final output, run a recency retrieval pass (`/memory/search` or `/memory/context-pack`) when the task was long-running, high-risk, or likely affected by recent memory.
 - Before any context-compaction handoff, persist objective state through the adapter:
   - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`
 - Before a major model handoff or hard follow-up prompt, package the session:

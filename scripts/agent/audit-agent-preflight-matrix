@@ -43,6 +43,7 @@ DEFAULT_MATRIX_ORDER = (
     "hermes-agent",
     "hermes-ultra",
     "pi",
+    "droid",
     "chatgpt-web",
     "chatgpt-desktop",
     "claude-web",
@@ -62,6 +63,9 @@ REQUIRED_ALIASES = {
     "pi": "pi",
     "pi-agent": "pi",
     "pi_agent": "pi",
+    "droid": "droid",
+    "droid-agent": "droid",
+    "droid_agent": "droid",
 }
 
 def sample_context_pack(agent_id: str) -> dict[str, Any]:

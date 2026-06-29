@@ -2,7 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+TOOL_ROOT="$(contextlattice_root)"
 
 emit_codex_precompact_output() {
   local status="${1:-0}"
@@ -59,7 +61,7 @@ if len(encoded.encode("utf-8")) > max_bytes:
     }
     encoded = json.dumps(out, separators=(",", ":"))
 print(encoded)
-' "$status" "$REPO_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PreCompact checkpoint output emitter failed."}'
+' "$status" "$TOOL_ROOT" || printf '%s\n' '{"continue":true,"suppressOutput":false,"systemMessage":"ContextLattice PreCompact checkpoint output emitter failed."}'
 }
 
 summary="${1:-${CONTEXTLATTICE_COMPACTION_SUMMARY:-}}"
@@ -72,7 +74,7 @@ export CONTEXTLATTICE_CLIENT_TIMEOUT_SECS="${CONTEXTLATTICE_CLIENT_TIMEOUT_SECS:
 
 if [[ -z "${CONTEXTLATTICE_SESSION_ID:-}" && "${CONTEXTLATTICE_AUTO_SESSION_DISABLED:-0}" != "1" ]]; then
   set +e
-  session_out="$(python3 "${REPO_ROOT}/scripts/agent/contextlattice-session" ensure \
+  session_out="$(python3 "${TOOL_ROOT}/scripts/agent/contextlattice-session" ensure \
     "$summary" \
     --project "$project" \
     --agent "${CONTEXTLATTICE_AGENT:-compact-hook}" \
@@ -104,7 +106,7 @@ if [[ "${CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE:-}" == "1" ]]; then
 fi
 
 set +e
-handoff_payload="$(python3 "${REPO_ROOT}/scripts/agent/compaction-handoff-payload" --fallback-summary "${summary}" --summary)"
+handoff_payload="$(python3 "${TOOL_ROOT}/scripts/agent/compaction-handoff-payload" --fallback-summary "${summary}" --summary)"
 payload_status=$?
 set -e
 if [[ "$payload_status" -ne 0 ]]; then
@@ -113,7 +115,7 @@ if [[ "$payload_status" -ne 0 ]]; then
 fi
 
 set +e
-orchestration_out="$(python3 "${REPO_ROOT}/scripts/agent_orchestration.py" \
+orchestration_out="$(python3 "${TOOL_ROOT}/scripts/agent_orchestration.py" \
   compaction-handoff \
   "$project" \
   "$handoff_payload" \
