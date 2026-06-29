@@ -1997,6 +1997,139 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	}
 }
 
+func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		results := []map[string]any{
+			{
+				"project":    "contextlattice",
+				"file":       "notes/high-impact/decision.md",
+				"source":     "qdrant",
+				"score":      0.98,
+				"summary":    "decision: preserve user work; do not revert unrelated files; verify with `go test ./...` before claiming completion; risk regression if omitted.",
+				"topic_path": "runbooks/context-pack",
+				"timestamp":  "2026-06-28T00:00:00Z",
+			},
+			{
+				"project":    "contextlattice",
+				"file":       "notes/high-impact/checks.md",
+				"source":     "qdrant",
+				"score":      0.94,
+				"summary":    "acceptance criteria: context pack must expose token_budget, omitted_high_value_refs, and selected evidence with estimated_tokens.",
+				"topic_path": "runbooks/context-pack",
+			},
+			{
+				"project":    "contextlattice",
+				"file":       "notes/high-impact/risk.md",
+				"source":     "qdrant",
+				"score":      0.92,
+				"summary":    "known failure mode: returning the biggest memories first can waste the model budget and block actionable verification.",
+				"topic_path": "runbooks/context-pack",
+			},
+			{
+				"project":    "contextlattice",
+				"file":       "notes/background/architecture.md",
+				"source":     "qdrant",
+				"score":      0.71,
+				"summary":    strings.Repeat("background architecture detail with lower immediate action value. ", 30),
+				"topic_path": "background/context-pack",
+			},
+			{
+				"project":    "contextlattice",
+				"file":       "notes/background/history.md",
+				"source":     "qdrant",
+				"score":      0.69,
+				"summary":    strings.Repeat("historical context that may be useful later but is not the next check. ", 30),
+				"topic_path": "background/context-pack",
+			},
+			{
+				"project":    "contextlattice",
+				"file":       "notes/background/ideas.md",
+				"source":     "qdrant",
+				"score":      0.67,
+				"summary":    strings.Repeat("idea backlog context without direct acceptance criteria. ", 30),
+				"topic_path": "background/context-pack",
+			},
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results, "warnings": []any{}})
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"contextlattice","query":"budgeted context pack","topic_path":"runbooks/context-pack","limit":12,"max_facts":24,"target_context_pack_tokens":260,"include_retrieval_debug":true}`
+	resp, err := http.Post(gateway.URL+"/memory/context-pack", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("context-pack request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode context-pack payload: %v", err)
+	}
+	assertBoundaryContractPassed(t, contextPackResponseContractID, payload)
+	assertBoundaryJSONUnderLimit(t, contextPackResponseContractID, payload)
+	contextPack := anyMap(payload["context_pack"])
+	tokenBudget := anyMap(payload["token_budget"])
+	if !anyToBool(tokenBudget["active"]) || anyToInt(tokenBudget["target_context_pack_tokens"], 0) != 260 {
+		t.Fatalf("expected active target token budget, got %#v", tokenBudget)
+	}
+	if anyToString(tokenBudget["selection_strategy"]) != "impact_per_estimated_token_with_provenance_diversity" {
+		t.Fatalf("expected impact token selection strategy, got %#v", tokenBudget)
+	}
+	if nested := anyMap(contextPack["token_budget"]); !anyToBool(nested["active"]) {
+		t.Fatalf("expected nested token budget, got %#v", contextPack["token_budget"])
+	}
+	compiler := anyMap(payload["context_compiler"])
+	if anyToString(compiler["strategy"]) != "impact_per_token_prompt_packet" {
+		t.Fatalf("expected impact compiler strategy, got %#v", compiler)
+	}
+	ranked := contextPackAnyList(contextPack["ranked_evidence"])
+	if len(ranked) == 0 {
+		t.Fatalf("expected ranked evidence, got %#v", contextPack["ranked_evidence"])
+	}
+	highImpactSelected := false
+	for _, raw := range ranked {
+		item := anyMap(raw)
+		if anyToInt(item["estimated_tokens"], 0) <= 0 || anyToFloat(item["value_density"]) <= 0 || len(contextPackAnyList(item["why_selected"])) == 0 {
+			t.Fatalf("expected token-aware evidence metadata, got %#v", item)
+		}
+		switch anyToString(item["kind"]) {
+		case "decision", "risk", "check":
+			highImpactSelected = true
+		}
+	}
+	if !highImpactSelected {
+		t.Fatalf("expected protected decision/risk/check evidence under constrained budget, got %#v", ranked)
+	}
+	omitted := contextPackAnyList(payload["omitted_high_value_refs"])
+	if len(omitted) == 0 || len(contextPackAnyList(contextPack["omitted_high_value_refs"])) == 0 {
+		t.Fatalf("expected omitted high-value refs at root and nested pack, got root=%#v nested=%#v", payload["omitted_high_value_refs"], contextPack["omitted_high_value_refs"])
+	}
+	promptSections := anyMap(contextPack["prompt_sections"])
+	if !anyToBool(anyMap(promptSections["token_budget"])["active"]) || len(contextPackAnyList(promptSections["omitted_high_value_refs"])) == 0 {
+		t.Fatalf("expected prompt sections to expose budget and omitted refs, got %#v", promptSections)
+	}
+	referencePrompt := anyToString(payload["reference_prompt"])
+	if !strings.Contains(referencePrompt, "Context budget:") || !strings.Contains(referencePrompt, "Omitted high-value refs") {
+		t.Fatalf("expected reference prompt to describe token budget and omitted refs, got %q", referencePrompt)
+	}
+}
+
 func TestContextPackAgentRoutesClipOversizedBackendPayloads(t *testing.T) {
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")

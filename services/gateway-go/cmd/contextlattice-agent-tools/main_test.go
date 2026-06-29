@@ -86,6 +86,12 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 				"ok": true,
 				"context_pack": map[string]any{
 					"facts": []any{},
+					"token_budget": map[string]any{
+						"active": true,
+					},
+					"omitted_high_value_refs": []any{
+						map[string]any{"kind": "decision", "summary": "omitted"},
+					},
 				},
 				"format_contract": map[string]any{
 					"schema_id":         "context_pack_response.v1",
@@ -103,7 +109,7 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	var stdout bytes.Buffer
 	c := newCLI(&stdout, ioDiscard{})
 	c.baseURL = gateway.URL
-	if err := c.run([]string{"contextlattice_pack", "native pack", "--project", "alpha", "--mode", "fast", "--raw"}); err != nil {
+	if err := c.run([]string{"contextlattice_pack", "native pack", "--project", "alpha", "--mode", "fast", "--target-context-pack-tokens", "512", "--already-loaded-tokens", "200", "--raw"}); err != nil {
 		t.Fatalf("run pack: %v", err)
 	}
 	if packPayload["native_cli_implementation"] != true {
@@ -112,12 +118,21 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	if packPayload["session_id"] != "sess-test" {
 		t.Fatalf("expected session id from auto session: %#v", packPayload)
 	}
+	if asInt(packPayload["target_context_pack_tokens"]) != 512 || asInt(packPayload["already_loaded_tokens"]) != 200 {
+		t.Fatalf("expected token budget fields in pack request: %#v", packPayload)
+	}
 	var output map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
 	if output["ok"] != true {
 		t.Fatalf("expected ok output: %#v", output)
+	}
+	if !asBool(asMap(output["token_budget"])["active"]) {
+		t.Fatalf("expected normalized root token_budget from nested pack, got %#v", output)
+	}
+	if omitted := firstList(output["omitted_high_value_refs"]); len(omitted) == 0 {
+		t.Fatalf("expected normalized omitted refs from nested pack, got %#v", output)
 	}
 }
 

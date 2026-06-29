@@ -153,6 +153,7 @@ func (s *server) buildContextPackResponse(
 		searchResponse["session_id"] = sessionID
 	}
 
+	tokenBudget := contextPackTokenBudgetFromRequest(requestPayload)
 	contextPack := buildContextPackPayload(query, searchResponse, maxFacts, limit)
 	contextPack["project"] = strings.TrimSpace(anyToString(searchRequest["project"]))
 	contextPack["topic_path"] = strings.TrimSpace(anyToString(searchRequest["topic_path"]))
@@ -161,10 +162,14 @@ func (s *server) buildContextPackResponse(
 	sourceCoverage = contextPackSourceCoverageWithGraph(sourceCoverage, graphQuality)
 	contextPack["sourceCoverage"] = sourceCoverage
 	contextPack["combinedSources"] = combinedSources
-	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, effectiveObjectiveCtx)
+	compiled := compileContextPackForAgent(query, contextPack, sourceCoverage, effectiveObjectiveCtx, tokenBudget)
 	agentGuidance := anyMap(compiled["agent_guidance"])
 	contextPack["rankedEvidence"] = compiled["ranked_evidence"]
 	contextPack["ranked_evidence"] = compiled["ranked_evidence"]
+	contextPack["tokenBudget"] = compiled["token_budget"]
+	contextPack["token_budget"] = compiled["token_budget"]
+	contextPack["omittedHighValueRefs"] = compiled["omitted_high_value_refs"]
+	contextPack["omitted_high_value_refs"] = compiled["omitted_high_value_refs"]
 	contextPack["agentGuidance"] = agentGuidance
 	contextPack["agent_guidance"] = agentGuidance
 	contextPack["promptSections"] = compiled["prompt_sections"]
@@ -191,21 +196,23 @@ func (s *server) buildContextPackResponse(
 	contextPack["runAdvisor"] = runAdvisor
 	contextPack["run_advisor"] = runAdvisor
 	response := map[string]any{
-		"ok":                 true,
-		"query":              query,
-		"context_pack":       contextPack,
-		"context_compiler":   compiled["context_compiler"],
-		"agent_guidance":     agentGuidance,
-		"reference_prompt":   referencePrompt,
-		"run_advisor":        runAdvisor,
-		"warnings":           parseWarnings(searchResponse["warnings"]),
-		"retrieval_mode":     searchResponse["retrieval_mode"],
-		"retrieval_intent":   searchResponse["retrieval_intent"],
-		"traffic_class":      searchResponse["traffic_class"],
-		"agent_id":           searchResponse["agent_id"],
-		"session_id":         sessionID,
-		"source_coverage":    sourceCoverage,
-		"writeback_required": true,
+		"ok":                      true,
+		"query":                   query,
+		"context_pack":            contextPack,
+		"context_compiler":        compiled["context_compiler"],
+		"agent_guidance":          agentGuidance,
+		"reference_prompt":        referencePrompt,
+		"run_advisor":             runAdvisor,
+		"token_budget":            compiled["token_budget"],
+		"omitted_high_value_refs": compiled["omitted_high_value_refs"],
+		"warnings":                parseWarnings(searchResponse["warnings"]),
+		"retrieval_mode":          searchResponse["retrieval_mode"],
+		"retrieval_intent":        searchResponse["retrieval_intent"],
+		"traffic_class":           searchResponse["traffic_class"],
+		"agent_id":                searchResponse["agent_id"],
+		"session_id":              sessionID,
+		"source_coverage":         sourceCoverage,
+		"writeback_required":      true,
 	}
 	if includeRetrievalDebug {
 		if retrievalDebug, ok := searchResponse["retrieval_debug"]; ok {
@@ -505,8 +512,96 @@ func mergeContextPackFiles(existing any, graphRows []any, limit int) []any {
 	return out
 }
 
-func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext) map[string]any {
-	rankedEvidence := contextPackRankedEvidence(contextPack)
+type contextPackTokenBudget struct {
+	AgentContextBudgetTokens int
+	ModelContextWindowTokens int
+	ReservedResponseTokens   int
+	AlreadyLoadedTokens      int
+	TargetContextPackTokens  int
+	RankedEvidenceTokens     int
+	Active                   bool
+	EstimateMethod           string
+}
+
+type contextPackEvidenceAllocation struct {
+	RankedEvidence       []any
+	OmittedHighValueRefs []any
+	TokenBudget          map[string]any
+	UsedTokensEstimate   int
+	CompressionLevel     string
+}
+
+type contextPackEvidenceItem struct {
+	Rank            int
+	Kind            string
+	Score           float64
+	ImpactScore     float64
+	ValueDensity    float64
+	Reason          string
+	Text            string
+	Project         string
+	File            string
+	Source          string
+	TopicPath       string
+	Timestamp       string
+	Confidence      float64
+	EstimatedTokens int
+	WhySelected     []any
+	DiversityKey    string
+}
+
+func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenBudget {
+	readInt := func(keys ...string) int {
+		for _, key := range keys {
+			if value, ok := payload[key]; ok {
+				parsed := anyToInt(value, 0)
+				if parsed > 0 {
+					return parsed
+				}
+			}
+		}
+		return 0
+	}
+	budget := contextPackTokenBudget{
+		AgentContextBudgetTokens: readInt("agent_context_budget_tokens", "agentContextBudgetTokens"),
+		ModelContextWindowTokens: readInt("model_context_window_tokens", "modelContextWindowTokens"),
+		ReservedResponseTokens:   readInt("reserved_response_tokens", "reservedResponseTokens"),
+		AlreadyLoadedTokens:      readInt("already_loaded_tokens", "alreadyLoadedTokens"),
+		TargetContextPackTokens:  readInt("target_context_pack_tokens", "targetContextPackTokens", "budget_tokens", "budgetTokens"),
+		EstimateMethod:           "chars_div_4",
+	}
+	if budget.TargetContextPackTokens <= 0 {
+		available := 0
+		if budget.AgentContextBudgetTokens > 0 {
+			available = budget.AgentContextBudgetTokens
+		} else if budget.ModelContextWindowTokens > 0 {
+			available = budget.ModelContextWindowTokens
+		}
+		available -= budget.ReservedResponseTokens
+		available -= budget.AlreadyLoadedTokens
+		if available > 0 {
+			budget.TargetContextPackTokens = available
+		}
+	}
+	if budget.TargetContextPackTokens > 0 {
+		budget.TargetContextPackTokens = clampInt(budget.TargetContextPackTokens, 128, 32768)
+		budget.RankedEvidenceTokens = clampInt((budget.TargetContextPackTokens*60)/100, 96, budget.TargetContextPackTokens)
+		budget.Active = true
+	}
+	return budget
+}
+
+func contextPackEstimateTokens(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 1
+	}
+	return maxInt(1, len(text)/4)
+}
+
+func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext, tokenBudget contextPackTokenBudget) map[string]any {
+	allocation := contextPackRankedEvidence(contextPack, tokenBudget)
+	rankedEvidence := allocation.RankedEvidence
 	agentGuidance := buildAgentEvidenceGuidance(agentEvidenceGuidanceInput{
 		Query:          query,
 		Surface:        "context_pack",
@@ -517,53 +612,73 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 		MaxLinks:       5,
 		MaxHints:       8,
 	})
-	promptSections := contextPackPromptSections(query, contextPack, sourceCoverage, objectiveCtx, rankedEvidence, agentGuidance)
+	promptSections := contextPackPromptSections(query, contextPack, sourceCoverage, objectiveCtx, rankedEvidence, allocation.TokenBudget, allocation.OmittedHighValueRefs, agentGuidance)
+	strategy := "ranked_evidence_prompt_packet"
+	if tokenBudget.Active {
+		strategy = "impact_per_token_prompt_packet"
+	}
 	compiler := map[string]any{
 		"schema_id":           "contextlattice_context_compiler.v1",
 		"version":             1,
-		"strategy":            "ranked_evidence_prompt_packet",
+		"strategy":            strategy,
 		"intended_use":        "send the next model call with bounded task context, ranked evidence, constraints, and checks",
 		"recommended_surface": "cli_for_local_agents",
 		"alternate_surfaces": []any{
 			"http_for_app_integrations",
 			"mcp_for_tool_calling_hosts",
 		},
-		"ranked_evidence_count": len(rankedEvidence),
-		"agent_guidance":        true,
-		"source_count":          len(anyToStringList(sourceCoverage["returned"], 64)),
-		"complete":              anyToBool(sourceCoverage["complete"]),
+		"ranked_evidence_count":           len(rankedEvidence),
+		"ranked_evidence_tokens_estimate": allocation.UsedTokensEstimate,
+		"omitted_high_value_ref_count":    len(allocation.OmittedHighValueRefs),
+		"token_budget":                    allocation.TokenBudget,
+		"agent_guidance":                  true,
+		"source_count":                    len(anyToStringList(sourceCoverage["returned"], 64)),
+		"complete":                        anyToBool(sourceCoverage["complete"]),
 		"guardrails": []any{
 			"bounded_contract_output",
+			"impact_per_estimated_token_selection",
 			"cite_or_inspect_before_claims",
 			"no_raw_logs_or_volatile_artifacts",
 			"strict_numeric_copy",
 		},
 	}
 	return map[string]any{
-		"context_compiler": compiler,
-		"ranked_evidence":  rankedEvidence,
-		"agent_guidance":   agentGuidance,
-		"prompt_sections":  promptSections,
-		"reference_prompt": contextPackReferencePrompt(promptSections),
+		"context_compiler":        compiler,
+		"ranked_evidence":         rankedEvidence,
+		"token_budget":            allocation.TokenBudget,
+		"omitted_high_value_refs": allocation.OmittedHighValueRefs,
+		"agent_guidance":          agentGuidance,
+		"prompt_sections":         promptSections,
+		"reference_prompt":        contextPackReferencePrompt(promptSections),
 	}
 }
 
-func contextPackRankedEvidence(contextPack map[string]any) []any {
-	type evidenceItem struct {
-		Rank       int
-		Kind       string
-		Score      float64
-		Reason     string
-		Text       string
-		Project    string
-		File       string
-		Source     string
-		TopicPath  string
-		Timestamp  string
-		Confidence float64
-	}
-	out := []evidenceItem{}
+func contextPackRankedEvidence(contextPack map[string]any, tokenBudget contextPackTokenBudget) contextPackEvidenceAllocation {
+	out := []contextPackEvidenceItem{}
 	seen := map[string]struct{}{}
+	impactSignals := func(kind string, text string, source map[string]any) []any {
+		signals := []any{kind + "_priority"}
+		lower := strings.ToLower(text)
+		if strings.TrimSpace(anyToString(source["file"])) != "" {
+			signals = append(signals, "file_provenance")
+		}
+		if strings.TrimSpace(anyToString(source["source"])) != "" {
+			signals = append(signals, "source_provenance")
+		}
+		if strings.TrimSpace(anyToString(source["topic_path"])) != "" {
+			signals = append(signals, "topic_scope")
+		}
+		if containsAny(lower, []string{"fail", "failure", "timeout", "blocked", "blocker", "regression", "risk", "contradict", "do not", "must not"}) {
+			signals = append(signals, "risk_or_contradiction_signal")
+		}
+		if containsAny(lower, []string{"verify", "test", "check", "acceptance", "must pass", "script", "command", "gmake", "go test", "pytest", "curl"}) {
+			signals = append(signals, "actionable_verification_signal")
+		}
+		if strings.TrimSpace(anyToString(source["timestamp"])) != "" {
+			signals = append(signals, "timestamped")
+		}
+		return signals
+	}
 	add := func(kind string, baseScore float64, reason string, text string, source map[string]any) {
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -583,17 +698,38 @@ func contextPackRankedEvidence(contextPack map[string]any) []any {
 		if sourceScore > 0 {
 			score += sourceScore * 10
 		}
-		out = append(out, evidenceItem{
-			Kind:       kind,
-			Score:      score,
-			Reason:     reason,
-			Text:       clipText(text, 520),
-			Project:    project,
-			File:       fileName,
-			Source:     sourceName,
-			TopicPath:  topicPath,
-			Timestamp:  strings.TrimSpace(anyToString(source["timestamp"])),
-			Confidence: roundFloat(clampFloat(score/100, 0.1, 0.99), 3),
+		signals := impactSignals(kind, text, source)
+		for _, raw := range signals {
+			switch anyToString(raw) {
+			case "risk_or_contradiction_signal":
+				score += 10
+			case "actionable_verification_signal":
+				score += 8
+			case "file_provenance", "source_provenance", "topic_scope":
+				score += 3
+			case "timestamped":
+				score += 2
+			}
+		}
+		clippedText := clipText(text, 520)
+		estimatedTokens := contextPackEstimateTokens(clippedText + " " + reason + " " + project + " " + fileName + " " + sourceName + " " + topicPath)
+		diversityKey := firstNonEmptyStrings(fileName, topicPath, sourceName, kind)
+		out = append(out, contextPackEvidenceItem{
+			Kind:            kind,
+			Score:           score,
+			ImpactScore:     score,
+			Reason:          reason,
+			Text:            clippedText,
+			Project:         project,
+			File:            fileName,
+			Source:          sourceName,
+			TopicPath:       topicPath,
+			Timestamp:       strings.TrimSpace(anyToString(source["timestamp"])),
+			Confidence:      roundFloat(clampFloat(score/100, 0.1, 0.99), 3),
+			EstimatedTokens: estimatedTokens,
+			ValueDensity:    roundFloat(score/float64(maxInt(estimatedTokens, 1)), 4),
+			WhySelected:     signals,
+			DiversityKey:    diversityKey,
 		})
 	}
 	for _, item := range contextPackAnyList(contextPack["relevant_decisions"]) {
@@ -638,18 +774,23 @@ func contextPackRankedEvidence(contextPack map[string]any) []any {
 		}
 		return out[i].Score > out[j].Score
 	})
-	limit := minInt(len(out), 16)
+	selected, omitted, usedTokens, compressionLevel := allocateContextPackEvidence(out, tokenBudget)
+	limit := minInt(len(selected), 16)
 	rendered := make([]any, 0, limit)
 	for idx := 0; idx < limit; idx++ {
-		item := out[idx]
+		item := selected[idx]
 		item.Rank = idx + 1
 		renderedItem := map[string]any{
-			"rank":       item.Rank,
-			"kind":       item.Kind,
-			"score":      roundFloat(item.Score, 3),
-			"confidence": item.Confidence,
-			"reason":     item.Reason,
-			"text":       item.Text,
+			"rank":             item.Rank,
+			"kind":             item.Kind,
+			"score":            roundFloat(item.Score, 3),
+			"impact_score":     roundFloat(item.ImpactScore, 3),
+			"value_density":    item.ValueDensity,
+			"estimated_tokens": item.EstimatedTokens,
+			"confidence":       item.Confidence,
+			"reason":           item.Reason,
+			"why_selected":     item.WhySelected,
+			"text":             item.Text,
 		}
 		if item.Project != "" {
 			renderedItem["project"] = item.Project
@@ -668,7 +809,189 @@ func contextPackRankedEvidence(contextPack map[string]any) []any {
 		}
 		rendered = append(rendered, renderedItem)
 	}
-	return rendered
+	omittedRefs := renderOmittedHighValueRefs(omitted, 8)
+	tokenReport := contextPackTokenBudgetReport(tokenBudget, usedTokens, len(rendered), len(omittedRefs), compressionLevel)
+	return contextPackEvidenceAllocation{
+		RankedEvidence:       rendered,
+		OmittedHighValueRefs: omittedRefs,
+		TokenBudget:          tokenReport,
+		UsedTokensEstimate:   usedTokens,
+		CompressionLevel:     compressionLevel,
+	}
+}
+
+func allocateContextPackEvidence(items []contextPackEvidenceItem, tokenBudget contextPackTokenBudget) ([]contextPackEvidenceItem, []contextPackEvidenceItem, int, string) {
+	if !tokenBudget.Active || tokenBudget.RankedEvidenceTokens <= 0 {
+		limit := minInt(len(items), 16)
+		selected := append([]contextPackEvidenceItem{}, items[:limit]...)
+		used := 0
+		for _, item := range selected {
+			used += item.EstimatedTokens
+		}
+		return selected, []contextPackEvidenceItem{}, used, "none"
+	}
+
+	budget := maxInt(96, tokenBudget.RankedEvidenceTokens)
+	selected := []contextPackEvidenceItem{}
+	omitted := []contextPackEvidenceItem{}
+	remaining := append([]contextPackEvidenceItem{}, items...)
+	selectedDiversity := map[string]int{}
+	used := 0
+	compressionLevel := "none"
+
+	isProtected := func(item contextPackEvidenceItem) bool {
+		if (item.Kind == "risk" || item.Kind == "check" || item.Kind == "decision") && item.Score >= 80 {
+			return true
+		}
+		for _, signal := range item.WhySelected {
+			if anyToString(signal) == "risk_or_contradiction_signal" {
+				return true
+			}
+		}
+		return false
+	}
+	addSelected := func(item contextPackEvidenceItem) {
+		selected = append(selected, item)
+		used += item.EstimatedTokens
+		if item.DiversityKey != "" {
+			selectedDiversity[item.DiversityKey]++
+		}
+	}
+	tryFit := func(item contextPackEvidenceItem) (contextPackEvidenceItem, bool) {
+		if used+item.EstimatedTokens <= budget {
+			return item, true
+		}
+		available := budget - used
+		if available < 40 {
+			return item, false
+		}
+		clipped := item
+		clipped.Text = clipText(item.Text, maxInt(80, (available-16)*4))
+		clipped.EstimatedTokens = contextPackEstimateTokens(clipped.Text + " " + clipped.Reason + " " + clipped.Project + " " + clipped.File + " " + clipped.Source + " " + clipped.TopicPath)
+		clipped.ValueDensity = roundFloat(clipped.Score/float64(maxInt(clipped.EstimatedTokens, 1)), 4)
+		clipped.WhySelected = append(append([]any{}, clipped.WhySelected...), "compressed_to_fit_budget")
+		if used+clipped.EstimatedTokens <= budget {
+			compressionLevel = "compact"
+			return clipped, true
+		}
+		return item, false
+	}
+
+	filtered := remaining[:0]
+	for _, item := range remaining {
+		if !isProtected(item) {
+			filtered = append(filtered, item)
+			continue
+		}
+		if fitted, ok := tryFit(item); ok {
+			addSelected(fitted)
+		} else {
+			omitted = append(omitted, item)
+		}
+	}
+	remaining = filtered
+
+	for len(remaining) > 0 && len(selected) < 16 {
+		bestIdx := -1
+		bestAdjusted := -1.0
+		bestRawScore := -1.0
+		for idx, item := range remaining {
+			adjusted := item.ValueDensity
+			if item.DiversityKey != "" && selectedDiversity[item.DiversityKey] > 0 {
+				adjusted *= 0.55
+			}
+			if adjusted > bestAdjusted || (adjusted == bestAdjusted && item.Score > bestRawScore) {
+				bestIdx = idx
+				bestAdjusted = adjusted
+				bestRawScore = item.Score
+			}
+		}
+		if bestIdx < 0 {
+			break
+		}
+		item := remaining[bestIdx]
+		remaining = append(remaining[:bestIdx], remaining[bestIdx+1:]...)
+		if fitted, ok := tryFit(item); ok {
+			addSelected(fitted)
+			continue
+		}
+		omitted = append(omitted, item)
+		if budget-used < 40 {
+			break
+		}
+	}
+	omitted = append(omitted, remaining...)
+
+	sort.SliceStable(selected, func(i, j int) bool {
+		if selected[i].Score == selected[j].Score {
+			return selected[i].Kind < selected[j].Kind
+		}
+		return selected[i].Score > selected[j].Score
+	})
+	sort.SliceStable(omitted, func(i, j int) bool {
+		if omitted[i].Score == omitted[j].Score {
+			return omitted[i].EstimatedTokens > omitted[j].EstimatedTokens
+		}
+		return omitted[i].Score > omitted[j].Score
+	})
+	if len(omitted) > 0 && compressionLevel == "none" {
+		compressionLevel = "selective_omission"
+	}
+	return selected, omitted, used, compressionLevel
+}
+
+func renderOmittedHighValueRefs(items []contextPackEvidenceItem, limit int) []any {
+	out := []any{}
+	for _, item := range items {
+		if len(out) >= limit {
+			break
+		}
+		if item.Score < 70 && len(out) > 0 {
+			continue
+		}
+		row := map[string]any{
+			"kind":             item.Kind,
+			"score":            roundFloat(item.Score, 3),
+			"impact_score":     roundFloat(item.ImpactScore, 3),
+			"estimated_tokens": item.EstimatedTokens,
+			"reason":           item.Reason,
+			"omitted_reason":   "budget_or_diversity_limit",
+			"summary":          clipText(item.Text, 220),
+		}
+		if item.Project != "" {
+			row["project"] = item.Project
+		}
+		if item.File != "" {
+			row["file"] = item.File
+		}
+		if item.Source != "" {
+			row["source"] = item.Source
+		}
+		if item.TopicPath != "" {
+			row["topic_path"] = item.TopicPath
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func contextPackTokenBudgetReport(tokenBudget contextPackTokenBudget, usedTokens int, selectedCount int, omittedCount int, compressionLevel string) map[string]any {
+	return map[string]any{
+		"schema_id":                     "contextlattice_context_token_budget.v1",
+		"active":                        tokenBudget.Active,
+		"estimate_method":               firstNonEmptyStrings(tokenBudget.EstimateMethod, "chars_div_4"),
+		"selection_strategy":            "impact_per_estimated_token_with_provenance_diversity",
+		"agent_context_budget_tokens":   tokenBudget.AgentContextBudgetTokens,
+		"model_context_window_tokens":   tokenBudget.ModelContextWindowTokens,
+		"reserved_response_tokens":      tokenBudget.ReservedResponseTokens,
+		"already_loaded_tokens":         tokenBudget.AlreadyLoadedTokens,
+		"target_context_pack_tokens":    tokenBudget.TargetContextPackTokens,
+		"ranked_evidence_budget_tokens": tokenBudget.RankedEvidenceTokens,
+		"used_tokens_estimate":          usedTokens,
+		"selected_count":                selectedCount,
+		"omitted_high_value_count":      omittedCount,
+		"compression_level":             compressionLevel,
+	}
 }
 
 func contextPackPromptSections(
@@ -677,6 +1000,8 @@ func contextPackPromptSections(
 	sourceCoverage map[string]any,
 	objectiveCtx objectiveContext,
 	rankedEvidence []any,
+	tokenBudget map[string]any,
+	omittedHighValueRefs []any,
 	agentGuidance map[string]any,
 ) map[string]any {
 	files := anyToStringList(contextPack["files_to_read"], 12)
@@ -702,20 +1027,22 @@ func contextPackPromptSections(
 		query,
 	)
 	return map[string]any{
-		"objective":           clipText(objective, 900),
-		"task":                clipText(query, 900),
-		"mission":             clipText(objectiveCtx.Mission, 900),
-		"goal":                clipText(objectiveCtx.Goal, 900),
-		"objective_hierarchy": hierarchy,
-		"objective_lineage":   lineage,
-		"next_action":         clipText(nextAction, 900),
-		"evidence":            rankedEvidence,
-		"agent_guidance":      agentGuidance,
-		"files_to_inspect":    files,
-		"commands":            commands,
-		"checks":              checks,
-		"risks":               risks,
-		"capabilities":        capabilities,
+		"objective":               clipText(objective, 900),
+		"task":                    clipText(query, 900),
+		"mission":                 clipText(objectiveCtx.Mission, 900),
+		"goal":                    clipText(objectiveCtx.Goal, 900),
+		"objective_hierarchy":     hierarchy,
+		"objective_lineage":       lineage,
+		"next_action":             clipText(nextAction, 900),
+		"evidence":                rankedEvidence,
+		"token_budget":            tokenBudget,
+		"omitted_high_value_refs": omittedHighValueRefs,
+		"agent_guidance":          agentGuidance,
+		"files_to_inspect":        files,
+		"commands":                commands,
+		"checks":                  checks,
+		"risks":                   risks,
+		"capabilities":            capabilities,
 		"source_coverage": map[string]any{
 			"returned": anyToStringList(sourceCoverage["returned"], 16),
 			"pending":  anyToStringList(sourceCoverage["pending"], 16),
@@ -726,6 +1053,7 @@ func contextPackPromptSections(
 			"Prefer cited evidence over inference.",
 			"Inspect files before claiming current code behavior.",
 			"Do not include raw logs, volatile telemetry, secrets, or oversized provider errors.",
+			"If omitted_high_value_refs is non-empty, treat it as frontier context and retrieve before relying on it.",
 			"Keep the next model call focused on the requested task and acceptance checks.",
 		},
 	}
@@ -756,6 +1084,9 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 		lines = append(lines, "Subobjectives: "+strings.Join(subobjectives, "; "))
 	}
 	lines = append(lines, "Next action: "+anyToString(promptSections["next_action"]))
+	if budget := anyMap(promptSections["token_budget"]); len(budget) > 0 && anyToBool(budget["active"]) {
+		lines = append(lines, "Context budget: selected "+anyToString(budget["selected_count"])+" ranked evidence items using ~"+anyToString(budget["used_tokens_estimate"])+"/"+anyToString(budget["ranked_evidence_budget_tokens"])+" estimated ranked-evidence tokens; compression="+anyToString(budget["compression_level"])+".")
+	}
 	lines = append(lines, "", "Ranked evidence:")
 	evidence := contextPackAnyList(promptSections["evidence"])
 	if len(evidence) == 0 {
@@ -772,6 +1103,22 @@ func contextPackReferencePrompt(promptSections map[string]any) string {
 			line += " (" + citation + ")"
 		}
 		lines = append(lines, line)
+	}
+	if omitted := contextPackAnyList(promptSections["omitted_high_value_refs"]); len(omitted) > 0 {
+		lines = append(lines, "", "Omitted high-value refs:")
+		for idx, item := range omitted {
+			if idx >= 5 {
+				break
+			}
+			entry := anyMap(item)
+			citation := contextPackEvidenceCitation(entry)
+			line := "- [" + anyToString(entry["kind"]) + "] " + firstNonEmptyStrings(anyToString(entry["summary"]), anyToString(entry["text"]))
+			if citation != "" {
+				line += " (" + citation + ")"
+			}
+			lines = append(lines, line)
+		}
+		lines = append(lines, "Retrieve omitted refs before making claims based on them.")
 	}
 	if files := anyToStringList(promptSections["files_to_inspect"], 8); len(files) > 0 {
 		lines = append(lines, "", "Files to inspect:")
