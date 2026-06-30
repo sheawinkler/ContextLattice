@@ -59,6 +59,8 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
     failedWebhooks: number;
     windowDays: number;
   } | null>(null);
+  const authRequired = dashboardClientAuthRequired();
+  const accountBillingEnabled = authRequired && !!session?.user;
 
   useEffect(() => {
     if (searchParams.get("success") === "1") {
@@ -105,6 +107,9 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
   }, []);
 
   useEffect(() => {
+    if (!accountBillingEnabled) {
+      return;
+    }
     fetch("/api/billing/reconcile/status")
       .then((res) => res.json())
       .then((data) => {
@@ -117,9 +122,12 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
         }
       })
       .catch(() => undefined);
-  }, []);
+  }, [accountBillingEnabled]);
 
   useEffect(() => {
+    if (!accountBillingEnabled) {
+      return;
+    }
     fetch("/api/billing/summary")
       .then((res) => res.json())
       .then((data) => {
@@ -128,7 +136,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
         }
       })
       .catch(() => undefined);
-  }, []);
+  }, [accountBillingEnabled]);
 
   async function startStripe(planId: string) {
     setMessage(null);
@@ -235,12 +243,16 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
           first, PayPal next, and crypto if you prefer on-chain settlement.
         </p>
         <div className="mt-4 text-sm text-slate-300 space-y-1">
-          <p><strong>Step 1:</strong> confirm you are signed in.</p>
+          <p><strong>Step 1:</strong> {authRequired ? "confirm you are signed in." : "run locally; dashboard accounts are off by default."}</p>
           <p><strong>Step 2:</strong> choose monthly or annual.</p>
           <p><strong>Step 3:</strong> complete checkout with any provider below.</p>
           <p><strong>Step 4:</strong> after confirmation, open <a className="underline" href="/downloads">Downloads</a>.</p>
         </div>
-        {!session?.user ? (
+        {!authRequired ? (
+          <p className="text-sm text-slate-300 mt-3">
+            Local OSS mode is account-free. Billing actions stay inactive until you set <code>AUTH_REQUIRED=true</code>.
+          </p>
+        ) : !session?.user ? (
           <p className="text-sm text-amber-300 mt-3">
             You are not signed in. <a className="underline" href="/auth/login">Sign in</a> to attach billing to your account.
           </p>
@@ -268,7 +280,15 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
 
       <section className="card space-y-2">
         <h3 className="text-lg font-semibold">Current plan</h3>
-        {summary ? (
+        {!authRequired ? (
+          <p className="text-sm text-slate-400">
+            Subscription summary is account-scoped and hidden in local OSS mode.
+          </p>
+        ) : !session?.user ? (
+          <p className="text-sm text-slate-400">
+            Sign in to view subscription summary and entitlements.
+          </p>
+        ) : summary ? (
           <>
             <p className="text-sm text-slate-300">
               Plan name:{" "}
@@ -374,7 +394,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded bg-emerald-500 text-emerald-950 py-2 font-semibold"
                 onClick={() => startStripe(plan.id)}
-                disabled={providers.stripe && !providers.stripe.enabled}
+                disabled={!accountBillingEnabled || (providers.stripe && !providers.stripe.enabled)}
               >
                 Pay with card (Stripe Checkout)
               </button>
@@ -384,7 +404,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded border border-slate-700 py-2"
                 onClick={() => startStripe(plan.id)}
-                disabled={providers["apple-pay"] && !providers["apple-pay"].enabled}
+                disabled={!accountBillingEnabled || (providers["apple-pay"] && !providers["apple-pay"].enabled)}
               >
                 Pay with Apple Pay (via Stripe)
               </button>
@@ -396,7 +416,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded border border-slate-700 py-2"
                 onClick={() => startStripe(plan.id)}
-                disabled={providers["google-pay"] && !providers["google-pay"].enabled}
+                disabled={!accountBillingEnabled || (providers["google-pay"] && !providers["google-pay"].enabled)}
               >
                 Pay with Google Pay (via Stripe)
               </button>
@@ -408,7 +428,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded border border-slate-700 py-2"
                 onClick={() => startPayPal(plan.id)}
-                disabled={providers.paypal && !providers.paypal.enabled}
+                disabled={!accountBillingEnabled || (providers.paypal && !providers.paypal.enabled)}
               >
                 Pay with PayPal
               </button>
@@ -418,7 +438,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded border border-slate-700 py-2"
                 onClick={() => startSolanaPay(plan.id)}
-                disabled={providers["solana-pay"] && !providers["solana-pay"].enabled}
+                disabled={!accountBillingEnabled || (providers["solana-pay"] && !providers["solana-pay"].enabled)}
               >
                 Pay with Solana Pay
               </button>
@@ -432,7 +452,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded border border-slate-700 py-2"
                 onClick={() => startKrak(plan.id)}
-                disabled={providers.kraken && !providers.kraken.enabled}
+                disabled={!accountBillingEnabled || (providers.kraken && !providers.kraken.enabled)}
               >
                 Pay with Kraken
               </button>
@@ -442,7 +462,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
               <button
                 className="w-full rounded border border-slate-700 py-2"
                 onClick={() => startCoinbase(plan.id)}
-                disabled={providers.coinbase && !providers.coinbase.enabled}
+                disabled={!accountBillingEnabled || (providers.coinbase && !providers.coinbase.enabled)}
               >
                 Pay with Coinbase Commerce
               </button>
@@ -482,6 +502,7 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
         <button
           className="mt-4 rounded border border-slate-700 px-4 py-2"
           onClick={() => openStripePortal()}
+          disabled={!accountBillingEnabled}
         >
           Open Stripe portal
         </button>
@@ -495,7 +516,9 @@ function BillingPageContent({ session }: { session: DashboardSessionLike }) {
 
       <section className="card">
         <h3 className="text-lg font-semibold">Recent payment activity</h3>
-        {summary?.intents?.length ? (
+        {!accountBillingEnabled ? (
+          <p className="text-sm text-slate-400 mt-2">Account billing history is disabled in local OSS mode.</p>
+        ) : summary?.intents?.length ? (
           <div className="mt-3 space-y-2 text-sm text-slate-300">
             {summary.intents.map((intent, idx) => (
               <div key={`${intent.provider}-${intent.createdAt}-${idx}`} className="rounded border border-slate-800 px-3 py-2">
