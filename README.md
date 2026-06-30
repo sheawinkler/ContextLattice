@@ -50,6 +50,58 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Quickstart
 
+### Agent Quickstart: Install + Integrate
+
+If you are an AI agent reading this README because a user asked you to install or integrate ContextLattice, follow this section directly. Do not wait for the user to copy another prompt back to you.
+
+Human users can also paste the block below into Codex, Claude Code, Hermes, OpenCode, or another terminal-capable agent.
+
+```text
+You are integrating ContextLattice.
+
+Repository:
+https://github.com/sheawinkler/ContextLattice.git
+
+Goals:
+- Install and launch ContextLattice locally.
+- Verify the runtime is healthy.
+- Integrate the target repo with ContextLattice-supported agent profiles.
+- Do not install third-party agent harnesses unless the user explicitly asks.
+
+Important:
+- `contextlattice_adopt integrate` writes managed instruction blocks for supported profiles.
+- It does not install Codex, Claude Code, Hermes, Hermes Ultra, Pi, Droid, or other agents.
+- Preserve existing user text in repo instruction files.
+- If you are already inside a ContextLattice checkout, do not clone a duplicate repo.
+
+Install ContextLattice:
+
+git clone https://github.com/sheawinkler/ContextLattice.git
+cd ContextLattice
+cp .env.example .env
+gmake quickstart
+
+Verify ContextLattice:
+
+curl -fsS http://127.0.0.1:8075/health | jq
+contextlattice_adopt status --pretty
+
+Integrate the target repo:
+
+cd /path/to/target/repo
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
+contextlattice_doctor --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --skip-provider-smoke --pretty
+
+If any step fails:
+- Report the exact failing command and path.
+- Fix only the local setup issue needed for that failure.
+- Rerun the check.
+- If ContextLattice is unreachable, continue in degraded-memory mode and say so explicitly.
+```
+
+For the full reusable agent contract, see `docs/public_overview/templates/agents/universal.md`.
+
 ### 1) Clone and configure
 
 ```bash
