@@ -2549,21 +2549,244 @@ func agentProcessIgnored(command, args string) bool {
 }
 
 func agentProcessMatches(command, args string, patterns []string) bool {
-	base := strings.ToLower(filepath.Base(command))
-	haystack := strings.ToLower(command + " " + args)
+	identities := agentProcessIdentities(command, args)
+	if len(identities) == 0 {
+		return false
+	}
 	for _, pattern := range patterns {
-		p := strings.ToLower(strings.TrimSpace(pattern))
+		p := normalizeProcessIdentity(pattern)
 		if p == "" {
 			continue
 		}
-		if base == p || strings.Contains(base, p) {
-			return true
-		}
-		if len(p) > 2 && strings.Contains(haystack, p) {
-			return true
+		for _, identity := range identities {
+			if identity == p {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func agentProcessIdentities(command, args string) []string {
+	identities := []string{}
+	add := func(value string) {
+		identity := normalizeProcessIdentity(value)
+		if identity != "" {
+			identities = append(identities, identity)
+		}
+	}
+	add(command)
+	tokens := strings.Fields(args)
+	if len(tokens) == 0 {
+		return uniqueStrings(identities)
+	}
+	add(tokens[0])
+	identities = append(identities, executableTargetIdentities(tokens)...)
+	return uniqueStrings(identities)
+}
+
+func executableTargetIdentities(tokens []string) []string {
+	if len(tokens) == 0 {
+		return nil
+	}
+	name := normalizeProcessIdentity(tokens[0])
+	if name == "" {
+		return nil
+	}
+	if isShellProcessName(name) {
+		return nil
+	}
+	if isEnvProcessName(name) {
+		return executableTargetIdentities(skipEnvArgs(tokens[1:]))
+	}
+	if isInterpreterProcessName(name) {
+		return interpreterTargetIdentities(tokens[1:])
+	}
+	if isPackageRunnerProcessName(name) {
+		return packageRunnerTargetIdentities(name, tokens[1:])
+	}
+	return []string{name}
+}
+
+func interpreterTargetIdentities(tokens []string) []string {
+	for i := 0; i < len(tokens); i++ {
+		token := strings.TrimSpace(tokens[i])
+		if token == "" {
+			continue
+		}
+		if token == "-m" && i+1 < len(tokens) {
+			return moduleTargetIdentities(tokens[i+1])
+		}
+		if strings.HasPrefix(token, "-") {
+			if interpreterOptionTakesValue(token) && i+1 < len(tokens) {
+				i++
+			}
+			continue
+		}
+		return []string{normalizeProcessIdentity(token)}
+	}
+	return nil
+}
+
+func moduleTargetIdentities(module string) []string {
+	module = strings.Trim(strings.TrimSpace(module), `"'`)
+	module = strings.TrimSuffix(module, ":")
+	module = strings.TrimSpace(module)
+	if module == "" {
+		return nil
+	}
+	parts := strings.Split(module, ".")
+	first := ""
+	if len(parts) > 0 {
+		first = normalizeProcessIdentity(parts[0])
+	}
+	full := normalizeProcessIdentity(strings.ReplaceAll(module, ".", "-"))
+	out := []string{full, first}
+	for _, value := range []string{full, first} {
+		if strings.HasSuffix(value, "-cli") {
+			out = append(out, strings.TrimSuffix(value, "-cli"))
+		}
+	}
+	return uniqueStrings(out)
+}
+
+func packageRunnerTargetIdentities(runner string, tokens []string) []string {
+	if len(tokens) == 0 {
+		return nil
+	}
+	i := 0
+	if runner == "pipx" && i < len(tokens) && tokens[i] == "run" {
+		i++
+	}
+	if (runner == "pnpm" || runner == "yarn") && i < len(tokens) && (tokens[i] == "dlx" || tokens[i] == "exec") {
+		i++
+	}
+	for i < len(tokens) {
+		token := strings.TrimSpace(tokens[i])
+		if token == "" {
+			i++
+			continue
+		}
+		if token == "--" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			if packageRunnerOptionTakesValue(token) && i+1 < len(tokens) {
+				i += 2
+			} else {
+				i++
+			}
+			continue
+		}
+		return []string{normalizeProcessIdentity(token)}
+	}
+	return nil
+}
+
+func skipEnvArgs(tokens []string) []string {
+	for len(tokens) > 0 {
+		token := strings.TrimSpace(tokens[0])
+		if token == "" {
+			tokens = tokens[1:]
+			continue
+		}
+		if token == "-S" && len(tokens) > 1 {
+			return tokens[1:]
+		}
+		if strings.HasPrefix(token, "-") || strings.Contains(token, "=") {
+			tokens = tokens[1:]
+			continue
+		}
+		return tokens
+	}
+	return nil
+}
+
+func normalizeProcessIdentity(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), `"'`)
+	value = strings.TrimSuffix(value, ":")
+	if value == "" {
+		return ""
+	}
+	base := filepath.Base(value)
+	base = strings.Trim(strings.TrimSpace(base), `"'`)
+	base = strings.ToLower(base)
+	base = strings.ReplaceAll(base, "_", "-")
+	for _, suffix := range []string{".exe", ".cmd", ".bat", ".js", ".mjs", ".cjs", ".py", ".pyw", ".rb", ".pl", ".sh"} {
+		base = strings.TrimSuffix(base, suffix)
+	}
+	return base
+}
+
+func isShellProcessName(name string) bool {
+	switch name {
+	case "sh", "bash", "zsh", "fish", "dash", "csh", "tcsh", "ksh", "pwsh", "powershell", "osascript":
+		return true
+	default:
+		return false
+	}
+}
+
+func isEnvProcessName(name string) bool {
+	return name == "env" || name == "arch"
+}
+
+func isInterpreterProcessName(name string) bool {
+	return name == "python" ||
+		name == "pythonw" ||
+		name == "pypy" ||
+		name == "node" ||
+		name == "nodejs" ||
+		name == "deno" ||
+		name == "bun" ||
+		name == "ruby" ||
+		name == "perl" ||
+		strings.HasPrefix(name, "python") ||
+		strings.HasPrefix(name, "pypy")
+}
+
+func isPackageRunnerProcessName(name string) bool {
+	switch name {
+	case "uvx", "pipx", "npx", "pnpm", "yarn", "bunx", "mise", "asdf":
+		return true
+	default:
+		return false
+	}
+}
+
+func interpreterOptionTakesValue(option string) bool {
+	switch option {
+	case "-c", "-W", "-X", "-Q":
+		return true
+	default:
+		return strings.HasPrefix(option, "--check-hash-based-pycs")
+	}
+}
+
+func packageRunnerOptionTakesValue(option string) bool {
+	if strings.Contains(option, "=") {
+		return false
+	}
+	switch option {
+	case "--from", "--python", "--with", "--with-editable", "--index-url", "--extra-index-url", "--find-links", "--resolution", "--prerelease", "--exclude-newer", "--keyring-provider", "--config-setting", "--project", "--directory", "--package", "-p", "--package-manager":
+		return true
+	default:
+		return false
+	}
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func processCWD(pid string) string {

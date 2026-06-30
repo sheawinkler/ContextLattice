@@ -332,6 +332,96 @@ func TestDiscoverUsesProcessFixtureAndProfileAuthority(t *testing.T) {
 		t.Fatalf("unexpected discovered state: %#v", state)
 	}
 }
+
+func TestAgentProcessMatchesPackageManagedHermesExecutables(t *testing.T) {
+	patterns := []string{"hermes-agent", "hermes"}
+	cases := []struct {
+		name    string
+		command string
+		args    string
+		want    bool
+	}{
+		{
+			name:    "homebrew python console script",
+			command: "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+			args:    "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /opt/homebrew/bin/hermes --cli",
+			want:    true,
+		},
+		{
+			name:    "nix executable path",
+			command: "/nix/store/abc123-hermes-agent/bin/hermes",
+			args:    "/nix/store/abc123-hermes-agent/bin/hermes --cli",
+			want:    true,
+		},
+		{
+			name:    "macports executable path",
+			command: "/opt/local/bin/hermes-agent",
+			args:    "/opt/local/bin/hermes-agent --model openai/gpt-5-mini",
+			want:    true,
+		},
+		{
+			name:    "python module source launch",
+			command: "/Users/example/src/hermes-agent/.venv/bin/python",
+			args:    "/Users/example/src/hermes-agent/.venv/bin/python -m hermes_cli.main --cli",
+			want:    true,
+		},
+		{
+			name:    "uvx runner launch",
+			command: "/opt/homebrew/bin/uvx",
+			args:    "uvx --from hermes-agent hermes --cli",
+			want:    true,
+		},
+		{
+			name:    "hermes ultra binary is separate",
+			command: "/Users/example/.cargo/bin/hermes-agent-ultra",
+			args:    "/Users/example/.cargo/bin/hermes-agent-ultra",
+			want:    false,
+		},
+		{
+			name:    "hermes ultra python worker path is separate",
+			command: "/opt/homebrew/bin/python3.14",
+			args:    "/opt/homebrew/bin/python3.14 /Users/example/Projects/hermes-agent-ultra/scripts/upstream_webhook_sync.py worker --repo-root /Users/example/Projects/hermes-agent-ultra",
+			want:    false,
+		},
+		{
+			name:    "shell command text is not process identity",
+			command: "/bin/zsh",
+			args:    "zsh -lc contextlattice_agent_discover --agents hermes-agent",
+			want:    false,
+		},
+		{
+			name:    "doctor argument text is not process identity",
+			command: "/Users/example/.contextlattice/bin/contextlattice_doctor",
+			args:    "contextlattice_doctor --agents hermes-agent --pretty",
+			want:    false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := agentProcessMatches(tc.command, tc.args, patterns); got != tc.want {
+				t.Fatalf("agentProcessMatches()=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiscoverHermesDoesNotCountHermesUltraOrSelfCommands(t *testing.T) {
+	fixture := strings.Join([]string{
+		"101 1 /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /opt/homebrew/bin/hermes --cli",
+		"102 1 /Users/example/.cargo/bin/hermes-agent-ultra /Users/example/.cargo/bin/hermes-agent-ultra",
+		"103 1 /opt/homebrew/bin/python3.14 /opt/homebrew/bin/python3.14 /Users/example/Projects/hermes-agent-ultra/scripts/upstream_webhook_sync.py worker --repo-root /Users/example/Projects/hermes-agent-ultra",
+		"104 1 /bin/zsh zsh -lc contextlattice_agent_discover --agents hermes-agent",
+		"105 1 /Users/example/.contextlattice/bin/contextlattice_doctor contextlattice_doctor --agents hermes-agent --pretty",
+	}, "\n")
+	processes := discoverAgentProcesses(fixture, []string{"hermes-agent", "hermes"}, 8)
+	if len(processes) != 1 {
+		t.Fatalf("expected only the real hermes process, got %#v", processes)
+	}
+	process := processes[0].(map[string]any)
+	if firstString(process["pid"]) != "101" {
+		t.Fatalf("unexpected process match: %#v", process)
+	}
+}
 func TestTraceCommandRendersTree(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/agents/sessions/sess-trace/trace" {
