@@ -332,7 +332,8 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Integrations: `https://contextlattice.io/integration.html`
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
-- Release notes:
+- Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.6.2.md`
   - `docs/releases/v3.5.0.md`
   - `docs/releases/v3.4.25.md`
   - `docs/releases/v3.4.14.md`
