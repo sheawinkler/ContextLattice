@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
+import { dashboardClientAuthRequired } from "@/lib/authMode";
 
 type DownloadAsset = {
   id: string;
@@ -24,8 +25,19 @@ type TokenLink = {
   url: string;
 };
 
-export default function DownloadsPage() {
-  const { data: session } = useSession();
+type DashboardSessionLike = {
+  user?: {
+    email?: string | null;
+  } | null;
+} | null;
+
+function DownloadsPageContent({
+  authRequired,
+  session,
+}: {
+  authRequired: boolean;
+  session: DashboardSessionLike;
+}) {
   const [catalog, setCatalog] = useState<DownloadCatalog | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [tokenLinks, setTokenLinks] = useState<TokenLink[]>([]);
@@ -44,7 +56,11 @@ export default function DownloadsPage() {
           return;
         }
         if (status === 401) {
-          setMessage("Sign in to access premium downloads.");
+          setMessage(
+            authRequired
+              ? "Sign in to access premium downloads."
+              : "Premium downloads require a hosted/authenticated dashboard. Local open-source dashboard access does not require sign-in.",
+          );
           return;
         }
         if (!data?.ok) {
@@ -61,7 +77,7 @@ export default function DownloadsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [authRequired]);
 
   const hasAssets = useMemo(() => (catalog?.assets?.length || 0) > 0, [catalog]);
 
@@ -138,7 +154,13 @@ export default function DownloadsPage() {
         </div>
         {!session?.user ? (
           <p className="text-sm text-amber-300 mt-2">
-            <a className="underline" href="/auth/login">Sign in</a> to access premium downloads.
+            {authRequired ? (
+              <>
+                <a className="underline" href="/auth/login">Sign in</a> to access premium downloads.
+              </>
+            ) : (
+              "Local open-source dashboard mode does not require sign-in. Premium downloads stay locked unless hosted auth is enabled."
+            )}
           </p>
         ) : (
           <p className="text-sm text-emerald-300 mt-2">
@@ -245,4 +267,16 @@ export default function DownloadsPage() {
       ) : null}
     </div>
   );
+}
+
+function DownloadsPageWithSession() {
+  const { data: session } = useSession();
+  return <DownloadsPageContent authRequired session={session} />;
+}
+
+export default function DownloadsPage() {
+  if (dashboardClientAuthRequired()) {
+    return <DownloadsPageWithSession />;
+  }
+  return <DownloadsPageContent authRequired={false} session={null} />;
 }

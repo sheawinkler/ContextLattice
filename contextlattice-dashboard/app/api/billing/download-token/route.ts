@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { requireUserWorkspaceId } from "@/lib/workspace";
 import {
   appOrigin,
@@ -23,7 +22,7 @@ function normalizeAsset(input: string): PremiumDownloadAssetId | null {
 }
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   const userId = session?.user?.id || "";
   const userEmail = session?.user?.email || "";
   if (!userId || !userEmail) {

@@ -1,8 +1,13 @@
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { recordAttempt, isRateLimited } from "@/lib/rateLimit";
+import { authDisabledResponse, dashboardAuthRequired } from "@/lib/authMode";
 
 export async function POST(request: Request) {
+  if (!dashboardAuthRequired()) {
+    return authDisabledResponse();
+  }
+
   const { email, token, password } = await request.json();
   const normalized = String(email || "").trim().toLowerCase();
   const resetToken = String(token || "");

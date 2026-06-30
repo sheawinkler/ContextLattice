@@ -1,12 +1,11 @@
 import { PLANS } from "@/lib/billing/plans";
 import { recordPaymentIntent } from "@/lib/billing/reconcile";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { fetchWithRetry } from "@/lib/http/retry";
 
 export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

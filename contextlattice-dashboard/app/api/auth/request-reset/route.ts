@@ -2,8 +2,13 @@ import crypto from "crypto";
 import { prisma } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { recordAttempt, isRateLimited } from "@/lib/rateLimit";
+import { authDisabledResponse, dashboardAuthRequired } from "@/lib/authMode";
 
 export async function POST(request: Request) {
+  if (!dashboardAuthRequired()) {
+    return authDisabledResponse();
+  }
+
   const { email } = await request.json();
   const normalized = String(email || "").trim().toLowerCase();
   if (!normalized) {

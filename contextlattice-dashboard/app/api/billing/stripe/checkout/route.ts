@@ -1,12 +1,11 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { prisma } from "@/lib/db";
 import { getStripeClient } from "@/lib/billing/stripe";
 import { getStripePriceId } from "@/lib/billing/providers";
 import { recordPaymentIntent } from "@/lib/billing/reconcile";
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.email || !session.user.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

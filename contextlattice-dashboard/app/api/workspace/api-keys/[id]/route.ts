@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { prisma } from "@/lib/db";
 import { requireUserWorkspaceId } from "@/lib/workspace";
 import { recordAuditLog } from "@/lib/audit";
@@ -8,7 +7,7 @@ export async function DELETE(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
