@@ -1,11 +1,10 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { requireActiveWorkspaceId } from "@/lib/workspace";
 import { listAuditLogs, recordAuditLog } from "@/lib/audit";
 import { extractApiKey, authenticateApiKey, hasScope } from "@/lib/auth/apiKeys";
 
 export async function GET(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -20,7 +19,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const rawKey = extractApiKey(request);
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   let workspaceId: string | null = null;
   let userId: string | null = null;
 

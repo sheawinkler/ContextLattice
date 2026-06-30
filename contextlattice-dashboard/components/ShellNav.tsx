@@ -26,10 +26,40 @@ function displayName(session: any): string {
   return "Account";
 }
 
-export function ShellNav() {
+function AuthControls() {
   const { data: session, status } = useSession();
   const isSignedIn = status === "authenticated" && !!session?.user;
 
+  if (isSignedIn) {
+    return (
+      <>
+        <span className="shell-account-chip" title={session?.user?.email || undefined}>
+          {displayName(session)}
+        </span>
+        <button
+          className="shell-nav-link shell-nav-link-action"
+          type="button"
+          onClick={() => signOut({ callbackUrl: "/auth/login" })}
+        >
+          Sign out
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <a className="shell-nav-link" href="/auth/register">
+        Create account
+      </a>
+      <a className="shell-nav-link shell-nav-link-primary" href="/auth/login">
+        Sign in
+      </a>
+    </>
+  );
+}
+
+export function ShellNav({ authEnabled }: { authEnabled: boolean }) {
   return (
     <nav className="shell-nav" aria-label="Primary">
       {NAV_LINKS.map((link) => (
@@ -38,30 +68,7 @@ export function ShellNav() {
         </a>
       ))}
 
-      {isSignedIn ? (
-        <>
-          <span className="shell-account-chip" title={session?.user?.email || undefined}>
-            {displayName(session)}
-          </span>
-          <button
-            className="shell-nav-link shell-nav-link-action"
-            type="button"
-            onClick={() => signOut({ callbackUrl: "/auth/login" })}
-          >
-            Sign out
-          </button>
-        </>
-      ) : (
-        <>
-          <a className="shell-nav-link" href="/auth/register">
-            Create account
-          </a>
-          <a className="shell-nav-link shell-nav-link-primary" href="/auth/login">
-            Sign in
-          </a>
-        </>
-      )}
+      {authEnabled ? <AuthControls /> : null}
     </nav>
   );
 }
-

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { PLANS } from "@/lib/billing/plans";
+import { dashboardClientAuthRequired } from "@/lib/authMode";
 
 const intervals = ["monthly", "annual"] as const;
 
@@ -37,8 +38,14 @@ type BillingSummary = {
   failedIntentCount: number;
 };
 
-function BillingPageContent() {
-  const { data: session } = useSession();
+type DashboardSessionLike = {
+  user?: {
+    email?: string | null;
+    workspaceRole?: string | null;
+  } | null;
+} | null;
+
+function BillingPageContent({ session }: { session: DashboardSessionLike }) {
   const searchParams = useSearchParams();
   const [interval, setInterval] = useState<Interval>("monthly");
   const [message, setMessage] = useState<string | null>(null);
@@ -575,10 +582,21 @@ function BillingPageContent() {
   );
 }
 
+function BillingPageWithSession() {
+  const { data: session } = useSession();
+  return <BillingPageContent session={session} />;
+}
+
 export default function BillingPage() {
+  const content = dashboardClientAuthRequired() ? (
+    <BillingPageWithSession />
+  ) : (
+    <BillingPageContent session={null} />
+  );
+
   return (
     <Suspense fallback={<div className="card text-sm text-slate-400">Loading billing…</div>}>
-      <BillingPageContent />
+      {content}
     </Suspense>
   );
 }

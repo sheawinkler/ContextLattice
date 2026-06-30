@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { prisma } from "@/lib/db";
 import { generateApiKey } from "@/lib/auth/apiKeys";
 import { requireUserWorkspaceId } from "@/lib/workspace";
@@ -17,7 +16,7 @@ function roleAllowed(role: string | null | undefined): boolean {
 }
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id || !session.user.email) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

@@ -84,12 +84,17 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async session({ session, user }) {
       if (session.user && user) {
-        session.user.id = user.id;
+        const sessionUser = session.user as typeof session.user & {
+          id?: string;
+          workspaceId?: string | null;
+          workspaceRole?: string | null;
+        };
+        sessionUser.id = user.id;
         const membership = await prisma.workspaceMember.findFirst({
           where: { userId: user.id },
           orderBy: { createdAt: "asc" },
         });
-        session.user.workspaceId = membership?.workspaceId || null;
+        sessionUser.workspaceId = membership?.workspaceId || null;
       }
       return session;
     },

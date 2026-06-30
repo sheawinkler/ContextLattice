@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { recordUsageEvent } from "@/lib/usage/events";
 import { checkUsageLimits, getUsageSummary } from "@/lib/usage/budgets";
 import { extractApiKey, authenticateApiKey, hasScope } from "@/lib/auth/apiKeys";
@@ -9,7 +8,7 @@ import { requireActiveSubscription } from "@/lib/billing/entitlements";
 
 export async function POST(request: Request) {
   const rawKey = extractApiKey(request);
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
 
   let workspaceId: string | null = null;
   let userId: string | null = null;

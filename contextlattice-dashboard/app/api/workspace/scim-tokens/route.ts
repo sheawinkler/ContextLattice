@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { prisma } from "@/lib/db";
 import { requireUserWorkspaceId } from "@/lib/workspace";
 import { generateScimToken } from "@/lib/auth/scim";
@@ -7,7 +6,7 @@ import { recordAuditLog } from "@/lib/audit";
 import { getWorkspacePlan, requireActiveSubscription } from "@/lib/billing/entitlements";
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
@@ -31,7 +30,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }

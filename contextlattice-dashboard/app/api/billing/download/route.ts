@@ -1,5 +1,4 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { requireUserWorkspaceId } from "@/lib/workspace";
 import { requireActiveSubscription } from "@/lib/billing/entitlements";
 import { premiumDownloadById, verifyDownloadToken } from "@/lib/billing/downloads";
@@ -35,7 +34,7 @@ export async function GET(request: Request) {
     return Response.redirect(asset.url, 302);
   }
 
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   if (!session?.user?.id) {
     return Response.json(
       { ok: false, error: "Unauthorized" },

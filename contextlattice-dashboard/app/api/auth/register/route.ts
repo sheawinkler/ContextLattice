@@ -1,5 +1,6 @@
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/db";
+import { authDisabledResponse, dashboardAuthRequired } from "@/lib/authMode";
 
 function slugify(value: string) {
   return value
@@ -10,6 +11,10 @@ function slugify(value: string) {
 }
 
 export async function POST(request: Request) {
+  if (!dashboardAuthRequired()) {
+    return authDisabledResponse();
+  }
+
   const body = await request.json();
   const email = String(body?.email || "").trim().toLowerCase();
   const password = String(body?.password || "");

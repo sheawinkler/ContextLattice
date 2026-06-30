@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getDashboardSession } from "@/lib/dashboardSession";
 import { callOrchestrator } from "@/lib/orchestrator";
 import { extractApiKey, authenticateApiKey, hasScope } from "@/lib/auth/apiKeys";
 import { ensureWorkspaceActive, requireActiveWorkspaceId } from "@/lib/workspace";
@@ -10,7 +9,7 @@ import { recordAuditLog } from "@/lib/audit";
 import { getWorkspacePlan, requireActiveSubscription } from "@/lib/billing/entitlements";
 
 export async function POST(request: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getDashboardSession();
   const rawKey = extractApiKey(request);
   let workspaceId: string | null = null;
   let userId: string | null = null;
