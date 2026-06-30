@@ -30,7 +30,7 @@ from _common import contextlattice_api_key, contextlattice_base_url, emit, now_i
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 DEFAULT_MARKER = "contextlattice-smoke-ok"
-DEFAULT_PROJECT = "context-lattice-private"
+DEFAULT_PROJECT = "contextlattice"
 DEFAULT_TOPIC_PATH = "ops/agents/provider-cli-smoke"
 LOCAL_STATE_DIRS = (".opencode",)
 

@@ -309,7 +309,7 @@ Graph quality repair is a bounded maintenance lane over that telemetry:
 
 ```bash
 scripts/agent/memory-graph-quality --all-projects --pretty
-scripts/agent/memory-graph-quality --project context-lattice-private --write --confirm-repair context-lattice-private --pretty
+scripts/agent/memory-graph-quality --project contextlattice --write --confirm-repair contextlattice --pretty
 make memory-graph-quality-install
 ```
 
