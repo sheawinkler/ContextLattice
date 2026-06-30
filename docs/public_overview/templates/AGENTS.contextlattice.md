@@ -34,7 +34,8 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 - Global helper CLIs (auto-installed by quickstart/installers):
   - `contextlattice_agent_start` (hook-first startup guard)
-  - `contextlattice_agent_adapter` (profile bootstrap, context-pack, checkpoint, handoff)
+  - `contextlattice_agent_adapter` (profile bootstrap, context-pack, lifecycle state, checkpoint, handoff)
+  - `contextlattice_agent_discover` (best-effort local agent process/profile/hook/repo-instruction discovery)
   - `contextlattice_agent_session` (runtime, rollup, context-package, completion)
   - `contextlattice_search` (lifecycle-aware search helper)
   - `contextlattice_write` (checkpoint write helper)
@@ -51,6 +52,7 @@ Agent-session default:
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_agent_adapter state --agent codex --session-id "$SESSION_ID" --state working --pretty
 ```
 
 ## 3) Checkpoints and Conditional Recency Pass

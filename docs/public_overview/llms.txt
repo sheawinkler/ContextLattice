@@ -34,7 +34,8 @@ Agent usage expectations:
 - Prefer exact CLI commands from /cli.html and /installation.html.
 - Start new machines, accounts, or agent surfaces with `contextlattice_adopt status --pretty`; use `contextlattice_adopt install`, `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty`, `profiles`, and `proof` before dropping into lower-level adapter commands.
 - Prefer universal adapter startup when local CLI tools are installed: `contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty`.
-- Use the same adapter session for recall, checkpoint, handoff, and completion: `contextlattice_agent_adapter context-pack|checkpoint|handoff|complete`.
+- Use the same adapter session for recall, state, checkpoint, handoff, and completion: `contextlattice_agent_adapter context-pack|state|checkpoint|handoff|complete`.
+- Use `contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty` to inspect best-effort process/profile/hook/repo-instruction evidence for local agents.
 - Use `contextlattice_pack "<task>" --project <project> --pretty` or `POST /memory/context-pack` to compile ranked evidence, files, checks, risks, source coverage, and `reference_prompt` for the next model call.
 - Use `contextlattice_agent_session rollup --session-id <id> --pretty` to summarize a session into reusable state.
 - Use `contextlattice_agent_session context-package --session-id <id> --pretty` when an agent needs to send the next model call with the objective, evidence, risks, source coverage, and next action already organized.

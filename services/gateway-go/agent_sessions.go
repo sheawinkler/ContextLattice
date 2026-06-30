@@ -224,15 +224,15 @@ func (s *agentSessionStore) enforceBoundsLocked() {
 
 func normalizeAgentSessionStatus(raw string) string {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
-	case "active", "running", "started", "open":
+	case "active", "running", "started", "open", "working":
 		return "active"
-	case "completed", "complete", "succeeded", "success":
+	case "completed", "complete", "succeeded", "success", "done":
 		return "completed"
 	case "failed", "error":
 		return "failed"
 	case "blocked":
 		return "blocked"
-	case "paused", "waiting":
+	case "paused", "waiting", "awaiting_user", "needs_user":
 		return "paused"
 	case "canceled", "cancelled":
 		return "canceled"
@@ -243,11 +243,92 @@ func normalizeAgentSessionStatus(raw string) string {
 
 func agentSessionTerminal(status string) bool {
 	switch normalizeAgentSessionStatus(status) {
-	case "completed", "failed", "blocked", "canceled":
+	case "completed", "failed", "canceled":
 		return true
 	default:
 		return false
 	}
+}
+
+func normalizeAgentLifecycleState(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(strings.ReplaceAll(raw, "-", "_"))) {
+	case "idle", "ready", "standby":
+		return "idle"
+	case "working", "running", "active", "started", "busy":
+		return "working"
+	case "awaiting_user", "awaiting", "waiting", "paused", "needs_user", "need_user", "approval":
+		return "awaiting_user"
+	case "blocked", "stuck", "failed", "error":
+		return "blocked"
+	case "done", "completed", "complete", "succeeded", "success":
+		return "done"
+	default:
+		return "working"
+	}
+}
+
+func normalizeAgentStateAuthority(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(strings.ReplaceAll(raw, "-", "_"))) {
+	case "hook", "plugin", "self_report", "process_probe", "manual", "none":
+		return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(raw, "-", "_")))
+	case "process", "probe", "ps":
+		return "process_probe"
+	case "self", "agent", "agent_report":
+		return "self_report"
+	default:
+		return "self_report"
+	}
+}
+
+func agentLifecycleStateFromSessionStatus(status string) string {
+	switch normalizeAgentSessionStatus(status) {
+	case "completed":
+		return "done"
+	case "blocked", "failed":
+		return "blocked"
+	case "paused":
+		return "awaiting_user"
+	default:
+		return "working"
+	}
+}
+
+func normalizeAgentLifecyclePayload(value any, fallbackStatus string) map[string]any {
+	raw := anyMap(value)
+	state := normalizeAgentLifecycleState(firstNonEmptyStrings(anyToString(raw["state"]), agentLifecycleStateFromSessionStatus(fallbackStatus)))
+	out := map[string]any{
+		"schema_id": "contextlattice_agent_lifecycle_state.v1",
+		"state":     state,
+		"authority": normalizeAgentStateAuthority(anyToString(raw["authority"])),
+		"source":    clipText(firstNonEmptyStrings(anyToString(raw["source"]), "session_status"), 96),
+	}
+	for _, key := range []string{"ttl_seconds", "expires_at", "updated_at", "task_id", "repo", "branch", "worktree", "cwd", "native_session_id", "needs_user", "blocked_by"} {
+		if rawValue, ok := raw[key]; ok {
+			out[key] = compactAgentSessionValue(rawValue, 2)
+		}
+	}
+	return out
+}
+
+func agentSessionOwnership(session map[string]any) map[string]any {
+	state := anyMap(session["agent_state"])
+	out := map[string]any{}
+	for _, key := range []string{"task_id", "repo", "worktree", "branch", "cwd", "native_session_id"} {
+		value := firstNonEmptyStrings(anyToString(session[key]), anyToString(state[key]))
+		if value != "" {
+			out[key] = clipText(value, 360)
+		}
+	}
+	if len(out) > 0 {
+		out["ownership_key"] = clipText(strings.Join([]string{
+			anyToString(out["repo"]),
+			anyToString(out["worktree"]),
+			anyToString(out["branch"]),
+			anyToString(out["task_id"]),
+			anyToString(session["id"]),
+		}, "|"), 720)
+	}
+	return out
 }
 
 func agentSessionObjectiveHierarchy(session map[string]any) map[string]any {
@@ -566,7 +647,7 @@ func agentSessionPhase(eventType string) string {
 
 func compactAgentSessionRecentEvent(event map[string]any) map[string]any {
 	metadata := anyMap(event["metadata"])
-	return map[string]any{
+	out := map[string]any{
 		"id":         clipText(anyToString(event["id"]), 128),
 		"type":       clipText(anyToString(event["type"]), 96),
 		"phase":      agentSessionPhase(anyToString(event["type"])),
@@ -580,6 +661,13 @@ func compactAgentSessionRecentEvent(event map[string]any) map[string]any {
 			return anyToInt(metadata["result_count"], -1)
 		}(),
 	}
+	if state := anyMap(metadata["agent_state"]); len(state) > 0 {
+		out["agent_state"] = normalizeAgentLifecyclePayload(state, anyToString(event["status"]))
+	}
+	if ownership := anyMap(metadata["ownership"]); len(ownership) > 0 {
+		out["ownership"] = compactAgentSessionMetadata(ownership)
+	}
+	return out
 }
 
 func agentSessionSteeringInbox(events []map[string]any) map[string]any {
@@ -754,6 +842,8 @@ func buildAgentSessionRollup(session map[string]any, events []map[string]any, no
 	}
 	objectiveHierarchy := agentSessionObjectiveHierarchy(session)
 	objectiveLineage := agentSessionObjectiveLineage(session)
+	agentLifecycle := normalizeAgentLifecyclePayload(session["agent_state"], anyToString(session["status"]))
+	ownership := agentSessionOwnership(session)
 	rollup := map[string]any{
 		"ok":                  true,
 		"schema_id":           agentSessionRollupContractID,
@@ -762,6 +852,8 @@ func buildAgentSessionRollup(session map[string]any, events []map[string]any, no
 		"agent_id":            anyToString(session["agent_id"]),
 		"project":             anyToString(session["project"]),
 		"status":              normalizeAgentSessionStatus(anyToString(session["status"])),
+		"agent_lifecycle":     agentLifecycle,
+		"ownership":           ownership,
 		"objective":           clipText(anyToString(session["objective"]), 1200),
 		"mission":             clipText(anyToString(session["mission"]), 1200),
 		"goal":                clipText(anyToString(session["goal"]), 1200),
@@ -818,6 +910,8 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 	artifactSummary := anyMap(rollup["artifact_summary"])
 	riskSummary := anyMap(rollup["risk_summary"])
 	agentInbox := anyMap(rollup["agent_inbox"])
+	agentLifecycle := anyMap(rollup["agent_lifecycle"])
+	ownership := anyMap(rollup["ownership"])
 	latestSteering := anyMap(agentInbox["latest"])
 	sessionID := anyToString(rollup["session_id"])
 	objective := firstNonEmptyStrings(anyToString(rollup["objective"]), anyToString(rollup["goal"]), "Continue the agent objective using available evidence.")
@@ -839,6 +933,8 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 		"Objective lineage: " + firstNonEmptyStrings(lineageStatus, "unknown"),
 		"Objective: " + objective,
 		"Status: " + anyToString(rollup["status"]) + " / last event " + anyToString(rollup["last_event_type"]),
+		"Agent lifecycle: " + firstNonEmptyStrings(anyToString(agentLifecycle["state"]), "unknown") + " via " + firstNonEmptyStrings(anyToString(agentLifecycle["authority"]), "unknown"),
+		"Ownership: repo=" + anyToString(ownership["repo"]) + " worktree=" + anyToString(ownership["worktree"]) + " branch=" + anyToString(ownership["branch"]) + " task=" + anyToString(ownership["task_id"]),
 		"Memory contribution score: " + anyToString(anyMap(rollup["memory_contribution"])["score"]),
 		"Retrieved sources: " + strings.Join(anyToStringList(retrievalSummary["returned_sources"], 16), ", "),
 		"Latest agent steering: " + firstNonEmptyStrings(anyToString(latestSteering["message"]), "none"),
@@ -862,6 +958,8 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 			"objective_hierarchy": objectiveHierarchy,
 			"objective_lineage":   objectiveLineage,
 			"current_state":       anyToString(rollup["objective_state"]),
+			"agent_lifecycle":     agentLifecycle,
+			"ownership":           ownership,
 			"next_action":         nextAction,
 			"retrieval_summary":   retrievalSummary,
 			"agent_inbox":         agentInbox,
@@ -934,6 +1032,12 @@ func compactAgentTraceEvent(event map[string]any) map[string]any {
 	}
 	if skillsReturned := anyToInt(metadata["skills_index_returned"], -1); skillsReturned >= 0 {
 		out["skills_index_returned"] = skillsReturned
+	}
+	if state := anyMap(metadata["agent_state"]); len(state) > 0 {
+		out["agent_state"] = normalizeAgentLifecyclePayload(state, anyToString(event["status"]))
+	}
+	if ownership := anyMap(metadata["ownership"]); len(ownership) > 0 {
+		out["ownership"] = compactAgentSessionMetadata(ownership)
 	}
 	return out
 }
@@ -1027,6 +1131,12 @@ func buildAgentRunCardMarkdown(trace map[string]any) string {
 	b.WriteString("- Agent: `" + clipText(firstNonEmptyStrings(anyToString(session["agent"]), anyToString(session["agent_id"]), "agent"), 120) + "`\n")
 	b.WriteString("- Project: `" + clipText(anyToString(session["project"]), 120) + "`\n")
 	b.WriteString("- Status: `" + clipText(anyToString(session["status"]), 80) + "`\n")
+	if lifecycle := anyMap(session["agent_lifecycle"]); len(lifecycle) > 0 {
+		b.WriteString("- Agent lifecycle: `" + clipText(anyToString(lifecycle["state"]), 80) + "` via `" + clipText(anyToString(lifecycle["authority"]), 80) + "`\n")
+	}
+	if ownership := anyMap(session["ownership"]); len(ownership) > 0 {
+		b.WriteString("- Ownership: repo `" + clipText(anyToString(ownership["repo"]), 160) + "`, worktree `" + clipText(anyToString(ownership["worktree"]), 160) + "`, branch `" + clipText(anyToString(ownership["branch"]), 80) + "`, task `" + clipText(anyToString(ownership["task_id"]), 80) + "`\n")
+	}
 	b.WriteString("- Objective: " + clipText(anyToString(session["objective"]), 420) + "\n")
 	if len(objectiveHierarchy) > 0 {
 		projectObjective := clipText(anyToString(anyMap(objectiveHierarchy["project"])["primary_objective"]), 420)
@@ -1098,6 +1208,8 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 			"agent_id":            anyToString(rollup["agent_id"]),
 			"project":             anyToString(rollup["project"]),
 			"status":              anyToString(rollup["status"]),
+			"agent_lifecycle":     rollup["agent_lifecycle"],
+			"ownership":           rollup["ownership"],
 			"objective":           anyToString(rollup["objective"]),
 			"objective_hierarchy": rollup["objective_hierarchy"],
 			"objective_lineage":   rollup["objective_lineage"],
@@ -1113,7 +1225,9 @@ func buildAgentRunTrace(session map[string]any, events []map[string]any, now tim
 		"phase_counts":        rollup["phase_counts"],
 		"memory_contribution": rollup["memory_contribution"],
 		"run_shaping": map[string]any{
-			"run_advisor": runAdvisor,
+			"run_advisor":     runAdvisor,
+			"agent_lifecycle": rollup["agent_lifecycle"],
+			"ownership":       rollup["ownership"],
 			"objective": map[string]any{
 				"hierarchy": rollup["objective_hierarchy"],
 				"lineage":   rollup["objective_lineage"],
@@ -1174,7 +1288,11 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 		"project":             clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["project_name"]))), 120),
 		"repo":                clipText(strings.TrimSpace(anyToString(payload["repo"])), 240),
 		"branch":              clipText(strings.TrimSpace(anyToString(payload["branch"])), 160),
+		"worktree":            clipText(strings.TrimSpace(anyToString(payload["worktree"])), 320),
 		"cwd":                 clipText(strings.TrimSpace(anyToString(payload["cwd"])), 320),
+		"task_id":             clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_id"]), anyToString(payload["taskId"]))), 160),
+		"native_session_id":   clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["native_session_id"]), anyToString(payload["nativeSessionId"]))), 180),
+		"agent_state":         normalizeAgentLifecyclePayload(payload["agent_state"], status),
 		"objective":           clipText(strings.TrimSpace(anyToString(payload["objective"])), 1200),
 		"mission":             clipText(strings.TrimSpace(anyToString(payload["mission"])), 1200),
 		"goal":                clipText(strings.TrimSpace(anyToString(payload["goal"])), 1200),
@@ -1206,7 +1324,7 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 		eventID = "evt_" + primitive.NewObjectID().Hex()
 	}
 	metadata := compactAgentSessionMetadata(anyMap(payload["metadata"]))
-	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff", "objective_hierarchy", "objective_lineage"} {
+	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff", "objective_hierarchy", "objective_lineage", "agent_state", "ownership"} {
 		if value, ok := payload[key]; ok {
 			metadata[key] = compactAgentSessionValue(value, 3)
 		}
@@ -1332,22 +1450,48 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	if nextAction := strings.TrimSpace(anyToString(metadata["next_action"])); nextAction != "" {
 		session["next_action"] = clipText(nextAction, 720)
 	}
+	if statePayload := anyMap(metadata["agent_state"]); len(statePayload) > 0 {
+		state := normalizeAgentLifecyclePayload(statePayload, anyToString(event["status"]))
+		session["agent_state"] = state
+		for _, key := range []string{"task_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
+			if value := strings.TrimSpace(anyToString(state[key])); value != "" {
+				session[key] = clipText(value, 360)
+			}
+		}
+	}
+	if ownership := anyMap(metadata["ownership"]); len(ownership) > 0 {
+		for _, key := range []string{"task_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
+			if value := strings.TrimSpace(anyToString(ownership[key])); value != "" {
+				session[key] = clipText(value, 360)
+			}
+		}
+	}
 	switch eventType {
 	case "session.completed", "agent.session.completed":
 		session["status"] = "completed"
+		session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "done", "authority": "self_report", "source": eventType}), "completed")
 		session["completed_at"] = createdAt
 	case "session.failed", "agent.session.failed":
 		session["status"] = "failed"
+		session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "blocked", "authority": "self_report", "source": eventType}), "failed")
 		session["completed_at"] = createdAt
 	case "session.blocked", "agent.session.blocked":
 		session["status"] = "blocked"
-		session["completed_at"] = createdAt
+		session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "blocked", "authority": "self_report", "source": eventType}), "blocked")
+		session["completed_at"] = ""
 	case "session.canceled", "agent.session.canceled":
 		session["status"] = "canceled"
 		session["completed_at"] = createdAt
 	default:
 		if !agentSessionTerminal(anyToString(session["status"])) {
-			session["status"] = "active"
+			if state := anyToString(anyMap(session["agent_state"])["state"]); state != "" {
+				session["status"] = normalizeAgentSessionStatus(state)
+			} else {
+				session["status"] = "active"
+			}
+			if !agentSessionTerminal(anyToString(session["status"])) {
+				session["completed_at"] = ""
+			}
 		}
 	}
 	session["memory_contribution"] = bumpContribution(
@@ -1569,10 +1713,15 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 		"project":  session["project"],
 		"summary":  session["objective"],
 		"metadata": map[string]any{
-			"repo":   session["repo"],
-			"branch": session["branch"],
-			"cwd":    session["cwd"],
-			"tags":   session["tags"],
+			"repo":              session["repo"],
+			"branch":            session["branch"],
+			"worktree":          session["worktree"],
+			"cwd":               session["cwd"],
+			"task_id":           session["task_id"],
+			"native_session_id": session["native_session_id"],
+			"agent_state":       session["agent_state"],
+			"ownership":         agentSessionOwnership(session),
+			"tags":              session["tags"],
 		},
 	})
 	if eventErr == nil {

@@ -24,6 +24,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_adopt
   contextlattice_doctor
   contextlattice_agent_adapter
+  contextlattice_agent_discover
   contextlattice_agent_session
   contextlattice_agent_trace
   contextlattice_run_advisor
@@ -512,6 +513,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice_adopt
   contextlattice_doctor
   contextlattice_agent_adapter
+  contextlattice_agent_discover
   contextlattice_agent_session
   contextlattice_agent_trace
   contextlattice_run_advisor
@@ -720,6 +722,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_discover"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_session"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_trace"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_run_advisor"

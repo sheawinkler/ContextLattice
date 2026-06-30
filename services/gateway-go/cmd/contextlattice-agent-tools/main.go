@@ -38,6 +38,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_agent_runtime_proof":             "runtime-proof",
 	"contextlattice_agent_adoption_proof":            "adoption-proof",
 	"contextlattice_agent_adapter":                   "adapter",
+	"contextlattice_agent_discover":                  "discover",
 	"contextlattice_memory_topology":                 "memory-topology",
 	"contextlattice_skills_index":                    "skills-index",
 }
@@ -113,6 +114,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdAdoptionProof(args)
 	case "adapter":
 		return c.cmdAdapter(args)
+	case "discover":
+		return c.cmdDiscover(args)
 	case "adopt":
 		return c.cmdAdopt(args)
 	case "memory-topology":
@@ -144,7 +147,8 @@ Native commands:
   runtime-doctor                 audit local native helper install and gateway health
   runtime-proof                  compact live runtime proof
   adoption-proof                 compact profile preflight proof matrix
-  adapter                        profiles/bootstrap/status/context-pack/checkpoint/handoff/event/complete helpers
+  adapter                        profiles/bootstrap/status/context-pack/checkpoint/handoff/state/event/complete helpers
+  discover                       local agent process/profile/integration discovery
   adopt                          status/doctor/proof compatibility front door
   memory-topology                audit /telemetry/storage memory topology
   skills-index                   active Skills Index search/reindex helper
@@ -416,6 +420,7 @@ func (c *cli) adoptStatus(args []string) error {
 	boundary, _, boundaryErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/context-boundary", nil, parsed.float("timeout", 10))
 	ownership, _, ownershipErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/native-ownership", nil, parsed.float("timeout", 10))
 	installChecks := adoptionInstallChecks(globalHome)
+	discovery := localAgentDiscoverySummary(globalHome, profileNames, "", 4)
 	ok := healthErr == nil && boundaryErr == nil && ownershipErr == nil && asBool(health["ok"]) && asBool(boundary["ok"]) && asBool(ownership["ok"]) && asBool(installChecks["ok"])
 	return c.emit(map[string]any{
 		"ok":              ok,
@@ -429,6 +434,7 @@ func (c *cli) adoptStatus(args []string) error {
 		"contextBoundary": map[string]any{"ok": boundary["ok"], "violationCount": boundary["violationCount"], "boundedSurfaceCount": boundary["boundedSurfaceCount"]},
 		"nativeOwnership": map[string]any{"ok": ownership["ok"], "violationCount": ownership["violationCount"], "nativeRouteCount": ownership["nativeRouteCount"], "pythonHotPathOwnership": ownership["pythonHotPathOwnership"]},
 		"install":         installChecks,
+		"agent_discovery": discovery,
 		"repair_command":  "scripts/install_global_agent_tools.sh --install-codex-hooks --no-shell-profile",
 	}, parsed.bool("pretty"))
 }
@@ -443,6 +449,7 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice_adopt",
 		"contextlattice_doctor",
 		"contextlattice_agent_adapter",
+		"contextlattice_agent_discover",
 		"contextlattice_agent_session",
 		"contextlattice_agent_start",
 		"contextlattice_checkpoint",
@@ -645,6 +652,15 @@ func repoRoot() string {
 		return strings.TrimSpace(string(out))
 	}
 	return "."
+}
+
+func currentGitRoot() string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = currentWorkingDir()
+	if out, err := cmd.Output(); err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return ""
 }
 
 func (c *cli) requestJSON(ctx context.Context, method, path string, payload any, timeout float64) (map[string]any, int, error) {
@@ -952,16 +968,39 @@ func (c *cli) requestWithRetries(path string, payload any, timeout float64, retr
 }
 
 func (c *cli) ensureSession(project, objective, agentID string, timeout float64) string {
+	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, map[string]any{}, adapterProfile{}, timeout)
+}
+
+func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, ownership map[string]any, profile adapterProfile, timeout float64) string {
+	if agent == "" {
+		agent = envString("CONTEXTLATTICE_AGENT", "agent-cli")
+	}
+	if agentID == "" {
+		agentID = envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", ""))
+	}
+	if len(ownership) == 0 {
+		ownership = adapterOwnership(parsedArgs{})
+	}
+	state := buildAgentLifecycleState(parsedArgs{}, profile, "working")
 	payload := map[string]any{
-		"project":   project,
-		"objective": objective,
-		"agent":     envString("CONTEXTLATTICE_AGENT", "agent-cli"),
-		"agent_id":  agentID,
-		"repo":      gitValue("config", "--get", "remote.origin.url"),
-		"branch":    gitValue("branch", "--show-current"),
-		"cwd":       currentWorkingDir(),
-		"tags":      []string{"auto-session", "context-pack", "go-native-cli"},
-		"metadata":  map[string]any{"tool": "contextlattice_pack"},
+		"project":           project,
+		"objective":         objective,
+		"agent":             agent,
+		"agent_id":          agentID,
+		"repo":              ownership["repo"],
+		"branch":            ownership["branch"],
+		"worktree":          ownership["worktree"],
+		"cwd":               ownership["cwd"],
+		"task_id":           ownership["task_id"],
+		"native_session_id": ownership["native_session_id"],
+		"agent_state":       state,
+		"tags":              []string{"auto-session", "context-pack", "go-native-cli"},
+		"metadata": map[string]any{
+			"tool":            "contextlattice_pack",
+			"ownership":       ownership,
+			"agent_state":     state,
+			"state_authority": state["authority"],
+		},
 	}
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/start", payload, minFloat(timeout, 10))
 	if err != nil {
@@ -1496,7 +1535,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)
@@ -1505,23 +1544,26 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 			"ok":                executableExists(path),
 			"path":              path,
 			"go_native_wrapper": wrapperIsGoNative(path),
+			"explanation":       "expected executable Go-native global wrapper in ContextLattice bin directory",
 		})
 	}
 	health, _, healthErr := c.requestJSON(context.Background(), http.MethodGet, "/health", nil, parsed.float("timeout", 10))
-	checks = append(checks, map[string]any{"name": "gateway_health", "ok": healthErr == nil && asBool(health["ok"]), "service": health["service"], "base_url": c.baseURL})
+	checks = append(checks, map[string]any{"name": "gateway_health", "ok": healthErr == nil && asBool(health["ok"]), "service": health["service"], "base_url": c.baseURL, "explanation": "gateway must be reachable before agents can report lifecycle or retrieve memory"})
 	boundary, _, boundaryErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/context-boundary", nil, parsed.float("timeout", 10))
-	checks = append(checks, map[string]any{"name": "context_boundary", "ok": boundaryErr == nil && asBool(boundary["ok"]) && asInt(boundary["violationCount"]) == 0, "boundedSurfaceCount": boundary["boundedSurfaceCount"], "violationCount": boundary["violationCount"]})
+	checks = append(checks, map[string]any{"name": "context_boundary", "ok": boundaryErr == nil && asBool(boundary["ok"]) && asInt(boundary["violationCount"]) == 0, "boundedSurfaceCount": boundary["boundedSurfaceCount"], "violationCount": boundary["violationCount"], "explanation": "agent-facing context responses must stay within the bounded output contract"})
 	ownership, _, ownershipErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/native-ownership", nil, parsed.float("timeout", 10))
 	hotPath := asMap(ownership["pythonHotPathOwnership"])
-	checks = append(checks, map[string]any{"name": "native_ownership", "ok": ownershipErr == nil && asBool(ownership["ok"]) && asInt(hotPath["fallbacks"]) == 0, "nativeRouteCount": ownership["nativeRouteCount"], "python_fallbacks": hotPath["fallbacks"]})
+	checks = append(checks, map[string]any{"name": "native_ownership", "ok": ownershipErr == nil && asBool(ownership["ok"]) && asInt(hotPath["fallbacks"]) == 0, "nativeRouteCount": ownership["nativeRouteCount"], "python_fallbacks": hotPath["fallbacks"], "explanation": "default live agent hot paths should be owned by native routes and wrappers"})
 	if repo := parsed.string("repo", ""); repo != "" {
 		absRepo, err := filepath.Abs(repo)
 		repoAudit := map[string]any{"ok": false, "schema_id": "contextlattice_agent_repo_integration_audit.v1", "repo": repo, "findings": []map[string]any{{"reason": "repo_path_invalid", "detail": errString(err)}}}
 		if err == nil {
 			repoAudit = auditRepoIntegration(absRepo, splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid")))
 		}
-		checks = append(checks, map[string]any{"name": "repo_integration", "ok": asBool(repoAudit["ok"]), "repo": absRepo, "audit": repoAudit})
+		checks = append(checks, map[string]any{"name": "repo_integration", "ok": asBool(repoAudit["ok"]), "repo": absRepo, "audit": repoAudit, "explanation": "repo-local instruction blocks tell non-hooked agents how to bootstrap, checkpoint, handoff, and report lifecycle state"})
 	}
+	discovery := localAgentDiscoverySummary(globalHome, splitCSV(parsed.string("agents", "")), parsed.string("repo", ""), 6)
+	checks = append(checks, map[string]any{"name": "agent_discovery", "ok": asBool(discovery["ok"]), "discovery": discovery, "explanation": "best-effort process/profile discovery explains observable agent presence without depending on prompt compliance"})
 	findings := []map[string]any{}
 	for _, check := range checks {
 		if !asBool(check["ok"]) {
@@ -1532,10 +1574,11 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 		}
 	}
 	return c.emit(map[string]any{
-		"ok":        len(findings) == 0,
-		"schema_id": "contextlattice_native_agent_tools_doctor.v1",
-		"checks":    checks,
-		"findings":  findings,
+		"ok":                      len(findings) == 0,
+		"schema_id":               "contextlattice_native_agent_tools_doctor.v1",
+		"checks":                  checks,
+		"findings":                findings,
+		"diagnostic_explanations": doctorExplanations(checks),
 	}, parsed.bool("pretty"))
 }
 
@@ -1591,7 +1634,7 @@ func (c *cli) cmdAdoptionProof(args []string) error {
 
 func (c *cli) cmdAdapter(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		return c.emitUsage("contextlattice_agent_adapter {profiles|bootstrap|status|context-pack|checkpoint|handoff|event|complete} [options]")
+		return c.emitUsage("contextlattice_agent_adapter {profiles|bootstrap|status|context-pack|checkpoint|handoff|state|event|complete} [options]")
 	}
 	sub := args[0]
 	args = args[1:]
@@ -1608,6 +1651,8 @@ func (c *cli) cmdAdapter(args []string) error {
 		return c.adapterCheckpoint(args)
 	case "handoff":
 		return c.adapterHandoff(args)
+	case "state":
+		return c.adapterState(args)
 	case "event":
 		return c.adapterEvent(args)
 	case "complete":
@@ -1629,20 +1674,28 @@ func (c *cli) adapterProfiles(args []string) error {
 }
 
 func (c *cli) adapterBootstrap(args []string) error {
-	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"agent": "agent", "agent-id": "agent_id", "query": "query", "objective": "objective", "mission": "mission", "goal": "goal"}), commonBoolFlags())
+	parsed := parseArgs(args, mergeStringFlags(adapterStringFlags(), map[string]string{"agent": "agent", "agent-id": "agent_id", "query": "query", "objective": "objective", "mission": "mission", "goal": "goal"}), commonBoolFlags())
 	c.applyBaseURL(parsed)
 	agent := parsed.string("agent", "codex")
+	profile := resolveAdapterProfile(parsed)
 	query := parsed.string("query", parsed.string("objective", agent+" preflight connectivity and retrieval"))
 	payload := dropEmpty(map[string]any{
-		"agent":          agent,
-		"agent_id":       parsed.string("agent_id", ""),
-		"project":        parsed.string("project", "contextlattice"),
-		"topic_path":     parsed.string("topic_path", ""),
-		"query":          query,
-		"retrieval_mode": parsed.string("mode", "balanced"),
-		"mission":        parsed.string("mission", ""),
-		"objective":      parsed.string("objective", query),
-		"goal":           parsed.string("goal", ""),
+		"agent":             agent,
+		"agent_id":          parsed.string("agent_id", ""),
+		"project":           parsed.string("project", "contextlattice"),
+		"topic_path":        parsed.string("topic_path", ""),
+		"query":             query,
+		"retrieval_mode":    parsed.string("mode", "balanced"),
+		"mission":           parsed.string("mission", ""),
+		"objective":         parsed.string("objective", query),
+		"goal":              parsed.string("goal", ""),
+		"task_id":           parsed.string("task_id", ""),
+		"repo":              adapterOwnership(parsed)["repo"],
+		"branch":            adapterOwnership(parsed)["branch"],
+		"worktree":          adapterOwnership(parsed)["worktree"],
+		"cwd":               adapterOwnership(parsed)["cwd"],
+		"native_session_id": adapterOwnership(parsed)["native_session_id"],
+		"agent_state":       buildAgentLifecycleState(parsed, profile, "working"),
 	})
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/preflight", payload, parsed.float("timeout", 45))
 	findings := errorFinding(err)
@@ -1654,26 +1707,38 @@ func (c *cli) adapterBootstrap(args []string) error {
 	if sessionID != "" {
 		writeSessionState(parsed.string("project", "contextlattice"), sessionID, query, parsed.string("agent_id", ""))
 	}
-	return c.emit(adapterResponse("bootstrap", ok, firstString(raw["agent"], agent), firstString(raw["agent_id"], payload["agent_id"]), parsed.string("project", "contextlattice"), sessionID, map[string]any{"preflight": compactPreflightForAdapter(raw)}, findings), parsed.bool("pretty"))
+	return c.emit(adapterResponse("bootstrap", ok, firstString(raw["agent"], agent), firstString(raw["agent_id"], payload["agent_id"]), parsed.string("project", "contextlattice"), sessionID, map[string]any{"preflight": compactPreflightForAdapter(raw), "agent_state": payload["agent_state"], "ownership": adapterOwnership(parsed)}, findings), parsed.bool("pretty"))
 }
 
 func adapterStringFlags() map[string]string {
 	return mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
-		"agent":         "agent",
-		"agent-id":      "agent_id",
-		"session-id":    "session_id",
-		"mission":       "mission",
-		"objective":     "objective",
-		"goal":          "goal",
-		"query":         "query",
-		"limit":         "limit",
-		"max-facts":     "max_facts",
-		"summary":       "summary",
-		"next-action":   "next_action",
-		"file":          "file",
-		"content":       "content",
-		"metadata-json": "metadata_json",
-		"status":        "status",
+		"agent":             "agent",
+		"agent-id":          "agent_id",
+		"session-id":        "session_id",
+		"mission":           "mission",
+		"objective":         "objective",
+		"goal":              "goal",
+		"query":             "query",
+		"limit":             "limit",
+		"max-facts":         "max_facts",
+		"summary":           "summary",
+		"next-action":       "next_action",
+		"file":              "file",
+		"content":           "content",
+		"metadata-json":     "metadata_json",
+		"status":            "status",
+		"state":             "state",
+		"authority":         "authority",
+		"source":            "source",
+		"ttl-seconds":       "ttl_seconds",
+		"task-id":           "task_id",
+		"repo":              "repo",
+		"branch":            "branch",
+		"worktree":          "worktree",
+		"cwd":               "cwd",
+		"native-session-id": "native_session_id",
+		"needs-user":        "needs_user",
+		"blocked-by":        "blocked_by",
 	})
 }
 
@@ -1686,12 +1751,14 @@ func adapterBoolFlags() map[string]string {
 }
 
 type adapterProfile struct {
-	agent     string
-	agentID   string
-	topicPath string
-	query     string
-	mode      string
-	profile   map[string]any
+	agent          string
+	agentID        string
+	topicPath      string
+	query          string
+	mode           string
+	stateAuthority string
+	processNames   []string
+	profile        map[string]any
 }
 
 func resolveAdapterProfile(parsed parsedArgs) adapterProfile {
@@ -1704,7 +1771,12 @@ func resolveAdapterProfile(parsed parsedArgs) adapterProfile {
 	if mode == "" {
 		mode = "balanced"
 	}
-	return adapterProfile{agent: agent, agentID: agentID, topicPath: topicPath, query: query, mode: mode, profile: profile}
+	stateAuthority := normalizeAgentStateAuthority(parsed.string("authority", firstString(profile["state_authority"], "self_report")))
+	processNames := anyToStringList(firstList(profile["process_names"], profile["processNames"], profile["surfaces"]), 16)
+	if len(processNames) == 0 {
+		processNames = defaultAgentProcessNames(agent)
+	}
+	return adapterProfile{agent: agent, agentID: agentID, topicPath: topicPath, query: query, mode: mode, stateAuthority: stateAuthority, processNames: processNames, profile: profile}
 }
 
 func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentID string) (string, error) {
@@ -1712,7 +1784,8 @@ func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentI
 	if sessionID != "" {
 		return sessionID, nil
 	}
-	sessionID = c.ensureSession(project, objective, agentID, parsed.float("timeout", 30))
+	profile := resolveAdapterProfile(parsed)
+	sessionID = c.ensureSessionForAgent(project, objective, profile.agent, agentID, adapterOwnership(parsed), profile, parsed.float("timeout", 30))
 	if sessionID == "" && parsed.bool("strict") {
 		return "", errors.New("failed to create ContextLattice agent session")
 	}
@@ -1802,12 +1875,160 @@ func compactSkillsIndex(payload map[string]any) map[string]any {
 func defaultAdapterContract() map[string]any {
 	return map[string]any{
 		"schema_id":          "contextlattice_universal_agent_adapter.v1",
-		"version":            "2026-06-05",
-		"required_phases":    []any{"preflight", "auto_session", "context_pack", "checkpoint", "handoff", "completion"},
+		"version":            "2026-06-30",
+		"required_phases":    []any{"preflight", "auto_session", "agent_state", "context_pack", "checkpoint", "handoff", "completion"},
 		"preflight_route":    "/v1/agents/preflight",
 		"event_route":        "/v1/agents/sessions/event",
 		"context_pack_route": "/memory/context-pack",
 		"checkpoint_route":   "/memory/write",
+		"agent_lifecycle":    defaultAgentLifecycleContract(),
+		"ownership_fields":   []any{"session_id", "agent", "agent_id", "task_id", "repo", "worktree", "branch", "cwd", "native_session_id"},
+	}
+}
+
+func defaultAgentLifecycleContract() map[string]any {
+	return map[string]any{
+		"schema_id":          "contextlattice_agent_lifecycle_state.v1",
+		"states":             []any{"idle", "working", "awaiting_user", "blocked", "done"},
+		"authorities":        []any{"hook", "plugin", "self_report", "process_probe", "manual", "none"},
+		"state_route":        "/v1/agents/sessions/event",
+		"discovery_command":  "contextlattice_agent_discover --pretty",
+		"adapter_command":    "contextlattice_agent_adapter state --state working --pretty",
+		"separate_lifecycle": "agent_state is the semantic agent lifecycle; retrieval_lifecycle remains source-fetch progress only",
+	}
+}
+
+func normalizeAgentLifecycleState(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(strings.ReplaceAll(raw, "-", "_"))) {
+	case "idle", "ready", "standby":
+		return "idle"
+	case "working", "running", "active", "started", "busy":
+		return "working"
+	case "awaiting_user", "awaiting", "waiting", "paused", "needs_user", "need_user", "approval":
+		return "awaiting_user"
+	case "blocked", "stuck", "failed", "error":
+		return "blocked"
+	case "done", "completed", "complete", "succeeded", "success":
+		return "done"
+	default:
+		return "working"
+	}
+}
+
+func normalizeAgentStateAuthority(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(strings.ReplaceAll(raw, "-", "_"))) {
+	case "hook", "plugin", "self_report", "process_probe", "manual", "none":
+		return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(raw, "-", "_")))
+	case "process", "probe", "ps":
+		return "process_probe"
+	case "self", "agent", "agent_report":
+		return "self_report"
+	default:
+		return "self_report"
+	}
+}
+
+func sessionStatusForAgentState(state string) string {
+	switch normalizeAgentLifecycleState(state) {
+	case "awaiting_user":
+		return "paused"
+	case "blocked":
+		return "blocked"
+	case "done":
+		return "completed"
+	default:
+		return "active"
+	}
+}
+
+func buildAgentLifecycleState(parsed parsedArgs, profile adapterProfile, fallbackState string) map[string]any {
+	state := normalizeAgentLifecycleState(parsed.string("state", fallbackState))
+	authority := normalizeAgentStateAuthority(parsed.string("authority", profile.stateAuthority))
+	if authority == "" {
+		authority = "self_report"
+	}
+	ttl := parsed.int("ttl_seconds", 0)
+	out := map[string]any{
+		"schema_id":  "contextlattice_agent_lifecycle_state.v1",
+		"state":      state,
+		"authority":  authority,
+		"source":     parsed.string("source", "contextlattice_agent_adapter"),
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	if ttl > 0 {
+		out["ttl_seconds"] = ttl
+		out["expires_at"] = time.Now().UTC().Add(time.Duration(ttl) * time.Second).Format(time.RFC3339)
+	}
+	for key, value := range adapterOwnership(parsed) {
+		if firstString(value) != "" {
+			out[key] = value
+		}
+	}
+	if needsUser := parsed.string("needs_user", ""); needsUser != "" {
+		out["needs_user"] = needsUser
+	}
+	if blockedBy := parsed.string("blocked_by", ""); blockedBy != "" {
+		out["blocked_by"] = blockedBy
+	}
+	return out
+}
+
+func adapterOwnership(parsed parsedArgs) map[string]any {
+	cwd := parsed.string("cwd", currentWorkingDir())
+	worktree := parsed.string("worktree", gitValueInDir(cwd, "rev-parse", "--show-toplevel"))
+	if worktree == "" {
+		worktree = cwd
+	}
+	repo := parsed.string("repo", gitValueInDir(worktree, "config", "--get", "remote.origin.url"))
+	branch := parsed.string("branch", gitValueInDir(worktree, "branch", "--show-current"))
+	return dropEmpty(map[string]any{
+		"task_id":           parsed.string("task_id", ""),
+		"repo":              repo,
+		"branch":            branch,
+		"worktree":          worktree,
+		"cwd":               cwd,
+		"native_session_id": parsed.string("native_session_id", ""),
+	})
+}
+
+func mergeAdapterMetadata(parsed parsedArgs, profile adapterProfile, fallbackState string) map[string]any {
+	metadata := parseJSONObject(parsed.string("metadata_json", ""))
+	state := buildAgentLifecycleState(parsed, profile, fallbackState)
+	ownership := adapterOwnership(parsed)
+	if len(state) > 0 {
+		metadata["agent_state"] = state
+	}
+	if len(ownership) > 0 {
+		metadata["ownership"] = ownership
+	}
+	metadata["state_authority"] = state["authority"]
+	metadata["adapter"] = firstNonEmpty(firstString(metadata["adapter"]), "contextlattice-agent-adapter")
+	metadata["go_native_cli"] = true
+	return metadata
+}
+
+func defaultAgentProcessNames(agent string) []string {
+	switch strings.TrimSpace(strings.ToLower(agent)) {
+	case "codex":
+		return []string{"codex"}
+	case "claude-code":
+		return []string{"claude"}
+	case "opencode":
+		return []string{"opencode"}
+	case "hermes-agent":
+		return []string{"hermes-agent", "hermes"}
+	case "hermes-ultra":
+		return []string{"hermes-ultra", "hermes-agent-ultra"}
+	case "pi":
+		return []string{"pi"}
+	case "droid":
+		return []string{"droid"}
+	case "chatgpt-desktop":
+		return []string{"ChatGPT", "chatgpt"}
+	case "claude-desktop":
+		return []string{"Claude", "claude"}
+	default:
+		return []string{agent}
 	}
 }
 
@@ -1836,6 +2057,9 @@ func (c *cli) adapterContextPack(args []string) error {
 		"include_retrieval_debug":   parsed.bool("include_retrieval_debug"),
 		"agent_id":                  profile.agentID,
 		"session_id":                sessionID,
+		"task_id":                   parsed.string("task_id", ""),
+		"agent_state":               buildAgentLifecycleState(parsed, profile, "working"),
+		"ownership":                 adapterOwnership(parsed),
 		"traffic_class":             "user",
 		"native_cli_implementation": true,
 	})
@@ -1865,6 +2089,8 @@ func (c *cli) adapterContextPack(args []string) error {
 			"contract_ok":      len(findings) == 0,
 			"go_native_cli":    true,
 			"context_pack_ref": firstString(contextPack["schema_id"], "context_pack_response.v1"),
+			"agent_state":      request["agent_state"],
+			"ownership":        request["ownership"],
 		},
 	}, parsed.float("timeout", 10))
 	if eventErr != nil {
@@ -1876,6 +2102,8 @@ func (c *cli) adapterContextPack(args []string) error {
 		"topic_path":     request["topic_path"],
 		"query":          profile.query,
 		"retrieval_mode": profile.mode,
+		"agent_state":    request["agent_state"],
+		"ownership":      request["ownership"],
 		"context_pack":   contextPack,
 		"event":          event,
 	}, findings), parsed.bool("pretty"))
@@ -1920,6 +2148,10 @@ func (c *cli) adapterCheckpoint(args []string) error {
 		"content":     content,
 		"agent_id":    profile.agentID,
 		"session_id":  sessionID,
+		"task_id":     parsed.string("task_id", ""),
+		"repo":        adapterOwnership(parsed)["repo"],
+		"branch":      adapterOwnership(parsed)["branch"],
+		"worktree":    adapterOwnership(parsed)["worktree"],
 		"tags":        []any{"agent-writeback", "checkpoint", "universal-agent-adapter", "go-native-cli"},
 	}, parsed.float("timeout", 30))
 	if err != nil {
@@ -1937,6 +2169,8 @@ func (c *cli) adapterCheckpoint(args []string) error {
 			"file":          fileName,
 			"topic_path":    topicPath,
 			"go_native_cli": true,
+			"agent_state":   buildAgentLifecycleState(parsed, profile, "working"),
+			"ownership":     adapterOwnership(parsed),
 		},
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
@@ -1981,6 +2215,8 @@ func (c *cli) adapterHandoff(args []string) error {
 		"summary":     truncate(summary, 4000),
 		"objective":   parsed.string("objective", ""),
 		"next_action": parsed.string("next_action", ""),
+		"agent_state": buildAgentLifecycleState(parsed, profile, "working"),
+		"ownership":   adapterOwnership(parsed),
 		"created_at":  time.Now().UTC().Format(time.RFC3339),
 	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
@@ -1995,6 +2231,8 @@ func (c *cli) adapterHandoff(args []string) error {
 			"handoff":       handoff,
 			"handoff_ok":    true,
 			"go_native_cli": true,
+			"agent_state":   handoff["agent_state"],
+			"ownership":     handoff["ownership"],
 		},
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
@@ -2003,6 +2241,58 @@ func (c *cli) adapterHandoff(args []string) error {
 		"handoff": handoff,
 		"event":   event,
 	}, findings), parsed.bool("pretty"))
+}
+
+func (c *cli) adapterState(args []string) error {
+	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_agent_adapter state --state working --session-id <id> [--task-id <id>] [--needs-user text] [--blocked-by text] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", "contextlattice")
+	profile := resolveAdapterProfile(parsed)
+	state := buildAgentLifecycleState(parsed, profile, "working")
+	sessionID, err := c.ensureAdapterSession(parsed, project, parsed.string("objective", "agent state "+firstString(state["state"])), profile.agentID)
+	if err != nil {
+		return err
+	}
+	summary := parsed.string("summary", "")
+	if summary == "" {
+		switch firstString(state["state"]) {
+		case "awaiting_user":
+			summary = firstNonEmpty(firstString(state["needs_user"]), "agent is awaiting user input")
+		case "blocked":
+			summary = firstNonEmpty(firstString(state["blocked_by"]), "agent is blocked")
+		case "done":
+			summary = "agent completed assigned work"
+		case "idle":
+			summary = "agent is idle"
+		default:
+			summary = "agent is working"
+		}
+	}
+	metadata := mergeAdapterMetadata(parsed, profile, firstString(state["state"]))
+	eventType := "agent.state." + firstString(state["state"])
+	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
+		"session_id": sessionID,
+		"agent":      profile.agent,
+		"agent_id":   profile.agentID,
+		"project":    project,
+		"type":       eventType,
+		"summary":    summary,
+		"status":     sessionStatusForAgentState(firstString(state["state"])),
+		"metadata":   metadata,
+	}, parsed.float("timeout", 10))
+	findings := errorFinding(eventErr)
+	ok := len(findings) == 0 && asBool(event["ok"])
+	if err := c.emit(adapterResponse("state", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+		"agent_state": state,
+		"ownership":   adapterOwnership(parsed),
+		"event":       event,
+	}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *cli) adapterEvent(args []string) error {
@@ -2028,8 +2318,8 @@ func (c *cli) adapterEvent(args []string) error {
 		"project":    project,
 		"type":       parsed.pos[0],
 		"summary":    summary,
-		"status":     parsed.string("status", ""),
-		"metadata":   parseJSONObject(parsed.string("metadata_json", "")),
+		"status":     firstNonEmpty(parsed.string("status", ""), sessionStatusForAgentState(parsed.string("state", "working"))),
+		"metadata":   mergeAdapterMetadata(parsed, profile, parsed.string("state", "working")),
 	}), parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
 	ok := len(findings) == 0 && asBool(event["ok"])
@@ -2060,14 +2350,359 @@ func (c *cli) adapterComplete(args []string) error {
 		"type":       "session.completed",
 		"summary":    summary,
 		"status":     "completed",
-		"metadata": map[string]any{
-			"adapter":       "contextlattice-agent-adapter",
-			"go_native_cli": true,
-		},
+		"metadata":   mergeAdapterMetadata(parsed, profile, "done"),
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
 	ok := len(findings) == 0 && asBool(event["ok"])
 	return c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event}, findings), parsed.bool("pretty"))
+}
+
+func (c *cli) cmdDiscover(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"agents":      "agents",
+		"repo":        "repo",
+		"global-home": "global_home",
+		"ps-fixture":  "ps_fixture",
+		"limit":       "limit",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_agent_discover --agents codex,claude-code --repo . --pretty")
+	}
+	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
+	profiles := loadAgentProfilesFromGlobalHome(globalHome)
+	names := splitCSV(parsed.string("agents", ""))
+	if len(names) == 0 {
+		for name := range profiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	}
+	psText, psErr := readProcessSnapshot(parsed.string("ps_fixture", ""), parsed.float("timeout", 2))
+	repo := parsed.string("repo", "")
+	absRepo := ""
+	if repo != "" {
+		if resolved, err := filepath.Abs(repo); err == nil {
+			absRepo = resolved
+		}
+	}
+	agents := []map[string]any{}
+	findings := []map[string]any{}
+	for _, name := range names {
+		profile := asMap(profiles[name])
+		resolved := adapterProfile{
+			agent:          name,
+			agentID:        firstString(profile["agent_id"], strings.ReplaceAll(name, "-", "_")+"_agent"),
+			stateAuthority: normalizeAgentStateAuthority(firstString(profile["state_authority"], "self_report")),
+			processNames:   anyToStringList(firstList(profile["process_names"], profile["processNames"], profile["surfaces"]), 16),
+			profile:        profile,
+		}
+		if len(resolved.processNames) == 0 {
+			resolved.processNames = defaultAgentProcessNames(name)
+		}
+		processes := discoverAgentProcesses(psText, resolved.processNames, parsed.int("limit", 8))
+		stateValue := "idle"
+		stateSource := "profile"
+		if len(processes) > 0 {
+			stateValue = "working"
+			stateSource = "process_probe"
+		}
+		hook := agentHookEvidence(name)
+		integration := map[string]any{
+			"profile_present":        len(profile) > 0,
+			"adapter_tool":           executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_adapter")),
+			"discover_tool":          executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_discover")),
+			"state_authority":        resolved.stateAuthority,
+			"hook":                   hook,
+			"repo_instruction_check": map[string]any{"ok": false, "reason": "repo_not_requested"},
+		}
+		if absRepo != "" {
+			audit := auditRepoIntegration(absRepo, []string{name})
+			integration["repo_instruction_check"] = map[string]any{
+				"ok":       asBool(audit["ok"]),
+				"repo":     absRepo,
+				"findings": audit["findings"],
+			}
+		}
+		explanation := agentDiscoveryExplanation(name, stateValue, stateSource, processes, integration)
+		agents = append(agents, map[string]any{
+			"agent":            name,
+			"agent_id":         resolved.agentID,
+			"state_authority":  resolved.stateAuthority,
+			"process_patterns": resolved.processNames,
+			"agent_state": map[string]any{
+				"schema_id": "contextlattice_agent_lifecycle_state.v1",
+				"state":     stateValue,
+				"authority": "process_probe",
+				"source":    stateSource,
+			},
+			"process_count": len(processes),
+			"processes":     processes,
+			"integration":   integration,
+			"explanation":   explanation,
+		})
+		if !asBool(integration["adapter_tool"]) {
+			findings = append(findings, map[string]any{"reason": "adapter_tool_missing", "agent": name, "path": filepath.Join(globalHome, "bin", "contextlattice_agent_adapter")})
+		}
+	}
+	return c.emit(map[string]any{
+		"ok":                 len(findings) == 0,
+		"schema_id":          "contextlattice_agent_discovery.v1",
+		"lifecycle_contract": defaultAgentLifecycleContract(),
+		"global_home":        globalHome,
+		"repo":               absRepo,
+		"process_probe": map[string]any{
+			"ok":           psErr == nil,
+			"source":       "ps",
+			"best_effort":  true,
+			"error":        errString(psErr),
+			"privacy_note": "cwd/worktree evidence is best-effort and may be unavailable under OS privacy controls",
+		},
+		"agents": agents,
+		"findings": append(findings, func() []map[string]any {
+			if psErr == nil {
+				return nil
+			}
+			return []map[string]any{{"reason": "process_snapshot_unavailable", "severity": "warning", "detail": truncate(psErr.Error(), 500)}}
+		}()...),
+	}, parsed.bool("pretty"))
+}
+
+func readProcessSnapshot(fixture string, timeout float64) (string, error) {
+	if strings.TrimSpace(fixture) != "" {
+		data, err := os.ReadFile(fixture)
+		return string(data), err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(maxFloat(timeout, 1))*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,comm=,args=")
+	raw, err := cmd.Output()
+	return string(raw), err
+}
+
+func discoverAgentProcesses(psText string, patterns []string, limit int) []any {
+	if limit < 1 {
+		limit = 8
+	}
+	out := []any{}
+	for _, raw := range strings.Split(psText, "\n") {
+		fields := strings.Fields(raw)
+		if len(fields) < 3 {
+			continue
+		}
+		pid := fields[0]
+		ppid := fields[1]
+		command := fields[2]
+		args := ""
+		if len(fields) > 3 {
+			args = strings.Join(fields[3:], " ")
+		}
+		if agentProcessIgnored(command, args) {
+			continue
+		}
+		if !agentProcessMatches(command, args, patterns) {
+			continue
+		}
+		cwd := processCWD(pid)
+		worktree := ""
+		branch := ""
+		repo := ""
+		if cwd != "" {
+			worktree = gitValueInDir(cwd, "rev-parse", "--show-toplevel")
+			if worktree != "" {
+				branch = gitValueInDir(worktree, "branch", "--show-current")
+				repo = gitValueInDir(worktree, "config", "--get", "remote.origin.url")
+			}
+		}
+		out = append(out, dropEmpty(map[string]any{
+			"pid":      pid,
+			"ppid":     ppid,
+			"command":  command,
+			"args":     truncate(args, 360),
+			"cwd":      cwd,
+			"worktree": worktree,
+			"branch":   branch,
+			"repo":     repo,
+		}))
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func agentProcessIgnored(command, args string) bool {
+	lower := strings.ToLower(command + " " + args)
+	for _, pattern := range []string{
+		"crashpad",
+		"node_repl",
+		"skycomputeruseclient",
+		"kickbacks-codex-cli-agent",
+		"contextlattice_agent_discover",
+		"contextlattice-agent-tools discover",
+		"go run ./cmd/contextlattice-agent-tools discover",
+	} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentProcessMatches(command, args string, patterns []string) bool {
+	base := strings.ToLower(filepath.Base(command))
+	haystack := strings.ToLower(command + " " + args)
+	for _, pattern := range patterns {
+		p := strings.ToLower(strings.TrimSpace(pattern))
+		if p == "" {
+			continue
+		}
+		if base == p || strings.Contains(base, p) {
+			return true
+		}
+		if len(p) > 2 && strings.Contains(haystack, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func processCWD(pid string) string {
+	if pid == "" {
+		return ""
+	}
+	if target, err := os.Readlink(filepath.Join("/proc", pid, "cwd")); err == nil {
+		return target
+	}
+	if _, err := exec.LookPath("lsof"); err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "lsof", "-a", "-p", pid, "-d", "cwd", "-Fn")
+	raw, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "n/") {
+			return strings.TrimPrefix(line, "n")
+		}
+	}
+	return ""
+}
+
+func agentHookEvidence(agent string) map[string]any {
+	switch strings.TrimSpace(strings.ToLower(agent)) {
+	case "codex":
+		path := filepath.Join(homeDir(), ".codex", "hooks.json")
+		data, err := os.ReadFile(path)
+		ok := err == nil && strings.Contains(string(data), "contextlattice_agent_start")
+		reason := "codex_hooks_json_contains_contextlattice_agent_start"
+		if err != nil {
+			reason = "codex_hooks_json_unreadable_or_missing"
+		} else if !ok {
+			reason = "codex_hooks_json_missing_contextlattice_agent_start"
+		}
+		return map[string]any{"ok": ok, "path": path, "reason": reason}
+	default:
+		return map[string]any{"ok": false, "reason": "no_known_native_hook_probe_for_profile"}
+	}
+}
+
+func agentDiscoveryExplanation(agent, state, stateSource string, processes []any, integration map[string]any) string {
+	parts := []string{}
+	if len(processes) > 0 {
+		parts = append(parts, fmt.Sprintf("%s appears %s because %d matching process(es) were found by %s", agent, state, len(processes), stateSource))
+	} else {
+		parts = append(parts, fmt.Sprintf("%s has no matching process evidence, so discovery reports %s until hooks or self-reporting update state", agent, state))
+	}
+	if hook := asMap(integration["hook"]); asBool(hook["ok"]) {
+		parts = append(parts, "native hook evidence is present")
+	}
+	if repo := asMap(integration["repo_instruction_check"]); asBool(repo["ok"]) {
+		parts = append(parts, "repo instruction block is present")
+	}
+	if !asBool(integration["adapter_tool"]) {
+		parts = append(parts, "global adapter tool is missing or not executable")
+	}
+	return strings.Join(parts, "; ") + "."
+}
+
+func localAgentDiscoverySummary(globalHome string, names []string, repo string, limit int) map[string]any {
+	profiles := loadAgentProfilesFromGlobalHome(globalHome)
+	if len(names) == 0 {
+		for name := range profiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	}
+	psText, psErr := readProcessSnapshot("", 1.5)
+	agents := []any{}
+	for _, name := range names {
+		profile := asMap(profiles[name])
+		processNames := anyToStringList(firstList(profile["process_names"], profile["processNames"], profile["surfaces"]), 16)
+		if len(processNames) == 0 {
+			processNames = defaultAgentProcessNames(name)
+		}
+		processes := discoverAgentProcesses(psText, processNames, limit)
+		state := "idle"
+		source := "profile"
+		if len(processes) > 0 {
+			state = "working"
+			source = "process_probe"
+		}
+		integration := map[string]any{
+			"profile_present": len(profile) > 0,
+			"adapter_tool":    executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_adapter")),
+			"discover_tool":   executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_discover")),
+			"hook":            agentHookEvidence(name),
+		}
+		if strings.TrimSpace(repo) != "" {
+			if absRepo, err := filepath.Abs(repo); err == nil {
+				audit := auditRepoIntegration(absRepo, []string{name})
+				integration["repo_instruction_check"] = map[string]any{"ok": asBool(audit["ok"]), "repo": absRepo, "findings": audit["findings"]}
+			}
+		}
+		agents = append(agents, map[string]any{
+			"agent":           name,
+			"state":           state,
+			"state_source":    source,
+			"process_count":   len(processes),
+			"state_authority": normalizeAgentStateAuthority(firstString(profile["state_authority"], "self_report")),
+			"integration":     integration,
+			"explanation":     agentDiscoveryExplanation(name, state, source, processes, integration),
+		})
+	}
+	return map[string]any{
+		"ok":        true,
+		"schema_id": "contextlattice_agent_discovery_summary.v1",
+		"agents":    agents,
+		"process_probe": map[string]any{
+			"ok":    psErr == nil,
+			"error": errString(psErr),
+		},
+	}
+}
+
+func doctorExplanations(checks []map[string]any) []any {
+	out := []any{}
+	for _, check := range checks {
+		name := firstString(check["name"])
+		explanation := firstString(check["explanation"])
+		if name == "" || explanation == "" {
+			continue
+		}
+		state := "passed"
+		if !asBool(check["ok"]) {
+			state = "failed"
+		}
+		out = append(out, map[string]any{
+			"check":       name,
+			"status":      state,
+			"explanation": explanation,
+		})
+	}
+	return out
 }
 
 func (c *cli) cmdMemoryTopology(args []string) error {
@@ -2362,9 +2997,19 @@ func containsProviderOverflowPayload(payload any) bool {
 }
 
 func loadAgentProfiles() map[string]any {
+	return loadAgentProfilesFromGlobalHome(envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
+}
+
+func loadAgentProfilesFromGlobalHome(globalHome string) map[string]any {
+	if strings.TrimSpace(globalHome) == "" {
+		globalHome = filepath.Join(homeDir(), ".contextlattice")
+	}
 	paths := []string{
-		filepath.Join(envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")), "config", "agents", "agent_profiles.json"),
+		filepath.Join(globalHome, "config", "agents", "agent_profiles.json"),
 		filepath.Join(repoRoot(), "config", "agents", "agent_profiles.json"),
+	}
+	if currentRoot := currentGitRoot(); currentRoot != "" {
+		paths = append(paths, filepath.Join(currentRoot, "config", "agents", "agent_profiles.json"))
 	}
 	profiles := map[string]any{}
 	seen := map[string]bool{}
@@ -2490,6 +3135,40 @@ func asList(value any) []any {
 		return items
 	}
 	return []any{}
+}
+
+func anyToStringList(value any, limit int) []string {
+	if limit < 1 {
+		limit = 1
+	}
+	items := []string{}
+	add := func(raw any) {
+		if len(items) >= limit {
+			return
+		}
+		text := firstString(raw)
+		if text == "" {
+			return
+		}
+		items = append(items, text)
+	}
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			add(item)
+		}
+	case []string:
+		for _, item := range typed {
+			add(item)
+		}
+	case string:
+		for _, item := range splitCSV(typed) {
+			add(item)
+		}
+	default:
+		add(value)
+	}
+	return items
 }
 
 func firstList(values ...any) []any {
@@ -2652,8 +3331,15 @@ func currentWorkingDir() string {
 }
 
 func gitValue(args ...string) string {
+	return gitValueInDir(repoRoot(), args...)
+}
+
+func gitValueInDir(dir string, args ...string) string {
+	if strings.TrimSpace(dir) == "" {
+		dir = currentWorkingDir()
+	}
 	cmd := exec.Command("git", args...)
-	cmd.Dir = repoRoot()
+	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

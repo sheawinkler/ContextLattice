@@ -34,9 +34,11 @@ Use this as a reusable skill block for agent frameworks that support skills or t
    - `POST /tools/feedback_submit` (include `idempotencyKey`)
 8. Before context compaction/summarization, persist objective continuity through the adapter:
    - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`
-9. Before completion, run one recency retrieval pass:
+9. When agent lifecycle changes, report it without confusing it with retrieval progress:
+   - `contextlattice_agent_adapter state --project contextlattice --session-id <session_id> --state working|awaiting_user|blocked|done --summary "<why>"`
+10. Before completion, run one recency retrieval pass:
    - `POST /memory/search` or `POST /memory/context-pack`
-10. Set caller timeout to match retrieval mode:
+11. Set caller timeout to match retrieval mode:
    - `fast`: `25s`
    - `balanced`: `60s`
    - `deep` (or explicit `letta` / `memory_bank`): `75s`

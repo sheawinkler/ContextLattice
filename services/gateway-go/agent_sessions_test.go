@@ -62,6 +62,13 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 		"agent":"codex",
 		"agent_id":"codex_gpt5_test",
 		"project":"contextlattice",
+		"repo":"git@example.com:contextlattice/repo.git",
+		"branch":"feature/lifecycle-presence",
+		"worktree":"/tmp/contextlattice-worktree",
+		"cwd":"/tmp/contextlattice-worktree",
+		"task_id":"HD-17",
+		"native_session_id":"codex-native-123",
+		"agent_state":{"state":"working","authority":"hook","source":"codex-session-hook","task_id":"HD-17","repo":"git@example.com:contextlattice/repo.git","branch":"feature/lifecycle-presence","worktree":"/tmp/contextlattice-worktree","cwd":"/tmp/contextlattice-worktree","native_session_id":"codex-native-123"},
 		"objective":"make ContextLattice coordinate parallel agents",
 		"objective_hierarchy":{
 			"schema_id":"contextlattice_objective_hierarchy.v1",
@@ -106,6 +113,35 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	contribution := anyMap(session["memory_contribution"])
 	if anyToInt(contribution["context_packs"], 0) != 1 || anyToInt(contribution["score"], 0) <= 0 {
 		t.Fatalf("expected context contribution score, got %#v", contribution)
+	}
+
+	status, stateEvent := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
+		"session_id":"sess-test",
+		"type":"agent.state.awaiting_user",
+		"agent_id":"codex_gpt5_test",
+		"project":"contextlattice",
+		"summary":"waiting on approval",
+		"status":"paused",
+		"metadata":{
+			"agent_state":{"state":"awaiting_user","authority":"hook","source":"codex-session-hook","task_id":"HD-17","needs_user":"approve command","repo":"git@example.com:contextlattice/repo.git","branch":"feature/lifecycle-presence","worktree":"/tmp/contextlattice-worktree","cwd":"/tmp/contextlattice-worktree","native_session_id":"codex-native-123"},
+			"ownership":{"task_id":"HD-17","repo":"git@example.com:contextlattice/repo.git","branch":"feature/lifecycle-presence","worktree":"/tmp/contextlattice-worktree","cwd":"/tmp/contextlattice-worktree","native_session_id":"codex-native-123"}
+		}
+	}`)
+	if status != http.StatusOK || !anyToBool(stateEvent["ok"]) {
+		t.Fatalf("expected state event ok, status=%d payload=%#v", status, stateEvent)
+	}
+	stateSession := anyMap(stateEvent["session"])
+	if anyToString(stateSession["status"]) != "paused" {
+		t.Fatalf("expected semantic awaiting_user to map to paused session status, got %#v", stateSession)
+	}
+	stateRollup := anyMap(stateEvent["rollup"])
+	lifecycle := anyMap(stateRollup["agent_lifecycle"])
+	if anyToString(lifecycle["state"]) != "awaiting_user" || anyToString(lifecycle["authority"]) != "hook" {
+		t.Fatalf("expected lifecycle rollup, got %#v", lifecycle)
+	}
+	ownership := anyMap(stateRollup["ownership"])
+	if anyToString(ownership["task_id"]) != "HD-17" || anyToString(ownership["branch"]) != "feature/lifecycle-presence" || anyToString(ownership["native_session_id"]) != "codex-native-123" {
+		t.Fatalf("expected ownership rollup, got %#v", ownership)
 	}
 
 	status, preflightEvent := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/events", `{
@@ -173,6 +209,10 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	if !strings.Contains(anyToString(packageResponse["reference_prompt"]), "Project primary objective") {
 		t.Fatalf("expected objective hierarchy in reference prompt, got %#v", packageResponse["reference_prompt"])
 	}
+	if !strings.Contains(anyToString(packageResponse["reference_prompt"]), "Agent lifecycle: awaiting_user via hook") ||
+		!strings.Contains(anyToString(packageResponse["reference_prompt"]), "task=HD-17") {
+		t.Fatalf("expected lifecycle and ownership in reference prompt, got %#v", packageResponse["reference_prompt"])
+	}
 
 	status, traceResponse := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/trace")
 	if status != http.StatusOK || !anyToBool(traceResponse["ok"]) {
@@ -196,6 +236,10 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	if !strings.Contains(markdown, "frontend-design") {
 		t.Fatalf("expected captured skill in run card, got %q", markdown)
 	}
+	if !strings.Contains(markdown, "Agent lifecycle: `awaiting_user` via `hook`") ||
+		!strings.Contains(markdown, "task `HD-17`") {
+		t.Fatalf("expected lifecycle and ownership in run card, got %q", markdown)
+	}
 	validation := anyMap(anyMap(traceResponse["format_contract"])["validation"])
 	if anyToString(validation["status"]) != "passed" {
 		t.Fatalf("expected trace contract validation to pass, got %#v", traceResponse["format_contract"])
@@ -205,8 +249,8 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	if status != http.StatusOK || !anyToBool(runtime["enabled"]) {
 		t.Fatalf("expected runtime telemetry ok, status=%d payload=%#v", status, runtime)
 	}
-	if anyToInt(runtime["active"], 0) != 1 {
-		t.Fatalf("expected one active session, got %#v", runtime)
+	if anyToInt(runtime["paused"], 0) != 1 {
+		t.Fatalf("expected one paused session after awaiting_user lifecycle event, got %#v", runtime)
 	}
 
 	status, completed := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
@@ -221,7 +265,76 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	if anyToString(session["status"]) != "completed" {
 		t.Fatalf("expected completed session, got %#v", session)
 	}
+	completedLifecycle := anyMap(session["agent_state"])
+	if anyToString(completedLifecycle["state"]) != "done" {
+		t.Fatalf("expected completed session to force agent lifecycle done, got %#v", completedLifecycle)
+	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(os.Getenv("GO_AGENT_SESSIONS_PATH")), "agent_sessions.json")); err != nil {
 		t.Fatalf("expected persisted agent session ledger: %v", err)
+	}
+}
+
+func TestBlockedSessionCanRecoverWithoutCompletedAt(t *testing.T) {
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, started := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", `{
+		"session_id":"sess-recover",
+		"agent":"codex",
+		"agent_id":"codex_gpt5_test",
+		"project":"contextlattice",
+		"objective":"prove blocked is recoverable",
+		"agent_state":{"state":"working","authority":"hook","source":"test"}
+	}`)
+	if status != http.StatusOK || !anyToBool(started["ok"]) {
+		t.Fatalf("expected start ok, status=%d payload=%#v", status, started)
+	}
+
+	status, blocked := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
+		"session_id":"sess-recover",
+		"type":"session.blocked",
+		"status":"blocked",
+		"summary":"waiting on external fix",
+		"metadata":{"agent_state":{"state":"blocked","authority":"hook","source":"test","blocked_by":"external fix"}}
+	}`)
+	if status != http.StatusOK || !anyToBool(blocked["ok"]) {
+		t.Fatalf("expected blocked event ok, status=%d payload=%#v", status, blocked)
+	}
+	blockedSession := anyMap(blocked["session"])
+	if anyToString(blockedSession["status"]) != "blocked" {
+		t.Fatalf("expected blocked status, got %#v", blockedSession)
+	}
+	if anyToString(blockedSession["completed_at"]) != "" {
+		t.Fatalf("blocked should be recoverable and must not set completed_at: %#v", blockedSession)
+	}
+
+	status, recovered := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
+		"session_id":"sess-recover",
+		"type":"agent.state.working",
+		"status":"active",
+		"summary":"external fix arrived",
+		"metadata":{"agent_state":{"state":"working","authority":"hook","source":"test"}}
+	}`)
+	if status != http.StatusOK || !anyToBool(recovered["ok"]) {
+		t.Fatalf("expected recovery event ok, status=%d payload=%#v", status, recovered)
+	}
+	recoveredSession := anyMap(recovered["session"])
+	if anyToString(recoveredSession["status"]) != "active" {
+		t.Fatalf("expected recovered active status, got %#v", recoveredSession)
+	}
+	if anyToString(recoveredSession["completed_at"]) != "" {
+		t.Fatalf("recovered session must keep completed_at empty: %#v", recoveredSession)
+	}
+	lifecycle := anyMap(anyMap(recovered["rollup"])["agent_lifecycle"])
+	if anyToString(lifecycle["state"]) != "working" {
+		t.Fatalf("expected lifecycle to recover to working, got %#v", lifecycle)
 	}
 }

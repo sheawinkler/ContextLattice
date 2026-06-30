@@ -55,7 +55,8 @@ Installed commands:
 | Command | Purpose |
 | --- | --- |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
-| `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, event, and completion. |
+| `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, state, event, and completion. |
+| `contextlattice_agent_discover` | Best-effort local agent discovery for profile authority, process evidence, hook evidence, repo instruction evidence, and lifecycle explanations. |
 | `contextlattice_agent_session` | Session lifecycle, rollup, context-package, trace, runtime, and cleanup CLI. |
 | `contextlattice_agent_trace` | Contract-valid run trace and exportable run card showing which context, skills that may be helpful, sources, graph touches, handoffs, and checkpoints shaped a session. |
 | `contextlattice_adopt` | Zero-friction adoption front door for status, install guidance, proof, profiles, and CI-style adoption scenarios. |
@@ -88,6 +89,8 @@ Installed commands:
 
 ```bash
 contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
+contextlattice_agent_adapter state --agent codex --state working --summary "startup active" --pretty
+contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty
 contextlattice_adopt status --pretty
 contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
@@ -95,6 +98,13 @@ contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_trace --session-id <session-id> --tree
 ```
+
+Agent lifecycle state is separate from retrieval lifecycle state. Use
+`idle`, `working`, `awaiting_user`, `blocked`, or `done` for the agent itself;
+`retrieval_lifecycle` remains source-fetch progress such as queued, partial, or
+succeeded. Each profile declares a preferred `state_authority` such as `hook`,
+`self_report`, `process_probe`, or `manual`; discovery reports the evidence it
+found rather than guessing.
 
 This creates or recovers a ContextLattice-owned session, returns bounded exports,
 emits a contract-valid `universal_agent_adapter_response.v1`, and renders the

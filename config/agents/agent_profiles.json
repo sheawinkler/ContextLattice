@@ -5,6 +5,7 @@
     "required_phases": [
       "preflight",
       "auto_session",
+      "agent_state",
       "context_pack",
       "checkpoint",
       "handoff",
@@ -22,11 +23,45 @@
     "preflight_route": "/v1/agents/preflight",
     "context_pack_route": "/memory/context-pack",
     "checkpoint_route": "/memory/write",
-    "handoff_helper": "scripts/agent/compaction-handoff-payload"
+    "handoff_helper": "scripts/agent/compaction-handoff-payload",
+    "agent_lifecycle": {
+      "schema_id": "contextlattice_agent_lifecycle_state.v1",
+      "states": [
+        "idle",
+        "working",
+        "awaiting_user",
+        "blocked",
+        "done"
+      ],
+      "authorities": [
+        "hook",
+        "plugin",
+        "self_report",
+        "process_probe",
+        "manual",
+        "none"
+      ],
+      "ownership_fields": [
+        "session_id",
+        "agent",
+        "agent_id",
+        "task_id",
+        "repo",
+        "worktree",
+        "branch",
+        "cwd",
+        "native_session_id"
+      ],
+      "separate_lifecycle": "agent_state is the semantic agent lifecycle; retrieval_lifecycle remains source-fetch progress only"
+    }
   },
   "profiles": {
     "codex": {
       "agent_id": "codex_gpt5",
+      "state_authority": "hook",
+      "process_names": [
+        "codex"
+      ],
       "topic_path": "runbooks/codex-integration",
       "query": "codex preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -37,6 +72,10 @@
     },
     "claude-code": {
       "agent_id": "claude_code_agent",
+      "state_authority": "self_report",
+      "process_names": [
+        "claude"
+      ],
       "topic_path": "runbooks/claude-code-integration",
       "query": "claude code preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -46,6 +85,10 @@
     },
     "opencode": {
       "agent_id": "opencode_agent",
+      "state_authority": "self_report",
+      "process_names": [
+        "opencode"
+      ],
       "topic_path": "runbooks/opencode-integration",
       "query": "opencode preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -55,6 +98,11 @@
     },
     "hermes-agent": {
       "agent_id": "hermes_agent",
+      "state_authority": "self_report",
+      "process_names": [
+        "hermes-agent",
+        "hermes"
+      ],
       "topic_path": "runbooks/hermes-agent-integration",
       "query": "hermes agent preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -64,6 +112,11 @@
     },
     "hermes-ultra": {
       "agent_id": "hermes_ultra_agent",
+      "state_authority": "self_report",
+      "process_names": [
+        "hermes-ultra",
+        "hermes-agent-ultra"
+      ],
       "topic_path": "runbooks/hermes-ultra-integration",
       "query": "hermes ultra preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -74,6 +127,10 @@
     },
     "pi": {
       "agent_id": "pi_agent",
+      "state_authority": "manual",
+      "process_names": [
+        "pi"
+      ],
       "topic_path": "runbooks/pi-integration",
       "query": "pi agent preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -83,6 +140,10 @@
     },
     "droid": {
       "agent_id": "droid_agent",
+      "state_authority": "manual",
+      "process_names": [
+        "droid"
+      ],
       "topic_path": "runbooks/droid-integration",
       "query": "droid agent preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -92,6 +153,8 @@
     },
     "chatgpt-web": {
       "agent_id": "chatgpt_web_agent",
+      "state_authority": "manual",
+      "process_names": [],
       "topic_path": "runbooks/chatgpt-web-integration",
       "query": "chatgpt web session preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -101,6 +164,11 @@
     },
     "chatgpt-desktop": {
       "agent_id": "chatgpt_desktop_agent",
+      "state_authority": "manual",
+      "process_names": [
+        "ChatGPT",
+        "chatgpt"
+      ],
       "topic_path": "runbooks/chatgpt-desktop-integration",
       "query": "chatgpt desktop session preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -110,6 +178,8 @@
     },
     "claude-web": {
       "agent_id": "claude_web_agent",
+      "state_authority": "manual",
+      "process_names": [],
       "topic_path": "runbooks/claude-web-integration",
       "query": "claude web session preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
@@ -119,6 +189,11 @@
     },
     "claude-desktop": {
       "agent_id": "claude_desktop_agent",
+      "state_authority": "manual",
+      "process_names": [
+        "Claude",
+        "claude"
+      ],
       "topic_path": "runbooks/claude-desktop-integration",
       "query": "claude desktop session preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
