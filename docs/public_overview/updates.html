@@ -227,7 +227,8 @@
           objective state, behavior provenance, and completion all move through one durable local contract.
         </p>
         <ul>
-          <li><strong>Universal adapter:</strong> <code>contextlattice_agent_adapter</code> handles bootstrap, context-pack, checkpoint, handoff, event, and complete flows.</li>
+          <li><strong>Universal adapter:</strong> <code>contextlattice_agent_adapter</code> handles bootstrap, context-pack, lifecycle state, checkpoint, handoff, event, and complete flows.</li>
+          <li><strong>Agent discovery:</strong> <code>contextlattice_agent_discover</code> reports best-effort process, profile, hook, and repo-instruction evidence for local agents.</li>
           <li><strong>Runtime sessions:</strong> live agent work is tracked through <code>/v1/agents/sessions</code> with typed events and Agent Radar telemetry.</li>
           <li><strong>Objective contract:</strong> preflight, context-pack, and Dream Mode return <code>objective_runtime_state.v1</code> with action, evidence, delta, risk, and next-action fields.</li>
           <li><strong>Agent coverage:</strong> templates and conformance checks cover Codex, Claude Code, OpenCode, Hermes Agent, ChatGPT web/desktop, and Claude web/desktop patterns.</li>

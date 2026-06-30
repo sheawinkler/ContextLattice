@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -224,6 +226,112 @@ func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
 	}
 }
 
+func TestAdapterStatePostsLifecycleAndOwnership(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	var captured map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/sessions/event":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode event request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "event": map[string]any{"id": "evt-state"}})
+		case "/v1/agents/sessions/sess-state/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice_agent_adapter", "state",
+		"--agent", "codex",
+		"--project", "alpha",
+		"--session-id", "sess-state",
+		"--state", "awaiting_user",
+		"--authority", "hook",
+		"--source", "codex-session-hook",
+		"--task-id", "HD-17",
+		"--repo", "git@example.com:alpha/repo.git",
+		"--branch", "feature/lifecycle",
+		"--worktree", "/tmp/contextlattice-worktree",
+		"--cwd", "/tmp/contextlattice-worktree",
+		"--native-session-id", "codex-native-123",
+		"--needs-user", "approve shell command",
+		"--pretty",
+	}); err != nil {
+		t.Fatalf("run adapter state: %v", err)
+	}
+	if captured["type"] != "agent.state.awaiting_user" || captured["status"] != "paused" {
+		t.Fatalf("unexpected state event envelope: %#v", captured)
+	}
+	metadata := asMap(captured["metadata"])
+	state := asMap(metadata["agent_state"])
+	if state["state"] != "awaiting_user" || state["authority"] != "hook" || state["needs_user"] != "approve shell command" {
+		t.Fatalf("unexpected agent_state metadata: %#v", state)
+	}
+	ownership := asMap(metadata["ownership"])
+	if ownership["task_id"] != "HD-17" || ownership["branch"] != "feature/lifecycle" || ownership["native_session_id"] != "codex-native-123" {
+		t.Fatalf("unexpected ownership metadata: %#v", ownership)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["command"] != "state" || output["ok"] != true {
+		t.Fatalf("unexpected state output: %#v", output)
+	}
+}
+
+func TestDiscoverUsesProcessFixtureAndProfileAuthority(t *testing.T) {
+	globalHome := t.TempDir()
+	repoRoot, err := filepath.Abs("../../../..")
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	t.Setenv("CONTEXTLATTICE_REPO_ROOT", repoRoot)
+	t.Setenv("CONTEXTLATTICE_GLOBAL_HOME", globalHome)
+	binDir := filepath.Join(globalHome, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	for _, name := range []string{"contextlattice_agent_adapter", "contextlattice_agent_discover"} {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	fixture := filepath.Join(t.TempDir(), "ps.txt")
+	if err := os.WriteFile(fixture, []byte("123 1 codex /opt/homebrew/bin/codex --model gpt-5\n999 1 zsh zsh\n"), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	if err := c.run([]string{"contextlattice_agent_discover", "--agents", "codex", "--global-home", globalHome, "--ps-fixture", fixture, "--pretty"}); err != nil {
+		t.Fatalf("run discover: %v", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	agents := output["agents"].([]any)
+	if len(agents) != 1 {
+		t.Fatalf("expected one agent: %#v", output)
+	}
+	agent := agents[0].(map[string]any)
+	if agent["state_authority"] != "hook" || int(agent["process_count"].(float64)) != 1 {
+		t.Fatalf("unexpected discover agent: %#v", agent)
+	}
+	state := asMap(agent["agent_state"])
+	if state["state"] != "working" || state["authority"] != "process_probe" {
+		t.Fatalf("unexpected discovered state: %#v", state)
+	}
+}
 func TestTraceCommandRendersTree(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/agents/sessions/sess-trace/trace" {

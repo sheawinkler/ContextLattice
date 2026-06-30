@@ -137,7 +137,9 @@ contextlattice_checkpoint -h
 contextlattice_skills_index search "browser automation" --pretty
 ```
 
-- `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
+- `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, state, event, and completion flows.
+- `contextlattice_agent_adapter state --state working|awaiting_user|blocked|done --session-id <id> --pretty` reports semantic agent lifecycle state with authority, source, TTL, native session id, task id, repo, worktree, branch, cwd, and user/blocker fields.
+- `contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty` reports best-effort local process/profile/hook/repo-instruction evidence with explanations. Discovery is diagnostic evidence; explicit hook or adapter state remains authoritative.
 - `contextlattice_adopt` is the zero-friction front door for local readiness, install guidance, profiles, and lifecycle proof; `contextlattice_doctor` combines readiness, proof, and trace evidence in one bounded report.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_agent_trace` renders the bounded run-shaping trail as a terminal tree, JSON, or Markdown run card.
@@ -158,8 +160,10 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Compile task context through `POST /memory/context-pack`, `POST /tools/context_pack`, or global `contextlattice_pack`; responses include `context_compiler`, ranked evidence, deterministic `agent_guidance` for themes/risk markers/candidate attention links, prompt sections, and a bounded `reference_prompt`.
 - Watch long-running recall through `scripts/agent/contextlattice-session watch --session-id <id> --continuation-token <token>`; continuation responses include `retrieval_progress.v1`, dashboard status links, and agent-visible steering when async work is ready.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
-- Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, event, and completion flows.
-- Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; `doctor` combines gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, runtime-doctor checks, lifecycle proof, and run trace evidence into one bounded report.
+- Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, state, event, and completion flows.
+- Use `contextlattice_agent_adapter state --state working|awaiting_user|blocked|done --session-id <id> --pretty` to report semantic agent lifecycle state with authority, source, TTL, native session id, task id, repo, worktree, branch, cwd, and user/blocker fields.
+- Use global `contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty` for best-effort local process/profile/hook/repo-instruction discovery. Discovery explains why ContextLattice believes an agent is idle, working, waiting, blocked, or integrated; it does not replace explicit hook or adapter state.
+- Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; `doctor` combines gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, best-effort discovery, runtime-doctor checks, lifecycle proof, and run trace evidence into one bounded report.
 - Run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty` inside a target repo to write managed `AGENTS.md`, `CLAUDE.md`, `HERMES.md`, `PI.md`, and `DROID.md` instruction blocks without overwriting user text.
 - Run `contextlattice_doctor --agents codex --skip-provider-smoke --pretty` for the fastest new-agent adoption proof.
 - The same doctor works for other agent profiles: `contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty`, `contextlattice_doctor --agents opencode --skip-provider-smoke --pretty`, or `contextlattice_doctor --agents codex,claude-code,opencode --skip-provider-smoke --pretty`.
@@ -170,7 +174,9 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
 - Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
 
-Canonical event families include `session.started`, `context_pack.completed`, `retrieval.continuation.progress`, `retrieval.continuation.ready`, `retrieval.continuation.degraded`, `dream.completed`, `graph.neighbors_returned`, `graph.edge_touched`, `decision.made`, `test.ran`, `handoff.created`, `writeback.completed`, and `session.completed`.
+Canonical event families include `session.started`, `agent.state.working`, `agent.state.awaiting_user`, `agent.state.blocked`, `agent.state.done`, `context_pack.completed`, `retrieval.continuation.progress`, `retrieval.continuation.ready`, `retrieval.continuation.degraded`, `dream.completed`, `graph.neighbors_returned`, `graph.edge_touched`, `decision.made`, `test.ran`, `handoff.created`, `writeback.completed`, and `session.completed`.
+
+Agent lifecycle and retrieval lifecycle are intentionally separate. `agent_lifecycle.state` describes the actor (`idle`, `working`, `awaiting_user`, `blocked`, `done`); `retrieval_lifecycle.status` describes source-fetch progress. This prevents async retrieval warming from being misread as a blocked or degraded agent.
 
 ## Download Installers
 

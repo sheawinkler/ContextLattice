@@ -148,6 +148,7 @@ SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print
 
 # retrieve bounded context against that session
 contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
+contextlattice_agent_adapter state --agent codex --project contextlattice --session-id "$SESSION_ID" --state working --pretty
 
 # write durable progress and handoff state
 contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
@@ -157,6 +158,7 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 # package the session for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_agent_trace --session-id "$SESSION_ID" --markdown
 contextlattice_run_advisor --session-id "$SESSION_ID" --pretty</code></pre>
