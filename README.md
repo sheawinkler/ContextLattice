@@ -32,15 +32,15 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.4.2` is the public agent runtime contract baseline: universal adapter lifecycle, native agent sessions, objective runtime state, scoped recall, checkpoints, handoffs, completion flow, runtime telemetry, one-command runtime proof, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.6.2` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
 `v4` remains the private tuning lane for experiments that still need benchmark, recall, and soak gates before public promotion.
 
-## Public Runtime Stack (v3.4)
+## Public Runtime Stack (v3.6)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
-- Degradation policy: fail-open retrieval with continuation lifecycle.
+- Retrieval policy: staged fast-return, async continuation lifecycle, and impact-per-token allocation.
 - Tooling compatibility: MCP + HTTP clients.
 - Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
 - Public single-container lite vector default: `topic_rollups` only.
