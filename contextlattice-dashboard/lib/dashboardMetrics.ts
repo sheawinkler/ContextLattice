@@ -7,7 +7,7 @@ export type TopicFlatNode = {
 };
 
 export type TokenImpactConfidence = "low" | "medium" | "high";
-export type TokenImpactCalibrationGrade = "heuristic" | "sampled_pack_estimate" | "measured";
+export type TokenImpactCalibrationGrade = "heuristic" | "sampled_pack_estimate" | "tokenizer_exact" | "measured";
 export type TokenImpactFactorRole = "baseline" | "packed" | "penalty";
 
 export type TokenImpactFactor = {
@@ -332,7 +332,10 @@ function normalizeMeasuredTokenImpact(candidate: unknown): TokenImpactEstimate |
   const sampleCount = Math.max(1, firstInt(record, ["sampleCount", "sample_count", "samples"]));
   const sessionCount = Math.max(1, firstInt(record, ["sessionCount", "session_count", "activeSessions"]));
   const calibrationGrade = normalizeCalibrationGrade(toText(record.calibrationGrade) || toText(record.calibration_grade));
-  const confidence = normalizeConfidence(toText(record.confidence), calibrationGrade === "measured" ? "high" : "medium");
+  const confidence = normalizeConfidence(
+    toText(record.confidence),
+    calibrationGrade === "measured" || calibrationGrade === "tokenizer_exact" ? "high" : "medium",
+  );
   const factors = normalizeMeasuredFactors(record.factors, baselineTokens, packedTokens, riskPenaltyTokens);
   const measurementLimit =
     toText(record.measurementLimit) ||
@@ -348,7 +351,7 @@ function normalizeMeasuredTokenImpact(candidate: unknown): TokenImpactEstimate |
     perSession: Math.max(0, Math.round(estimatedSaved / sessionCount)),
     confidence,
     calibrationGrade,
-    qualityScore: calibrationGrade === "measured" ? 96 : confidence === "high" ? 86 : 68,
+    qualityScore: calibrationGrade === "measured" ? 96 : calibrationGrade === "tokenizer_exact" ? 94 : confidence === "high" ? 86 : 68,
     requestEquivalent: roundRatio(estimatedSaved / 16000),
     windowLabel: toText(record.windowLabel) || toText(record.window_label) || `${sampleCount} sampled pack${sampleCount === 1 ? "" : "s"}`,
     measurementLimit,
@@ -443,8 +446,11 @@ function normalizeConfidence(value: string, fallback: TokenImpactConfidence): To
 }
 
 function normalizeCalibrationGrade(value: string): TokenImpactCalibrationGrade {
-  if (value === "measured" || value === "sampled_pack_estimate" || value === "heuristic") {
+  if (value === "measured" || value === "tokenizer_exact" || value === "sampled_pack_estimate" || value === "heuristic") {
     return value;
+  }
+  if (value.includes("tokenizer") || value.includes("tiktoken") || value.includes("exact")) {
+    return "tokenizer_exact";
   }
   return value.includes("sample") ? "sampled_pack_estimate" : "heuristic";
 }

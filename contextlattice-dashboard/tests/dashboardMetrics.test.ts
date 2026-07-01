@@ -32,6 +32,32 @@ test("estimateTokenImpact prefers sampled token impact payloads", () => {
   assert.match(impact.measurementLimit, /chars_div_4/);
 });
 
+test("estimateTokenImpact preserves tokenizer-exact calibration", () => {
+  const impact = estimateTokenImpact(
+    {
+      tokenImpact: {
+        baseline_tokens_estimate: 32000,
+        packed_tokens_estimate: 12000,
+        saved_tokens_estimate: 20000,
+        compression_ratio: 2.67,
+        calibration_grade: "tokenizer_exact",
+        confidence: "high",
+        sample_count: 4,
+        tokenizer_exact: true,
+        tokenizer_encoding: "o200k_base",
+        measurement_limit: "Token counts use configured tiktoken encoding; no raw prompt text is persisted.",
+      },
+    },
+    null,
+    null,
+  );
+
+  assert.equal(impact.calibrationGrade, "tokenizer_exact");
+  assert.equal(impact.confidence, "high");
+  assert.equal(impact.qualityScore, 94);
+  assert.match(impact.measurementLimit, /tiktoken/);
+});
+
 test("estimateTokenImpact bounds lifetime writes into a live working set", () => {
   const impact = estimateTokenImpact(
     {

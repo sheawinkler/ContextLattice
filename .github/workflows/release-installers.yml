@@ -29,6 +29,12 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
+      - name: Check release note hygiene
+        if: github.event_name == 'release'
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: python3 scripts/release_notes_hygiene.py --text "$RELEASE_BODY"
+
       - name: Import macOS signing identity (optional)
         env:
           CONTEXTLATTICE_MACOS_CERT_P12_BASE64: ${{ secrets.CONTEXTLATTICE_MACOS_CERT_P12_BASE64 }}
@@ -71,6 +77,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Check release note hygiene
+        if: github.event_name == 'release'
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: python3 scripts/release_notes_hygiene.py --text "$RELEASE_BODY"
 
       - name: Build Linux bundle
         run: bash scripts/build_linux_bundle.sh

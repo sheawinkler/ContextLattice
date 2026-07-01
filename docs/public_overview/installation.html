@@ -107,7 +107,7 @@
           <li><strong>Less technical Linux users:</strong> <a href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz" target="_blank" rel="noreferrer">Download Linux Bundle (tar.gz)</a></li>
           <li><strong>Technical/dev users (default):</strong> clone repo or download <a href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">main ZIP</a></li>
           <li><strong>CLI fallback:</strong> <code>gmake quickstart</code> remains first-class for technical operators.</li>
-          <li><strong>DMG helper:</strong> writes <code>~/ContextLattice/setup/agent_contextlattice_instructions.md</code> (copied to clipboard) and <code>~/ContextLattice/setup/agent_smoke_write_read.md</code> for immediate write/read validation.</li>
+          <li><strong>DMG helper:</strong> writes <code>$HOME/ContextLattice/setup/agent_contextlattice_instructions.md</code> (copied to clipboard) and <code>$HOME/ContextLattice/setup/agent_smoke_write_read.md</code> for immediate write/read validation.</li>
         </ul>
       </article>
     </section>
@@ -181,14 +181,14 @@ brew info --cask sheawinkler/contextlattice/contextlattice</code></pre>
         <div class="priority-row"><span class="priority-chip recommended">Recommended</span></div>
         <p>Keep active project source local for speed, and map high-growth service data paths to external NVMe before heavy ingest.</p>
 <pre><code># keep source local
-~/Documents/projects
+$HOME/Documents/projects
 
 # move service data to external SSD
-/Volumes/&lt;external-ssd&gt;/contextlattice/qdrant
-/Volumes/&lt;external-ssd&gt;/contextlattice/mongo
-/Volumes/&lt;external-ssd&gt;/contextlattice/mindsdb
-/Volumes/&lt;external-ssd&gt;/contextlattice/letta
-/Volumes/&lt;external-ssd&gt;/contextlattice/orchestrator</code></pre>
+&lt;external-volume&gt;/contextlattice/qdrant
+&lt;external-volume&gt;/contextlattice/mongo
+&lt;external-volume&gt;/contextlattice/mindsdb
+&lt;external-volume&gt;/contextlattice/letta
+&lt;external-volume&gt;/contextlattice/orchestrator</code></pre>
         <ul class="spec-list">
           <li><strong>Why:</strong> avoids laptop internal SSD exhaustion during fanout + rehydrate windows.</li>
           <li><strong>When:</strong> set mount paths before first full-mode launch.</li>
