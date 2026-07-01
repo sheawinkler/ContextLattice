@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { OverviewCommandDeck } from "@/components/OverviewCommandDeck";
 
 export default function OverviewPage() {
-  redirect("/mindmap");
+  return <OverviewCommandDeck />;
 }

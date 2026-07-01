@@ -2,16 +2,18 @@
 
 import { signOut, useSession } from "next-auth/react";
 
-const NAV_LINKS = [
+const CORE_NAV_LINKS = [
   { href: "/console", label: "Console" },
   { href: "/overview", label: "Overview" },
-  { href: "/mindmap", label: "Mindmap" },
+  { href: "/mindmap", label: "Topics" },
   { href: "/status", label: "Status" },
-  { href: "/setup", label: "Setup" },
+  { href: "/downloads", label: "Install" },
+  { href: "/settings", label: "Settings" },
+];
+
+const HOSTED_NAV_LINKS = [
   { href: "/pricing", label: "Pricing" },
   { href: "/billing", label: "Billing" },
-  { href: "/downloads", label: "Downloads" },
-  { href: "/settings", label: "Settings" },
 ];
 
 function displayName(session: any): string {
@@ -60,9 +62,11 @@ function AuthControls() {
 }
 
 export function ShellNav({ authEnabled }: { authEnabled: boolean }) {
+  const navLinks = authEnabled ? [...CORE_NAV_LINKS, ...HOSTED_NAV_LINKS] : CORE_NAV_LINKS;
+
   return (
     <nav className="shell-nav" aria-label="Primary">
-      {NAV_LINKS.map((link) => (
+      {navLinks.map((link) => (
         <a key={link.href} className="shell-nav-link" href={link.href}>
           {link.label}
         </a>
