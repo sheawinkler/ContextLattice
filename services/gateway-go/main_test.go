@@ -978,6 +978,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
+		`mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
 		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
@@ -1036,6 +1037,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
+		`mux.HandleFunc("/telemetry/token-impact", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
@@ -2127,6 +2129,41 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	referencePrompt := anyToString(payload["reference_prompt"])
 	if !strings.Contains(referencePrompt, "Context budget:") || !strings.Contains(referencePrompt, "Omitted high-value refs") {
 		t.Fatalf("expected reference prompt to describe token budget and omitted refs, got %q", referencePrompt)
+	}
+	tokenImpact := anyMap(payload["token_impact"])
+	if anyToString(tokenImpact["schema_id"]) != "contextlattice_token_impact.v1" {
+		t.Fatalf("expected token impact sample, got %#v", tokenImpact)
+	}
+	baselineTokens := anyToInt(tokenImpact["baseline_tokens_estimate"], 0)
+	packedTokens := anyToInt(tokenImpact["packed_tokens_estimate"], 0)
+	savedTokens := anyToInt(tokenImpact["saved_tokens_estimate"], 0)
+	if baselineTokens <= packedTokens || savedTokens != baselineTokens-packedTokens {
+		t.Fatalf("expected positive token savings, got baseline=%d packed=%d saved=%d payload=%#v", baselineTokens, packedTokens, savedTokens, tokenImpact)
+	}
+	if anyToString(tokenImpact["calibration_grade"]) != "sampled_pack_estimate" || anyToString(tokenImpact["estimate_method"]) != "chars_div_4" {
+		t.Fatalf("expected honest sampled estimate metadata, got %#v", tokenImpact)
+	}
+	nestedTokenImpact := anyMap(contextPack["token_impact"])
+	if anyToInt(nestedTokenImpact["saved_tokens_estimate"], 0) != savedTokens {
+		t.Fatalf("expected nested token impact to match root sample, root=%#v nested=%#v", tokenImpact, nestedTokenImpact)
+	}
+	telemetryResp, err := http.Get(gateway.URL + "/telemetry/token-impact")
+	if err != nil {
+		t.Fatalf("token impact telemetry request failed: %v", err)
+	}
+	defer telemetryResp.Body.Close()
+	if telemetryResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(telemetryResp.Body)
+		t.Fatalf("expected token impact telemetry 200, got %d body=%s", telemetryResp.StatusCode, string(body))
+	}
+	var telemetryPayload map[string]any
+	if err := json.NewDecoder(telemetryResp.Body).Decode(&telemetryPayload); err != nil {
+		t.Fatalf("decode token impact telemetry payload: %v", err)
+	}
+	if anyToString(telemetryPayload["schema_id"]) != "contextlattice_token_impact_telemetry.v1" ||
+		anyToInt(telemetryPayload["sample_count"], 0) < 1 ||
+		anyToInt(telemetryPayload["saved_tokens_estimate"], 0) < savedTokens {
+		t.Fatalf("expected token impact telemetry aggregate to include sample, got %#v", telemetryPayload)
 	}
 }
 

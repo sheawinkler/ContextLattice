@@ -14,7 +14,7 @@
     "billing:reconcile:coinbase": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/reconcile_coinbase.ts",
     "audit:export": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/export_audit_logs.ts",
     "audit:prune": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/prune_audit_logs.ts",
-    "test": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --test --require ts-node/register tests/auth-boundary.test.ts tests/overrides-api.test.ts tests/overrides-panel.test.tsx tests/sidecar-health-api.test.ts tests/sidecar-health-panel.test.tsx tests/charts-panel.test.tsx tests/alerts-panel.test.tsx tests/strategy-panel.test.tsx tests/recall-quality-panel.test.tsx tests/retrieval-panel.test.tsx tests/continuations-api.test.ts"
+    "test": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --test --require ts-node/register tests/auth-boundary.test.ts tests/dashboardMetrics.test.ts tests/overrides-api.test.ts tests/overrides-panel.test.tsx tests/sidecar-health-api.test.ts tests/sidecar-health-panel.test.tsx tests/charts-panel.test.tsx tests/alerts-panel.test.tsx tests/strategy-panel.test.tsx tests/recall-quality-panel.test.tsx tests/retrieval-panel.test.tsx tests/continuations-api.test.ts"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",

@@ -1649,6 +1649,99 @@ body,
   color: var(--cl-paper);
 }
 
+.cl-impact-hero {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.7rem;
+}
+
+.cl-impact-hero > div {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid rgba(216, 207, 184, 0.2);
+  background: #090907;
+  padding: 0.55rem;
+}
+
+.cl-impact-hero strong {
+  color: var(--cl-paper);
+  font-family: var(--cl-pixel);
+  font-size: clamp(1.9rem, 3vw, 3rem);
+  line-height: 0.85;
+}
+
+.cl-impact-meter {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.7rem;
+}
+
+.cl-impact-meter-row {
+  display: grid;
+  grid-template-columns: 5.8rem minmax(0, 1fr) 4.4rem;
+  gap: 0.55rem;
+  align-items: center;
+  color: var(--cl-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.cl-impact-meter-row div {
+  height: 0.72rem;
+  border: 1px solid var(--cl-line);
+  background: #070706;
+}
+
+.cl-impact-meter-row i {
+  display: block;
+  height: 100%;
+  background: var(--cl-accent);
+}
+
+.cl-impact-meter-row--packed i {
+  background: var(--cl-paper);
+}
+
+.cl-impact-meter-row strong {
+  justify-self: end;
+  color: var(--cl-paper);
+  font-size: 0.72rem;
+}
+
+.cl-impact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  border-top: 1px solid rgba(216, 207, 184, 0.14);
+  padding-top: 0.5rem;
+}
+
+.cl-impact-row strong {
+  color: var(--cl-paper);
+  font-size: 0.73rem;
+}
+
+.cl-impact-row--packed span:first-child {
+  color: var(--cl-accent);
+}
+
+.cl-impact-row--penalty span:first-child {
+  color: var(--cl-amber);
+}
+
+.cl-impact-warnings {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.7rem;
+}
+
+.cl-impact-warnings p {
+  margin: 0;
+  color: var(--cl-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
 .cl-lane-track {
   height: 0.65rem;
   border: 1px solid var(--cl-line);
@@ -2153,6 +2246,16 @@ body,
   .cl-proof-strip > div {
     border-right: 0;
     border-bottom: 1px solid rgba(8, 8, 6, 0.25);
+  }
+
+  .cl-impact-hero,
+  .cl-impact-row,
+  .cl-impact-meter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cl-impact-meter-row strong {
+    justify-self: start;
   }
 
   .cl-tree-branch summary,

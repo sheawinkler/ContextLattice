@@ -177,6 +177,10 @@ func (s *server) buildContextPackResponse(
 	contextPack["contextCompiler"] = compiled["context_compiler"]
 	contextPack["context_compiler"] = compiled["context_compiler"]
 	referencePrompt := anyToString(compiled["reference_prompt"])
+	tokenImpact := buildContextPackTokenImpact(query, contextPack, compiled, referencePrompt)
+	s.recordTokenImpact(tokenImpact)
+	contextPack["tokenImpact"] = tokenImpact
+	contextPack["token_impact"] = tokenImpact
 	rankedEvidence := contextPackAnyList(compiled["ranked_evidence"])
 	runAdvisor := buildRunAdvisor(runAdvisorInput{
 		Query:           query,
@@ -202,6 +206,7 @@ func (s *server) buildContextPackResponse(
 		"context_compiler":        compiled["context_compiler"],
 		"agent_guidance":          agentGuidance,
 		"reference_prompt":        referencePrompt,
+		"token_impact":            tokenImpact,
 		"run_advisor":             runAdvisor,
 		"token_budget":            compiled["token_budget"],
 		"omitted_high_value_refs": compiled["omitted_high_value_refs"],
@@ -992,6 +997,101 @@ func contextPackTokenBudgetReport(tokenBudget contextPackTokenBudget, usedTokens
 		"omitted_high_value_count":      omittedCount,
 		"compression_level":             compressionLevel,
 	}
+}
+
+func buildContextPackTokenImpact(query string, contextPack map[string]any, compiled map[string]any, referencePrompt string) map[string]any {
+	compiler := anyMap(compiled["context_compiler"])
+	tokenBudget := anyMap(compiled["token_budget"])
+	sourceCoverage := anyMap(contextPack["sourceCoverage"])
+	if len(sourceCoverage) == 0 {
+		sourceCoverage = anyMap(contextPack["source_coverage"])
+	}
+
+	baselinePayload := map[string]any{
+		"query":                   query,
+		"facts":                   contextPackAnyList(contextPack["facts"]),
+		"numeric_facts":           contextPackAnyList(contextPack["numeric_facts"]),
+		"results":                 contextPackAnyList(contextPack["results"]),
+		"relevant_decisions":      contextPackAnyList(contextPack["relevant_decisions"]),
+		"known_failure_modes":     contextPackAnyList(contextPack["known_failure_modes"]),
+		"acceptance_criteria":     contextPackAnyList(contextPack["acceptance_criteria"]),
+		"runbooks":                contextPackAnyList(contextPack["runbooks"]),
+		"capabilities_to_use":     contextPackAnyList(contextPack["capabilities_to_use"]),
+		"commands":                contextPackAnyList(contextPack["commands"]),
+		"citations":               contextPackAnyList(contextPack["citations"]),
+		"graph_neighbors":         contextPackAnyList(contextPack["graph_neighbors"]),
+		"topic_rollup":            contextPack["topic_rollup"],
+		"source_coverage":         sourceCoverage,
+		"agent_guidance":          compiled["agent_guidance"],
+		"omitted_high_value_refs": contextPackAnyList(compiled["omitted_high_value_refs"]),
+	}
+	baselineTokens := contextPackEstimateAnyTokens(baselinePayload)
+	packedTokens := contextPackEstimateTokens(referencePrompt)
+	if used := anyToInt(tokenBudget["used_tokens_estimate"], 0); used > 0 {
+		packedTokens = maxInt(packedTokens, used+contextPackEstimateTokens(query)+600)
+	}
+	if packedTokens <= 0 {
+		packedTokens = 1
+	}
+	if baselineTokens < packedTokens {
+		baselineTokens = packedTokens
+	}
+	savedTokens := maxInt(0, baselineTokens-packedTokens)
+	ratio := 1.0
+	if packedTokens > 0 {
+		ratio = roundFloat(float64(baselineTokens)/float64(packedTokens), 2)
+	}
+
+	selectedCount := anyToInt(compiler["ranked_evidence_count"], len(contextPackAnyList(compiled["ranked_evidence"])))
+	omittedCount := anyToInt(compiler["omitted_high_value_ref_count"], len(contextPackAnyList(compiled["omitted_high_value_refs"])))
+	returnedSourceCount := len(anyToStringList(sourceCoverage["returned"], 64))
+	confidence := "medium"
+	if savedTokens > 0 && selectedCount > 0 && returnedSourceCount > 0 {
+		confidence = "high"
+	}
+	if selectedCount == 0 || baselineTokens == packedTokens {
+		confidence = "low"
+	}
+
+	return map[string]any{
+		"schema_id":                "contextlattice_token_impact.v1",
+		"version":                  1,
+		"scope":                    "context_pack_response",
+		"calibration_grade":        "sampled_pack_estimate",
+		"confidence":               confidence,
+		"estimate_method":          "chars_div_4",
+		"baseline_kind":            "raw_candidate_evidence_prompt_stuffing",
+		"packed_kind":              "compiled_ranked_evidence_reference_prompt",
+		"baseline_tokens_estimate": baselineTokens,
+		"packed_tokens_estimate":   packedTokens,
+		"saved_tokens_estimate":    savedTokens,
+		"compression_ratio":        ratio,
+		"sample_count":             1,
+		"selected_evidence_count":  selectedCount,
+		"omitted_high_value_count": omittedCount,
+		"returned_source_count":    returnedSourceCount,
+		"token_budget_active":      anyToBool(tokenBudget["active"]),
+		"token_budget_target":      anyToInt(tokenBudget["target_context_pack_tokens"], 0),
+		"ranked_evidence_tokens":   anyToInt(tokenBudget["used_tokens_estimate"], anyToInt(compiler["ranked_evidence_tokens_estimate"], 0)),
+		"selection_strategy":       firstNonEmptyStrings(anyToString(tokenBudget["selection_strategy"]), anyToString(compiler["strategy"])),
+		"moat_claim":               "ContextLattice converts raw candidate memory into a bounded, provenance-carrying prompt packet and reports the estimated token delta per pack.",
+		"measurement_limit":        "Estimate uses chars_div_4 until model-tokenizer accounting is wired.",
+		"basis": []any{
+			"raw candidate evidence JSON",
+			"compiled reference_prompt",
+			"ranked evidence token budget",
+			"source coverage",
+			"omitted high-value references",
+		},
+	}
+}
+
+func contextPackEstimateAnyTokens(value any) int {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return 1
+	}
+	return contextPackEstimateTokens(string(raw))
 }
 
 func contextPackPromptSections(
