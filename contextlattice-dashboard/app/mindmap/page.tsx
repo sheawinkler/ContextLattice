@@ -1,5 +1,5 @@
-import { SourceMindMap } from "@/components/SourceMindMap";
+import { TopicHierarchyConsole } from "@/components/TopicHierarchyConsole";
 
 export default function MindMapPage() {
-  return <SourceMindMap />;
+  return <TopicHierarchyConsole />;
 }

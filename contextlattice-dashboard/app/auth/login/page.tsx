@@ -3,74 +3,57 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { dashboardClientAuthRequired } from "@/lib/authMode";
 import { sanitizeCallbackUrl } from "@/lib/callback-url";
 
-function GithubMark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="auth-provider-icon">
-      <path
-        fill="currentColor"
-        d="M12 .5A11.5 11.5 0 0 0 .5 12.3c0 5.26 3.44 9.73 8.2 11.3.6.12.82-.26.82-.58v-2.03c-3.33.75-4.03-1.46-4.03-1.46-.55-1.42-1.33-1.79-1.33-1.79-1.08-.76.08-.74.08-.74 1.2.09 1.83 1.26 1.83 1.26 1.06 1.86 2.78 1.32 3.46 1 .11-.8.41-1.33.75-1.64-2.66-.31-5.46-1.37-5.46-6.1 0-1.35.47-2.45 1.24-3.31-.13-.31-.54-1.57.12-3.26 0 0 1.02-.33 3.35 1.26a11.3 11.3 0 0 1 6.1 0c2.33-1.6 3.35-1.26 3.35-1.26.66 1.69.24 2.95.12 3.26.77.86 1.24 1.96 1.24 3.31 0 4.74-2.8 5.78-5.47 6.09.43.38.81 1.11.81 2.25v3.33c0 .32.21.7.82.58a11.8 11.8 0 0 0 8.2-11.3A11.5 11.5 0 0 0 12 .5Z"
-      />
-    </svg>
-  );
+function ProviderMark({ provider }: { provider: string }) {
+  const id = provider.toLowerCase();
+  if (id === "github") {
+    return <span className="auth-provider-glyph">GH</span>;
+  }
+  if (id === "google") {
+    return <span className="auth-provider-glyph">GO</span>;
+  }
+  return <span className="auth-provider-glyph">ID</span>;
 }
 
-function GoogleMark() {
+function LocalAuthDisabled() {
   return (
-    <svg viewBox="0 0 18 18" aria-hidden="true" className="auth-provider-icon">
-      <path fill="#EA4335" d="M9.12 7.38v3.3h4.59c-.2 1.06-.8 1.96-1.7 2.57l2.74 2.13c1.6-1.48 2.52-3.65 2.52-6.21 0-.6-.05-1.16-.16-1.7H9.12Z" />
-      <path fill="#34A853" d="M9.12 17.5c2.29 0 4.21-.75 5.62-2.04l-2.74-2.13c-.76.51-1.73.82-2.88.82-2.22 0-4.1-1.5-4.77-3.5l-2.84 2.19A8.5 8.5 0 0 0 9.12 17.5Z" />
-      <path fill="#4A90E2" d="M4.35 10.66A5.12 5.12 0 0 1 4.07 9c0-.58.1-1.13.28-1.66L1.5 5.14A8.52 8.52 0 0 0 .62 9c0 1.39.33 2.7.89 3.86l2.84-2.2Z" />
-      <path fill="#FBBC05" d="M9.12 3.85c1.24 0 2.36.43 3.23 1.28l2.43-2.43A8.1 8.1 0 0 0 9.12.5c-3.33 0-6.2 1.9-7.62 4.64l2.84 2.2c.66-2 2.55-3.5 4.77-3.5Z" />
-    </svg>
+    <section className="auth-shell auth-shell--minimal">
+      <div className="auth-panel auth-panel--local">
+        <div className="auth-brand-row">
+          <span className="auth-brand-pixel">CL</span>
+          <span className="auth-brand-text">ContextLattice</span>
+        </div>
+        <p className="auth-kicker">Local dashboard</p>
+        <h2 className="auth-title">No login required here.</h2>
+        <p className="auth-subtitle">
+          This open-source/local console is running with auth disabled. Billing and hosted account surfaces stay quiet; the operator dashboard is ready.
+        </p>
+        <div className="auth-local-actions">
+          <a className="auth-submit auth-submit--link" href="/console">Open Console</a>
+          <a className="auth-link auth-link--quiet" href="/downloads">Install + integrate agents</a>
+        </div>
+      </div>
+    </section>
   );
 }
 
 function LoginPageContent() {
+  const authRequired = dashboardClientAuthRequired();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [oauthProviders, setOauthProviders] = useState<
-    Array<{ id: string; name: string }>
-  >([]);
+  const [oauthProviders, setOauthProviders] = useState<Array<{ id: string; name: string }>>([]);
   const router = useRouter();
   const params = useSearchParams();
   const callbackUrl = sanitizeCallbackUrl(params.get("callbackUrl"));
   const providerHint = (params.get("provider") || "").toLowerCase();
   const providerAutoLaunchRef = useRef(false);
-  const fallbackProviders = [
-    { id: "github", name: "GitHub" },
-    { id: "google", name: "Google" },
-  ];
-
-  function providerClass(providerId: string, enabled: boolean) {
-    const id = providerId.toLowerCase();
-    if (!enabled) {
-      return "auth-provider auth-provider--disabled";
-    }
-    if (id === "github") {
-      return "auth-provider auth-provider--github";
-    }
-    if (id === "google") {
-      return "auth-provider auth-provider--google";
-    }
-    return "auth-provider";
-  }
-
-  function providerIcon(providerId: string) {
-    const id = providerId.toLowerCase();
-    if (id === "github") {
-      return <GithubMark />;
-    }
-    if (id === "google") {
-      return <GoogleMark />;
-    }
-    return null;
-  }
 
   useEffect(() => {
+    if (!authRequired) return;
     fetch("/api/auth/providers")
       .then((res) => res.json())
       .then((providers) => {
@@ -80,22 +63,19 @@ function LoginPageContent() {
         setOauthProviders(list);
       })
       .catch(() => undefined);
-  }, []);
+  }, [authRequired]);
 
   useEffect(() => {
-    if (providerAutoLaunchRef.current) {
-      return;
-    }
-    if (!providerHint || oauthProviders.length === 0) {
-      return;
-    }
+    if (!authRequired || providerAutoLaunchRef.current || !providerHint || oauthProviders.length === 0) return;
     const match = oauthProviders.find((provider) => provider.id === providerHint);
-    if (!match) {
-      return;
-    }
+    if (!match) return;
     providerAutoLaunchRef.current = true;
     signIn(match.id, { callbackUrl });
-  }, [providerHint, oauthProviders, callbackUrl]);
+  }, [authRequired, providerHint, oauthProviders, callbackUrl]);
+
+  if (!authRequired) {
+    return <LocalAuthDisabled />;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -115,104 +95,50 @@ function LoginPageContent() {
     router.push(callbackUrl);
   }
 
-  const providerHintMissing =
-    providerHint &&
-    oauthProviders.length > 0 &&
-    !oauthProviders.find((provider) => provider.id === providerHint);
+  const providerHintMissing = providerHint && oauthProviders.length > 0 && !oauthProviders.find((provider) => provider.id === providerHint);
 
   return (
-    <section className="auth-shell">
-      <div className="auth-panel">
+    <section className="auth-shell auth-shell--minimal">
+      <div className="auth-panel auth-panel--login">
         <header className="auth-header">
-          <p className="auth-kicker">Secure access</p>
-          <h2 className="auth-title">Sign in</h2>
-          <p className="auth-subtitle">
-            Access billing, usage, and your private context workspace.
-          </p>
+          <div className="auth-brand-row" aria-label="ContextLattice">
+            <span className="auth-brand-pixel">CL</span>
+            <span className="auth-brand-text">ContextLattice</span>
+          </div>
+          <p className="auth-kicker">Hosted access</p>
+          <h2 className="auth-title">Enter the control room.</h2>
+          <p className="auth-subtitle">Sign in only when this deployment has hosted billing, account, or paid-runtime lanes enabled.</p>
         </header>
 
         <form onSubmit={handleSubmit} className="auth-form">
           <label className="auth-field">
             <span className="auth-label">Email</span>
-            <input
-              className="auth-input"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+            <input className="auth-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </label>
-
           <label className="auth-field">
             <span className="auth-label">Password</span>
-            <input
-              className="auth-input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <input className="auth-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </label>
-
           {error ? <p className="auth-error">{error}</p> : null}
-
-          <button type="submit" className="auth-submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
+          <button type="submit" className="auth-submit" disabled={loading}>{loading ? "Checking" : "Sign in"}</button>
         </form>
 
-        <div className="auth-divider">
-          <span>or continue with</span>
-        </div>
-
-        <div className="auth-provider-grid">
-          {(oauthProviders.length > 0 ? oauthProviders : fallbackProviders).map(
-            (provider) => {
-              const hasProviders = oauthProviders.length > 0;
-              const enabled = hasProviders;
-              const action = () => signIn(provider.id, { callbackUrl });
-              return (
-                <button
-                  key={provider.id}
-                  className={providerClass(provider.id, enabled)}
-                  onClick={enabled ? action : undefined}
-                  disabled={!enabled}
-                  type="button"
-                >
-                  {providerIcon(provider.id)}
-                  <span>Sign in with {provider.name}</span>
+        {oauthProviders.length ? (
+          <>
+            <div className="auth-divider"><span>or</span></div>
+            <div className="auth-provider-grid">
+              {oauthProviders.map((provider) => (
+                <button key={provider.id} className="auth-provider" onClick={() => signIn(provider.id, { callbackUrl })} type="button">
+                  <ProviderMark provider={provider.id} />
+                  <span>{provider.name}</span>
                 </button>
-              );
-            },
-          )}
-        </div>
-
-        {oauthProviders.length === 0 ? (
-          <p className="auth-inline-warning">
-            Social sign-in is not configured on this deployment yet.
-          </p>
+              ))}
+            </div>
+          </>
         ) : null}
 
-        {providerHintMissing ? (
-          <p className="auth-inline-warning">
-            Requested provider is not configured on this deployment.
-          </p>
-        ) : null}
-
-        <p className="auth-meta">
-          Need an account?{" "}
-          <a className="auth-link" href="/auth/register">
-            Create one
-          </a>
-          .
-        </p>
-        <p className="auth-meta">
-          Forgot password?{" "}
-          <a className="auth-link" href="/auth/request-reset">
-            Reset it
-          </a>
-          .
-        </p>
+        {providerHintMissing ? <p className="auth-inline-warning">Requested provider is not configured on this deployment.</p> : null}
+        <p className="auth-meta"><a className="auth-link" href="/auth/request-reset">Reset password</a> · <a className="auth-link" href="/auth/register">Create account</a></p>
       </div>
     </section>
   );
@@ -220,13 +146,7 @@ function LoginPageContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense
-      fallback={
-        <section className="auth-shell">
-          <div className="auth-panel">Loading sign-in...</div>
-        </section>
-      }
-    >
+    <Suspense fallback={<section className="auth-shell"><div className="auth-panel">Loading sign-in...</div></section>}>
       <LoginPageContent />
     </Suspense>
   );

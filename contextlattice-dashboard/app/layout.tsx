@@ -5,8 +5,8 @@ import { ShellNav } from "@/components/ShellNav";
 import { dashboardAuthRequired } from "@/lib/authMode";
 
 export const metadata = {
-  title: "ContextLattice Console",
-  description: "Operator console for the memory and context stack",
+  title: "ContextLattice",
+  description: "Local-first memory infrastructure for agent systems",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -19,9 +19,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <header className="shell-header">
             <div className="shell-header-row">
               <div className="shell-title-wrap">
-                <h1 className="shell-title">ContextLattice Console</h1>
+                <h1 className="shell-title">ContextLattice</h1>
                 <p className="shell-subtitle">
-                  Live window into the memory bank, orchestrator, and MCP stack
+                  Durable memory, context allocation, and runtime proof for agent systems.
                 </p>
               </div>
               <ShellNav authEnabled={authEnabled} />
