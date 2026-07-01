@@ -67,6 +67,7 @@ export async function GET(request: Request) {
   const [
     status,
     telemetryMetrics,
+    tokenImpact,
     memoryTelemetry,
     retrieval,
     fanout,
@@ -86,6 +87,7 @@ export async function GET(request: Request) {
   ] = await Promise.all([
     safeGet("/status"),
     safeGet("/telemetry/metrics"),
+    safeGet("/telemetry/token-impact"),
     safeGet("/telemetry/memory"),
     safeGet("/telemetry/retrieval?traffic_class=user"),
     safeGet("/telemetry/fanout"),
@@ -108,6 +110,7 @@ export async function GET(request: Request) {
   const endpoints = {
     status,
     telemetryMetrics,
+    tokenImpact,
     memoryTelemetry,
     retrieval,
     fanout,
@@ -149,6 +152,7 @@ export async function GET(request: Request) {
     capturedAt: new Date().toISOString(),
     status: status.data,
     telemetryMetrics: telemetryMetrics.data,
+    tokenImpact: tokenImpact.data,
     memoryTelemetry: memoryTelemetry.data,
     retrieval: retrieval.data,
     fanout: fanout.data,

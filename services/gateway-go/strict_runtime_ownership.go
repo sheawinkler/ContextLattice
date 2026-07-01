@@ -37,6 +37,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/v1/agents/sessions", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent runtime session ledger", Required: true},
 		{Path: "/telemetry/agents/runtime", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "agent runtime telemetry", Required: true},
 		{Path: "/telemetry/metrics", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "native metrics and embedding cache telemetry", Required: true},
+		{Path: "/telemetry/token-impact", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "context-pack token impact samples and aggregate prompt economics", Required: true},
 		{Path: "/telemetry/memory", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "native memory write and fanout telemetry", Required: true},
 		{Path: "/telemetry/retrieval", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "retrieval source telemetry", Required: true},
 		{Path: "/telemetry/retrieval/source-quality", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "retrieval source quality matrix", Required: true},

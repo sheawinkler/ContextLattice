@@ -209,10 +209,16 @@ export function CommandCenterDashboard() {
 
       <section className="cl-metric-grid" aria-busy={loading}>
         <MetricCard
-          label="estimated tokens saved"
+          label={tokenImpact.calibrationGrade === "heuristic" ? "estimated tokens saved" : "sampled tokens saved"}
           value={formatCompact(tokenImpact.estimatedSaved)}
-          detail={`${formatCompact(tokenImpact.perSession)} per active session · ${tokenImpact.confidence} confidence`}
+          detail={`${tokenImpact.compressionRatio}x compression · ${tokenImpact.confidence} confidence`}
           tone="hot"
+        />
+        <MetricCard
+          label="context packet delta"
+          value={formatCompact(tokenImpact.packedTokens)}
+          detail={`${formatCompact(tokenImpact.baselineTokens)} baseline · ${formatCompact(tokenImpact.estimatedSaved)} saved`}
+          tone={tokenImpact.calibrationGrade === "heuristic" ? "neutral" : "good"}
         />
         <MetricCard
           label="service health"
@@ -266,19 +272,54 @@ export function CommandCenterDashboard() {
           <div className="cl-section-head">
             <div>
               <p className="cl-kicker">token impact engine</p>
-              <h3>Why the estimate moved</h3>
+              <h3>Prompt economics ledger</h3>
+            </div>
+            <span className="cl-badge">{tokenImpact.calibrationGrade.replace(/_/g, " ")}</span>
+          </div>
+          <div className="cl-impact-hero">
+            <div>
+              <span className="cl-label">compression</span>
+              <strong>{tokenImpact.compressionRatio}x</strong>
+            </div>
+            <div>
+              <span className="cl-label">quality</span>
+              <strong>{tokenImpact.qualityScore}</strong>
+            </div>
+            <div>
+              <span className="cl-label">16k windows</span>
+              <strong>{tokenImpact.requestEquivalent}</strong>
+            </div>
+          </div>
+          <div className="cl-impact-meter" aria-label="Token impact baseline and packed comparison">
+            <div className="cl-impact-meter-row">
+              <span>baseline</span>
+              <div><i style={{ width: "100%" }} /></div>
+              <strong>{formatCompact(tokenImpact.baselineTokens)}</strong>
+            </div>
+            <div className="cl-impact-meter-row cl-impact-meter-row--packed">
+              <span>packed</span>
+              <div>
+                <i style={{ width: `${Math.max(4, Math.min(100, tokenImpact.baselineTokens > 0 ? (tokenImpact.packedTokens / tokenImpact.baselineTokens) * 100 : 0))}%` }} />
+              </div>
+              <strong>{formatCompact(tokenImpact.packedTokens)}</strong>
             </div>
           </div>
           <div className="cl-impact-stack">
-            {tokenImpact.basis.map((item) => (
-              <div key={item} className="cl-impact-row">
-                <span>{item}</span>
-                <span>counted</span>
+            {tokenImpact.factors.map((item) => (
+              <div key={`${item.role}-${item.label}`} className={`cl-impact-row cl-impact-row--${item.role}`}>
+                <span>{item.label}</span>
+                <span>{item.value}</span>
+                <strong>{formatCompact(item.tokens)}</strong>
               </div>
             ))}
           </div>
+          <div className="cl-impact-warnings">
+            {tokenImpact.warnings.slice(0, 3).map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </div>
           <p className="cl-panel-note">
-            Estimate means prompt-stuffing avoided by durable writes, rollups, sessions, and retrieval lanes. It is directional, not billing-grade.
+            {tokenImpact.measurementLimit}
           </p>
         </section>
 
