@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.7.0 is the public baseline. v4 remains private tuning lane.</h3>
+        <h3>v3.7.1 is the public baseline. v4 remains private tuning lane.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.7.0:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
+          <li><strong>Public v3.7.1:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
           <li><strong>Private v4:</strong> same external memory contract, but with stronger adaptive tuning, candidate backend experimentation, and promotion gates before public sync.</li>
           <li><strong>Promotion policy:</strong> features move from v4 to public only after benchmark + recall + soak evidence.</li>
         </ul>
@@ -56,6 +56,19 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.7.1 · Security Patch</span>
+        <h2>MongoDB driver advisory closed for the v3.7 train.</h2>
+        <p>
+          v3.7.1 upgrades the Go MongoDB driver past the patched advisory floor while keeping tokenizer-exact
+          prompt economics and bounded token-impact ledger persistence unchanged.
+        </p>
+        <ul>
+          <li><strong>Security:</strong> resolves <code>GHSA-cp6g-7hqx-qxhp</code> in the Go gateway dependency graph.</li>
+          <li><strong>Upgrade path:</strong> dependency-only patch; no migration required from v3.7.0.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.7.0 · Token Impact Engine</span>
         <h3>The memory layer now proves its prompt economics with tokenizer-exact accounting.</h3>
