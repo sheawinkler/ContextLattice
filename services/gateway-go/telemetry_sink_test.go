@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 func TestBuildTelemetryBlobUpsertUpdateAvoidsConflictingPaths(t *testing.T) {
@@ -57,9 +56,9 @@ func TestBuildTelemetryBlobUpsertUpdateAvoidsConflictingPaths(t *testing.T) {
 		t.Fatalf("expected $setOnInsert.created_at=%s, got %#v", now.Format(time.RFC3339Nano), setOnInsert["created_at"])
 	}
 
-	payload, ok := setOnInsert["payload"].(primitive.Binary)
+	payload, ok := setOnInsert["payload"].(bson.Binary)
 	if !ok {
-		t.Fatalf("expected payload primitive.Binary, got %T", setOnInsert["payload"])
+		t.Fatalf("expected payload bson.Binary, got %T", setOnInsert["payload"])
 	}
 	if !bytes.Equal(payload.Data, compressed) {
 		t.Fatalf("expected payload bytes %v, got %v", compressed, payload.Data)

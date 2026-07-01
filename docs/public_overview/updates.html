@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.7.1 is the public baseline. v4 remains private tuning lane.</h3>
+        <h3>v3.8.0 is the public baseline. v4 remains private tuning lane.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.7.1:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
+          <li><strong>Public v3.8.0:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
           <li><strong>Private v4:</strong> same external memory contract, but with stronger adaptive tuning, candidate backend experimentation, and promotion gates before public sync.</li>
           <li><strong>Promotion policy:</strong> features move from v4 to public only after benchmark + recall + soak evidence.</li>
         </ul>
@@ -56,6 +56,21 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.8.0 · Context Pack Quality Ledger</span>
+        <h2>Context packs now measure quality, not just size.</h2>
+        <p>
+          v3.8.0 separates exact prompt-token savings from confidence-banded inference avoidance. The new quality
+          ledger records compact pack-quality rows and lets agents post first-pass, repair, retry, and follow-up-token
+          outcomes for calibration.
+        </p>
+        <ul>
+          <li><strong>Runtime:</strong> gateway now uses the MongoDB Go driver v2 line.</li>
+          <li><strong>Proof:</strong> exact prompt savings stay exact; modeled inference avoidance is labeled as modeled until outcomes calibrate it.</li>
+          <li><strong>Storage:</strong> bounded NDJSON, no raw prompts, no raw queries, no raw source text.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.7.1 · Security Patch</span>
         <h2>MongoDB driver advisory closed for the v3.7 train.</h2>

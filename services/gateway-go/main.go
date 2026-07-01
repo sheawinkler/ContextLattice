@@ -315,6 +315,7 @@ type server struct {
 	telemetrySpool                  *telemetrySpool
 	telemetryRing                   *telemetryRing
 	tokenImpact                     *tokenImpactTelemetry
+	contextPackQuality              *contextPackQualityTelemetry
 	telemetryMetricsMu              sync.Mutex
 	telemetryMetricsState           map[string]any
 	memoryTelemetryMu               sync.Mutex
@@ -1260,6 +1261,7 @@ func newServer() *server {
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,
 		tokenImpact:                     newTokenImpactTelemetry(100),
+		contextPackQuality:              newContextPackQualityTelemetry(100),
 		agentSessions:                   agentSessionStoreInstance,
 		telemetryMetricsState:           defaultTelemetryMetricsState(),
 		tradingState:                    defaultTradingState(),
@@ -6893,6 +6895,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/storage/ledger", s.storageTelemetryLedger)
 	mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)
 	mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)
+	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
+	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
 	mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)

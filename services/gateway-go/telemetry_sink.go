@@ -14,11 +14,10 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
 const (
@@ -87,10 +86,7 @@ func newTelemetrySinkFromEnv() (*telemetrySink, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 
-	client, err := mongo.Connect(
-		ctx,
-		options.Client().ApplyURI(mongoURI),
-	)
+	client, err := mongo.Connect(options.Client().ApplyURI(mongoURI))
 	if err != nil {
 		return nil, fmt.Errorf("connect mongo telemetry sink: %w", err)
 	}
@@ -200,7 +196,7 @@ func (s *telemetrySink) ingestWrite(
 		return telemetryIngestResult{}, fmt.Errorf("telemetry sink disabled")
 	}
 	now := time.Now().UTC()
-	eventID := primitive.NewObjectID().Hex()
+	eventID := bson.NewObjectID().Hex()
 	contentHash := sha256Hex(item.content)
 	preview := clipText(item.content, s.contentPreviewChars)
 	storedInline := true
@@ -231,7 +227,7 @@ func (s *telemetrySink) ingestWrite(
 			ctx,
 			bson.M{"_id": contentRef},
 			blobUpdate,
-			options.Update().SetUpsert(true),
+			options.UpdateOne().SetUpsert(true),
 		)
 		if err != nil {
 			return telemetryIngestResult{}, fmt.Errorf("upsert telemetry blob: %w", err)
@@ -309,7 +305,7 @@ func buildTelemetryBlobUpsertUpdate(
 			"content_hash":     contentHash,
 			"content_bytes":    rawBytes,
 			"compressed_bytes": compressedBytes,
-			"payload":          primitive.Binary{Subtype: 0x00, Data: compressed},
+			"payload":          bson.Binary{Subtype: 0x00, Data: compressed},
 			"created_at":       now,
 		},
 		"$set": bson.M{

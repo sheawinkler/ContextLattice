@@ -199,6 +199,22 @@ func (s *server) buildContextPackResponse(
 	})
 	contextPack["runAdvisor"] = runAdvisor
 	contextPack["run_advisor"] = runAdvisor
+	warnings := parseWarnings(searchResponse["warnings"])
+	contextPackQuality := buildContextPackQualitySample(contextPackQualitySampleInput{
+		Query:                query,
+		Project:              strings.TrimSpace(anyToString(requestPayload["project"])),
+		TopicPath:            strings.TrimSpace(anyToString(requestPayload["topic_path"])),
+		TokenImpact:          tokenImpact,
+		Compiled:             compiled,
+		SourceCoverage:       sourceCoverage,
+		GraphQuality:         graphQuality,
+		RankedEvidence:       compiled["ranked_evidence"],
+		OmittedHighValueRefs: compiled["omitted_high_value_refs"],
+		Warnings:             warnings,
+	})
+	s.recordContextPackQuality(contextPackQuality)
+	contextPack["contextPackQuality"] = contextPackQuality
+	contextPack["context_pack_quality"] = contextPackQuality
 	response := map[string]any{
 		"ok":                      true,
 		"query":                   query,
@@ -207,10 +223,11 @@ func (s *server) buildContextPackResponse(
 		"agent_guidance":          agentGuidance,
 		"reference_prompt":        referencePrompt,
 		"token_impact":            tokenImpact,
+		"context_pack_quality":    contextPackQuality,
 		"run_advisor":             runAdvisor,
 		"token_budget":            compiled["token_budget"],
 		"omitted_high_value_refs": compiled["omitted_high_value_refs"],
-		"warnings":                parseWarnings(searchResponse["warnings"]),
+		"warnings":                warnings,
 		"retrieval_mode":          searchResponse["retrieval_mode"],
 		"retrieval_intent":        searchResponse["retrieval_intent"],
 		"traffic_class":           searchResponse["traffic_class"],
