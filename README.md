@@ -333,6 +333,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.7.1.md` (MongoDB driver security patch for the v3.7 train)
   - `docs/releases/v3.7.0.md` (tokenizer-exact prompt economics, bounded token-impact ledger, and release-note hygiene)
   - `docs/releases/v3.6.2.md`
   - `docs/releases/v3.5.0.md`
