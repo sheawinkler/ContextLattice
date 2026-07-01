@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const (
@@ -1277,7 +1277,7 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 		fallbackID,
 	))
 	if sessionID == "" {
-		sessionID = "sess_" + primitive.NewObjectID().Hex()
+		sessionID = "sess_" + bson.NewObjectID().Hex()
 	}
 	status := normalizeAgentSessionStatus(anyToString(payload["status"]))
 	record := map[string]any{
@@ -1321,7 +1321,7 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 	))
 	eventID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["id"]), anyToString(payload["event_id"])))
 	if eventID == "" {
-		eventID = "evt_" + primitive.NewObjectID().Hex()
+		eventID = "evt_" + bson.NewObjectID().Hex()
 	}
 	metadata := compactAgentSessionMetadata(anyMap(payload["metadata"]))
 	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff", "objective_hierarchy", "objective_lineage", "agent_state", "ownership"} {
@@ -1386,7 +1386,7 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 		anyToString(payload["sessionId"]),
 	))
 	if sessionID == "" {
-		sessionID = "sess_" + primitive.NewObjectID().Hex()
+		sessionID = "sess_" + bson.NewObjectID().Hex()
 	}
 	session, ok := s.sessions[sessionID]
 	if !ok {

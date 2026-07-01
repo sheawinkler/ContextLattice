@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type memoryStorePolicy struct {
@@ -526,7 +526,7 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 		return
 	}
 	if strings.TrimSpace(entry.EventID) == "" {
-		entry.EventID = primitive.NewObjectID().Hex()
+		entry.EventID = bson.NewObjectID().Hex()
 	}
 	if strings.TrimSpace(entry.CreatedAt) == "" {
 		entry.CreatedAt = nowUTCISO()
@@ -671,7 +671,7 @@ func (m *memoryStore) blobPathForHash(contentHash string) (string, error) {
 }
 
 func writeAtomicFile(path string, content []byte, mode fs.FileMode) error {
-	tmpPath := path + ".tmp-" + primitive.NewObjectID().Hex()
+	tmpPath := path + ".tmp-" + bson.NewObjectID().Hex()
 	if err := os.WriteFile(tmpPath, content, mode); err != nil {
 		return err
 	}
@@ -689,7 +689,7 @@ func copyFileAtomic(src string, dst string, mode fs.FileMode) error {
 	}
 	defer in.Close()
 
-	tmpPath := dst + ".tmp-" + primitive.NewObjectID().Hex()
+	tmpPath := dst + ".tmp-" + bson.NewObjectID().Hex()
 	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
@@ -737,7 +737,7 @@ func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return fmt.Errorf("create memory file directory: %w", err)
 	}
-	tmpPath := filePath + ".tmp-" + primitive.NewObjectID().Hex()
+	tmpPath := filePath + ".tmp-" + bson.NewObjectID().Hex()
 
 	mode := m.policy.contentLinkMode
 	if mode == "" {
@@ -801,7 +801,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 
 	buildEntry := func() memoryStoreEntry {
 		return memoryStoreEntry{
-			EventID:     primitive.NewObjectID().Hex(),
+			EventID:     bson.NewObjectID().Hex(),
 			Project:     project,
 			FileName:    fileName,
 			TopicPath:   topicPath,

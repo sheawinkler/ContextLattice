@@ -9,6 +9,7 @@ export type TopicFlatNode = {
 export type TokenImpactConfidence = "low" | "medium" | "high";
 export type TokenImpactCalibrationGrade = "heuristic" | "sampled_pack_estimate" | "tokenizer_exact" | "measured";
 export type TokenImpactFactorRole = "baseline" | "packed" | "penalty";
+export type ContextPackQualityCalibrationGrade = "modeled_counterfactual" | "outcome_seeded" | "outcome_adjusted" | "heuristic";
 
 export type TokenImpactFactor = {
   label: string;
@@ -34,6 +35,22 @@ export type TokenImpactEstimate = {
   source: string;
   basis: string[];
   factors: TokenImpactFactor[];
+  warnings: string[];
+};
+
+export type ContextPackQualityEstimate = {
+  modeledInferenceSaved: number;
+  exactPromptSaved: number;
+  qualityScore: number;
+  extraCallsAvoided: number;
+  confidence: TokenImpactConfidence;
+  calibrationGrade: ContextPackQualityCalibrationGrade;
+  outcomeSamples: number;
+  sampleCount: number;
+  observedFirstPassRate: number | null;
+  observedRepairRate: number | null;
+  measurementLimit: string;
+  source: string;
   warnings: string[];
 };
 
@@ -298,6 +315,93 @@ export function estimateTokenImpact(overview: unknown, mindmap: unknown, topics:
   };
 }
 
+export function estimateContextPackQuality(overview: unknown): ContextPackQualityEstimate {
+  const overviewRecord = asRecord(overview);
+  const candidates = [
+    overviewRecord.contextPackQuality,
+    overviewRecord.context_pack_quality,
+    asRecord(overviewRecord.status).contextPackQuality,
+    asRecord(overviewRecord.status).context_pack_quality,
+    asRecord(overviewRecord.telemetryMetrics).contextPackQuality,
+    asRecord(overviewRecord.telemetryMetrics).context_pack_quality,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeContextPackQuality(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return {
+    modeledInferenceSaved: 0,
+    exactPromptSaved: 0,
+    qualityScore: 0,
+    extraCallsAvoided: 0,
+    confidence: "low",
+    calibrationGrade: "heuristic",
+    outcomeSamples: 0,
+    sampleCount: 0,
+    observedFirstPassRate: null,
+    observedRepairRate: null,
+    measurementLimit: "No context-pack quality samples are available yet.",
+    source: "context_pack_quality_unavailable",
+    warnings: ["Run a context pack to seed the quality ledger."],
+  };
+}
+
+function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEstimate | null {
+  const record = asRecord(candidate);
+  if (Object.keys(record).length === 0) {
+    return null;
+  }
+  const modeledInferenceSaved = firstInt(record, [
+    "modeledInferenceTokensAvoided",
+    "modeled_inference_tokens_avoided",
+    "modeledInferenceSaved",
+  ]);
+  const exactPromptSaved = firstInt(record, [
+    "exactPromptTokensSaved",
+    "exact_prompt_tokens_saved",
+    "saved_tokens_estimate",
+  ]);
+  const sampleCount = firstInt(record, ["sampleCount", "sample_count"]);
+  const outcomeSamples = firstInt(record, ["outcomeSampleCount", "outcome_sample_count"]);
+  const qualityScore = clampInt(
+    firstInt(record, ["averageQualityScore", "average_quality_score", "qualityScore", "quality_score"]),
+    0,
+    100,
+  );
+  if (modeledInferenceSaved <= 0 && exactPromptSaved <= 0 && sampleCount <= 0 && outcomeSamples <= 0) {
+    return null;
+  }
+  const calibrationGrade = normalizeContextPackQualityCalibration(
+    toText(record.calibrationGrade) || toText(record.calibration_grade),
+  );
+  const measurementLimit =
+    toText(record.measurementLimit) ||
+    toText(record.measurement_limit) ||
+    "Exact prompt tokens are measured; inference avoidance is confidence-banded.";
+  const firstPass = nullableRatio(record.observedFirstPassSuccessRate ?? record.observed_first_pass_success_rate);
+  const repairRate = nullableRatio(record.observedRepairRate ?? record.observed_repair_rate);
+  return {
+    modeledInferenceSaved: roundTokenCount(modeledInferenceSaved),
+    exactPromptSaved: roundTokenCount(exactPromptSaved),
+    qualityScore,
+    extraCallsAvoided: roundRatio(record.modeledExtraCallsAvoided ?? record.modeled_extra_calls_avoided),
+    confidence: normalizeConfidence(toText(record.confidence), outcomeSamples >= 20 ? "high" : outcomeSamples > 0 ? "medium" : "low"),
+    calibrationGrade,
+    outcomeSamples,
+    sampleCount,
+    observedFirstPassRate: firstPass,
+    observedRepairRate: repairRate,
+    measurementLimit,
+    source: toText(record.source) || "/telemetry/context-pack-quality",
+    warnings: [
+      measurementLimit,
+      calibrationGrade === "modeled_counterfactual" ? "Inference avoidance is not exact until outcome rows calibrate the model." : "",
+    ].filter(Boolean),
+  };
+}
+
 function measuredTokenImpactEstimate(overviewRecord: Record<string, any>): TokenImpactEstimate | null {
   const candidates = [
     overviewRecord.tokenImpact,
@@ -438,11 +542,29 @@ function roundRatio(value: unknown): number {
   return Math.round(parsed * 10) / 10;
 }
 
+function nullableRatio(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.round(parsed * 1000) / 1000;
+}
+
 function normalizeConfidence(value: string, fallback: TokenImpactConfidence): TokenImpactConfidence {
   if (value === "high" || value === "medium" || value === "low") {
     return value;
   }
   return fallback;
+}
+
+function normalizeContextPackQualityCalibration(value: string): ContextPackQualityCalibrationGrade {
+  if (value === "outcome_adjusted" || value === "outcome_seeded" || value === "modeled_counterfactual") {
+    return value;
+  }
+  return "heuristic";
 }
 
 function normalizeCalibrationGrade(value: string): TokenImpactCalibrationGrade {

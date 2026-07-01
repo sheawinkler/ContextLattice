@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { estimateTokenImpact } from "@/lib/dashboardMetrics";
+import { estimateContextPackQuality, estimateTokenImpact } from "@/lib/dashboardMetrics";
 
 test("estimateTokenImpact prefers sampled token impact payloads", () => {
   const impact = estimateTokenImpact(
@@ -101,4 +101,42 @@ test("estimateTokenImpact bounds lifetime writes into a live working set", () =>
   assert.ok(impact.estimatedSaved < 9000 * 720, "fallback must not multiply every lifetime write into saved tokens");
   assert.ok(impact.factors.some((factor) => factor.label === "raw working-set writes"));
   assert.ok(impact.warnings.some((warning) => warning.includes("working set")));
+});
+
+test("estimateContextPackQuality preserves modeled inference avoidance and outcome calibration", () => {
+  const quality = estimateContextPackQuality({
+    contextPackQuality: {
+      sample_count: 12,
+      outcome_sample_count: 6,
+      average_quality_score: 87,
+      exact_prompt_tokens_saved: 42000,
+      modeled_inference_tokens_avoided: 6800,
+      modeled_extra_calls_avoided: 1.7,
+      calibration_grade: "outcome_seeded",
+      confidence: "medium",
+      observed_first_pass_success_rate: 0.833,
+      observed_repair_rate: 0.167,
+      measurement_limit: "Exact prompt-token savings are measured; modeled inference avoidance is confidence-banded.",
+    },
+  });
+
+  assert.equal(quality.modeledInferenceSaved, 6800);
+  assert.equal(quality.exactPromptSaved, 42000);
+  assert.equal(quality.qualityScore, 87);
+  assert.equal(quality.extraCallsAvoided, 1.7);
+  assert.equal(quality.calibrationGrade, "outcome_seeded");
+  assert.equal(quality.confidence, "medium");
+  assert.equal(quality.outcomeSamples, 6);
+  assert.equal(quality.observedFirstPassRate, 0.833);
+  assert.equal(quality.observedRepairRate, 0.167);
+  assert.match(quality.measurementLimit, /confidence-banded/);
+});
+
+test("estimateContextPackQuality falls back when no quality samples exist", () => {
+  const quality = estimateContextPackQuality({});
+
+  assert.equal(quality.modeledInferenceSaved, 0);
+  assert.equal(quality.calibrationGrade, "heuristic");
+  assert.equal(quality.confidence, "low");
+  assert.ok(quality.warnings.some((warning) => warning.includes("Run a context pack")));
 });

@@ -5,6 +5,7 @@ import {
   ageLabel,
   asArray,
   asRecord,
+  estimateContextPackQuality,
   estimateTokenImpact,
   formatCompact,
   formatMs,
@@ -154,6 +155,7 @@ export function CommandCenterDashboard() {
     () => estimateTokenImpact(overview, mindmap, state.topics),
     [overview, mindmap, state.topics],
   );
+  const contextPackQuality = useMemo(() => estimateContextPackQuality(overview), [overview]);
   const memoryTelemetry = asRecord(asRecord(overview).memoryTelemetry);
   const memoryBank = asRecord(memoryTelemetry.memoryBank);
   const fanout = asRecord(memoryTelemetry.fanout);
@@ -225,6 +227,12 @@ export function CommandCenterDashboard() {
           value={formatCompact(tokenImpact.packedTokens)}
           detail={`${formatCompact(tokenImpact.baselineTokens)} baseline · ${formatCompact(tokenImpact.estimatedSaved)} saved`}
           tone={tokenImpact.calibrationGrade === "heuristic" ? "neutral" : "good"}
+        />
+        <MetricCard
+          label="modeled inference avoided"
+          value={formatCompact(contextPackQuality.modeledInferenceSaved)}
+          detail={`${contextPackQuality.extraCallsAvoided} calls · ${contextPackQuality.confidence} confidence`}
+          tone={contextPackQuality.calibrationGrade === "outcome_adjusted" ? "good" : "neutral"}
         />
         <MetricCard
           label="service health"

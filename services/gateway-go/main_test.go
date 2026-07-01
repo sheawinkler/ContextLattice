@@ -27,6 +27,9 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	if os.Getenv("GO_TOKEN_IMPACT_LEDGER_ENABLED") == "" {
 		t.Setenv("GO_TOKEN_IMPACT_LEDGER_ENABLED", "false")
 	}
+	if os.Getenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED") == "" {
+		t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
+	}
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -982,6 +985,8 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)`,
+		`mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)`,
+		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
 		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
@@ -1041,6 +1046,8 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.proxy)`,
+		`mux.HandleFunc("/telemetry/context-pack-quality", s.proxy)`,
+		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
@@ -2019,6 +2026,9 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	t.Setenv("GO_TOKEN_IMPACT_LEDGER_ENABLED", "true")
 	t.Setenv("GO_TOKEN_IMPACT_LEDGER_MAX_BYTES", "65536")
 	t.Setenv("GO_TOKEN_IMPACT_LEDGER_MAX_SAMPLES", "20")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_MAX_BYTES", "65536")
+	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_MAX_SAMPLES", "20")
 	t.Setenv("CONTEXTLATTICE_TOKENIZER_ENCODING", "cl100k_base")
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
@@ -2170,6 +2180,26 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	if anyToInt(nestedTokenImpact["saved_tokens_estimate"], 0) != savedTokens {
 		t.Fatalf("expected nested token impact to match root sample, root=%#v nested=%#v", tokenImpact, nestedTokenImpact)
 	}
+	contextPackQuality := anyMap(payload["context_pack_quality"])
+	if anyToString(contextPackQuality["schema_id"]) != contextPackQualitySchemaID {
+		t.Fatalf("expected context pack quality sample, got %#v", contextPackQuality)
+	}
+	qualitySampleID := anyToString(contextPackQuality["sample_id"])
+	if qualitySampleID == "" || !strings.HasPrefix(qualitySampleID, "cpq_") {
+		t.Fatalf("expected stable quality sample id, got %#v", contextPackQuality)
+	}
+	if anyToInt(contextPackQuality["exact_prompt_tokens_saved"], 0) != savedTokens ||
+		anyToInt(contextPackQuality["modeled_inference_tokens_avoided"], 0) <= 0 ||
+		anyToInt(contextPackQuality["quality_score"], 0) <= 0 {
+		t.Fatalf("expected quality sample to include exact savings and modeled avoidance, got %#v", contextPackQuality)
+	}
+	if anyToString(contextPackQuality["calibration_grade"]) != "modeled_counterfactual" ||
+		anyToString(contextPackQuality["counterfactual_baseline"]) != "raw_candidate_replay" {
+		t.Fatalf("expected confidence-banded counterfactual quality metadata, got %#v", contextPackQuality)
+	}
+	if anyToString(contextPackQuality["query_hash"]) == "" || strings.Contains(anyToString(contextPackQuality["query_hash"]), "budgeted") {
+		t.Fatalf("expected hashed query provenance only, got %#v", contextPackQuality)
+	}
 	telemetryResp, err := http.Get(gateway.URL + "/telemetry/token-impact")
 	if err != nil {
 		t.Fatalf("token impact telemetry request failed: %v", err)
@@ -2201,6 +2231,68 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	if !strings.Contains(string(ledgerRaw), `"tokenizer_exact":true`) || strings.Contains(string(ledgerRaw), "preserve user work") {
 		t.Fatalf("expected compact exact ledger row without raw prompt text, got %s", string(ledgerRaw))
 	}
+	qualityResp, err := http.Get(gateway.URL + "/telemetry/context-pack-quality")
+	if err != nil {
+		t.Fatalf("context pack quality telemetry request failed: %v", err)
+	}
+	defer qualityResp.Body.Close()
+	if qualityResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(qualityResp.Body)
+		t.Fatalf("expected context pack quality telemetry 200, got %d body=%s", qualityResp.StatusCode, string(body))
+	}
+	var qualityPayload map[string]any
+	if err := json.NewDecoder(qualityResp.Body).Decode(&qualityPayload); err != nil {
+		t.Fatalf("decode context pack quality telemetry payload: %v", err)
+	}
+	if anyToString(qualityPayload["schema_id"]) != contextPackQualityTelemetrySchemaID ||
+		anyToInt(qualityPayload["sample_count"], 0) < 1 ||
+		anyToInt(qualityPayload["modeled_inference_tokens_avoided"], 0) <= 0 ||
+		anyToInt(qualityPayload["exact_prompt_tokens_saved"], 0) < savedTokens {
+		t.Fatalf("expected quality aggregate to include sample, got %#v", qualityPayload)
+	}
+	qualityStorage := anyMap(qualityPayload["storage"])
+	if !anyToBool(qualityStorage["enabled"]) || anyToString(qualityStorage["durability"]) != "bounded_ndjson" {
+		t.Fatalf("expected bounded persisted context-pack quality storage, got %#v", qualityStorage)
+	}
+	qualityLedgerPath := filepath.Join(root, "_contextlattice", "context_pack_quality_ledger.ndjson")
+	qualityLedgerRaw, err := os.ReadFile(qualityLedgerPath)
+	if err != nil {
+		t.Fatalf("expected persisted context pack quality ledger: %v", err)
+	}
+	if !strings.Contains(string(qualityLedgerRaw), contextPackQualitySchemaID) || strings.Contains(string(qualityLedgerRaw), "preserve user work") || strings.Contains(string(qualityLedgerRaw), "budgeted context pack") {
+		t.Fatalf("expected compact quality ledger row without raw query/source text, got %s", string(qualityLedgerRaw))
+	}
+	outcomeBody, err := json.Marshal(map[string]any{
+		"sample_id":          qualitySampleID,
+		"first_pass_success": true,
+		"repair_required":    false,
+		"retry_count":        0,
+		"followup_tokens":    123,
+		"outcome_source":     "test_agent",
+	})
+	if err != nil {
+		t.Fatalf("encode quality outcome: %v", err)
+	}
+	outcomeResp, err := http.Post(gateway.URL+"/telemetry/context-pack-quality/outcome", "application/json", strings.NewReader(string(outcomeBody)))
+	if err != nil {
+		t.Fatalf("context pack quality outcome request failed: %v", err)
+	}
+	defer outcomeResp.Body.Close()
+	if outcomeResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(outcomeResp.Body)
+		t.Fatalf("expected quality outcome 200, got %d body=%s", outcomeResp.StatusCode, string(body))
+	}
+	var outcomePayload map[string]any
+	if err := json.NewDecoder(outcomeResp.Body).Decode(&outcomePayload); err != nil {
+		t.Fatalf("decode context pack quality outcome payload: %v", err)
+	}
+	outcomeTelemetry := anyMap(outcomePayload["telemetry"])
+	if anyToInt(outcomeTelemetry["outcome_sample_count"], 0) < 1 ||
+		anyToString(outcomeTelemetry["calibration_grade"]) != "outcome_seeded" ||
+		anyToFloat(outcomeTelemetry["observed_first_pass_success_rate"]) <= 0 ||
+		anyToInt(outcomeTelemetry["observed_followup_tokens"], 0) != 123 {
+		t.Fatalf("expected outcome-seeded quality telemetry, got %#v", outcomeTelemetry)
+	}
 
 	reloaded := newTestServer(t, backend.URL)
 	reloadedGateway := httptest.NewServer(buildMux(reloaded))
@@ -2216,6 +2308,21 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	}
 	if anyToInt(reloadedPayload["sample_count"], 0) < 1 || anyToInt(reloadedPayload["saved_tokens_estimate"], 0) < savedTokens {
 		t.Fatalf("expected reloaded telemetry to include persisted token impact sample, got %#v", reloadedPayload)
+	}
+	reloadedQualityResp, err := http.Get(reloadedGateway.URL + "/telemetry/context-pack-quality")
+	if err != nil {
+		t.Fatalf("reloaded context pack quality telemetry request failed: %v", err)
+	}
+	defer reloadedQualityResp.Body.Close()
+	var reloadedQuality map[string]any
+	if err := json.NewDecoder(reloadedQualityResp.Body).Decode(&reloadedQuality); err != nil {
+		t.Fatalf("decode reloaded context pack quality telemetry payload: %v", err)
+	}
+	if anyToInt(reloadedQuality["sample_count"], 0) < 1 ||
+		anyToInt(reloadedQuality["outcome_sample_count"], 0) < 1 ||
+		anyToInt(reloadedQuality["modeled_inference_tokens_avoided"], 0) <= 0 ||
+		anyToInt(reloadedQuality["observed_followup_tokens"], 0) != 123 {
+		t.Fatalf("expected reloaded quality telemetry to include persisted sample and outcome, got %#v", reloadedQuality)
 	}
 }
 
