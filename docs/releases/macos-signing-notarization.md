@@ -82,8 +82,8 @@ Do not paste credentials into chat or commit them. Use the helper locally:
 
 ```bash
 scripts/macos_configure_github_signing_secrets.sh \
-  --cert-p12 ~/Downloads/DeveloperIDApplication.p12 \
-  --notary-key-p8 ~/Downloads/AuthKey_ABC123DEFG.p8 \
+  --cert-p12 $HOME/Downloads/DeveloperIDApplication.p12 \
+  --notary-key-p8 $HOME/Downloads/AuthKey_ABC123DEFG.p8 \
   --notary-key-id ABC123DEFG \
   --notary-issuer-id 00000000-0000-0000-0000-000000000000 \
   --required-gates
@@ -93,7 +93,7 @@ For Apple ID app-specific password notarization instead of an API key:
 
 ```bash
 scripts/macos_configure_github_signing_secrets.sh \
-  --cert-p12 ~/Downloads/DeveloperIDApplication.p12 \
+  --cert-p12 $HOME/Downloads/DeveloperIDApplication.p12 \
   --apple-id you@example.com \
   --team-id TEAMID1234 \
   --required-gates

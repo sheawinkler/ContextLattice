@@ -24,6 +24,9 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
 	t.Setenv("GO_MEMORY_STORE_ENABLED", "false")
 	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	if os.Getenv("GO_TOKEN_IMPACT_LEDGER_ENABLED") == "" {
+		t.Setenv("GO_TOKEN_IMPACT_LEDGER_ENABLED", "false")
+	}
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -1999,7 +2002,24 @@ func TestMemoryContextPackServedFromGatewayHandler(t *testing.T) {
 	}
 }
 
+func TestContextPackTokenizerExactAccounting(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_TOKENIZER_ENCODING", "cl100k_base")
+	result := contextPackCountTokens("hello world")
+	if !result.TokenizerExact || result.Method != "tiktoken" || result.CalibrationGrade != "tokenizer_exact" || result.Encoding != "cl100k_base" {
+		t.Fatalf("expected tokenizer-exact cl100k accounting, got %#v", result)
+	}
+	if result.Tokens != 2 {
+		t.Fatalf("expected cl100k token count for hello world to be 2, got %d", result.Tokens)
+	}
+}
+
 func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_TOKEN_IMPACT_LEDGER_ENABLED", "true")
+	t.Setenv("GO_TOKEN_IMPACT_LEDGER_MAX_BYTES", "65536")
+	t.Setenv("GO_TOKEN_IMPACT_LEDGER_MAX_SAMPLES", "20")
+	t.Setenv("CONTEXTLATTICE_TOKENIZER_ENCODING", "cl100k_base")
 	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
@@ -2140,8 +2160,11 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	if baselineTokens <= packedTokens || savedTokens != baselineTokens-packedTokens {
 		t.Fatalf("expected positive token savings, got baseline=%d packed=%d saved=%d payload=%#v", baselineTokens, packedTokens, savedTokens, tokenImpact)
 	}
-	if anyToString(tokenImpact["calibration_grade"]) != "sampled_pack_estimate" || anyToString(tokenImpact["estimate_method"]) != "chars_div_4" {
-		t.Fatalf("expected honest sampled estimate metadata, got %#v", tokenImpact)
+	if anyToString(tokenImpact["calibration_grade"]) != "tokenizer_exact" ||
+		anyToString(tokenImpact["estimate_method"]) != "tiktoken" ||
+		anyToString(tokenImpact["tokenizer_encoding"]) != "cl100k_base" ||
+		!anyToBool(tokenImpact["tokenizer_exact"]) {
+		t.Fatalf("expected tokenizer-exact impact metadata, got %#v", tokenImpact)
 	}
 	nestedTokenImpact := anyMap(contextPack["token_impact"])
 	if anyToInt(nestedTokenImpact["saved_tokens_estimate"], 0) != savedTokens {
@@ -2162,8 +2185,37 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	}
 	if anyToString(telemetryPayload["schema_id"]) != "contextlattice_token_impact_telemetry.v1" ||
 		anyToInt(telemetryPayload["sample_count"], 0) < 1 ||
-		anyToInt(telemetryPayload["saved_tokens_estimate"], 0) < savedTokens {
+		anyToInt(telemetryPayload["saved_tokens_estimate"], 0) < savedTokens ||
+		!anyToBool(telemetryPayload["tokenizer_exact"]) {
 		t.Fatalf("expected token impact telemetry aggregate to include sample, got %#v", telemetryPayload)
+	}
+	storage := anyMap(telemetryPayload["storage"])
+	if !anyToBool(storage["enabled"]) || anyToString(storage["durability"]) != "bounded_ndjson" {
+		t.Fatalf("expected bounded persisted token-impact storage, got %#v", storage)
+	}
+	ledgerPath := filepath.Join(root, "_contextlattice", "token_impact_ledger.ndjson")
+	ledgerRaw, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatalf("expected persisted token impact ledger: %v", err)
+	}
+	if !strings.Contains(string(ledgerRaw), `"tokenizer_exact":true`) || strings.Contains(string(ledgerRaw), "preserve user work") {
+		t.Fatalf("expected compact exact ledger row without raw prompt text, got %s", string(ledgerRaw))
+	}
+
+	reloaded := newTestServer(t, backend.URL)
+	reloadedGateway := httptest.NewServer(buildMux(reloaded))
+	defer reloadedGateway.Close()
+	reloadedResp, err := http.Get(reloadedGateway.URL + "/telemetry/token-impact")
+	if err != nil {
+		t.Fatalf("reloaded token impact telemetry request failed: %v", err)
+	}
+	defer reloadedResp.Body.Close()
+	var reloadedPayload map[string]any
+	if err := json.NewDecoder(reloadedResp.Body).Decode(&reloadedPayload); err != nil {
+		t.Fatalf("decode reloaded token impact telemetry payload: %v", err)
+	}
+	if anyToInt(reloadedPayload["sample_count"], 0) < 1 || anyToInt(reloadedPayload["saved_tokens_estimate"], 0) < savedTokens {
+		t.Fatalf("expected reloaded telemetry to include persisted token impact sample, got %#v", reloadedPayload)
 	}
 }
 

@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.6.2 is the public baseline. v4 remains private tuning lane.</h3>
+        <h3>v3.7.0 is the public baseline. v4 remains private tuning lane.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.6.2:</strong> agent operating layer, agent-actionable quickstart, impact-per-token context allocation, universal adapter, native agent runtime sessions, LLM-derived Dream Mode, Qdrant-first local Lite, and core memory edges/neighbors.</li>
+          <li><strong>Public v3.7.0:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
           <li><strong>Private v4:</strong> same external memory contract, but with stronger adaptive tuning, candidate backend experimentation, and promotion gates before public sync.</li>
           <li><strong>Promotion policy:</strong> features move from v4 to public only after benchmark + recall + soak evidence.</li>
         </ul>
@@ -56,6 +56,22 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.7.0 · Token Impact Engine</span>
+        <h3>The memory layer now proves its prompt economics with tokenizer-exact accounting.</h3>
+        <p class="spotlight">
+          v3.7.0 upgrades ContextLattice from directional token-savings estimates to a restart-safe prompt economics ledger.
+          Context packs report exact tokenizer counts when the configured encoding is available, and the gateway persists compact
+          proof rows without storing raw prompts or recalled source text.
+        </p>
+        <ul>
+          <li><strong>Exact accounting:</strong> context packs expose <code>tokenizer_exact</code>, <code>estimate_method</code>, and <code>tokenizer_encoding</code>.</li>
+          <li><strong>Bounded ledger:</strong> token-impact rows are compact, capped, and reloaded on gateway startup.</li>
+          <li><strong>Proof cockpit:</strong> dashboard labels exact, sampled, and heuristic token savings separately.</li>
+          <li><strong>Release hygiene:</strong> release notes now reject machine-local paths before publishing.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-06-30 · v3.6.2 · Agent-Actionable Quickstart</span>
         <h3>A fresh agent can now land on the README and wire ContextLattice without a second prompt.</h3>
@@ -68,7 +84,7 @@
           <li><strong>Agent prompt:</strong> README now tells AI agents reading the page to follow the install + integration section directly.</li>
           <li><strong>Canonical repo:</strong> the quickstart spells out <code>https://github.com/sheawinkler/ContextLattice.git</code>.</li>
           <li><strong>Integration guardrail:</strong> <code>contextlattice_adopt integrate</code> writes managed instruction blocks; it does not install third-party agents.</li>
-          <li><strong>Installer lane:</strong> public releases and the optional Homebrew cask now point at the current v3.6.2 train.</li>
+          <li><strong>Installer lane:</strong> public releases and the optional Homebrew cask now point at the v3.6.2 train.</li>
           <li><strong>Operating layer:</strong> v3.6 keeps durable writes, scoped packs, Skills Index discovery, async recall steering, runtime policy, template conformance, and local-first storage under one contract.</li>
         </ul>
       </article>

@@ -526,6 +526,9 @@ type contextPackTokenBudget struct {
 	RankedEvidenceTokens     int
 	Active                   bool
 	EstimateMethod           string
+	CalibrationGrade         string
+	TokenizerEncoding        string
+	TokenizerExact           bool
 }
 
 type contextPackEvidenceAllocation struct {
@@ -567,13 +570,17 @@ func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenB
 		}
 		return 0
 	}
+	tokenMeta := contextPackTokenCountMetadata()
 	budget := contextPackTokenBudget{
 		AgentContextBudgetTokens: readInt("agent_context_budget_tokens", "agentContextBudgetTokens"),
 		ModelContextWindowTokens: readInt("model_context_window_tokens", "modelContextWindowTokens"),
 		ReservedResponseTokens:   readInt("reserved_response_tokens", "reservedResponseTokens"),
 		AlreadyLoadedTokens:      readInt("already_loaded_tokens", "alreadyLoadedTokens"),
 		TargetContextPackTokens:  readInt("target_context_pack_tokens", "targetContextPackTokens", "budget_tokens", "budgetTokens"),
-		EstimateMethod:           "chars_div_4",
+		EstimateMethod:           tokenMeta.Method,
+		CalibrationGrade:         tokenMeta.CalibrationGrade,
+		TokenizerEncoding:        tokenMeta.Encoding,
+		TokenizerExact:           tokenMeta.TokenizerExact,
 	}
 	if budget.TargetContextPackTokens <= 0 {
 		available := 0
@@ -594,14 +601,6 @@ func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenB
 		budget.Active = true
 	}
 	return budget
-}
-
-func contextPackEstimateTokens(text string) int {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return 1
-	}
-	return maxInt(1, len(text)/4)
 }
 
 func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext, tokenBudget contextPackTokenBudget) map[string]any {
@@ -981,10 +980,12 @@ func renderOmittedHighValueRefs(items []contextPackEvidenceItem, limit int) []an
 }
 
 func contextPackTokenBudgetReport(tokenBudget contextPackTokenBudget, usedTokens int, selectedCount int, omittedCount int, compressionLevel string) map[string]any {
-	return map[string]any{
+	report := map[string]any{
 		"schema_id":                     "contextlattice_context_token_budget.v1",
 		"active":                        tokenBudget.Active,
 		"estimate_method":               firstNonEmptyStrings(tokenBudget.EstimateMethod, "chars_div_4"),
+		"calibration_grade":             firstNonEmptyStrings(tokenBudget.CalibrationGrade, "sampled_pack_estimate"),
+		"tokenizer_exact":               tokenBudget.TokenizerExact,
 		"selection_strategy":            "impact_per_estimated_token_with_provenance_diversity",
 		"agent_context_budget_tokens":   tokenBudget.AgentContextBudgetTokens,
 		"model_context_window_tokens":   tokenBudget.ModelContextWindowTokens,
@@ -997,6 +998,10 @@ func contextPackTokenBudgetReport(tokenBudget contextPackTokenBudget, usedTokens
 		"omitted_high_value_count":      omittedCount,
 		"compression_level":             compressionLevel,
 	}
+	if tokenBudget.TokenizerEncoding != "" {
+		report["tokenizer_encoding"] = tokenBudget.TokenizerEncoding
+	}
+	return report
 }
 
 func buildContextPackTokenImpact(query string, contextPack map[string]any, compiled map[string]any, referencePrompt string) map[string]any {
@@ -1025,10 +1030,13 @@ func buildContextPackTokenImpact(query string, contextPack map[string]any, compi
 		"agent_guidance":          compiled["agent_guidance"],
 		"omitted_high_value_refs": contextPackAnyList(compiled["omitted_high_value_refs"]),
 	}
-	baselineTokens := contextPackEstimateAnyTokens(baselinePayload)
-	packedTokens := contextPackEstimateTokens(referencePrompt)
+	baselineCount := contextPackCountAnyTokens(baselinePayload)
+	packedCount := contextPackCountTokens(referencePrompt)
+	queryCount := contextPackCountTokens(query)
+	baselineTokens := baselineCount.Tokens
+	packedTokens := packedCount.Tokens
 	if used := anyToInt(tokenBudget["used_tokens_estimate"], 0); used > 0 {
-		packedTokens = maxInt(packedTokens, used+contextPackEstimateTokens(query)+600)
+		packedTokens = maxInt(packedTokens, used+queryCount.Tokens+600)
 	}
 	if packedTokens <= 0 {
 		packedTokens = 1
@@ -1052,14 +1060,23 @@ func buildContextPackTokenImpact(query string, contextPack map[string]any, compi
 	if selectedCount == 0 || baselineTokens == packedTokens {
 		confidence = "low"
 	}
+	tokenizerExact := baselineCount.TokenizerExact && packedCount.TokenizerExact && queryCount.TokenizerExact
+	estimateMethod := firstNonEmptyStrings(anyToString(tokenBudget["estimate_method"]), baselineCount.Method)
+	calibrationGrade := firstNonEmptyStrings(anyToString(tokenBudget["calibration_grade"]), baselineCount.CalibrationGrade)
+	tokenizerEncoding := firstNonEmptyStrings(anyToString(tokenBudget["tokenizer_encoding"]), baselineCount.Encoding)
+	measurementLimit := "Token counts use configured tiktoken encoding; no raw prompt text is persisted."
+	if !tokenizerExact {
+		measurementLimit = "Token counts fell back to chars_div_4 because configured tokenizer accounting was unavailable."
+	}
 
-	return map[string]any{
+	impact := map[string]any{
 		"schema_id":                "contextlattice_token_impact.v1",
 		"version":                  1,
 		"scope":                    "context_pack_response",
-		"calibration_grade":        "sampled_pack_estimate",
+		"calibration_grade":        calibrationGrade,
 		"confidence":               confidence,
-		"estimate_method":          "chars_div_4",
+		"estimate_method":          estimateMethod,
+		"tokenizer_exact":          tokenizerExact,
 		"baseline_kind":            "raw_candidate_evidence_prompt_stuffing",
 		"packed_kind":              "compiled_ranked_evidence_reference_prompt",
 		"baseline_tokens_estimate": baselineTokens,
@@ -1075,7 +1092,7 @@ func buildContextPackTokenImpact(query string, contextPack map[string]any, compi
 		"ranked_evidence_tokens":   anyToInt(tokenBudget["used_tokens_estimate"], anyToInt(compiler["ranked_evidence_tokens_estimate"], 0)),
 		"selection_strategy":       firstNonEmptyStrings(anyToString(tokenBudget["selection_strategy"]), anyToString(compiler["strategy"])),
 		"moat_claim":               "ContextLattice converts raw candidate memory into a bounded, provenance-carrying prompt packet and reports the estimated token delta per pack.",
-		"measurement_limit":        "Estimate uses chars_div_4 until model-tokenizer accounting is wired.",
+		"measurement_limit":        measurementLimit,
 		"basis": []any{
 			"raw candidate evidence JSON",
 			"compiled reference_prompt",
@@ -1084,14 +1101,22 @@ func buildContextPackTokenImpact(query string, contextPack map[string]any, compi
 			"omitted high-value references",
 		},
 	}
+	if tokenizerEncoding != "" {
+		impact["tokenizer_encoding"] = tokenizerEncoding
+	}
+	return impact
 }
 
 func contextPackEstimateAnyTokens(value any) int {
+	return contextPackCountAnyTokens(value).Tokens
+}
+
+func contextPackCountAnyTokens(value any) tokenCountResult {
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return 1
+		return tokenCountResult{Tokens: 1, Method: "chars_div_4", CalibrationGrade: "sampled_pack_estimate"}
 	}
-	return contextPackEstimateTokens(string(raw))
+	return contextPackCountTokens(string(raw))
 }
 
 func contextPackPromptSections(

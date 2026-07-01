@@ -209,7 +209,13 @@ export function CommandCenterDashboard() {
 
       <section className="cl-metric-grid" aria-busy={loading}>
         <MetricCard
-          label={tokenImpact.calibrationGrade === "heuristic" ? "estimated tokens saved" : "sampled tokens saved"}
+          label={
+            tokenImpact.calibrationGrade === "heuristic"
+              ? "estimated tokens saved"
+              : tokenImpact.calibrationGrade === "tokenizer_exact"
+                ? "exact tokens saved"
+                : "sampled tokens saved"
+          }
           value={formatCompact(tokenImpact.estimatedSaved)}
           detail={`${tokenImpact.compressionRatio}x compression · ${tokenImpact.confidence} confidence`}
           tone="hot"

@@ -17,17 +17,17 @@ They also enforce the default context-compaction handoff (`compaction-handoff`) 
 Templates are contract-aware but intentionally light: agents should preserve `format_contract` metadata from ContextLattice, not echo it in every human-facing answer.
 
 Global helper CLI tools are auto-installed by `gmake quickstart` and installer flows:
-- `~/.contextlattice/bin/contextlattice_adopt`
-- `~/.contextlattice/bin/contextlattice_agent_adapter`
-- `~/.contextlattice/bin/contextlattice_search`
-- `~/.contextlattice/bin/contextlattice_write`
-- `~/.contextlattice/bin/contextlattice_agent_start`
-- `~/.contextlattice/bin/contextlattice_checkpoint`
-- `~/.contextlattice/bin/contextlattice_agent_session`
-- `~/.contextlattice/bin/contextlattice_agent_trace`
-- `~/.contextlattice/bin/contextlattice_agent_adoption_proof`
-- `~/.contextlattice/bin/contextlattice_agent_runtime_doctor`
-- `~/.contextlattice/bin/contextlattice_skills_index`
+- `$HOME/.contextlattice/bin/contextlattice_adopt`
+- `$HOME/.contextlattice/bin/contextlattice_agent_adapter`
+- `$HOME/.contextlattice/bin/contextlattice_search`
+- `$HOME/.contextlattice/bin/contextlattice_write`
+- `$HOME/.contextlattice/bin/contextlattice_agent_start`
+- `$HOME/.contextlattice/bin/contextlattice_checkpoint`
+- `$HOME/.contextlattice/bin/contextlattice_agent_session`
+- `$HOME/.contextlattice/bin/contextlattice_agent_trace`
+- `$HOME/.contextlattice/bin/contextlattice_agent_adoption_proof`
+- `$HOME/.contextlattice/bin/contextlattice_agent_runtime_doctor`
+- `$HOME/.contextlattice/bin/contextlattice_skills_index`
 
 Preferred startup:
 

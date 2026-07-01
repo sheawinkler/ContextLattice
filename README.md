@@ -32,7 +32,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.6.2` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.7.0` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
 `v4` remains the private tuning lane for experiments that still need benchmark, recall, and soak gates before public promotion.
 
@@ -174,7 +174,7 @@ LLAMA_CPP_BASE_URL=http://127.0.0.1:8080
 
 ## Agent CLI
 
-Installer and quickstart paths install agent helpers under `~/.contextlattice/bin`.
+Installer and quickstart paths install agent helpers under `$HOME/.contextlattice/bin`.
 
 ```bash
 contextlattice_agent_adapter profiles
@@ -333,6 +333,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.7.0.md` (tokenizer-exact prompt economics, bounded token-impact ledger, and release-note hygiene)
   - `docs/releases/v3.6.2.md`
   - `docs/releases/v3.5.0.md`
   - `docs/releases/v3.4.25.md`
