@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const name = String(body?.name || "Default key").trim();
+  const name = String(body?.name || "Unnamed API key").trim();
   const scopesInput = Array.isArray(body?.scopes)
     ? body.scopes.join(",")
     : String(body?.scopes || "memory:write,usage:write");

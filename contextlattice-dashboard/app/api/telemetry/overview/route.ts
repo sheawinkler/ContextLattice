@@ -15,11 +15,21 @@ function clampInt(value: string | null, fallback: number, min: number, max: numb
   return Math.max(min, Math.min(max, parsed));
 }
 
-async function safeGet(path: string): Promise<SafeResponse> {
+async function safeGet(
+  path: string,
+  options?: { optionalStatuses?: number[] },
+): Promise<SafeResponse> {
   const fetchedAt = new Date().toISOString();
   try {
     const response = await fetchOrchestrator(path, { method: "GET" });
     if (!response.ok) {
+      if (options?.optionalStatuses?.includes(response.status)) {
+        return {
+          data: null,
+          error: null,
+          fetchedAt,
+        };
+      }
       const detail = (await response.text()).slice(0, 280);
       return {
         data: null,
@@ -105,7 +115,7 @@ export async function GET(request: Request) {
     safeGet("/telemetry/agents/runtime?limit=16"),
     safeGet("/ops/native-ownership"),
     safeGet(`/telemetry/tools/invocations?limit=${toolLimit}&status_min=400`),
-    safeGet("/ops/quality/sentrux/status"),
+    safeGet("/ops/quality/sentrux/status", { optionalStatuses: [404] }),
   ]);
 
   const errors: Record<string, string> = {};

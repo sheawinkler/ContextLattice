@@ -53,16 +53,18 @@ function MetricCard({
   value,
   detail,
   tone = "neutral",
+  compactValue = false,
 }: {
   label: string;
   value: string;
   detail: string;
   tone?: "neutral" | "good" | "warn" | "hot";
+  compactValue?: boolean;
 }) {
   return (
     <article className={`cl-metric cl-metric--${tone}`}>
       <div className="cl-label">{label}</div>
-      <div className="cl-metric-value">{value}</div>
+      <div className={`cl-metric-value${compactValue ? " cl-metric-value--compact" : ""}`}>{value}</div>
       <div className="cl-metric-detail">{detail}</div>
     </article>
   );
@@ -177,6 +179,7 @@ export function CommandCenterDashboard() {
   const healthStatus = toText(health?.status) || (health?.ok ? "healthy" : "unknown");
   const storage = asRecord(asRecord(asRecord(overview).status).storageGovernance).disk;
   const storageRecord = asRecord(storage);
+  const diskPressure = toText(storageRecord.pressureBand) || toText(asRecord(asRecord(overview).storage).pressureBand) || "tracked";
 
   return (
     <div className="cl-page cl-console-page">
@@ -266,9 +269,10 @@ export function CommandCenterDashboard() {
         />
         <MetricCard
           label="disk pressure"
-          value={toText(storageRecord.pressureBand) || toText(asRecord(asRecord(overview).storage).pressureBand) || "tracked"}
+          value={diskPressure}
           detail={`${toText(storageRecord.usedHuman) || "--"} used · ${toText(storageRecord.freeHuman) || "--"} free`}
           tone={toNumber(storageRecord.usedRatio) > 0.9 ? "warn" : "neutral"}
+          compactValue={diskPressure.toLowerCase() === "tracked"}
         />
       </section>
 

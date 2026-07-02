@@ -143,6 +143,7 @@ export function RuntimeStatusBoard() {
   const storageGovernance = asRecord(status.storageGovernance);
   const disk = asRecord(storageGovernance.disk);
   const runtimePolicy = asRecord(status.runtimeBackendPolicy);
+  const nativeHotPath = Boolean(status.strictNoPythonRuntime);
   const pageRows = useMemo(() => checks.filter((row) => row.kind === "page"), [checks]);
   const apiRows = useMemo(() => checks.filter((row) => row.kind === "api"), [checks]);
 
@@ -165,9 +166,11 @@ export function RuntimeStatusBoard() {
 
       <section className="cl-metric-grid cl-metric-grid--status">
         <article className="cl-metric cl-metric--good">
-          <div className="cl-label">strict hot path</div>
-          <div className="cl-metric-value">{status.strictNoPythonRuntime ? "no python" : "mixed"}</div>
-          <div className="cl-metric-detail">route owner: {toText(status.routeOwnerClass) || "--"}</div>
+          <div className="cl-label">native hot path</div>
+          <div className="cl-metric-value">{nativeHotPath ? "Go/Rust" : "mixed"}</div>
+          <div className="cl-metric-detail">
+            {nativeHotPath ? "backend forwarding disabled by policy" : `route owner: ${toText(status.routeOwnerClass) || "--"}`}
+          </div>
         </article>
         <article className="cl-metric">
           <div className="cl-label">vector backend</div>
@@ -176,7 +179,9 @@ export function RuntimeStatusBoard() {
         </article>
         <article className={`cl-metric ${toNumber(disk.usedRatio) > 0.9 ? "cl-metric--warn" : ""}`}>
           <div className="cl-label">storage</div>
-          <div className="cl-metric-value">{toText(storageGovernance.pressureBand) || "tracked"}</div>
+          <div className={`cl-metric-value${toText(storageGovernance.pressureBand) ? "" : " cl-metric-value--compact"}`}>
+            {toText(storageGovernance.pressureBand) || "tracked"}
+          </div>
           <div className="cl-metric-detail">{toText(disk.usedHuman) || "--"} used · {toText(disk.freeHuman) || "--"} free</div>
         </article>
         <article className="cl-metric">

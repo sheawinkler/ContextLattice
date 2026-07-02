@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const name = String(body?.name || "SCIM token").trim();
+  const name = String(body?.name || "Unnamed SCIM token").trim();
   const workspaceId = await requireUserWorkspaceId(session.user.id);
   try {
     await requireActiveSubscription(workspaceId);
