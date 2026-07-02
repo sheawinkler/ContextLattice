@@ -49,6 +49,12 @@ export type ContextPackQualityEstimate = {
   sampleCount: number;
   observedFirstPassRate: number | null;
   observedRepairRate: number | null;
+  observedFollowupTokens: number;
+  observedProviderUsageCount: number;
+  observedProviderPromptTokens: number;
+  observedProviderCompletionTokens: number;
+  observedProviderTotalTokens: number;
+  observedAverageProviderTotalTokens: number | null;
   measurementLimit: string;
   source: string;
   warnings: string[];
@@ -342,6 +348,12 @@ export function estimateContextPackQuality(overview: unknown): ContextPackQualit
     sampleCount: 0,
     observedFirstPassRate: null,
     observedRepairRate: null,
+    observedFollowupTokens: 0,
+    observedProviderUsageCount: 0,
+    observedProviderPromptTokens: 0,
+    observedProviderCompletionTokens: 0,
+    observedProviderTotalTokens: 0,
+    observedAverageProviderTotalTokens: null,
     measurementLimit: "No context-pack quality samples are available yet.",
     source: "context_pack_quality_unavailable",
     warnings: ["Run a context pack to seed the quality ledger."],
@@ -382,6 +394,10 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
     "Exact prompt tokens are measured; inference avoidance is confidence-banded.";
   const firstPass = nullableRatio(record.observedFirstPassSuccessRate ?? record.observed_first_pass_success_rate);
   const repairRate = nullableRatio(record.observedRepairRate ?? record.observed_repair_rate);
+  const observedProviderUsageCount = firstInt(record, ["observedProviderUsageCount", "observed_provider_usage_count"]);
+  const observedAverageProviderTotalTokens = nullableNumber(
+    record.observedAverageProviderTotalTokens ?? record.observed_average_provider_total_tokens,
+  );
   return {
     modeledInferenceSaved: roundTokenCount(modeledInferenceSaved),
     exactPromptSaved: roundTokenCount(exactPromptSaved),
@@ -393,11 +409,18 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
     sampleCount,
     observedFirstPassRate: firstPass,
     observedRepairRate: repairRate,
+    observedFollowupTokens: firstInt(record, ["observedFollowupTokens", "observed_followup_tokens"]),
+    observedProviderUsageCount,
+    observedProviderPromptTokens: firstInt(record, ["observedProviderPromptTokens", "observed_provider_prompt_tokens"]),
+    observedProviderCompletionTokens: firstInt(record, ["observedProviderCompletionTokens", "observed_provider_completion_tokens"]),
+    observedProviderTotalTokens: firstInt(record, ["observedProviderTotalTokens", "observed_provider_total_tokens"]),
+    observedAverageProviderTotalTokens,
     measurementLimit,
     source: toText(record.source) || "/telemetry/context-pack-quality",
     warnings: [
       measurementLimit,
       calibrationGrade === "modeled_counterfactual" ? "Inference avoidance is not exact until outcome rows calibrate the model." : "",
+      observedProviderUsageCount > 0 ? "Provider usage is observed from posted outcome rows, separate from modeled inference avoidance." : "",
     ].filter(Boolean),
   };
 }
@@ -551,6 +574,14 @@ function nullableRatio(value: unknown): number | null {
     return null;
   }
   return Math.round(parsed * 1000) / 1000;
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function normalizeConfidence(value: string, fallback: TokenImpactConfidence): TokenImpactConfidence {

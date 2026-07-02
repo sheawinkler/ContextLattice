@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.8.0 is the public baseline. v4 remains private tuning lane.</h3>
+        <h3>v3.9.0 is the public baseline. v4 remains private tuning lane.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.8.0:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
+          <li><strong>Public v3.9.0:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
           <li><strong>Private v4:</strong> same external memory contract, but with stronger adaptive tuning, candidate backend experimentation, and promotion gates before public sync.</li>
           <li><strong>Promotion policy:</strong> features move from v4 to public only after benchmark + recall + soak evidence.</li>
         </ul>
@@ -56,6 +56,21 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.9.0 · Observed Outcome Telemetry</span>
+        <h2>Agents can now report whether the context pack actually worked.</h2>
+        <p>
+          v3.9.0 closes the loop between context allocation and real agent outcomes. Context packs now carry an
+          outcome-report contract, the adapter can post first-pass/repair/retry facts at completion, and provider
+          token counters stay separate from modeled inference avoidance.
+        </p>
+        <ul>
+          <li><strong>Agent contract:</strong> <code>contextlattice_agent_adapter outcome</code> and completion outcome flags.</li>
+          <li><strong>Telemetry:</strong> compact provider prompt/completion/total token counters in the quality ledger.</li>
+          <li><strong>Dashboard:</strong> observed provider tokens shown beside exact prompt savings and modeled avoidance.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-01 · v3.8.0 · Context Pack Quality Ledger</span>
         <h2>Context packs now measure quality, not just size.</h2>

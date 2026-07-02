@@ -601,6 +601,31 @@ func (a parsedArgs) bool(name string) bool {
 	return a.bools[name]
 }
 
+func (a parsedArgs) has(name string) bool {
+	if _, ok := a.values[name]; ok {
+		return true
+	}
+	if _, ok := a.bools[name]; ok {
+		return true
+	}
+	return false
+}
+
+func (a parsedArgs) boolString(name string) (bool, bool, error) {
+	raw, ok := a.values[name]
+	if !ok {
+		return false, false, nil
+	}
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "1", "true", "yes", "on":
+		return true, true, nil
+	case "0", "false", "no", "off":
+		return false, true, nil
+	default:
+		return false, true, fmt.Errorf("--%s must be true or false", strings.ReplaceAll(name, "_", "-"))
+	}
+}
+
 func (c *cli) applyBaseURL(args parsedArgs) {
 	if raw := strings.TrimSpace(args.values["base_url"]); raw != "" {
 		c.baseURL = strings.TrimRight(raw, "/")
@@ -949,7 +974,19 @@ func (c *cli) cmdPack(args []string) error {
 		return err
 	}
 	out := normalizePackOutput(raw, query, parsed.int("budget_chars", 10000))
-	return c.emit(out, parsed.bool("pretty") || !parsed.bool("raw"))
+	qualitySample := contextPackQualitySample(out)
+	if len(qualitySample) == 0 {
+		qualitySample = contextPackQualitySample(raw)
+	}
+	qualitySampleID := firstString(qualitySample["sample_id"])
+	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
+	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 {
+		out["outcome_report"] = report
+	}
+	if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *cli) requestWithRetries(path string, payload any, timeout float64, retries int, delay float64) (map[string]any, error) {
@@ -1634,7 +1671,7 @@ func (c *cli) cmdAdoptionProof(args []string) error {
 
 func (c *cli) cmdAdapter(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		return c.emitUsage("contextlattice_agent_adapter {profiles|bootstrap|status|context-pack|checkpoint|handoff|state|event|complete} [options]")
+		return c.emitUsage("contextlattice_agent_adapter {profiles|bootstrap|status|context-pack|checkpoint|handoff|state|event|outcome|complete} [options]")
 	}
 	sub := args[0]
 	args = args[1:]
@@ -1655,6 +1692,8 @@ func (c *cli) cmdAdapter(args []string) error {
 		return c.adapterState(args)
 	case "event":
 		return c.adapterEvent(args)
+	case "outcome":
+		return c.adapterOutcome(args)
 	case "complete":
 		return c.adapterComplete(args)
 	default:
@@ -1712,41 +1751,56 @@ func (c *cli) adapterBootstrap(args []string) error {
 
 func adapterStringFlags() map[string]string {
 	return mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
-		"agent":             "agent",
-		"agent-id":          "agent_id",
-		"session-id":        "session_id",
-		"mission":           "mission",
-		"objective":         "objective",
-		"goal":              "goal",
-		"query":             "query",
-		"limit":             "limit",
-		"max-facts":         "max_facts",
-		"summary":           "summary",
-		"next-action":       "next_action",
-		"file":              "file",
-		"content":           "content",
-		"metadata-json":     "metadata_json",
-		"status":            "status",
-		"state":             "state",
-		"authority":         "authority",
-		"source":            "source",
-		"ttl-seconds":       "ttl_seconds",
-		"task-id":           "task_id",
-		"repo":              "repo",
-		"branch":            "branch",
-		"worktree":          "worktree",
-		"cwd":               "cwd",
-		"native-session-id": "native_session_id",
-		"needs-user":        "needs_user",
-		"blocked-by":        "blocked_by",
+		"agent":                          "agent",
+		"agent-id":                       "agent_id",
+		"session-id":                     "session_id",
+		"mission":                        "mission",
+		"objective":                      "objective",
+		"goal":                           "goal",
+		"query":                          "query",
+		"limit":                          "limit",
+		"max-facts":                      "max_facts",
+		"summary":                        "summary",
+		"next-action":                    "next_action",
+		"file":                           "file",
+		"content":                        "content",
+		"metadata-json":                  "metadata_json",
+		"status":                         "status",
+		"state":                          "state",
+		"authority":                      "authority",
+		"source":                         "source",
+		"ttl-seconds":                    "ttl_seconds",
+		"task-id":                        "task_id",
+		"repo":                           "repo",
+		"branch":                         "branch",
+		"worktree":                       "worktree",
+		"cwd":                            "cwd",
+		"native-session-id":              "native_session_id",
+		"needs-user":                     "needs_user",
+		"blocked-by":                     "blocked_by",
+		"context-pack-quality-sample-id": "context_pack_quality_sample_id",
+		"sample-id":                      "context_pack_quality_sample_id",
+		"first-pass-success":             "first_pass_success",
+		"succeeded-first-pass":           "first_pass_success",
+		"repair-required":                "repair_required",
+		"retry-count":                    "retry_count",
+		"retries":                        "retry_count",
+		"followup-tokens":                "followup_tokens",
+		"provider-prompt-tokens":         "provider_prompt_tokens",
+		"provider-completion-tokens":     "provider_completion_tokens",
+		"provider-total-tokens":          "provider_total_tokens",
+		"provider-usage-json":            "provider_usage_json",
+		"task-class":                     "task_class",
+		"outcome-source":                 "outcome_source",
 	})
 }
 
 func adapterBoolFlags() map[string]string {
 	return mergeBoolFlags(commonBoolFlags(), map[string]string{
-		"include-retrieval-debug": "include_retrieval_debug",
-		"stdin":                   "stdin",
-		"strict":                  "strict",
+		"include-retrieval-debug":     "include_retrieval_debug",
+		"stdin":                       "stdin",
+		"strict":                      "strict",
+		"report-context-pack-outcome": "report_context_pack_outcome",
 	})
 }
 
@@ -1777,6 +1831,62 @@ func resolveAdapterProfile(parsed parsedArgs) adapterProfile {
 		processNames = defaultAgentProcessNames(agent)
 	}
 	return adapterProfile{agent: agent, agentID: agentID, topicPath: topicPath, query: query, mode: mode, stateAuthority: stateAuthority, processNames: processNames, profile: profile}
+}
+
+func contextPackQualitySample(payload map[string]any) map[string]any {
+	if quality := asMap(payload["context_pack_quality"]); len(quality) > 0 {
+		return quality
+	}
+	pack := asMap(payload["context_pack"])
+	if quality := asMap(firstMap(pack["context_pack_quality"], pack["contextPackQuality"])); len(quality) > 0 {
+		return quality
+	}
+	return map[string]any{}
+}
+
+func contextPackQualitySampleID(payload map[string]any) string {
+	return firstString(contextPackQualitySample(payload)["sample_id"])
+}
+
+func contextPackOutcomeReport(sessionID string, sampleID string) map[string]any {
+	if strings.TrimSpace(sampleID) == "" {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"schema_id": "contextlattice_context_pack_outcome_report.v1",
+		"sample_id": sampleID,
+		"endpoint":  "/telemetry/context-pack-quality/outcome",
+		"command":   "contextlattice_agent_adapter outcome --session-id " + shellQuote(sessionID) + " --context-pack-quality-sample-id " + shellQuote(sampleID) + " --first-pass-success true --repair-required false --retry-count 0",
+		"fields":    []any{"first_pass_success", "repair_required", "retry_count", "followup_tokens", "provider_prompt_tokens", "provider_completion_tokens", "provider_total_tokens"},
+		"privacy":   "stores compact counters only; do not send prompts, completions, source text, or secrets",
+	}
+}
+
+func recordContextPackQualityPending(project, sessionID, objective, agentID string, quality map[string]any) {
+	sampleID := firstString(quality["sample_id"])
+	if sampleID == "" || sessionID == "" {
+		return
+	}
+	writeSessionStateWithExtras(project, sessionID, objective, agentID, map[string]any{
+		"latest_context_pack_quality": map[string]any{
+			"sample_id":     sampleID,
+			"query_hash":    quality["query_hash"],
+			"quality_score": quality["quality_score"],
+			"captured_at":   firstString(quality["capturedAt"], quality["captured_at"], time.Now().UTC().Format(time.RFC3339)),
+		},
+	})
+}
+
+func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string) string {
+	if sampleID := parsed.string("context_pack_quality_sample_id", ""); sampleID != "" {
+		return sampleID
+	}
+	if sampleID := envString("CONTEXTLATTICE_CONTEXT_PACK_QUALITY_SAMPLE_ID", ""); sampleID != "" {
+		return sampleID
+	}
+	state := readSessionState(project)
+	quality := asMap(state["latest_context_pack_quality"])
+	return firstString(quality["sample_id"])
 }
 
 func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentID string) (string, error) {
@@ -1874,15 +1984,16 @@ func compactSkillsIndex(payload map[string]any) map[string]any {
 
 func defaultAdapterContract() map[string]any {
 	return map[string]any{
-		"schema_id":          "contextlattice_universal_agent_adapter.v1",
-		"version":            "2026-06-30",
-		"required_phases":    []any{"preflight", "auto_session", "agent_state", "context_pack", "checkpoint", "handoff", "completion"},
-		"preflight_route":    "/v1/agents/preflight",
-		"event_route":        "/v1/agents/sessions/event",
-		"context_pack_route": "/memory/context-pack",
-		"checkpoint_route":   "/memory/write",
-		"agent_lifecycle":    defaultAgentLifecycleContract(),
-		"ownership_fields":   []any{"session_id", "agent", "agent_id", "task_id", "repo", "worktree", "branch", "cwd", "native_session_id"},
+		"schema_id":                  "contextlattice_universal_agent_adapter.v1",
+		"version":                    "2026-06-30",
+		"required_phases":            []any{"preflight", "auto_session", "agent_state", "context_pack", "context_pack_outcome", "checkpoint", "handoff", "completion"},
+		"preflight_route":            "/v1/agents/preflight",
+		"event_route":                "/v1/agents/sessions/event",
+		"context_pack_route":         "/memory/context-pack",
+		"context_pack_outcome_route": "/telemetry/context-pack-quality/outcome",
+		"checkpoint_route":           "/memory/write",
+		"agent_lifecycle":            defaultAgentLifecycleContract(),
+		"ownership_fields":           []any{"session_id", "agent", "agent_id", "task_id", "repo", "worktree", "branch", "cwd", "native_session_id"},
 	}
 }
 
@@ -2068,6 +2179,9 @@ func (c *cli) adapterContextPack(args []string) error {
 	if err != nil {
 		return err
 	}
+	qualitySample := contextPackQualitySample(contextPack)
+	qualitySampleID := firstString(qualitySample["sample_id"])
+	recordContextPackQualityPending(project, sessionID, profile.query, profile.agentID, qualitySample)
 	findings := []map[string]any{}
 	if validation := contractValidationStatus(contextPack); validation != "" && validation != "passed" {
 		findings = append(findings, map[string]any{"reason": "context_pack_validation_not_passed", "validation": validation})
@@ -2083,14 +2197,15 @@ func (c *cli) adapterContextPack(args []string) error {
 		"type":       "context_pack.completed",
 		"summary":    "context pack completed for " + truncate(profile.query, 160),
 		"metadata": map[string]any{
-			"adapter":          "contextlattice-agent-adapter",
-			"topic_path":       request["topic_path"],
-			"retrieval_mode":   profile.mode,
-			"contract_ok":      len(findings) == 0,
-			"go_native_cli":    true,
-			"context_pack_ref": firstString(contextPack["schema_id"], "context_pack_response.v1"),
-			"agent_state":      request["agent_state"],
-			"ownership":        request["ownership"],
+			"adapter":                        "contextlattice-agent-adapter",
+			"topic_path":                     request["topic_path"],
+			"retrieval_mode":                 profile.mode,
+			"contract_ok":                    len(findings) == 0,
+			"go_native_cli":                  true,
+			"context_pack_ref":               firstString(contextPack["schema_id"], "context_pack_response.v1"),
+			"context_pack_quality_sample_id": qualitySampleID,
+			"agent_state":                    request["agent_state"],
+			"ownership":                      request["ownership"],
 		},
 	}, parsed.float("timeout", 10))
 	if eventErr != nil {
@@ -2105,6 +2220,7 @@ func (c *cli) adapterContextPack(args []string) error {
 		"agent_state":    request["agent_state"],
 		"ownership":      request["ownership"],
 		"context_pack":   contextPack,
+		"outcome_report": contextPackOutcomeReport(sessionID, qualitySampleID),
 		"event":          event,
 	}, findings), parsed.bool("pretty"))
 }
@@ -2326,10 +2442,158 @@ func (c *cli) adapterEvent(args []string) error {
 	return c.emit(adapterResponse("event", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event}, findings), parsed.bool("pretty"))
 }
 
+func resolveOutcomeSessionID(parsed parsedArgs, project string) string {
+	if sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", "")); sessionID != "" {
+		return sessionID
+	}
+	return firstString(readSessionState(project)["session_id"])
+}
+
+func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string, profile adapterProfile, source string) (map[string]any, bool, error) {
+	sampleID := resolvePendingContextPackQualitySampleID(parsed, project)
+	if sampleID == "" {
+		return nil, false, errors.New("context pack quality sample id is required; run contextlattice_agent_adapter context-pack first or pass --context-pack-quality-sample-id")
+	}
+	firstPass, firstPassPresent, err := parsed.boolString("first_pass_success")
+	if err != nil {
+		return nil, false, err
+	}
+	repairRequired, repairPresent, err := parsed.boolString("repair_required")
+	if err != nil {
+		return nil, false, err
+	}
+	providerUsage := parseJSONObject(parsed.string("provider_usage_json", ""))
+	payload := dropEmpty(map[string]any{
+		"sample_id":                      sampleID,
+		"context_pack_quality_sample_id": sampleID,
+		"session_id":                     sessionID,
+		"agent":                          profile.agent,
+		"agent_id":                       profile.agentID,
+		"project":                        project,
+		"task_class":                     parsed.string("task_class", "agent_workflow"),
+		"outcome_source":                 parsed.string("outcome_source", source),
+		"retry_count":                    parsed.int("retry_count", 0),
+		"followup_tokens":                parsed.int("followup_tokens", 0),
+		"provider_prompt_tokens":         parsed.int("provider_prompt_tokens", 0),
+		"provider_completion_tokens":     parsed.int("provider_completion_tokens", 0),
+		"provider_total_tokens":          parsed.int("provider_total_tokens", 0),
+		"provider_usage":                 providerUsage,
+	})
+	if firstPassPresent {
+		payload["first_pass_success"] = firstPass
+	}
+	if repairPresent {
+		payload["repair_required"] = repairRequired
+	}
+	hasSignal := firstPassPresent ||
+		repairPresent ||
+		parsed.int("retry_count", 0) > 0 ||
+		parsed.int("followup_tokens", 0) > 0 ||
+		parsed.int("provider_prompt_tokens", 0) > 0 ||
+		parsed.int("provider_completion_tokens", 0) > 0 ||
+		parsed.int("provider_total_tokens", 0) > 0 ||
+		len(providerUsage) > 0
+	if !hasSignal {
+		return nil, false, errors.New("outcome requires at least one explicit outcome or usage signal")
+	}
+	return payload, true, nil
+}
+
+func contextPackOutcomeRequested(parsed parsedArgs) bool {
+	if parsed.bool("report_context_pack_outcome") {
+		return true
+	}
+	for _, key := range []string{
+		"context_pack_quality_sample_id",
+		"first_pass_success",
+		"repair_required",
+		"retry_count",
+		"followup_tokens",
+		"provider_prompt_tokens",
+		"provider_completion_tokens",
+		"provider_total_tokens",
+		"provider_usage_json",
+	} {
+		if parsed.has(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func compactOutcomeMetadata(outcome map[string]any) map[string]any {
+	return dropEmpty(map[string]any{
+		"schema_id":                  firstString(outcome["schema_id"], "contextlattice_context_pack_outcome.v1"),
+		"sample_id":                  outcome["sample_id"],
+		"task_class":                 outcome["task_class"],
+		"first_pass_success":         outcome["first_pass_success"],
+		"repair_required":            outcome["repair_required"],
+		"retry_count":                outcome["retry_count"],
+		"observed_followup_tokens":   outcome["observed_followup_tokens"],
+		"provider_prompt_tokens":     outcome["provider_prompt_tokens"],
+		"provider_completion_tokens": outcome["provider_completion_tokens"],
+		"provider_total_tokens":      outcome["provider_total_tokens"],
+		"outcome_source":             outcome["outcome_source"],
+	})
+}
+
+func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID string, profile adapterProfile, source string) (map[string]any, map[string]any, []map[string]any) {
+	payload, _, err := buildContextPackOutcomePayload(parsed, project, sessionID, profile, source)
+	if err != nil {
+		return map[string]any{}, map[string]any{}, errorFinding(err)
+	}
+	raw, _, postErr := c.requestJSON(context.Background(), http.MethodPost, "/telemetry/context-pack-quality/outcome", payload, parsed.float("timeout", 10))
+	findings := errorFinding(postErr)
+	event := map[string]any{}
+	outcome := asMap(raw["outcome"])
+	if postErr == nil && sessionID != "" {
+		var postEventErr error
+		event, _, postEventErr = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
+			"session_id": sessionID,
+			"agent":      profile.agent,
+			"agent_id":   profile.agentID,
+			"project":    project,
+			"type":       "context_pack.outcome_reported",
+			"summary":    "context pack outcome reported",
+			"metadata": map[string]any{
+				"adapter":       "contextlattice-agent-adapter",
+				"go_native_cli": true,
+				"outcome":       compactOutcomeMetadata(outcome),
+			},
+		}, parsed.float("timeout", 10))
+		findings = append(findings, errorFinding(postEventErr)...)
+	}
+	return raw, event, findings
+}
+
+func (c *cli) adapterOutcome(args []string) error {
+	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_agent_adapter outcome --session-id <id> --context-pack-quality-sample-id <id> --first-pass-success true|false --repair-required true|false [--retry-count n] [--provider-total-tokens n] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", "contextlattice")
+	profile := resolveAdapterProfile(parsed)
+	sessionID := resolveOutcomeSessionID(parsed, project)
+	raw, event, findings := c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_outcome")
+	ok := len(findings) == 0 && asBool(raw["ok"])
+	if err := c.emit(adapterResponse("outcome", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+		"outcome":   raw["outcome"],
+		"telemetry": raw["telemetry"],
+		"event":     event,
+	}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("context pack outcome report failed")
+	}
+	return nil
+}
+
 func (c *cli) adapterComplete(args []string) error {
 	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_agent_adapter complete --session-id <id> --summary '<result>' --pretty")
+		return c.emitUsage("contextlattice_agent_adapter complete --session-id <id> --summary '<result>' [--first-pass-success true|false --repair-required true|false --retry-count n] --pretty")
 	}
 	c.applyBaseURL(parsed)
 	project := parsed.string("project", "contextlattice")
@@ -2353,8 +2617,18 @@ func (c *cli) adapterComplete(args []string) error {
 		"metadata":   mergeAdapterMetadata(parsed, profile, "done"),
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
+	outcomeResult := map[string]any{}
+	outcomeEvent := map[string]any{}
+	if contextPackOutcomeRequested(parsed) {
+		var outcomeFindings []map[string]any
+		outcomeResult, outcomeEvent, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_complete")
+		findings = append(findings, outcomeFindings...)
+	}
 	ok := len(findings) == 0 && asBool(event["ok"])
-	return c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event}, findings), parsed.bool("pretty"))
+	if err := c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *cli) cmdDiscover(args []string) error {
@@ -3288,18 +3562,50 @@ func errString(err error) string {
 	return err.Error()
 }
 
+func sessionStatePath(project string) string {
+	root := filepath.Join(homeDir(), ".contextlattice", "agent_runtime_sessions")
+	keyRaw := project + "|" + currentWorkingDir()
+	hash := sha256.Sum256([]byte(keyRaw))
+	return filepath.Join(root, hex.EncodeToString(hash[:])[:16]+".json")
+}
+
 func writeSessionState(project, sessionID, objective, agentID string) {
+	writeSessionStateWithExtras(project, sessionID, objective, agentID, nil)
+}
+
+func writeSessionStateWithExtras(project, sessionID, objective, agentID string, extras map[string]any) {
 	if sessionID == "" {
 		return
 	}
-	root := filepath.Join(homeDir(), ".contextlattice", "agent_runtime_sessions")
-	_ = os.MkdirAll(root, 0700)
-	keyRaw := project + "|" + currentWorkingDir()
-	hash := sha256.Sum256([]byte(keyRaw))
-	path := filepath.Join(root, hex.EncodeToString(hash[:])[:16]+".json")
-	payload := map[string]any{"session_id": sessionID, "project": project, "agent_id": agentID, "objective": objective, "source": "go-native-cli", "updated_at": time.Now().UTC().Format(time.RFC3339)}
+	path := sessionStatePath(project)
+	_ = os.MkdirAll(filepath.Dir(path), 0700)
+	payload := readSessionState(project)
+	payload["session_id"] = sessionID
+	payload["project"] = project
+	payload["agent_id"] = agentID
+	if strings.TrimSpace(objective) != "" {
+		payload["objective"] = objective
+	}
+	payload["source"] = "go-native-cli"
+	for key, value := range extras {
+		payload[key] = value
+	}
+	payload["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	raw, _ := json.Marshal(payload)
 	_ = os.WriteFile(path, append(raw, '\n'), 0600)
+}
+
+func readSessionState(project string) map[string]any {
+	path := sessionStatePath(project)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]any{}
+	}
+	payload := map[string]any{}
+	if json.Unmarshal(data, &payload) != nil {
+		return map[string]any{}
+	}
+	return payload
 }
 
 func parseJSONObject(raw string) map[string]any {

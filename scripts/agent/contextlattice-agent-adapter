@@ -45,7 +45,7 @@ def adapter_contract() -> dict[str, Any]:
     return {
         "schema_id": "contextlattice_universal_agent_adapter.v1",
         "version": "2026-06-05",
-        "required_phases": ["preflight", "auto_session", "context_pack", "checkpoint", "handoff", "completion"],
+        "required_phases": ["preflight", "auto_session", "context_pack", "context_pack_outcome", "checkpoint", "handoff", "completion"],
         "required_exports": [
             "CONTEXTLATTICE_ORCHESTRATOR_URL",
             "MEMMCP_ORCHESTRATOR_URL",
@@ -57,6 +57,7 @@ def adapter_contract() -> dict[str, Any]:
         "preflight_route": "/v1/agents/preflight",
         "event_route": "/v1/agents/sessions/event",
         "context_pack_route": "/memory/context-pack",
+        "context_pack_outcome_route": "/telemetry/context-pack-quality/outcome",
         "checkpoint_route": "/memory/write",
         "handoff_helper": "scripts/agent/compaction-handoff-payload",
     }
@@ -299,6 +300,201 @@ def metadata_from_args(raw: str) -> dict[str, Any]:
     return parsed
 
 
+def context_pack_quality_sample(payload: dict[str, Any]) -> dict[str, Any]:
+    quality = payload.get("context_pack_quality")
+    if isinstance(quality, dict):
+        return quality
+    pack = payload.get("context_pack")
+    if isinstance(pack, dict):
+        quality = pack.get("context_pack_quality") or pack.get("contextPackQuality")
+        if isinstance(quality, dict):
+            return quality
+    return {}
+
+
+def context_pack_outcome_report(session_id: str, sample_id: str) -> dict[str, Any]:
+    sample_id = str(sample_id or "").strip()
+    if not sample_id:
+        return {}
+    return {
+        "schema_id": "contextlattice_context_pack_outcome_report.v1",
+        "sample_id": sample_id,
+        "endpoint": "/telemetry/context-pack-quality/outcome",
+        "command": (
+            "contextlattice_agent_adapter outcome "
+            f"--session-id {json.dumps(session_id)} "
+            f"--context-pack-quality-sample-id {json.dumps(sample_id)} "
+            "--first-pass-success true --repair-required false --retry-count 0"
+        ),
+        "fields": [
+            "first_pass_success",
+            "repair_required",
+            "retry_count",
+            "followup_tokens",
+            "provider_prompt_tokens",
+            "provider_completion_tokens",
+            "provider_total_tokens",
+        ],
+        "privacy": "stores compact counters only; do not send prompts, completions, source text, or secrets",
+    }
+
+
+def record_context_pack_quality_pending(project: str, session_id: str, agent_id: str, objective: str, quality: dict[str, Any]) -> None:
+    sample_id = str(quality.get("sample_id") or "").strip()
+    if not sample_id or not session_id:
+        return
+    from _common import read_agent_session_state, write_agent_session_state
+
+    state = read_agent_session_state(project)
+    state.update(
+        {
+            "session_id": session_id,
+            "project": project,
+            "agent_id": agent_id,
+            "objective": objective,
+            "source": "contextlattice-agent-adapter",
+            "latest_context_pack_quality": {
+                "sample_id": sample_id,
+                "query_hash": quality.get("query_hash"),
+                "quality_score": quality.get("quality_score"),
+                "captured_at": quality.get("capturedAt") or quality.get("captured_at") or now_iso(),
+            },
+        }
+    )
+    write_agent_session_state(project, state)
+
+
+def parse_bool_arg(raw: str, name: str) -> tuple[bool, bool]:
+    if raw == "":
+        return False, False
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True, True
+    if value in {"0", "false", "no", "off"}:
+        return False, True
+    raise SystemExit(f"--{name} must be true or false")
+
+
+def pending_quality_sample_id(args: argparse.Namespace) -> str:
+    sample_id = str(getattr(args, "context_pack_quality_sample_id", "") or "").strip()
+    if sample_id:
+        return sample_id
+    sample_id = os.getenv("CONTEXTLATTICE_CONTEXT_PACK_QUALITY_SAMPLE_ID", "").strip()
+    if sample_id:
+        return sample_id
+    from _common import read_agent_session_state
+
+    state = read_agent_session_state(args.project)
+    quality = state.get("latest_context_pack_quality") if isinstance(state.get("latest_context_pack_quality"), dict) else {}
+    return str(quality.get("sample_id") or "").strip()
+
+
+def outcome_payload_from_args(args: argparse.Namespace, session_id: str, profile_key: str, agent_id: str, source: str) -> dict[str, Any]:
+    sample_id = pending_quality_sample_id(args)
+    if not sample_id:
+        raise SystemExit("context pack quality sample id is required; run context-pack first or pass --context-pack-quality-sample-id")
+    first_pass, first_pass_present = parse_bool_arg(args.first_pass_success, "first-pass-success")
+    repair_required, repair_present = parse_bool_arg(args.repair_required, "repair-required")
+    provider_usage = metadata_from_args(args.provider_usage_json)
+    payload: dict[str, Any] = {
+        "sample_id": sample_id,
+        "context_pack_quality_sample_id": sample_id,
+        "session_id": session_id,
+        "agent": profile_key,
+        "agent_id": agent_id,
+        "project": args.project,
+        "task_class": args.task_class or "agent_workflow",
+        "outcome_source": args.outcome_source or source,
+        "retry_count": max(0, int(args.retry_count or 0)),
+        "followup_tokens": max(0, int(args.followup_tokens or 0)),
+        "provider_prompt_tokens": max(0, int(args.provider_prompt_tokens or 0)),
+        "provider_completion_tokens": max(0, int(args.provider_completion_tokens or 0)),
+        "provider_total_tokens": max(0, int(args.provider_total_tokens or 0)),
+    }
+    if provider_usage:
+        payload["provider_usage"] = provider_usage
+    if first_pass_present:
+        payload["first_pass_success"] = first_pass
+    if repair_present:
+        payload["repair_required"] = repair_required
+    has_signal = (
+        first_pass_present
+        or repair_present
+        or payload["retry_count"] > 0
+        or payload["followup_tokens"] > 0
+        or payload["provider_prompt_tokens"] > 0
+        or payload["provider_completion_tokens"] > 0
+        or payload["provider_total_tokens"] > 0
+        or bool(provider_usage)
+    )
+    if not has_signal:
+        raise SystemExit("outcome requires at least one explicit outcome or usage signal")
+    return {key: value for key, value in payload.items() if value not in ("", None, {})}
+
+
+def compact_outcome_metadata(outcome: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "schema_id",
+        "sample_id",
+        "task_class",
+        "first_pass_success",
+        "repair_required",
+        "retry_count",
+        "observed_followup_tokens",
+        "provider_prompt_tokens",
+        "provider_completion_tokens",
+        "provider_total_tokens",
+        "outcome_source",
+    ]
+    return {key: outcome.get(key) for key in keys if key in outcome}
+
+
+def post_context_pack_outcome(args: argparse.Namespace, session_id: str, profile_key: str, agent_id: str, source: str) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    payload = outcome_payload_from_args(args, session_id, profile_key, agent_id, source)
+    raw = request_json("POST", "/telemetry/context-pack-quality/outcome", payload, args.timeout)
+    event: dict[str, Any] = {}
+    findings: list[dict[str, Any]] = []
+    outcome = raw.get("outcome") if isinstance(raw.get("outcome"), dict) else {}
+    if session_id:
+        event = request_json(
+            "POST",
+            "/v1/agents/sessions/event",
+            {
+                "session_id": session_id,
+                "agent": profile_key,
+                "agent_id": agent_id,
+                "project": args.project,
+                "type": "context_pack.outcome_reported",
+                "summary": "context pack outcome reported",
+                "metadata": {
+                    "adapter": "contextlattice-agent-adapter",
+                    "outcome": compact_outcome_metadata(outcome),
+                },
+            },
+            args.timeout,
+        )
+        if not event.get("ok"):
+            findings.append({"reason": "outcome_event_failed", "event": event})
+    return raw, event, findings
+
+
+def outcome_args_present(args: argparse.Namespace) -> bool:
+    return any(
+        [
+            bool(getattr(args, "report_context_pack_outcome", False)),
+            bool(getattr(args, "context_pack_quality_sample_id", "")),
+            bool(getattr(args, "first_pass_success", "")),
+            bool(getattr(args, "repair_required", "")),
+            int(getattr(args, "retry_count", 0) or 0) > 0,
+            int(getattr(args, "followup_tokens", 0) or 0) > 0,
+            int(getattr(args, "provider_prompt_tokens", 0) or 0) > 0,
+            int(getattr(args, "provider_completion_tokens", 0) or 0) > 0,
+            int(getattr(args, "provider_total_tokens", 0) or 0) > 0,
+            bool(getattr(args, "provider_usage_json", "")),
+        ]
+    )
+
+
 def cmd_checkpoint(args: argparse.Namespace) -> int:
     configure_base_url(args)
     profile_key, profile, agent_id, topic_path, query, mode = profile_payload(args)
@@ -381,6 +577,9 @@ def cmd_context_pack(args: argparse.Namespace) -> int:
     context_pack = request_json("POST", "/memory/context-pack", request, args.timeout)
     if isinstance(context_pack, dict):
         context_pack = attach_format_contract("context_pack_response.v1", context_pack)
+    quality_sample = context_pack_quality_sample(context_pack if isinstance(context_pack, dict) else {})
+    quality_sample_id = str(quality_sample.get("sample_id") or "").strip()
+    record_context_pack_quality_pending(args.project, session_id, agent_id, query, quality_sample)
     findings = validate_agent_contract_payload("context_pack_response.v1", context_pack)
     if contains_provider_overflow(context_pack):
         findings.append({"reason": "context_pack_provider_overflow_phrase_leaked"})
@@ -399,6 +598,7 @@ def cmd_context_pack(args: argparse.Namespace) -> int:
                 "topic_path": request.get("topic_path"),
                 "retrieval_mode": mode,
                 "contract_ok": not findings,
+                "context_pack_quality_sample_id": quality_sample_id,
             },
         },
         args.timeout,
@@ -416,6 +616,7 @@ def cmd_context_pack(args: argparse.Namespace) -> int:
             "query": query,
             "retrieval_mode": mode,
             "context_pack": enforce_contract_limits("context_pack_response.v1", context_pack),
+            "outcome_report": context_pack_outcome_report(session_id, quality_sample_id),
             "event": event,
         },
         findings=findings,
@@ -487,9 +688,61 @@ def cmd_handoff(args: argparse.Namespace) -> int:
 
 
 def cmd_complete(args: argparse.Namespace) -> int:
-    args.event_type = "session.completed"
-    args.status = "completed"
-    return cmd_event(args)
+    configure_base_url(args)
+    profile_key, _profile, agent_id, _topic_path, _query, _mode = profile_payload(args)
+    session_id = ensure_session_for_args(args, args.summary or "session completed")
+    payload = {
+        "session_id": session_id,
+        "agent": profile_key,
+        "agent_id": agent_id,
+        "project": args.project,
+        "type": "session.completed",
+        "summary": args.summary,
+        "status": "completed",
+        "metadata": metadata_from_args(args.metadata_json),
+    }
+    event = request_json("POST", "/v1/agents/sessions/event", {key: value for key, value in payload.items() if value not in ("", None, {})}, args.timeout)
+    findings: list[dict[str, Any]] = []
+    outcome: dict[str, Any] = {}
+    outcome_event: dict[str, Any] = {}
+    if outcome_args_present(args):
+        outcome, outcome_event, outcome_findings = post_context_pack_outcome(args, session_id, profile_key, agent_id, "adapter_complete")
+        findings.extend(outcome_findings)
+    output = adapter_response(
+        command="complete",
+        ok=bool(event.get("ok")) and not findings and (not outcome or bool(outcome.get("ok"))),
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"event": event, "outcome": outcome.get("outcome"), "outcome_event": outcome_event},
+        findings=findings,
+    )
+    emit(output, args.pretty)
+    return 0 if output.get("ok") else 1
+
+
+def cmd_outcome(args: argparse.Namespace) -> int:
+    configure_base_url(args)
+    profile_key, _profile, agent_id, _topic_path, query, _mode = profile_payload(args)
+    session_id = args.session_id or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+    if not session_id:
+        from _common import read_agent_session_state
+
+        session_id = str(read_agent_session_state(args.project).get("session_id") or "")
+    outcome, event, findings = post_context_pack_outcome(args, session_id, profile_key, agent_id, "adapter_outcome")
+    output = adapter_response(
+        command="outcome",
+        ok=bool(outcome.get("ok")) and not findings,
+        agent=profile_key,
+        agent_id=agent_id,
+        project=args.project,
+        session_id=session_id,
+        result={"query": query, "outcome": outcome.get("outcome"), "telemetry": outcome.get("telemetry"), "event": event},
+        findings=findings,
+    )
+    emit(output, args.pretty)
+    return 0 if output.get("ok") else 1
 
 
 def cmd_profiles(args: argparse.Namespace) -> int:
@@ -516,6 +769,21 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--pretty", action="store_true")
+
+
+def add_outcome_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--context-pack-quality-sample-id", "--sample-id", default="", dest="context_pack_quality_sample_id")
+    parser.add_argument("--first-pass-success", default="")
+    parser.add_argument("--repair-required", default="")
+    parser.add_argument("--retry-count", "--retries", type=int, default=0, dest="retry_count")
+    parser.add_argument("--followup-tokens", type=int, default=0)
+    parser.add_argument("--provider-prompt-tokens", type=int, default=0)
+    parser.add_argument("--provider-completion-tokens", type=int, default=0)
+    parser.add_argument("--provider-total-tokens", type=int, default=0)
+    parser.add_argument("--provider-usage-json", default="")
+    parser.add_argument("--task-class", default="agent_workflow")
+    parser.add_argument("--outcome-source", default="")
+    parser.add_argument("--report-context-pack-outcome", action="store_true")
 
 
 def main() -> int:
@@ -568,7 +836,16 @@ def main() -> int:
     complete.add_argument("--summary", default="session completed")
     complete.add_argument("--status", default="")
     complete.add_argument("--metadata-json", default="")
+    add_outcome_args(complete)
     complete.set_defaults(func=cmd_complete)
+
+    outcome = sub.add_parser("outcome")
+    add_common(outcome)
+    outcome.add_argument("--topic-path", default="")
+    outcome.add_argument("--query", default="")
+    outcome.add_argument("--mode", default="")
+    add_outcome_args(outcome)
+    outcome.set_defaults(func=cmd_outcome)
 
     list_cmd = sub.add_parser("profiles")
     list_cmd.add_argument("--project", default="contextlattice")

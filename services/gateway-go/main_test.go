@@ -2268,7 +2268,12 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 		"repair_required":    false,
 		"retry_count":        0,
 		"followup_tokens":    123,
-		"outcome_source":     "test_agent",
+		"usage": map[string]any{
+			"prompt_tokens":     456,
+			"completion_tokens": 78,
+			"total_tokens":      534,
+		},
+		"outcome_source": "test_agent",
 	})
 	if err != nil {
 		t.Fatalf("encode quality outcome: %v", err)
@@ -2290,7 +2295,9 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	if anyToInt(outcomeTelemetry["outcome_sample_count"], 0) < 1 ||
 		anyToString(outcomeTelemetry["calibration_grade"]) != "outcome_seeded" ||
 		anyToFloat(outcomeTelemetry["observed_first_pass_success_rate"]) <= 0 ||
-		anyToInt(outcomeTelemetry["observed_followup_tokens"], 0) != 123 {
+		anyToInt(outcomeTelemetry["observed_followup_tokens"], 0) != 123 ||
+		anyToInt(outcomeTelemetry["observed_provider_total_tokens"], 0) != 534 ||
+		anyToInt(outcomeTelemetry["observed_provider_usage_count"], 0) != 1 {
 		t.Fatalf("expected outcome-seeded quality telemetry, got %#v", outcomeTelemetry)
 	}
 
@@ -2321,7 +2328,8 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	if anyToInt(reloadedQuality["sample_count"], 0) < 1 ||
 		anyToInt(reloadedQuality["outcome_sample_count"], 0) < 1 ||
 		anyToInt(reloadedQuality["modeled_inference_tokens_avoided"], 0) <= 0 ||
-		anyToInt(reloadedQuality["observed_followup_tokens"], 0) != 123 {
+		anyToInt(reloadedQuality["observed_followup_tokens"], 0) != 123 ||
+		anyToInt(reloadedQuality["observed_provider_total_tokens"], 0) != 534 {
 		t.Fatalf("expected reloaded quality telemetry to include persisted sample and outcome, got %#v", reloadedQuality)
 	}
 }

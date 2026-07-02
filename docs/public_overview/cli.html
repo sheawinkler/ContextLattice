@@ -153,7 +153,7 @@ contextlattice_agent_adapter state --agent codex --project contextlattice --sess
 # write durable progress and handoff state
 contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
 contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
-contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed"
+contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed" --first-pass-success true --repair-required false --retry-count 0
 
 # package the session for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty

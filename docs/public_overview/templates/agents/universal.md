@@ -18,7 +18,7 @@ Operating rules:
 8) Before handoff or compaction, run `contextlattice_agent_adapter handoff --session-id <session_id> --summary "<objective state>"`.
 9) When preparing a difficult new model/problem-solving request, run `contextlattice_agent_session context-package --session-id <session_id>` and use the returned reference package as the factual context scaffold, including the project/topic/session objective lineage.
 10) When you need to explain what shaped the run, use `contextlattice_agent_trace --session-id <session_id> --tree` or GET /v1/agents/sessions/{session_id}/trace; the trace includes objective lineage, context, skills, sources, graph touches, handoffs, checkpoints, lifecycle state, and ownership.
-11) On normal completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`.
+11) On normal completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`. When the runtime knows the outcome, include `--first-pass-success true|false --repair-required true|false --retry-count <n>` plus provider token counters if available; do not guess missing outcome fields.
 12) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, `contextlattice_agent_lifecycle_state.v1`, and `universal_agent_adapter_response.v1` contract metadata, including `objective_hierarchy` and `objective_lineage`, in downstream handoffs.
 13) If direct search is needed, call POST /memory/search with include_grounding=true and scoped project/topic when known.
 14) If relevant capabilities are unclear, run `contextlattice_skills_index search "<task or tool need>" --pretty` instead of loading every skill.
@@ -52,7 +52,7 @@ contextlattice_agent_adapter state --agent codex --project contextlattice --sess
 # checkpoint and handoff through the shared lifecycle
 contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
 contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
-contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed"
+contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed" --first-pass-success true --repair-required false --retry-count 0
 
 # package session state for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty

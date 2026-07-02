@@ -23,7 +23,7 @@ Recommended reading order:
 Product positioning (public-safe):
 - Context Lattice is local-first memory infrastructure for AI agents.
 - Context Lattice complements local AI workspaces: workspaces are cockpits, while ContextLattice is the durable memory infrastructure and shared memory spine they can plug into.
-- Current public release baseline is v3.8.0: the public agent operating layer with durable memory writes, tokenizer-exact prompt economics, bounded token-impact ledger persistence, MongoDB driver v2 runtime, Context Pack Quality Ledger, modeled inference-avoidance telemetry, scoped context packs, async recall steering, agent discovery and process identity hardening, CLI workflows, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, local session-store diagnostics, optional storage guardrails, and Qdrant-first local Lite writeback behind one local contract.
+- Current public release baseline is v3.9.0: the public agent operating layer with durable memory writes, tokenizer-exact prompt economics, bounded token-impact ledger persistence, MongoDB driver v2 runtime, Context Pack Quality Ledger, observed outcome telemetry, modeled inference-avoidance telemetry, scoped context packs, async recall steering, agent discovery and process identity hardening, CLI workflows, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, local session-store diagnostics, optional storage guardrails, and Qdrant-first local Lite writeback behind one local contract.
 - Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery; full/operator stacks can add pgvector, raw ledger, behavior provenance, deeper async recall lanes, and stronger reliability controls behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, behavior provenance, and retrieval quality over time.
 - Public lane is open-source and installable locally.
@@ -34,7 +34,8 @@ Agent usage expectations:
 - Prefer exact CLI commands from /cli.html and /installation.html.
 - Start new machines, accounts, or agent surfaces with `contextlattice_adopt status --pretty`; use `contextlattice_adopt install`, `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty`, `profiles`, and `proof` before dropping into lower-level adapter commands.
 - Prefer universal adapter startup when local CLI tools are installed: `contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty`.
-- Use the same adapter session for recall, state, checkpoint, handoff, and completion: `contextlattice_agent_adapter context-pack|state|checkpoint|handoff|complete`.
+- Use the same adapter session for recall, state, checkpoint, handoff, completion, and outcome telemetry: `contextlattice_agent_adapter context-pack|state|checkpoint|handoff|complete|outcome`.
+- When a runtime knows the result, report context-pack outcome fields at completion: `--first-pass-success true|false --repair-required true|false --retry-count <n>` and provider token counters if available. Do not invent missing outcome fields.
 - Use `contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty` to inspect best-effort process/profile/hook/repo-instruction evidence for local agents.
 - Use `contextlattice_pack "<task>" --project <project> --pretty` or `POST /memory/context-pack` to compile ranked evidence, files, checks, risks, source coverage, and `reference_prompt` for the next model call.
 - Use `contextlattice_agent_session rollup --session-id <id> --pretty` to summarize a session into reusable state.
