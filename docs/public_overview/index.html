@@ -49,35 +49,37 @@
     </header>
 
     <section class="hero">
-      <span class="badge">Local-first memory infrastructure for AI agents</span>
-      <h1>Stop giving your agents amnesia and calling it workflow.</h1>
-      <p class="sub">
-        ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and custom MCP agents one durable place to remember decisions, evidence, skills, checkpoints, behavior, and project context, then compile that memory into the next sharp model prompt.
-      </p>
-      <div class="hero-local">CLI + HTTP/MCP + compiled context packets + async recall progress + agent steering</div>
-      <div class="cta-row">
-        <a class="cta primary" href="installation.html">Add memory to your agents</a>
-        <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">Start Free on GitHub</a>
-        <a class="cta secondary" href="premium.html">See Premium</a>
-      </div>
-      <div class="trust-strip" aria-label="Trust signals">
-        <a href="cli.html"><strong>CLI:</strong> start, search, compile</a>
-        <a href="wiki.html"><strong>Skills:</strong> searchable capability index</a>
-        <a href="architecture.html"><strong>Learning:</strong> feedback-aware retrieval</a>
-        <a href="scaling-memory.html"><strong>Scale:</strong> graph + deep recall lanes</a>
-      </div>
-      <details class="fold download-fold">
-        <summary>Download options + technical bundles</summary>
-        <div class="download-grid">
-          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a>
-          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz" target="_blank" rel="noreferrer">Download Linux Bundle</a>
-          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi" target="_blank" rel="noreferrer">Download Windows MSI</a>
-          <a class="cta secondary" href="app.html">App Surface</a>
-          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Download main (ZIP)</a>
+      <div class="hero-text-plate">
+        <span class="badge">Local-first memory infrastructure for AI agents</span>
+        <h1>Stop giving your agents amnesia and calling it workflow.</h1>
+        <p class="sub">
+          ContextLattice gives Codex, Cursor, Claude Desktop, Open WebUI, and custom MCP agents one durable place to remember decisions, evidence, skills, checkpoints, behavior, and project context, then compile that memory into the next sharp model prompt.
+        </p>
+        <div class="hero-local">CLI + HTTP/MCP + compiled context packets + async recall progress + agent steering</div>
+        <div class="cta-row">
+          <a class="cta primary" href="installation.html">Add memory to your agents</a>
+          <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice" target="_blank" rel="noreferrer">Start Free on GitHub</a>
+          <a class="cta secondary" href="premium.html">See Premium</a>
         </div>
-        <p class="muted-note">Less technical users: DMG/Linux bundle/MSI. Technical/dev users: repo + ZIP remain the default.</p>
-        <p class="muted-note">Clone: <code>git clone git@github.com:sheawinkler/ContextLattice.git</code></p>
-      </details>
+        <div class="trust-strip" aria-label="Trust signals">
+          <a href="cli.html"><strong>CLI:</strong> start, search, compile</a>
+          <a href="wiki.html"><strong>Skills:</strong> searchable capability index</a>
+          <a href="architecture.html"><strong>Learning:</strong> feedback-aware retrieval</a>
+          <a href="scaling-memory.html"><strong>Scale:</strong> graph + deep recall lanes</a>
+        </div>
+        <details class="fold download-fold">
+          <summary>Download options + technical bundles</summary>
+          <div class="download-grid">
+            <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-macOS-universal.dmg" target="_blank" rel="noreferrer">Download macOS DMG</a>
+            <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-linux-bootstrap.tar.gz" target="_blank" rel="noreferrer">Download Linux Bundle</a>
+            <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/releases/latest/download/ContextLattice-windows-x64.msi" target="_blank" rel="noreferrer">Download Windows MSI</a>
+            <a class="cta secondary" href="app.html">App Surface</a>
+            <a class="cta secondary" href="https://github.com/sheawinkler/ContextLattice/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">Download main (ZIP)</a>
+          </div>
+          <p class="muted-note">Less technical users: DMG/Linux bundle/MSI. Technical/dev users: repo + ZIP remain the default.</p>
+          <p class="muted-note">Clone: <code>git clone git@github.com:sheawinkler/ContextLattice.git</code></p>
+        </details>
+      </div>
       <div class="hero-art" aria-hidden="true">
         <svg class="hero-lattice" viewBox="0 0 340 210" role="presentation" focusable="false">
           <defs>
@@ -309,6 +311,17 @@
           </g>
         </svg>
       </div>
+    </section>
+
+    <section class="section agent-prompt-section" id="agent-start">
+      <article class="card agent-prompt-card">
+        <div>
+          <div class="kicker">Agent quickstart</div>
+          <h2>If an agent is reading this page, give it this prompt.</h2>
+          <p>One instruction, one repo, one doctor pass. It tells the agent to install ContextLattice, wire only detected harnesses, and report proof instead of guessing.</p>
+        </div>
+        <pre>Navigate to github.com/sheawinkler/contextlattice, install ContextLattice using the documented quickstart, run the doctor, then integrate only with agent harnesses that are actually installed on this machine. Configure hooks/agent files for the detected agents, verify ContextLattice recall/writeback works, and report exact commands plus any skipped integrations.</pre>
+      </article>
     </section>
 
     <section class="section section-tight">

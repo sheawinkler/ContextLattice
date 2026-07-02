@@ -134,11 +134,11 @@ export function TopicHierarchyConsole() {
         <aside className="cl-panel cl-project-rail">
           <p className="cl-kicker">projects</p>
           <div className="cl-project-list">
-            {projects.map((project) => {
+            {projects.map((project, index) => {
               const name = toText(project.project);
               return (
                 <button
-                  key={name}
+                  key={`${name || "workspace"}:${index}`}
                   className={`cl-project-button ${name === activeProject ? "cl-project-button--active" : ""}`}
                   type="button"
                   onClick={() => setSelectedProject(name)}
@@ -163,8 +163,8 @@ export function TopicHierarchyConsole() {
           <div className="cl-tree">
             {tree.length ? tree.map((node) => <TreeBranch key={node.id} node={node} />) : (
               <div className="cl-fallback-topics">
-                {simpleTopics.length ? simpleTopics.map((topic) => (
-                  <div key={topic.path} className="cl-topic-row">
+                {simpleTopics.length ? simpleTopics.map((topic, index) => (
+                  <div key={`${topic.path}:${index}`} className="cl-topic-row">
                     <span>{topic.path}</span>
                     <strong>{formatCompact(topic.count)}</strong>
                   </div>
@@ -182,8 +182,8 @@ export function TopicHierarchyConsole() {
             </div>
           </div>
           <div className="cl-topic-list">
-            {topPaths.map((row) => (
-              <div className="cl-topic-row" key={`${toText(row.project)}:${toText(row.path)}`}>
+            {topPaths.map((row, index) => (
+              <div className="cl-topic-row" key={`${toText(row.project)}:${toText(row.path)}:${index}`}>
                 <span>{toText(row.path) || "root"}</span>
                 <strong>{formatCompact(toInt(row.eventCount))}</strong>
               </div>
@@ -192,8 +192,8 @@ export function TopicHierarchyConsole() {
           <div className="cl-divider" />
           <p className="cl-kicker">cold branches</p>
           <div className="cl-topic-list">
-            {stalePaths.map((row) => (
-              <div className="cl-topic-row" key={`${toText(row.project)}:${toText(row.path)}:stale`}>
+            {stalePaths.map((row, index) => (
+              <div className="cl-topic-row" key={`${toText(row.project)}:${toText(row.path)}:stale:${index}`}>
                 <span>{toText(row.path) || "root"}</span>
                 <strong>{formatTimestamp(row.latestTimestamp)}</strong>
               </div>

@@ -45,16 +45,32 @@ type AuditLog = {
   createdAt: string;
 };
 
+function formatDate(value?: string | null) {
+  if (!value) return "--";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "--" : date.toLocaleString();
+}
+
+function SecretOutput({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="cl-secret-card">
+      <span className="cl-label">{label}</span>
+      <p>Copy now. This value is only shown once.</p>
+      <code>{value}</code>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [newKeyName, setNewKeyName] = useState("Default key");
-  const [newKeyScopes, setNewKeyScopes] = useState("memory:write,usage:write");
+  const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyScopes, setNewKeyScopes] = useState("");
   const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
   const [keyLimit, setKeyLimit] = useState<number | null>(null);
   const [planId, setPlanId] = useState<string | null>(null);
   const [scimTokens, setScimTokens] = useState<ScimToken[]>([]);
-  const [newScimName, setNewScimName] = useState("SCIM token");
+  const [newScimName, setNewScimName] = useState("");
   const [newScimTokenValue, setNewScimTokenValue] = useState<string | null>(null);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -104,20 +120,25 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    loadWorkspace();
-    loadKeys();
-    loadBudget();
-    loadAuditLogs();
-    loadScimTokens();
+    void loadWorkspace();
+    void loadKeys();
+    void loadBudget();
+    void loadAuditLogs();
+    void loadScimTokens();
   }, []);
 
   async function createKey() {
+    const name = newKeyName.trim();
+    if (!name) {
+      setMessage("Name the key before creating it.");
+      return;
+    }
     setMessage(null);
     setNewKeyValue(null);
     const res = await fetch("/api/workspace/api-keys", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: newKeyName, scopes: newKeyScopes }),
+      body: JSON.stringify({ name, scopes: newKeyScopes.trim() || undefined }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -125,7 +146,9 @@ export default function SettingsPage() {
       return;
     }
     setNewKeyValue(data.key?.apiKey || null);
-    loadKeys();
+    setNewKeyName("");
+    setNewKeyScopes("");
+    void loadKeys();
   }
 
   async function revokeKey(id: string) {
@@ -135,16 +158,21 @@ export default function SettingsPage() {
       setMessage("Failed to revoke key");
       return;
     }
-    loadKeys();
+    void loadKeys();
   }
 
   async function createScimToken() {
+    const name = newScimName.trim();
+    if (!name) {
+      setMessage("Name the SCIM token before creating it.");
+      return;
+    }
     setMessage(null);
     setNewScimTokenValue(null);
     const res = await fetch("/api/workspace/scim-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: newScimName }),
+      body: JSON.stringify({ name }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -152,7 +180,8 @@ export default function SettingsPage() {
       return;
     }
     setNewScimTokenValue(data.token?.token || null);
-    loadScimTokens();
+    setNewScimName("");
+    void loadScimTokens();
   }
 
   async function revokeScimToken(id: string) {
@@ -164,7 +193,7 @@ export default function SettingsPage() {
       setMessage("Failed to revoke SCIM token");
       return;
     }
-    loadScimTokens();
+    void loadScimTokens();
   }
 
   async function saveBudget() {
@@ -222,252 +251,184 @@ export default function SettingsPage() {
       return;
     }
     setMessage("Deletion request submitted.");
-    loadWorkspace();
-    loadKeys();
-    loadAuditLogs();
+    void loadWorkspace();
+    void loadKeys();
+    void loadAuditLogs();
   }
 
   return (
-    <div className="space-y-6">
-      <section className="card">
-        <h2 className="text-xl font-semibold">Workspace</h2>
-        {workspace ? (
-          <div className="text-sm text-slate-300 mt-2 space-y-1">
-            <div>Name: {workspace.name}</div>
-            <div>Slug: {workspace.slug}</div>
-            <div>Role: {workspace.role}</div>
-            {workspace.status ? <div>Status: {workspace.status}</div> : null}
-          </div>
-        ) : (
-          <p className="text-sm text-slate-400 mt-2">
-            Sign in to manage workspace settings.
+    <div className="cl-page cl-settings-page">
+      <section className="cl-hero cl-hero--compact">
+        <div className="cl-hero-copy">
+          <p className="cl-kicker">Settings // control surface</p>
+          <h2>Keys, limits, exports, and audit truth.</h2>
+          <p>
+            Account controls without filler: issue explicit keys, set budget rails, export workspace state,
+            and inspect the trail of administrative actions.
           </p>
-        )}
-      </section>
-
-      <section className="card space-y-3">
-        <h3 className="text-lg font-semibold">API keys</h3>
-        <p className="text-sm text-slate-400">
-          Keys are shown once on creation. Store them securely.
-        </p>
-        <p className="text-xs text-slate-500">
-          Tip: add <code>audit:write</code> if you want retention/export scripts to
-          write audit logs.
-        </p>
-        {planId ? (
-          <p className="text-xs text-slate-500">
-            Plan: {planId} • Keys: {keys.length}/
-            {keyLimit === null ? "unlimited" : keyLimit}
-          </p>
-        ) : null}
-        <div className="flex flex-wrap gap-2">
-          <input
-            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-            value={newKeyName}
-            onChange={(e) => setNewKeyName(e.target.value)}
-          />
-          <input
-            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-            value={newKeyScopes}
-            onChange={(e) => setNewKeyScopes(e.target.value)}
-          />
-          <button
-            className="rounded bg-emerald-500 text-emerald-950 px-3 py-2 text-sm font-semibold"
-            onClick={createKey}
-          >
-            Create key
-          </button>
         </div>
-        {newKeyValue ? (
-          <div className="rounded border border-emerald-600/60 bg-emerald-900/20 p-3 text-sm">
-            <div className="text-emerald-200 font-semibold mb-1">
-              New API key (copy now)
-            </div>
-            <code className="break-all">{newKeyValue}</code>
-          </div>
-        ) : null}
-        <div className="space-y-2 text-sm">
-          {keys.length === 0 ? (
-            <p className="text-slate-400">No keys yet.</p>
-          ) : (
-            keys.map((key) => (
-              <div
-                key={key.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 px-3 py-2"
-              >
-                <div>
-                  <div className="font-semibold">{key.name}</div>
-                  <div className="text-xs text-slate-400">
-                    {key.prefix}… • {key.scopes || "default scopes"} • created{" "}
-                    {new Date(key.createdAt).toLocaleDateString()}
-                  </div>
-                </div>
-                <button
-                  className="text-xs text-amber-300 hover:text-amber-200"
-                  onClick={() => revokeKey(key.id)}
-                >
-                  Revoke
-                </button>
-              </div>
-            ))
-          )}
+        <div className="cl-overview-stamp">
+          <span>workspace</span>
+          <strong>{workspace?.role || "signed out"}</strong>
+          <small>{workspace?.slug || "local dashboard"}</small>
         </div>
       </section>
 
-      <section className="card space-y-3">
-        <h3 className="text-lg font-semibold">SCIM provisioning</h3>
-        <p className="text-sm text-slate-400">
-          Generate a SCIM token to integrate with IdPs. The SCIM endpoints are
-          scaffolded but provisioning is not yet active.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <input
-            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-            value={newScimName}
-            onChange={(e) => setNewScimName(e.target.value)}
-          />
-          <button
-            className="rounded border border-slate-700 px-3 py-2 text-sm"
-            onClick={createScimToken}
-          >
-            Create SCIM token
-          </button>
-        </div>
-        {newScimTokenValue ? (
-          <div className="rounded border border-emerald-600/60 bg-emerald-900/20 p-3 text-sm">
-            <div className="text-emerald-200 font-semibold mb-1">
-              New SCIM token (copy now)
-            </div>
-            <code className="break-all">{newScimTokenValue}</code>
-          </div>
-        ) : null}
-        <div className="space-y-2 text-sm">
-          {scimTokens.length === 0 ? (
-            <p className="text-slate-400">No SCIM tokens yet.</p>
-          ) : (
-            scimTokens.map((token) => (
-              <div
-                key={token.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 px-3 py-2"
-              >
-                <div>
-                  <div className="font-semibold">{token.name}</div>
-                  <div className="text-xs text-slate-400">
-                    {token.prefix}… • created{" "}
-                    {new Date(token.createdAt).toLocaleDateString()}
-                  </div>
-                </div>
-                <button
-                  className="text-xs text-amber-300 hover:text-amber-200"
-                  onClick={() => revokeScimToken(token.id)}
-                >
-                  Revoke
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      {message ? <section className="cl-alert-strip"><strong>Settings notice.</strong><span>{message}</span></section> : null}
 
-      <section className="card space-y-3">
-        <h3 className="text-lg font-semibold">Usage budgets</h3>
-        <p className="text-sm text-slate-400">
-          Budgets apply to the current month. Enforcement is on by default
-          (set <code className="ml-1">ENFORCE_BUDGETS=false</code> to disable).
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <input
-            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-            placeholder="Token limit"
-            value={tokenLimit}
-            onChange={(e) => setTokenLimit(e.target.value)}
-          />
-          <input
-            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
-            placeholder="Cost limit (USD)"
-            value={costLimit}
-            onChange={(e) => setCostLimit(e.target.value)}
-          />
-          <button
-            className="rounded border border-slate-700 px-3 py-2 text-sm"
-            onClick={saveBudget}
-          >
-            Save budget
-          </button>
-        </div>
-        {budget ? (
-          <div className="text-sm text-slate-300 space-y-1">
+      <section className="cl-settings-grid">
+        <article className="cl-panel cl-settings-card cl-settings-card--identity">
+          <div className="cl-section-head">
             <div>
-              Active budget: {budget.tokenLimit ?? "no token limit"} tokens /{" "}
-              {budget.costLimitUsd ?? "no cost limit"} USD
+              <p className="cl-kicker">workspace</p>
+              <h3>{workspace?.name || "Sign in to manage"}</h3>
             </div>
-            {usage ? (
-              <div>
-                Month-to-date: {usage.tokens} tokens / ${usage.costUsd.toFixed(2)}
-              </div>
-            ) : null}
+            <span className="cl-badge">{workspace?.status || workspace?.role || "local"}</span>
           </div>
-        ) : (
-          <p className="text-sm text-slate-400">No active budget set.</p>
-        )}
-      </section>
+          {workspace ? (
+            <div className="cl-definition-grid">
+              <span>Name</span><strong>{workspace.name}</strong>
+              <span>Slug</span><strong>{workspace.slug}</strong>
+              <span>Role</span><strong>{workspace.role}</strong>
+              {workspace.status ? <><span>Status</span><strong>{workspace.status}</strong></> : null}
+            </div>
+          ) : (
+            <p className="cl-panel-note">Sign in when this deployment has account mode enabled. Local OSS mode does not require dashboard auth.</p>
+          )}
+        </article>
 
-      {message ? (
-        <p className="text-sm text-amber-300">{message}</p>
-      ) : null}
-
-      <section className="card space-y-3">
-        <h3 className="text-lg font-semibold">Data export</h3>
-        <p className="text-sm text-slate-400">
-          Export workspace metadata, usage, and audit logs. Memory bank files are
-          exported separately from the memorymcp store.
-        </p>
-        <button
-          className="rounded border border-slate-700 px-3 py-2 text-sm"
-          onClick={exportWorkspace}
-        >
-          Download export JSON
-        </button>
-      </section>
-
-      <section className="card space-y-3">
-        <h3 className="text-lg font-semibold">Deletion request</h3>
-        <p className="text-sm text-slate-400">
-          Mark the workspace for deletion. API keys will be revoked immediately.
-        </p>
-        <button
-          className="rounded border border-rose-500/60 text-rose-200 px-3 py-2 text-sm"
-          onClick={requestDeletion}
-        >
-          Request deletion
-        </button>
-      </section>
-
-      <section className="card space-y-3">
-        <h3 className="text-lg font-semibold">Audit log</h3>
-        {auditLogs.length === 0 ? (
-          <p className="text-sm text-slate-400">No audit events yet.</p>
-        ) : (
-          <div className="space-y-2 text-sm">
-            {auditLogs.map((log) => (
-              <div
-                key={log.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 px-3 py-2"
-              >
+        <article className="cl-panel cl-settings-card">
+          <div className="cl-section-head">
+            <div>
+              <p className="cl-kicker">runtime access</p>
+              <h3>API keys</h3>
+            </div>
+            <span className="cl-badge">{planId ? `${keys.length}/${keyLimit === null ? "unlimited" : keyLimit}` : "locked"}</span>
+          </div>
+          <p className="cl-panel-note">Keys are shown once. Add only the scopes this integration actually needs.</p>
+          <div className="cl-form-grid">
+            <label className="cl-field">
+              <span>Key name</span>
+              <input value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="example: CI write key" />
+            </label>
+            <label className="cl-field">
+              <span>Scopes</span>
+              <input value={newKeyScopes} onChange={(e) => setNewKeyScopes(e.target.value)} placeholder="memory:write,usage:write" />
+            </label>
+            <button className="cl-button" onClick={createKey} disabled={!newKeyName.trim()} type="button">Create key</button>
+          </div>
+          {newKeyValue ? <SecretOutput label="new api key" value={newKeyValue} /> : null}
+          <div className="cl-settings-list">
+            {keys.length === 0 ? <p className="cl-empty">No keys yet.</p> : keys.map((key) => (
+              <div className="cl-settings-row" key={key.id}>
                 <div>
-                  <div className="font-semibold">{log.action}</div>
-                  <div className="text-xs text-slate-400">
-                    {log.targetType || "system"} •{" "}
-                    {new Date(log.createdAt).toLocaleString()}
-                  </div>
+                  <strong>{key.name}</strong>
+                  <span>{key.prefix}... / {key.scopes || "default scopes"} / created {formatDate(key.createdAt)}</span>
                 </div>
-                <div className="text-xs text-slate-500">
-                  {log.targetId ? log.targetId.slice(0, 8) : ""}
-                </div>
+                <button className="cl-text-button" onClick={() => revokeKey(key.id)} type="button">Revoke</button>
               </div>
             ))}
           </div>
-        )}
+        </article>
+
+        <article className="cl-panel cl-settings-card">
+          <div className="cl-section-head">
+            <div>
+              <p className="cl-kicker">identity sync</p>
+              <h3>SCIM provisioning</h3>
+            </div>
+            <span className="cl-badge">enterprise</span>
+          </div>
+          <p className="cl-panel-note">Generate SCIM tokens for IdP wiring. Provisioning controls stay explicit and audit logged.</p>
+          <div className="cl-form-grid cl-form-grid--inline">
+            <label className="cl-field">
+              <span>Token name</span>
+              <input value={newScimName} onChange={(e) => setNewScimName(e.target.value)} placeholder="example: Okta SCIM" />
+            </label>
+            <button className="cl-button cl-button--secondary" onClick={createScimToken} disabled={!newScimName.trim()} type="button">Create token</button>
+          </div>
+          {newScimTokenValue ? <SecretOutput label="new scim token" value={newScimTokenValue} /> : null}
+          <div className="cl-settings-list">
+            {scimTokens.length === 0 ? <p className="cl-empty">No SCIM tokens yet.</p> : scimTokens.map((token) => (
+              <div className="cl-settings-row" key={token.id}>
+                <div>
+                  <strong>{token.name}</strong>
+                  <span>{token.prefix}... / created {formatDate(token.createdAt)}</span>
+                </div>
+                <button className="cl-text-button" onClick={() => revokeScimToken(token.id)} type="button">Revoke</button>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="cl-panel cl-settings-card">
+          <div className="cl-section-head">
+            <div>
+              <p className="cl-kicker">budget rails</p>
+              <h3>Usage budgets</h3>
+            </div>
+            <span className="cl-badge">monthly</span>
+          </div>
+          <p className="cl-panel-note">Budget inputs are explicit. Blank fields remove that limit.</p>
+          <div className="cl-form-grid">
+            <label className="cl-field">
+              <span>Token limit</span>
+              <input inputMode="numeric" value={tokenLimit} onChange={(e) => setTokenLimit(e.target.value)} placeholder="blank = no token cap" />
+            </label>
+            <label className="cl-field">
+              <span>Cost limit USD</span>
+              <input inputMode="decimal" value={costLimit} onChange={(e) => setCostLimit(e.target.value)} placeholder="blank = no cost cap" />
+            </label>
+            <button className="cl-button cl-button--secondary" onClick={saveBudget} type="button">Save budget</button>
+          </div>
+          <div className="cl-definition-grid">
+            <span>Active</span><strong>{budget ? `${budget.tokenLimit ?? "no token cap"} / ${budget.costLimitUsd ?? "no cost cap"} USD` : "none"}</strong>
+            <span>Month to date</span><strong>{usage ? `${usage.tokens} tokens / $${usage.costUsd.toFixed(2)}` : "--"}</strong>
+          </div>
+        </article>
+
+        <article className="cl-panel cl-settings-card">
+          <div className="cl-section-head">
+            <div>
+              <p className="cl-kicker">portability</p>
+              <h3>Data export</h3>
+            </div>
+          </div>
+          <p className="cl-panel-note">Export workspace metadata, usage, and audit logs. Memory bank files are exported from the memory store separately.</p>
+          <button className="cl-button cl-button--secondary" onClick={exportWorkspace} type="button">Download export JSON</button>
+        </article>
+
+        <article className="cl-panel cl-settings-card cl-settings-card--danger">
+          <div className="cl-section-head">
+            <div>
+              <p className="cl-kicker">danger rail</p>
+              <h3>Deletion request</h3>
+            </div>
+          </div>
+          <p className="cl-panel-note">Request workspace deletion and revoke active API keys immediately.</p>
+          <button className="cl-button cl-button--danger" onClick={requestDeletion} type="button">Request deletion</button>
+        </article>
+      </section>
+
+      <section className="cl-panel">
+        <div className="cl-section-head">
+          <div>
+            <p className="cl-kicker">audit</p>
+            <h3>Administrative trail</h3>
+          </div>
+          <span className="cl-badge">{auditLogs.length} events</span>
+        </div>
+        <div className="cl-settings-list cl-settings-list--audit">
+          {auditLogs.length === 0 ? <p className="cl-empty">No audit events yet.</p> : auditLogs.map((log) => (
+            <div className="cl-settings-row" key={log.id}>
+              <div>
+                <strong>{log.action}</strong>
+                <span>{log.targetType || "system"} / {formatDate(log.createdAt)}</span>
+              </div>
+              <code>{log.targetId ? log.targetId.slice(0, 8) : "--"}</code>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { generateApiKey } from "@/lib/auth/apiKeys";
 import { requireUserWorkspaceId } from "@/lib/workspace";
 import { recordAuditLog } from "@/lib/audit";
-import { getWorkspacePlan, requireActiveSubscription } from "@/lib/billing/entitlements";
+import { getWorkspacePlan, requirePaidSubscription } from "@/lib/billing/entitlements";
 import { sendEmail } from "@/lib/email";
 
 const DEFAULT_KEY_NAME = "Premium Runtime Key";
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   const workspaceId = await requireUserWorkspaceId(session.user.id);
   try {
-    await requireActiveSubscription(workspaceId);
+    await requirePaidSubscription(workspaceId);
   } catch (err: any) {
     return Response.json(
       { ok: false, error: err?.message || "Active subscription required" },

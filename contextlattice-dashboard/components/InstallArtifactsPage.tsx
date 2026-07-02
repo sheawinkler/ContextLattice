@@ -90,6 +90,7 @@ function HostedArtifacts({ authRequired, session }: { authRequired: boolean; ses
   }, [authRequired]);
 
   const hasAssets = useMemo(() => (catalog?.assets?.length || 0) > 0, [catalog]);
+  const canIssueRuntimeKey = authRequired && !!session?.user?.email && !!catalog?.planId;
 
   async function issueTimedLinks(email: boolean) {
     setBusy(email ? "email-links" : "links");
@@ -164,10 +165,13 @@ function HostedArtifacts({ authRequired, session }: { authRequired: boolean; ses
         <button className="cl-button" disabled={!hasAssets || busy !== null} onClick={() => issueTimedLinks(true)} type="button">
           {busy === "email-links" ? "Emailing" : "Generate + email"}
         </button>
-        <button className="cl-button" disabled={busy !== null} onClick={issueRuntimeKey} type="button">
+        <button className="cl-button" disabled={!canIssueRuntimeKey || busy !== null} onClick={issueRuntimeKey} type="button">
           {busy === "runtime-key" ? "Issuing" : "Issue runtime key"}
         </button>
       </div>
+      {!canIssueRuntimeKey ? (
+        <p className="cl-panel-note">Runtime keys are issued only to signed-in users with an active paid entitlement.</p>
+      ) : null}
       {tokenLinks.length ? (
         <div className="cl-link-stack">
           {tokenLinks.map((link) => (

@@ -4,7 +4,7 @@ import {
   configuredPremiumDownloads,
   defaultDownloadTokenTtlMinutes,
 } from "@/lib/billing/downloads";
-import { getWorkspacePlan, requireActiveSubscription } from "@/lib/billing/entitlements";
+import { getWorkspacePlan, requirePaidSubscription } from "@/lib/billing/entitlements";
 
 export async function GET() {
   const session = await getDashboardSession();
@@ -14,7 +14,7 @@ export async function GET() {
 
   const workspaceId = await requireUserWorkspaceId(session.user.id);
   try {
-    await requireActiveSubscription(workspaceId);
+    await requirePaidSubscription(workspaceId);
   } catch (err: any) {
     return Response.json(
       { ok: false, error: err?.message || "Active subscription required" },

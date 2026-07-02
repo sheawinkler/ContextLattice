@@ -1,6 +1,6 @@
 import { getDashboardSession } from "@/lib/dashboardSession";
 import { requireUserWorkspaceId } from "@/lib/workspace";
-import { requireActiveSubscription } from "@/lib/billing/entitlements";
+import { requirePaidSubscription } from "@/lib/billing/entitlements";
 import { premiumDownloadById, verifyDownloadToken } from "@/lib/billing/downloads";
 
 function noStoreHeaders() {
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 
   const workspaceId = await requireUserWorkspaceId(session.user.id);
   try {
-    await requireActiveSubscription(workspaceId);
+    await requirePaidSubscription(workspaceId);
   } catch (err: any) {
     return Response.json(
       { ok: false, error: err?.message || "Active subscription required" },

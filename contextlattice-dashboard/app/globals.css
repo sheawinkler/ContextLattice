@@ -2328,3 +2328,315 @@ body,
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+/* Surgical dashboard polish: contrast, calmer titles, and equalized cards. */
+.shell-title {
+  font-size: clamp(1.72rem, 2.45vw, 2.55rem);
+}
+
+.cl-hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.cl-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0.75rem 0.75rem auto auto;
+  width: clamp(7rem, 18vw, 16rem);
+  height: clamp(3.5rem, 8vw, 7rem);
+  border-top: 1px solid rgba(233, 226, 207, 0.24);
+  border-right: 1px solid rgba(233, 226, 207, 0.2);
+  background:
+    linear-gradient(90deg, rgba(233, 226, 207, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(233, 226, 207, 0.07) 1px, transparent 1px);
+  background-size: 18px 18px;
+  opacity: 0.48;
+  pointer-events: none;
+}
+
+.cl-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.cl-hero-copy {
+  border: 1px solid rgba(216, 207, 184, 0.22);
+  background:
+    linear-gradient(135deg, rgba(233, 226, 207, 0.06), rgba(8, 8, 6, 0.18)),
+    rgba(10, 10, 8, 0.54);
+  padding: clamp(0.8rem, 1.4vw, 1.1rem);
+  box-shadow:
+    inset 0 1px 0 rgba(233, 226, 207, 0.13),
+    0 12px 40px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.cl-hero h2 {
+  font-size: clamp(2.28rem, 6.15vw, 5.05rem);
+  line-height: 0.88;
+}
+
+.cl-hero--compact h2 {
+  font-size: clamp(1.95rem, 4.35vw, 3.85rem);
+  line-height: 0.92;
+}
+
+.cl-metric-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  justify-content: center;
+}
+
+.cl-proof-strip {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.cl-metric--hot {
+  grid-column: auto;
+}
+
+.cl-metric-value--compact {
+  font-size: clamp(0.95rem, 1.85vw, 1.45rem);
+  line-height: 1.05;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.cl-metric-grid--status {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cl-capability-grid,
+.cl-project-grid,
+.cl-service-grid,
+.cl-fanout-grid,
+.cl-artifact-grid,
+.cl-command-grid,
+.cl-surface-grid,
+.cl-settings-grid {
+  justify-content: center;
+}
+
+.cl-visual-mindmap-panel {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.cl-visual-mindmap-panel .ops-shell {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.cl-visual-mindmap-panel .ops-card {
+  margin: 0;
+  border-color: rgba(216, 207, 184, 0.28);
+  background: #0b0b08;
+  box-shadow: none;
+}
+
+.cl-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.cl-settings-card {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.cl-settings-card--identity {
+  grid-column: 1 / -1;
+}
+
+.cl-settings-card--danger {
+  border-color: rgba(255, 95, 86, 0.54);
+}
+
+.cl-definition-grid {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.36fr) minmax(0, 1fr);
+  gap: 0.45rem 0.8rem;
+  border-top: 1px solid rgba(216, 207, 184, 0.15);
+  padding-top: 0.7rem;
+}
+
+.cl-definition-grid span,
+.cl-settings-row span,
+.cl-secret-card p,
+.cl-field span {
+  color: var(--cl-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.cl-definition-grid strong,
+.cl-settings-row strong {
+  color: var(--cl-paper);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.cl-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.cl-form-grid--inline {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.cl-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.cl-field input {
+  min-height: 2.45rem;
+  width: 100%;
+  border: 1px solid var(--cl-line);
+  border-radius: 0;
+  background: #090907;
+  color: var(--cl-paper);
+  font-family: var(--cl-mono);
+  font-size: 0.78rem;
+  padding: 0.62rem 0.7rem;
+  outline: none;
+}
+
+.cl-field input:focus {
+  border-color: var(--cl-accent);
+  box-shadow: 0 0 0 2px rgba(199, 255, 74, 0.12);
+}
+
+.cl-field input::placeholder {
+  color: var(--cl-dim);
+}
+
+.cl-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+}
+
+.cl-button--secondary {
+  background: #0d0d0a;
+  color: var(--cl-paper);
+}
+
+.cl-button--danger {
+  border-color: rgba(255, 95, 86, 0.76);
+  background: rgba(255, 95, 86, 0.14);
+  color: #ffd5d1;
+}
+
+.cl-settings-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.cl-settings-list--audit {
+  margin-top: 0.75rem;
+}
+
+.cl-settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  border: 1px solid rgba(216, 207, 184, 0.18);
+  background: #0b0b08;
+  padding: 0.65rem 0.75rem;
+}
+
+.cl-settings-row > div {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.cl-text-button {
+  border: 0;
+  background: transparent;
+  color: var(--cl-amber);
+  cursor: pointer;
+  font-family: var(--cl-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cl-secret-card,
+.cl-secret-output {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid rgba(99, 255, 141, 0.5);
+  background: rgba(99, 255, 141, 0.08);
+  padding: 0.75rem;
+}
+
+.cl-secret-card code,
+.cl-secret-output,
+.cl-settings-row code {
+  color: var(--cl-paper);
+  font-family: var(--cl-mono);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (min-width: 681px) and (max-width: 1040px) {
+  .cl-metric-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: min(100%, calc((100% - 0.65rem) / 2));
+  }
+
+  .cl-metric-grid--status > :last-child:nth-child(odd) {
+    grid-column: auto;
+    justify-self: stretch;
+    width: auto;
+  }
+}
+
+@media (max-width: 1040px) {
+  .cl-metric-grid--status {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cl-settings-grid,
+  .cl-form-grid,
+  .cl-form-grid--inline {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .shell-title {
+    font-size: clamp(1.55rem, 12vw, 2.15rem);
+  }
+
+  .cl-hero h2,
+  .cl-hero--compact h2,
+  .auth-title {
+    font-size: clamp(1.72rem, 12.5vw, 2.8rem);
+  }
+
+  .cl-hero-copy {
+    padding: 0.75rem;
+  }
+
+  .cl-metric-value--compact {
+    font-size: 1rem;
+  }
+
+  .cl-definition-grid,
+  .cl-settings-row {
+    grid-template-columns: 1fr;
+  }
+}

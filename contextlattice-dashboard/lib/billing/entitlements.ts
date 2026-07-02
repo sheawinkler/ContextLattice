@@ -73,3 +73,13 @@ export async function requireActiveSubscription(workspaceId: string) {
   }
   return { required: true, planId, subscription };
 }
+
+export async function requirePaidSubscription(workspaceId: string) {
+  const { active, planId, subscription } = await getWorkspacePlan(workspaceId);
+  if (!active) {
+    throw new Error(
+      `Active subscription required (current: ${subscription?.status || "none"})`,
+    );
+  }
+  return { required: true, planId, subscription };
+}

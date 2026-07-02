@@ -9,7 +9,7 @@ import {
 } from "@/lib/billing/downloads";
 import {
   getWorkspacePlan,
-  requireActiveSubscription,
+  requirePaidSubscription,
 } from "@/lib/billing/entitlements";
 import { sendEmail } from "@/lib/email";
 
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
   const workspaceId = await requireUserWorkspaceId(userId);
   try {
-    await requireActiveSubscription(workspaceId);
+    await requirePaidSubscription(workspaceId);
   } catch (err: any) {
     return Response.json(
       { ok: false, error: err?.message || "Active subscription required" },
