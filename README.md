@@ -32,11 +32,11 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.7.0` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, tokenizer-exact prompt economics, bounded token-impact ledger persistence, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.9.0` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
 `v4` remains the private tuning lane for experiments that still need benchmark, recall, and soak gates before public promotion.
 
-## Public Runtime Stack (v3.6)
+## Public Runtime Stack (v3.9)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -333,6 +333,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.9.0.md` (agent-operable context-pack outcome telemetry and observed provider usage)
   - `docs/releases/v3.8.0.md` (MongoDB driver v2 migration and Context Pack Quality Ledger)
   - `docs/releases/v3.7.1.md` (MongoDB driver security patch for the v3.7 train)
   - `docs/releases/v3.7.0.md` (tokenizer-exact prompt economics, bounded token-impact ledger, and release-note hygiene)

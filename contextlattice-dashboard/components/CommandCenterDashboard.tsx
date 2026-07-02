@@ -235,6 +235,12 @@ export function CommandCenterDashboard() {
           tone={contextPackQuality.calibrationGrade === "outcome_adjusted" ? "good" : "neutral"}
         />
         <MetricCard
+          label="observed provider tokens"
+          value={formatCompact(contextPackQuality.observedProviderTotalTokens)}
+          detail={`${formatCompact(contextPackQuality.observedProviderUsageCount)} outcome rows · avg ${formatCompact(contextPackQuality.observedAverageProviderTotalTokens ?? 0)}/call`}
+          tone={contextPackQuality.observedProviderUsageCount > 0 ? "good" : "neutral"}
+        />
+        <MetricCard
           label="service health"
           value={serviceHealth.label}
           detail="gateway, memory store, retrieval lanes"

@@ -163,11 +163,11 @@ brew info --cask sheawinkler/contextlattice/contextlattice</code></pre>
         <h3>Size your machine by lane and deployment mode</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <ul class="spec-list">
-          <li><strong>Public <code>v3.4.x</code> Hugging Face / Glama lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>20-50 GB</code> SSD</li>
-          <li><strong>Public <code>v3.4.x</code> local Lite:</strong> <code>2-4</code> vCPU, <code>8-12 GB</code> RAM, <code>25-80 GB</code> SSD</li>
-          <li><strong>Public <code>v3.4.x</code> local Lite advanced:</strong> <code>4-6</code> vCPU, <code>12-16 GB</code> RAM, <code>80-140 GB</code> SSD</li>
-          <li><strong>Public <code>v3.4.x</code> local Full (no spike-lab):</strong> <code>6-8</code> vCPU, <code>12-20 GB</code> RAM, <code>100-180 GB</code> SSD</li>
-          <li><strong>Public <code>v3.4.x</code> local Full + spike-lab:</strong> <code>8-12</code> vCPU, <code>24-32 GB</code> RAM, <code>180-300 GB</code> SSD/NVMe</li>
+          <li><strong>Public <code>v3.9.x</code> Hugging Face / Glama lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>20-50 GB</code> SSD</li>
+          <li><strong>Public <code>v3.9.x</code> local Lite:</strong> <code>2-4</code> vCPU, <code>8-12 GB</code> RAM, <code>25-80 GB</code> SSD</li>
+          <li><strong>Public <code>v3.9.x</code> local Lite advanced:</strong> <code>4-6</code> vCPU, <code>12-16 GB</code> RAM, <code>80-140 GB</code> SSD</li>
+          <li><strong>Public <code>v3.9.x</code> local Full (no spike-lab):</strong> <code>6-8</code> vCPU, <code>12-20 GB</code> RAM, <code>100-180 GB</code> SSD</li>
+          <li><strong>Public <code>v3.9.x</code> local Full + spike-lab:</strong> <code>8-12</code> vCPU, <code>24-32 GB</code> RAM, <code>180-300 GB</code> SSD/NVMe</li>
           <li><strong>Public-paid / private <code>v4</code> local premium:</strong> <code>8-12</code> vCPU, <code>24-48 GB</code> RAM, <code>250 GB-1 TB</code> SSD/NVMe</li>
           <li><strong>Private <code>v4</code> hosted baseline:</strong> <code>16+</code> vCPU host, <code>64+ GB</code> RAM, GPU lane, <code>1-2 TB</code> NVMe for retrieval indexes/snapshots</li>
         </ul>
@@ -206,7 +206,7 @@ $HOME/Documents/projects
           <h3>Hugging Face / Glama lite</h3>
           <p>Single-container lane for lowest operational overhead and maximum compatibility.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.4.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.9.x</code></li>
             <li><strong>Services:</strong> Gateway + orchestrator in one container, topic rollups retrieval lane</li>
             <li><strong>Retrieval lanes:</strong> <code>topic_rollups</code> default, async continuation where configured</li>
             <li><strong>Resource target:</strong> 2-4 vCPU, 4-8 GB RAM, 20-50 GB SSD</li>
@@ -217,7 +217,7 @@ $HOME/Documents/projects
           <h3>Lite core installation</h3>
           <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.4.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.9.x</code></li>
             <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
             <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + qdrant</code>; pgvector is available in full/operator stacks</li>
             <li><strong>Advanced adapters:</strong> memory-bank spike/adapters are opt-in with <code>gmake mem-up-lite-advanced</code></li>
@@ -229,7 +229,7 @@ $HOME/Documents/projects
           <h3>Full installation</h3>
           <p>Enables full retrieval fabric and operations stack including analytics, observability, and deeper RAG support.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.4.x</code> Full, and baseline for private <code>v4</code> tuning</li>
+            <li><strong>App version lane:</strong> Public <code>v3.9.x</code> Full, and baseline for private <code>v4</code> tuning</li>
             <li><strong>Services:</strong> Lite stack plus MindsDB, Letta, and observability profile</li>
             <li><strong>Deep continuation lane:</strong> async coverage from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Resource target:</strong> 6-8 vCPU, 12-20 GB RAM, 100-180 GB SSD (without spike-lab)</li>

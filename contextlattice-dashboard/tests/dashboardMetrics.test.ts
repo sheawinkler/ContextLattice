@@ -116,6 +116,12 @@ test("estimateContextPackQuality preserves modeled inference avoidance and outco
       confidence: "medium",
       observed_first_pass_success_rate: 0.833,
       observed_repair_rate: 0.167,
+      observed_followup_tokens: 1234,
+      observed_provider_usage_count: 3,
+      observed_provider_prompt_tokens: 18000,
+      observed_provider_completion_tokens: 2400,
+      observed_provider_total_tokens: 20400,
+      observed_average_provider_total_tokens: 6800,
       measurement_limit: "Exact prompt-token savings are measured; modeled inference avoidance is confidence-banded.",
     },
   });
@@ -129,6 +135,10 @@ test("estimateContextPackQuality preserves modeled inference avoidance and outco
   assert.equal(quality.outcomeSamples, 6);
   assert.equal(quality.observedFirstPassRate, 0.833);
   assert.equal(quality.observedRepairRate, 0.167);
+  assert.equal(quality.observedFollowupTokens, 1234);
+  assert.equal(quality.observedProviderUsageCount, 3);
+  assert.equal(quality.observedProviderTotalTokens, 20400);
+  assert.equal(quality.observedAverageProviderTotalTokens, 6800);
   assert.match(quality.measurementLimit, /confidence-banded/);
 });
 

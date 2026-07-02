@@ -86,6 +86,12 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": true,
+				"context_pack_quality": map[string]any{
+					"schema_id":     "contextlattice_context_pack_quality.v1",
+					"sample_id":     "cpq_test_pack",
+					"query_hash":    "abc123",
+					"quality_score": 88,
+				},
 				"context_pack": map[string]any{
 					"facts": []any{},
 					"token_budget": map[string]any{
@@ -135,6 +141,9 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	}
 	if omitted := firstList(output["omitted_high_value_refs"]); len(omitted) == 0 {
 		t.Fatalf("expected normalized omitted refs from nested pack, got %#v", output)
+	}
+	if firstString(asMap(output["outcome_report"])["sample_id"]) != "cpq_test_pack" {
+		t.Fatalf("expected context-pack output to include outcome report, got %#v", output["outcome_report"])
 	}
 }
 
@@ -284,6 +293,85 @@ func TestAdapterStatePostsLifecycleAndOwnership(t *testing.T) {
 	}
 	if output["command"] != "state" || output["ok"] != true {
 		t.Fatalf("unexpected state output: %#v", output)
+	}
+}
+
+func TestAdapterOutcomePostsCompactProviderUsage(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	var outcomePayload map[string]any
+	var eventPayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/telemetry/context-pack-quality/outcome":
+			if err := json.NewDecoder(r.Body).Decode(&outcomePayload); err != nil {
+				t.Fatalf("decode outcome request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"outcome": map[string]any{
+					"schema_id":                  "contextlattice_context_pack_outcome.v1",
+					"sample_id":                  outcomePayload["sample_id"],
+					"first_pass_success":         outcomePayload["first_pass_success"],
+					"repair_required":            outcomePayload["repair_required"],
+					"retry_count":                outcomePayload["retry_count"],
+					"provider_prompt_tokens":     outcomePayload["provider_prompt_tokens"],
+					"provider_completion_tokens": outcomePayload["provider_completion_tokens"],
+					"provider_total_tokens":      outcomePayload["provider_total_tokens"],
+					"outcome_source":             "adapter_outcome",
+				},
+				"telemetry": map[string]any{"outcome_sample_count": 1, "observed_provider_total_tokens": 789},
+			})
+		case "/v1/agents/sessions/event":
+			if err := json.NewDecoder(r.Body).Decode(&eventPayload); err != nil {
+				t.Fatalf("decode event request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "event": map[string]any{"id": "evt-outcome"}})
+		case "/v1/agents/sessions/sess-outcome/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice_agent_adapter", "outcome",
+		"--agent", "codex",
+		"--project", "alpha",
+		"--session-id", "sess-outcome",
+		"--context-pack-quality-sample-id", "cpq_adapter",
+		"--first-pass-success", "true",
+		"--repair-required", "false",
+		"--retry-count", "0",
+		"--followup-tokens", "22",
+		"--provider-prompt-tokens", "700",
+		"--provider-completion-tokens", "89",
+		"--provider-total-tokens", "789",
+	}); err != nil {
+		t.Fatalf("run adapter outcome: %v", err)
+	}
+	if outcomePayload["sample_id"] != "cpq_adapter" ||
+		outcomePayload["first_pass_success"] != true ||
+		outcomePayload["repair_required"] != false ||
+		asInt(outcomePayload["provider_total_tokens"]) != 789 {
+		t.Fatalf("unexpected outcome payload: %#v", outcomePayload)
+	}
+	if eventPayload["type"] != "context_pack.outcome_reported" {
+		t.Fatalf("expected outcome session event, got %#v", eventPayload)
+	}
+	metadata := asMap(eventPayload["metadata"])
+	if asMap(metadata["outcome"])["provider_total_tokens"] == nil {
+		t.Fatalf("expected compact outcome metadata to include provider tokens, got %#v", metadata)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["command"] != "outcome" || output["ok"] != true {
+		t.Fatalf("unexpected outcome output: %#v", output)
 	}
 }
 
