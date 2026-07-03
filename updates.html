@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.4 is public baseline. v4 remains private tuning lane.</h3>
+        <h3>v3.9.1 is the public baseline. v4 remains private tuning lane.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.4:</strong> universal agent adapter, native agent runtime sessions, objective state contract, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, <code>shodh_spike</code> memory-bank default.</li>
+          <li><strong>Public v3.9.1:</strong> agent operating layer, agent-actionable quickstart, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and <code>shodh_spike</code> memory-bank default.</li>
           <li><strong>Private v4:</strong> same external memory contract, but with stronger adaptive tuning, candidate backend experimentation, and promotion gates before public sync.</li>
           <li><strong>Promotion policy:</strong> features move from v4 to public only after benchmark + recall + soak evidence.</li>
         </ul>
@@ -56,6 +56,145 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-03 · v3.9.1 · Dashboard Polish</span>
+        <h2>The cockpit is quieter, sharper, and harder to misread.</h2>
+        <p>
+          v3.9.1 packages the dashboard polish pass after the outcome-telemetry release: stronger contrast,
+          calmer titles, cleaner Settings, restored topic/mind-map context, and current public guidance for
+          humans and agents landing on the project.
+        </p>
+        <ul>
+          <li><strong>Dashboard:</strong> denser proof cards, clearer disk pressure labels, and less visual noise.</li>
+          <li><strong>Settings:</strong> real local values, no placeholder model defaults, and paid runtime-key gating.</li>
+          <li><strong>Docs:</strong> public baseline, install guidance, and LLM guidance now point at v3.9.1.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.9.0 · Observed Outcome Telemetry</span>
+        <h2>Agents can now report whether the context pack actually worked.</h2>
+        <p>
+          v3.9.0 closes the loop between context allocation and real agent outcomes. Context packs now carry an
+          outcome-report contract, the adapter can post first-pass/repair/retry facts at completion, and provider
+          token counters stay separate from modeled inference avoidance.
+        </p>
+        <ul>
+          <li><strong>Agent contract:</strong> <code>contextlattice_agent_adapter outcome</code> and completion outcome flags.</li>
+          <li><strong>Telemetry:</strong> compact provider prompt/completion/total token counters in the quality ledger.</li>
+          <li><strong>Dashboard:</strong> observed provider tokens shown beside exact prompt savings and modeled avoidance.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.8.0 · Context Pack Quality Ledger</span>
+        <h2>Context packs now measure quality, not just size.</h2>
+        <p>
+          v3.8.0 separates exact prompt-token savings from confidence-banded inference avoidance. The new quality
+          ledger records compact pack-quality rows and lets agents post first-pass, repair, retry, and follow-up-token
+          outcomes for calibration.
+        </p>
+        <ul>
+          <li><strong>Runtime:</strong> gateway now uses the MongoDB Go driver v2 line.</li>
+          <li><strong>Proof:</strong> exact prompt savings stay exact; modeled inference avoidance is labeled as modeled until outcomes calibrate it.</li>
+          <li><strong>Storage:</strong> bounded NDJSON, no raw prompts, no raw queries, no raw source text.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.7.1 · Security Patch</span>
+        <h2>MongoDB driver advisory closed for the v3.7 train.</h2>
+        <p>
+          v3.7.1 upgrades the Go MongoDB driver past the patched advisory floor while keeping tokenizer-exact
+          prompt economics and bounded token-impact ledger persistence unchanged.
+        </p>
+        <ul>
+          <li><strong>Security:</strong> resolves <code>GHSA-cp6g-7hqx-qxhp</code> in the Go gateway dependency graph.</li>
+          <li><strong>Upgrade path:</strong> dependency-only patch; no migration required from v3.7.0.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-01 · v3.7.0 · Token Impact Engine</span>
+        <h3>The memory layer now proves its prompt economics with tokenizer-exact accounting.</h3>
+        <p class="spotlight">
+          v3.7.0 upgrades ContextLattice from directional token-savings estimates to a restart-safe prompt economics ledger.
+          Context packs report exact tokenizer counts when the configured encoding is available, and the gateway persists compact
+          proof rows without storing raw prompts or recalled source text.
+        </p>
+        <ul>
+          <li><strong>Exact accounting:</strong> context packs expose <code>tokenizer_exact</code>, <code>estimate_method</code>, and <code>tokenizer_encoding</code>.</li>
+          <li><strong>Bounded ledger:</strong> token-impact rows are compact, capped, and reloaded on gateway startup.</li>
+          <li><strong>Proof cockpit:</strong> dashboard labels exact, sampled, and heuristic token savings separately.</li>
+          <li><strong>Release hygiene:</strong> release notes now reject machine-local paths before publishing.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-30 · v3.6.2 · Agent-Actionable Quickstart</span>
+        <h3>A fresh agent can now land on the README and wire ContextLattice without a second prompt.</h3>
+        <p class="spotlight">
+          v3.6.2 makes the public adoption path explicit: clone the canonical repo, run the quickstart, verify the gateway,
+          integrate supported local agent profiles, and run the doctor. The release keeps ContextLattice positioned as the
+          durable operating layer around agent memory rather than another cockpit.
+        </p>
+        <ul>
+          <li><strong>Agent prompt:</strong> README now tells AI agents reading the page to follow the install + integration section directly.</li>
+          <li><strong>Canonical repo:</strong> the quickstart spells out <code>https://github.com/sheawinkler/ContextLattice.git</code>.</li>
+          <li><strong>Integration guardrail:</strong> <code>contextlattice_adopt integrate</code> writes managed instruction blocks; it does not install third-party agents.</li>
+          <li><strong>Installer lane:</strong> public releases, paid release assets, and the optional Homebrew cask now point at the v3.6.2 train.</li>
+          <li><strong>Operating layer:</strong> v3.6 keeps durable writes, scoped packs, Skills Index discovery, async recall steering, runtime policy, template conformance, and local-first storage under one contract.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-19 · v3.4.25 · Go 1.26.4 Build Surface + Qdrant Writeback</span>
+        <h3>The public build lane now targets Go 1.26.4 end to end.</h3>
+        <p class="spotlight">
+          This release updates the Go module and Docker builder surface while packaging the post-v3.4.24 agent/runtime train:
+          Go helper binaries, graph-aware context packs, Review Mode, bounded output contracts, and Qdrant-first writeback closure.
+        </p>
+        <ul>
+          <li><strong>Go toolchain:</strong> gateway and orchestrator modules now declare <code>go 1.26</code> with <code>toolchain go1.26.4</code>.</li>
+          <li><strong>Container builders:</strong> Go builder stages now use exact <code>golang:1.26.4</code> Alpine/Bookworm tags.</li>
+          <li><strong>Lite boundary:</strong> local Lite keeps <code>topic_rollups + qdrant</code>; hosted/Glama Lite remains topic-rollups-only and sidecar-free.</li>
+          <li><strong>Memory writeback:</strong> Qdrant is first-class for native writeback surfaces; pgvector remains a Full/operator SQL-co-located vector lane.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-11 · v3.4.13 · Zero-Friction Agent Adoption Kit</span>
+        <h3>One command now tells a new agent whether ContextLattice is ready.</h3>
+        <p class="spotlight">
+          The adoption front door wraps install checks, runtime doctor output, profile detection, profiles, and proof
+          output so Codex, Claude Code, OpenCode, Hermes, web agents, and custom
+          LLM apps can start from the same local contract.
+        </p>
+        <ul>
+          <li><strong>Status:</strong> run <code>contextlattice_adopt status --pretty</code> to inspect gateway, helper, PATH, storage, session-store, and profile readiness.</li>
+          <li><strong>Install:</strong> run <code>contextlattice_adopt install --pretty</code> from the repo to wire global helpers and Codex hooks.</li>
+          <li><strong>Doctor:</strong> run <code>contextlattice_doctor --agents codex --skip-provider-smoke --pretty</code> for readiness, proof, and trace evidence in one bounded report.</li>
+          <li><strong>Proof:</strong> run <code>contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty</code> for the bounded lifecycle proof path.</li>
+          <li><strong>Profiles:</strong> use <code>contextlattice_agent_adapter profiles --pretty</code> when moving to a new account, machine, or agent surface.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-06-12 · v3.4.13 · Async Recall Steering</span>
+        <h3>Slow recall can now steer the requesting agent when it finishes.</h3>
+        <p class="spotlight">
+          Staged retrieval still returns fast context first, but continuation progress is now contract-visible across
+          HTTP, CLI, session rollups, traces, and the dashboard. Local agents can watch their own session and receive a
+          bounded steering comment when deeper recall is ready or degraded.
+        </p>
+        <ul>
+          <li><strong>Progress contract:</strong> responses include <code>retrieval_progress.v1</code> with progress, confidence, source state, poll URL, and event URL.</li>
+          <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.ready</code> or <code>retrieval.continuation.degraded</code>.</li>
+          <li><strong>CLI watch:</strong> <code>contextlattice_agent_session watch --session-id &lt;id&gt; --continuation-token &lt;token&gt; --pretty</code> gives agents a compact terminal inbox.</li>
+          <li><strong>Dashboard:</strong> retrieval flow shows the async lane, source states, progress, confidence, and the agent watch command.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-06-11 · v3.4.12 · Run Advisor + Graph Quality Audit</span>
         <h3>Agent runs now come with a readiness signal, not just a transcript trail.</h3>
@@ -118,7 +257,7 @@
           <li><strong>CLI path:</strong> <code>contextlattice_agent_session rollup</code> and <code>contextlattice_agent_session context-package</code> give local agents the lowest-overhead access path.</li>
           <li><strong>Capability lookup:</strong> <code>contextlattice_skills_index search</code> exposes Skills Index discovery without loading every skill into startup context.</li>
           <li><strong>Memory topology:</strong> <code>contextlattice_memory_topology</code> validates the base default path, the richer backend fabric, partition keys, clusters, and graph telemetry.</li>
-          <li><strong>Source backfill:</strong> <code>contextlattice_source_backfill</code> imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.</li>
+          <li><strong>Source backfill:</strong> the optional dev helper <code>contextlattice_source_backfill</code> imports bounded files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres data through the same memory write contract.</li>
           <li><strong>Runtime confidence:</strong> Agent Radar shows prompt package readiness, source coverage, missing evidence, and confidence per session.</li>
         </ul>
       </article>
@@ -162,7 +301,8 @@
           objective state, behavior provenance, and completion all move through one durable local contract.
         </p>
         <ul>
-          <li><strong>Universal adapter:</strong> <code>contextlattice_agent_adapter</code> handles bootstrap, context-pack, checkpoint, handoff, event, and complete flows.</li>
+          <li><strong>Universal adapter:</strong> <code>contextlattice_agent_adapter</code> handles bootstrap, context-pack, lifecycle state, checkpoint, handoff, event, and complete flows.</li>
+          <li><strong>Agent discovery:</strong> <code>contextlattice_agent_discover</code> reports best-effort process, profile, hook, and repo-instruction evidence for local agents.</li>
           <li><strong>Runtime sessions:</strong> live agent work is tracked through <code>/v1/agents/sessions</code> with typed events and Agent Radar telemetry.</li>
           <li><strong>Objective contract:</strong> preflight, context-pack, and Dream Mode return <code>objective_runtime_state.v1</code> with action, evidence, delta, risk, and next-action fields.</li>
           <li><strong>Agent coverage:</strong> templates and conformance checks cover Codex, Claude Code, OpenCode, Hermes Agent, ChatGPT web/desktop, and Claude web/desktop patterns.</li>

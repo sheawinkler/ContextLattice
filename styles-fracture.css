@@ -646,6 +646,54 @@ table.kv-table {
   animation: fxLaneGlint 5.6s ease-in-out infinite 1.4s;
 }
 
+.hero-lattice .hl-progress-panel {
+  opacity: 0.92;
+}
+
+.hero-lattice .hl-progress-back {
+  fill: rgba(8, 12, 20, 0.72);
+  stroke: rgba(228, 236, 250, 0.32);
+  stroke-width: 0.8;
+}
+
+.hero-lattice .hl-progress-fill {
+  fill: rgba(121, 220, 252, 0.78);
+  filter: drop-shadow(0 0 4px rgba(121, 220, 252, 0.38));
+}
+
+.hero-lattice .hl-progress-pulse {
+  fill: rgba(255, 241, 194, 0.96);
+  filter: drop-shadow(0 0 4px rgba(255, 214, 134, 0.42));
+}
+
+.hero-lattice .hl-progress-label {
+  font: 600 6px "IBM Plex Mono", monospace;
+  letter-spacing: 0;
+  fill: rgba(238, 242, 250, 0.78);
+}
+
+.hero-lattice .hl-progress-label.warm {
+  fill: rgba(251, 218, 151, 0.8);
+}
+
+.hero-lattice .hl-progress-label.steering {
+  fill: rgba(245, 248, 255, 0.86);
+}
+
+.hero-lattice .hl-steering-link {
+  fill: none;
+  stroke: rgba(255, 230, 168, 0.72);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  animation: fxLaneFlow 3.6s linear infinite;
+}
+
+.hero-lattice .hl-steering-chip {
+  fill: rgba(17, 22, 34, 0.78);
+  stroke: rgba(255, 230, 168, 0.52);
+  stroke-width: 0.8;
+}
+
 .hero-lattice .hl-node {
   fill: rgba(222, 228, 236, 0.86);
   stroke: rgba(5, 8, 14, 0.95);
@@ -1767,4 +1815,132 @@ body.home .feature-tile:focus-visible {
   body.home .feature-tile-inner {
     transition: none;
   }
+}
+
+/* Homepage contrast and agent quickstart polish. */
+.hero-text-plate {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 0.78rem;
+  width: min(760px, 100%);
+  padding: clamp(1rem, 2vw, 1.35rem);
+  border: 1.5px solid rgba(238, 245, 255, 0.28);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(8, 12, 20, 0.18)),
+    rgba(8, 12, 20, 0.58);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(20px) saturate(1.12);
+}
+
+.hero-text-plate .badge,
+.hero-text-plate h1,
+.hero-text-plate .sub,
+.hero-text-plate .hero-local,
+.hero-text-plate .cta-row,
+.hero-text-plate .trust-strip,
+.hero-text-plate .download-fold {
+  position: relative;
+  z-index: 2;
+}
+
+body.home .hero-text-plate {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(249, 247, 238, 0.5)),
+    rgba(246, 243, 231, 0.78);
+  border-color: rgba(50, 49, 42, 0.2);
+  border-radius: 18px;
+  box-shadow: 12px 12px 0 rgba(12, 12, 9, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(18px) saturate(1.04);
+}
+
+body.home .hero-art {
+  opacity: 0.58;
+  filter: grayscale(1) saturate(0) contrast(1.14);
+}
+
+.agent-prompt-section {
+  margin-top: 1rem;
+}
+
+.agent-prompt-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
+  gap: clamp(1rem, 2.4vw, 1.7rem);
+  align-items: stretch;
+}
+
+.agent-prompt-card h2 {
+  margin-bottom: 0.55rem;
+}
+
+.agent-prompt-card p {
+  color: var(--fx-muted);
+  margin: 0;
+}
+
+.agent-prompt-card pre {
+  margin: 0;
+  min-height: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1.5px solid var(--fx-line-hard);
+  border-radius: 12px;
+  background: rgba(6, 8, 14, 0.9);
+  color: var(--fx-ink);
+  font-family: "Space Mono", monospace;
+  font-size: clamp(0.78rem, 1vw, 0.92rem);
+  line-height: 1.55;
+  padding: 1rem;
+}
+
+body.home .agent-prompt-card pre {
+  background: var(--paper-soft);
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: inset 5px 0 0 var(--accent);
+}
+
+@media (max-width: 760px) {
+  .hero-text-plate {
+    border-radius: 14px;
+    padding: 0.9rem;
+  }
+
+  body.home .hero-text-plate {
+    border-radius: 14px;
+  }
+
+  body.home .hero-art {
+    opacity: 0.36;
+  }
+
+  .agent-prompt-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+body.home .hero-text-plate h1 {
+  color: #181712;
+  text-shadow: none;
+}
+
+body.home .hero-text-plate .sub,
+body.home .hero-text-plate p {
+  color: #625f54;
+}
+
+body.home .hero-text-plate .badge,
+body.home .hero-text-plate .hero-local,
+body.home .hero-text-plate .download-fold,
+body.home .hero-text-plate .trust-strip a,
+body.home .hero-text-plate .cta.secondary {
+  background: #171612;
+  border-color: #343228;
+  color: #f7f3e8;
+}
+
+body.home .hero-text-plate .trust-strip a strong {
+  color: #ffffff;
 }
