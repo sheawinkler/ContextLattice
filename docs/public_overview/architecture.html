@@ -233,14 +233,14 @@
 
     <section class="section" id="arch-lanes">
       <div class="kicker">Release Boundaries</div>
-      <h2>Public v3.2 lane vs private v4 lane</h2>
+      <h2>Public v3.9 lane vs private v4 lane</h2>
       <div class="grid component-grid">
         <article class="card component-card">
-          <h3>Public v3.2 (operator default)</h3>
+          <h3>Public v3.9 (operator default)</h3>
           <ul class="spec-list">
             <li><strong>Ingress:</strong> <code>gateway-go</code> on <code>:8075</code></li>
             <li><strong>Fallback:</strong> Python rollback lane on <code>:18075</code></li>
-            <li><strong>Memory-bank default:</strong> <code>icm_spike</code></li>
+            <li><strong>Memory-bank default:</strong> <code>shodh_spike</code> with bounded fallback chain</li>
             <li><strong>Slow-source handling:</strong> async continuation by default for tail-latency control</li>
             <li><strong>Objective:</strong> stable performance with clear operational behavior</li>
           </ul>
@@ -248,10 +248,10 @@
         <article class="card component-card">
           <h3>Private v4 (experimentation lane)</h3>
           <ul class="spec-list">
-            <li><strong>Ingress contract:</strong> unchanged from public v3.2</li>
+            <li><strong>Ingress contract:</strong> unchanged from public v3.9</li>
             <li><strong>Policy:</strong> stricter tuning loops and candidate backend promotions</li>
             <li><strong>Promotion gate:</strong> benchmark delta + recall parity + runtime soak</li>
-            <li><strong>Rollback:</strong> keep v3.2-compatible path available</li>
+            <li><strong>Rollback:</strong> keep v3.9-compatible path available</li>
             <li><strong>Objective:</strong> find next proven step-change before public release</li>
           </ul>
         </article>
