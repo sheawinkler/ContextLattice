@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -42,6 +45,19 @@ DEFAULT_MODEL = os.getenv("TASK_MODEL", "qwen3.5:9b")
 DEFAULT_INFERENCE_CONTROL_PLANE_URL = os.getenv(
     "TASK_INFERENCE_CONTROL_PLANE_URL",
     DEFAULT_ORCH_URL,
+)
+
+ADAPTER_AGENT_ALIASES = {
+    "pi": "pi",
+    "pi-coding-agent": "pi",
+    "droid": "droid",
+    "factory-droid": "droid",
+}
+
+RUNNER_SECRET_PATTERNS = (
+    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{16,}", re.IGNORECASE),
+    re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
+    re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9][A-Za-z0-9_-]{47,}(?![A-Za-z0-9])"),
 )
 
 
@@ -120,7 +136,7 @@ def _format_route_label_from_payload(
 
 
 def _runner_cmd_for_agent(agent: str) -> Optional[str]:
-    agent = agent.lower()
+    agent = _normalize_agent_alias(agent)
     if os.getenv("TASK_AGENT_CMD"):
         return os.getenv("TASK_AGENT_CMD")
     if agent == "trae":
@@ -148,6 +164,207 @@ def _runner_cmd_for_agent(agent: str) -> Optional[str]:
 
 def _run_command(cmd: str, env: dict[str, str]) -> int:
     return subprocess.call(cmd, shell=True, env=env)
+
+
+def _normalize_agent_alias(agent: str) -> str:
+    normalized = str(agent or "").strip().lower().replace("_", "-")
+    return ADAPTER_AGENT_ALIASES.get(normalized, normalized)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _runner_adapter_for_agent(agent: str) -> list[str] | None:
+    normalized = _normalize_agent_alias(agent)
+    script_by_agent = {
+        "pi": _repo_root() / "scripts" / "agent_runners" / "pi_runner.py",
+        "droid": _repo_root() / "scripts" / "agent_runners" / "droid_runner.py",
+    }
+    script = script_by_agent.get(normalized)
+    if not script or not script.is_file():
+        return None
+    return [sys.executable, str(script)]
+
+
+def _runner_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _redact_runner_text(value: str) -> str:
+    text = str(value or "")
+    for pattern in RUNNER_SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def _runner_tail(value: str, limit: int = 4000) -> str:
+    text = _redact_runner_text(value)
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+def _runner_timeout_secs(task_payload: dict[str, Any]) -> int:
+    for key in ("timeout_secs", "max_runtime_secs"):
+        try:
+            value = int(task_payload.get(key) or 0)
+        except Exception:
+            value = 0
+        if value > 0:
+            return value + 30
+    try:
+        value = int(os.getenv("TASK_RUNNER_TIMEOUT_SECS", "0") or 0)
+    except Exception:
+        value = 0
+    return value if value > 0 else 930
+
+
+def _fallback_runner_result(
+    agent: str,
+    status: str,
+    exit_code: int,
+    summary: str,
+    stdout: str = "",
+    stderr: str = "",
+) -> dict[str, Any]:
+    now = _runner_now_iso()
+    return attach_format_contract(
+        "runner_result.v1",
+        {
+            "schema_id": "runner_result.v1",
+            "ok": False,
+            "runner": agent,
+            "agent": agent,
+            "agent_id": f"{agent}_agent",
+            "task_id": "",
+            "project": "",
+            "status": status,
+            "exit_code": exit_code,
+            "started_at": now,
+            "completed_at": now,
+            "duration_secs": 0.0,
+            "summary": summary[:3000],
+            "stdout_tail": _runner_tail(stdout),
+            "stderr_tail": _runner_tail(stderr),
+            "artifacts": [],
+            "warnings": [],
+            "metadata": {"adapter": "task_agent_worker", "parse_fallback": True},
+        },
+    )
+
+
+def _parse_adapter_result(agent: str, stdout: str, stderr: str, exit_code: int) -> dict[str, Any]:
+    text = stdout.strip()
+    candidates = [text]
+    if "\n" in text:
+        candidates.extend(line.strip() for line in reversed(text.splitlines()) if line.strip().startswith("{"))
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return _fallback_runner_result(
+        agent,
+        "failed",
+        exit_code,
+        "Runner adapter did not emit valid runner_result.v1 JSON",
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _run_adapter(argv: list[str], env: dict[str, str], cwd: Path, timeout: int, agent: str) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        result = _parse_adapter_result(agent, proc.stdout, proc.stderr, proc.returncode)
+        if "exit_code" not in result:
+            result["exit_code"] = proc.returncode
+        return result
+    except subprocess.TimeoutExpired as exc:
+        return _fallback_runner_result(
+            agent,
+            "timed_out",
+            124,
+            f"Runner adapter timed out after {timeout} seconds",
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+        )
+    except OSError as exc:
+        return _fallback_runner_result(agent, "failed", 1, f"Runner adapter execution failed: {exc}")
+
+
+def _compact_runner_result(result: dict[str, Any]) -> dict[str, Any]:
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    return {
+        "schema_id": str(result.get("schema_id") or "runner_result.v1"),
+        "ok": bool(result.get("ok")),
+        "runner": str(result.get("runner") or ""),
+        "agent": str(result.get("agent") or ""),
+        "agent_id": str(result.get("agent_id") or ""),
+        "task_id": str(result.get("task_id") or ""),
+        "project": str(result.get("project") or ""),
+        "status": str(result.get("status") or ""),
+        "exit_code": result.get("exit_code"),
+        "started_at": result.get("started_at"),
+        "completed_at": result.get("completed_at"),
+        "duration_secs": result.get("duration_secs"),
+        "summary": str(result.get("summary") or "")[:1500],
+        "stdout_tail": _runner_tail(str(result.get("stdout_tail") or ""), 1200),
+        "stderr_tail": _runner_tail(str(result.get("stderr_tail") or ""), 1200),
+        "artifacts": result.get("artifacts") if isinstance(result.get("artifacts"), list) else [],
+        "warnings": result.get("warnings") if isinstance(result.get("warnings"), list) else [],
+        "metadata": {
+            "adapter": metadata.get("adapter"),
+            "lease": metadata.get("lease"),
+            "agent_state": metadata.get("agent_state"),
+            "flags_note": metadata.get("flags_note"),
+            "install_hint": metadata.get("install_hint"),
+        },
+    }
+
+
+def _task_status_for_runner_result(result: dict[str, Any]) -> str:
+    status = str(result.get("status") or "").lower()
+    if status == "succeeded" and bool(result.get("ok")):
+        return "succeeded"
+    if status in {"blocked", "missing_binary", "invalid_task", "skipped"}:
+        return "blocked"
+    return "failed"
+
+
+def _message_for_adapter_result(agent: str, result: dict[str, Any]) -> str:
+    status = str(result.get("status") or "").lower()
+    if status == "succeeded" and bool(result.get("ok")):
+        return f"Completed by {agent} adapter"
+    if status == "timed_out":
+        return "Runner adapter timed out"
+    if status == "missing_binary":
+        return "Runner binary missing"
+    return "Runner adapter failed"
+
+
+def _agent_state_for_runner_status(result: dict[str, Any]) -> dict[str, Any]:
+    status = str(result.get("status") or "").lower()
+    if status == "succeeded" and bool(result.get("ok")):
+        state = "done"
+    elif status in {"blocked", "missing_binary", "invalid_task", "timed_out"}:
+        state = "blocked"
+    else:
+        state = "blocked"
+    return {"schema_id": "contextlattice_agent_lifecycle_state.v1", "state": state, "authority": "adapter", "source": "task_agent_worker"}
 
 
 def _orchestrator_headers() -> dict[str, str]:
@@ -262,8 +479,11 @@ def _handle_task(
         os.getenv("TASK_INFERENCE_CONTROL_PLANE_URL", DEFAULT_INFERENCE_CONTROL_PLANE_URL)
     ).strip() or orchestrator_url
     route_payload: dict[str, Any] = {}
+    task_payload = task.get("payload") or {}
+    agent_choice = _normalize_agent_alias(task.get("agent") or agent)
+    adapter_argv = None if os.getenv("TASK_AGENT_CMD") else _runner_adapter_for_agent(agent_choice)
 
-    if not _gateway_inference_enabled():
+    if not _gateway_inference_enabled() and adapter_argv is None:
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
@@ -271,39 +491,51 @@ def _handle_task(
         )
         return
 
-    try:
-        route_response = _post(
-            control_plane_url,
-            "/v1/inference/route",
-            {
+    if _gateway_inference_enabled():
+        try:
+            route_response = _post(
+                control_plane_url,
+                "/v1/inference/route",
+                {
+                    "provider": provider,
+                    "base_url": base_url_override,
+                    "api_key": api_key or "",
+                },
+                timeout=20.0,
+            )
+            route_candidate = route_response.get("route")
+            if isinstance(route_candidate, dict):
+                route_payload = dict(route_candidate)
+        except Exception as exc:
+            if adapter_argv is None:
+                _post(
+                    orchestrator_url,
+                    f"/agents/tasks/{task['id']}/status",
+                    {"status": "failed", "message": f"Go inference route error: {exc}"},
+                )
+                return
+            route_payload = {
                 "provider": provider,
-                "base_url": base_url_override,
-                "api_key": api_key or "",
-            },
-            timeout=20.0,
-        )
-        route_candidate = route_response.get("route")
-        if isinstance(route_candidate, dict):
-            route_payload = dict(route_candidate)
-    except Exception as exc:
-        _post(
-            orchestrator_url,
-            f"/agents/tasks/{task['id']}/status",
-            {"status": "failed", "message": f"Go inference route error: {exc}"},
-        )
-        return
+                "base_url": base_url_override or "",
+                "reason": f"inference route unavailable for optional adapter execution: {exc}",
+            }
 
-    if not route_payload:
+    if not route_payload and adapter_argv is None:
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
             {"status": "failed", "message": "Go inference route returned no route payload"},
         )
         return
+    if not route_payload:
+        route_payload = {
+            "provider": provider,
+            "base_url": base_url_override or "",
+            "reason": "inference route skipped for optional runner adapter",
+        }
 
-    task_payload = task.get("payload") or {}
     topic_path = task_payload.get("topic_path") or task_payload.get("topicPath")
-    context_runtime = ContextExpansionRuntime(orchestrator_url=orchestrator_url, agent_id=(task.get("agent") or agent))
+    context_runtime = ContextExpansionRuntime(orchestrator_url=orchestrator_url, agent_id=agent_choice)
     context_bundle: dict[str, Any]
     context_prompt: str
     try:
@@ -334,7 +566,6 @@ def _handle_task(
             {"status": "blocked", "message": "Awaiting approval"},
         )
         return
-    agent_choice = (task.get("agent") or agent).lower()
     cmd = _runner_cmd_for_agent(agent_choice)
     route_provider = str(route_payload.get("provider") or provider)
     route_base_url = str(route_payload.get("base_url") or (base_url_override or ""))
@@ -354,6 +585,10 @@ def _handle_task(
             "TASK_API_KEY": str(api_key or ""),
             "CONTEXTLATTICE_ORCHESTRATOR_URL": orchestrator_url,
             "MEMMCP_ORCHESTRATOR_URL": orchestrator_url,
+            "CONTEXTLATTICE_SESSION_ID": str(
+                task_payload.get("session_id") or task_payload.get("sessionId") or task.get("session_id") or os.getenv("CONTEXTLATTICE_SESSION_ID", "")
+            ),
+            "CONTEXTLATTICE_AGENT_ID": str(task_payload.get("agent_id") or task_payload.get("agentId") or f"{agent_choice.replace('-', '_')}_agent"),
             "TASK_CONTEXT_BUNDLE": _serialize_env_json(context_bundle),
             "TASK_CONTEXT_PROMPT": context_prompt,
             "TASK_TOOL_CONTEXT_SLICES": _serialize_env_json(
@@ -363,6 +598,78 @@ def _handle_task(
             ),
         }
     )
+
+    if adapter_argv is not None:
+        result = _run_adapter(
+            adapter_argv,
+            env,
+            _repo_root(),
+            _runner_timeout_secs(task_payload),
+            agent_choice,
+        )
+        compact_result = _compact_runner_result(result)
+        task_status = _task_status_for_runner_result(result)
+        message = _message_for_adapter_result(agent_choice, result)
+        if pending_sources:
+            message += f" (pending async sources: {', '.join(str(item) for item in pending_sources[:4])})"
+        agent_state = _agent_state_for_runner_status(result)
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {
+                "status": task_status,
+                "message": message,
+                "metadata": {
+                    "runner_result": compact_result,
+                    "agent_state": agent_state,
+                    "retrieval_lifecycle": lifecycle,
+                },
+            },
+        )
+        context_runtime.write_checkpoint(
+            task=task,
+            bundle=context_bundle,
+            output=json.dumps(
+                {
+                    "schema_id": "contextlattice_runner_checkpoint.v1",
+                    "message": message,
+                    "runner_result": compact_result,
+                    "agent_state": agent_state,
+                    "lease": compact_result.get("metadata", {}).get("lease"),
+                    "retrieval_lifecycle": lifecycle,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            provider=f"{agent_choice}-adapter",
+            model=model,
+            status=task_status,
+        )
+        _post_feedback(
+            orchestrator_url,
+            {
+                "project": task.get("project"),
+                "task_id": task.get("id"),
+                "source": "agent",
+                "content": str(compact_result.get("summary") or message)[:1500],
+                "topic_path": topic_path,
+                "metadata": {
+                    "agent": agent_choice,
+                    "provider": route_provider,
+                    "model": model,
+                    "inference_route": {
+                        "provider": route_provider,
+                        "base_url": route_base_url,
+                        "reason": route_reason,
+                    },
+                    "runner_result": compact_result,
+                    "agent_state": agent_state,
+                    "retrieval_lifecycle": lifecycle,
+                    "context_expansion": context_bundle.get("expansion"),
+                },
+            },
+        )
+        return
 
     if cmd:
         exit_code = _run_command(cmd, env)
@@ -491,7 +798,7 @@ def main() -> None:
     parser.add_argument(
         "--task-agent",
         default=DEFAULT_AGENT,
-        help="trae|letta|autogen|crewai|langgraph|openhands|hermes-agent|hermes|opencode|goose|eliza",
+        help="trae|letta|autogen|crewai|langgraph|openhands|hermes-agent|hermes|opencode|goose|eliza|pi|droid",
     )
     parser.add_argument("--orchestrator-url", default=DEFAULT_ORCH_URL)
     parser.add_argument("--model-provider", default=DEFAULT_PROVIDER)

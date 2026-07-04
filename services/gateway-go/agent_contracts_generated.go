@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 12
+const GeneratedAgentContractRegistryVersion = 13
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -19,6 +19,7 @@ const GeneratedAgentContractAgentPromptContextPackageV1 = "agent_prompt_context_
 const GeneratedAgentContractAgentRunTraceV1 = "agent_run_trace.v1"
 const GeneratedAgentContractAgentSessionRollupV1 = "agent_session_rollup.v1"
 const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
+const GeneratedAgentContractAgentTaskLeaseV1 = "agent_task_lease.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
@@ -31,6 +32,8 @@ const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
 const GeneratedAgentContractRetrievalProgressV1 = "retrieval_progress.v1"
 const GeneratedAgentContractReviewModeResponseV1 = "review_mode_response.v1"
 const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
+const GeneratedAgentContractRunnerCapabilityV1 = "runner_capability.v1"
+const GeneratedAgentContractRunnerResultV1 = "runner_result.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
 const GeneratedAgentContractUniversalAgentAdapterResponseV1 = "universal_agent_adapter_response.v1"
 const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
@@ -43,6 +46,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentRunTraceV1,
 	GeneratedAgentContractAgentSessionRollupV1,
 	GeneratedAgentContractAgentSpanV1,
+	GeneratedAgentContractAgentTaskLeaseV1,
 	GeneratedAgentContractAgentTaskResultV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
 	GeneratedAgentContractCodexCompactHookStdoutV1,
@@ -55,6 +59,8 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractRetrievalProgressV1,
 	GeneratedAgentContractReviewModeResponseV1,
 	GeneratedAgentContractRunAdvisorV1,
+	GeneratedAgentContractRunnerCapabilityV1,
+	GeneratedAgentContractRunnerResultV1,
 	GeneratedAgentContractSteeringCommentV1,
 	GeneratedAgentContractUniversalAgentAdapterResponseV1,
 	GeneratedAgentContractWritebackResultV1,
@@ -100,6 +106,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractAgentSpanV1,
 		PayloadKind:        "agent_span",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentTaskLeaseV1,
+		PayloadKind:        "agent_task_lease",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -172,6 +184,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractRunAdvisorV1,
 		PayloadKind:        "run_advisor",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRunnerCapabilityV1,
+		PayloadKind:        "runner_capability",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRunnerResultV1,
+		PayloadKind:        "runner_result",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

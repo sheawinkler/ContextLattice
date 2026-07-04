@@ -91,6 +91,7 @@ RUNTIME_PROOF = AGENT_DIR / "agent-runtime-proof-pack"
 ADOPTION_PROOF = AGENT_DIR / "agent-adoption-proof-matrix"
 TRACE = AGENT_DIR / "agent-run-trace"
 REPO_INTEGRATION_AUDIT = AGENT_DIR / "audit-agent-repo-integration"
+CONTRACTS_PATH = REPO_ROOT / "config" / "agent_contracts" / "agent_output_contracts.json"
 AGENT_CONFIG_PATHS = [
     GLOBAL_HOME / "config" / "agents" / "agent_profiles.json",
     REPO_ROOT / "config" / "agents" / "agent_profiles.json",
@@ -115,6 +116,16 @@ AGENT_COMMANDS = {
     "hermes-ultra": ["hermes-ultra"],
     "pi": ["pi"],
     "droid": ["droid"],
+}
+
+RUNNER_INSTALL_HINTS = {
+    "pi": "brew install pi-coding-agent",
+    "droid": "brew install --cask droid",
+}
+
+RUNNER_ADAPTERS = {
+    "pi": REPO_ROOT / "scripts" / "agent_runners" / "pi_runner.py",
+    "droid": REPO_ROOT / "scripts" / "agent_runners" / "droid_runner.py",
 }
 
 APP_PATHS = {
@@ -329,28 +340,51 @@ def hook_runtime_status(global_home: Path) -> list[dict[str, Any]]:
     ]
 
 
+def runner_capability_contract_present() -> bool:
+    try:
+        parsed = json.loads(CONTRACTS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    contracts = parsed.get("contracts") if isinstance(parsed, dict) else {}
+    return isinstance(contracts, dict) and "runner_capability.v1" in contracts
+
+
 def detect_agents(home: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     profiles = load_profiles()
+    capability_contract_present = runner_capability_contract_present()
     for profile in profile_order():
         command_hits = [cmd for cmd in AGENT_COMMANDS.get(profile, []) if shutil.which(cmd)]
         app_hits = [path for path in APP_PATHS.get(profile, []) if Path(path).exists()]
-        if profile.endswith("-web") or profile in {"pi", "droid"}:
+        template = template_path(profile)
+        template_exists = template.exists()
+        command_state = "detected" if command_hits else ("missing" if AGENT_COMMANDS.get(profile) else "not_applicable")
+        adapter_path = RUNNER_ADAPTERS.get(profile)
+        adapter_present = bool(adapter_path and adapter_path.is_file())
+        runner_profile = profile in RUNNER_INSTALL_HINTS
+        if runner_profile and command_hits:
+            install_state = "detected"
+        elif profile.endswith("-web") or runner_profile:
             install_state = "copy_template"
         elif command_hits or app_hits:
             install_state = "detected"
         else:
             install_state = "not_detected"
-        template = template_path(profile)
         rows.append(
             {
                 "profile": profile,
                 "agent_id": str(as_dict(profiles.get(profile)).get("agent_id") or ""),
                 "surfaces": as_list(as_dict(profiles.get(profile)).get("surfaces")),
                 "install_state": install_state,
+                "instruction_state": "template_present" if template_exists else "template_missing",
+                "command_state": command_state,
                 "commands": command_hits,
                 "apps": app_hits,
-                "template": compact_path(template) if template.exists() else "",
+                "template": compact_path(template) if template_exists else "",
+                "install_hint": RUNNER_INSTALL_HINTS.get(profile, ""),
+                "runner_adapter": compact_path(adapter_path) if adapter_path and adapter_present else "",
+                "runner_capability_contract": capability_contract_present if runner_profile else None,
+                "runner_ready": bool(runner_profile and template_exists and command_hits and adapter_present and capability_contract_present),
             }
         )
     codex_sessions = home / ".codex" / "sessions"

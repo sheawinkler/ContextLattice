@@ -2689,6 +2689,10 @@ func (c *cli) cmdDiscover(args []string) error {
 			"hook":                   hook,
 			"repo_instruction_check": map[string]any{"ok": false, "reason": "repo_not_requested"},
 		}
+		if runner := runnerDiscoveryMetadata(name, absRepo); len(runner) > 0 {
+			integration["runner"] = runner
+			integration["install_hint"] = runner["install_hint"]
+		}
 		if absRepo != "" {
 			audit := auditRepoIntegration(absRepo, []string{name})
 			integration["repo_instruction_check"] = map[string]any{
@@ -3063,6 +3067,109 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func runnerDiscoveryMetadata(agent string, repo string) map[string]any {
+	name := strings.TrimSpace(strings.ToLower(agent))
+	var commands []string
+	var hint string
+	var adapterRel string
+	switch name {
+	case "pi":
+		commands = []string{"pi"}
+		hint = "brew install pi-coding-agent"
+		adapterRel = filepath.Join("scripts", "agent_runners", "pi_runner.py")
+	case "droid":
+		commands = []string{"droid"}
+		hint = "brew install --cask droid"
+		adapterRel = filepath.Join("scripts", "agent_runners", "droid_runner.py")
+	default:
+		return map[string]any{}
+	}
+	detected := []string{}
+	for _, command := range commands {
+		if _, err := exec.LookPath(command); err == nil {
+			detected = append(detected, command)
+		}
+	}
+	adapter := runnerArtifactPath(repo, adapterRel)
+	adapterPresent := executableExists(adapter)
+	contractPresent := runnerCapabilityContractPresent(repo)
+	commandState := "missing"
+	if len(detected) > 0 {
+		commandState = "detected"
+	}
+	return map[string]any{
+		"profile":                    name,
+		"commands":                   detected,
+		"command_state":              commandState,
+		"install_hint":               hint,
+		"adapter":                    adapter,
+		"adapter_present":            adapterPresent,
+		"runner_capability_contract": contractPresent,
+		"runner_ready":               len(detected) > 0 && adapterPresent && contractPresent,
+		"required_for_quickstart":    false,
+	}
+}
+
+func runnerContextLatticeRoots(repo string) []string {
+	candidates := []string{currentGitRoot()}
+	if strings.TrimSpace(repo) != "" {
+		if abs, err := filepath.Abs(repo); err == nil {
+			candidates = append(candidates, abs)
+		}
+	}
+	candidates = append(candidates, repoRoot(), ".")
+	seen := map[string]bool{}
+	out := []string{}
+	for _, candidate := range candidates {
+		clean := strings.TrimSpace(candidate)
+		if clean == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(clean); err == nil {
+			clean = abs
+		}
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+	return out
+}
+
+func runnerArtifactPath(repo string, rel string) string {
+	roots := runnerContextLatticeRoots(repo)
+	for _, root := range roots {
+		path := filepath.Join(root, rel)
+		if executableExists(path) {
+			return path
+		}
+	}
+	if len(roots) > 0 {
+		return filepath.Join(roots[0], rel)
+	}
+	return rel
+}
+
+func runnerCapabilityContractPresent(repo string) bool {
+	for _, root := range runnerContextLatticeRoots(repo) {
+		path := filepath.Join(root, "config", "agent_contracts", "agent_output_contracts.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		parsed := map[string]any{}
+		if json.Unmarshal(data, &parsed) != nil {
+			continue
+		}
+		contracts := asMap(parsed["contracts"])
+		if _, ok := contracts["runner_capability.v1"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func processCWD(pid string) string {
 	if pid == "" {
 		return ""
@@ -3122,6 +3229,13 @@ func agentDiscoveryExplanation(agent, state, stateSource string, processes []any
 	if !asBool(integration["adapter_tool"]) {
 		parts = append(parts, "global adapter tool is missing or not executable")
 	}
+	if runner := asMap(integration["runner"]); len(runner) > 0 {
+		if asBool(runner["runner_ready"]) {
+			parts = append(parts, "runner adapter is ready")
+		} else if hint := firstString(runner["install_hint"]); hint != "" {
+			parts = append(parts, "runner adapter is optional and not ready; install hint: "+hint)
+		}
+	}
 	return strings.Join(parts, "; ") + "."
 }
 
@@ -3153,6 +3267,10 @@ func localAgentDiscoverySummary(globalHome string, names []string, repo string, 
 			"adapter_tool":    executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_adapter")),
 			"discover_tool":   executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_discover")),
 			"hook":            agentHookEvidence(name),
+		}
+		if runner := runnerDiscoveryMetadata(name, repo); len(runner) > 0 {
+			integration["runner"] = runner
+			integration["install_hint"] = runner["install_hint"]
 		}
 		if strings.TrimSpace(repo) != "" {
 			if absRepo, err := filepath.Abs(repo); err == nil {

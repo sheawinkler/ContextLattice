@@ -71,6 +71,7 @@ Goals:
 Important:
 - `contextlattice_adopt integrate` writes managed instruction blocks for supported profiles.
 - It does not install Codex, Claude Code, Hermes, Hermes Ultra, Pi, Droid, or other agents.
+- Optional Pi/Droid runner execution requires their CLIs (`brew install pi-coding-agent`, `brew install --cask droid`).
 - Preserve existing user text in repo instruction files.
 - If you are already inside a ContextLattice checkout, do not clone a duplicate repo.
 

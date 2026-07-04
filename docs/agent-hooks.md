@@ -74,6 +74,8 @@ Installed commands:
 | `contextlattice_branch_lane_guard` | Private/public/public-paid lane hygiene. |
 | `contextlattice_rust_rebuild_gate` | Detect Rust changes and enforce full rebuild. |
 | `contextlattice_runtime_env_guard` | Detect stale/conflicting env override drift. |
+
+Pi and Droid runner adapters are repo-local task-worker internals under `scripts/agent_runners/`. ContextLattice reports install hints and readiness, but it does not install or require third-party Pi/Droid CLIs for quickstart.
 | `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
 | `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
 | `contextlattice_orbstack_forward_guard` | Docker/OrbStack and 8075 host-forward repair guard. |

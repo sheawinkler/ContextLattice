@@ -37,6 +37,9 @@ REQUIRED_CONTRACTS = (
     "policy_context_package.v1",
     "agent_preflight_response.v1",
     "agent_task_result.v1",
+    "runner_capability.v1",
+    "runner_result.v1",
+    "agent_task_lease.v1",
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
     "run_advisor.v1",
@@ -325,6 +328,114 @@ def sample_task_result() -> dict[str, Any]:
     )
 
 
+def sample_runner_capability(runner: str) -> dict[str, Any]:
+    if runner == "droid":
+        payload = {
+            "schema_id": "runner_capability.v1",
+            "runner": "droid",
+            "agent": "droid",
+            "agent_id": "droid_agent",
+            "roles": ["scout", "reviewer", "implementer"],
+            "surfaces": ["cli", "json", "brew-cask"],
+            "install": {"brew": "", "brew_cask": "droid", "hint": "brew install --cask droid"},
+            "detection": {"commands": ["droid"], "env_overrides": ["DROID_BIN"]},
+            "execution": {
+                "adapter": "scripts/agent_runners/droid_runner.py",
+                "supports_worktree": True,
+                "supports_json_output": True,
+                "requires_explicit_cwd": True,
+            },
+            "safety": {
+                "default_write_access": False,
+                "requires_sandbox": True,
+                "no_auto_merge": True,
+                "no_git_push": True,
+                "redact_secrets": True,
+            },
+            "max_parallel": 1,
+        }
+    else:
+        payload = {
+            "schema_id": "runner_capability.v1",
+            "runner": "pi",
+            "agent": "pi",
+            "agent_id": "pi_agent",
+            "roles": ["scout", "summarizer", "reviewer", "light_refactor"],
+            "surfaces": ["cli", "json", "brew"],
+            "install": {"brew": "pi-coding-agent", "brew_cask": "", "hint": "brew install pi-coding-agent"},
+            "detection": {"commands": ["pi"], "env_overrides": ["PI_CODING_AGENT_BIN", "PI_BIN"]},
+            "execution": {
+                "adapter": "scripts/agent_runners/pi_runner.py",
+                "supports_worktree": False,
+                "supports_json_output": True,
+                "requires_explicit_cwd": True,
+            },
+            "safety": {
+                "default_write_access": False,
+                "requires_sandbox": True,
+                "no_auto_merge": True,
+                "no_git_push": True,
+                "redact_secrets": True,
+            },
+            "max_parallel": 3,
+        }
+    return attach_format_contract("runner_capability.v1", payload)
+
+
+def sample_runner_result_missing_binary() -> dict[str, Any]:
+    return attach_format_contract(
+        "runner_result.v1",
+        {
+            "schema_id": "runner_result.v1",
+            "ok": False,
+            "runner": "pi",
+            "agent": "pi",
+            "agent_id": "pi_agent",
+            "task_id": "task_audit",
+            "project": "contextlattice",
+            "status": "missing_binary",
+            "exit_code": 127,
+            "started_at": "2026-07-04T00:00:00Z",
+            "completed_at": "2026-07-04T00:00:01Z",
+            "duration_secs": 1.0,
+            "summary": "pi binary not found; install with: brew install pi-coding-agent",
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "artifacts": [],
+            "warnings": ["optional ContextLattice context prompt/bundle not supplied"],
+            "metadata": {
+                "adapter": "pi_runner",
+                "install_hint": "brew install pi-coding-agent",
+                "agent_state": {"state": "blocked", "authority": "adapter", "source": "pi_runner"},
+            },
+        },
+    )
+
+
+def sample_agent_task_lease() -> dict[str, Any]:
+    return attach_format_contract(
+        "agent_task_lease.v1",
+        {
+            "schema_id": "agent_task_lease.v1",
+            "task_id": "task_audit",
+            "lease_id": "lease_audit",
+            "worker": "local-pi-01",
+            "runner": "pi",
+            "status": "claimed",
+            "claimed_at": "2026-07-04T00:00:00Z",
+            "expires_at": "2026-07-04T00:10:00Z",
+            "heartbeat_required": False,
+            "heartbeat_interval_secs": 0,
+            "worktree": "",
+            "cwd": "",
+            "allowed_paths": [],
+            "max_runtime_secs": 600,
+            "capabilities": ["scout", "reviewer"],
+            "metadata": {"heartbeat_todo": "POST /agents/tasks/{task_id}/heartbeat when the task store exposes it"},
+        },
+    )
+
+
 def sample_contract_ack() -> dict[str, Any]:
     registry = load_agent_contracts_registry()
     return attach_format_contract(
@@ -591,6 +702,7 @@ def sample_universal_agent_adapter_response(registry: dict[str, Any]) -> dict[st
                 "required_phases": [
                     "preflight",
                     "auto_session",
+                    "agent_state",
                     "context_pack",
                     "checkpoint",
                     "handoff",
@@ -787,6 +899,10 @@ def run_audit() -> list[dict[str, Any]]:
     for contract_id, payload in (
         ("writeback_result.v1", sample_writeback_result()),
         ("agent_task_result.v1", sample_task_result()),
+        ("runner_capability.v1", sample_runner_capability("pi")),
+        ("runner_capability.v1", sample_runner_capability("droid")),
+        ("runner_result.v1", sample_runner_result_missing_binary()),
+        ("agent_task_lease.v1", sample_agent_task_lease()),
         ("contract_acknowledgement.v1", sample_contract_ack()),
         ("agent_span.v1", sample_agent_span()),
         ("agent_flight_recorder_event.v1", sample_flight_event()),
