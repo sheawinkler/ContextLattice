@@ -413,6 +413,60 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
             self.assertLessEqual(len(payload["stdout_tail"]), 4200)
             self.assertLessEqual(len(payload["stderr_tail"]), 4200)
 
+    def test_droid_adapter_uses_verified_exec_file_cwd_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "fake_droid.py"
+            fake.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "print(json.dumps(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            env = adapter_env(json.dumps({"cwd": tmp}))
+            env["TASK_AGENT"] = "droid"
+            env["DROID_BIN"] = str(fake)
+            proc = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "agent_runners" / "droid_runner.py")],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            payload = json.loads(proc.stdout)
+            self.assertEqual(proc.returncode, 0)
+            argv = json.loads(payload["stdout_tail"])
+            self.assertEqual(argv[0], "exec")
+            self.assertIn("--file", argv)
+            self.assertIn("--cwd", argv)
+            self.assertEqual(Path(argv[argv.index("--cwd") + 1]).resolve(), Path(tmp).resolve())
+
+    def test_droid_auth_failure_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "fake_droid.py"
+            fake.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "print('Authentication failed. Please log in using /login or set FACTORY_API_KEY.', file=sys.stderr)\n"
+                "raise SystemExit(1)\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            env = adapter_env(json.dumps({"cwd": tmp}))
+            env["TASK_AGENT"] = "droid"
+            env["DROID_BIN"] = str(fake)
+            proc = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "agent_runners" / "droid_runner.py")],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            payload = json.loads(proc.stdout)
+            self.assertEqual(proc.returncode, 1)
+            self.assertEqual(payload["status"], "blocked")
+            self.assertIn("operator action required", payload["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

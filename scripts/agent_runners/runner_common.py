@@ -168,6 +168,38 @@ def build_argv(binary: str, raw_args: str, prompt_file: Path) -> list[str]:
     return [binary] + args + [prompt]
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def build_droid_argv(binary: str, raw_args: str, prompt_file: Path, workdir: str, payload: dict[str, Any]) -> list[str]:
+    args = split_args(raw_args)
+    prompt = str(prompt_file)
+    if any("{prompt_file}" in item or "{cwd}" in item for item in args):
+        return [binary] + [item.replace("{prompt_file}", prompt).replace("{cwd}", workdir) for item in args]
+
+    argv = [binary, "exec", "--file", prompt, "--cwd", workdir]
+    output_format = str(os.getenv("DROID_OUTPUT_FORMAT", "") or payload.get("output_format") or "").strip()
+    if output_format:
+        argv.extend(["--output-format", output_format])
+    auto_level = str(os.getenv("DROID_AUTO_LEVEL", "") or payload.get("auto_level") or "").strip()
+    if auto_level:
+        argv.extend(["--auto", auto_level])
+    if _env_bool("DROID_USE_SPEC", bool(payload.get("use_spec") or False)):
+        argv.append("--use-spec")
+    argv.extend(args)
+    return argv
+
+
+def build_runner_argv(runner: str, binary: str, raw_args: str, prompt_file: Path, workdir: str, payload: dict[str, Any]) -> list[str]:
+    if runner == "droid":
+        return build_droid_argv(binary, raw_args, prompt_file, workdir, payload)
+    return build_argv(binary, raw_args, prompt_file)
+
+
 def safe_payload_for_prompt(payload: dict[str, Any]) -> dict[str, Any]:
     out = redact_value(payload)
     if isinstance(out, dict):
@@ -242,6 +274,15 @@ def result_payload(
         "metadata": redact_value(metadata or {}),
     }
     return attach_format_contract("runner_result.v1", payload)
+
+
+def classify_process_status(returncode: int, stdout: str, stderr: str) -> str:
+    if returncode == 0:
+        return "succeeded"
+    combined = f"{stdout}\n{stderr}".lower()
+    if "authentication failed" in combined or "please log in" in combined or "factory_api_key" in combined:
+        return "blocked"
+    return "failed"
 
 
 def emit_result(payload: dict[str, Any], exit_code: int) -> int:
@@ -367,7 +408,7 @@ def run_adapter(
     with tempfile.TemporaryDirectory(prefix=f"contextlattice-{runner}-") as tmp:
         prompt_file = Path(tmp) / "prompt.json"
         prompt_file.write_text(build_prompt_text(runner, payload, warnings), encoding="utf-8")
-        argv = build_argv(binary, raw_args, prompt_file)
+        argv = build_runner_argv(runner, binary, raw_args, prompt_file, workdir, payload)
         metadata = {
             "adapter": f"{runner}_runner",
             "argv": [Path(binary).name] + argv[1:],
@@ -399,13 +440,16 @@ def run_adapter(
                 check=False,
             )
             completed = now_iso()
-            status = "succeeded" if proc.returncode == 0 else "failed"
+            status = classify_process_status(proc.returncode, proc.stdout, proc.stderr)
             metadata["agent_state"] = {
                 "state": "done" if proc.returncode == 0 else "blocked",
                 "authority": "adapter",
                 "source": f"{runner}_runner",
             }
-            summary = f"{runner} adapter completed" if proc.returncode == 0 else f"{runner} adapter exited {proc.returncode}"
+            if status == "blocked":
+                summary = f"{runner} adapter blocked: authentication or operator action required"
+            else:
+                summary = f"{runner} adapter completed" if proc.returncode == 0 else f"{runner} adapter exited {proc.returncode}"
             return emit_result(
                 result_payload(
                     runner=runner,

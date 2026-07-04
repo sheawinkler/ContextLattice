@@ -37,3 +37,5 @@ Optional runner execution:
 ```bash
 TASK_AGENT=droid python3 scripts/task_agent_worker.py --task-agent droid --worker-name local-droid-01
 ```
+
+The repo-local Droid adapter uses `droid exec --file <prompt> --cwd <path>` by default. Keep custom flags operator-controlled through `DROID_ARGS`, `DROID_AUTO_LEVEL`, `DROID_OUTPUT_FORMAT`, and `DROID_USE_SPEC`.
