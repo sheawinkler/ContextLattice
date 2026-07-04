@@ -135,7 +135,12 @@
       "query": "pi agent preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
       "surfaces": [
-        "pi"
+        "pi",
+        "pi-coding-agent",
+        "brew"
+      ],
+      "aliases": [
+        "pi-coding-agent"
       ]
     },
     "droid": {
@@ -148,7 +153,12 @@
       "query": "droid agent preflight connectivity and retrieval",
       "retrieval_mode": "balanced",
       "surfaces": [
-        "droid"
+        "droid",
+        "droid-exec",
+        "brew-cask"
+      ],
+      "aliases": [
+        "factory-droid"
       ]
     },
     "chatgpt-web": {

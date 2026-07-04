@@ -45,7 +45,7 @@ def adapter_contract() -> dict[str, Any]:
     return {
         "schema_id": "contextlattice_universal_agent_adapter.v1",
         "version": "2026-06-05",
-        "required_phases": ["preflight", "auto_session", "context_pack", "context_pack_outcome", "checkpoint", "handoff", "completion"],
+        "required_phases": ["preflight", "auto_session", "agent_state", "context_pack", "context_pack_outcome", "checkpoint", "handoff", "completion"],
         "required_exports": [
             "CONTEXTLATTICE_ORCHESTRATOR_URL",
             "MEMMCP_ORCHESTRATOR_URL",
