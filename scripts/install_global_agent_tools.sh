@@ -46,6 +46,7 @@ Optional development-only Python helpers are installed only with
   contextlattice_agent_orchestration
   contextlattice_source_backfill
   contextlattice_codex_session_store_doctor
+  contextlattice_runner_quality
 
 The compact hook runtime installs its minimal Python helpers by default because
 PreCompact/PostCompact/SessionStart hooks use them even when the public CLI
@@ -483,6 +484,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_runner_quality" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/runner-quality"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh --include-dev-python-tools first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_search" \
   "${GLOBAL_BIN_DIR}/contextlattice_pack" \
@@ -502,7 +516,8 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_memory_topology" \
   "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
   "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
-  "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
+  "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" \
+  "${GLOBAL_BIN_DIR}/contextlattice_runner_quality"
 
 build_go_agent_tools
 
@@ -534,7 +549,8 @@ if [[ "$INCLUDE_DEV_PYTHON_TOOLS" != "1" ]]; then
   rm -f \
     "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
     "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
-    "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
+    "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" \
+    "${GLOBAL_BIN_DIR}/contextlattice_runner_quality"
 fi
 
 write_hook_wrapper() {
@@ -741,6 +757,7 @@ if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
   log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
   log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
+  log "  - ${GLOBAL_BIN_DIR}/contextlattice_runner_quality"
 fi
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
@@ -762,5 +779,6 @@ log "  contextlattice_memory_topology --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
+  log "  contextlattice_runner_quality --pretty"
 fi
 log "  contextlattice_agent_start -h"

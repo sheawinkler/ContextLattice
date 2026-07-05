@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 13,
-  "updated_at": "2026-07-04T00:00:00Z",
+  "registry_version": 14,
+  "updated_at": "2026-07-05T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -1946,6 +1946,111 @@
         "raw_prompt",
         "api_key",
         "token",
+        "password"
+      ],
+      "forbidden_scope": "root"
+    },
+    "runner_quality_sample.v1": {
+      "contract_version": 1,
+      "payload_kind": "runner_quality_sample",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_runner_quality_without_raw_logs_or_secrets",
+      "max_total_json_bytes": 45000,
+      "max_string_bytes": 3000,
+      "max_list_items": 48,
+      "required_fields": [
+        "schema_id",
+        "sample_id",
+        "captured_at",
+        "runner",
+        "agent",
+        "agent_id",
+        "task_id",
+        "project",
+        "status",
+        "ok",
+        "exit_code",
+        "duration_secs",
+        "context_pack_quality",
+        "token_impact",
+        "outcome",
+        "feedback",
+        "metadata",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "sample_id": "string",
+        "captured_at": "string",
+        "runner": "string",
+        "agent": "string",
+        "agent_id": "string",
+        "task_id": "string",
+        "project": "string",
+        "status": "string",
+        "ok": "bool",
+        "exit_code": "int",
+        "duration_secs": "number",
+        "context_pack_quality": "object",
+        "token_impact": "object",
+        "outcome": "object",
+        "feedback": "object",
+        "metadata": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "context_pack_quality": [
+          "sample_id",
+          "quality_score",
+          "confidence",
+          "calibration_grade",
+          "exact_prompt_tokens_saved",
+          "modeled_inference_tokens_avoided",
+          "modeled_extra_calls_avoided",
+          "tokenizer_exact"
+        ],
+        "token_impact": [
+          "saved_tokens_estimate",
+          "packed_tokens_estimate",
+          "tokenizer_exact",
+          "provider_prompt_tokens",
+          "provider_completion_tokens",
+          "provider_total_tokens"
+        ],
+        "outcome": [
+          "task_status",
+          "runner_status",
+          "first_pass_success",
+          "blocked",
+          "failed",
+          "retry_count",
+          "observed_followup_tokens"
+        ],
+        "feedback": [
+          "present",
+          "rating",
+          "label",
+          "source"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "runner_quality_sample.v1",
+        "format_contract.schema_id": "runner_quality_sample.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "raw_prompt",
+        "api_key",
         "password"
       ],
       "forbidden_scope": "root"

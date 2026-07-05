@@ -383,6 +383,19 @@ if not exist "%PYTHON_EXE%" (
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
 "@
 
+$runnerQualityCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\runner-quality
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 -IncludeDevPythonTools first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+"@
+
 Set-Content -Path (Join-Path $BinDir "contextlattice_search.cmd") -Value $searchCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_write.cmd") -Value $writeCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_pack.cmd") -Value $packCmd -Encoding Ascii
@@ -401,6 +414,7 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_memory_topology.cmd") -Valu
 Set-Content -Path (Join-Path $BinDir "contextlattice_source_backfill.cmd") -Value $sourceBackfillCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_skills_index.cmd") -Value $skillsIndexCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_codex_session_store_doctor.cmd") -Value $codexSessionStoreDoctorCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_runner_quality.cmd") -Value $runnerQualityCmd -Encoding Ascii
 
 function Write-GoNativeCmd {
     param([string]$Name)
@@ -444,7 +458,8 @@ if (-not $IncludeDevPythonTools.IsPresent) {
     foreach ($name in @(
         "contextlattice_agent_orchestration",
         "contextlattice_source_backfill",
-        "contextlattice_codex_session_store_doctor"
+        "contextlattice_codex_session_store_doctor",
+        "contextlattice_runner_quality"
     )) {
         $path = Join-Path $BinDir "$name.cmd"
         if (Test-Path $path) {
@@ -490,4 +505,5 @@ Write-Host "  contextlattice_skills_index search agent --pretty"
 if ($IncludeDevPythonTools.IsPresent) {
     Write-Host "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
     Write-Host "  contextlattice_codex_session_store_doctor --pretty"
+    Write-Host "  contextlattice_runner_quality --pretty"
 }
