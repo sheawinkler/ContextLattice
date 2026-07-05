@@ -6897,6 +6897,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
+	mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
 	mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)

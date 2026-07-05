@@ -47,7 +47,7 @@ Prior best observed gate sample (`20260316T004108Z`):
 
 2. `EmbedAnything`: **defer runtime integration**.
 - Reason: strongest fit is corpus ingestion/indexing workflows, not the current latency-critical online read path.
-- Action: move to V4/V72 ingestion lane evaluation rather than default retrieval path.
+- Action: move to performance-track ingestion lane evaluation rather than default retrieval path.
 
 3. `zvec`: **defer**.
 - Reason: no validated end-to-end improvement artifact in current orchestrator path.
@@ -62,7 +62,7 @@ Prior best observed gate sample (`20260316T004108Z`):
 
 ## Close Recommendation
 Issue #69 is complete for its decision objective (shortlist evaluation + keep/drop/defer outcomes).
-Follow-on implementation exploration should continue under the broader V4/V72 performance track.
+Follow-on implementation exploration should continue under the broader performance-track performance track.
 
 ## 2026-03-22 Addendum (Promotion Alignment)
 - Gate defaults were lowered from `20%` to `5%` to match the approved promotion policy for the shortlist lane.

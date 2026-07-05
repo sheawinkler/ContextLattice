@@ -6,6 +6,7 @@ import {
   asArray,
   asRecord,
   estimateContextPackQuality,
+  estimateRunnerQuality,
   estimateTokenImpact,
   formatCompact,
   formatMs,
@@ -115,6 +116,10 @@ function SessionRow({ session }: { session: any }) {
   );
 }
 
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
 export function CommandCenterDashboard() {
   const [state, setState] = useState<DashboardState>(EMPTY_STATE);
   const [loading, setLoading] = useState(true);
@@ -158,6 +163,7 @@ export function CommandCenterDashboard() {
     [overview, mindmap, state.topics],
   );
   const contextPackQuality = useMemo(() => estimateContextPackQuality(overview), [overview]);
+  const runnerQuality = useMemo(() => estimateRunnerQuality(overview), [overview]);
   const memoryTelemetry = asRecord(asRecord(overview).memoryTelemetry);
   const memoryBank = asRecord(memoryTelemetry.memoryBank);
   const fanout = asRecord(memoryTelemetry.fanout);
@@ -244,6 +250,13 @@ export function CommandCenterDashboard() {
           tone={contextPackQuality.observedProviderUsageCount > 0 ? "good" : "neutral"}
         />
         <MetricCard
+          label="runner advisor"
+          value={runnerQuality.topRunner || "training"}
+          detail={`${formatCompact(runnerQuality.sampleCount)} samples · ${runnerQuality.confidence.replace(/_/g, " ")}`}
+          tone={runnerQuality.sampleCount >= 3 ? "good" : "neutral"}
+          compactValue={!runnerQuality.topRunner}
+        />
+        <MetricCard
           label="service health"
           value={serviceHealth.label}
           detail="gateway, memory store, retrieval lanes"
@@ -290,6 +303,47 @@ export function CommandCenterDashboard() {
               <p className="cl-empty">No retrieval telemetry surfaced yet.</p>
             )}
           </div>
+        </section>
+
+        <section className="cl-panel">
+          <div className="cl-section-head">
+            <div>
+              <p className="cl-kicker">runner quality</p>
+              <h3>Adapter advisor</h3>
+            </div>
+            <span className="cl-badge">{runnerQuality.mode.replace(/_/g, " ")}</span>
+          </div>
+          <div className="cl-impact-hero">
+            <div>
+              <span className="cl-label">samples</span>
+              <strong>{formatCompact(runnerQuality.sampleCount)}</strong>
+            </div>
+            <div>
+              <span className="cl-label">scope</span>
+              <strong>{runnerQuality.taskClass.slice(0, 12)}</strong>
+            </div>
+            <div>
+              <span className="cl-label">pick</span>
+              <strong>{(runnerQuality.topRunner || "--").slice(0, 12)}</strong>
+            </div>
+          </div>
+          <div className="cl-impact-stack">
+            {runnerQuality.candidates.length ? runnerQuality.candidates.slice(0, 4).map((candidate) => (
+              <div key={candidate.runner} className="cl-impact-row">
+                <span>{candidate.runner}</span>
+                <span>{formatPercent(candidate.successRate)} ok · {formatPercent(candidate.blockedRate)} blocked</span>
+                <strong>{candidate.score}</strong>
+              </div>
+            )) : <p className="cl-empty">No adapter samples yet. Run task-agent workers through Pi, Droid, or another adapter to seed the ledger.</p>}
+          </div>
+          <div className="cl-impact-warnings">
+            {runnerQuality.warnings.slice(0, 2).map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </div>
+          <p className="cl-panel-note">
+            Advisor only: ContextLattice reports evidence; the operator chooses the runner.
+          </p>
         </section>
 
         <section className="cl-panel">

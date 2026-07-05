@@ -39,6 +39,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_agent_adoption_proof":            "adoption-proof",
 	"contextlattice_agent_adapter":                   "adapter",
 	"contextlattice_agent_discover":                  "discover",
+	"contextlattice_runner_quality":                  "runner-quality",
 	"contextlattice_memory_topology":                 "memory-topology",
 	"contextlattice_skills_index":                    "skills-index",
 }
@@ -116,6 +117,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdAdapter(args)
 	case "discover":
 		return c.cmdDiscover(args)
+	case "runner-quality":
+		return c.cmdRunnerQuality(args)
 	case "adopt":
 		return c.cmdAdopt(args)
 	case "memory-topology":
@@ -149,6 +152,7 @@ Native commands:
   adoption-proof                 compact profile preflight proof matrix
   adapter                        profiles/bootstrap/status/context-pack/checkpoint/handoff/state/event/complete helpers
   discover                       local agent process/profile/integration discovery
+  runner-quality                 bounded adapter quality telemetry and advisor-only recommendations
   adopt                          status/doctor/proof compatibility front door
   memory-topology                audit /telemetry/storage memory topology
   skills-index                   active Skills Index search/reindex helper
@@ -419,6 +423,7 @@ func (c *cli) adoptStatus(args []string) error {
 	health, _, healthErr := c.requestJSON(context.Background(), http.MethodGet, "/health", nil, parsed.float("timeout", 10))
 	boundary, _, boundaryErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/context-boundary", nil, parsed.float("timeout", 10))
 	ownership, _, ownershipErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/native-ownership", nil, parsed.float("timeout", 10))
+	runnerQuality, _, runnerQualityErr := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/runner-quality?limit=200", nil, parsed.float("timeout", 10))
 	installChecks := adoptionInstallChecks(globalHome)
 	discovery := localAgentDiscoverySummary(globalHome, profileNames, "", 4)
 	ok := healthErr == nil && boundaryErr == nil && ownershipErr == nil && asBool(health["ok"]) && asBool(boundary["ok"]) && asBool(ownership["ok"]) && asBool(installChecks["ok"])
@@ -433,6 +438,7 @@ func (c *cli) adoptStatus(args []string) error {
 		"health":          health,
 		"contextBoundary": map[string]any{"ok": boundary["ok"], "violationCount": boundary["violationCount"], "boundedSurfaceCount": boundary["boundedSurfaceCount"]},
 		"nativeOwnership": map[string]any{"ok": ownership["ok"], "violationCount": ownership["violationCount"], "nativeRouteCount": ownership["nativeRouteCount"], "pythonHotPathOwnership": ownership["pythonHotPathOwnership"]},
+		"runner_quality":  dropEmpty(map[string]any{"ok": runnerQualityErr == nil, "summary": runnerQuality, "error": errString(runnerQualityErr)}),
 		"install":         installChecks,
 		"agent_discovery": discovery,
 		"repair_command":  "scripts/install_global_agent_tools.sh --install-codex-hooks --no-shell-profile",
@@ -450,6 +456,7 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice_doctor",
 		"contextlattice_agent_adapter",
 		"contextlattice_agent_discover",
+		"contextlattice_runner_quality",
 		"contextlattice_agent_session",
 		"contextlattice_agent_start",
 		"contextlattice_checkpoint",
@@ -1572,7 +1579,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)
@@ -1591,6 +1598,8 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	ownership, _, ownershipErr := c.requestJSON(context.Background(), http.MethodGet, "/ops/native-ownership", nil, parsed.float("timeout", 10))
 	hotPath := asMap(ownership["pythonHotPathOwnership"])
 	checks = append(checks, map[string]any{"name": "native_ownership", "ok": ownershipErr == nil && asBool(ownership["ok"]) && asInt(hotPath["fallbacks"]) == 0, "nativeRouteCount": ownership["nativeRouteCount"], "python_fallbacks": hotPath["fallbacks"], "explanation": "default live agent hot paths should be owned by native routes and wrappers"})
+	runnerQuality, _, runnerQualityErr := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/runner-quality?limit=200", nil, parsed.float("timeout", 10))
+	checks = append(checks, map[string]any{"name": "runner_quality", "ok": runnerQualityErr == nil && !explicitFalse(runnerQuality["ok"]), "telemetry": runnerQuality, "explanation": "runner quality is advisory telemetry for operator selection; it must not dispatch work automatically"})
 	if repo := parsed.string("repo", ""); repo != "" {
 		absRepo, err := filepath.Abs(repo)
 		repoAudit := map[string]any{"ok": false, "schema_id": "contextlattice_agent_repo_integration_audit.v1", "repo": repo, "findings": []map[string]any{{"reason": "repo_path_invalid", "detail": errString(err)}}}
@@ -1617,6 +1626,27 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 		"findings":                findings,
 		"diagnostic_explanations": doctorExplanations(checks),
 	}, parsed.bool("pretty"))
+}
+
+func (c *cli) cmdRunnerQuality(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"limit":      "limit",
+		"task-class": "task_class",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_runner_quality [--task-class scout] [--limit 500] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	values := url.Values{}
+	values.Set("limit", strconv.Itoa(parsed.int("limit", 500)))
+	if taskClass := parsed.string("task_class", ""); taskClass != "" {
+		values.Set("task_class", taskClass)
+	}
+	raw, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/runner-quality?"+values.Encode(), nil, parsed.float("timeout", 10))
+	if err != nil {
+		return err
+	}
+	return c.emit(raw, parsed.bool("pretty"))
 }
 
 func (c *cli) cmdRuntimeProof(args []string) error {

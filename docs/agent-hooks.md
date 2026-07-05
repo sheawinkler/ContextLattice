@@ -68,7 +68,7 @@ Installed commands:
 | `contextlattice_skills_index` | Skills Index search CLI for discovering capabilities without bloating startup context. |
 | `contextlattice_source_backfill` | Optional development helper, installed with `--include-dev-python-tools`, for bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres. |
 | `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
-| `contextlattice_runner_quality` | Optional development helper, installed with `--include-dev-python-tools`, for summarizing bounded runner adapter quality samples. |
+| `contextlattice_runner_quality` | Primary CLI for bounded runner-quality telemetry and advisor-only runner recommendations. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
 | `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |
@@ -77,7 +77,7 @@ Installed commands:
 | `contextlattice_runtime_env_guard` | Detect stale/conflicting env override drift. |
 
 Pi and Droid runner adapters are repo-local task-worker internals under `scripts/agent_runners/`. ContextLattice reports install hints and readiness, but it does not install or require third-party Pi/Droid CLIs for quickstart.
-Runner adapter completions write compact `runner_quality_sample.v1` rows when task-agent workers can access the ledger. Inspect them with `scripts/agent/runner-quality --pretty` or optional dev-tool command `contextlattice_runner_quality --pretty`.
+Runner adapter completions write compact `runner_quality_sample.v1` rows when task-agent workers can access the ledger. Inspect them with primary CLI command `contextlattice_runner_quality --pretty` or repo-local development fallback `scripts/agent/runner-quality --pretty`.
 | `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
 | `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
 | `contextlattice_orbstack_forward_guard` | Docker/OrbStack and 8075 host-forward repair guard. |

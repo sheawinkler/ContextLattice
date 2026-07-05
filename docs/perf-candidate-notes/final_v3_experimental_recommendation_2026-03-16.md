@@ -1,4 +1,4 @@
-# Final V3/V4 Recommendation (2026-03-16)
+# Final V3/Experimental Recommendation (2026-03-16)
 
 Project: `contextlattice`  
 Objective: maximize recall quality while reaching seamless read UX.
@@ -79,7 +79,7 @@ MindsDB remains useful for deep/slow SQL-assisted reasoning, but for latency-sen
 4. Keep `memory_bank_tantivy_spike` as secondary fallback lane.
 5. Keep `letta` and `mindsdb` as deep-mode asynchronous sources only (not sync fast-path blockers).
 
-## V4 (replacement/pivot lane if needed)
+## Experimental (replacement/pivot lane if needed)
 
 1. Pilot `postgres + pgvector (+pgvectorscale)` as a structured deep-lane replacement candidate for parts of MindsDB duties.
 2. Run native Trieve POC only if we want Trieve-native ranking/recommendation semantics beyond adapter mode.

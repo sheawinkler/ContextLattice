@@ -1,6 +1,6 @@
-# ContextLattice V4 Stack and Rust Exploration Plan (2026-03-16)
+# ContextLattice Experimental Stack and Rust Exploration Plan (2026-03-16)
 
-## Promoted V4 Runtime Stack
+## Experimental Runtime Stack
 
 ### Fast retrieval lane (sync)
 - `topic_rollups`

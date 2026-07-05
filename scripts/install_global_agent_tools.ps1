@@ -448,7 +448,8 @@ $goNativeCommands = @(
     "contextlattice_strict_runtime_native_ownership",
     "contextlattice_context_boundary",
     "contextlattice_memory_topology",
-    "contextlattice_skills_index"
+    "contextlattice_skills_index",
+    "contextlattice_runner_quality"
 )
 foreach ($name in $goNativeCommands) {
     Write-GoNativeCmd $name
@@ -458,8 +459,7 @@ if (-not $IncludeDevPythonTools.IsPresent) {
     foreach ($name in @(
         "contextlattice_agent_orchestration",
         "contextlattice_source_backfill",
-        "contextlattice_codex_session_store_doctor",
-        "contextlattice_runner_quality"
+        "contextlattice_codex_session_store_doctor"
     )) {
         $path = Join-Path $BinDir "$name.cmd"
         if (Test-Path $path) {
@@ -502,8 +502,8 @@ Write-Host "  contextlattice_run_advisor --session-id <session-id> --pretty"
 Write-Host "  contextlattice_memory_topology --pretty"
 Write-Host "  contextlattice_agent_runtime_doctor --pretty"
 Write-Host "  contextlattice_skills_index search agent --pretty"
+Write-Host "  contextlattice_runner_quality --pretty"
 if ($IncludeDevPythonTools.IsPresent) {
     Write-Host "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
     Write-Host "  contextlattice_codex_session_store_doctor --pretty"
-    Write-Host "  contextlattice_runner_quality --pretty"
 }

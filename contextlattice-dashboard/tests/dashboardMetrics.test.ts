@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { estimateContextPackQuality, estimateTokenImpact } from "@/lib/dashboardMetrics";
+import { estimateContextPackQuality, estimateRunnerQuality, estimateTokenImpact } from "@/lib/dashboardMetrics";
 
 test("estimateTokenImpact prefers sampled token impact payloads", () => {
   const impact = estimateTokenImpact(
@@ -149,4 +149,56 @@ test("estimateContextPackQuality falls back when no quality samples exist", () =
   assert.equal(quality.calibrationGrade, "heuristic");
   assert.equal(quality.confidence, "low");
   assert.ok(quality.warnings.some((warning) => warning.includes("Run a context pack")));
+});
+
+test("estimateRunnerQuality preserves advisor-only recommendations", () => {
+  const quality = estimateRunnerQuality({
+    runnerQuality: {
+      sample_count: 2,
+      total_sample_count: 3,
+      task_class: "scout",
+      by_status: { succeeded: 1, blocked: 1 },
+      by_task_class: { scout: 2, implementer: 1 },
+      recommendations: {
+        mode: "advisor_only",
+        task_class: "scout",
+        confidence: "low",
+        top_runner: "pi",
+        candidates: [
+          {
+            runner: "pi",
+            score: 87.123,
+            sample_count: 1,
+            success_rate: 1,
+            blocked_rate: 0,
+            failure_rate: 0,
+            average_duration_secs: 1.2,
+            reason: "100% success across one comparable sample",
+          },
+        ],
+        guardrails: ["Never dispatch or mutate automatically from this summary."],
+      },
+      measurement_limit: "Aggregates bounded runner-quality rows only.",
+      storage: { durability: "bounded_ndjson" },
+    },
+  });
+
+  assert.equal(quality.sampleCount, 2);
+  assert.equal(quality.totalSampleCount, 3);
+  assert.equal(quality.mode, "advisor_only");
+  assert.equal(quality.confidence, "low");
+  assert.equal(quality.topRunner, "pi");
+  assert.equal(quality.candidates[0].score, 87.1);
+  assert.equal(quality.byTaskClass.scout, 2);
+  assert.ok(quality.warnings.some((warning) => warning.includes("Never dispatch")));
+});
+
+test("estimateRunnerQuality falls back when no samples exist", () => {
+  const quality = estimateRunnerQuality({});
+
+  assert.equal(quality.sampleCount, 0);
+  assert.equal(quality.confidence, "insufficient_samples");
+  assert.equal(quality.mode, "advisor_only");
+  assert.equal(quality.topRunner, "");
+  assert.ok(quality.warnings.some((warning) => warning.includes("advisor-only")));
 });
