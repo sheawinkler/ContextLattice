@@ -60,6 +60,33 @@ export type ContextPackQualityEstimate = {
   warnings: string[];
 };
 
+export type RunnerQualityCandidate = {
+  runner: string;
+  score: number;
+  sampleCount: number;
+  successRate: number;
+  blockedRate: number;
+  failureRate: number;
+  averageDurationSecs: number;
+  reason: string;
+};
+
+export type RunnerQualityEstimate = {
+  sampleCount: number;
+  totalSampleCount: number;
+  taskClass: string;
+  mode: string;
+  confidence: "insufficient_samples" | "low" | "medium" | "high";
+  topRunner: string;
+  candidates: RunnerQualityCandidate[];
+  byStatus: Record<string, number>;
+  byTaskClass: Record<string, number>;
+  measurementLimit: string;
+  source: string;
+  storageDurability: string;
+  warnings: string[];
+};
+
 export const COMPACT_NUMBER = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
@@ -360,6 +387,87 @@ export function estimateContextPackQuality(overview: unknown): ContextPackQualit
   };
 }
 
+export function estimateRunnerQuality(overview: unknown): RunnerQualityEstimate {
+  const overviewRecord = asRecord(overview);
+  const candidates = [
+    overviewRecord.runnerQuality,
+    overviewRecord.runner_quality,
+    asRecord(overviewRecord.status).runnerQuality,
+    asRecord(overviewRecord.status).runner_quality,
+    asRecord(overviewRecord.telemetryMetrics).runnerQuality,
+    asRecord(overviewRecord.telemetryMetrics).runner_quality,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeRunnerQuality(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return {
+    sampleCount: 0,
+    totalSampleCount: 0,
+    taskClass: "all",
+    mode: "advisor_only",
+    confidence: "insufficient_samples",
+    topRunner: "",
+    candidates: [],
+    byStatus: {},
+    byTaskClass: {},
+    measurementLimit: "No runner-quality samples are available yet.",
+    source: "runner_quality_unavailable",
+    storageDurability: "unknown",
+    warnings: [
+      "Run optional Pi/Droid or other adapter tasks through the task worker to seed bounded runner-quality samples.",
+      "Runner-quality is advisor-only; it never dispatches work automatically.",
+    ],
+  };
+}
+
+function normalizeRunnerQuality(candidate: unknown): RunnerQualityEstimate | null {
+  const record = asRecord(candidate);
+  if (Object.keys(record).length === 0) {
+    return null;
+  }
+  const recommendations = asRecord(record.recommendations);
+  const rawCandidates = asArray(recommendations.candidates).map((item) => {
+    const row = asRecord(item);
+    return {
+      runner: toText(row.runner) || "unknown",
+      score: roundRatio(row.score),
+      sampleCount: toInt(row.sample_count ?? row.sampleCount),
+      successRate: nullableRatio(row.success_rate ?? row.successRate) ?? 0,
+      blockedRate: nullableRatio(row.blocked_rate ?? row.blockedRate) ?? 0,
+      failureRate: nullableRatio(row.failure_rate ?? row.failureRate) ?? 0,
+      averageDurationSecs: roundRatio(row.average_duration_secs ?? row.averageDurationSecs),
+      reason: toText(row.reason),
+    };
+  });
+  const storage = asRecord(record.storage);
+  const confidence = normalizeRunnerQualityConfidence(toText(recommendations.confidence));
+  const measurementLimit =
+    toText(record.measurementLimit) ||
+    toText(record.measurement_limit) ||
+    "Aggregates bounded runner-quality rows; use as operator advice, not automatic dispatch.";
+  return {
+    sampleCount: firstInt(record, ["sampleCount", "sample_count"]),
+    totalSampleCount: firstInt(record, ["totalSampleCount", "total_sample_count"]),
+    taskClass: toText(recommendations.task_class) || toText(record.task_class) || "all",
+    mode: toText(recommendations.mode) || "advisor_only",
+    confidence,
+    topRunner: toText(recommendations.top_runner) || toText(recommendations.topRunner),
+    candidates: rawCandidates,
+    byStatus: numericRecord(record.by_status ?? record.byStatus),
+    byTaskClass: numericRecord(record.by_task_class ?? record.byTaskClass),
+    measurementLimit,
+    source: toText(record.source) || "/telemetry/runner-quality",
+    storageDurability: toText(storage.durability) || "unknown",
+    warnings: [
+      ...asArray<string>(recommendations.guardrails).map(String),
+      measurementLimit,
+    ].filter(Boolean).slice(0, 5),
+  };
+}
+
 function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEstimate | null {
   const record = asRecord(candidate);
   if (Object.keys(record).length === 0) {
@@ -582,6 +690,18 @@ function nullableNumber(value: unknown): number | null {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numericRecord(value: unknown): Record<string, number> {
+  const record = asRecord(value);
+  return Object.fromEntries(Object.entries(record).map(([key, raw]) => [key, toInt(raw)]));
+}
+
+function normalizeRunnerQualityConfidence(value: string): RunnerQualityEstimate["confidence"] {
+  if (value === "high" || value === "medium" || value === "low" || value === "insufficient_samples") {
+    return value;
+  }
+  return "insufficient_samples";
 }
 
 function normalizeConfidence(value: string, fallback: TokenImpactConfidence): TokenImpactConfidence {

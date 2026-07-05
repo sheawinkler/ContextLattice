@@ -149,7 +149,7 @@ func TestNormalizeWritePayloadCanonicalMetadata(t *testing.T) {
 		"metadata": map[string]any{
 			"agent_id":   "codex_gpt5",
 			"session_id": "sess-1",
-			"tags":       []string{"lane:go", "runtime:v4"},
+			"tags":       []string{"lane:go", "runtime:go"},
 			"created_at": "2026-04-01T00:00:00Z",
 		},
 	})
@@ -206,7 +206,7 @@ func TestBuildForwardPayloadIncludesCanonicalMetadata(t *testing.T) {
 		topicPath: "runbooks/x",
 		agentID:   "codex_gpt5",
 		sessionID: "session-abc",
-		tags:      []string{"runtime:v4", "lane:mongo_raw"},
+		tags:      []string{"runtime:go", "lane:mongo_raw"},
 		createdAt: "2026-04-01T01:02:03Z",
 	}
 

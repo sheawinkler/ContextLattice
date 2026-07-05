@@ -1836,6 +1836,7 @@
         "agent_id": "string",
         "task_id": "string",
         "project": "string",
+        "task_class": "string",
         "status": "string",
         "exit_code": "int",
         "started_at": "string",

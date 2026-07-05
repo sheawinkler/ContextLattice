@@ -182,6 +182,43 @@ func TestSkillsIndexCommandUsesNativeEndpoint(t *testing.T) {
 	}
 }
 
+func TestRunnerQualityCommandUsesNativeTelemetryEndpoint(t *testing.T) {
+	var requestedPath string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.String()
+		if r.URL.Path != "/telemetry/runner-quality" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"schema_id":    "contextlattice_runner_quality_telemetry.v1",
+			"sample_count": 2,
+			"recommendations": map[string]any{
+				"mode":       "advisor_only",
+				"task_class": "scout",
+				"top_runner": "pi",
+			},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_runner_quality", "--task-class", "scout", "--limit", "12", "--pretty"}); err != nil {
+		t.Fatalf("run runner quality: %v", err)
+	}
+	if !strings.Contains(requestedPath, "task_class=scout") || !strings.Contains(requestedPath, "limit=12") {
+		t.Fatalf("runner quality query missing expected filters: %s", requestedPath)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if firstString(asMap(output["recommendations"])["mode"]) != "advisor_only" {
+		t.Fatalf("expected advisor-only recommendations, got %#v", output)
+	}
+}
+
 func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/agents/preflight" {

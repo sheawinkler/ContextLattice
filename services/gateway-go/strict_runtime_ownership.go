@@ -39,6 +39,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/telemetry/metrics", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "native metrics and embedding cache telemetry", Required: true},
 		{Path: "/telemetry/token-impact", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "context-pack token impact samples and aggregate prompt economics", Required: true},
 		{Path: "/telemetry/context-pack-quality", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "context-pack quality, counterfactual inference avoidance, and outcome calibration", Required: true},
+		{Path: "/telemetry/runner-quality", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "adapter runner quality samples and advisor-only recommendations", Required: true},
 		{Path: "/telemetry/memory", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "native memory write and fanout telemetry", Required: true},
 		{Path: "/telemetry/retrieval", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "retrieval source telemetry", Required: true},
 		{Path: "/telemetry/retrieval/source-quality", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "retrieval source quality matrix", Required: true},

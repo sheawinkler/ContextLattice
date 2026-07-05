@@ -196,6 +196,7 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
                 "agent_id": "pi_agent",
                 "task_id": "task_test",
                 "project": "contextlattice",
+                "task_class": "scout",
                 "status": "succeeded",
                 "ok": True,
                 "exit_code": 0,
@@ -491,6 +492,7 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
             self.assertNotIn("Bearer abcdef", raw)
             row = json.loads(raw.splitlines()[0])
             self.assertEqual(row["schema_id"], "runner_quality_sample.v1")
+            self.assertEqual(row["task_class"], "general")
             self.assertEqual(row["context_pack_quality"]["sample_id"], "cpq_worker")
             self.assertEqual(row["context_pack_quality"]["exact_prompt_tokens_saved"], 1234)
             status_metadata = captured["posts"][0][1]["metadata"]
@@ -498,6 +500,8 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
             summary = runner_quality.summarize([row])
             self.assertEqual(summary["by_runner"]["pi"]["success_count"], 1)
             self.assertEqual(summary["by_runner"]["pi"]["exact_prompt_tokens_saved"], 1234)
+            self.assertEqual(summary["recommendations"]["mode"], "advisor_only")
+            self.assertNotIn("routing_hint", summary)
 
     def test_legacy_task_agent_cmd_override_still_uses_legacy_command(self) -> None:
         worker = load_task_worker()

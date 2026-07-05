@@ -449,6 +449,7 @@ def sample_runner_quality_sample() -> dict[str, Any]:
             "agent_id": "pi_agent",
             "task_id": "task_audit",
             "project": "contextlattice",
+            "task_class": "scout",
             "status": "succeeded",
             "ok": True,
             "exit_code": 0,

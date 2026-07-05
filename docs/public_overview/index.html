@@ -477,12 +477,13 @@ gmake monitor-check</code></pre>
 
     <section class="section">
       <div class="kicker">Version Lanes</div>
-      <h2>What is public now vs private next</h2>
+      <h2>What is public now</h2>
       <div class="grid component-grid">
         <article class="card component-card">
           <h3>Public v3.9 (current launch lane)</h3>
           <ul class="spec-list">
             <li><strong>Current public release:</strong> <code>v3.9.1</code></li>
+            <li><strong>Primary interface:</strong> CLI workflows for install, adoption, context packs, checkpoints, sessions, and runner-quality telemetry</li>
             <li><strong>Frontdoor:</strong> <code>gateway-go</code> on <code>:8075</code></li>
             <li><strong>Fallback:</strong> Python orchestrator on <code>:18075</code></li>
             <li><strong>Lite memory default:</strong> topic rollups, Qdrant recall, and memory edges/neighbors</li>
@@ -492,14 +493,13 @@ gmake monitor-check</code></pre>
           </ul>
         </article>
         <article class="card component-card">
-          <h3>Private v4 (tuning lane)</h3>
+          <h3>Optional public adapter lab</h3>
           <ul class="spec-list">
-            <li><strong>Frontdoor:</strong> same <code>:8075</code> go gateway contract</li>
-            <li><strong>Policy:</strong> aggressive adaptive tuning and candidate promotions</li>
-            <li><strong>Memory-bank:</strong> <code>shodh_spike</code> with deterministic fallback chain and optional hedge</li>
-            <li><strong>Validation:</strong> benchmark + recall parity + soak gate before promotion</li>
-            <li><strong>Personal computer target:</strong> start from Full baseline and add headroom, especially SSD (external NVMe recommended)</li>
-            <li><strong>Release posture:</strong> private experimentation before any public cutover</li>
+            <li><strong>Mode:</strong> opt-in public local Lite advanced, started with <code>gmake mem-up-lite-advanced</code></li>
+            <li><strong>Purpose:</strong> evaluate memory-bank adapters without making them quickstart dependencies</li>
+            <li><strong>Interface:</strong> same CLI-first agent contract; dashboard, HTTP, and MCP remain companion surfaces</li>
+            <li><strong>Boundary:</strong> not a paid/private feature gate and not required for normal users</li>
+            <li><strong>Validation:</strong> operator-controlled, evidence-first testing before any adapter is promoted into defaults</li>
           </ul>
         </article>
       </div>
@@ -513,8 +513,8 @@ flowchart LR
   C --> E["Slow async continuation: mindsdb + mongo_raw + letta + memory_bank"]
   E --> F["Cache warm + optional deep follow-up"]
   B --> G["Python fallback lane :18075 (rollback only)"]
-  H["Private Lane: v4"] --> I["Same ingress contract + stricter tuning gates"]
-  I --> J["Candidate promotions only after benchmark + recall + soak pass"]
+  B --> H["Optional public adapter lab"]
+  H --> I["Operator-controlled tests only"]
         </div>
       </article>
     </section>
@@ -776,7 +776,7 @@ flowchart LR
           <h3>Full mode</h3>
           <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.9.x</code> Full, and baseline for private <code>v4</code> tuning</li>
+            <li><strong>App version lane:</strong> Public <code>v3.9.x</code> Full</li>
             <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
             <li><strong>Deep continuation lane:</strong> async enrichment from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Compute:</strong> 6-8 vCPU recommended</li>

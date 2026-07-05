@@ -32,20 +32,19 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.9.1` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, a clearer dashboard cockpit, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
-
-`v4` remains the private tuning lane for experiments that still need benchmark, recall, and soak gates before public promotion.
+`v3.9.1` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, dashboard visibility, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
 ## Public Runtime Stack (v3.9)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
 - Retrieval policy: staged fast-return, async continuation lifecycle, and impact-per-token allocation.
-- Tooling compatibility: MCP + HTTP clients.
+- Primary interface: CLI helpers such as `contextlattice_adopt`, `contextlattice_agent_adapter`, `contextlattice_pack`, `contextlattice_checkpoint`, `contextlattice_agent_session`, and `contextlattice_runner_quality`.
+- Companion surfaces: dashboard for visibility, HTTP for app integration, and MCP-compatible clients for host/harness integrations.
 - Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
 - Public single-container lite vector default: `topic_rollups` only.
 - Public local lite core default: `topic_rollups + qdrant`; pgvector and memory-bank spike adapters are not started by default.
-- Public local lite advanced: opt-in adapter lab via `gmake mem-up-lite-advanced`.
+- Public local lite advanced: optional public adapter lab via `gmake mem-up-lite-advanced`; not the default quickstart and not a paid/private boundary.
 - Full/operator stacks: Qdrant remains the primary vector-native lane; pgvector stays supported for SQL-co-located vector workloads.
 
 ## Quickstart
@@ -223,7 +222,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
 - Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime/trace flows.
 - Use `scripts/agent/agent-run-trace --session-id <id> --tree` or global `contextlattice_agent_trace --session-id <id> --tree` to see the terminal trace, then `--markdown` to export the run card.
-- Use `scripts/agent/runner-quality --pretty` to inspect the bounded runner-quality ledger for adapter success/block/failure rates, context-pack quality linkage, exact prompt-token savings, and modeled inference-avoidance signals. Optional dev-tool installs expose it as `contextlattice_runner_quality`.
+- Use global `contextlattice_runner_quality --pretty` to inspect bounded runner-quality telemetry for adapter success/block/failure rates, context-pack quality linkage, exact prompt-token savings, modeled inference-avoidance signals, and advisor-only runner recommendations. Repo-local `scripts/agent/runner-quality --pretty` remains available for development fallback.
 - Use `scripts/agent/contextlattice-session sweep-stale-audits --all-projects --pretty` for dry-run-first cleanup of stale objective-runtime audit/preflight sessions; add `--confirm` only after reviewing matches.
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
 - Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
@@ -232,7 +231,7 @@ Canonical event families include `session.started`, `agent.state.working`, `agen
 
 Agent lifecycle and retrieval lifecycle are intentionally separate. `agent_lifecycle.state` describes the actor (`idle`, `working`, `awaiting_user`, `blocked`, `done`); `retrieval_lifecycle.status` describes source-fetch progress. This prevents async retrieval warming from being misread as a blocked or degraded agent.
 
-Runner quality is intentionally separate from both lifecycle surfaces. See `docs/runtime/runner-quality-loop.md` for the compact adapter measurement loop and its interpretation limits.
+Runner quality is intentionally separate from both lifecycle surfaces. It is advisor-only telemetry for operator selection, not automatic dispatch. See `docs/runtime/runner-quality-loop.md` for the compact adapter measurement loop and its interpretation limits.
 
 ## Download Installers
 

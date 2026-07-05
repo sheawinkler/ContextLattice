@@ -43,24 +43,24 @@ CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_MAX_SAMPLES=1000
 
 ## Inspect Runner Quality
 
-Repo-local:
+Primary CLI:
+
+```bash
+contextlattice_runner_quality --pretty
+contextlattice_runner_quality --task-class scout --pretty
+```
+
+Development fallback from a repo checkout:
 
 ```bash
 scripts/agent/runner-quality --pretty
 ```
 
-Optional dev-tool global install:
-
-```bash
-scripts/install_global_agent_tools.sh --include-dev-python-tools
-contextlattice_runner_quality --pretty
-```
-
-The summary reports per-runner sample counts, success/block/failure rates, average duration, average context quality score, exact prompt tokens saved, and modeled inference tokens avoided.
+The summary reports per-runner sample counts, success/block/failure rates, average duration, average context quality score, exact prompt tokens saved, modeled inference tokens avoided, task-class slices, and advisor-only recommendations. The dashboard and doctor surface the same signal as visibility, not control.
 
 ## Interpretation
 
-Use this as a routing signal, not a routing authority.
+Use this as operator advice, never automatic dispatch. ContextLattice may tell you which runner looks strongest for similar observed task classes, but it does not dispatch, mutate, merge, or push from this telemetry.
 
 Low sample counts are weak evidence. A blocked Droid run caused by missing auth should improve the Droid readiness workflow, not prove Droid is a bad runner. A high prompt-token-savings number reflects context-pack compression, not guaranteed dollar savings unless provider usage counters are also present.
 

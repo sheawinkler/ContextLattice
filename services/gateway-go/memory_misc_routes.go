@@ -105,7 +105,7 @@ func normalizeEntitlementPlan(raw string, aliases map[string]string) string {
 }
 
 func (s *server) entitlementPathProtected(path string) bool {
-	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_V4_ENTITLEMENT_MODE")))
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_PAID_ENTITLEMENT_MODE")))
 	switch mode {
 	case "", "off":
 		return false
@@ -114,7 +114,7 @@ func (s *server) entitlementPathProtected(path string) bool {
 		return false
 	}
 	protected := parseHTTPPathSet(
-		os.Getenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS"),
+		os.Getenv("GO_PAID_ENTITLEMENT_PROTECTED_PATHS"),
 		"/v1/inference/route,/v1/inference/chat,/v1/inference/runtime-policy,/v1/inference/embedding-policy,/maintenance/storage/run,/maintenance/memory/graph/prune-volatile,/maintenance/telemetry/blob-gc,/migration/runtime",
 	)
 	normalized := normalizeHTTPPath(path)
@@ -138,8 +138,8 @@ func (s *server) entitlementPathProtected(path string) bool {
 	return false
 }
 
-func (s *server) enforceV4Entitlement(w http.ResponseWriter, r *http.Request, path string) bool {
-	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_V4_ENTITLEMENT_MODE")))
+func (s *server) enforcePaidEntitlement(w http.ResponseWriter, r *http.Request, path string) bool {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("GO_PAID_ENTITLEMENT_MODE")))
 	switch mode {
 	case "", "off":
 		return true
@@ -156,11 +156,11 @@ func (s *server) enforceV4Entitlement(w http.ResponseWriter, r *http.Request, pa
 		environment = strings.TrimSpace(strings.ToLower(os.Getenv("MEMMCP_ENV")))
 	}
 	securityStrict := envBool("ORCH_SECURITY_STRICT", false)
-	if !securityStrict && environment != "production" && envBool("GO_V4_ENTITLEMENT_DEV_ALLOW", true) {
+	if !securityStrict && environment != "production" && envBool("GO_PAID_ENTITLEMENT_DEV_ALLOW", true) {
 		return true
 	}
 
-	requiredKey := strings.TrimSpace(os.Getenv("GO_V4_ENTITLEMENT_KEY"))
+	requiredKey := strings.TrimSpace(os.Getenv("GO_PAID_ENTITLEMENT_KEY"))
 	if requiredKey != "" && !secureTokenEqual(r.Header.Get("X-ContextLattice-Entitlement-Key"), requiredKey) {
 		if mode == "warn" {
 			return true
@@ -175,11 +175,11 @@ func (s *server) enforceV4Entitlement(w http.ResponseWriter, r *http.Request, pa
 	}
 
 	aliases := parseAliasMap(
-		os.Getenv("GO_V4_ENTITLEMENT_PLAN_ALIASES"),
+		os.Getenv("GO_PAID_ENTITLEMENT_PLAN_ALIASES"),
 		"pro:team,business:enterprise",
 	)
 	allowedPlans := parseNormalizedCSVSet(
-		os.Getenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS"),
+		os.Getenv("GO_PAID_ENTITLEMENT_ALLOWED_PLANS"),
 		"team,enterprise",
 	)
 	plan := normalizeEntitlementPlan(r.Header.Get("X-ContextLattice-Plan"), aliases)
@@ -199,7 +199,7 @@ func (s *server) enforceV4Entitlement(w http.ResponseWriter, r *http.Request, pa
 	}
 
 	allowedRoles := parseNormalizedCSVSet(
-		os.Getenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES"),
+		os.Getenv("GO_PAID_ENTITLEMENT_ALLOWED_ROLES"),
 		"owner,admin",
 	)
 	role := strings.TrimSpace(strings.ToLower(r.Header.Get("X-ContextLattice-Workspace-Role")))
@@ -919,7 +919,7 @@ func (s *server) preferencesRoute(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) maintenanceRoute(w http.ResponseWriter, r *http.Request) {
 	if s.entitlementPathProtected(r.URL.Path) {
-		if !s.enforceV4Entitlement(w, r, r.URL.Path) {
+		if !s.enforcePaidEntitlement(w, r, r.URL.Path) {
 			return
 		}
 	}

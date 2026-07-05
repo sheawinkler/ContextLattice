@@ -46,7 +46,6 @@ Optional development-only Python helpers are installed only with
   contextlattice_agent_orchestration
   contextlattice_source_backfill
   contextlattice_codex_session_store_doctor
-  contextlattice_runner_quality
 
 The compact hook runtime installs its minimal Python helpers by default because
 PreCompact/PostCompact/SessionStart hooks use them even when the public CLI
@@ -539,6 +538,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice_context_boundary
   contextlattice_memory_topology
   contextlattice_skills_index
+  contextlattice_runner_quality
 )
 
 for command_name in "${GO_NATIVE_COMMANDS[@]}"; do
@@ -549,8 +549,7 @@ if [[ "$INCLUDE_DEV_PYTHON_TOOLS" != "1" ]]; then
   rm -f \
     "${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration" \
     "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
-    "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" \
-    "${GLOBAL_BIN_DIR}/contextlattice_runner_quality"
+    "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
 fi
 
 write_hook_wrapper() {
@@ -757,7 +756,6 @@ if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_orchestration"
   log "  - ${GLOBAL_BIN_DIR}/contextlattice_source_backfill"
   log "  - ${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor"
-  log "  - ${GLOBAL_BIN_DIR}/contextlattice_runner_quality"
 fi
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
@@ -777,8 +775,8 @@ log "  contextlattice_agent_trace --session-id <session-id> --tree"
 log "  contextlattice_run_advisor 'current task context' --pretty"
 log "  contextlattice_memory_topology --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
+log "  contextlattice_runner_quality --pretty"
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
-  log "  contextlattice_runner_quality --pretty"
 fi
 log "  contextlattice_agent_start -h"

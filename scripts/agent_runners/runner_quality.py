@@ -158,6 +158,28 @@ def feedback_from_task(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_task_class(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return "general"
+    text = re.sub(r"[^a-z0-9_.:/-]+", "-", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-_.:/")
+    return text[:80] or "general"
+
+
+def task_class_from_task(task: dict[str, Any]) -> str:
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    for key in ("task_class", "taskClass", "runner_task_class", "runnerTaskClass", "role", "intent", "operation"):
+        value = payload.get(key)
+        if value is not None:
+            return normalize_task_class(value)
+    for key in ("task_class", "taskClass", "role", "intent", "operation"):
+        value = task.get(key)
+        if value is not None:
+            return normalize_task_class(value)
+    return "general"
+
+
 def build_runner_quality_sample(
     *,
     task: dict[str, Any],
@@ -195,6 +217,7 @@ def build_runner_quality_sample(
         "agent_id": str(result.get("agent_id") or metadata.get("agent_id") or ""),
         "task_id": str(result.get("task_id") or task.get("id") or ""),
         "project": str(result.get("project") or task.get("project") or "_global"),
+        "task_class": task_class_from_task(task),
         "status": runner_status,
         "ok": ok,
         "exit_code": _safe_int(result.get("exit_code"), 0),
@@ -324,9 +347,75 @@ def record_runner_quality(
     return sample, storage
 
 
-def summarize(rows: list[dict[str, Any]], parse_errors: int = 0) -> dict[str, Any]:
+def _row_task_class(row: dict[str, Any]) -> str:
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    return normalize_task_class(row.get("task_class") or metadata.get("task_class"))
+
+
+def _recommendations(by_runner: dict[str, dict[str, Any]], sample_count: int, task_class: str) -> dict[str, Any]:
+    candidates = []
+    for runner, metrics in sorted(by_runner.items()):
+        total = _safe_int(metrics.get("sample_count"), 0)
+        if total <= 0:
+            continue
+        success_rate = _safe_float(metrics.get("success_rate"), 0.0)
+        blocked_rate = _safe_float(metrics.get("blocked_rate"), 0.0)
+        failure_rate = _safe_float(metrics.get("failure_rate"), 0.0)
+        quality = _safe_float(metrics.get("average_context_quality_score"), 0.0)
+        duration = _safe_float(metrics.get("average_duration_secs"), 0.0)
+        score = (success_rate * 100.0) - (blocked_rate * 24.0) - (failure_rate * 38.0) + min(quality, 100.0) * 0.08
+        if duration > 0:
+            score -= min(duration, 300.0) * 0.015
+        candidates.append(
+            {
+                "runner": runner,
+                "score": round(score, 3),
+                "sample_count": total,
+                "success_rate": success_rate,
+                "blocked_rate": blocked_rate,
+                "failure_rate": failure_rate,
+                "average_duration_secs": duration,
+                "reason": (
+                    f"{success_rate:.0%} success, {blocked_rate:.0%} blocked, "
+                    f"{failure_rate:.0%} failed across {total} comparable sample(s)"
+                ),
+            }
+        )
+    candidates.sort(key=lambda item: (-_safe_float(item.get("score"), 0.0), -_safe_int(item.get("sample_count"), 0), str(item.get("runner") or "")))
+    comparable_runners = sum(1 for item in candidates if _safe_int(item.get("sample_count"), 0) >= 2)
+    if sample_count < 3:
+        confidence = "insufficient_samples"
+    elif sample_count < 10 or comparable_runners < 2:
+        confidence = "low"
+    elif sample_count < 30:
+        confidence = "medium"
+    else:
+        confidence = "high"
+    return {
+        "mode": "advisor_only",
+        "basis": "observed_bounded_runner_quality_samples",
+        "task_class": task_class or "all",
+        "minimum_samples_per_runner": 5,
+        "confidence": confidence,
+        "top_runner": str(candidates[0].get("runner") or "") if candidates else "",
+        "candidates": candidates[:5],
+        "guardrails": [
+            "Never dispatch or mutate automatically from this summary.",
+            "Compare only similar task_class samples before preferring a runner.",
+            "missing_binary, auth, or blocked statuses are readiness signals, not proof that a runner is low quality.",
+            "Use operator judgment and task constraints before selecting Pi, Droid, Codex, or another adapter.",
+        ],
+    }
+
+
+def summarize(rows: list[dict[str, Any]], parse_errors: int = 0, task_class: str = "") -> dict[str, Any]:
+    all_rows = rows
+    requested_task_class = normalize_task_class(task_class) if task_class else ""
+    if requested_task_class:
+        rows = [row for row in rows if _row_task_class(row) == requested_task_class]
     by_runner: dict[str, dict[str, Any]] = {}
     status_counts = Counter(str(row.get("status") or "unknown") for row in rows)
+    task_class_counts = Counter(_row_task_class(row) for row in all_rows)
     runner_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         runner_rows[str(row.get("runner") or "unknown")].append(row)
@@ -365,28 +454,18 @@ def summarize(rows: list[dict[str, Any]], parse_errors: int = 0) -> dict[str, An
             "exact_prompt_tokens_saved": exact_saved,
             "modeled_inference_tokens_avoided": modeled_avoided,
         }
-    routing_candidates = sorted(
-        by_runner.items(),
-        key=lambda item: (
-            -float(item[1]["success_rate"]),
-            float(item[1]["blocked_rate"]),
-            float(item[1]["failure_rate"]),
-            -int(item[1]["sample_count"]),
-        ),
-    )
     return {
         "schema_id": "contextlattice_runner_quality_summary.v1",
         "updated_at": now_iso(),
         "sample_count": len(rows),
+        "total_sample_count": len(all_rows),
+        "filtered": bool(requested_task_class),
+        "task_class": requested_task_class or "all",
         "parse_errors": parse_errors,
         "by_status": dict(status_counts),
+        "by_task_class": dict(task_class_counts),
         "by_runner": by_runner,
-        "routing_hint": {
-            "basis": "observed_local_runner_quality_samples",
-            "best_runner": routing_candidates[0][0] if routing_candidates else "",
-            "confidence": "low" if len(rows) < 10 else "medium",
-            "warning": "Do not auto-route solely from this summary; use it as decision support until enough comparable samples exist.",
-        },
+        "recommendations": _recommendations(by_runner, len(rows), requested_task_class or "all"),
     }
 
 
@@ -394,11 +473,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize the bounded ContextLattice runner-quality ledger.")
     parser.add_argument("--ledger", default="", help="Override runner-quality ledger path.")
     parser.add_argument("--limit", type=int, default=500)
+    parser.add_argument("--task-class", default="", help="Filter/advice scope for comparable runner samples.")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
     path = Path(args.ledger).expanduser() if args.ledger else ledger_path()
     rows, parse_errors = _read_rows(path, args.limit)
-    payload = summarize(rows, parse_errors=parse_errors)
+    payload = summarize(rows, parse_errors=parse_errors, task_class=args.task_class)
     payload["storage"] = {
         "path": str(path),
         "exists": path.exists(),

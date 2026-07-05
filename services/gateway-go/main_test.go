@@ -987,6 +987,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)`,
+		`mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
 		`mux.HandleFunc("/telemetry/fanout", s.telemetryFanoutRoute)`,
@@ -1048,6 +1049,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/telemetry/token-impact", s.proxy)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.proxy)`,
+		`mux.HandleFunc("/telemetry/runner-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/fanout", s.proxy)`,
@@ -3781,11 +3783,11 @@ func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
 }
 
 func TestMaintenanceRouteMethodGateAndProtectedEntitlement(t *testing.T) {
-	t.Setenv("GO_V4_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_V4_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_V4_ENTITLEMENT_PROTECTED_PATHS", "/maintenance/diagnostics")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_V4_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
+	t.Setenv("GO_PAID_ENTITLEMENT_MODE", "enforce")
+	t.Setenv("GO_PAID_ENTITLEMENT_DEV_ALLOW", "false")
+	t.Setenv("GO_PAID_ENTITLEMENT_PROTECTED_PATHS", "/maintenance/diagnostics")
+	t.Setenv("GO_PAID_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
+	t.Setenv("GO_PAID_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
 
 	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

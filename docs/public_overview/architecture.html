@@ -233,26 +233,27 @@
 
     <section class="section" id="arch-lanes">
       <div class="kicker">Release Boundaries</div>
-      <h2>Public v3.9 lane vs private v4 lane</h2>
+      <h2>Public operator modes</h2>
       <div class="grid component-grid">
         <article class="card component-card">
-          <h3>Public v3.9 (operator default)</h3>
+          <h3>Lite default</h3>
           <ul class="spec-list">
+            <li><strong>Primary interface:</strong> CLI workflows for agents and operators</li>
             <li><strong>Ingress:</strong> <code>gateway-go</code> on <code>:8075</code></li>
             <li><strong>Fallback:</strong> Python rollback lane on <code>:18075</code></li>
-            <li><strong>Memory-bank default:</strong> <code>shodh_spike</code> with bounded fallback chain</li>
+            <li><strong>Fast memory:</strong> topic rollups, Qdrant, graph neighbors, and bounded context packs</li>
             <li><strong>Slow-source handling:</strong> async continuation by default for tail-latency control</li>
-            <li><strong>Objective:</strong> stable performance with clear operational behavior</li>
+            <li><strong>Objective:</strong> stable local memory with clear operational behavior</li>
           </ul>
         </article>
         <article class="card component-card">
-          <h3>Private v4 (experimentation lane)</h3>
+          <h3>Optional adapter lab</h3>
           <ul class="spec-list">
-            <li><strong>Ingress contract:</strong> unchanged from public v3.9</li>
-            <li><strong>Policy:</strong> stricter tuning loops and candidate backend promotions</li>
-            <li><strong>Promotion gate:</strong> benchmark delta + recall parity + runtime soak</li>
-            <li><strong>Rollback:</strong> keep v3.9-compatible path available</li>
-            <li><strong>Objective:</strong> find next proven step-change before public release</li>
+            <li><strong>Mode:</strong> <code>gmake mem-up-lite-advanced</code></li>
+            <li><strong>Purpose:</strong> public, opt-in adapter testing without changing quickstart defaults</li>
+            <li><strong>Boundary:</strong> not a paid/private lane and not automatic promotion</li>
+            <li><strong>Proof:</strong> use runner-quality, recall quality, and live operator checks before adopting a lane</li>
+            <li><strong>Objective:</strong> make experimentation observable without surprising normal users</li>
           </ul>
         </article>
       </div>
@@ -266,9 +267,9 @@ flowchart TD
   C --> E["Slow async: mindsdb, mongo_raw, letta, memory_bank"]
   E --> F["Continuation events + cache warm"]
   B --> G["Python fallback :18075 (rollback)"]
-  H["Private v4 tuning lane"] --> I["Same external API contract"]
-  I --> J["Adaptive backend experiments"]
-  J --> K["Promote only with hard gate evidence"]
+  B --> H["Optional adapter lab"]
+  H --> I["Bounded telemetry + operator review"]
+  I --> J["Promote only with hard gate evidence"]
         </div>
       </article>
     </section>

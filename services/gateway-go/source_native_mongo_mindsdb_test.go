@@ -27,7 +27,7 @@ func TestQueryMongoRawSourceUsesSpoolFallbackWithCanonicalMetadata(t *testing.T)
 
 	tempDir := t.TempDir()
 	spoolPath := filepath.Join(tempDir, "telemetry_spool.jsonl")
-	line := `{"project":"alpha","file_name":"notes/plan.md","topic_path":"runbooks/testing","content":"profitability baseline ladder","timestamp":"2026-04-01T00:00:00Z","spool_ref":"spool://alpha-1","agent_id":"codex_gpt5","session_id":"sess-42","tags":["runtime:v4","lane:mongo_raw"]}` + "\n"
+	line := `{"project":"alpha","file_name":"notes/plan.md","topic_path":"runbooks/testing","content":"profitability baseline ladder","timestamp":"2026-04-01T00:00:00Z","spool_ref":"spool://alpha-1","agent_id":"codex_gpt5","session_id":"sess-42","tags":["runtime:go","lane:mongo_raw"]}` + "\n"
 	if err := os.WriteFile(spoolPath, []byte(line), 0o600); err != nil {
 		t.Fatalf("write spool fixture: %v", err)
 	}

@@ -96,7 +96,7 @@ function downloadTokenSecret(): string {
   return (
     process.env.CONTEXTLATTICE_DOWNLOAD_TOKEN_SECRET ||
     process.env.CONTEXTLATTICE_ADMIN_API_KEY ||
-    process.env.GO_V4_ENTITLEMENT_KEY ||
+    process.env.GO_PAID_ENTITLEMENT_KEY ||
     process.env.NEXTAUTH_SECRET ||
     ""
   ).trim();
