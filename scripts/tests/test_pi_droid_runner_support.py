@@ -16,8 +16,12 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
+RUNNERS_DIR = REPO_ROOT / "scripts" / "agent_runners"
+sys.path.insert(0, str(RUNNERS_DIR))
 
 from agent_contracts import attach_format_contract, load_agent_contracts_registry, validate_agent_contract_payload  # noqa: E402
+import context_expansion_runtime  # noqa: E402
+import runner_quality  # noqa: E402
 
 
 def load_task_worker():
@@ -81,7 +85,7 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
         self.assertIn("brew-cask", profiles["profiles"]["droid"]["surfaces"])
 
         registry = load_agent_contracts_registry()
-        for contract_id in ("runner_capability.v1", "runner_result.v1", "agent_task_lease.v1"):
+        for contract_id in ("runner_capability.v1", "runner_result.v1", "agent_task_lease.v1", "runner_quality_sample.v1"):
             self.assertIn(contract_id, registry["contracts"])
 
     def test_contract_examples_validate(self) -> None:
@@ -181,11 +185,67 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
             },
             registry,
         )
+        quality_sample = attach_format_contract(
+            "runner_quality_sample.v1",
+            {
+                "schema_id": "runner_quality_sample.v1",
+                "sample_id": "rqs_test",
+                "captured_at": "2026-07-05T00:00:00Z",
+                "runner": "pi",
+                "agent": "pi",
+                "agent_id": "pi_agent",
+                "task_id": "task_test",
+                "project": "contextlattice",
+                "status": "succeeded",
+                "ok": True,
+                "exit_code": 0,
+                "duration_secs": 1.25,
+                "context_pack_quality": {
+                    "sample_id": "cpq_test",
+                    "quality_score": 88,
+                    "confidence": "medium",
+                    "calibration_grade": "observed_outcome",
+                    "exact_prompt_tokens_saved": 900,
+                    "modeled_inference_tokens_avoided": 2400,
+                    "modeled_extra_calls_avoided": 0.3,
+                    "tokenizer_exact": True,
+                },
+                "token_impact": {
+                    "saved_tokens_estimate": 900,
+                    "packed_tokens_estimate": 600,
+                    "tokenizer_exact": True,
+                    "provider_prompt_tokens": 0,
+                    "provider_completion_tokens": 0,
+                    "provider_total_tokens": 0,
+                },
+                "outcome": {
+                    "task_status": "succeeded",
+                    "runner_status": "succeeded",
+                    "first_pass_success": True,
+                    "blocked": False,
+                    "failed": False,
+                    "retry_count": 0,
+                    "observed_followup_tokens": 0,
+                },
+                "feedback": {"present": False, "rating": 0, "label": "", "source": ""},
+                "metadata": {
+                    "adapter": "pi_runner",
+                    "context_pack_quality_sample_id": "cpq_test",
+                    "summary_hash": "abc123",
+                    "warning_count": 0,
+                    "artifact_count": 0,
+                    "retrieval_status": "completed",
+                    "quality_basis": "context_pack_quality_sample",
+                },
+            },
+            registry,
+        )
         for contract_id, payload in (
             ("runner_capability.v1", pi_capability),
             ("runner_capability.v1", droid_capability),
             ("runner_result.v1", runner_result),
             ("agent_task_lease.v1", lease),
+            ("runner_quality_sample.v1", quality_sample),
         ):
             self.assertEqual(validate_agent_contract_payload(contract_id, payload, registry), [])
 
@@ -307,6 +367,137 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
         self.assertIn("Context expansion unavailable", captured["env"]["TASK_CONTEXT_PROMPT"])
         self.assertEqual(captured["posts"][0][1]["status"], "succeeded")
         self.assertIn("runner_result", captured["checkpoint"]["output"])
+
+    def test_context_expansion_preserves_context_pack_quality_sample(self) -> None:
+        class FakeRuntime(context_expansion_runtime.ContextExpansionRuntime):
+            def _context_pack(self, **_: Any) -> dict[str, Any]:
+                return {
+                    "context_pack": {
+                        "facts": [{"text": "fact"}],
+                        "results": [],
+                        "numericFacts": [],
+                    },
+                    "context_pack_quality": {
+                        "sample_id": "cpq_preserved",
+                        "quality_score": 91,
+                        "confidence": "medium",
+                        "exact_prompt_tokens_saved": 111,
+                        "modeled_inference_tokens_avoided": 222,
+                    },
+                    "token_impact": {
+                        "saved_tokens_estimate": 111,
+                        "packed_tokens_estimate": 40,
+                        "tokenizer_exact": True,
+                    },
+                }
+
+            def _search(self, **_: Any) -> dict[str, Any]:
+                return {
+                    "results": [],
+                    "grounding": {"facts": [{"text": "search fact"}], "numeric_facts": []},
+                    "retrieval_lifecycle": {"status": "completed", "result_state": "ready"},
+                    "source_summary": {"returned_now": ["postgres_pgvector"]},
+                }
+
+        runtime = FakeRuntime("http://127.0.0.1:8075")
+        bundle = runtime.prepare({"id": "task_quality", "title": "Quality", "project": "contextlattice", "payload": {}})
+        self.assertEqual(bundle["context_pack_quality"]["sample_id"], "cpq_preserved")
+        self.assertEqual(bundle["token_impact"]["saved_tokens_estimate"], 111)
+
+    def test_task_worker_records_runner_quality_sample(self) -> None:
+        worker = load_task_worker()
+        captured: dict[str, Any] = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger_path = Path(tmp) / "runner_quality.ndjson"
+
+            class FakeRuntime:
+                def __init__(self, *_: Any, **__: Any) -> None:
+                    pass
+
+                def prepare(self, task: dict[str, Any]) -> dict[str, Any]:
+                    return {
+                        "lifecycle": {"status": "completed", "result_state": "ready", "degraded": False},
+                        "tool_slices": {},
+                        "expansion": {},
+                        "context_pack_quality": {
+                            "sample_id": "cpq_worker",
+                            "quality_score": 86,
+                            "confidence": "medium",
+                            "calibration_grade": "observed_outcome",
+                            "exact_prompt_tokens_saved": 1234,
+                            "modeled_inference_tokens_avoided": 2400,
+                            "modeled_extra_calls_avoided": 0.25,
+                            "tokenizer_exact": True,
+                        },
+                        "token_impact": {
+                            "saved_tokens_estimate": 1234,
+                            "packed_tokens_estimate": 900,
+                            "tokenizer_exact": True,
+                        },
+                    }
+
+                def render_for_prompt(self, bundle: dict[str, Any]) -> str:
+                    return "context"
+
+                def write_checkpoint(self, **kwargs: Any) -> None:
+                    captured["checkpoint"] = kwargs
+
+            def fake_post(_url: str, path: str, payload: dict[str, Any], *args: Any, **kwargs: Any) -> dict[str, Any]:
+                if path == "/v1/inference/route":
+                    return {"route": {"provider": "test", "base_url": "", "reason": "test"}}
+                captured.setdefault("posts", []).append((path, payload))
+                return {"ok": True}
+
+            def fake_run_adapter(_argv: list[str], env: dict[str, str], *_: Any, **__: Any) -> dict[str, Any]:
+                return {
+                    "schema_id": "runner_result.v1",
+                    "ok": True,
+                    "runner": "pi",
+                    "agent": "pi",
+                    "agent_id": "pi_agent",
+                    "task_id": "task_quality",
+                    "project": "contextlattice",
+                    "status": "succeeded",
+                    "exit_code": 0,
+                    "duration_secs": 1.2,
+                    "summary": "finished with sk-abcdefghijklmnopqrstuvwxyz1234567890",
+                    "stdout_tail": "Bearer abcdefghijklmnopqrstuvwxyz1234567890",
+                    "stderr_tail": "",
+                    "artifacts": [],
+                    "warnings": [],
+                    "metadata": {"adapter": "pi_runner"},
+                }
+
+            original_runtime, original_post, original_run = worker.ContextExpansionRuntime, worker._post, worker._run_adapter
+            with EnvPatch({"CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_PATH": str(ledger_path)}):
+                try:
+                    worker.ContextExpansionRuntime = FakeRuntime
+                    worker._post = fake_post
+                    worker._run_adapter = fake_run_adapter
+                    worker._handle_task(
+                        "http://127.0.0.1:8075",
+                        {"id": "task_quality", "title": "Run", "project": "contextlattice", "agent": "pi", "payload": {}},
+                        "pi",
+                        "auto",
+                        "model",
+                        None,
+                        None,
+                    )
+                finally:
+                    worker.ContextExpansionRuntime, worker._post, worker._run_adapter = original_runtime, original_post, original_run
+
+            raw = ledger_path.read_text(encoding="utf-8")
+            self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz", raw)
+            self.assertNotIn("Bearer abcdef", raw)
+            row = json.loads(raw.splitlines()[0])
+            self.assertEqual(row["schema_id"], "runner_quality_sample.v1")
+            self.assertEqual(row["context_pack_quality"]["sample_id"], "cpq_worker")
+            self.assertEqual(row["context_pack_quality"]["exact_prompt_tokens_saved"], 1234)
+            status_metadata = captured["posts"][0][1]["metadata"]
+            self.assertEqual(status_metadata["runner_quality"]["context_pack_quality"]["sample_id"], "cpq_worker")
+            summary = runner_quality.summarize([row])
+            self.assertEqual(summary["by_runner"]["pi"]["success_count"], 1)
+            self.assertEqual(summary["by_runner"]["pi"]["exact_prompt_tokens_saved"], 1234)
 
     def test_legacy_task_agent_cmd_override_still_uses_legacy_command(self) -> None:
         worker = load_task_worker()

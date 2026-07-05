@@ -223,6 +223,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
 - Use `scripts/agent/contextlattice-session` for CLI start/event/complete/fail/status/runtime/trace flows.
 - Use `scripts/agent/agent-run-trace --session-id <id> --tree` or global `contextlattice_agent_trace --session-id <id> --tree` to see the terminal trace, then `--markdown` to export the run card.
+- Use `scripts/agent/runner-quality --pretty` to inspect the bounded runner-quality ledger for adapter success/block/failure rates, context-pack quality linkage, exact prompt-token savings, and modeled inference-avoidance signals. Optional dev-tool installs expose it as `contextlattice_runner_quality`.
 - Use `scripts/agent/contextlattice-session sweep-stale-audits --all-projects --pretty` for dry-run-first cleanup of stale objective-runtime audit/preflight sessions; add `--confirm` only after reviewing matches.
 - `scripts/agent/contextlattice-pack`, `scripts/agent/contextlattice-dream`, `scripts/agent/writeback`, and compaction hooks auto-start or recover a session when `CONTEXTLATTICE_SESSION_ID` is absent.
 - Pass `--session-id` or `CONTEXTLATTICE_SESSION_ID` to force a specific session. Set `CONTEXTLATTICE_AUTO_SESSION_DISABLED=1` to disable automatic session creation.
@@ -230,6 +231,8 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 Canonical event families include `session.started`, `agent.state.working`, `agent.state.awaiting_user`, `agent.state.blocked`, `agent.state.done`, `context_pack.completed`, `retrieval.continuation.progress`, `retrieval.continuation.ready`, `retrieval.continuation.degraded`, `dream.completed`, `graph.neighbors_returned`, `graph.edge_touched`, `decision.made`, `test.ran`, `handoff.created`, `writeback.completed`, and `session.completed`.
 
 Agent lifecycle and retrieval lifecycle are intentionally separate. `agent_lifecycle.state` describes the actor (`idle`, `working`, `awaiting_user`, `blocked`, `done`); `retrieval_lifecycle.status` describes source-fetch progress. This prevents async retrieval warming from being misread as a blocked or degraded agent.
+
+Runner quality is intentionally separate from both lifecycle surfaces. See `docs/runtime/runner-quality-loop.md` for the compact adapter measurement loop and its interpretation limits.
 
 ## Download Installers
 

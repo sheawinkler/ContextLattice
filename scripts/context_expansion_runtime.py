@@ -575,6 +575,30 @@ class ContextExpansionRuntime:
             }
             responses.append(pseudo)
 
+        context_pack_quality = (
+            context_pack.get("context_pack_quality")
+            if isinstance(context_pack.get("context_pack_quality"), dict)
+            else {}
+        )
+        nested_context_pack = context_pack.get("context_pack") if isinstance(context_pack.get("context_pack"), dict) else {}
+        if not context_pack_quality:
+            context_pack_quality = (
+                nested_context_pack.get("context_pack_quality")
+                if isinstance(nested_context_pack.get("context_pack_quality"), dict)
+                else nested_context_pack.get("contextPackQuality")
+                if isinstance(nested_context_pack.get("contextPackQuality"), dict)
+                else {}
+            )
+        token_impact = (
+            context_pack.get("token_impact")
+            if isinstance(context_pack.get("token_impact"), dict)
+            else nested_context_pack.get("token_impact")
+            if isinstance(nested_context_pack.get("token_impact"), dict)
+            else nested_context_pack.get("tokenImpact")
+            if isinstance(nested_context_pack.get("tokenImpact"), dict)
+            else {}
+        )
+
         lifecycle = self._lifecycle_from_response(primary if primary else {})
         results_now = primary.get("results") if isinstance(primary.get("results"), list) else []
         facts_now = (
@@ -687,6 +711,8 @@ class ContextExpansionRuntime:
             },
             "numeric_facts": merged_numeric[: self.max_facts],
             "tool_slices": tool_slices,
+            "context_pack_quality": context_pack_quality,
+            "token_impact": token_impact,
             "expansion": {
                 "broadened_scope": broadened_scope,
                 "deep_escalated": deep_escalated,

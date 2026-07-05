@@ -18,6 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+RUNNERS_DIR = Path(__file__).resolve().parent / "agent_runners"
+if str(RUNNERS_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNNERS_DIR))
+
 try:
     from scripts.contextlattice_client import (
         ContextLatticeClient,
@@ -34,6 +38,11 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run from scripts
     )
     from agent_contracts import attach_format_contract  # type: ignore[no-redef]
     from context_expansion_runtime import ContextExpansionRuntime
+
+try:
+    from runner_quality import record_runner_quality
+except ModuleNotFoundError:  # pragma: no cover - runner metrics are fail-open
+    record_runner_quality = None  # type: ignore[assignment]
 
 DEFAULT_ORCH_URL = os.getenv(
     "CONTEXTLATTICE_ORCHESTRATOR_URL",
@@ -367,6 +376,75 @@ def _agent_state_for_runner_status(result: dict[str, Any]) -> dict[str, Any]:
     return {"schema_id": "contextlattice_agent_lifecycle_state.v1", "state": state, "authority": "adapter", "source": "task_agent_worker"}
 
 
+def _compact_runner_quality_sample(sample: dict[str, Any], storage: dict[str, Any]) -> dict[str, Any]:
+    quality = sample.get("context_pack_quality") if isinstance(sample.get("context_pack_quality"), dict) else {}
+    token_impact = sample.get("token_impact") if isinstance(sample.get("token_impact"), dict) else {}
+    outcome = sample.get("outcome") if isinstance(sample.get("outcome"), dict) else {}
+    return {
+        "schema_id": str(sample.get("schema_id") or "runner_quality_sample.v1"),
+        "sample_id": str(sample.get("sample_id") or ""),
+        "runner": str(sample.get("runner") or ""),
+        "agent": str(sample.get("agent") or ""),
+        "agent_id": str(sample.get("agent_id") or ""),
+        "task_id": str(sample.get("task_id") or ""),
+        "project": str(sample.get("project") or ""),
+        "status": str(sample.get("status") or ""),
+        "ok": bool(sample.get("ok")),
+        "duration_secs": sample.get("duration_secs"),
+        "context_pack_quality": {
+            "sample_id": quality.get("sample_id"),
+            "quality_score": quality.get("quality_score"),
+            "confidence": quality.get("confidence"),
+            "exact_prompt_tokens_saved": quality.get("exact_prompt_tokens_saved"),
+            "modeled_inference_tokens_avoided": quality.get("modeled_inference_tokens_avoided"),
+        },
+        "token_impact": {
+            "saved_tokens_estimate": token_impact.get("saved_tokens_estimate"),
+            "provider_total_tokens": token_impact.get("provider_total_tokens"),
+        },
+        "outcome": {
+            "first_pass_success": outcome.get("first_pass_success"),
+            "blocked": outcome.get("blocked"),
+            "failed": outcome.get("failed"),
+            "retry_count": outcome.get("retry_count"),
+            "observed_followup_tokens": outcome.get("observed_followup_tokens"),
+        },
+        "storage": {
+            "enabled": bool(storage.get("enabled", False)),
+            "sample_id": storage.get("sample_id"),
+            "max_bytes": storage.get("max_bytes"),
+            "max_samples": storage.get("max_samples"),
+        },
+    }
+
+
+def _record_runner_quality_sample(
+    *,
+    task: dict[str, Any],
+    agent: str,
+    result: dict[str, Any],
+    context_bundle: dict[str, Any],
+    task_status: str,
+    message: str,
+    route_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if record_runner_quality is None:
+        return {"ok": False, "reason": "runner_quality_module_unavailable"}
+    try:
+        sample, storage = record_runner_quality(
+            task=task,
+            agent=agent,
+            result=result,
+            context_bundle=context_bundle,
+            task_status=task_status,
+            message=message,
+            route_payload=route_payload,
+        )
+        return _compact_runner_quality_sample(sample, storage)
+    except Exception as exc:
+        return {"ok": False, "reason": "runner_quality_record_failed", "error": str(exc)[:240]}
+
+
 def _orchestrator_headers() -> dict[str, str]:
     return build_orchestrator_headers(resolve_orchestrator_api_key(role="worker"))
 
@@ -613,6 +691,15 @@ def _handle_task(
         if pending_sources:
             message += f" (pending async sources: {', '.join(str(item) for item in pending_sources[:4])})"
         agent_state = _agent_state_for_runner_status(result)
+        runner_quality = _record_runner_quality_sample(
+            task=task,
+            agent=agent_choice,
+            result=result,
+            context_bundle=context_bundle,
+            task_status=task_status,
+            message=message,
+            route_payload=route_payload,
+        )
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
@@ -621,6 +708,7 @@ def _handle_task(
                 "message": message,
                 "metadata": {
                     "runner_result": compact_result,
+                    "runner_quality": runner_quality,
                     "agent_state": agent_state,
                     "retrieval_lifecycle": lifecycle,
                 },
@@ -634,6 +722,7 @@ def _handle_task(
                     "schema_id": "contextlattice_runner_checkpoint.v1",
                     "message": message,
                     "runner_result": compact_result,
+                    "runner_quality": runner_quality,
                     "agent_state": agent_state,
                     "lease": compact_result.get("metadata", {}).get("lease"),
                     "retrieval_lifecycle": lifecycle,
@@ -663,6 +752,7 @@ def _handle_task(
                         "reason": route_reason,
                     },
                     "runner_result": compact_result,
+                    "runner_quality": runner_quality,
                     "agent_state": agent_state,
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
