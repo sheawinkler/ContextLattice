@@ -185,7 +185,7 @@ func (c *cli) cmdAdopt(args []string) error {
 			"schema_id":      "contextlattice_agent_adoption_status.v1",
 			"native_cli":     true,
 			"install_status": "already_managed_by_scripts_install_global_agent_tools",
-			"message":        "Run scripts/install_global_agent_tools.sh from the checkout to refresh Go-native global tools.",
+			"message":        "Run scripts/install_global_agent_tools.sh from the checkout to refresh Go-native global tools and detected agent instruction hooks.",
 		}, parsed.bool("pretty"))
 	case "integrate":
 		return c.cmdAdoptIntegrate(args)
@@ -200,19 +200,21 @@ type integrationTarget struct {
 }
 
 var agentInstructionTargets = map[string]integrationTarget{
-	"codex":        {file: "AGENTS.md", label: "Codex"},
-	"claude-code":  {file: "CLAUDE.md", label: "Claude Code"},
-	"opencode":     {file: "AGENTS.md", label: "OpenCode"},
-	"hermes-agent": {file: "HERMES.md", label: "Hermes Agent"},
-	"hermes-ultra": {file: "HERMES.md", label: "Hermes Ultra"},
-	"pi":           {file: "PI.md", label: "Pi"},
-	"droid":        {file: "DROID.md", label: "Droid"},
+	"codex":         {file: "AGENTS.md", label: "Codex"},
+	"claude-code":   {file: "CLAUDE.md", label: "Claude Code"},
+	"opencode":      {file: "AGENTS.md", label: "OpenCode"},
+	"hermes-agent":  {file: "HERMES.md", label: "Hermes Agent"},
+	"hermes-ultra":  {file: "HERMES.md", label: "Hermes Ultra"},
+	"omp":           {file: "AGENTS.md", label: "OMP"},
+	"mercury-agent": {file: "MERCURY.md", label: "Mercury Agent"},
+	"pi":            {file: "PI.md", label: "Pi"},
+	"droid":         {file: "DROID.md", label: "Droid"},
 }
 
 func (c *cli) cmdAdoptIntegrate(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"repo": "repo", "agents": "agents"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"dry-run": "dry_run", "check": "check"}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid [--check] --pretty")
+		return c.emitUsage("contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid [--check] --pretty")
 	}
 	repo := parsed.string("repo", ".")
 	if repo == "" {
@@ -223,7 +225,7 @@ func (c *cli) cmdAdoptIntegrate(args []string) error {
 		return err
 	}
 	profiles := loadAgentProfiles()
-	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid"))
+	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid"))
 	if parsed.bool("check") {
 		audit := auditRepoIntegration(absRepo, agents)
 		if err := c.emit(audit, parsed.bool("pretty")); err != nil {
@@ -441,7 +443,7 @@ func (c *cli) adoptStatus(args []string) error {
 		"runner_quality":  dropEmpty(map[string]any{"ok": runnerQualityErr == nil, "summary": runnerQuality, "error": errString(runnerQualityErr)}),
 		"install":         installChecks,
 		"agent_discovery": discovery,
-		"repair_command":  "scripts/install_global_agent_tools.sh --install-codex-hooks --no-shell-profile",
+		"repair_command":  "scripts/install_global_agent_tools.sh --install-codex-hooks --install-agent-hooks --no-shell-profile",
 	}, parsed.bool("pretty"))
 }
 
@@ -486,7 +488,64 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		ok = ok && installed
 		checks = append(checks, map[string]any{"name": strings.TrimPrefix(path, globalHome+string(os.PathSeparator)), "path": path, "ok": installed, "kind": "hook_runtime"})
 	}
+	for _, check := range detectedAgentInstructionHookChecks() {
+		ok = ok && asBool(check["ok"])
+		checks = append(checks, check)
+	}
 	return map[string]any{"ok": ok, "checks": checks}
+}
+
+func detectedAgentInstructionHookChecks() []map[string]any {
+	cases := []struct {
+		agent    string
+		path     string
+		commands []string
+		dirs     []string
+	}{
+		{
+			agent:    "omp",
+			path:     filepath.Join(homeDir(), ".omp", "agent", "AGENTS.md"),
+			commands: []string{"omp"},
+			dirs:     []string{filepath.Join(homeDir(), ".omp", "agent")},
+		},
+		{
+			agent:    "mercury-agent",
+			path:     filepath.Join(homeDir(), ".mercury", "soul.md"),
+			commands: []string{"mercury-agent", "mercury"},
+			dirs:     []string{filepath.Join(homeDir(), ".mercury")},
+		},
+	}
+	out := []map[string]any{}
+	for _, row := range cases {
+		detected := false
+		detectedBy := []string{}
+		for _, command := range row.commands {
+			if _, err := exec.LookPath(command); err == nil {
+				detected = true
+				detectedBy = append(detectedBy, "command:"+command)
+			}
+		}
+		for _, dir := range row.dirs {
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				detected = true
+				detectedBy = append(detectedBy, "dir:"+dir)
+			}
+		}
+		if !detected {
+			continue
+		}
+		evidence := managedAgentInstructionHookEvidence(row.agent, row.path)
+		out = append(out, map[string]any{
+			"name":        row.agent + "_instruction_hook",
+			"kind":        "agent_instruction_hook",
+			"agent":       row.agent,
+			"path":        row.path,
+			"ok":          asBool(evidence["ok"]),
+			"detected_by": detectedBy,
+			"evidence":    evidence,
+		})
+	}
+	return out
 }
 
 func parseArgs(args []string, stringNames map[string]string, boolNames map[string]string) parsedArgs {
@@ -1604,7 +1663,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 		absRepo, err := filepath.Abs(repo)
 		repoAudit := map[string]any{"ok": false, "schema_id": "contextlattice_agent_repo_integration_audit.v1", "repo": repo, "findings": []map[string]any{{"reason": "repo_path_invalid", "detail": errString(err)}}}
 		if err == nil {
-			repoAudit = auditRepoIntegration(absRepo, splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid")))
+			repoAudit = auditRepoIntegration(absRepo, splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid")))
 		}
 		checks = append(checks, map[string]any{"name": "repo_integration", "ok": asBool(repoAudit["ok"]), "repo": absRepo, "audit": repoAudit, "explanation": "repo-local instruction blocks tell non-hooked agents how to bootstrap, checkpoint, handoff, and report lifecycle state"})
 	}
@@ -1677,7 +1736,7 @@ func (c *cli) cmdAdoptionProof(args []string) error {
 		return c.emitUsage("contextlattice_agent_adoption_proof --agents codex,claude-code --pretty")
 	}
 	c.applyBaseURL(parsed)
-	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid,chatgpt-web,chatgpt-desktop,claude-web,claude-desktop"))
+	agents := splitCSV(parsed.string("agents", "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid,chatgpt-web,chatgpt-desktop,claude-web,claude-desktop"))
 	cases := []map[string]any{}
 	for _, agent := range agents {
 		payload := map[string]any{"agent": agent, "project": parsed.string("project", "contextlattice"), "retrieval_mode": parsed.string("mode", "fast")}
@@ -2160,6 +2219,10 @@ func defaultAgentProcessNames(agent string) []string {
 		return []string{"hermes-agent", "hermes"}
 	case "hermes-ultra":
 		return []string{"hermes-ultra", "hermes-agent-ultra"}
+	case "omp":
+		return []string{"omp"}
+	case "mercury-agent":
+		return []string{"mercury-agent", "mercury"}
 	case "pi":
 		return []string{"pi"}
 	case "droid":
@@ -3238,9 +3301,26 @@ func agentHookEvidence(agent string) map[string]any {
 			reason = "codex_hooks_json_missing_contextlattice_agent_start"
 		}
 		return map[string]any{"ok": ok, "path": path, "reason": reason}
+	case "omp":
+		return managedAgentInstructionHookEvidence("omp", filepath.Join(homeDir(), ".omp", "agent", "AGENTS.md"))
+	case "mercury-agent", "mercury":
+		return managedAgentInstructionHookEvidence("mercury-agent", filepath.Join(homeDir(), ".mercury", "soul.md"))
 	default:
 		return map[string]any{"ok": false, "reason": "no_known_native_hook_probe_for_profile"}
 	}
+}
+
+func managedAgentInstructionHookEvidence(profile string, path string) map[string]any {
+	data, err := os.ReadFile(path)
+	marker := "contextlattice-agent-install:" + profile
+	ok := err == nil && strings.Contains(string(data), marker)
+	reason := "managed_agent_instruction_hook_present"
+	if err != nil {
+		reason = "agent_instruction_file_unreadable_or_missing"
+	} else if !ok {
+		reason = "managed_agent_instruction_hook_missing"
+	}
+	return map[string]any{"ok": ok, "path": path, "reason": reason, "marker": marker}
 }
 
 func agentDiscoveryExplanation(agent, state, stateSource string, processes []any, integration map[string]any) string {

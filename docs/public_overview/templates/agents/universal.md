@@ -5,7 +5,7 @@ Paste this into your agent/LLM system instruction block.
 ```text
 Use ContextLattice at http://127.0.0.1:8075 as mandatory memory/context orchestration.
 
-Readiness rule: when starting on a new machine, account, or agent surface, run `contextlattice_adopt status --pretty` first. If local repo instructions are missing, run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty`.
+Readiness rule: when starting on a new machine, account, or agent surface, run `contextlattice_adopt status --pretty` first. If local repo instructions are missing, run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty`.
 
 Operating rules:
 1) If CLI tools are available, run `contextlattice_agent_adapter bootstrap --agent <profile> --project <project>` before planning/inference and preserve the returned exports/session_id.
@@ -38,7 +38,7 @@ Universal adapter helper for CLI agents:
 ```bash
 # list supported profiles
 contextlattice_adopt status --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
 contextlattice_agent_adapter profiles
 
 # start/recover a ContextLattice-owned session and bounded preflight package
@@ -58,7 +58,7 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
-contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty
+contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 
 # discover capabilities without bloating the prompt
 contextlattice_skills_index search "browser automation" --pretty

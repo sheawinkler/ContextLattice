@@ -114,8 +114,15 @@ AGENT_COMMANDS = {
     "opencode": ["opencode"],
     "hermes-agent": ["hermes", "hermes-agent"],
     "hermes-ultra": ["hermes-ultra"],
+    "omp": ["omp"],
+    "mercury-agent": ["mercury-agent", "mercury"],
     "pi": ["pi"],
     "droid": ["droid"],
+}
+
+AGENT_INSTRUCTION_HOOKS = {
+    "omp": Path.home() / ".omp" / "agent" / "AGENTS.md",
+    "mercury-agent": Path.home() / ".mercury" / "soul.md",
 }
 
 RUNNER_INSTALL_HINTS = {
@@ -203,6 +210,8 @@ def profile_order() -> list[str]:
         "opencode",
         "hermes-agent",
         "hermes-ultra",
+        "omp",
+        "mercury-agent",
         "pi",
         "droid",
         "chatgpt-web",
@@ -297,6 +306,8 @@ def install_argv(global_home: Path, args: argparse.Namespace | None = None) -> l
         argv = [runner, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(INSTALLER_PS1), "-GlobalHome", str(global_home)]
         if skip_venv:
             argv.append("-SkipVenv")
+        if not bool(getattr(args, "install_agent_hooks", True)):
+            argv.append("-NoAgentHooks")
         return argv
 
     argv = [str(INSTALLER_SH), "--global-home", str(global_home)]
@@ -306,6 +317,8 @@ def install_argv(global_home: Path, args: argparse.Namespace | None = None) -> l
         argv.append("--skip-venv")
     if bool(getattr(args, "install_codex_hooks", False)) and not bool(getattr(args, "no_codex_hooks", False)):
         argv.append("--install-codex-hooks")
+    if not bool(getattr(args, "install_agent_hooks", True)):
+        argv.append("--no-agent-hooks")
     if bool(getattr(args, "quiet", False)):
         argv.append("--quiet")
     return argv
@@ -358,6 +371,15 @@ def detect_agents(home: Path) -> list[dict[str, Any]]:
         app_hits = [path for path in APP_PATHS.get(profile, []) if Path(path).exists()]
         template = template_path(profile)
         template_exists = template.exists()
+        instruction_hook = AGENT_INSTRUCTION_HOOKS.get(profile)
+        hook_installed = False
+        if instruction_hook and instruction_hook.exists():
+            try:
+                hook_installed = "contextlattice-agent-install" in instruction_hook.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except Exception:
+                hook_installed = False
         command_state = "detected" if command_hits else ("missing" if AGENT_COMMANDS.get(profile) else "not_applicable")
         adapter_path = RUNNER_ADAPTERS.get(profile)
         adapter_present = bool(adapter_path and adapter_path.is_file())
@@ -381,6 +403,8 @@ def detect_agents(home: Path) -> list[dict[str, Any]]:
                 "commands": command_hits,
                 "apps": app_hits,
                 "template": compact_path(template) if template_exists else "",
+                "instruction_hook": compact_path(instruction_hook) if instruction_hook else "",
+                "instruction_hook_installed": hook_installed if instruction_hook else None,
                 "install_hint": RUNNER_INSTALL_HINTS.get(profile, ""),
                 "runner_adapter": compact_path(adapter_path) if adapter_path and adapter_present else "",
                 "runner_capability_contract": capability_contract_present if runner_profile else None,
@@ -544,9 +568,22 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         failures.append({"reason": "native_ownership_failed", "detail": as_list(as_dict(native_ownership.get("payload")).get("findings"))[:8]})
     if context_boundary.get("ok") is False:
         failures.append({"reason": "context_boundary_failed", "detail": as_list(as_dict(context_boundary.get("payload")).get("findings"))[:8]})
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        if item.get("profile") in AGENT_INSTRUCTION_HOOKS and item.get("install_state") == "detected" and item.get("instruction_hook_installed") is False:
+            failures.append(
+                {
+                    "reason": "agent_instruction_hook_missing",
+                    "profile": item.get("profile"),
+                    "path": item.get("instruction_hook"),
+                    "suggested_fix": "scripts/install_global_agent_tools.sh --install-agent-hooks --no-shell-profile",
+                }
+            )
     repair_args = argparse.Namespace(
         install_codex_hooks=True,
         no_codex_hooks=False,
+        install_agent_hooks=True,
         no_shell_profile=True,
         skip_venv=True,
         quiet=False,
@@ -627,7 +664,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         "proof": proof,
         "next_commands": [
             "contextlattice_adopt status --pretty",
-            "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty",
+            "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty",
             "contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty",
             "contextlattice_agent_adapter profiles",
         ],
@@ -1005,7 +1042,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
         "commands": {
             "install": "contextlattice_adopt install --pretty",
             "install_from_repo": "scripts/agent/contextlattice-adopt install --pretty",
-            "integrate": "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty",
+            "integrate": "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty",
             "status": "contextlattice_adopt status --pretty",
             "proof": "contextlattice_adopt proof --skip-provider-smoke --pretty",
             "bootstrap": "contextlattice_agent_adapter bootstrap --agent <profile> --project <project> --pretty",
@@ -1094,6 +1131,8 @@ INSTRUCTION_TARGETS = {
     "opencode": ("AGENTS.md", "OpenCode"),
     "hermes-agent": ("HERMES.md", "Hermes Agent"),
     "hermes-ultra": ("HERMES.md", "Hermes Ultra"),
+    "omp": ("AGENTS.md", "OMP"),
+    "mercury-agent": ("MERCURY.md", "Mercury Agent"),
     "pi": ("PI.md", "Pi"),
     "droid": ("DROID.md", "Droid"),
 }
@@ -1343,6 +1382,7 @@ def build_parser() -> argparse.ArgumentParser:
     install = sub.add_parser("install", help="Install global tools, optional hooks, then run adoption status.")
     add_common(install)
     install.add_argument("--install-codex-hooks", action=argparse.BooleanOptionalAction, default=True)
+    install.add_argument("--install-agent-hooks", action=argparse.BooleanOptionalAction, default=True)
     install.add_argument("--no-codex-hooks", action="store_true")
     install.add_argument("--no-shell-profile", action="store_true")
     install.add_argument("--skip-venv", action="store_true")
@@ -1405,7 +1445,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     integrate = sub.add_parser("integrate", help="Write repo-local managed instruction blocks for selected agents.")
     integrate.add_argument("--repo", default=".")
-    integrate.add_argument("--agents", default="codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid")
+    integrate.add_argument("--agents", default="codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid")
     integrate.add_argument("--project", default="contextlattice")
     integrate.add_argument("--timeout", type=float, default=10)
     integrate.add_argument("--check", action="store_true", help="Verify existing managed instruction blocks instead of writing them.")

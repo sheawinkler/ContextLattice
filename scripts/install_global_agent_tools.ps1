@@ -1,7 +1,8 @@
 Param(
     [string]$GlobalHome = "$env:USERPROFILE\.contextlattice",
     [switch]$SkipVenv,
-    [switch]$IncludeDevPythonTools
+    [switch]$IncludeDevPythonTools,
+    [switch]$NoAgentHooks
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,7 @@ $BinDir = Join-Path $GlobalHome "bin"
 $VenvDir = Join-Path $GlobalHome "venv-agent-tools"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $HookEnvFile = Join-Path $GlobalHome "agent_hooks.env"
+$HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
 
 function ConvertTo-ShellDoubleQuoted {
     param([string]$Value)
@@ -61,6 +63,74 @@ if ($existingHookEnvLines.Count -gt 0) {
     $hookEnvLines += $existingHookEnvLines
 }
 Set-Content -Path $HookEnvFile -Value $hookEnvLines -Encoding Ascii
+
+function Test-AgentCommand {
+    param([string[]]$Names)
+    foreach ($name in $Names) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Add-AgentInstructionHook {
+    param(
+        [string]$Path,
+        [string]$Profile,
+        [string]$Label,
+        [string]$AgentId,
+        [string]$TopicPath
+    )
+    $begin = "<!-- >>> contextlattice-agent-install:$Profile >>>"
+    $end = "<!-- <<< contextlattice-agent-install:$Profile <<< -->"
+    $block = @(
+        $begin,
+        "# ContextLattice $Label Hook",
+        "",
+        "ContextLattice is the local memory and context layer for this agent.",
+        "",
+        "- Profile: ``$Profile``",
+        "- Stable agent id: ``$AgentId``",
+        "- Topic path: ``$TopicPath``",
+        "- Default orchestrator: ``http://127.0.0.1:8075``",
+        "",
+        "Before substantial planning or coding, retrieve scoped context:",
+        "",
+        "~~~bash",
+        "contextlattice_agent_start --soft --compact",
+        "contextlattice_agent_adapter bootstrap --agent $Profile --project contextlattice --pretty",
+        "contextlattice_agent_adapter context-pack --agent $Profile --project contextlattice --pretty",
+        "~~~",
+        "",
+        "During long work, checkpoint decisions with ``contextlattice_checkpoint`` or ``contextlattice_agent_adapter checkpoint``.",
+        "Before handoff or compaction, write a concise handoff through ``contextlattice_agent_adapter handoff``.",
+        "If ContextLattice is unreachable, continue from local evidence and state ``degraded-memory mode`` explicitly.",
+        $end
+    ) -join "`r`n"
+    $current = ""
+    if (Test-Path $Path) {
+        $current = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
+    }
+    $pattern = [regex]::Escape($begin) + "[\s\S]*?" + [regex]::Escape($end) + "\r?\n?"
+    $without = [regex]::Replace([string]$current, $pattern, "").TrimEnd()
+    $next = if ($without.Length -gt 0) { "$without`r`n`r`n$block" } else { $block }
+    New-Item -ItemType Directory -Path (Split-Path $Path -Parent) -Force | Out-Null
+    Set-Content -Path $Path -Value $next -Encoding Ascii
+}
+
+if (-not $NoAgentHooks.IsPresent) {
+    $ompPath = Join-Path $HomeDir ".omp\agent\AGENTS.md"
+    if ((Test-AgentCommand @("omp")) -or (Test-Path (Join-Path $HomeDir ".omp\agent"))) {
+        Add-AgentInstructionHook -Path $ompPath -Profile "omp" -Label "OMP" -AgentId "omp_agent" -TopicPath "runbooks/omp-integration"
+        Write-Host "Installed OMP ContextLattice instruction hook in `$HOME/.omp/agent/AGENTS.md"
+    }
+    $mercuryPath = Join-Path $HomeDir ".mercury\soul.md"
+    if ((Test-AgentCommand @("mercury-agent", "mercury")) -or (Test-Path (Join-Path $HomeDir ".mercury"))) {
+        Add-AgentInstructionHook -Path $mercuryPath -Profile "mercury-agent" -Label "Mercury Agent" -AgentId "mercury_agent" -TopicPath "runbooks/mercury-agent-integration"
+        Write-Host "Installed Mercury ContextLattice instruction hook in `$HOME/.mercury/soul.md"
+    }
+}
 
 $hookRuntimePythonFiles = @(
     "scripts\agent\_common.py",

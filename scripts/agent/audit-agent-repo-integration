@@ -12,13 +12,15 @@ from _common import emit
 
 BEGIN = "<!-- >>> contextlattice-agent-integration >>>"
 END = "<!-- <<< contextlattice-agent-integration <<< -->"
-DEFAULT_AGENTS = "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid"
+DEFAULT_AGENTS = "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid"
 INSTRUCTION_TARGETS = {
     "codex": ("AGENTS.md", "Codex"),
     "claude-code": ("CLAUDE.md", "Claude Code"),
     "opencode": ("AGENTS.md", "OpenCode"),
     "hermes-agent": ("HERMES.md", "Hermes Agent"),
     "hermes-ultra": ("HERMES.md", "Hermes Ultra"),
+    "omp": ("AGENTS.md", "OMP"),
+    "mercury-agent": ("MERCURY.md", "Mercury Agent"),
     "pi": ("PI.md", "Pi"),
     "droid": ("DROID.md", "Droid"),
 }

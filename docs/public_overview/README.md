@@ -23,7 +23,7 @@ This folder is the source for the public ContextLattice overview web pages.
 - `styles-fracture.css` - fracture-ledger visual treatment
 - `assets/` - listing/social graphics (`contextlattice-og-1200x630.png`, `contextlattice-icon-512.png`)
 - `templates/` - copy-ready agent instruction templates (`AGENTS.contextlattice.md`, `SKILLS.contextlattice.md`)
-- `templates/agents/` - agent-profile templates (`codex`, `claude-code`, `opencode`, `hermes-agent`, `chatgpt`, `claude`)
+- `templates/agents/` - agent-profile templates (`codex`, `claude-code`, `opencode`, `hermes-agent`, `omp`, `mercury-agent`, `pi`, `droid`, `chatgpt`, `claude`)
 - `.well-known/glama.json` - Glama server-claim metadata
 - `.nojekyll` - enables serving dot-directories such as `.well-known` on GitHub Pages
 

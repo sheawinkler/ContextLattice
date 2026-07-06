@@ -26,9 +26,9 @@ Bad hook targets:
 
 ```bash
 scripts/install_global_agent_tools.sh --install-codex-hooks
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
-contextlattice_doctor --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --skip-provider-smoke --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty
+contextlattice_doctor --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --skip-provider-smoke --pretty
 ```
 
 Optional machine-local hook policy belongs outside git:
@@ -77,6 +77,13 @@ Installed commands:
 | `contextlattice_runtime_env_guard` | Detect stale/conflicting env override drift. |
 
 Pi and Droid runner adapters are repo-local task-worker internals under `scripts/agent_runners/`. ContextLattice reports install hints and readiness, but it does not install or require third-party Pi/Droid CLIs for quickstart.
+
+OMP and Mercury are instruction-hook integrations, not bundled harnesses. Installer flows upsert a bounded managed ContextLattice block into detected user instruction files:
+
+- OMP: `$HOME/.omp/agent/AGENTS.md`
+- Mercury: `$HOME/.mercury/soul.md`
+
+Use `scripts/install_global_agent_tools.sh --no-agent-hooks` or `contextlattice_adopt install --no-install-agent-hooks` to opt out. These hooks teach the detected agent to run ContextLattice bootstrap/context-pack/checkpoint/handoff commands; they do not install OMP or Mercury binaries.
 Runner adapter completions write compact `runner_quality_sample.v1` rows when task-agent workers can access the ledger. Inspect them with primary CLI command `contextlattice_runner_quality --pretty` or repo-local development fallback `scripts/agent/runner-quality --pretty`.
 | `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
 | `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
@@ -94,7 +101,7 @@ Runner adapter completions write compact `runner_quality_sample.v1` rows when ta
 ```bash
 contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
 contextlattice_agent_adapter state --agent codex --state working --summary "startup active" --pretty
-contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty
+contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 contextlattice_adopt status --pretty
 contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty

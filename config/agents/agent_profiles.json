@@ -125,6 +125,45 @@
         "hermes-agent-ultra"
       ]
     },
+    "omp": {
+      "agent_id": "omp_agent",
+      "state_authority": "self_report",
+      "process_names": [
+        "omp"
+      ],
+      "topic_path": "runbooks/omp-integration",
+      "query": "omp agent preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "omp",
+        "oh-my-pi",
+        "omp-cli",
+        "agent-instructions"
+      ],
+      "aliases": [
+        "oh-my-pi",
+        "oh_my_pi"
+      ]
+    },
+    "mercury-agent": {
+      "agent_id": "mercury_agent",
+      "state_authority": "self_report",
+      "process_names": [
+        "mercury-agent",
+        "mercury"
+      ],
+      "topic_path": "runbooks/mercury-agent-integration",
+      "query": "mercury agent preflight connectivity and retrieval",
+      "retrieval_mode": "balanced",
+      "surfaces": [
+        "mercury-agent",
+        "mercury",
+        "agent-instructions"
+      ],
+      "aliases": [
+        "mercury"
+      ]
+    },
     "pi": {
       "agent_id": "pi_agent",
       "state_authority": "manual",

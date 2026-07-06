@@ -49,7 +49,7 @@ Use this as a reusable skill block for agent frameworks that support skills or t
 - Keep factual numbers as exact copies from retrieved records.
 - Expect first deep reads to be slower; repeated equivalent reads should speed up as caches warm.
 - Profile keys for common agents:
-  - `codex`, `claude-code`, `opencode`, `hermes-agent`
+  - `codex`, `claude-code`, `opencode`, `hermes-agent`, `hermes-ultra`, `omp`, `mercury-agent`, `pi`, `droid`
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 
 ### Quality Policy
