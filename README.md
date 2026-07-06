@@ -32,7 +32,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.10.0` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, optional Pi/Droid task-runner adapters, bounded runner-quality telemetry, advisor-only runner recommendations, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, dashboard visibility, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.10.1` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, optional Pi/Droid task-runner adapters, detected OMP/Mercury instruction hooks, bounded runner-quality telemetry, advisor-only runner recommendations, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, dashboard visibility, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
 ## Public Runtime Stack (v3.10)
 
@@ -53,7 +53,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 If you are an AI agent reading this README because a user asked you to install or integrate ContextLattice, follow this section directly. Do not wait for the user to copy another prompt back to you.
 
-Human users can also paste the block below into Codex, Claude Code, Hermes, OpenCode, or another terminal-capable agent.
+Human users can also paste the block below into Codex, Claude Code, Hermes, OpenCode, OMP, Mercury, or another terminal-capable agent.
 
 ```text
 You are integrating ContextLattice.
@@ -65,11 +65,11 @@ Goals:
 - Install and launch ContextLattice locally.
 - Verify the runtime is healthy.
 - Integrate the target repo with ContextLattice-supported agent profiles.
-- Do not install third-party agent harnesses unless the user explicitly asks.
+- Do not install third-party agent harness binaries unless the user explicitly asks.
 
 Important:
 - `contextlattice_adopt integrate` writes managed instruction blocks for supported profiles.
-- It does not install Codex, Claude Code, Hermes, Hermes Ultra, Pi, Droid, or other agents.
+- Installer flows may add managed instruction hooks for detected OMP and Mercury user-instruction files; they do not install OMP, Mercury, Codex, Claude Code, Hermes, Hermes Ultra, Pi, Droid, or other agent binaries.
 - Optional Pi/Droid runner execution requires their CLIs (`brew install pi-coding-agent`, `brew install --cask droid`).
 - Preserve existing user text in repo instruction files.
 - If you are already inside a ContextLattice checkout, do not clone a duplicate repo.
@@ -89,9 +89,9 @@ contextlattice_adopt status --pretty
 Integrate the target repo:
 
 cd /path/to/target/repo
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
-contextlattice_doctor --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --skip-provider-smoke --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty
+contextlattice_doctor --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --skip-provider-smoke --pretty
 
 If any step fails:
 - Report the exact failing command and path.
@@ -191,7 +191,7 @@ contextlattice_skills_index search "browser automation" --pretty
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, state, event, and completion flows.
 - `contextlattice_agent_adapter state --state working|awaiting_user|blocked|done --session-id <id> --pretty` reports semantic agent lifecycle state with authority, source, TTL, native session id, task id, repo, worktree, branch, cwd, and user/blocker fields.
-- `contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty` reports best-effort local process/profile/hook/repo-instruction evidence with explanations. Discovery is diagnostic evidence; explicit hook or adapter state remains authoritative.
+- `contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty` reports best-effort local process/profile/hook/repo-instruction evidence with explanations. Discovery is diagnostic evidence; explicit hook or adapter state remains authoritative.
 - `contextlattice_adopt` is the zero-friction front door for local readiness, install guidance, profiles, and lifecycle proof; `contextlattice_doctor` combines readiness, proof, and trace evidence in one bounded report.
 - `contextlattice_agent_start` runs the lightweight startup guard for agents.
 - `contextlattice_agent_trace` renders the bounded run-shaping trail as a terminal tree, JSON, or Markdown run card.
@@ -214,9 +214,9 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, state, event, and completion flows.
 - Use `contextlattice_agent_adapter state --state working|awaiting_user|blocked|done --session-id <id> --pretty` to report semantic agent lifecycle state with authority, source, TTL, native session id, task id, repo, worktree, branch, cwd, and user/blocker fields.
-- Use global `contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty` for best-effort local process/profile/hook/repo-instruction discovery. Discovery explains why ContextLattice believes an agent is idle, working, waiting, blocked, or integrated; it does not replace explicit hook or adapter state.
+- Use global `contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty` for best-effort local process/profile/hook/repo-instruction discovery. Discovery explains why ContextLattice believes an agent is idle, working, waiting, blocked, or integrated; it does not replace explicit hook or adapter state.
 - Use `scripts/agent/contextlattice-adopt` or global `contextlattice_adopt` before handing ContextLattice to a new agent/account; `doctor` combines gateway health, helper install state, shell PATH, storage posture, session store, profile coverage, best-effort discovery, runtime-doctor checks, lifecycle proof, and run trace evidence into one bounded report.
-- Run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty` inside a target repo to write managed `AGENTS.md`, `CLAUDE.md`, `HERMES.md`, `PI.md`, and `DROID.md` instruction blocks without overwriting user text.
+- Run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty` inside a target repo to write managed `AGENTS.md`, `CLAUDE.md`, `HERMES.md`, `MERCURY.md`, `PI.md`, and `DROID.md` instruction blocks without overwriting user text.
 - Run `contextlattice_doctor --agents codex --skip-provider-smoke --pretty` for the fastest new-agent adoption proof.
 - The same doctor works for other agent profiles: `contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty`, `contextlattice_doctor --agents opencode --skip-provider-smoke --pretty`, or `contextlattice_doctor --agents codex,claude-code,opencode --skip-provider-smoke --pretty`.
 - Run `scripts/agent/agent-runtime-proof-pack --pretty` or global `contextlattice_agent_runtime_proof --pretty` for a one-command live proof that bootstrap, scoped recall, checkpoint, handoff, completion, status, and runtime telemetry are wired end to end.
@@ -336,6 +336,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.10.1.md` (detected OMP/Mercury instruction hooks and default adoption coverage)
   - `docs/releases/v3.10.0.md` (optional Pi/Droid runner adapters, runner-quality advisor, and CLI-first public surface)
   - `docs/releases/v3.9.1.md` (dashboard contrast, settings clarity, public-site alignment, and current-version guidance)
   - `docs/releases/v3.9.0.md` (agent-operable context-pack outcome telemetry and observed provider usage)

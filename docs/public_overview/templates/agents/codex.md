@@ -24,7 +24,7 @@ contextlattice_skills_index search "repo conventions testing release" --pretty
 ```
 
 Behavior contract:
-- Run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty` to install repo-local instruction files, or paste `docs/public_overview/templates/agents/universal.md` into system instructions when the runtime has no repo instruction file.
+- Run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty` to install repo-local instruction files, or paste `docs/public_overview/templates/agents/universal.md` into system instructions when the runtime has no repo instruction file.
 - Codex SessionStart hook template: `config/codex/contextlattice_agent_start.sh`
 - Install Codex hooks: `scripts/install_global_agent_tools.sh --install-codex-hooks`
 - Verify hooks and repo instructions: `contextlattice_adopt status --pretty && contextlattice_doctor --agents codex --skip-provider-smoke --pretty`

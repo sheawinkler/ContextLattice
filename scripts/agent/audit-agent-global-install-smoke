@@ -18,7 +18,7 @@ from _common import emit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPO_ROOT / "scripts" / "install_global_agent_tools.sh"
 MANAGED_ENV_HEADER = "# Local-only ContextLattice hook policy. Not part of any repo."
-DEFAULT_AGENTS = "codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid"
+DEFAULT_AGENTS = "codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid"
 REQUIRED_RUNTIME_FILES = [
     "scripts/agent/_common.py",
     "scripts/agent/audit-codex-session-store",
@@ -39,6 +39,8 @@ EXPECTED_PROFILES = [
     "opencode",
     "hermes-agent",
     "hermes-ultra",
+    "omp",
+    "mercury-agent",
     "pi",
     "droid",
     "chatgpt-web",
@@ -46,7 +48,7 @@ EXPECTED_PROFILES = [
     "claude-web",
     "claude-desktop",
 ]
-EXPECTED_INTEGRATION_FILES = ["AGENTS.md", "CLAUDE.md", "HERMES.md", "PI.md", "DROID.md"]
+EXPECTED_INTEGRATION_FILES = ["AGENTS.md", "CLAUDE.md", "HERMES.md", "MERCURY.md", "PI.md", "DROID.md"]
 
 
 def run(argv: list[str], timeout: float, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -107,6 +109,9 @@ def main() -> int:
         created_temp = True
 
     checks: list[dict[str, Any]] = []
+    test_home = global_home / "home"
+    (test_home / ".omp" / "agent").mkdir(parents=True, exist_ok=True)
+    (test_home / ".mercury").mkdir(parents=True, exist_ok=True)
     env_file = global_home / "agent_hooks.env"
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text(
@@ -125,9 +130,12 @@ def main() -> int:
         encoding="utf-8",
     )
 
+    install_env = os.environ.copy()
+    install_env["HOME"] = str(test_home)
     install = run(
         [str(INSTALLER), "--global-home", str(global_home), "--no-shell-profile", "--skip-venv", "--quiet"],
         args.timeout,
+        install_env,
     )
     checks.append(check("installer_exit", bool(install["ok"]), returncode=install.get("returncode"), stderr=install.get("stderr")))
 
@@ -152,8 +160,21 @@ def main() -> int:
     for name in OPTIONAL_DEV_WRAPPERS:
         path = bin_dir / name
         checks.append(check(f"dev_wrapper_absent:{name}", not path.exists(), path=str(path)))
+    agent_hook_files = {
+        "omp": test_home / ".omp" / "agent" / "AGENTS.md",
+        "mercury-agent": test_home / ".mercury" / "soul.md",
+    }
+    for agent, path in agent_hook_files.items():
+        text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        checks.append(
+            check(
+                f"agent_instruction_hook:{agent}",
+                f"contextlattice-agent-install:{agent}" in text,
+                path=str(path),
+            )
+        )
 
-    smoke_env = os.environ.copy()
+    smoke_env = install_env.copy()
     smoke_env["CONTEXTLATTICE_GLOBAL_HOME"] = str(global_home)
     pre_env = smoke_env | {"CONTEXTLATTICE_PRECOMPACT_SCHEMA_SMOKE": "1"}
     post_env = smoke_env | {"CONTEXTLATTICE_POSTCOMPACT_SCHEMA_SMOKE": "1"}

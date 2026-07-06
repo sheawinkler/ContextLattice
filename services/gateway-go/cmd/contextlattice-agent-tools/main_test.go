@@ -593,11 +593,11 @@ func TestAdoptIntegrateCheckValidatesManagedBlocks(t *testing.T) {
 	repo := t.TempDir()
 	var stdout bytes.Buffer
 	c := newCLI(&stdout, ioDiscard{})
-	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,claude-code,hermes-agent,pi,droid", "--project", "smoke", "--pretty"}); err != nil {
+	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,claude-code,hermes-agent,omp,mercury-agent,pi,droid", "--project", "smoke", "--pretty"}); err != nil {
 		t.Fatalf("run integrate: %v", err)
 	}
 	stdout.Reset()
-	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,claude-code,hermes-agent,pi,droid", "--check", "--pretty"}); err != nil {
+	if err := c.run([]string{"contextlattice_adopt", "integrate", "--repo", repo, "--agents", "codex,claude-code,hermes-agent,omp,mercury-agent,pi,droid", "--check", "--pretty"}); err != nil {
 		t.Fatalf("run integrate check: %v", err)
 	}
 	var output map[string]any
@@ -608,8 +608,8 @@ func TestAdoptIntegrateCheckValidatesManagedBlocks(t *testing.T) {
 		t.Fatalf("expected repo integration check to pass: %#v", output)
 	}
 	files := output["files"].([]any)
-	if len(files) != 5 {
-		t.Fatalf("expected five instruction files, got %#v", files)
+	if len(files) != 6 {
+		t.Fatalf("expected six instruction files, got %#v", files)
 	}
 }
 

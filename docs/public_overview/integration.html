@@ -183,7 +183,7 @@ Required behavior:
     <section class="section" id="integration-profiles">
       <article class="card">
         <div class="kicker">Profile-aware preflight</div>
-        <h3>Deep integration for Codex, Claude Code, OpenCode, Hermes, ChatGPT, Claude</h3>
+        <h3>Deep integration for Codex, Claude Code, OpenCode, Hermes, OMP, Mercury, ChatGPT, Claude</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p>Use profile-aware preflight so each agent gets a stable <code>agent_id</code>, topic scope, and query defaults before work begins.</p>
 <pre><code># generic profile-aware preflight
@@ -200,6 +200,8 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice
 python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
 python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
+python3 scripts/agent_orchestration.py preflight-agent omp contextlattice
+python3 scripts/agent_orchestration.py preflight-agent mercury-agent contextlattice
 
 # auto-installed global CLI wrappers ($HOME/.contextlattice/bin)
 contextlattice_agent_start --soft --compact
@@ -216,7 +218,7 @@ contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h</code></pre>
         <ul class="spec-list">
-          <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
+          <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
           <li><strong>Context compiler:</strong> <code>contextlattice_pack</code> and <code>contextlattice_agent_session context-package</code> turn current objective state, ranked evidence, missing sources, risks, files, and next action into a bounded reference packet.</li>
           <li><strong>Skills Index:</strong> <code>contextlattice_skills_index</code> searches active configured skill roots such as <code>$CODEX_HOME/skills</code> without loading every skill body.</li>
           <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>

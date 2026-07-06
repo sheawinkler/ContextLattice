@@ -91,8 +91,8 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 <pre><code>contextlattice_search -h
 contextlattice_write -h
 contextlattice_adopt status --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty
 contextlattice_doctor --repo . --agents codex --skip-provider-smoke --pretty
 contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
 contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
@@ -139,7 +139,7 @@ contextlattice_doctor --agents codex --skip-provider-smoke --pretty
 contextlattice_agent_runtime_proof --pretty
 
 # prove the same lifecycle across configured profiles
-contextlattice_adopt proof --agents codex,claude-code,opencode --skip-provider-smoke --pretty
+contextlattice_adopt proof --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --skip-provider-smoke --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 
 # start or recover a ContextLattice-owned session
@@ -158,11 +158,11 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 # package the session for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty
+contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_agent_trace --session-id "$SESSION_ID" --markdown
 contextlattice_run_advisor --session-id "$SESSION_ID" --pretty</code></pre>
-        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain surfaces unseen continuation ready/degraded steering after normal tool boundaries; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
+        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain surfaces unseen continuation ready/degraded steering after normal tool boundaries; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
       </article>
     </section>
 

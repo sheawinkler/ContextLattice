@@ -8,6 +8,7 @@ GLOBAL_BIN_DIR="${GLOBAL_HOME}/bin"
 GLOBAL_VENV_DIR="${GLOBAL_HOME}/venv-agent-tools"
 UPDATE_SHELL_PROFILE=1
 INSTALL_CODEX_HOOKS=0
+INSTALL_AGENT_HOOKS=1
 SKIP_VENV=0
 INCLUDE_DEV_PYTHON_TOOLS=0
 QUIET=0
@@ -55,6 +56,8 @@ Options:
   --global-home <path>    Override installation root (default: ~/.contextlattice)
   --no-shell-profile      Do not modify shell startup files
   --install-codex-hooks   Install Codex SessionStart hooks into ~/.codex/hooks.json
+  --install-agent-hooks   Install detected OMP/Mercury instruction hooks (default)
+  --no-agent-hooks        Do not modify detected third-party agent instruction files
   --include-dev-python-tools
                          Also install development-only Python helper wrappers
   --skip-venv             Skip Python venv/httpx setup for dev Python helpers
@@ -84,6 +87,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --install-codex-hooks)
       INSTALL_CODEX_HOOKS=1
+      shift
+      ;;
+    --install-agent-hooks)
+      INSTALL_AGENT_HOOKS=1
+      shift
+      ;;
+    --no-agent-hooks)
+      INSTALL_AGENT_HOOKS=0
       shift
       ;;
     --skip-venv)
@@ -141,6 +152,101 @@ upsert_hook_env_defaults() {
 }
 
 upsert_hook_env_defaults
+
+agent_command_detected() {
+  local command_name
+  for command_name in "$@"; do
+    command -v "$command_name" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+agent_instruction_hook_block() {
+  local profile="$1"
+  local label="$2"
+  local agent_id="$3"
+  local topic_path="$4"
+  cat <<EOF
+<!-- >>> contextlattice-agent-install:${profile} >>>
+# ContextLattice ${label} Hook
+
+ContextLattice is the local memory and context layer for this agent.
+
+- Profile: \`${profile}\`
+- Stable agent id: \`${agent_id}\`
+- Topic path: \`${topic_path}\`
+- Default orchestrator: \`http://127.0.0.1:8075\`
+
+Before substantial planning or coding, retrieve scoped context:
+
+\`\`\`bash
+contextlattice_agent_start --soft --compact
+contextlattice_agent_adapter bootstrap --agent ${profile} --project contextlattice --pretty
+contextlattice_agent_adapter context-pack --agent ${profile} --project contextlattice --pretty
+\`\`\`
+
+During long work, checkpoint decisions with \`contextlattice_checkpoint\` or \`contextlattice_agent_adapter checkpoint\`.
+Before handoff or compaction, write a concise handoff through \`contextlattice_agent_adapter handoff\`.
+If ContextLattice is unreachable, continue from local evidence and state \`degraded-memory mode\` explicitly.
+<!-- <<< contextlattice-agent-install:${profile} <<< -->
+EOF
+}
+
+upsert_agent_instruction_hook() {
+  local path="$1"
+  local profile="$2"
+  local label="$3"
+  local agent_id="$4"
+  local topic_path="$5"
+  local begin="<!-- >>> contextlattice-agent-install:${profile} >>>"
+  local end="<!-- <<< contextlattice-agent-install:${profile} <<< -->"
+  local tmp_base tmp_next mode
+  tmp_base="$(mktemp)"
+  tmp_next="$(mktemp)"
+  if [[ -f "$path" ]]; then
+    mode="$(stat -f "%Lp" "$path" 2>/dev/null || stat -c "%a" "$path" 2>/dev/null || printf '0644')"
+    local skipping=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "$begin" ]]; then
+        skipping=1
+        continue
+      fi
+      if [[ "$line" == "$end" ]]; then
+        skipping=0
+        continue
+      fi
+      [[ "$skipping" == "1" ]] && continue
+      printf '%s\n' "$line" >> "$tmp_base"
+    done < "$path"
+  fi
+  mode="${mode:-0644}"
+  mkdir -p "$(dirname "$path")"
+  if [[ -s "$tmp_base" ]]; then
+    awk 'NF { for (i = 1; i <= blank_count; i++) print blanks[i]; blank_count = 0; print; next } { blanks[++blank_count] = $0 }' "$tmp_base" > "$tmp_next"
+    printf '\n\n' >> "$tmp_next"
+  fi
+  agent_instruction_hook_block "$profile" "$label" "$agent_id" "$topic_path" >> "$tmp_next"
+  mv "$tmp_next" "$path"
+  rm -f "$tmp_base"
+  chmod "$mode" "$path"
+}
+
+install_detected_agent_instruction_hooks() {
+  local installed=0
+  if agent_command_detected omp || [[ -d "$HOME/.omp/agent" ]]; then
+    upsert_agent_instruction_hook "$HOME/.omp/agent/AGENTS.md" "omp" "OMP" "omp_agent" "runbooks/omp-integration"
+    log "Installed OMP ContextLattice instruction hook in \$HOME/.omp/agent/AGENTS.md"
+    installed=1
+  fi
+  if agent_command_detected mercury-agent mercury || [[ -d "$HOME/.mercury" ]]; then
+    upsert_agent_instruction_hook "$HOME/.mercury/soul.md" "mercury-agent" "Mercury Agent" "mercury_agent" "runbooks/mercury-agent-integration"
+    log "Installed Mercury ContextLattice instruction hook in \$HOME/.mercury/soul.md"
+    installed=1
+  fi
+  if [[ "$installed" != "1" ]]; then
+    log "No detected OMP or Mercury agent instruction hooks to install."
+  fi
+}
 
 copy_script() {
   local src="$1"
@@ -727,6 +833,10 @@ for key, value in sorted(state_entries.items()):
 config_path.write_text(text)
 PY
   log "Installed Codex SessionStart, PreCompact, and PostCompact hooks in $HOME/.codex/hooks.json"
+fi
+
+if [[ "$INSTALL_AGENT_HOOKS" == "1" ]]; then
+  install_detected_agent_instruction_hooks
 fi
 
 log "Installed global ContextLattice tools:"

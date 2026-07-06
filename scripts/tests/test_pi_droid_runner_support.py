@@ -78,11 +78,17 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
         profiles = json.loads((REPO_ROOT / "config" / "agents" / "agent_profiles.json").read_text())
         self.assertEqual(profiles["profiles"]["pi"]["agent_id"], "pi_agent")
         self.assertEqual(profiles["profiles"]["droid"]["agent_id"], "droid_agent")
+        self.assertEqual(profiles["profiles"]["omp"]["agent_id"], "omp_agent")
+        self.assertEqual(profiles["profiles"]["mercury-agent"]["agent_id"], "mercury_agent")
         self.assertEqual(profiles["profiles"]["pi"]["state_authority"], "manual")
         self.assertEqual(profiles["profiles"]["droid"]["state_authority"], "manual")
+        self.assertEqual(profiles["profiles"]["omp"]["state_authority"], "self_report")
+        self.assertEqual(profiles["profiles"]["mercury-agent"]["state_authority"], "self_report")
         self.assertIn("agent_state", profiles["adapter_contract"]["required_phases"])
         self.assertIn("pi-coding-agent", profiles["profiles"]["pi"]["surfaces"])
         self.assertIn("brew-cask", profiles["profiles"]["droid"]["surfaces"])
+        self.assertIn("oh-my-pi", profiles["profiles"]["omp"]["surfaces"])
+        self.assertIn("mercury", profiles["profiles"]["mercury-agent"]["process_names"])
 
         registry = load_agent_contracts_registry()
         for contract_id in ("runner_capability.v1", "runner_result.v1", "agent_task_lease.v1", "runner_quality_sample.v1"):

@@ -7,6 +7,8 @@ These files provide copy-ready instruction blocks for common agents.
 - `claude-code.md`
 - `opencode.md`
 - `hermes-agent.md`
+- `omp.md`
+- `mercury-agent.md`
 - `pi.md`
 - `droid.md`
 - `chatgpt-web-desktop.md`
@@ -33,8 +35,8 @@ Preferred startup:
 
 ```bash
 contextlattice_adopt status --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --pretty
-contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,pi,droid --check --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty

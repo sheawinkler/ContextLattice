@@ -30,7 +30,7 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `POST /v1/agents/preflight`
   - `POST /v1/codex/preflight` (compatibility alias)
 - Common profile keys:
-  - `codex`, `claude-code`, `opencode`, `hermes-agent`, `hermes-ultra`, `pi`, `droid`
+  - `codex`, `claude-code`, `opencode`, `hermes-agent`, `hermes-ultra`, `omp`, `mercury-agent`, `pi`, `droid`
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 - Global helper CLIs (auto-installed by quickstart/installers):
   - `contextlattice_agent_start` (hook-first startup guard)

@@ -22,6 +22,8 @@ TEMPLATE_COVERAGE = {
     "opencode": "opencode.md",
     "hermes-agent": "hermes-agent.md",
     "hermes-ultra": "hermes-agent.md",
+    "omp": "omp.md",
+    "mercury-agent": "mercury-agent.md",
     "pi": "pi.md",
     "droid": "droid.md",
     "chatgpt-web": "chatgpt-web-desktop.md",
