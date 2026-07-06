@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.10.0 is the public baseline.</h3>
+        <h3>v3.10.1 is the public baseline.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.10.0:</strong> agent runner layer, CLI-first quickstart, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
+          <li><strong>Public v3.10.1:</strong> agent runner layer, CLI-first quickstart, detected OMP/Mercury instruction hooks, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
           <li><strong>Promotion policy:</strong> optional adapter-lab work only becomes a public default after benchmark, recall, and soak evidence.</li>
         </ul>
@@ -56,6 +56,22 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-06 · v3.10.1 · OMP + Mercury Install Hooks</span>
+        <h2>New installs now wire more local agents without another round trip.</h2>
+        <p>
+          v3.10.1 adds first-class OMP and Mercury agent profiles, default adoption coverage,
+          and installer-managed instruction hooks when those harnesses are detected locally.
+          ContextLattice still does not install third-party agent binaries.
+        </p>
+        <ul>
+          <li><strong>OMP:</strong> detected installs receive a managed ContextLattice block in the OMP user instruction file.</li>
+          <li><strong>Mercury:</strong> detected installs receive a managed ContextLattice block in the Mercury user instruction file.</li>
+          <li><strong>Adoption:</strong> <code>contextlattice_adopt integrate</code>, discovery, preflight, and profile parity now include <code>omp</code> and <code>mercury-agent</code>.</li>
+          <li><strong>Opt-out:</strong> use <code>--no-agent-hooks</code> or <code>--no-install-agent-hooks</code> to avoid writing detected third-party instruction files.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-06 · v3.10.0 · Agent Runner Layer</span>
         <h2>Agents can now do real local runner work without turning ContextLattice into a swarm manager.</h2>
