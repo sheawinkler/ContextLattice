@@ -99,8 +99,6 @@ contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty
 contextlattice_agent_adapter profiles
 contextlattice_agent_session runtime --pretty
-contextlattice_async_inbox_drain --session-id &lt;session-id&gt;
-contextlattice_async_inbox_hook --session-id &lt;session-id&gt;
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
 contextlattice_run_advisor "what should this agent know before solving the task?" --pretty
 contextlattice_agent_runtime_doctor --pretty
@@ -160,9 +158,7 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 # package the session for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_async_inbox_drain --session-id "$SESSION_ID"
 contextlattice_agent_discover --agents codex,claude-code,opencode --repo . --pretty
-contextlattice_async_inbox_hook --session-id "$SESSION_ID"
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_agent_trace --session-id "$SESSION_ID" --markdown
 contextlattice_run_advisor --session-id "$SESSION_ID" --pretty</code></pre>
