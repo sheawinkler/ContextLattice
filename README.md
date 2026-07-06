@@ -32,9 +32,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.9.1` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, dashboard visibility, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.10.0` is the current public agent operating-layer baseline: durable memory writes, agent-actionable installation, optional Pi/Droid task-runner adapters, bounded runner-quality telemetry, advisor-only runner recommendations, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, dashboard visibility, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
 
-## Public Runtime Stack (v3.9)
+## Public Runtime Stack (v3.10)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -336,6 +336,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.10.0.md` (optional Pi/Droid runner adapters, runner-quality advisor, and CLI-first public surface)
   - `docs/releases/v3.9.1.md` (dashboard contrast, settings clarity, public-site alignment, and current-version guidance)
   - `docs/releases/v3.9.0.md` (agent-operable context-pack outcome telemetry and observed provider usage)
   - `docs/releases/v3.8.0.md` (MongoDB driver v2 migration and Context Pack Quality Ledger)
