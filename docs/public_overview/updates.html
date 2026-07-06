@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.9.1 is the public baseline.</h3>
+        <h3>v3.10.0 is the public baseline.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.9.1:</strong> agent operating layer, CLI-first quickstart, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
+          <li><strong>Public v3.10.0:</strong> agent runner layer, CLI-first quickstart, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
           <li><strong>Promotion policy:</strong> optional adapter-lab work only becomes a public default after benchmark, recall, and soak evidence.</li>
         </ul>
@@ -56,6 +56,22 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-06 · v3.10.0 · Agent Runner Layer</span>
+        <h2>Agents can now do real local runner work without turning ContextLattice into a swarm manager.</h2>
+        <p>
+          v3.10.0 adds optional Pi and Droid runner adapters, task-worker execution through safe repo-local
+          adapters, bounded runner-quality telemetry, and CLI-first operator guidance. ContextLattice coordinates
+          context, contracts, checkpoints, and evidence; external runners still execute the work.
+        </p>
+        <ul>
+          <li><strong>Runner adapters:</strong> Pi and Droid stay optional, explicit, and outside Docker Compose.</li>
+          <li><strong>Advisor telemetry:</strong> <code>contextlattice_runner_quality</code> and the dashboard show bounded, task-class-aware runner evidence.</li>
+          <li><strong>Public interface:</strong> CLI is the primary path; dashboard, HTTP, and MCP are companion surfaces.</li>
+          <li><strong>Safety:</strong> no automatic dispatch, auto-merge, auto-push, raw prompt logging, or gateway-owned runner subprocesses.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-03 · v3.9.1 · Dashboard Polish</span>
         <h2>The cockpit is quieter, sharper, and harder to misread.</h2>
