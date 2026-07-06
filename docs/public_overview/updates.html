@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.10.1 is the public baseline.</h3>
+        <h3>v3.10.2 is the public baseline.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.10.1:</strong> agent runner layer, CLI-first quickstart, detected OMP/Mercury instruction hooks, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
+          <li><strong>Public v3.10.2:</strong> Go-native feedback submit, agent runner layer, CLI-first quickstart, detected OMP/Mercury instruction hooks, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
           <li><strong>Promotion policy:</strong> optional adapter-lab work only becomes a public default after benchmark, recall, and soak evidence.</li>
         </ul>
@@ -56,6 +56,21 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-06 · v3.10.2 · Go-Native Feedback Submit</span>
+        <h2>The feedback loop moved onto the hot path.</h2>
+        <p>
+          v3.10.2 makes <code>/tools/feedback_submit</code> a native Go route with bounded
+          validation, idempotency, preference projection, telemetry, and strict ownership coverage.
+          The active runtime no longer needs a Python backend proxy for agent feedback.
+        </p>
+        <ul>
+          <li><strong>Native route:</strong> <code>/tools/feedback_submit</code> is served by <code>gateway-go</code>.</li>
+          <li><strong>Safety:</strong> duplicate idempotency keys replay safely; mismatched payloads return conflict.</li>
+          <li><strong>Signal:</strong> <code>/preferences</code> and <code>/telemetry/memory</code> expose bounded feedback-derived state.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-06 · v3.10.1 · OMP + Mercury Install Hooks</span>
         <h2>New installs now wire more local agents without another round trip.</h2>
