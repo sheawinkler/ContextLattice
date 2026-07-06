@@ -311,6 +311,7 @@ type server struct {
 	writePolicy                     writeIngressPolicy
 	memoryStore                     *memoryStore
 	memoryProfilesStore             *memoryProfileStore
+	feedbackStore                   *feedbackStore
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
 	telemetryRing                   *telemetryRing
@@ -1235,6 +1236,10 @@ func newServer() *server {
 	if agentSessionStoreErr != nil {
 		log.Printf("gateway-go agent session runtime degraded: %v", agentSessionStoreErr)
 	}
+	feedbackStoreInstance, feedbackStoreErr := newFeedbackStoreFromEnv()
+	if feedbackStoreErr != nil {
+		log.Printf("gateway-go feedback store degraded: %v", feedbackStoreErr)
+	}
 	memoryStoreInstance, memoryStoreErr := newMemoryStoreFromEnv()
 	if memoryStoreErr != nil {
 		log.Printf("gateway-go memory store disabled: %v", memoryStoreErr)
@@ -1257,6 +1262,7 @@ func newServer() *server {
 		writePolicy:                     writePolicy,
 		memoryStore:                     memoryStoreInstance,
 		memoryProfilesStore:             newMemoryProfileStore(policy),
+		feedbackStore:                   feedbackStoreInstance,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
 		telemetryRing:                   telemetryRingInstance,
@@ -1789,28 +1795,6 @@ func (s *server) prepareToolHeaders(w http.ResponseWriter, r *http.Request, tool
 		headers.Set("X-Api-Key", provided)
 	}
 	return headers, true
-}
-
-func (s *server) toolsFeedbackSubmit(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
-		return
-	}
-	if s.strictNoPythonRuntime {
-		if !s.allowPythonHotPathFallback(w, "/tools/feedback_submit", "strict_runtime_backend_forward_disabled") {
-			return
-		}
-	}
-	bodyBytes, err := readRequestBody(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to read request body"})
-		return
-	}
-	incomingHeaders, ok := s.prepareToolHeaders(w, r, "/tools/feedback_submit")
-	if !ok {
-		return
-	}
-	s.proxyWithBodyToTarget(w, r, incomingHeaders, http.MethodPost, "/tools/feedback_submit", r.URL.RawQuery, bodyBytes)
 }
 
 func (s *server) toolsMemoryWriteBatch(w http.ResponseWriter, r *http.Request) {

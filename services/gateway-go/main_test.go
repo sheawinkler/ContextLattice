@@ -981,6 +981,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/review", s.memoryReview)`,
 		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
+		`mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
@@ -1043,6 +1044,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/review", s.proxy)`,
 		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
+		`mux.HandleFunc("/tools/feedback_submit", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
@@ -1084,6 +1086,154 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		if strings.Contains(source, needle) {
 			t.Fatalf("hot-path route drifted back to direct python proxy mapping: %s", needle)
 		}
+	}
+}
+
+func TestToolsFeedbackSubmitNativeSemanticParity(t *testing.T) {
+	t.Setenv("FEEDBACK_HISTORY_PATH", filepath.Join(t.TempDir(), "feedback.ndjson"))
+	t.Setenv("LEARNING_LOOP_ENABLED", "true")
+	t.Setenv("PREFERENCE_MAX_ENTRIES", "10")
+	t.Setenv("FEEDBACK_SUBMIT_IDEMPOTENCY_TTL_SECS", "900")
+
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"proxied":true}`))
+	}))
+	defer backend.Close()
+	gateway := httptest.NewServer(buildMux(newTestServer(t, backend.URL)))
+	defer gateway.Close()
+
+	firstResp, err := http.Post(
+		gateway.URL+"/tools/feedback_submit",
+		"application/json",
+		strings.NewReader(`{"project":"alpha","user_id":"u1","content":"Excellent scoped recall","rating":5,"sentiment":"good","tags":["Quality","quality","retrieval"],"topic_path":"runbooks/feedback","idempotencyKey":"idem-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("submit feedback: %v", err)
+	}
+	defer firstResp.Body.Close()
+	if firstResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(firstResp.Body)
+		t.Fatalf("expected first submit 200 got %d body=%s", firstResp.StatusCode, string(body))
+	}
+	var firstPayload map[string]any
+	if err := json.NewDecoder(firstResp.Body).Decode(&firstPayload); err != nil {
+		t.Fatalf("decode first feedback response: %v", err)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected /tools/feedback_submit to stay Go-native, backend calls=%d", backendCalls)
+	}
+	feedback := anyMap(firstPayload["feedback"])
+	if anyToString(feedback["source"]) != "agent" {
+		t.Fatalf("expected default source agent, got %#v", feedback)
+	}
+	if anyToString(feedback["sentiment"]) != "positive" {
+		t.Fatalf("expected sentiment alias to normalize to positive, got %#v", feedback)
+	}
+	tags := anyToStringSlice(feedback["tags"])
+	if len(tags) != 2 || tags[0] != "quality" || tags[1] != "retrieval" {
+		t.Fatalf("expected deduped normalized tags, got %#v", feedback["tags"])
+	}
+	learning := anyMap(firstPayload["learning"])
+	if !anyToBool(learning["enabled"]) || !anyToBool(learning["preferenceUpdated"]) || anyToBool(learning["memoryIndexed"]) {
+		t.Fatalf("unexpected learning payload: %#v", learning)
+	}
+	preferences := anyMap(firstPayload["preferences"])
+	if anyToInt(preferences["total"], 0) != 1 || len(anyToStringSlice(preferences["positive"])) != 1 {
+		t.Fatalf("expected one positive preference, got %#v", preferences)
+	}
+
+	replayResp, err := http.Post(
+		gateway.URL+"/tools/feedback_submit",
+		"application/json",
+		strings.NewReader(`{"project":"alpha","user_id":"u1","content":"Excellent scoped recall","rating":5,"sentiment":"good","tags":["Quality","quality","retrieval"],"topic_path":"runbooks/feedback","idempotencyKey":"idem-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("replay feedback: %v", err)
+	}
+	defer replayResp.Body.Close()
+	if replayResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(replayResp.Body)
+		t.Fatalf("expected replay 200 got %d body=%s", replayResp.StatusCode, string(body))
+	}
+	var replayPayload map[string]any
+	if err := json.NewDecoder(replayResp.Body).Decode(&replayPayload); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if !anyToBool(replayPayload["idempotentReplay"]) || anyToString(replayPayload["idempotencyScope"]) != "request" {
+		t.Fatalf("expected idempotent replay marker, got %#v", replayPayload)
+	}
+	if anyToString(anyMap(replayPayload["feedback"])["id"]) != anyToString(feedback["id"]) {
+		t.Fatalf("expected replay to return original feedback id")
+	}
+
+	conflictResp, err := http.Post(
+		gateway.URL+"/tools/feedback_submit",
+		"application/json",
+		strings.NewReader(`{"project":"alpha","content":"Different payload","rating":4,"idempotencyKey":"idem-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("conflict feedback: %v", err)
+	}
+	defer conflictResp.Body.Close()
+	if conflictResp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(conflictResp.Body)
+		t.Fatalf("expected idempotency conflict 409 got %d body=%s", conflictResp.StatusCode, string(body))
+	}
+
+	malformedResp, err := http.Post(
+		gateway.URL+"/tools/feedback_submit",
+		"application/json",
+		strings.NewReader(`{"project":"alpha","tags":["bad tag"],"content":"invalid tag shape"}`),
+	)
+	if err != nil {
+		t.Fatalf("malformed feedback: %v", err)
+	}
+	defer malformedResp.Body.Close()
+	if malformedResp.StatusCode != http.StatusUnprocessableEntity {
+		body, _ := io.ReadAll(malformedResp.Body)
+		t.Fatalf("expected malformed tag 422 got %d body=%s", malformedResp.StatusCode, string(body))
+	}
+
+	preferencesResp, err := http.Get(gateway.URL + "/preferences?project=alpha&user_id=u1")
+	if err != nil {
+		t.Fatalf("preferences request: %v", err)
+	}
+	defer preferencesResp.Body.Close()
+	if preferencesResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(preferencesResp.Body)
+		t.Fatalf("expected preferences 200 got %d body=%s", preferencesResp.StatusCode, string(body))
+	}
+	var preferencesPayload map[string]any
+	if err := json.NewDecoder(preferencesResp.Body).Decode(&preferencesPayload); err != nil {
+		t.Fatalf("decode preferences: %v", err)
+	}
+	if !anyToBool(preferencesPayload["enabled"]) || anyToInt(anyMap(preferencesPayload["preferences"])["total"], 0) != 1 {
+		t.Fatalf("expected enabled preference context, got %#v", preferencesPayload)
+	}
+
+	memoryResp, err := http.Get(gateway.URL + "/telemetry/memory")
+	if err != nil {
+		t.Fatalf("memory telemetry: %v", err)
+	}
+	defer memoryResp.Body.Close()
+	if memoryResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(memoryResp.Body)
+		t.Fatalf("expected memory telemetry 200 got %d body=%s", memoryResp.StatusCode, string(body))
+	}
+	var memoryPayload map[string]any
+	if err := json.NewDecoder(memoryResp.Body).Decode(&memoryPayload); err != nil {
+		t.Fatalf("decode memory telemetry: %v", err)
+	}
+	feedbackSubmit := anyMap(memoryPayload["feedbackSubmit"])
+	metrics := anyMap(feedbackSubmit["metrics"])
+	if anyToInt(metrics["accepted"], 0) != 1 || anyToInt(metrics["idempotentHits"], 0) != 1 || anyToInt(metrics["rejected"], 0) != 2 {
+		t.Fatalf("unexpected feedback metrics: %#v", metrics)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected no backend proxy calls after all feedback checks, got %d", backendCalls)
 	}
 }
 
@@ -3188,27 +3338,6 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 		t.Fatalf("expected /tools/memory_write_batch to be proxied, got %s", capturedPath)
 	}
 
-	reqFeedback, err := http.NewRequest(
-		http.MethodPost,
-		gateway.URL+"/tools/feedback_submit",
-		strings.NewReader(`{"project":"alpha","content":"good result","tags":["quality"]}`),
-	)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	reqFeedback.Header.Set("Content-Type", "application/json")
-	respFeedback, err := http.DefaultClient.Do(reqFeedback)
-	if err != nil {
-		t.Fatalf("feedback submit request failed: %v", err)
-	}
-	defer respFeedback.Body.Close()
-	if respFeedback.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for /tools/feedback_submit, got %d", respFeedback.StatusCode)
-	}
-	if capturedPath != "/tools/feedback_submit" {
-		t.Fatalf("expected /tools/feedback_submit to be proxied, got %s", capturedPath)
-	}
-
 	resp2, err := http.Get(gateway.URL + "/ops/queue/status?include_deadletters=false")
 	if err != nil {
 		t.Fatalf("ops queue request failed: %v", err)
@@ -3307,6 +3436,7 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 		t.Fatalf("expected /memory/topics to be forwarded by native route, got %s", capturedPath)
 	}
 
+	backendCallsBeforeFeedback := backendCalls
 	req8, err := http.NewRequest(
 		http.MethodPost,
 		gateway.URL+"/feedback",
@@ -3324,8 +3454,8 @@ func TestProxyForwardsBatchAndOpsQueuePaths(t *testing.T) {
 	if resp8.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /feedback, got %d", resp8.StatusCode)
 	}
-	if capturedPath != "/feedback" {
-		t.Fatalf("expected /feedback to be forwarded by native route, got %s", capturedPath)
+	if backendCalls != backendCallsBeforeFeedback {
+		t.Fatalf("expected /feedback to stay go-native, backend calls before=%d after=%d", backendCallsBeforeFeedback, backendCalls)
 	}
 
 	resp9, err := http.Get(gateway.URL + "/agents/tasks?project=contextlattice")

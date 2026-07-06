@@ -316,6 +316,7 @@ func (s *server) telemetryMemoryPayload() map[string]any {
 			},
 		},
 		"telemetryMetrics": metricsSnapshot,
+		"feedbackSubmit":   s.feedbackStore.feedbackSubmitStatus(),
 	}
 }
 

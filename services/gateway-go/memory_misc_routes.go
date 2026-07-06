@@ -770,17 +770,6 @@ func recallEvalNormalizeTopicPath(value string) string {
 	return strings.Trim(strings.ToLower(strings.TrimSpace(value)), "/")
 }
 
-func (s *server) feedbackRoute(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.forwardJSONGET(w, r, "/feedback")
-	case http.MethodPost:
-		s.forwardJSONPOST(w, r, "/feedback")
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
-	}
-}
-
 func (s *server) migrationRuntime(w http.ResponseWriter, r *http.Request) {
 	if !methodAllowed(r.Method, http.MethodGet, http.MethodPost) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -894,27 +883,6 @@ func (s *server) telemetryRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.forwardJSONGET(w, r, r.URL.Path)
-}
-
-func (s *server) preferencesRoute(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
-		return
-	}
-	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": false,
-		"preferences": map[string]any{
-			"total":      0,
-			"positive":   []any{},
-			"negative":   []any{},
-			"notes":      []any{},
-			"updated_at": nil,
-		},
-		"reason": "go_runtime_preferences_not_enabled",
-	})
 }
 
 func (s *server) maintenanceRoute(w http.ResponseWriter, r *http.Request) {
