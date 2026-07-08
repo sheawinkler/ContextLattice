@@ -26,6 +26,7 @@ const defaultBaseURL = "http://127.0.0.1:8075"
 var nativeToolNames = map[string]string{
 	"contextlattice_search":                          "search",
 	"contextlattice_pack":                            "pack",
+	"contextlattice_synthesis_pack":                  "synthesis-pack",
 	"contextlattice_write":                           "write",
 	"contextlattice_agent_session":                   "session",
 	"contextlattice_agent_trace":                     "trace",
@@ -97,6 +98,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdWrite(args)
 	case "pack":
 		return c.cmdPack(args)
+	case "synthesis-pack":
+		return c.cmdSynthesisPack(args)
 	case "session":
 		return c.cmdSession(args)
 	case "trace":
@@ -141,6 +144,7 @@ Usage:
 Native commands:
   search                         lifecycle-aware memory search
   pack                           bounded context package
+  synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
   write                          memory write/checkpoint
   session                        agent session lifecycle, rollup, context package, trace, runtime
   trace                          alias for session trace
@@ -158,8 +162,8 @@ Native commands:
   skills-index                   active Skills Index search/reindex helper
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
-contextlattice_pack, contextlattice_write, contextlattice_agent_session, and
-other contextlattice_* commands.`)
+contextlattice_pack, contextlattice_synthesis_pack, contextlattice_write,
+contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
 
@@ -453,6 +457,7 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice-agent-tools",
 		"contextlattice_search",
 		"contextlattice_pack",
+		"contextlattice_synthesis_pack",
 		"contextlattice_write",
 		"contextlattice_adopt",
 		"contextlattice_doctor",
@@ -982,6 +987,14 @@ func resolveContent(parsed parsedArgs) (string, error) {
 }
 
 func (c *cli) cmdPack(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice_pack", "/memory/context-pack", "context-pack")
+}
+
+func (c *cli) cmdSynthesisPack(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice_synthesis_pack", "/memory/synthesis-pack", "synthesis-pack")
+}
+
+func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, sessionTag string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
 		"budget-chars": "budget_chars",
 		"limit":        "limit",
@@ -999,7 +1012,7 @@ func (c *cli) cmdPack(args []string) error {
 		"no-auto-session": "no_auto_session",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_pack '<task>' [--project p] [--topic-path t] [--mode balanced] [--pretty]")
+		return c.emitUsage(commandName + " '<task>' [--project p] [--topic-path t] [--mode balanced] [--pretty]")
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
@@ -1032,7 +1045,7 @@ func (c *cli) cmdPack(args []string) error {
 		"native_cli_implementation": true,
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
-	raw, err := c.requestWithRetries("/memory/context-pack", payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+	raw, err := c.requestWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
 	if err != nil {
 		if parsed.bool("soft") {
 			return c.emit(failurePack(query, parsed.int("budget_chars", 10000), err), !parsed.bool("raw"))
@@ -1046,6 +1059,10 @@ func (c *cli) cmdPack(args []string) error {
 	}
 	qualitySampleID := firstString(qualitySample["sample_id"])
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
+	if commandName != "contextlattice_pack" {
+		out["tool"] = commandName
+		out["pack_surface"] = sessionTag
+	}
 	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 {
 		out["outcome_report"] = report
 	}
@@ -1582,7 +1599,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/synthesis-pack", "/tools/synthesis_pack", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
@@ -1638,7 +1655,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)

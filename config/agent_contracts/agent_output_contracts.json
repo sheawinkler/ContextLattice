@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 14,
-  "updated_at": "2026-07-05T00:00:00Z",
+  "registry_version": 16,
+  "updated_at": "2026-07-11T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -770,6 +770,142 @@
       },
       "required_string_contains": {
         "format_contract.schema_id": "context_pack_response.v1"
+      }
+    },
+    "synthesis_pack.v1": {
+      "contract_version": 1,
+      "payload_kind": "synthesis_pack",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_synthesis_without_uncited_llm_claims_or_raw_retrieval_payload",
+      "max_total_json_bytes": 180000,
+      "max_string_bytes": 6000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "project",
+        "query",
+        "topic_path",
+        "retrieval_mode",
+        "retrieval_intent",
+        "synthesis_pack",
+        "context_pack",
+        "source_coverage",
+        "reference_prompt",
+        "token_impact",
+        "context_pack_quality",
+        "run_advisor",
+        "writeback_required",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "project": "string",
+        "query": "string",
+        "topic_path": "string",
+        "retrieval_mode": "string",
+        "retrieval_intent": "string",
+        "synthesis_pack": "object",
+        "context_pack": "object",
+        "source_coverage": "object",
+        "reference_prompt": "string",
+        "token_impact": "object",
+        "context_pack_quality": "object",
+        "run_advisor": "object",
+        "writeback_required": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "synthesis_pack": [
+          "schema_id",
+          "version",
+          "generated_at",
+          "project",
+          "query",
+          "topic_path",
+          "summary",
+          "high_signal_findings",
+          "topic_gravity",
+          "cross_project_bridges",
+          "must_not_forget",
+          "recommended_next_actions",
+          "open_questions",
+          "semantic_tags",
+          "synthesis_quality",
+          "evidence_trail",
+          "synthesis_trace"
+        ],
+        "synthesis_pack.synthesis_quality": [
+          "status",
+          "score",
+          "basis",
+          "limits"
+        ],
+        "synthesis_pack.synthesis_trace": [
+          "mode",
+          "llm_used",
+          "basis",
+          "inference_boundary"
+        ],
+        "context_pack": [
+          "facts",
+          "results",
+          "citations",
+          "ranked_evidence",
+          "prompt_sections",
+          "context_compiler"
+        ],
+        "source_coverage": [
+          "configured",
+          "returned",
+          "complete"
+        ],
+        "run_advisor": [
+          "schema_id",
+          "posture",
+          "prompt_quality",
+          "retrieval_advice",
+          "continuation",
+          "objective_coherence"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "synthesis_pack.v1",
+        "synthesis_pack.schema_id": "synthesis_pack.v1",
+        "reference_prompt": "Synthesis Pack v1",
+        "format_contract.schema_id": "synthesis_pack.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "secret",
+        "secrets"
+      ],
+      "forbidden_scope": "root",
+      "max_bytes_by_path": {
+        "query": 2000,
+        "summary": 1200,
+        "synthesis_pack.summary": 1200,
+        "reference_prompt": 5000,
+        "synthesis_pack.synthesis_trace.inference_boundary": 1200
       }
     },
     "dream_mode_response.v1": {

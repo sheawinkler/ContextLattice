@@ -505,6 +505,7 @@ if not exist "%GO_TOOL%" (
 $goNativeCommands = @(
     "contextlattice_search",
     "contextlattice_pack",
+    "contextlattice_synthesis_pack",
     "contextlattice_write",
     "contextlattice_adopt",
     "contextlattice_doctor",
@@ -558,6 +559,7 @@ Write-Host "Installed global ContextLattice tools to $GlobalHome"
 Write-Host "Open a new terminal and verify:"
 Write-Host "  contextlattice_search -h"
 Write-Host "  contextlattice_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
+Write-Host "  contextlattice_synthesis_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_adopt status --pretty"
 Write-Host "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"

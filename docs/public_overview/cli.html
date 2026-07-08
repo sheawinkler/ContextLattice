@@ -121,11 +121,16 @@ printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextla
         <div class="kicker">Context compiler</div>
         <h3>Build the next prompt packet from memory</h3>
 <pre><code>contextlattice_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
+contextlattice_synthesis_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
 
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
   -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
-  http://127.0.0.1:8075/memory/context-pack | jq '.reference_prompt'</code></pre>
-        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code> that can be handed to Codex, Claude Code, MCP hosts, or a custom LLM app.</p>
+  http://127.0.0.1:8075/memory/context-pack | jq '.reference_prompt'
+
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
+  http://127.0.0.1:8075/memory/synthesis-pack | jq '.synthesis_pack'</code></pre>
+        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code>. Synthesis Pack v1 adds high-signal findings, topic gravity, graph/cross-project bridges, must-not-forget constraints, next actions, open questions, and semantic tags over that same bounded evidence.</p>
       </article>
     </section>
 

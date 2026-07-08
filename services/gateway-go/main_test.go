@@ -978,10 +978,12 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.memoryTopicTree)`,
 		`mux.HandleFunc("/memory/topics/list", s.memoryTopicList)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)`,
+		`mux.HandleFunc("/memory/synthesis-pack", s.memorySynthesisPack)`,
 		`mux.HandleFunc("/memory/review", s.memoryReview)`,
 		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
 		`mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)`,
+		`mux.HandleFunc("/tools/synthesis_pack", s.toolsSynthesisPack)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
@@ -1041,10 +1043,12 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.proxy)`,
 		`mux.HandleFunc("/memory/topics/list", s.proxy)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.proxy)`,
+		`mux.HandleFunc("/memory/synthesis-pack", s.proxy)`,
 		`mux.HandleFunc("/memory/review", s.proxy)`,
 		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
 		`mux.HandleFunc("/tools/feedback_submit", s.proxy)`,
+		`mux.HandleFunc("/tools/synthesis_pack", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
@@ -1723,6 +1727,168 @@ func TestMemoryContextPackIncludesBoundedGraphNeighbors(t *testing.T) {
 	signals := anyMap(graphQuality["signals"])
 	if anyToInt(signals["added_evidence_count"], 0) != 1 {
 		t.Fatalf("expected one added graph evidence signal, got %#v", signals)
+	}
+}
+
+func TestSynthesisPackRoutesProduceContractValidSynthesis(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/retrieval/query":
+			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/synthesis.md","source":"qdrant","score":0.91,"summary":"decision: Synthesis Pack should verify ` + "`go test ./...`" + ` and avoid known failure regression loops","topic_path":"runbooks/synthesis-pack","timestamp":"2026-07-08T00:00:00Z"}],"warnings":[]}`))
+			return
+		case "/memory/synthesis-pack":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"proxy path should not be called"}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	for _, path := range []string{"/memory/synthesis-pack", "/tools/synthesis_pack"} {
+		t.Run(path, func(t *testing.T) {
+			reqBody := `{"project":"contextlattice","query":"synthesize context intelligence","topic_path":"runbooks/synthesis-pack","limit":8,"retrieval_mode":"balanced","agent_id":"codex_gpt5_synthesis_test"}`
+			resp, err := http.Post(gateway.URL+path, "application/json", strings.NewReader(reqBody))
+			if err != nil {
+				t.Fatalf("synthesis-pack request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode synthesis-pack payload: %v", err)
+			}
+			assertBoundaryContractPassed(t, synthesisPackContractID, payload)
+			assertBoundaryJSONUnderLimit(t, synthesisPackContractID, payload)
+			if anyToString(payload["schema_id"]) != synthesisPackContractID {
+				t.Fatalf("expected synthesis schema id, got %#v", payload["schema_id"])
+			}
+			pack := anyMap(payload["synthesis_pack"])
+			if len(contextPackAnyList(pack["high_signal_findings"])) == 0 {
+				t.Fatalf("expected high signal findings, got %#v", pack)
+			}
+			if !testStringSliceContains(anyToStringList(pack["semantic_tags"], 20), "decision_memory") {
+				t.Fatalf("expected decision_memory semantic tag, got %#v", pack["semantic_tags"])
+			}
+			if !strings.Contains(anyToString(payload["reference_prompt"]), "Synthesis Pack v1") {
+				t.Fatalf("expected synthesis reference prompt, got %q", anyToString(payload["reference_prompt"]))
+			}
+			if path == "/tools/synthesis_pack" && strings.TrimSpace(anyToString(payload["tool"])) != "synthesis_pack" {
+				t.Fatalf("expected tool marker on /tools/synthesis_pack, got %#v", payload["tool"])
+			}
+		})
+	}
+}
+
+func TestSynthesisPackUsesTopicGravityAndCrossProjectGraphBridge(t *testing.T) {
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBORS_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_SEED_MAX", "2")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_MAX", "4")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_PER_SEED", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_MEMORY_GRAPH_EDGE_PATH", filepath.Join(root, "_contextlattice", "memory_edges.ndjson"))
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/seed.md","source":"qdrant","score":0.92,"summary":"decision: alpha seed links to beta architecture verification","topic_path":"graph/test","timestamp":"2026-07-08T00:00:00Z"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+		t.Fatalf("expected enabled memory store")
+	}
+	for _, item := range []normalizedWrite{
+		{project: "alpha", fileName: "notes/seed.md", content: "seed memory", topicPath: "graph/test"},
+		{project: "beta", fileName: "notes/target.md", content: "target memory", topicPath: "graph/test/link"},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory store: %v", err)
+		}
+	}
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		SourceID:   "alpha::notes/seed.md",
+		TargetID:   "beta::notes/target.md",
+		Relation:   "supports",
+		Project:    "alpha",
+		TopicPath:  "graph/test",
+		Confidence: 0.94,
+		CreatedAt:  nowUTCISO(),
+		Source:     memoryEdgeSource,
+	}); err != nil {
+		t.Fatalf("seed memory edge: %v", err)
+	}
+
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"alpha","topic_path":"graph/test","query":"synthesize alpha beta graph link","limit":5,"include_retrieval_debug":true,"retrieval_mode":"balanced"}`
+	resp, err := http.Post(gateway.URL+"/memory/synthesis-pack", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("synthesis-pack request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode synthesis-pack response: %v", err)
+	}
+	assertBoundaryContractPassed(t, synthesisPackContractID, payload)
+	pack := anyMap(payload["synthesis_pack"])
+	if len(contextPackAnyList(pack["topic_gravity"])) == 0 {
+		t.Fatalf("expected topic gravity, got %#v", pack)
+	}
+	bridges := contextPackAnyList(pack["cross_project_bridges"])
+	foundBeta := false
+	for _, raw := range bridges {
+		if anyToString(anyMap(raw)["project"]) == "beta" {
+			foundBeta = true
+			break
+		}
+	}
+	if !foundBeta {
+		t.Fatalf("expected beta cross-project bridge, got %#v", bridges)
+	}
+	if !testStringSliceContains(anyToStringList(pack["semantic_tags"], 24), "cross_project_bridge") {
+		t.Fatalf("expected cross_project_bridge tag, got %#v", pack["semantic_tags"])
 	}
 }
 

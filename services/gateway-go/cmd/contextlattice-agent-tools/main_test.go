@@ -147,6 +147,66 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	}
 }
 
+func TestSynthesisPackCommandUsesNativeEndpoint(t *testing.T) {
+	var captured map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/memory/synthesis-pack":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode synthesis request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":        true,
+				"schema_id": "synthesis_pack.v1",
+				"synthesis_pack": map[string]any{
+					"schema_id":                "synthesis_pack.v1",
+					"high_signal_findings":     []any{map[string]any{"kind": "decision", "text": "ship synthesis"}},
+					"semantic_tags":            []any{"synthesis_pack_v1"},
+					"synthesis_quality":        map[string]any{"status": "strong"},
+					"recommended_next_actions": []any{},
+				},
+				"context_pack": map[string]any{
+					"query":           "native synthesis",
+					"ranked_evidence": []any{},
+					"token_budget":    map[string]any{"active": true},
+				},
+				"context_pack_quality": map[string]any{
+					"schema_id": "contextlattice_context_pack_quality.v1",
+					"sample_id": "cpq_synthesis_test",
+				},
+				"token_impact": map[string]any{"schema_id": "contextlattice_token_impact.v1"},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_synthesis_pack", "native synthesis", "--project", "alpha", "--mode", "fast", "--raw", "--no-auto-session"}); err != nil {
+		t.Fatalf("run synthesis pack: %v", err)
+	}
+	if captured["native_cli_implementation"] != true {
+		t.Fatalf("expected native_cli_implementation marker: %#v", captured)
+	}
+	if captured["retrieval_mode"] != "fast" {
+		t.Fatalf("expected fast retrieval mode, got %#v", captured)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if output["tool"] != "contextlattice_synthesis_pack" || output["pack_surface"] != "synthesis-pack" {
+		t.Fatalf("expected synthesis tool markers, got %#v", output)
+	}
+	if len(asMap(output["synthesis_pack"])) == 0 {
+		t.Fatalf("expected synthesis pack in output, got %#v", output)
+	}
+}
+
 func TestSkillsIndexCommandUsesNativeEndpoint(t *testing.T) {
 	var captured map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

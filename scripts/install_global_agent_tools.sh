@@ -21,6 +21,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice-agent-tools
   contextlattice_search
   contextlattice_pack
+  contextlattice_synthesis_pack
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
@@ -629,6 +630,7 @@ build_go_agent_tools
 GO_NATIVE_COMMANDS=(
   contextlattice_search
   contextlattice_pack
+  contextlattice_synthesis_pack
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
@@ -843,6 +845,7 @@ log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
@@ -871,6 +874,7 @@ log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
 log "  contextlattice_pack 'release readiness' --project contextlattice --pretty"
+log "  contextlattice_synthesis_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_adopt status --pretty"

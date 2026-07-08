@@ -39,6 +39,7 @@ Agent usage expectations:
 - When a runtime knows the result, report context-pack outcome fields at completion: `--first-pass-success true|false --repair-required true|false --retry-count <n>` and provider token counters if available. Do not invent missing outcome fields.
 - Use `contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty` to inspect best-effort process/profile/hook/repo-instruction evidence for local agents.
 - Use `contextlattice_pack "<task>" --project <project> --pretty` or `POST /memory/context-pack` to compile ranked evidence, files, checks, risks, source coverage, and `reference_prompt` for the next model call.
+- Use `contextlattice_synthesis_pack "<task>" --project <project> --pretty` or `POST /memory/synthesis-pack` when the next step needs high-signal findings, topic gravity, graph/cross-project bridges, must-not-forget constraints, recommended next actions, and open questions over the same bounded evidence.
 - Use `contextlattice_agent_session rollup --session-id <id> --pretty` to summarize a session into reusable state.
 - Use `contextlattice_agent_session context-package --session-id <id> --pretty` when an agent needs to send the next model call with the objective, evidence, risks, source coverage, and next action already organized.
 - Use `contextlattice_agent_trace --session-id <id> --tree` to inspect the bounded run-shaping trail and `contextlattice_agent_trace --session-id <id> --markdown` to export a run card.
