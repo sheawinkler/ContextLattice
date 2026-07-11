@@ -1,0 +1,147 @@
+{
+  "schema_id": "contextlattice_public_core_capabilities.v1",
+  "version": 1,
+  "release_train": "v3.11",
+  "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
+  "invariants": [
+    "public_core_is_present_in_every_distribution",
+    "distributions_may_add_capabilities_without_exposing_them_here",
+    "declared_artifacts_exist_in_every_distribution",
+    "capability_definitions_are_byte-equivalent_after_json_normalization"
+  ],
+  "capabilities": [
+    {
+      "id": "cli.primary.v1",
+      "summary": "The CLI is the prescribed local-agent interface; HTTP and MCP remain integration fallbacks.",
+      "contracts": [],
+      "artifacts": [
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go",
+        "scripts/install_global_agent_tools.sh",
+        "docs/agent-hooks.md"
+      ]
+    },
+    {
+      "id": "memory.write.v1",
+      "summary": "Validated durable memory writes and native feedback writeback remain available through one local contract.",
+      "contracts": ["writeback_result.v1"],
+      "artifacts": [
+        "services/gateway-go/write_ingress.go",
+        "services/gateway-go/strict_runtime_ownership.go"
+      ]
+    },
+    {
+      "id": "context_pack.v1",
+      "summary": "Impact-per-token context compilation returns bounded ranked evidence and prompt sections.",
+      "contracts": ["context_pack_response.v1"],
+      "artifacts": [
+        "services/gateway-go/memory_context_pack.go",
+        "scripts/agent/contextlattice-pack"
+      ]
+    },
+    {
+      "id": "synthesis_pack.v1",
+      "summary": "Deterministic synthesis groups evidence, bridges topics, preserves constraints, and proposes next actions.",
+      "contracts": ["synthesis_pack.v1"],
+      "artifacts": [
+        "services/gateway-go/memory_synthesis_pack.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+      ]
+    },
+    {
+      "id": "skills_index.v1",
+      "summary": "Agents discover relevant capabilities without loading every skill into startup context.",
+      "contracts": [],
+      "artifacts": [
+        "services/gateway-go/skills_quarantine_routes.go",
+        "scripts/agent/contextlattice-skills-index"
+      ]
+    },
+    {
+      "id": "agent_lifecycle.v1",
+      "summary": "Agent state, sessions, traces, checkpoints, and handoffs are distinct from retrieval lifecycle.",
+      "contracts": ["contextlattice_agent_lifecycle_state.v1", "agent_session_rollup.v1", "agent_run_trace.v1"],
+      "artifacts": [
+        "services/gateway-go/agent_sessions.go",
+        "scripts/agent/contextlattice-agent-adapter"
+      ]
+    },
+    {
+      "id": "async_retrieval_warming.v1",
+      "summary": "Deferred retrieval reports warming progress until ready or terminally degraded.",
+      "contracts": ["retrieval_progress.v1", "steering_comment.v1"],
+      "artifacts": [
+        "services/gateway-go/continuation_steering.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+      ]
+    },
+    {
+      "id": "agent_adoption.v1",
+      "summary": "Install, discovery, doctor, managed repo instructions, and lifecycle proof are one bounded adoption flow.",
+      "contracts": ["universal_agent_adapter_response.v1"],
+      "artifacts": [
+        "scripts/agent/contextlattice-adopt",
+        "scripts/agent/audit-agent-repo-integration",
+        "scripts/agent/audit-agent-global-install-smoke"
+      ]
+    },
+    {
+      "id": "omp_mercury_integration.v1",
+      "summary": "Detected OMP and Mercury installations receive managed instructions without installing third-party binaries.",
+      "contracts": [],
+      "artifacts": [
+        "docs/public_overview/templates/agents/omp.md",
+        "docs/public_overview/templates/agents/mercury-agent.md",
+        "config/agents/agent_profiles.json"
+      ]
+    },
+    {
+      "id": "pi_droid_runners.v1",
+      "summary": "Safe repo-local Pi and Droid adapters execute external runners without moving subprocess ownership into gateway-go.",
+      "contracts": ["runner_capability.v1", "runner_result.v1", "agent_task_lease.v1"],
+      "artifacts": [
+        "scripts/agent_runners/pi_runner.py",
+        "scripts/agent_runners/droid_runner.py",
+        "scripts/task_agent_worker.py"
+      ]
+    },
+    {
+      "id": "runner_quality.v1",
+      "summary": "Bounded observed runner outcomes support advisor-only comparisons and never auto-dispatch work.",
+      "contracts": ["runner_quality_sample.v1"],
+      "artifacts": [
+        "services/gateway-go/runner_quality_telemetry.go",
+        "scripts/agent_runners/runner_quality.py",
+        "docs/runtime/runner-quality-loop.md"
+      ]
+    },
+    {
+      "id": "token_impact.v1",
+      "summary": "Tokenizer-exact prompt savings and bounded modeled inference avoidance remain separately labeled.",
+      "contracts": [],
+      "artifacts": [
+        "services/gateway-go/token_impact_telemetry.go",
+        "services/gateway-go/context_pack_quality_telemetry.go"
+      ]
+    },
+    {
+      "id": "memory_graph_recall.v1",
+      "summary": "Typed edges, graph neighbors, saved recall evaluation, and graph-lift telemetry share one native evidence loop.",
+      "contracts": [],
+      "artifacts": [
+        "services/gateway-go/memory_edges.go",
+        "services/gateway-go/memory_graph_telemetry.go",
+        "services/gateway-go/memory_recall_eval_saved_native.go",
+        "scripts/agent/recall-quality-eval"
+      ]
+    },
+    {
+      "id": "runtime_policy.v1",
+      "summary": "Local inference routing and template conformance remain explicit runtime policy rather than hidden runner behavior.",
+      "contracts": [],
+      "artifacts": [
+        "services/gateway-go/inference.go",
+        "scripts/inference_template_conformance.sh"
+      ]
+    }
+  ]
+}

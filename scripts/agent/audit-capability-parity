@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Audit the public-safe core capability manifest in this checkout or supplied refs."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from _common import emit
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MANIFEST = "config/capabilities/public_core_capabilities.json"
+DEFAULT_REFS = "WORKTREE"
+EXPECTED_SCHEMA = "contextlattice_public_core_capabilities.v1"
+
+
+def split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+
+
+def git(args: list[str]) -> tuple[bool, str]:
+    proc = subprocess.run(["git", *args], cwd=REPO_ROOT, check=False, capture_output=True, text=True)
+    return proc.returncode == 0, proc.stdout
+
+
+def normalize_ref(ref: str) -> str:
+    if ref == "WORKTREE" or ref.startswith("refs/"):
+        return ref
+    candidate = f"refs/remotes/{ref}"
+    ok, _ = git(["show-ref", "--verify", candidate])
+    return candidate if ok else ref
+
+
+def load_text(ref: str, path: str) -> tuple[bool, str]:
+    if ref == "WORKTREE":
+        target = REPO_ROOT / path
+        if not target.is_file():
+            return False, ""
+        return True, target.read_text(encoding="utf-8", errors="replace")
+    return git(["show", f"{ref}:{path}"])
+
+
+def path_exists(ref: str, path: str) -> bool:
+    if ref == "WORKTREE":
+        return (REPO_ROOT / path).is_file()
+    ok, _ = git(["cat-file", "-e", f"{ref}:{path}"])
+    return ok
+
+
+def normalized_capability(capability: dict[str, Any]) -> str:
+    return json.dumps(capability, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def inspect_ref(ref: str, manifest_path: str) -> dict[str, Any]:
+    git_ref = normalize_ref(ref)
+    ok, raw = load_text(git_ref, manifest_path)
+    if not ok:
+        return {
+            "ref": ref,
+            "git_ref": git_ref,
+            "ok": False,
+            "skipped": True,
+            "reason": "manifest_unavailable",
+            "manifest_path": manifest_path,
+        }
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {"ref": ref, "git_ref": git_ref, "ok": False, "reason": "manifest_invalid_json", "detail": str(exc)}
+
+    findings: list[dict[str, Any]] = []
+    if not isinstance(manifest, dict):
+        findings.append({"reason": "manifest_not_object"})
+        manifest = {}
+    if manifest.get("schema_id") != EXPECTED_SCHEMA:
+        findings.append({"reason": "schema_id_mismatch", "expected": EXPECTED_SCHEMA, "actual": manifest.get("schema_id")})
+    if not isinstance(manifest.get("version"), int) or int(manifest.get("version") or 0) < 1:
+        findings.append({"reason": "manifest_version_invalid", "actual": manifest.get("version")})
+
+    rows = manifest.get("capabilities")
+    if not isinstance(rows, list) or not rows:
+        findings.append({"reason": "capabilities_missing"})
+        rows = []
+    capabilities: dict[str, dict[str, Any]] = {}
+    for index, raw_capability in enumerate(rows):
+        if not isinstance(raw_capability, dict):
+            findings.append({"reason": "capability_not_object", "index": index})
+            continue
+        capability_id = str(raw_capability.get("id") or "").strip()
+        if not capability_id:
+            findings.append({"reason": "capability_id_missing", "index": index})
+            continue
+        if capability_id in capabilities:
+            findings.append({"reason": "capability_id_duplicate", "capability_id": capability_id})
+            continue
+        summary = str(raw_capability.get("summary") or "").strip()
+        artifacts = raw_capability.get("artifacts")
+        contracts = raw_capability.get("contracts")
+        if not summary:
+            findings.append({"reason": "capability_summary_missing", "capability_id": capability_id})
+        if not isinstance(contracts, list):
+            findings.append({"reason": "capability_contracts_not_list", "capability_id": capability_id})
+        if not isinstance(artifacts, list) or not artifacts:
+            findings.append({"reason": "capability_artifacts_missing", "capability_id": capability_id})
+            artifacts = []
+        for artifact in artifacts:
+            path = str(artifact or "").strip()
+            if not path or path.startswith("/") or ".." in Path(path).parts:
+                findings.append({"reason": "artifact_path_unsafe", "capability_id": capability_id, "path": path})
+            elif not path_exists(git_ref, path):
+                findings.append({"reason": "artifact_missing", "capability_id": capability_id, "path": path})
+        capabilities[capability_id] = raw_capability
+
+    return {
+        "ref": ref,
+        "git_ref": git_ref,
+        "ok": not findings,
+        "manifest_path": manifest_path,
+        "schema_id": manifest.get("schema_id"),
+        "version": manifest.get("version"),
+        "release_train": manifest.get("release_train"),
+        "capability_count": len(capabilities),
+        "capability_ids": sorted(capabilities),
+        "capabilities": capabilities,
+        "findings": findings,
+    }
+
+
+def compare_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    available = [item for item in results if not item.get("skipped")]
+    if not available:
+        return [{"reason": "no_manifests_available"}]
+    baseline = available[0]
+    baseline_ids = set(baseline.get("capability_ids") or [])
+    baseline_capabilities = baseline.get("capabilities") if isinstance(baseline.get("capabilities"), dict) else {}
+    findings: list[dict[str, Any]] = []
+    for item in available[1:]:
+        item_ids = set(item.get("capability_ids") or [])
+        missing = sorted(baseline_ids - item_ids)
+        extra = sorted(item_ids - baseline_ids)
+        if missing or extra:
+            findings.append(
+                {
+                    "reason": "public_core_capability_set_drift",
+                    "baseline_ref": baseline.get("ref"),
+                    "ref": item.get("ref"),
+                    "missing_from_ref": missing,
+                    "extra_in_ref": extra,
+                }
+            )
+        item_capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
+        for capability_id in sorted(baseline_ids & item_ids):
+            if normalized_capability(baseline_capabilities[capability_id]) != normalized_capability(item_capabilities[capability_id]):
+                findings.append(
+                    {
+                        "reason": "public_core_capability_definition_drift",
+                        "baseline_ref": baseline.get("ref"),
+                        "ref": item.get("ref"),
+                        "capability_id": capability_id,
+                    }
+                )
+        if item.get("version") != baseline.get("version"):
+            findings.append(
+                {
+                    "reason": "public_core_manifest_version_drift",
+                    "baseline_ref": baseline.get("ref"),
+                    "ref": item.get("ref"),
+                    "baseline_version": baseline.get("version"),
+                    "version": item.get("version"),
+                }
+            )
+    return findings
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refs", default=DEFAULT_REFS, help="Comma-separated git refs; WORKTREE reads current files.")
+    parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
+    parser.add_argument("--strict-missing-refs", action="store_true")
+    parser.add_argument("--pretty", action="store_true")
+    args = parser.parse_args()
+
+    refs = split_csv(args.refs)
+    results = [inspect_ref(ref, args.manifest) for ref in refs]
+    findings: list[dict[str, Any]] = []
+    for item in results:
+        if item.get("skipped"):
+            if args.strict_missing_refs:
+                findings.append({"reason": "ref_manifest_unavailable", "ref": item.get("ref"), "detail": item.get("reason")})
+            continue
+        findings.extend({"ref": item.get("ref"), **finding} for finding in item.get("findings") or [])
+    findings.extend(compare_results(results))
+    payload = {
+        "ok": not findings,
+        "schema_id": "contextlattice_capability_parity_audit.v1",
+        "manifest_path": args.manifest,
+        "refs": refs,
+        "available_refs": [item.get("ref") for item in results if not item.get("skipped")],
+        "results": [{key: value for key, value in item.items() if key != "capabilities"} for item in results],
+        "findings": findings,
+    }
+    emit(payload, args.pretty)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
