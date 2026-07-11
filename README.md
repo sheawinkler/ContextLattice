@@ -33,7 +33,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.11.0` is the current public cognition-core baseline: deterministic Synthesis Packs, contract-valid sparse context, async continuation warming, idempotent outcome capture, saved recall evaluation, typed graph evidence, a cross-distribution capability manifest, Go-native feedback, optional Pi/Droid task runners, detected OMP/Mercury hooks, runner-quality guidance, tokenizer-exact prompt economics, Skills Index discovery, native sessions, checkpoints, handoffs, and durable memory behind one local contract.
+`v3.11.1` is the current public cognition-core baseline: deterministic Synthesis Packs, contract-valid sparse context, async continuation warming, idempotent outcome capture, saved recall evaluation, typed graph evidence, a cross-distribution capability manifest, Go-native feedback, upgrade-safe optional Pi/Droid runner discovery, detected OMP/Mercury hooks, runner-quality guidance, tokenizer-exact prompt economics, Skills Index discovery, native sessions, checkpoints, handoffs, and durable memory behind one local contract.
 
 ## Public Runtime Stack (v3.11)
 
@@ -338,6 +338,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.11.1.md` (upgrade-safe runner discovery across long-lived agent environments)
   - `docs/releases/v3.11.0.md` (Synthesis Packs, async warming, outcome calibration, memory activation evidence, and public-core parity)
   - `docs/releases/v3.10.2.md` (Go-native feedback submit, idempotency, preference projection, and strict ownership coverage)
   - `docs/releases/v3.10.1.md` (detected OMP/Mercury instruction hooks and default adoption coverage)

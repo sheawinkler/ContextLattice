@@ -526,6 +526,62 @@ func TestDiscoverUsesProcessFixtureAndProfileAuthority(t *testing.T) {
 	}
 }
 
+func TestRunnerDiscoveryUsesInstalledRootWhenInheritedRootIsStale(t *testing.T) {
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	isolatedDir := t.TempDir()
+	if err := os.Chdir(isolatedDir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+
+	globalHome := t.TempDir()
+	installedRoot := t.TempDir()
+	staleRoot := t.TempDir()
+	adapterPath := filepath.Join(installedRoot, "scripts", "agent_runners", "pi_runner.py")
+	if err := os.MkdirAll(filepath.Dir(adapterPath), 0755); err != nil {
+		t.Fatalf("create adapter directory: %v", err)
+	}
+	if err := os.WriteFile(adapterPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write adapter: %v", err)
+	}
+	contractPath := filepath.Join(globalHome, "config", "agent_contracts", "agent_output_contracts.json")
+	if err := os.MkdirAll(filepath.Dir(contractPath), 0755); err != nil {
+		t.Fatalf("create contract directory: %v", err)
+	}
+	if err := os.WriteFile(contractPath, []byte(`{"contracts":{"runner_capability.v1":{}}}`), 0644); err != nil {
+		t.Fatalf("write contract registry: %v", err)
+	}
+	hookEnv := filepath.Join(globalHome, "agent_hooks.env")
+	if err := os.WriteFile(hookEnv, []byte("export CONTEXTLATTICE_REPO_ROOT='"+installedRoot+"'\n"), 0600); err != nil {
+		t.Fatalf("write hook environment: %v", err)
+	}
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "pi"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake pi binary: %v", err)
+	}
+	t.Setenv("PATH", fakeBin)
+	t.Setenv("CONTEXTLATTICE_REPO_ROOT", staleRoot)
+
+	runner := runnerDiscoveryMetadata("pi", "", globalHome)
+	if !asBool(runner["runner_ready"]) {
+		t.Fatalf("expected installed-root fallback to make runner ready: %#v", runner)
+	}
+	if got := firstString(runner["adapter"]); got != adapterPath {
+		t.Fatalf("adapter=%q want=%q", got, adapterPath)
+	}
+}
+
+func TestRunnerDiscoveryPrefersExplicitRepo(t *testing.T) {
+	explicitRepo := t.TempDir()
+	roots := runnerContextLatticeRoots(explicitRepo, "")
+	if len(roots) == 0 || roots[0] != explicitRepo {
+		t.Fatalf("roots=%#v want explicit repo first", roots)
+	}
+}
+
 func TestAgentProcessMatchesPackageManagedHermesExecutables(t *testing.T) {
 	patterns := []string{"hermes-agent", "hermes"}
 	cases := []struct {
