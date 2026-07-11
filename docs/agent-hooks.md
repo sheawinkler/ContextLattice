@@ -68,6 +68,10 @@ Installed commands:
 | `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
 | `contextlattice_memory_topology` | Memory topology audit for base/default lanes, full backend fabric, partition keys, clusters, and graph health. |
 | `contextlattice_skills_index` | Skills Index search CLI for discovering capabilities without bloating startup context. |
+| `contextlattice_retrieval_plan` | Advisor-only evidence obligations, source/query plan, token allocation, graph expansion advice, and marginal-value stop conditions. |
+| `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
+| `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
+| `contextlattice_synthesis_pack_v2` | Proof-carrying synthesis with claim-level support, opposition, temporal state, confidence decomposition, and missing-proof disclosure. |
 | `contextlattice_source_backfill` | Optional development helper, installed with `--include-dev-python-tools`, for bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres. |
 | `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
 | `contextlattice_runner_quality` | Primary CLI for bounded runner-quality telemetry and advisor-only runner recommendations. |

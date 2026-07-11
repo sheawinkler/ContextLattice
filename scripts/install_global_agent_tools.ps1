@@ -519,6 +519,10 @@ $goNativeCommands = @(
     "contextlattice_search",
     "contextlattice_pack",
     "contextlattice_synthesis_pack",
+    "contextlattice_synthesis_pack_v2",
+    "contextlattice_retrieval_plan",
+    "contextlattice_claim_write",
+    "contextlattice_claim_query",
     "contextlattice_write",
     "contextlattice_adopt",
     "contextlattice_doctor",
@@ -574,6 +578,9 @@ Write-Host "Open a new terminal and verify:"
 Write-Host "  contextlattice_search -h"
 Write-Host "  contextlattice_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_synthesis_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
+Write-Host "  contextlattice_synthesis_pack_v2 `"what should this agent know before solving the task?`" --project contextlattice --pretty"
+Write-Host "  contextlattice_retrieval_plan `"what should this agent know before solving the task?`" --project contextlattice --pretty"
+Write-Host "  contextlattice_claim_query `"current project state`" --project contextlattice --pretty"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_adopt status --pretty"
 Write-Host "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"

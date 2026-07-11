@@ -311,6 +311,7 @@ type server struct {
 	writePolicy                     writeIngressPolicy
 	memoryStore                     *memoryStore
 	memoryProfilesStore             *memoryProfileStore
+	temporalClaims                  *temporalClaimStore
 	feedbackStore                   *feedbackStore
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
@@ -1245,6 +1246,11 @@ func newServer() *server {
 		log.Printf("gateway-go memory store disabled: %v", memoryStoreErr)
 		memoryStoreInstance = &memoryStore{policy: memoryStorePolicy{enabled: false}}
 	}
+	temporalClaimsInstance, temporalClaimsErr := newTemporalClaimStoreFromEnv()
+	if temporalClaimsErr != nil {
+		log.Printf("gateway-go temporal claim graph disabled: %v", temporalClaimsErr)
+		temporalClaimsInstance = &temporalClaimStore{enabled: false, claims: map[string]temporalClaim{}, lastError: temporalClaimsErr.Error()}
+	}
 	continuationDurable := newContinuationDurableQueue(policy)
 	t := newRetrievalTelemetry(policy)
 	s := &server{
@@ -1262,6 +1268,7 @@ func newServer() *server {
 		writePolicy:                     writePolicy,
 		memoryStore:                     memoryStoreInstance,
 		memoryProfilesStore:             newMemoryProfileStore(policy),
+		temporalClaims:                  temporalClaimsInstance,
 		feedbackStore:                   feedbackStoreInstance,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
@@ -2806,6 +2813,12 @@ func (s *server) strictRuntimeServices() []map[string]any {
 			}
 			return "degraded"
 		}(), sourceOwnerGoNative, "topic rollups + local graph store"),
+		serviceRow("temporal-claim-graph", func() string {
+			if s.temporalClaims != nil && s.temporalClaims.enabled {
+				return "healthy"
+			}
+			return "disabled"
+		}(), sourceOwnerGoNative, "bounded temporal claims + provenance ledger"),
 	}
 
 	memoryBankStatus, memoryBankOwner, memoryBankDetail := s.strictRuntimeLaneStatus(sourceMemoryBank)
@@ -6922,6 +6935,10 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/preferences", s.preferencesRoute)
 	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
 	mux.HandleFunc("/memory/synthesis-pack", s.memorySynthesisPack)
+	mux.HandleFunc("/memory/synthesis-pack/v2", s.memorySynthesisPackV2)
+	mux.HandleFunc("/memory/claims", s.memoryClaimsWrite)
+	mux.HandleFunc("/memory/claims/query", s.memoryClaimsQuery)
+	mux.HandleFunc("/memory/retrieval/plan", s.memoryRetrievalPlan)
 	mux.HandleFunc("/memory/dream", s.memoryDream)
 	mux.HandleFunc("/memory/review", s.memoryReview)
 	mux.HandleFunc("/feedback", s.feedbackRoute)
@@ -6933,6 +6950,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
+	mux.HandleFunc("/telemetry/claim-graph", s.telemetryClaimGraph)
 	mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
@@ -6962,6 +6980,10 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/ops_queue_status", s.toolsOpsQueueStatus)
 	mux.HandleFunc("/tools/context_pack", s.toolsContextPack)
 	mux.HandleFunc("/tools/synthesis_pack", s.toolsSynthesisPack)
+	mux.HandleFunc("/tools/synthesis_pack_v2", s.toolsSynthesisPackV2)
+	mux.HandleFunc("/tools/claim_write", s.toolsClaimWrite)
+	mux.HandleFunc("/tools/claim_query", s.toolsClaimQuery)
+	mux.HandleFunc("/tools/retrieval_plan", s.toolsRetrievalPlan)
 	mux.HandleFunc("/tools/dream", s.toolsDream)
 	mux.HandleFunc("/tools/review", s.toolsReview)
 	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)

@@ -44,6 +44,10 @@ REQUIRED_CONTRACTS = (
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
     "synthesis_pack.v1",
+    "synthesis_pack.v2",
+    "temporal_claim.v1",
+    "temporal_claim_query.v1",
+    "retrieval_plan.v1",
     "run_advisor.v1",
     "contract_acknowledgement.v1",
     "writeback_result.v1",
@@ -243,6 +247,140 @@ def sample_synthesis_pack() -> dict[str, Any]:
             "token_impact": {"schema_id": "contextlattice_token_impact.v1"},
             "context_pack_quality": {"schema_id": "contextlattice_context_pack_quality.v1"},
             "run_advisor": advisor,
+            "writeback_required": True,
+        },
+    )
+
+
+def sample_temporal_claim() -> dict[str, Any]:
+    claim = {
+        "schema_id": "temporal_claim.v1",
+        "claim_id": "claim_audit",
+        "project": "contextlattice",
+        "subject": "public release",
+        "predicate": "current_version",
+        "object": "3.12.0",
+        "statement": "The current public release is 3.12.0.",
+        "status": "active",
+        "observed_at": "2026-07-11T00:00:00Z",
+        "confidence": 0.98,
+        "supersedes": ["claim_previous_release"],
+        "contradicts": [],
+        "caused_by": ["claim_release_gate_passed"],
+        "support": [{"ref_id": "release:v3.12.0", "kind": "release"}],
+        "opposition": [],
+        "verification": {"status": "verified", "method": "release tag", "checked_at": "2026-07-11T00:00:00Z", "checker": "release audit"},
+        "provenance": {"source": "release manifest", "content_hash": "abc123"},
+        "revision": 1,
+        "created_at": "2026-07-11T00:00:00Z",
+        "updated_at": "2026-07-11T00:00:00Z",
+        "contradiction_state": "clear",
+    }
+    return attach_format_contract(
+        "temporal_claim.v1",
+        {"ok": True, "schema_id": "temporal_claim.v1", "claim": claim, "recorded": True},
+    )
+
+
+def sample_temporal_claim_query() -> dict[str, Any]:
+    claim = sample_temporal_claim()["claim"]
+    return attach_format_contract(
+        "temporal_claim_query.v1",
+        {
+            "ok": True,
+            "schema_id": "temporal_claim_query.v1",
+            "project": "contextlattice",
+            "query": "current public release",
+            "as_of": "2026-07-11T00:00:00Z",
+            "claims": [claim],
+            "claim_count": 1,
+            "graph_status": {
+                "schema_id": "temporal_claim_graph_status.v1",
+                "enabled": True,
+                "claim_count": 1,
+                "status_counts": {"active": 1},
+                "verification_counts": {"verified": 1},
+                "contradiction_links": 0,
+            },
+        },
+    )
+
+
+def sample_retrieval_plan() -> dict[str, Any]:
+    return attach_format_contract(
+        "retrieval_plan.v1",
+        {
+            "ok": True,
+            "schema_id": "retrieval_plan.v1",
+            "version": 1,
+            "generated_at": "2026-07-11T00:00:00Z",
+            "mode": "advisor",
+            "activation_state": "shadow_only",
+            "project": "contextlattice",
+            "query": "prove release readiness",
+            "task_phase": "release",
+            "retrieval_intent": "release",
+            "retrieval_mode": "balanced",
+            "token_budget": 4000,
+            "evidence_obligations": [{"id": "release_proof", "label": "release proof", "required": True}],
+            "query_plan": [{"query": "prove release readiness", "purpose": "primary task wording", "round": 1}],
+            "source_plan": [{"source": "qdrant", "selected": True, "score": 0.9}],
+            "expansion": {"temporal_claims": True, "memory_graph": False},
+            "budget_allocation": {"ranked_evidence_tokens": 2480},
+            "stop_conditions": {"max_rounds": 3, "stop_on_no_new_supported_claims": True},
+            "calibration": {"outcome_samples": 1, "grade": "outcome_seeded", "activation_eligible": False, "minimum_outcomes_for_candidate": 20, "reason": "advisor-only"},
+            "proof": {"inputs": ["source policy"], "llm_used": False, "deterministic": True},
+        },
+    )
+
+
+def sample_synthesis_pack_v2() -> dict[str, Any]:
+    context = sample_context_pack()
+    planner = sample_retrieval_plan()
+    planner.pop("format_contract", None)
+    pack = {
+        "schema_id": "synthesis_pack.v2",
+        "version": 2,
+        "generated_at": "2026-07-11T00:00:00Z",
+        "project": "contextlattice",
+        "query": "prove release readiness",
+        "summary": "One evidence-backed release claim is available.",
+        "proof_claims": [{"claim_id": "synth_claim_audit", "statement": "Release evidence is available.", "proof_status": "supported", "support": [{"ref_id": "notes/audit.md"}], "opposition": [], "temporal": {"state": "active"}, "causal_chain": [], "missing_proof": [], "confidence": {"final": 0.9}}],
+        "claim_count": 1,
+        "temporal_claims": [sample_temporal_claim()["claim"]],
+        "contradictions": [],
+        "causal_chains": [],
+        "proof_coverage": {"supported_claims": 1, "claim_support_rate": 1.0},
+        "topic_gravity": [],
+        "cross_project_bridges": [],
+        "must_not_forget": [],
+        "recommended_next_actions": [],
+        "open_questions": [],
+        "semantic_tags": ["synthesis_pack_v2", "proof_carrying"],
+        "synthesis_quality": {"status": "strong", "score": 90, "basis": ["claim-level evidence"], "limits": []},
+        "unsupported_claims_excluded": 0,
+        "limits": ["bounded evidence only"],
+        "synthesis_trace": {"mode": "deterministic_proof_v2", "llm_used": False, "basis": ["ranked evidence"], "inference_boundary": "Unsupported findings are excluded."},
+    }
+    return attach_format_contract(
+        "synthesis_pack.v2",
+        {
+            "ok": True,
+            "schema_id": "synthesis_pack.v2",
+            "version": 2,
+            "project": "contextlattice",
+            "query": "prove release readiness",
+            "topic_path": "releases",
+            "retrieval_mode": "balanced",
+            "retrieval_intent": "proof_synthesis",
+            "synthesis_pack": pack,
+            "retrieval_plan": planner,
+            "context_pack": context["context_pack"],
+            "source_coverage": context["source_coverage"],
+            "reference_prompt": "Use this ContextLattice Synthesis Pack v2 with its evidence references.",
+            "token_impact": {"schema_id": "contextlattice_token_impact.v1"},
+            "context_pack_quality": {"schema_id": "contextlattice_context_pack_quality.v1"},
+            "run_advisor": context["run_advisor"],
             "writeback_required": True,
         },
     )
@@ -1111,6 +1249,10 @@ def run_audit() -> list[dict[str, Any]]:
         ("runner_result.v1", sample_runner_result_missing_binary()),
         ("agent_task_lease.v1", sample_agent_task_lease()),
         ("runner_quality_sample.v1", sample_runner_quality_sample()),
+        ("temporal_claim.v1", sample_temporal_claim()),
+        ("temporal_claim_query.v1", sample_temporal_claim_query()),
+        ("retrieval_plan.v1", sample_retrieval_plan()),
+        ("synthesis_pack.v2", sample_synthesis_pack_v2()),
         ("contract_acknowledgement.v1", sample_contract_ack()),
         ("agent_span.v1", sample_agent_span()),
         ("agent_flight_recorder_event.v1", sample_flight_event()),

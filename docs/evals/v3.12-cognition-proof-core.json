@@ -1,0 +1,109 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "eval_id": "v3.12-cognition-proof-core",
+  "captured_at": "2026-07-11T23:28:09Z",
+  "objective": "Add time-aware claims, advisor-only adaptive retrieval planning, and proof-carrying deterministic synthesis without weakening v1 compatibility or activating unproven retrieval policy.",
+  "baseline": {
+    "agent_contract_count": 27,
+    "temporal_claim_contracts": 0,
+    "adaptive_retrieval_plan_contracts": 0,
+    "proof_carrying_synthesis_contracts": 0,
+    "cognition_core_cli_commands": 0,
+    "claim_query_1000_initial_benchmark": {
+      "median_ns_per_op": 1605193,
+      "median_bytes_per_op": 2297993,
+      "allocs_per_op": 6933
+    }
+  },
+  "intervention": {
+    "agent_contract_count": 31,
+    "contracts_added": [
+      "temporal_claim.v1",
+      "temporal_claim_query.v1",
+      "retrieval_plan.v1",
+      "synthesis_pack.v2"
+    ],
+    "native_routes_added": 9,
+    "cli_commands_added": [
+      "contextlattice_claim_write",
+      "contextlattice_claim_query",
+      "contextlattice_retrieval_plan",
+      "contextlattice_synthesis_pack_v2"
+    ],
+    "retrieval_policy_activation": "shadow_only",
+    "model_dependency": false,
+    "legacy_v1_routes_changed": false
+  },
+  "holdout": {
+    "kind": "deterministic_go_contract_and_persistence_tests",
+    "cases": [
+      "claim supersession persists across reload",
+      "invalid claim status is rejected without mutating the ledger",
+      "claim write and query routes pass boundary contracts",
+      "retrieval planner remains deterministic and advisor-only",
+      "findings without evidence identity are excluded",
+      "HTTP and tool synthesis v2 routes return supported claims"
+    ],
+    "repeat_runs": 3,
+    "external_network": false,
+    "model_calls": 0
+  },
+  "results": {
+    "focused_holdout": {
+      "passed": true,
+      "repeat_runs": 3,
+      "failures": 0
+    },
+    "claim_query_1000_final_benchmark": {
+      "median_ns_per_op": 931454,
+      "median_bytes_per_op": 33432,
+      "allocs_per_op": 7,
+      "latency_reduction_ratio": 0.4197,
+      "allocation_bytes_reduction_ratio": 0.9855,
+      "allocation_count_reduction_ratio": 0.999
+    },
+    "adaptive_retrieval_planner_benchmark": {
+      "median_ns_per_op": 10719,
+      "bytes_per_op": 19320,
+      "allocs_per_op": 172
+    },
+    "proof_claims_32_benchmark": {
+      "median_ns_per_op": 88211,
+      "bytes_per_op": 132288,
+      "allocs_per_op": 1604
+    }
+  },
+  "cost": {
+    "model_calls": 0,
+    "external_api_calls": 0,
+    "external_network_calls": 0,
+    "persistent_test_claims": 2,
+    "benchmark_claims": 1000,
+    "tool_calls": 0
+  },
+  "failures": [
+    {
+      "kind": "initial_compile_failure",
+      "detail": "The first retrieval-query-plan literal used an invalid untyped composite element.",
+      "resolution": "Use an explicit map[string]any element and rerun the full Go package test."
+    },
+    {
+      "kind": "initial_claim_query_allocation_pressure",
+      "detail": "Sorting every matching claim and recomputing normalized text consumed 2297993 B/op and 6933 allocs/op at 1000 claims.",
+      "resolution": "Cache normalized claim search text and retain only the bounded top-K candidates before sorting."
+    }
+  ],
+  "interpretation": {
+    "claim_graph": "Persistence, supersession, contradiction fields, verification, provenance, branch, and commit identity are implemented and contract-valid.",
+    "planner": "The planner is useful as deterministic advice but remains unproven as an automatic policy; activation is explicitly false.",
+    "synthesis_v2": "Every emitted proof claim has a bounded evidence identity; unsupported findings are counted and excluded.",
+    "semantic_limit": "Temporal-claim linking is deterministic lexical matching, not a claim of semantic equivalence.",
+    "promotion_policy": "No live policy promotion until outcome-trained holdouts demonstrate lift and rollback safety."
+  },
+  "reproduction": [
+    "cd services/gateway-go && go test -run 'TestTemporalClaim|TestAdaptiveRetrieval|TestProofClaim|TestProofCarrying' -count=3",
+    "cd services/gateway-go && go test -run '^$' -bench 'Benchmark(TemporalClaimQuery1000|AdaptiveRetrievalPlanner|ProofClaims32)$' -benchmem -count=3",
+    "scripts/agent/generate-agent-contract-types --check --pretty",
+    "scripts/agent/audit-agent-output-contracts"
+  ]
+}

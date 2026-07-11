@@ -1,7 +1,7 @@
 {
   "schema_id": "contextlattice_public_core_capabilities.v1",
   "version": 1,
-  "release_train": "v3.11",
+  "release_train": "v3.12",
   "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
   "invariants": [
     "public_core_is_present_in_every_distribution",
@@ -45,6 +45,33 @@
       "artifacts": [
         "services/gateway-go/memory_synthesis_pack.go",
         "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+      ]
+    },
+    {
+      "id": "temporal_claim_graph.v1",
+      "summary": "Structured time-aware claims preserve provenance, validity, supersession, contradiction, causality, verification, branch, and commit identity.",
+      "contracts": ["temporal_claim.v1", "temporal_claim_query.v1"],
+      "artifacts": [
+        "services/gateway-go/temporal_claim_graph.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+      ]
+    },
+    {
+      "id": "adaptive_retrieval_planner.v1",
+      "summary": "Advisor-only deterministic planning assigns evidence obligations, sources, token budgets, graph expansion, and marginal-value stop conditions without silently changing retrieval policy.",
+      "contracts": ["retrieval_plan.v1"],
+      "artifacts": [
+        "services/gateway-go/adaptive_retrieval_planner.go",
+        "services/gateway-go/context_pack_quality_telemetry.go"
+      ]
+    },
+    {
+      "id": "proof_carrying_synthesis.v2",
+      "summary": "Every synthesized finding carries bounded support, opposition, temporal state, confidence decomposition, missing proof, and causal context; unsupported findings are excluded.",
+      "contracts": ["synthesis_pack.v2"],
+      "artifacts": [
+        "services/gateway-go/memory_synthesis_pack_v2.go",
+        "services/gateway-go/memory_synthesis_pack.go"
       ]
     },
     {

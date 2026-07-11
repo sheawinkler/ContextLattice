@@ -27,6 +27,10 @@ var nativeToolNames = map[string]string{
 	"contextlattice_search":                          "search",
 	"contextlattice_pack":                            "pack",
 	"contextlattice_synthesis_pack":                  "synthesis-pack",
+	"contextlattice_synthesis_pack_v2":               "synthesis-pack-v2",
+	"contextlattice_retrieval_plan":                  "retrieval-plan",
+	"contextlattice_claim_write":                     "claim-write",
+	"contextlattice_claim_query":                     "claim-query",
 	"contextlattice_write":                           "write",
 	"contextlattice_agent_session":                   "session",
 	"contextlattice_agent_trace":                     "trace",
@@ -101,6 +105,14 @@ func (c *cli) run(argv []string) error {
 		return c.cmdPack(args)
 	case "synthesis-pack":
 		return c.cmdSynthesisPack(args)
+	case "synthesis-pack-v2":
+		return c.cmdSynthesisPackV2(args)
+	case "retrieval-plan":
+		return c.cmdRetrievalPlan(args)
+	case "claim-write":
+		return c.cmdClaimWrite(args)
+	case "claim-query":
+		return c.cmdClaimQuery(args)
 	case "session":
 		return c.cmdSession(args)
 	case "trace":
@@ -148,6 +160,10 @@ Native commands:
   search                         lifecycle-aware memory search
   pack                           bounded context package
   synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
+  synthesis-pack-v2              proof-carrying synthesis with temporal claims and retrieval plan
+  retrieval-plan                 deterministic advisor-only evidence and source plan
+  claim-write                    write or revise a structured temporal claim
+  claim-query                    query structured temporal claims as of a point in time
   write                          memory write/checkpoint
   session                        agent session lifecycle, rollup, context package, trace, runtime
   trace                          alias for session trace
@@ -166,7 +182,8 @@ Native commands:
   async-inbox-drain              bounded async continuation inbox drain for any agent
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
-contextlattice_pack, contextlattice_synthesis_pack, contextlattice_write,
+contextlattice_pack, contextlattice_synthesis_pack, contextlattice_synthesis_pack_v2,
+contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query, contextlattice_write,
 contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
@@ -462,6 +479,10 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice_search",
 		"contextlattice_pack",
 		"contextlattice_synthesis_pack",
+		"contextlattice_synthesis_pack_v2",
+		"contextlattice_retrieval_plan",
+		"contextlattice_claim_write",
+		"contextlattice_claim_query",
 		"contextlattice_write",
 		"contextlattice_adopt",
 		"contextlattice_doctor",
@@ -1021,15 +1042,110 @@ func (c *cli) cmdSynthesisPack(args []string) error {
 	return c.cmdPackWithRoute(args, "contextlattice_synthesis_pack", "/memory/synthesis-pack", "synthesis-pack")
 }
 
+func (c *cli) cmdSynthesisPackV2(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice_synthesis_pack_v2", "/memory/synthesis-pack/v2", "synthesis-pack-v2")
+}
+
+func (c *cli) cmdRetrievalPlan(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice_retrieval_plan", "/memory/retrieval/plan", "retrieval-plan")
+}
+
+func (c *cli) cmdClaimWrite(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"claim-id": "claim_id", "subject": "subject", "predicate": "predicate", "object": "object",
+		"statement": "statement", "status": "status", "valid-from": "valid_from", "valid-to": "valid_to",
+		"observed-at": "observed_at", "supersedes": "supersedes", "contradicts": "contradicts",
+		"caused-by": "caused_by", "branch": "branch", "commit": "commit", "payload-file": "payload_file",
+		"confidence": "confidence",
+		"agent-id":   "agent_id", "session-id": "session_id",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_claim_write --subject s --predicate p --object o [--project p] [--payload-file claim.json] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{}
+	if path := strings.TrimSpace(parsed.string("payload_file", "")); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return fmt.Errorf("decode claim payload: %w", err)
+		}
+	}
+	for flag, key := range map[string]string{
+		"claim_id": "claim_id", "subject": "subject", "predicate": "predicate", "object": "object",
+		"statement": "statement", "status": "status", "valid_from": "valid_from", "valid_to": "valid_to",
+		"observed_at": "observed_at", "branch": "branch", "commit": "commit",
+	} {
+		if value := strings.TrimSpace(parsed.string(flag, "")); value != "" {
+			payload[key] = value
+		}
+	}
+	if parsed.has("project") || strings.TrimSpace(firstString(payload["project"])) == "" {
+		payload["project"] = parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	}
+	if topic := parsed.string("topic_path", ""); topic != "" {
+		payload["topic_path"] = topic
+	}
+	for flag, key := range map[string]string{"supersedes": "supersedes", "contradicts": "contradicts", "caused_by": "caused_by"} {
+		if value := strings.TrimSpace(parsed.string(flag, "")); value != "" {
+			payload[key] = splitCSV(value)
+		}
+	}
+	if parsed.has("confidence") {
+		payload["confidence"] = parsed.float("confidence", 0.7)
+	}
+	if parsed.has("agent_id") || strings.TrimSpace(firstString(payload["agent_id"])) == "" {
+		payload["agent_id"] = parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", ""))
+	}
+	if parsed.has("session_id") || strings.TrimSpace(firstString(payload["session_id"])) == "" {
+		payload["session_id"] = parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/claims", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdClaimQuery(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"subject": "subject", "predicate": "predicate", "status": "status", "as-of": "as_of", "limit": "limit",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
+		"include-expired": "include_expired", "include-superseded": "include_superseded",
+	}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_claim_query '<query>' [--project p] [--as-of RFC3339] [--include-expired] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{
+		"query":   strings.TrimSpace(strings.Join(parsed.pos, " ")),
+		"project": parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")),
+		"subject": parsed.string("subject", ""), "predicate": parsed.string("predicate", ""),
+		"status": parsed.string("status", ""), "as_of": parsed.string("as_of", ""),
+		"limit": parsed.int("limit", 20), "include_expired": parsed.bool("include_expired"),
+		"include_superseded": parsed.bool("include_superseded"),
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/claims/query", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
 func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, sessionTag string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
-		"budget-chars": "budget_chars",
-		"limit":        "limit",
-		"max-facts":    "max_facts",
-		"agent-id":     "agent_id",
-		"session-id":   "session_id",
-		"retries":      "retries",
-		"retry-delay":  "retry_delay",
+		"budget-chars":         "budget_chars",
+		"limit":                "limit",
+		"max-facts":            "max_facts",
+		"agent-id":             "agent_id",
+		"session-id":           "session_id",
+		"retries":              "retries",
+		"retry-delay":          "retry_delay",
+		"task-phase":           "task_phase",
+		"retrieval-intent":     "retrieval_intent",
+		"evidence-obligations": "evidence_obligations",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
 		"blocking":        "blocking",
 		"nonblocking":     "nonblocking",
@@ -1072,6 +1188,15 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"native_cli_implementation": true,
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
+	if value := parsed.string("task_phase", ""); value != "" {
+		payload["task_phase"] = value
+	}
+	if value := parsed.string("retrieval_intent", ""); value != "" {
+		payload["retrieval_intent"] = value
+	}
+	if value := parsed.string("evidence_obligations", ""); value != "" {
+		payload["evidence_obligations"] = splitCSV(value)
+	}
 	raw, err := c.requestWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
 	if err != nil {
 		if parsed.bool("soft") {
@@ -1907,7 +2032,10 @@ func (c *cli) cmdStrictRuntimeNativeOwnership(args []string) error {
 func auditContextBoundary(payload map[string]any) map[string]any {
 	required := []string{
 		"/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight",
+		"/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan",
+		"/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query",
 		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
+		"contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query",
 		"contextlattice_async_inbox_drain",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	}
@@ -1962,7 +2090,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/synthesis-pack", "/tools/synthesis_pack", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
@@ -2018,7 +2146,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)

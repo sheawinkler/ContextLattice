@@ -30,6 +30,9 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	if os.Getenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED") == "" {
 		t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
 	}
+	if os.Getenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED") == "" {
+		t.Setenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED", "false")
+	}
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -979,17 +982,26 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics/list", s.memoryTopicList)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)`,
 		`mux.HandleFunc("/memory/synthesis-pack", s.memorySynthesisPack)`,
+		`mux.HandleFunc("/memory/synthesis-pack/v2", s.memorySynthesisPackV2)`,
+		`mux.HandleFunc("/memory/retrieval/plan", s.memoryRetrievalPlan)`,
+		`mux.HandleFunc("/memory/claims", s.memoryClaimsWrite)`,
+		`mux.HandleFunc("/memory/claims/query", s.memoryClaimsQuery)`,
 		`mux.HandleFunc("/memory/review", s.memoryReview)`,
 		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
 		`mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)`,
 		`mux.HandleFunc("/tools/synthesis_pack", s.toolsSynthesisPack)`,
+		`mux.HandleFunc("/tools/synthesis_pack_v2", s.toolsSynthesisPackV2)`,
+		`mux.HandleFunc("/tools/retrieval_plan", s.toolsRetrievalPlan)`,
+		`mux.HandleFunc("/tools/claim_write", s.toolsClaimWrite)`,
+		`mux.HandleFunc("/tools/claim_query", s.toolsClaimQuery)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)`,
+		`mux.HandleFunc("/telemetry/claim-graph", s.telemetryClaimGraph)`,
 		`mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)`,
@@ -1044,17 +1056,26 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics/list", s.proxy)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.proxy)`,
 		`mux.HandleFunc("/memory/synthesis-pack", s.proxy)`,
+		`mux.HandleFunc("/memory/synthesis-pack/v2", s.proxy)`,
+		`mux.HandleFunc("/memory/retrieval/plan", s.proxy)`,
+		`mux.HandleFunc("/memory/claims", s.proxy)`,
+		`mux.HandleFunc("/memory/claims/query", s.proxy)`,
 		`mux.HandleFunc("/memory/review", s.proxy)`,
 		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
 		`mux.HandleFunc("/tools/feedback_submit", s.proxy)`,
 		`mux.HandleFunc("/tools/synthesis_pack", s.proxy)`,
+		`mux.HandleFunc("/tools/synthesis_pack_v2", s.proxy)`,
+		`mux.HandleFunc("/tools/retrieval_plan", s.proxy)`,
+		`mux.HandleFunc("/tools/claim_write", s.proxy)`,
+		`mux.HandleFunc("/tools/claim_query", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
 		`mux.HandleFunc("/telemetry/token-impact", s.proxy)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.proxy)`,
+		`mux.HandleFunc("/telemetry/claim-graph", s.proxy)`,
 		`mux.HandleFunc("/telemetry/runner-quality", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval", s.proxy)`,
 		`mux.HandleFunc("/telemetry/retrieval/source-quality", s.proxy)`,
