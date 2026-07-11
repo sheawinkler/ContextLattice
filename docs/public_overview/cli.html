@@ -106,6 +106,10 @@ contextlattice_run_advisor "what should this agent know before solving the task?
 contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
+contextlattice_retrieval_plan "what evidence does this task owe?" --project contextlattice --pretty
+contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.12.0 --pretty
+contextlattice_claim_query "what is current?" --project contextlattice --include-superseded --pretty
+contextlattice_synthesis_pack_v2 "what can the evidence prove?" --project contextlattice --pretty
 contextlattice_agent_runtime_proof --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 contextlattice_skills_index search "browser automation" --pretty
@@ -124,6 +128,9 @@ printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextla
         <h3>Build the next prompt packet from memory</h3>
 <pre><code>contextlattice_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
 contextlattice_synthesis_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
+contextlattice_retrieval_plan "ship release notes without missing proof" --project contextlattice --pretty
+contextlattice_claim_query "current release constraints" --project contextlattice --include-superseded --pretty
+contextlattice_synthesis_pack_v2 "prove release readiness" --project contextlattice --pretty
 
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
   -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
@@ -132,7 +139,7 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
   -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
   http://127.0.0.1:8075/memory/synthesis-pack | jq '.synthesis_pack'</code></pre>
-        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code>. Synthesis Pack v1 adds high-signal findings, topic gravity, graph/cross-project bridges, must-not-forget constraints, next actions, open questions, and semantic tags over that same bounded evidence.</p>
+        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code>. Synthesis Pack v1 groups that evidence. Synthesis Pack v2 adds claim-level support, opposition, temporal state, confidence decomposition, causal context, and missing-proof disclosure. The retrieval planner is advisor-only and never silently activates policy.</p>
       </article>
     </section>
 

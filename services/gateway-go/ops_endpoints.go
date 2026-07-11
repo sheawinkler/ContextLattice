@@ -129,9 +129,26 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"topicPrefilterEnabled":    s.retrieval.topicPrefilterEnabled,
 			"coverageRescueEnabled":    s.retrieval.coverageRescueEnabled,
 		},
+		"cognition": map[string]any{
+			"temporalClaimGraph": s.temporalClaims.snapshot(),
+			"adaptiveRetrievalPlanner": map[string]any{
+				"schema_id":        retrievalPlanContractID,
+				"mode":             "advisor",
+				"activation_state": "shadow_only",
+			},
+			"proofCarryingSynthesis": map[string]any{
+				"schema_id":     synthesisPackV2ContractID,
+				"deterministic": true,
+				"llm_used":      false,
+			},
+		},
 		"tools": map[string]any{
 			"dream":                     true,
 			"review":                    true,
+			"synthesis_pack_v2":         true,
+			"retrieval_plan":            true,
+			"claim_write":               true,
+			"claim_query":               true,
 			"memory_write_batch":        true,
 			"ops_queue_status":          true,
 			"feedback_submit":           true,
@@ -179,6 +196,7 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 			"batchSize":               batchSize,
 			"continuationMaxInflight": queueCap,
 			"continuationCooldowns":   cooldownActive,
+			"temporalClaimGraph":      s.temporalClaims.snapshot(),
 		},
 		"trading": map[string]any{
 			"updatedAt":     nil,

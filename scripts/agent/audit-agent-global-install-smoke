@@ -154,7 +154,17 @@ def main() -> int:
     for rel in REQUIRED_RUNTIME_FILES:
         path = global_home / rel
         checks.append(check(f"hook_runtime:{rel}", path.is_file(), path=str(path)))
-    for name in ["contextlattice_pre_compaction_write", "contextlattice_post_compaction_read", "contextlattice_adopt", "contextlattice_agent_adapter", "contextlattice_synthesis_pack"]:
+    for name in [
+        "contextlattice_pre_compaction_write",
+        "contextlattice_post_compaction_read",
+        "contextlattice_adopt",
+        "contextlattice_agent_adapter",
+        "contextlattice_synthesis_pack",
+        "contextlattice_synthesis_pack_v2",
+        "contextlattice_retrieval_plan",
+        "contextlattice_claim_write",
+        "contextlattice_claim_query",
+    ]:
         path = bin_dir / name
         checks.append(check(f"wrapper:{name}", executable(path), path=str(path)))
     for name in OPTIONAL_DEV_WRAPPERS:

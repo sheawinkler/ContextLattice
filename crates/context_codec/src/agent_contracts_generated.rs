@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 16;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 17;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -28,6 +28,7 @@ pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const OBJECTIVE_RUNTIME_STATE_V1: &str = "objective_runtime_state.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
+pub const RETRIEVAL_PLAN_V1: &str = "retrieval_plan.v1";
 pub const RETRIEVAL_PROGRESS_V1: &str = "retrieval_progress.v1";
 pub const REVIEW_MODE_RESPONSE_V1: &str = "review_mode_response.v1";
 pub const RUN_ADVISOR_V1: &str = "run_advisor.v1";
@@ -36,6 +37,9 @@ pub const RUNNER_QUALITY_SAMPLE_V1: &str = "runner_quality_sample.v1";
 pub const RUNNER_RESULT_V1: &str = "runner_result.v1";
 pub const STEERING_COMMENT_V1: &str = "steering_comment.v1";
 pub const SYNTHESIS_PACK_V1: &str = "synthesis_pack.v1";
+pub const SYNTHESIS_PACK_V2: &str = "synthesis_pack.v2";
+pub const TEMPORAL_CLAIM_V1: &str = "temporal_claim.v1";
+pub const TEMPORAL_CLAIM_QUERY_V1: &str = "temporal_claim_query.v1";
 pub const UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1: &str = "universal_agent_adapter_response.v1";
 pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 
@@ -57,6 +61,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     DREAM_MODE_RESPONSE_V1,
     OBJECTIVE_RUNTIME_STATE_V1,
     POLICY_CONTEXT_PACKAGE_V1,
+    RETRIEVAL_PLAN_V1,
     RETRIEVAL_PROGRESS_V1,
     REVIEW_MODE_RESPONSE_V1,
     RUN_ADVISOR_V1,
@@ -65,6 +70,9 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     RUNNER_RESULT_V1,
     STEERING_COMMENT_V1,
     SYNTHESIS_PACK_V1,
+    SYNTHESIS_PACK_V2,
+    TEMPORAL_CLAIM_V1,
+    TEMPORAL_CLAIM_QUERY_V1,
     UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1,
     WRITEBACK_RESULT_V1,
 ];
@@ -173,6 +181,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: RETRIEVAL_PLAN_V1,
+        payload_kind: "adaptive_retrieval_plan",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: RETRIEVAL_PROGRESS_V1,
         payload_kind: "retrieval_progress",
         contract_version: 1,
@@ -217,6 +231,24 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: SYNTHESIS_PACK_V1,
         payload_kind: "synthesis_pack",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: SYNTHESIS_PACK_V2,
+        payload_kind: "proof_carrying_synthesis_pack",
+        contract_version: 2,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: TEMPORAL_CLAIM_V1,
+        payload_kind: "temporal_claim",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: TEMPORAL_CLAIM_QUERY_V1,
+        payload_kind: "temporal_claim_query",
         contract_version: 1,
         required_output_mode: "json_object",
     },

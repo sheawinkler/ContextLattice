@@ -210,6 +210,60 @@ func TestSynthesisPackCommandUsesNativeEndpoint(t *testing.T) {
 	}
 }
 
+func TestCognitionProofCommandsUseNativeEndpoints(t *testing.T) {
+	captured := map[string]map[string]any{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode %s request: %v", r.URL.Path, err)
+		}
+		captured[r.URL.Path] = payload
+		switch r.URL.Path {
+		case "/memory/synthesis-pack/v2":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "synthesis_pack.v2", "synthesis_pack": map[string]any{"schema_id": "synthesis_pack.v2", "proof_claims": []any{}}, "context_pack": map[string]any{"query": "proof", "ranked_evidence": []any{}}})
+		case "/memory/retrieval/plan":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "retrieval_plan.v1", "mode": "advisor", "activation_state": "shadow_only"})
+		case "/memory/claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "temporal_claim.v1", "recorded": true, "claim": map[string]any{"claim_id": "claim_test"}})
+		case "/memory/claims/query":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "temporal_claim_query.v1", "claim_count": 1, "claims": []any{map[string]any{"claim_id": "claim_test"}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"synthesis-v2", []string{"contextlattice_synthesis_pack_v2", "proof", "--project", "alpha", "--raw", "--no-auto-session"}, "/memory/synthesis-pack/v2"},
+		{"retrieval-plan", []string{"contextlattice_retrieval_plan", "debug retrieval", "--project", "alpha", "--raw", "--no-auto-session"}, "/memory/retrieval/plan"},
+		{"claim-write", []string{"contextlattice_claim_write", "--project", "alpha", "--subject", "release", "--predicate", "current_version", "--object", "3.12.0", "--raw"}, "/memory/claims"},
+		{"claim-query", []string{"contextlattice_claim_query", "current release", "--project", "alpha", "--raw"}, "/memory/claims/query"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			c := newCLI(&stdout, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.run(tc.args); err != nil {
+				t.Fatalf("run %s: %v", tc.name, err)
+			}
+			if _, ok := captured[tc.path]; !ok {
+				t.Fatalf("expected request to %s, captured=%#v", tc.path, captured)
+			}
+		})
+	}
+	if captured["/memory/synthesis-pack/v2"]["native_cli_implementation"] != true {
+		t.Fatalf("expected native CLI marker on v2 synthesis: %#v", captured["/memory/synthesis-pack/v2"])
+	}
+	if captured["/memory/claims"]["subject"] != "release" || captured["/memory/claims"]["object"] != "3.12.0" {
+		t.Fatalf("expected structured claim payload: %#v", captured["/memory/claims"])
+	}
+}
+
 func TestSkillsIndexCommandUsesNativeEndpoint(t *testing.T) {
 	var captured map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

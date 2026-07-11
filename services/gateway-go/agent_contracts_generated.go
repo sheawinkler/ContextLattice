@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 16
+const GeneratedAgentContractRegistryVersion = 17
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -29,6 +29,7 @@ const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgemen
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
+const GeneratedAgentContractRetrievalPlanV1 = "retrieval_plan.v1"
 const GeneratedAgentContractRetrievalProgressV1 = "retrieval_progress.v1"
 const GeneratedAgentContractReviewModeResponseV1 = "review_mode_response.v1"
 const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
@@ -37,6 +38,9 @@ const GeneratedAgentContractRunnerQualitySampleV1 = "runner_quality_sample.v1"
 const GeneratedAgentContractRunnerResultV1 = "runner_result.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
 const GeneratedAgentContractSynthesisPackV1 = "synthesis_pack.v1"
+const GeneratedAgentContractSynthesisPackV2 = "synthesis_pack.v2"
+const GeneratedAgentContractTemporalClaimV1 = "temporal_claim.v1"
+const GeneratedAgentContractTemporalClaimQueryV1 = "temporal_claim_query.v1"
 const GeneratedAgentContractUniversalAgentAdapterResponseV1 = "universal_agent_adapter_response.v1"
 const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 
@@ -58,6 +62,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractPolicyContextPackageV1,
+	GeneratedAgentContractRetrievalPlanV1,
 	GeneratedAgentContractRetrievalProgressV1,
 	GeneratedAgentContractReviewModeResponseV1,
 	GeneratedAgentContractRunAdvisorV1,
@@ -66,6 +71,9 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractRunnerResultV1,
 	GeneratedAgentContractSteeringCommentV1,
 	GeneratedAgentContractSynthesisPackV1,
+	GeneratedAgentContractSynthesisPackV2,
+	GeneratedAgentContractTemporalClaimV1,
+	GeneratedAgentContractTemporalClaimQueryV1,
 	GeneratedAgentContractUniversalAgentAdapterResponseV1,
 	GeneratedAgentContractWritebackResultV1,
 }
@@ -174,6 +182,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractRetrievalPlanV1,
+		PayloadKind:        "adaptive_retrieval_plan",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractRetrievalProgressV1,
 		PayloadKind:        "retrieval_progress",
 		ContractVersion:    1,
@@ -218,6 +232,24 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractSynthesisPackV1,
 		PayloadKind:        "synthesis_pack",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractSynthesisPackV2,
+		PayloadKind:        "proof_carrying_synthesis_pack",
+		ContractVersion:    2,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractTemporalClaimV1,
+		PayloadKind:        "temporal_claim",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractTemporalClaimQueryV1,
+		PayloadKind:        "temporal_claim_query",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

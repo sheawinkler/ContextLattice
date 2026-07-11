@@ -26,6 +26,8 @@ ContextLattice provides a single memory contract for agentic systems:
 - Durable fanout across retrieval/storage lanes.
 - Staged retrieval (fast now, deep continuation when needed).
 - Bounded async inbox delivery that reports queued work as warming and surfaces terminal continuation results at normal CLI boundaries.
+- Temporal claims that preserve what was true, when it was true, what replaced it, what contradicts it, and the evidence behind each assertion.
+- Advisor-only retrieval planning plus proof-carrying synthesis that exposes support, opposition, uncertainty, missing proof, and causal context instead of laundering recall into certainty.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
@@ -33,9 +35,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.11.2` is the current public cognition-core baseline: deterministic Synthesis Packs, evidence-preserving sparse context, async continuation warming, idempotent outcome capture, saved recall evaluation, typed graph evidence, a cross-distribution capability manifest, Go-native feedback, upgrade-safe optional Pi/Droid runner discovery, detected OMP/Mercury hooks, runner-quality guidance, tokenizer-exact prompt economics, Skills Index discovery, native sessions, checkpoints, handoffs, and durable memory behind one local contract.
+`v3.12.0` is the current public cognition-core baseline: Temporal Claim Graph, adaptive advisor-only retrieval planning, Proof-Carrying Synthesis v2, deterministic Synthesis Packs, evidence-preserving sparse context, async continuation warming, idempotent outcome capture, saved recall evaluation, typed graph evidence, a cross-distribution capability manifest, Go-native feedback, upgrade-safe optional Pi/Droid runner discovery, detected OMP/Mercury hooks, runner-quality guidance, tokenizer-exact prompt economics, Skills Index discovery, native sessions, checkpoints, handoffs, and durable memory behind one local contract.
 
-## Public Runtime Stack (v3.11)
+## Public Runtime Stack (v3.12)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -47,6 +49,32 @@ ContextLattice provides a single memory contract for agentic systems:
 - Public local lite core default: `topic_rollups + qdrant`; pgvector and memory-bank spike adapters are not started by default.
 - Public local lite advanced: optional public adapter lab via `gmake mem-up-lite-advanced`; not the default quickstart and not a paid/private boundary.
 - Full/operator stacks: Qdrant remains the primary vector-native lane; pgvector stays supported for SQL-co-located vector workloads.
+
+### Cognition Core CLI
+
+The CLI is the prescribed agent interface. HTTP and MCP remain integration fallbacks.
+
+```bash
+# Ask what evidence should be retrieved, from where, and when to stop.
+contextlattice_retrieval_plan "debug the current release regression" --project contextlattice --pretty
+
+# Persist a structured, time-aware assertion with explicit provenance.
+contextlattice_claim_write \
+  --project contextlattice \
+  --subject release \
+  --predicate current_version \
+  --object 3.12.0 \
+  --statement "The current public release is 3.12.0." \
+  --pretty
+
+# Query current, historical, superseded, or contradicted claims.
+contextlattice_claim_query "current public release" --project contextlattice --include-superseded --pretty
+
+# Return claim-level support, opposition, temporal state, uncertainty, and missing proof.
+contextlattice_synthesis_pack_v2 "prove release readiness" --project contextlattice --pretty
+```
+
+The planner is `shadow_only`: it recommends source/query/token strategy but never silently changes retrieval policy. See [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md) for contracts, safety boundaries, and HTTP fallbacks.
 
 ## Quickstart
 
@@ -338,6 +366,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.12.0.md` (Temporal Claim Graph, adaptive retrieval planning, and Proof-Carrying Synthesis v2)
   - `docs/releases/v3.11.2.md` (evidence-preserving sparse Context Packs and grounded deterministic synthesis)
   - `docs/releases/v3.11.1.md` (upgrade-safe runner discovery across long-lived agent environments)
   - `docs/releases/v3.11.0.md` (Synthesis Packs, async warming, outcome calibration, memory activation evidence, and public-core parity)

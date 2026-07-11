@@ -16,7 +16,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.11.2 + release notes + checksums + images",
+      "submission_path": "Tag v3.12.0 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.11.2",
-      "body": "ContextLattice v3.11.2 is now live.\\n\\nHighlights:\\n- Go/Rust own the active runtime; no Python application service\\n- Live retrieval A/B: mean 4.94x faster, p50 8.57x faster, p95 2.36x faster\\n- HTTP-first, MCP-compatible memory/context/task orchestration with secure local defaults\\n- Durable write fanout across memory-bank, Qdrant, Mongo raw, MindsDB, and optional Letta\\n\\nStart here:\\n- Docs: {docs_url}\\n- Troubleshooting: {troubleshooting_url}\\n- Repo: {repo_url}"
+      "title": "{product_name} v3.12.0",
+      "body": "ContextLattice v3.12.0 is now live.\\n\\nHighlights:\\n- Temporal Claim Graph preserves validity, provenance, supersession, contradiction, causality, branch, and commit identity\\n- Adaptive Retrieval Planner names evidence obligations, source/query strategy, token allocation, and stop conditions without silently activating policy\\n- Proof-Carrying Synthesis v2 exposes support, opposition, temporal state, confidence decomposition, and missing proof\\n- Go/Rust own the active runtime; no Python application service\\n\\nStart here:\\n- Docs: {docs_url}\\n- Troubleshooting: {troubleshooting_url}\\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.11.2 is live.\\n\\nPrivate-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.\\n- Go/Rust active runtime with strict native ownership\\n- Live retrieval uplift: ~5x faster mean latency on cutover benchmark\\n- HTTP-first, MCP-compatible interface with federated retrieval + learning rerank\\n\\nStart local-first: {docs_url}\\n\\nFollow-up thread:\\n1) Why long-horizon agent work degrades without memory/context\\n2) How orchestration + retrieval stabilizes quality\\n3) v3.11.2 runtime benchmark and rollout notes"
+      "body": "ContextLattice v3.12.0 is live.\\n\\nMemory learned time. Synthesis inherited a burden of proof.\\n- Temporal Claim Graph preserves current, historical, superseded, and contested claims\\n- Adaptive Retrieval Planner names the evidence a task owes before acting\\n- Proof-Carrying Synthesis v2 refuses to launder uncited recall into certainty\\n- Go/Rust active runtime with strict native ownership\\n\\nStart local-first: {docs_url}\\n\\nFollow-up thread:\\n1) Why ordinary memory flattens time\\n2) Why retrieval should expose evidence obligations and stop conditions\\n3) How claim-level proof changes agent synthesis"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "Today we are launching ContextLattice v3.11.2.\\n\\nContextLattice is an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator for agent systems.\\n\\nWhy teams use it:\\n- resolve an agentic issue once, then share reusable context across the team and organization\\n- reduces repeated errors in long-running agent workflows\\n- runs a Go/Rust active runtime with strict native ownership\\n- measured ~5x mean retrieval latency improvement in live A/B cutover validation\\n- ships private-by-default with local-first controls\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
+      "body": "Today we are launching ContextLattice v3.12.0.\\n\\nContextLattice is the local-first memory and context infrastructure for serious agent systems.\\n\\nWhat changed:\\n- Temporal Claim Graph preserves what is true, when it is true, what replaced it, and what contests it\\n- Adaptive Retrieval Planner makes source strategy and evidence obligations visible\\n- Proof-Carrying Synthesis v2 attaches support, opposition, uncertainty, temporal state, and missing proof to every finding\\n- the active runtime remains Go/Rust with strict native ownership\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

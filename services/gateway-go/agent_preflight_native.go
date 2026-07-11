@@ -33,7 +33,12 @@ func (s *server) statusPayload() map[string]any {
 		"retrievalFastSources":    append([]string{}, s.retrieval.fastSources...),
 		"retrievalSlowSources":    append([]string{}, s.retrieval.slowSources...),
 		"retrievalDefaultSources": append([]string{}, s.retrieval.defaultSources...),
-		"metadataContract":        metadataContractSnapshot(),
+		"cognition": map[string]any{
+			"temporalClaimGraph": s.temporalClaims.snapshot(),
+			"retrievalPlanner":   map[string]any{"mode": "advisor", "activation_state": "shadow_only"},
+			"synthesisContract":  synthesisPackV2ContractID,
+		},
+		"metadataContract": metadataContractSnapshot(),
 	}
 }
 
