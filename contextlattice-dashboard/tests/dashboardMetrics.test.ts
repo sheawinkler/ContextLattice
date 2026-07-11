@@ -108,6 +108,7 @@ test("estimateContextPackQuality preserves modeled inference avoidance and outco
     contextPackQuality: {
       sample_count: 12,
       outcome_sample_count: 6,
+      calibration_outcome_sample_count: 5,
       average_quality_score: 87,
       exact_prompt_tokens_saved: 42000,
       modeled_inference_tokens_avoided: 6800,
@@ -133,6 +134,7 @@ test("estimateContextPackQuality preserves modeled inference avoidance and outco
   assert.equal(quality.calibrationGrade, "outcome_seeded");
   assert.equal(quality.confidence, "medium");
   assert.equal(quality.outcomeSamples, 6);
+  assert.equal(quality.calibrationOutcomeSamples, 5);
   assert.equal(quality.observedFirstPassRate, 0.833);
   assert.equal(quality.observedRepairRate, 0.167);
   assert.equal(quality.observedFollowupTokens, 1234);

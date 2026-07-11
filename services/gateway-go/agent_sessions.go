@@ -670,7 +670,7 @@ func compactAgentSessionRecentEvent(event map[string]any) map[string]any {
 	return out
 }
 
-func agentSessionSteeringInbox(events []map[string]any) map[string]any {
+func agentSessionSteeringInbox(sessionID string, events []map[string]any) map[string]any {
 	items := []any{}
 	for i := len(events) - 1; i >= 0 && len(items) < 8; i-- {
 		event := events[i]
@@ -708,8 +708,9 @@ func agentSessionSteeringInbox(events []map[string]any) map[string]any {
 		"latest":          latest,
 		"items":           items,
 		"watch_command":   "contextlattice_agent_session watch --session-id <session_id> --pretty",
+		"drain_command":   "contextlattice_async_inbox_drain --session-id " + clipText(sessionID, 128),
 		"poll_endpoint":   "/v1/agents/sessions/{session_id}/events",
-		"delivery_policy": "live agents should watch session events or continuation SSE; inactive agents read latest steering from rollup/context-package before the next model call",
+		"delivery_policy": "agents should drain this bounded inbox after normal tool boundaries; live app hosts may also watch session events or continuation SSE",
 	}
 }
 
@@ -897,7 +898,7 @@ func buildAgentSessionRollup(session map[string]any, events []map[string]any, no
 			"cli_command":  "contextlattice_agent_session context-package --session-id " + anyToString(session["id"]) + " --pretty",
 			"best_surface": "cli_for_local_agents_http_for_apps_mcp_for_tool_calling_hosts",
 		},
-		"agent_inbox":   agentSessionSteeringInbox(events),
+		"agent_inbox":   agentSessionSteeringInbox(anyToString(session["id"]), events),
 		"confidence":    agentSessionRollupConfidence(session, contribution, phaseCounts, risks),
 		"recent_events": recent,
 	}

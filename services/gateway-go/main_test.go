@@ -978,10 +978,12 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.memoryTopicTree)`,
 		`mux.HandleFunc("/memory/topics/list", s.memoryTopicList)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.memoryTopicRollups)`,
+		`mux.HandleFunc("/memory/synthesis-pack", s.memorySynthesisPack)`,
 		`mux.HandleFunc("/memory/review", s.memoryReview)`,
 		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
 		`mux.HandleFunc("/tools/feedback_submit", s.toolsFeedbackSubmit)`,
+		`mux.HandleFunc("/tools/synthesis_pack", s.toolsSynthesisPack)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
@@ -1041,10 +1043,12 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/topics", s.proxy)`,
 		`mux.HandleFunc("/memory/topics/list", s.proxy)`,
 		`mux.HandleFunc("/memory/topic-rollups", s.proxy)`,
+		`mux.HandleFunc("/memory/synthesis-pack", s.proxy)`,
 		`mux.HandleFunc("/memory/review", s.proxy)`,
 		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
 		`mux.HandleFunc("/tools/feedback_submit", s.proxy)`,
+		`mux.HandleFunc("/tools/synthesis_pack", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,
@@ -1723,6 +1727,168 @@ func TestMemoryContextPackIncludesBoundedGraphNeighbors(t *testing.T) {
 	signals := anyMap(graphQuality["signals"])
 	if anyToInt(signals["added_evidence_count"], 0) != 1 {
 		t.Fatalf("expected one added graph evidence signal, got %#v", signals)
+	}
+}
+
+func TestSynthesisPackRoutesProduceContractValidSynthesis(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/retrieval/query":
+			_, _ = w.Write([]byte(`{"results":[{"project":"contextlattice","file":"notes/synthesis.md","source":"qdrant","score":0.91,"summary":"decision: Synthesis Pack should verify ` + "`go test ./...`" + ` and avoid known failure regression loops","topic_path":"runbooks/synthesis-pack","timestamp":"2026-07-08T00:00:00Z"}],"warnings":[]}`))
+			return
+		case "/memory/synthesis-pack":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"proxy path should not be called"}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	for _, path := range []string{"/memory/synthesis-pack", "/tools/synthesis_pack"} {
+		t.Run(path, func(t *testing.T) {
+			reqBody := `{"project":"contextlattice","query":"synthesize context intelligence","topic_path":"runbooks/synthesis-pack","limit":8,"retrieval_mode":"balanced","agent_id":"codex_gpt5_synthesis_test"}`
+			resp, err := http.Post(gateway.URL+path, "application/json", strings.NewReader(reqBody))
+			if err != nil {
+				t.Fatalf("synthesis-pack request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode synthesis-pack payload: %v", err)
+			}
+			assertBoundaryContractPassed(t, synthesisPackContractID, payload)
+			assertBoundaryJSONUnderLimit(t, synthesisPackContractID, payload)
+			if anyToString(payload["schema_id"]) != synthesisPackContractID {
+				t.Fatalf("expected synthesis schema id, got %#v", payload["schema_id"])
+			}
+			pack := anyMap(payload["synthesis_pack"])
+			if len(contextPackAnyList(pack["high_signal_findings"])) == 0 {
+				t.Fatalf("expected high signal findings, got %#v", pack)
+			}
+			if !testStringSliceContains(anyToStringList(pack["semantic_tags"], 20), "decision_memory") {
+				t.Fatalf("expected decision_memory semantic tag, got %#v", pack["semantic_tags"])
+			}
+			if !strings.Contains(anyToString(payload["reference_prompt"]), "Synthesis Pack v1") {
+				t.Fatalf("expected synthesis reference prompt, got %q", anyToString(payload["reference_prompt"]))
+			}
+			if path == "/tools/synthesis_pack" && strings.TrimSpace(anyToString(payload["tool"])) != "synthesis_pack" {
+				t.Fatalf("expected tool marker on /tools/synthesis_pack, got %#v", payload["tool"])
+			}
+		})
+	}
+}
+
+func TestSynthesisPackUsesTopicGravityAndCrossProjectGraphBridge(t *testing.T) {
+	t.Setenv("BACKEND_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_PROXY_TIMEOUT_SECS", "2")
+	t.Setenv("GO_TELEMETRY_SINK_ENABLED", "false")
+	t.Setenv("GO_RUNTIME_STRICT_NO_PYTHON", "false")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("GO_RETRIEVAL_NATIVE_QDRANT_ENABLED", "false")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBORS_ENABLED", "true")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_SEED_MAX", "2")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_MAX", "4")
+	t.Setenv("GO_CONTEXT_PACK_GRAPH_NEIGHBOR_PER_SEED", "2")
+	t.Setenv("GO_RETRIEVAL_CONTINUATION_DURABLE_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
+	root := t.TempDir()
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
+	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_MEMORY_GRAPH_EDGE_PATH", filepath.Join(root, "_contextlattice", "memory_edges.ndjson"))
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/seed.md","source":"qdrant","score":0.92,"summary":"decision: alpha seed links to beta architecture verification","topic_path":"graph/test","timestamp":"2026-07-08T00:00:00Z"}],"warnings":[]}`))
+	}))
+	defer backend.Close()
+	t.Setenv("BACKEND_URL", backend.URL)
+
+	s := newServer()
+	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+		t.Fatalf("expected enabled memory store")
+	}
+	for _, item := range []normalizedWrite{
+		{project: "alpha", fileName: "notes/seed.md", content: "seed memory", topicPath: "graph/test"},
+		{project: "beta", fileName: "notes/target.md", content: "target memory", topicPath: "graph/test/link"},
+	} {
+		if _, _, err := s.memoryStore.put(item); err != nil {
+			t.Fatalf("seed memory store: %v", err)
+		}
+	}
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		SourceID:   "alpha::notes/seed.md",
+		TargetID:   "beta::notes/target.md",
+		Relation:   "supports",
+		Project:    "alpha",
+		TopicPath:  "graph/test",
+		Confidence: 0.94,
+		CreatedAt:  nowUTCISO(),
+		Source:     memoryEdgeSource,
+	}); err != nil {
+		t.Fatalf("seed memory edge: %v", err)
+	}
+
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"project":"alpha","topic_path":"graph/test","query":"synthesize alpha beta graph link","limit":5,"include_retrieval_debug":true,"retrieval_mode":"balanced"}`
+	resp, err := http.Post(gateway.URL+"/memory/synthesis-pack", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("synthesis-pack request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode synthesis-pack response: %v", err)
+	}
+	assertBoundaryContractPassed(t, synthesisPackContractID, payload)
+	pack := anyMap(payload["synthesis_pack"])
+	if len(contextPackAnyList(pack["topic_gravity"])) == 0 {
+		t.Fatalf("expected topic gravity, got %#v", pack)
+	}
+	bridges := contextPackAnyList(pack["cross_project_bridges"])
+	foundBeta := false
+	for _, raw := range bridges {
+		if anyToString(anyMap(raw)["project"]) == "beta" {
+			foundBeta = true
+			break
+		}
+	}
+	if !foundBeta {
+		t.Fatalf("expected beta cross-project bridge, got %#v", bridges)
+	}
+	if !testStringSliceContains(anyToStringList(pack["semantic_tags"], 24), "cross_project_bridge") {
+		t.Fatalf("expected cross_project_bridge tag, got %#v", pack["semantic_tags"])
 	}
 }
 
@@ -6217,8 +6383,16 @@ func TestStagedRetrievalTopicRollupsTimeoutIsNonDegradable(t *testing.T) {
 
 	summary, _ := payload["source_summary"].(map[string]any)
 	timedOut := anyToStringSlice(summary["timed_out_sources"])
-	if len(timedOut) != 1 || timedOut[0] != "topic_rollups" {
-		t.Fatalf("expected timed_out_sources=[topic_rollups], got %v", timedOut)
+	if len(timedOut) != 0 {
+		t.Fatalf("expected agent-facing timed_out_sources to exclude warming continuation sources, got %v", timedOut)
+	}
+	deferredTimeouts := anyToStringSlice(summary["deferred_timeout_sources"])
+	if len(deferredTimeouts) != 1 || deferredTimeouts[0] != "topic_rollups" {
+		t.Fatalf("expected deferred_timeout_sources=[topic_rollups], got %v", deferredTimeouts)
+	}
+	syncTimeouts := anyToStringSlice(summary["sync_timed_out_sources"])
+	if len(syncTimeouts) != 1 || syncTimeouts[0] != "topic_rollups" {
+		t.Fatalf("expected sync_timed_out_sources=[topic_rollups], got %v", syncTimeouts)
 	}
 
 	continuation, _ := payload["continuation_async"].(map[string]any)
@@ -6233,6 +6407,108 @@ func TestStagedRetrievalTopicRollupsTimeoutIsNonDegradable(t *testing.T) {
 	warnings := strings.ToLower(strings.Join(parseWarnings(payload["warnings"]), " | "))
 	if !strings.Contains(warnings, "non-degradable lane") {
 		t.Fatalf("expected non-degradable warning context, got %v", payload["warnings"])
+	}
+}
+
+func TestStagedRetrievalFastTimeoutQueuedForContinuationIsPending(t *testing.T) {
+	t.Setenv("GO_RETRIEVAL_STAGED_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
+	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_TIMEOUT_SECS", "0.2")
+	t.Setenv("ORCH_RETRIEVAL_QDRANT_SYNC_TIMEOUT_CAP_SECS", "0.2")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_ENABLED", "true")
+	t.Setenv("ORCH_RETRIEVAL_FAIL_OPEN_TIMEOUT_CONTINUATION_SOURCES", "qdrant")
+	t.Setenv("GO_RETRIEVAL_PROTECTED_SOURCES", "qdrant")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/v1/retrieval/query" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		request, _ := payload["request"].(map[string]any)
+		sources, _ := request["sources"].([]any)
+		if len(sources) > 0 && strings.TrimSpace(strings.ToLower(anyToString(sources[0]))) == "qdrant" {
+			time.Sleep(450 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[],"warnings":[]}`))
+	}))
+	defer backend.Close()
+
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	reqBody := `{"request":{"query":"slow protected vector source","limit":5,"retrieval_mode":"balanced","sources":["qdrant"]}}`
+	resp, err := http.Post(gateway.URL+"/v1/retrieval/query", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := strings.TrimSpace(strings.ToLower(anyToString(payload["result_state"]))); got != "pending" {
+		t.Fatalf("expected result_state=pending for warming continuation source, got %q payload=%#v", got, payload)
+	}
+	if degraded, _ := payload["degraded"].(bool); degraded {
+		t.Fatalf("expected degraded=false while qdrant continuation is warming")
+	}
+
+	lifecycle, _ := payload["retrieval_lifecycle"].(map[string]any)
+	if got := strings.TrimSpace(strings.ToLower(anyToString(lifecycle["status"]))); got != "partial" {
+		t.Fatalf("expected lifecycle status partial, got %q lifecycle=%#v", got, lifecycle)
+	}
+	if got := strings.TrimSpace(strings.ToLower(anyToString(lifecycle["result_state"]))); got != "pending" {
+		t.Fatalf("expected lifecycle result_state pending, got %q lifecycle=%#v", got, lifecycle)
+	}
+
+	summary, _ := payload["source_summary"].(map[string]any)
+	if timedOut := anyToStringSlice(summary["timed_out_sources"]); len(timedOut) != 0 {
+		t.Fatalf("expected no terminal timed_out_sources while qdrant is warming, got %v", timedOut)
+	}
+	deferredTimeouts := anyToStringSlice(summary["deferred_timeout_sources"])
+	if len(deferredTimeouts) != 1 || deferredTimeouts[0] != "qdrant" {
+		t.Fatalf("expected deferred_timeout_sources=[qdrant], got %v", deferredTimeouts)
+	}
+	if failed := anyToStringSlice(summary["failed_sources"]); len(failed) != 0 {
+		t.Fatalf("expected no terminal failed_sources while qdrant is warming, got %v", failed)
+	}
+	deferredFailed := anyToStringSlice(summary["deferred_failed_sources"])
+	if len(deferredFailed) != 1 || deferredFailed[0] != "qdrant" {
+		t.Fatalf("expected deferred_failed_sources=[qdrant], got %v", deferredFailed)
+	}
+
+	continuation, _ := payload["continuation_async"].(map[string]any)
+	if continuation == nil {
+		t.Fatalf("expected continuation_async for qdrant timeout")
+	}
+	pending := anyToStringSlice(continuation["pending_sources"])
+	if len(pending) != 1 || pending[0] != "qdrant" {
+		t.Fatalf("expected continuation pending source qdrant, got %v", pending)
+	}
+	progress := anyMap(continuation["retrieval_progress"])
+	visibility := anyMap(progress["agent_visibility"])
+	if got := anyToString(visibility["session_event_type"]); got != "retrieval.continuation.progress" {
+		t.Fatalf("expected progress event type while qdrant is warming, got %#v", visibility)
 	}
 }
 

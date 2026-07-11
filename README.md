@@ -25,6 +25,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Unified write/read contract for memory and context.
 - Durable fanout across retrieval/storage lanes.
 - Staged retrieval (fast now, deep continuation when needed).
+- Bounded async inbox delivery that reports queued work as warming and surfaces terminal continuation results at normal CLI boundaries.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
@@ -32,9 +33,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.10.2` is the current public agent operating-layer baseline: Go-native feedback submit, durable memory writes, agent-actionable installation, optional Pi/Droid task-runner adapters, detected OMP/Mercury instruction hooks, bounded runner-quality telemetry, advisor-only runner recommendations, tokenizer-exact prompt economics, bounded token-impact ledger persistence, Context Pack Quality Ledger, observed outcome telemetry, dashboard visibility, universal adapter lifecycle, native agent sessions, objective runtime state, scoped context packs, async recall steering, impact-per-token context allocation, Skills Index discovery, runtime policy, template conformance, release installers, Homebrew tap metadata, storage-governance hardening, and local session-store diagnostics behind one local contract.
+`v3.11.0` is the current public cognition-core baseline: deterministic Synthesis Packs, contract-valid sparse context, async continuation warming, idempotent outcome capture, saved recall evaluation, typed graph evidence, a cross-distribution capability manifest, Go-native feedback, optional Pi/Droid task runners, detected OMP/Mercury hooks, runner-quality guidance, tokenizer-exact prompt economics, Skills Index discovery, native sessions, checkpoints, handoffs, and durable memory behind one local contract.
 
-## Public Runtime Stack (v3.10)
+## Public Runtime Stack (v3.11)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -210,6 +211,7 @@ ContextLattice tracks live agent work as first-class sessions, independent of th
 - Inspect a bounded run trace through `GET /v1/agents/sessions/{session_id}/trace`; the trace reports context, skills that may be helpful, source coverage, graph touches, handoffs, checkpoints, and timeline events without raw provider payloads.
 - Read live runtime telemetry from `GET /telemetry/agents/runtime`.
 - Compile task context through `POST /memory/context-pack`, `POST /tools/context_pack`, or global `contextlattice_pack`; responses include `context_compiler`, ranked evidence, deterministic `agent_guidance` for themes/risk markers/candidate attention links, prompt sections, and a bounded `reference_prompt`.
+- Ask for Synthesis Pack v1 through global `contextlattice_synthesis_pack "<task>" --project <project> --pretty`, `POST /memory/synthesis-pack`, or `POST /tools/synthesis_pack` when the next agent needs grouped high-signal findings, topic gravity, graph/cross-project bridges, must-not-forget constraints, recommended next actions, open questions, and semantic tags over the same bounded evidence.
 - Watch long-running recall through `scripts/agent/contextlattice-session watch --session-id <id> --continuation-token <token>`; continuation responses include `retrieval_progress.v1`, dashboard status links, and agent-visible steering when async work is ready.
 - Preflight, context-pack, and Dream Mode return `objective_runtime_state.v1` with `objective_state`, `action_executed`, `evidence`, `objective_delta`, `risk_or_blocker`, and `next_action`.
 - Use `scripts/agent/contextlattice-agent-adapter` or global `contextlattice_agent_adapter` as the first-class product path for agent bootstrap, context-pack, checkpoint, handoff, state, event, and completion flows.
@@ -336,6 +338,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.11.0.md` (Synthesis Packs, async warming, outcome calibration, memory activation evidence, and public-core parity)
   - `docs/releases/v3.10.2.md` (Go-native feedback submit, idempotency, preference projection, and strict ownership coverage)
   - `docs/releases/v3.10.1.md` (detected OMP/Mercury instruction hooks and default adoption coverage)
   - `docs/releases/v3.10.0.md` (optional Pi/Droid runner adapters, runner-quality advisor, and CLI-first public surface)

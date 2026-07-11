@@ -43,6 +43,7 @@ REQUIRED_CONTRACTS = (
     "runner_quality_sample.v1",
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
+    "synthesis_pack.v1",
     "run_advisor.v1",
     "contract_acknowledgement.v1",
     "writeback_result.v1",
@@ -59,7 +60,55 @@ REQUIRED_CONTRACTS = (
 )
 
 
+def sample_run_advisor() -> dict[str, Any]:
+    return attach_format_contract(
+        "run_advisor.v1",
+        {
+            "ok": True,
+            "schema_id": "run_advisor.v1",
+            "posture": "ready",
+            "prompt_quality": {
+                "score": 82,
+                "state": "ready",
+                "ranked_evidence_count": 1,
+                "reference_prompt_chars": 160,
+                "missing": [],
+            },
+            "retrieval_advice": {
+                "recommended_mode": "balanced",
+                "recommended_surface": "context_pack",
+                "rationale": ["audit fixture has bounded ranked evidence"],
+            },
+            "continuation": {
+                "status": "complete",
+                "pending_sources": [],
+                "warming_sources": [],
+                "repair_instruction": "",
+            },
+            "objective_coherence": {
+                "score": 90,
+                "status": "aligned",
+                "signals": {},
+                "repair_instruction": "",
+            },
+            "graph_quality": {
+                "status": "sampled",
+                "signals": {"added_evidence_count": 1},
+                "recommendation": "Use graph edges as supporting context.",
+            },
+            "next_actions": [
+                {
+                    "label": "send_reference_prompt",
+                    "command": "use response.reference_prompt for the next model call",
+                    "reason": "The packet is bounded.",
+                }
+            ],
+        },
+    )
+
+
 def sample_context_pack() -> dict[str, Any]:
+    run_advisor = sample_run_advisor()
     pack = {
         "facts": [],
         "results": [],
@@ -103,6 +152,97 @@ def sample_context_pack() -> dict[str, Any]:
             "context_compiler": pack["context_compiler"],
             "reference_prompt": "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
             "source_coverage": coverage,
+            "run_advisor": run_advisor,
+            "writeback_required": True,
+        },
+    )
+
+
+def sample_synthesis_pack() -> dict[str, Any]:
+    context_pack = sample_context_pack()
+    pack = context_pack["context_pack"]
+    coverage = context_pack["source_coverage"]
+    advisor = context_pack["run_advisor"]
+    synthesis = {
+        "schema_id": "synthesis_pack.v1",
+        "version": 1,
+        "generated_at": "2026-07-08T00:00:00Z",
+        "project": "contextlattice",
+        "query": "audit synthesis pack",
+        "topic_path": "runbooks/context-pack",
+        "summary": "Synthesis Pack v1 grouped one high-signal evidence card.",
+        "high_signal_findings": [
+            {
+                "rank": 1,
+                "kind": "decision",
+                "text": "Audit fixture decision memory.",
+                "score": 92,
+                "confidence": 0.92,
+                "why_it_matters": "Durable choice or policy.",
+                "citation": "contextlattice / notes/audit.md / qdrant / runbooks/context-pack",
+                "project": "contextlattice",
+                "file": "notes/audit.md",
+                "source": "qdrant",
+                "topic_path": "runbooks/context-pack",
+            }
+        ],
+        "topic_gravity": [
+            {
+                "project": "contextlattice",
+                "topic_path": "runbooks/context-pack",
+                "score": 88,
+                "reason": "present in ranked evidence",
+            }
+        ],
+        "cross_project_bridges": [],
+        "must_not_forget": [],
+        "recommended_next_actions": [
+            {
+                "label": "send_reference_prompt",
+                "command": "use response.reference_prompt for the next model call",
+                "reason": "The synthesis pack is bounded.",
+            }
+        ],
+        "open_questions": [],
+        "semantic_tags": ["synthesis_pack_v1", "decision_memory", "topic_gravity"],
+        "synthesis_quality": {
+            "status": "strong",
+            "score": 82,
+            "basis": ["ranked evidence present", "topic rollup gravity present"],
+            "limits": ["No uncited LLM synthesis was used."],
+        },
+        "evidence_trail": [
+            {
+                "citation": "contextlattice / notes/audit.md / qdrant / runbooks/context-pack",
+                "kind": "decision",
+                "rank": 1,
+            }
+        ],
+        "synthesis_trace": {
+            "mode": "deterministic_v1",
+            "llm_used": False,
+            "basis": ["context_pack.ranked_evidence", "memory_store.topic_rollups"],
+            "inference_boundary": "Synthesis Pack groups and scores already-retrieved evidence; it does not claim uncited facts.",
+        },
+    }
+    return attach_format_contract(
+        "synthesis_pack.v1",
+        {
+            "ok": True,
+            "schema_id": "synthesis_pack.v1",
+            "version": 1,
+            "project": "contextlattice",
+            "query": "audit synthesis pack",
+            "topic_path": "runbooks/context-pack",
+            "retrieval_mode": "balanced",
+            "retrieval_intent": "synthesis",
+            "synthesis_pack": synthesis,
+            "context_pack": pack,
+            "source_coverage": coverage,
+            "reference_prompt": "Use this ContextLattice Synthesis Pack v1 as the decision spine for the next reasoning step.",
+            "token_impact": {"schema_id": "contextlattice_token_impact.v1"},
+            "context_pack_quality": {"schema_id": "contextlattice_context_pack_quality.v1"},
+            "run_advisor": advisor,
             "writeback_required": True,
         },
     )
@@ -957,6 +1097,9 @@ def run_audit() -> list[dict[str, Any]]:
     for item in validate_agent_contract_payload("context_pack_response.v1", context_pack, registry):
         findings.append({"severity": "error", **item})
     for item in validate_agent_contract_payload("run_advisor.v1", context_pack.get("run_advisor"), registry):
+        findings.append({"severity": "error", **item})
+    synthesis_pack = sample_synthesis_pack()
+    for item in validate_agent_contract_payload("synthesis_pack.v1", synthesis_pack, registry):
         findings.append({"severity": "error", **item})
     findings.extend(oversized_boundary_findings(registry))
 

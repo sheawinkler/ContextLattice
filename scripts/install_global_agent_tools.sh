@@ -21,12 +21,14 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice-agent-tools
   contextlattice_search
   contextlattice_pack
+  contextlattice_synthesis_pack
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
   contextlattice_agent_adapter
   contextlattice_agent_discover
   contextlattice_agent_session
+  contextlattice_async_inbox_drain
   contextlattice_agent_trace
   contextlattice_run_advisor
   contextlattice_agent_runtime_proof
@@ -37,6 +39,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_memory_topology
   contextlattice_skills_index
   contextlattice_agent_start
+  contextlattice_async_inbox_hook
   contextlattice_checkpoint
   contextlattice_*_guard wrappers
   contextlattice_pre_compaction_write
@@ -629,12 +632,14 @@ build_go_agent_tools
 GO_NATIVE_COMMANDS=(
   contextlattice_search
   contextlattice_pack
+  contextlattice_synthesis_pack
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
   contextlattice_agent_adapter
   contextlattice_agent_discover
   contextlattice_agent_session
+  contextlattice_async_inbox_drain
   contextlattice_agent_trace
   contextlattice_run_advisor
   contextlattice_agent_runtime_proof
@@ -682,6 +687,7 @@ EOF
 }
 
 write_hook_wrapper contextlattice_agent_start agent_start.sh
+write_hook_wrapper contextlattice_async_inbox_hook contextlattice_async_inbox_drain.sh
 write_hook_wrapper contextlattice_preflight_hook contextlattice_preflight.sh
 write_hook_wrapper contextlattice_checkpoint contextlattice_checkpoint.sh
 write_hook_wrapper contextlattice_git_lane_guard git_lane_guard.sh
@@ -843,12 +849,14 @@ log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_adapter"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_discover"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_session"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_async_inbox_drain"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_trace"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_run_advisor"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_runtime_proof"
@@ -859,6 +867,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_context_boundary"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_memory_topology"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skills_index"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_agent_start"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_async_inbox_hook"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_checkpoint"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pre_compaction_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_post_compaction_read"
@@ -871,6 +880,7 @@ log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
 log "  contextlattice_search -h"
 log "  contextlattice_pack 'release readiness' --project contextlattice --pretty"
+log "  contextlattice_synthesis_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_adopt status --pretty"
@@ -881,11 +891,13 @@ log "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pr
 log "  contextlattice_strict_runtime_native_ownership --pretty"
 log "  contextlattice_context_boundary --pretty"
 log "  contextlattice_agent_session runtime --pretty"
+log "  contextlattice_async_inbox_drain --session-id <session-id>"
 log "  contextlattice_agent_trace --session-id <session-id> --tree"
 log "  contextlattice_run_advisor 'current task context' --pretty"
 log "  contextlattice_memory_topology --pretty"
 log "  contextlattice_skills_index search 'agent runtime' --pretty"
 log "  contextlattice_runner_quality --pretty"
+log "  contextlattice_async_inbox_hook --session-id <session-id>"
 if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
   log "  contextlattice_source_backfill --source jsonl --path data.jsonl --project my-project --pretty"
 fi

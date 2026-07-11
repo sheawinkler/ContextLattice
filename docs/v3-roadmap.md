@@ -65,7 +65,7 @@ V3 Program (Issues #68-#72)
 ## Program Tracks and Integration Scope
 
 ## Track A: Performance and Deep Read Stability
-Primary issues: [#69](https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/69), [#72](https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/72)
+Tracking: performance and deep-read work is maintained in this public roadmap and public release evidence.
 
 ### Repos and additions
 - `bosun-ai/swiftide`
@@ -98,7 +98,7 @@ Primary issues: [#69](https://github.com/sheawinkler/http-context-and-memory-orc
 - Full env-flag rollback validated.
 
 ## Track B: Recall Quality and Memory Semantics
-Primary issues: [#70](https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/70), [#72](https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/72)
+Tracking: recall-quality work is maintained in this public roadmap and public eval ledgers.
 
 ### Repos and additions
 - `cogniplex/codemem`
@@ -130,7 +130,7 @@ Primary issues: [#70](https://github.com/sheawinkler/http-context-and-memory-orc
 - Feature flags can disable all additions without behavior break.
 
 ## Track C: Agent Surface, Runners, and Compute Backends
-Primary issues: [#68](https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/68), [#71](https://github.com/sheawinkler/http-context-and-memory-orchestrator/issues/71)
+Tracking: agent-surface work is maintained in this public roadmap and public release evidence.
 
 ### Repos and additions
 - `anomalyco/opencode`

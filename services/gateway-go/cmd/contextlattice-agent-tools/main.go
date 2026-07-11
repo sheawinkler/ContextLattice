@@ -26,6 +26,7 @@ const defaultBaseURL = "http://127.0.0.1:8075"
 var nativeToolNames = map[string]string{
 	"contextlattice_search":                          "search",
 	"contextlattice_pack":                            "pack",
+	"contextlattice_synthesis_pack":                  "synthesis-pack",
 	"contextlattice_write":                           "write",
 	"contextlattice_agent_session":                   "session",
 	"contextlattice_agent_trace":                     "trace",
@@ -42,6 +43,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_runner_quality":                  "runner-quality",
 	"contextlattice_memory_topology":                 "memory-topology",
 	"contextlattice_skills_index":                    "skills-index",
+	"contextlattice_async_inbox_drain":               "async-inbox-drain",
 }
 
 type cli struct {
@@ -97,6 +99,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdWrite(args)
 	case "pack":
 		return c.cmdPack(args)
+	case "synthesis-pack":
+		return c.cmdSynthesisPack(args)
 	case "session":
 		return c.cmdSession(args)
 	case "trace":
@@ -125,6 +129,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdMemoryTopology(args)
 	case "skills-index":
 		return c.cmdSkillsIndex(args)
+	case "async-inbox-drain":
+		return c.cmdAsyncInboxDrain(args)
 	case "-h", "--help", "help":
 		return c.usage()
 	default:
@@ -141,6 +147,7 @@ Usage:
 Native commands:
   search                         lifecycle-aware memory search
   pack                           bounded context package
+  synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
   write                          memory write/checkpoint
   session                        agent session lifecycle, rollup, context package, trace, runtime
   trace                          alias for session trace
@@ -156,10 +163,11 @@ Native commands:
   adopt                          status/doctor/proof compatibility front door
   memory-topology                audit /telemetry/storage memory topology
   skills-index                   active Skills Index search/reindex helper
+  async-inbox-drain              bounded async continuation inbox drain for any agent
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
-contextlattice_pack, contextlattice_write, contextlattice_agent_session, and
-other contextlattice_* commands.`)
+contextlattice_pack, contextlattice_synthesis_pack, contextlattice_write,
+contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
 
@@ -453,6 +461,7 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice-agent-tools",
 		"contextlattice_search",
 		"contextlattice_pack",
+		"contextlattice_synthesis_pack",
 		"contextlattice_write",
 		"contextlattice_adopt",
 		"contextlattice_doctor",
@@ -825,11 +834,12 @@ func compactJSON(payload any) string {
 
 func (c *cli) cmdSearch(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
-		"query":    "query",
-		"q":        "query",
-		"limit":    "limit",
-		"l":        "limit",
-		"agent-id": "agent_id",
+		"query":      "query",
+		"q":          "query",
+		"limit":      "limit",
+		"l":          "limit",
+		"agent-id":   "agent_id",
+		"session-id": "session_id",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"wait": "wait"}))
 	if parsed.bool("help") {
 		return c.emitUsage("contextlattice_search [--query text] [--project p] [--topic-path t] [--mode fast|balanced|deep] [--limit n] [--wait] [--raw]")
@@ -843,16 +853,20 @@ func (c *cli) cmdSearch(args []string) error {
 		return errors.New("query is required")
 	}
 	mode := parsed.string("mode", envString("CONTEXTLATTICE_RETRIEVAL_MODE", "balanced"))
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "codex_gpt5")))
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	payload := map[string]any{
 		"query":                   query,
-		"project":                 parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")),
+		"project":                 project,
 		"topic_path":              emptyToNil(parsed.string("topic_path", "")),
 		"limit":                   maxInt(parsed.int("limit", 10), 1),
 		"fetch_content":           false,
 		"retrieval_mode":          mode,
 		"include_grounding":       true,
 		"include_retrieval_debug": false,
-		"agent_id":                parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "codex_gpt5"))),
+		"agent_id":                agentID,
+		"session_id":              emptyToNil(sessionID),
 	}
 	if strings.EqualFold(mode, "deep") {
 		payload["deep_async"] = true
@@ -865,7 +879,11 @@ func (c *cli) cmdSearch(args []string) error {
 	if parsed.bool("wait") {
 		output = c.waitForSearchContinuation(output, parsed.float("timeout", 30))
 	}
-	return c.emit(output, !parsed.bool("raw"))
+	if err := c.emit(output, !parsed.bool("raw")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, agentID)
+	return nil
 }
 
 func lifecycleSearchOutput(query, mode string, initial map[string]any) map[string]any {
@@ -938,6 +956,8 @@ func (c *cli) cmdWrite(args []string) error {
 		"content":      "content",
 		"c":            "content",
 		"content-file": "content_file",
+		"session-id":   "session_id",
+		"agent-id":     "agent_id",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"stdin": "stdin"}))
 	if parsed.bool("help") {
 		return c.emitUsage("contextlattice_write --file notes/x.md (--content text|--content-file path|--stdin) [--project p] [--topic-path t]")
@@ -951,10 +971,15 @@ func (c *cli) cmdWrite(args []string) error {
 	if err != nil {
 		return err
 	}
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
 	payload := map[string]any{
-		"projectName": parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")),
+		"projectName": project,
 		"fileName":    fileName,
 		"content":     content,
+		"session_id":  emptyToNil(sessionID),
+		"agent_id":    emptyToNil(agentID),
 	}
 	if topic := parsed.string("topic_path", ""); topic != "" {
 		payload["topicPath"] = topic
@@ -963,7 +988,11 @@ func (c *cli) cmdWrite(args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.emit(result, !parsed.bool("raw"))
+	if err := c.emit(result, !parsed.bool("raw")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, agentID)
+	return nil
 }
 
 func resolveContent(parsed parsedArgs) (string, error) {
@@ -982,6 +1011,14 @@ func resolveContent(parsed parsedArgs) (string, error) {
 }
 
 func (c *cli) cmdPack(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice_pack", "/memory/context-pack", "context-pack")
+}
+
+func (c *cli) cmdSynthesisPack(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice_synthesis_pack", "/memory/synthesis-pack", "synthesis-pack")
+}
+
+func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, sessionTag string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
 		"budget-chars": "budget_chars",
 		"limit":        "limit",
@@ -999,7 +1036,7 @@ func (c *cli) cmdPack(args []string) error {
 		"no-auto-session": "no_auto_session",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_pack '<task>' [--project p] [--topic-path t] [--mode balanced] [--pretty]")
+		return c.emitUsage(commandName + " '<task>' [--project p] [--topic-path t] [--mode balanced] [--pretty]")
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
@@ -1032,7 +1069,7 @@ func (c *cli) cmdPack(args []string) error {
 		"native_cli_implementation": true,
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
-	raw, err := c.requestWithRetries("/memory/context-pack", payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
+	raw, err := c.requestWithRetries(route, payload, parsed.float("timeout", 30), parsed.int("retries", 2), parsed.float("retry_delay", 1))
 	if err != nil {
 		if parsed.bool("soft") {
 			return c.emit(failurePack(query, parsed.int("budget_chars", 10000), err), !parsed.bool("raw"))
@@ -1046,12 +1083,17 @@ func (c *cli) cmdPack(args []string) error {
 	}
 	qualitySampleID := firstString(qualitySample["sample_id"])
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
+	if commandName != "contextlattice_pack" {
+		out["tool"] = commandName
+		out["pack_surface"] = sessionTag
+	}
 	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 {
 		out["outcome_report"] = report
 	}
 	if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
 		return err
 	}
+	c.autoDrainAsyncInbox(sessionID, project, agentID)
 	return nil
 }
 
@@ -1291,7 +1333,11 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.emit(raw, parsed.bool("pretty"))
+	if err := c.emit(raw, parsed.bool("pretty")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", "")), parsed.string("project", "contextlattice"), parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")))
+	return nil
 }
 
 func (c *cli) sessionGet(kind string, args []string) error {
@@ -1375,6 +1421,326 @@ func (c *cli) sessionWatch(args []string) error {
 	return c.emit(raw, parsed.bool("pretty") || !parsed.bool("jsonl"))
 }
 
+type asyncInboxDrainOptions struct {
+	SessionID       string
+	Project         string
+	AgentID         string
+	AckPath         string
+	MaxItems        int
+	Timeout         float64
+	Peek            bool
+	Strict          bool
+	IncludeProgress bool
+}
+
+func (c *cli) cmdAsyncInboxDrain(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"session-id": "session_id",
+		"agent-id":   "agent_id",
+		"ack-path":   "ack_path",
+		"max-items":  "max_items",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
+		"peek":             "peek",
+		"strict":           "strict",
+		"quiet":            "quiet",
+		"include-progress": "include_progress",
+	}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_async_inbox_drain [--session-id <id>] [--max-items 1] [--json|--pretty] [--peek] [--include-progress]")
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	if sessionID == "" {
+		sessionID = firstString(readSessionState(project)["session_id"])
+	}
+	result := c.asyncInboxDrain(asyncInboxDrainOptions{
+		SessionID:       sessionID,
+		Project:         project,
+		AgentID:         parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", ""))),
+		AckPath:         parsed.string("ack_path", envString("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", defaultAsyncInboxAckPath())),
+		MaxItems:        parsed.int("max_items", 1),
+		Timeout:         parsed.float("timeout", 2),
+		Peek:            parsed.bool("peek"),
+		Strict:          parsed.bool("strict"),
+		IncludeProgress: parsed.bool("include_progress"),
+	})
+	if parsed.bool("json") || parsed.bool("pretty") {
+		if err := c.emit(result, parsed.bool("pretty")); err != nil {
+			return err
+		}
+	} else if !parsed.bool("quiet") {
+		if text := renderAsyncInboxDrainText(result); text != "" {
+			if _, err := fmt.Fprint(c.stdout, text); err != nil {
+				return err
+			}
+		}
+	}
+	if parsed.bool("strict") && !asBool(result["ok"]) {
+		return fmt.Errorf("async inbox drain failed: %s", firstString(result["status"], result["error"], "unknown"))
+	}
+	return nil
+}
+
+func (c *cli) autoDrainAsyncInbox(sessionID, project, agentID string) {
+	if strings.TrimSpace(sessionID) == "" || !asyncInboxAutoDrainEnabled() {
+		return
+	}
+	result := c.asyncInboxDrain(asyncInboxDrainOptions{
+		SessionID:       sessionID,
+		Project:         firstNonEmpty(project, envString("CONTEXTLATTICE_PROJECT", "contextlattice")),
+		AgentID:         firstNonEmpty(agentID, envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", ""))),
+		AckPath:         envString("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", defaultAsyncInboxAckPath()),
+		MaxItems:        1,
+		Timeout:         envFloat("CONTEXTLATTICE_ASYNC_INBOX_TIMEOUT_SECS", 1.5),
+		IncludeProgress: envBool("CONTEXTLATTICE_ASYNC_INBOX_INCLUDE_PROGRESS", false),
+	})
+	if text := renderAsyncInboxDrainText(result); text != "" {
+		_, _ = fmt.Fprint(c.stderr, text)
+	}
+}
+
+func asyncInboxAutoDrainEnabled() bool {
+	for _, name := range []string{"CONTEXTLATTICE_ASYNC_INBOX_AUTO_DRAIN", "CONTEXTLATTICE_ASYNC_PUSH_ENABLED"} {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value == "" {
+			continue
+		}
+		return !(value == "0" || strings.EqualFold(value, "false") || strings.EqualFold(value, "off"))
+	}
+	return true
+}
+
+func (c *cli) asyncInboxDrain(opts asyncInboxDrainOptions) map[string]any {
+	sessionID := strings.TrimSpace(opts.SessionID)
+	maxItems := maxInt(opts.MaxItems, 1)
+	result := map[string]any{
+		"ok":            true,
+		"schema_id":     "contextlattice_async_inbox_drain.v1",
+		"session_id":    sessionID,
+		"project":       opts.Project,
+		"delivered":     0,
+		"items":         []any{},
+		"max_items":     maxItems,
+		"ack_path":      opts.AckPath,
+		"bounded":       true,
+		"terminal_only": !opts.IncludeProgress,
+	}
+	if sessionID == "" {
+		result["status"] = "no_session"
+		return result
+	}
+	raw, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID)+"/rollup", nil, maxFloat(opts.Timeout, 1))
+	if err != nil {
+		result["ok"] = false
+		result["status"] = "unavailable"
+		result["error"] = truncate(err.Error(), 500)
+		return result
+	}
+	rollup := asMap(raw["rollup"])
+	inbox := asMap(rollup["agent_inbox"])
+	state := readAsyncInboxAckState(opts.AckPath)
+	delivered := []any{}
+	seenNow := map[string]string{}
+	for _, rawItem := range asList(inbox["items"]) {
+		item := compactAsyncInboxItem(asMap(rawItem), sessionID)
+		if len(item) == 0 || !asyncInboxItemActionable(item, opts.IncludeProgress) {
+			continue
+		}
+		key := asyncInboxDedupeKey(sessionID, item)
+		if key == "" || state.Seen[key] != "" {
+			continue
+		}
+		delivered = append(delivered, item)
+		seenNow[key] = time.Now().UTC().Format(time.RFC3339)
+		if len(delivered) >= maxItems {
+			break
+		}
+	}
+	if len(delivered) == 0 {
+		result["status"] = "empty"
+		return result
+	}
+	if !opts.Peek {
+		for key, seenAt := range seenNow {
+			state.Seen[key] = seenAt
+		}
+		writeAsyncInboxAckState(opts.AckPath, state)
+	}
+	result["status"] = "delivered"
+	result["delivered"] = len(delivered)
+	result["items"] = delivered
+	result["acked"] = !opts.Peek
+	return result
+}
+
+type asyncInboxAckState struct {
+	SchemaID  string            `json:"schema_id"`
+	UpdatedAt string            `json:"updated_at"`
+	Seen      map[string]string `json:"seen"`
+}
+
+func readAsyncInboxAckState(path string) asyncInboxAckState {
+	state := asyncInboxAckState{SchemaID: "contextlattice_async_inbox_ack.v1", Seen: map[string]string{}}
+	if strings.TrimSpace(path) == "" {
+		return state
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return state
+	}
+	_ = json.Unmarshal(data, &state)
+	if state.Seen == nil {
+		state.Seen = map[string]string{}
+	}
+	if state.SchemaID == "" {
+		state.SchemaID = "contextlattice_async_inbox_ack.v1"
+	}
+	return state
+}
+
+func writeAsyncInboxAckState(path string, state asyncInboxAckState) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	state.SchemaID = "contextlattice_async_inbox_ack.v1"
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	state.Seen = trimAsyncInboxSeen(state.Seen, 2000)
+	raw, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0700)
+	_ = os.WriteFile(path, append(raw, '\n'), 0600)
+}
+
+func trimAsyncInboxSeen(seen map[string]string, limit int) map[string]string {
+	if len(seen) <= limit {
+		return seen
+	}
+	type row struct {
+		key  string
+		when string
+	}
+	rows := make([]row, 0, len(seen))
+	for key, when := range seen {
+		rows = append(rows, row{key: key, when: when})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].when == rows[j].when {
+			return rows[i].key < rows[j].key
+		}
+		return rows[i].when < rows[j].when
+	})
+	out := map[string]string{}
+	start := maxInt(0, len(rows)-limit)
+	for _, row := range rows[start:] {
+		out[row.key] = row.when
+	}
+	return out
+}
+
+func defaultAsyncInboxAckPath() string {
+	return filepath.Join(envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")), "async_inbox_seen.json")
+}
+
+func compactAsyncInboxItem(item map[string]any, sessionID string) map[string]any {
+	if len(item) == 0 {
+		return nil
+	}
+	delivery := asMap(item["delivery"])
+	token := firstString(item["token"])
+	fetchCommand := firstString(delivery["watch_command"])
+	if fetchCommand == "" && token != "" {
+		fetchCommand = "contextlattice_agent_session watch --continuation-token " + token + " --pretty"
+	}
+	if fetchCommand == "" {
+		fetchCommand = "contextlattice_agent_session context-package --session-id " + sessionID + " --pretty"
+	}
+	return map[string]any{
+		"event_id":         truncate(firstString(item["event_id"]), 128),
+		"type":             truncate(firstString(item["type"]), 96),
+		"created_at":       truncate(firstString(item["created_at"]), 80),
+		"severity":         truncate(firstString(item["severity"]), 40),
+		"message":          truncate(firstString(item["message"]), 720),
+		"suggested_action": truncate(firstString(item["suggested_action"]), 720),
+		"token":            truncate(token, 128),
+		"status":           truncate(firstString(item["status"]), 80),
+		"result_state":     truncate(firstString(item["result_state"]), 80),
+		"progress_pct":     item["progress_pct"],
+		"pending_sources":  stringList(item["pending_sources"], 8),
+		"failed_sources":   stringList(item["failed_sources"], 8),
+		"fetch_command":    truncate(fetchCommand, 600),
+	}
+}
+
+func asyncInboxItemActionable(item map[string]any, includeProgress bool) bool {
+	if includeProgress {
+		return true
+	}
+	joined := strings.ToLower(strings.Join([]string{
+		firstString(item["type"]),
+		firstString(item["status"]),
+		firstString(item["result_state"]),
+	}, " "))
+	for _, marker := range []string{"ready", "degraded", "completed", "succeeded", "failed"} {
+		if strings.Contains(joined, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func asyncInboxDedupeKey(sessionID string, item map[string]any) string {
+	id := firstString(item["event_id"])
+	if id == "" {
+		id = strings.Join([]string{
+			firstString(item["type"]),
+			firstString(item["token"]),
+			firstString(item["created_at"]),
+			firstString(item["message"]),
+		}, "|")
+	}
+	id = strings.Trim(id, "| ")
+	if id == "" {
+		return ""
+	}
+	return sessionID + "|" + id
+}
+
+func renderAsyncInboxDrainText(result map[string]any) string {
+	if asInt(result["delivered"]) == 0 {
+		return ""
+	}
+	items := asList(result["items"])
+	lines := []string{}
+	for _, raw := range items {
+		item := asMap(raw)
+		status := firstNonEmptyLower(item["result_state"], item["status"], item["type"], "ready")
+		label := "ready"
+		switch {
+		case strings.Contains(status, "degraded") || strings.Contains(status, "failed"):
+			label = "degraded"
+		case strings.Contains(status, "completed") || strings.Contains(status, "succeeded"):
+			label = "completed"
+		case strings.Contains(status, "progress") ||
+			strings.Contains(status, "running") ||
+			strings.Contains(status, "pending") ||
+			strings.Contains(status, "queued") ||
+			strings.Contains(status, "active"):
+			label = "warming"
+		}
+		lines = append(lines,
+			"ContextLattice async retrieval "+label,
+			"session: "+truncate(firstString(result["session_id"]), 120)+" | token: "+firstNonEmpty(firstString(item["token"]), "none")+" | progress: "+firstString(item["progress_pct"], "unknown"),
+			"message: "+truncate(firstString(item["message"]), 500),
+			"action: "+truncate(firstString(item["suggested_action"]), 500),
+			"fetch: "+truncate(firstString(item["fetch_command"]), 500),
+		)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func (c *cli) cmdTrace(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
 		"session-id": "session_id",
@@ -1427,11 +1793,14 @@ func (c *cli) cmdRunAdvisor(args []string) error {
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
 	var advisor map[string]any
+	project := parsed.string("project", "contextlattice")
+	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", ""))
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	if query != "" {
 		payload := map[string]any{
 			"query":                   query,
-			"project":                 parsed.string("project", "contextlattice"),
-			"projectName":             parsed.string("project", "contextlattice"),
+			"project":                 project,
+			"projectName":             project,
 			"topic_path":              emptyToNil(parsed.string("topic_path", "")),
 			"topicPath":               emptyToNil(parsed.string("topic_path", "")),
 			"retrieval_mode":          parsed.string("mode", "balanced"),
@@ -1442,7 +1811,8 @@ func (c *cli) cmdRunAdvisor(args []string) error {
 			"sync_slow_sources":       parsed.bool("blocking"),
 			"limit":                   parsed.int("limit", 12),
 			"max_facts":               parsed.int("max_facts", 24),
-			"agent_id":                emptyToNil(parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", ""))),
+			"agent_id":                emptyToNil(agentID),
+			"session_id":              emptyToNil(sessionID),
 		}
 		raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-pack", payload, parsed.float("timeout", 30))
 		if err != nil {
@@ -1450,7 +1820,6 @@ func (c *cli) cmdRunAdvisor(args []string) error {
 		}
 		advisor = firstMap(raw["run_advisor"], asMap(raw["context_pack"])["run_advisor"])
 	} else {
-		sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 		if sessionID == "" {
 			return errors.New("query or session id is required")
 		}
@@ -1464,10 +1833,17 @@ func (c *cli) cmdRunAdvisor(args []string) error {
 		advisor = map[string]any{"ok": false, "error": "run_advisor_missing"}
 	}
 	if parsed.bool("json") || parsed.bool("pretty") {
-		return c.emit(advisor, parsed.bool("pretty"))
+		if err := c.emit(advisor, parsed.bool("pretty")); err != nil {
+			return err
+		}
+		c.autoDrainAsyncInbox(sessionID, project, agentID)
+		return nil
 	}
-	_, err := fmt.Fprint(c.stdout, renderAdvisor(advisor))
-	return err
+	if _, err := fmt.Fprint(c.stdout, renderAdvisor(advisor)); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, agentID)
+	return nil
 }
 
 func renderAdvisor(advisor map[string]any) string {
@@ -1529,6 +1905,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 	required := []string{
 		"/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight",
 		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
+		"contextlattice_async_inbox_drain",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	}
 	requiredFields := []string{"contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items"}
@@ -1582,7 +1959,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/synthesis-pack", "/tools/synthesis_pack", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
@@ -1638,7 +2015,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)
@@ -1835,7 +2212,11 @@ func (c *cli) adapterBootstrap(args []string) error {
 	if sessionID != "" {
 		writeSessionState(parsed.string("project", "contextlattice"), sessionID, query, parsed.string("agent_id", ""))
 	}
-	return c.emit(adapterResponse("bootstrap", ok, firstString(raw["agent"], agent), firstString(raw["agent_id"], payload["agent_id"]), parsed.string("project", "contextlattice"), sessionID, map[string]any{"preflight": compactPreflightForAdapter(raw), "agent_state": payload["agent_state"], "ownership": adapterOwnership(parsed)}, findings), parsed.bool("pretty"))
+	if err := c.emit(adapterResponse("bootstrap", ok, firstString(raw["agent"], agent), firstString(raw["agent_id"], payload["agent_id"]), parsed.string("project", "contextlattice"), sessionID, map[string]any{"preflight": compactPreflightForAdapter(raw), "agent_state": payload["agent_state"], "ownership": adapterOwnership(parsed)}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, parsed.string("project", "contextlattice"), parsed.string("agent_id", ""))
+	return nil
 }
 
 func adapterStringFlags() map[string]string {
@@ -2305,7 +2686,7 @@ func (c *cli) adapterContextPack(args []string) error {
 		findings = append(findings, map[string]any{"reason": "context_pack_event_failed", "detail": truncate(eventErr.Error(), 500)})
 	}
 	ok := len(findings) == 0 && (len(event) == 0 || asBool(event["ok"]))
-	return c.emit(adapterResponse("context-pack", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	if err := c.emit(adapterResponse("context-pack", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"profile":        profile.profile,
 		"topic_path":     request["topic_path"],
 		"query":          profile.query,
@@ -2315,7 +2696,11 @@ func (c *cli) adapterContextPack(args []string) error {
 		"context_pack":   contextPack,
 		"outcome_report": contextPackOutcomeReport(sessionID, qualitySampleID),
 		"event":          event,
-	}, findings), parsed.bool("pretty"))
+	}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
+	return nil
 }
 
 func (c *cli) adapterCheckpoint(args []string) error {
@@ -2384,7 +2769,7 @@ func (c *cli) adapterCheckpoint(args []string) error {
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
 	ok := len(findings) == 0 && asBool(write["ok"])
-	return c.emit(adapterResponse("checkpoint", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	if err := c.emit(adapterResponse("checkpoint", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"writeback": map[string]any{
 			"ok":         asBool(write["ok"]),
 			"kind":       "checkpoint",
@@ -2395,7 +2780,11 @@ func (c *cli) adapterCheckpoint(args []string) error {
 			"write":      write,
 			"event":      event,
 		},
-	}, findings), parsed.bool("pretty"))
+	}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
+	return nil
 }
 
 func (c *cli) adapterHandoff(args []string) error {
@@ -2446,10 +2835,14 @@ func (c *cli) adapterHandoff(args []string) error {
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
 	ok := len(findings) == 0 && (len(event) == 0 || asBool(event["ok"]))
-	return c.emit(adapterResponse("handoff", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	if err := c.emit(adapterResponse("handoff", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"handoff": handoff,
 		"event":   event,
-	}, findings), parsed.bool("pretty"))
+	}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
+	return nil
 }
 
 func (c *cli) adapterState(args []string) error {
@@ -2501,6 +2894,7 @@ func (c *cli) adapterState(args []string) error {
 	}, findings), parsed.bool("pretty")); err != nil {
 		return err
 	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
 }
 
@@ -2532,7 +2926,11 @@ func (c *cli) adapterEvent(args []string) error {
 	}), parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
 	ok := len(findings) == 0 && asBool(event["ok"])
-	return c.emit(adapterResponse("event", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event}, findings), parsed.bool("pretty"))
+	if err := c.emit(adapterResponse("event", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event}, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
+	return nil
 }
 
 func resolveOutcomeSessionID(parsed parsedArgs, project string) string {
@@ -2677,6 +3075,7 @@ func (c *cli) adapterOutcome(args []string) error {
 	}, findings), parsed.bool("pretty")); err != nil {
 		return err
 	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	if !ok {
 		return errors.New("context pack outcome report failed")
 	}
@@ -2721,6 +3120,7 @@ func (c *cli) adapterComplete(args []string) error {
 	if err := c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent}, findings), parsed.bool("pretty")); err != nil {
 		return err
 	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	return nil
 }
 
@@ -4017,6 +4417,23 @@ func firstNonEmptyLower(values ...any) string {
 func envString(name, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		return value
+	}
+	return fallback
+}
+
+func envBool(name string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "on") || strings.EqualFold(value, "yes")
+}
+
+func envFloat(name string, fallback float64) float64 {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
 	}
 	return fallback
 }

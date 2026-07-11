@@ -868,6 +868,32 @@ func forceMinimalReviewModeResponseBoundary(payload map[string]any, stats *agent
 
 func minimalContextPackBoundary(existing map[string]any) map[string]any {
 	query := strings.TrimSpace(anyToString(existing["query"]))
+	compiler := anyMap(existing["context_compiler"])
+	if len(compiler) == 0 {
+		compiler = anyMap(existing["contextCompiler"])
+	}
+	if len(compiler) == 0 {
+		compiler = map[string]any{
+			"schema_id":             "contextlattice_context_compiler.v1",
+			"version":               1,
+			"strategy":              "boundary_minimal",
+			"intended_use":          "preserve a contract-valid context package after boundary compaction",
+			"recommended_surface":   "cli_for_local_agents",
+			"ranked_evidence_count": 0,
+		}
+	}
+	promptSections := anyMap(existing["prompt_sections"])
+	if len(promptSections) == 0 {
+		promptSections = anyMap(existing["promptSections"])
+	}
+	if len(promptSections) == 0 {
+		promptSections = map[string]any{
+			"objective":   query,
+			"task":        query,
+			"next_action": "Broaden retrieval or retry after deferred sources finish.",
+		}
+	}
+	rankedEvidence := []any{}
 	return map[string]any{
 		"query":               clipUTF8Bytes(sanitizeProviderOverflowText(query), 1000),
 		"facts":               []any{},
@@ -875,6 +901,12 @@ func minimalContextPackBoundary(existing map[string]any) map[string]any {
 		"numeric_facts":       []any{},
 		"citations":           []any{},
 		"results":             []any{},
+		"rankedEvidence":      rankedEvidence,
+		"ranked_evidence":     rankedEvidence,
+		"promptSections":      promptSections,
+		"prompt_sections":     promptSections,
+		"contextCompiler":     compiler,
+		"context_compiler":    compiler,
 		"relevantDecisions":   []any{},
 		"relevant_decisions":  []any{},
 		"filesToRead":         []any{},

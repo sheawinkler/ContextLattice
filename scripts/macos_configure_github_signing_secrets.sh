@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPOS="${CONTEXTLATTICE_MACOS_SECRET_REPOS:-sheawinkler/http-context-and-memory-orchestrator,sheawinkler/ContextLattice}"
+REPOS="${CONTEXTLATTICE_MACOS_SECRET_REPOS:-sheawinkler/ContextLattice}"
 CERT_P12_PATH="${CONTEXTLATTICE_MACOS_CERT_P12_PATH:-}"
 CERT_PASSWORD="${CONTEXTLATTICE_MACOS_CERT_P12_PASSWORD:-}"
 KEYCHAIN_PASSWORD="${CONTEXTLATTICE_MACOS_KEYCHAIN_PASSWORD:-}"

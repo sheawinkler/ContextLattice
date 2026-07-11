@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 14;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 16;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -35,6 +35,7 @@ pub const RUNNER_CAPABILITY_V1: &str = "runner_capability.v1";
 pub const RUNNER_QUALITY_SAMPLE_V1: &str = "runner_quality_sample.v1";
 pub const RUNNER_RESULT_V1: &str = "runner_result.v1";
 pub const STEERING_COMMENT_V1: &str = "steering_comment.v1";
+pub const SYNTHESIS_PACK_V1: &str = "synthesis_pack.v1";
 pub const UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1: &str = "universal_agent_adapter_response.v1";
 pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 
@@ -63,6 +64,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     RUNNER_QUALITY_SAMPLE_V1,
     RUNNER_RESULT_V1,
     STEERING_COMMENT_V1,
+    SYNTHESIS_PACK_V1,
     UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1,
     WRITEBACK_RESULT_V1,
 ];
@@ -209,6 +211,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: STEERING_COMMENT_V1,
         payload_kind: "steering_comment",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: SYNTHESIS_PACK_V1,
+        payload_kind: "synthesis_pack",
         contract_version: 1,
         required_output_mode: "json_object",
     },

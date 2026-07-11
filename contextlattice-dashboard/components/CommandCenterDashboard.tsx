@@ -240,7 +240,7 @@ export function CommandCenterDashboard() {
         <MetricCard
           label="modeled inference avoided"
           value={formatCompact(contextPackQuality.modeledInferenceSaved)}
-          detail={`${contextPackQuality.extraCallsAvoided} calls · ${contextPackQuality.confidence} confidence`}
+          detail={`${contextPackQuality.extraCallsAvoided} calls · ${formatCompact(contextPackQuality.calibrationOutcomeSamples)} calibrated · ${contextPackQuality.confidence}`}
           tone={contextPackQuality.calibrationGrade === "outcome_adjusted" ? "good" : "neutral"}
         />
         <MetricCard

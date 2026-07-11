@@ -388,6 +388,7 @@ def _compact_runner_quality_sample(sample: dict[str, Any], storage: dict[str, An
         "agent_id": str(sample.get("agent_id") or ""),
         "task_id": str(sample.get("task_id") or ""),
         "project": str(sample.get("project") or ""),
+        "task_class": str(sample.get("task_class") or "general"),
         "status": str(sample.get("status") or ""),
         "ok": bool(sample.get("ok")),
         "duration_secs": sample.get("duration_secs"),
@@ -400,10 +401,13 @@ def _compact_runner_quality_sample(sample: dict[str, Any], storage: dict[str, An
         },
         "token_impact": {
             "saved_tokens_estimate": token_impact.get("saved_tokens_estimate"),
+            "provider_prompt_tokens": token_impact.get("provider_prompt_tokens"),
+            "provider_completion_tokens": token_impact.get("provider_completion_tokens"),
             "provider_total_tokens": token_impact.get("provider_total_tokens"),
         },
         "outcome": {
             "first_pass_success": outcome.get("first_pass_success"),
+            "repair_required": outcome.get("repair_required"),
             "blocked": outcome.get("blocked"),
             "failed": outcome.get("failed"),
             "retry_count": outcome.get("retry_count"),
@@ -443,6 +447,101 @@ def _record_runner_quality_sample(
         return _compact_runner_quality_sample(sample, storage)
     except Exception as exc:
         return {"ok": False, "reason": "runner_quality_record_failed", "error": str(exc)[:240]}
+
+
+def _context_pack_quality_sample_id(bundle: dict[str, Any]) -> str:
+    quality = bundle.get("context_pack_quality") if isinstance(bundle.get("context_pack_quality"), dict) else {}
+    if not quality:
+        pack = bundle.get("context_pack") if isinstance(bundle.get("context_pack"), dict) else {}
+        quality = pack.get("context_pack_quality") if isinstance(pack.get("context_pack_quality"), dict) else {}
+    return str(quality.get("sample_id") or "").strip()
+
+
+def _task_class(task: dict[str, Any]) -> str:
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    for key in ("task_class", "taskClass", "runner_task_class", "runnerTaskClass", "role", "intent", "operation"):
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return re.sub(r"[^a-z0-9_.:/-]+", "-", str(value).strip().lower()).strip("-_.:/")[:80] or "general"
+    return "general"
+
+
+def _int_value(value: Any, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _post_context_pack_outcome(
+    orchestrator_url: str,
+    *,
+    task: dict[str, Any],
+    context_bundle: dict[str, Any],
+    status: str,
+    source: str,
+    calibration_eligible: bool,
+    outcome_class: str,
+    result_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sample_id = _context_pack_quality_sample_id(context_bundle)
+    if not sample_id:
+        return {"ok": False, "recorded": False, "reason": "context_pack_quality_sample_missing"}
+    metadata = result_metadata if isinstance(result_metadata, dict) else {}
+    retry_count = max(0, _int_value(metadata.get("retry_count"), 0))
+    repair_required = _env_bool_value(metadata.get("repair_required")) or retry_count > 0
+    normalized_status = str(status or "").strip().lower()
+    explicit_first_pass = metadata.get("first_pass_success")
+    if isinstance(explicit_first_pass, bool):
+        first_pass_success = explicit_first_pass
+    else:
+        first_pass_success = normalized_status == "succeeded" and not repair_required
+    provider_usage = metadata.get("provider_usage") if isinstance(metadata.get("provider_usage"), dict) else {}
+    payload: dict[str, Any] = {
+        "sample_id": sample_id,
+        "task_id": str(task.get("id") or ""),
+        "task_class": _task_class(task),
+        "first_pass_success": first_pass_success,
+        "repair_required": repair_required,
+        "retry_count": retry_count,
+        "observed_followup_tokens": max(0, _int_value(metadata.get("observed_followup_tokens"), 0)),
+        "outcome_source": f"task_agent_worker.{source}"[:80],
+        "outcome_class": str(outcome_class or "unspecified")[:80],
+        "context_attribution": str(metadata.get("context_attribution") or "observed_execution_result")[:80],
+        "calibration_eligible": bool(calibration_eligible),
+    }
+    for field, keys in {
+        "provider_prompt_tokens": ("prompt_tokens", "input_tokens"),
+        "provider_completion_tokens": ("completion_tokens", "output_tokens"),
+        "provider_total_tokens": ("total_tokens",),
+    }.items():
+        value = 0
+        for key in keys:
+            value = max(value, _int_value(provider_usage.get(key), 0))
+        if value > 0:
+            payload[field] = value
+    try:
+        response = _post(orchestrator_url, "/telemetry/context-pack-quality/outcome", payload)
+    except Exception as exc:
+        return {"ok": False, "recorded": False, "reason": "outcome_post_failed", "error": str(exc)[:240], "sample_id": sample_id}
+    outcome = response.get("outcome") if isinstance(response.get("outcome"), dict) else {}
+    return {
+        "ok": bool(response.get("ok", False)),
+        "recorded": bool(response.get("recorded", response.get("ok", False))),
+        "duplicate": bool(response.get("duplicate", False)),
+        "sample_id": sample_id,
+        "outcome_id": str(outcome.get("outcome_id") or ""),
+        "outcome_class": str(outcome.get("outcome_class") or payload["outcome_class"]),
+        "calibration_eligible": bool(outcome.get("calibration_eligible", calibration_eligible)),
+    }
+
+
+def _env_bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _orchestrator_headers() -> dict[str, str]:
@@ -700,6 +799,22 @@ def _handle_task(
             message=message,
             route_payload=route_payload,
         )
+        runner_status = str(result.get("status") or "").strip().lower()
+        result_metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        outcome_class = "success" if task_status == "succeeded" else "task_failure"
+        calibration_eligible = runner_status in {"succeeded", "failed"}
+        if not calibration_eligible:
+            outcome_class = "infrastructure_failure" if runner_status in {"missing_binary", "timed_out"} else "blocked"
+        context_pack_outcome = _post_context_pack_outcome(
+            orchestrator_url,
+            task=task,
+            context_bundle=context_bundle,
+            status=task_status,
+            source="runner_adapter",
+            calibration_eligible=calibration_eligible,
+            outcome_class=outcome_class,
+            result_metadata=result_metadata,
+        )
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
@@ -709,6 +824,7 @@ def _handle_task(
                 "metadata": {
                     "runner_result": compact_result,
                     "runner_quality": runner_quality,
+                    "context_pack_outcome": context_pack_outcome,
                     "agent_state": agent_state,
                     "retrieval_lifecycle": lifecycle,
                 },
@@ -723,6 +839,7 @@ def _handle_task(
                     "message": message,
                     "runner_result": compact_result,
                     "runner_quality": runner_quality,
+                    "context_pack_outcome": context_pack_outcome,
                     "agent_state": agent_state,
                     "lease": compact_result.get("metadata", {}).get("lease"),
                     "retrieval_lifecycle": lifecycle,
@@ -753,6 +870,7 @@ def _handle_task(
                     },
                     "runner_result": compact_result,
                     "runner_quality": runner_quality,
+                    "context_pack_outcome": context_pack_outcome,
                     "agent_state": agent_state,
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
@@ -767,11 +885,24 @@ def _handle_task(
         message = "Task completed by runner command" if exit_code == 0 else "Runner command failed"
         if pending_sources:
             message += f" (pending async sources: {', '.join(str(item) for item in pending_sources[:4])})"
-        _post(orchestrator_url, f"/agents/tasks/{task['id']}/status", {"status": status, "message": message})
+        context_pack_outcome = _post_context_pack_outcome(
+            orchestrator_url,
+            task=task,
+            context_bundle=context_bundle,
+            status=status,
+            source="legacy_command",
+            calibration_eligible=True,
+            outcome_class="success" if status == "succeeded" else "task_failure",
+        )
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {"status": status, "message": message, "metadata": {"context_pack_outcome": context_pack_outcome}},
+        )
         context_runtime.write_checkpoint(
             task=task,
             bundle=context_bundle,
-            output=message,
+            output=json.dumps({"message": message, "context_pack_outcome": context_pack_outcome}, sort_keys=True),
             provider=route_label,
             model=model,
             status=status,
@@ -796,6 +927,7 @@ def _handle_task(
                     },
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
+                    "context_pack_outcome": context_pack_outcome,
                 },
             },
         )
@@ -832,10 +964,20 @@ def _handle_task(
         completion_message = f"Completed via {run_route_label} ({model})"
         if pending_sources:
             completion_message += f" | pending async sources: {', '.join(str(item) for item in pending_sources[:4])}"
+        context_pack_outcome = _post_context_pack_outcome(
+            orchestrator_url,
+            task=task,
+            context_bundle=context_bundle,
+            status="succeeded",
+            source="gateway_inference",
+            calibration_eligible=True,
+            outcome_class="success",
+            result_metadata=active_route_payload.get("metadata") if isinstance(active_route_payload.get("metadata"), dict) else {},
+        )
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
-            {"status": "succeeded", "message": completion_message},
+            {"status": "succeeded", "message": completion_message, "metadata": {"context_pack_outcome": context_pack_outcome}},
         )
         context_runtime.write_checkpoint(
             task=task,
@@ -864,10 +1006,20 @@ def _handle_task(
                     },
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
+                    "context_pack_outcome": context_pack_outcome,
                 },
             },
         )
     except Exception as exc:  # pragma: no cover
+        context_pack_outcome = _post_context_pack_outcome(
+            orchestrator_url,
+            task=task,
+            context_bundle=context_bundle,
+            status="failed",
+            source="gateway_inference",
+            calibration_eligible=False,
+            outcome_class="infrastructure_failure",
+        )
         context_runtime.write_checkpoint(
             task=task,
             bundle=context_bundle,
@@ -879,7 +1031,11 @@ def _handle_task(
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
-            {"status": "failed", "message": f"Runner error: {exc}"},
+            {
+                "status": "failed",
+                "message": f"Runner error: {exc}",
+                "metadata": {"context_pack_outcome": context_pack_outcome},
+            },
         )
 
 

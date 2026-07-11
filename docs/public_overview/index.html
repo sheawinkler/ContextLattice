@@ -480,12 +480,12 @@ gmake monitor-check</code></pre>
       <h2>What is public now</h2>
       <div class="grid component-grid">
         <article class="card component-card">
-          <h3>Public v3.10 (current launch lane)</h3>
+          <h3>Public v3.11 (current launch lane)</h3>
           <ul class="spec-list">
-            <li><strong>Current public release:</strong> <code>v3.10.2</code></li>
+            <li><strong>Current public release:</strong> <code>v3.11.0</code></li>
             <li><strong>Primary interface:</strong> CLI workflows for install, adoption, context packs, checkpoints, sessions, and runner-quality telemetry</li>
             <li><strong>Frontdoor:</strong> <code>gateway-go</code> on <code>:8075</code></li>
-            <li><strong>Fallback:</strong> Python orchestrator on <code>:18075</code></li>
+            <li><strong>Runtime boundary:</strong> the active application path is Go/Rust; legacy Python is archived and not launched.</li>
             <li><strong>Lite memory default:</strong> topic rollups, Qdrant recall, and memory edges/neighbors</li>
             <li><strong>Retrieval behavior:</strong> staged fast-return, async recall steering, tokenizer-exact prompt economics, impact-per-token context allocation, and observed outcome telemetry</li>
             <li><strong>Personal computer target:</strong> HF/Glama <code>2-4</code> vCPU / <code>4-8 GB</code> RAM / <code>20-50 GB</code> SSD, Lite <code>2-4</code> vCPU / <code>8-12 GB</code> RAM / <code>25-80 GB</code> SSD, Full <code>6-8</code> vCPU / <code>12-20 GB</code> RAM / <code>100-180 GB</code> SSD (no spike-lab)</li>
@@ -507,12 +507,12 @@ gmake monitor-check</code></pre>
         <h3>Launch flow map</h3>
         <div class="mermaid">
 flowchart LR
-  A[Agent or App] --> B["Public Lane: v3.10"]
+  A[Agent or App] --> B["Public Lane: v3.11"]
   B --> C["Gateway-Go :8075"]
   C --> D["Public default fast sources: topic_rollups + qdrant"]
   C --> E["Slow async continuation: mindsdb + mongo_raw + letta + memory_bank"]
   E --> F["Cache warm + optional deep follow-up"]
-  B --> G["Python fallback lane :18075 (rollback only)"]
+  B --> G["Strict Go/Rust ownership audit"]
   B --> H["Optional public adapter lab"]
   H --> I["Operator-controlled tests only"]
         </div>
@@ -753,7 +753,7 @@ flowchart LR
           <h3>Hugging Face / Glama lite</h3>
           <p>Single-container lane focused on compatibility and low footprint.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.10.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.11.x</code></li>
             <li><strong>Includes:</strong> gateway + orchestrator container with topic-rollup-first retrieval</li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
             <li><strong>Memory:</strong> 4-8 GB RAM baseline</li>
@@ -764,7 +764,7 @@ flowchart LR
           <h3>Lite mode</h3>
           <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.10.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.11.x</code></li>
             <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
             <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + qdrant</code> by default; pgvector remains first-class for full/operator stacks</li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
@@ -776,7 +776,7 @@ flowchart LR
           <h3>Full mode</h3>
           <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
           <ul class="spec-list">
-            <li><strong>App version lane:</strong> Public <code>v3.10.x</code> Full</li>
+            <li><strong>App version lane:</strong> Public <code>v3.11.x</code> Full</li>
             <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
             <li><strong>Deep continuation lane:</strong> async enrichment from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>
             <li><strong>Compute:</strong> 6-8 vCPU recommended</li>

@@ -58,6 +58,8 @@ Installed commands:
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, state, event, and completion. |
 | `contextlattice_agent_discover` | Best-effort local agent discovery for profile authority, process evidence, hook evidence, repo instruction evidence, and lifecycle explanations. |
 | `contextlattice_agent_session` | Session lifecycle, rollup, context-package, trace, runtime, and cleanup CLI. |
+| `contextlattice_async_inbox_drain` | Bounded async continuation inbox drain; emits unseen terminal steering after normal CLI boundaries. |
+| `contextlattice_async_inbox_hook` | Fail-open hook entrypoint for runtimes with post-tool or post-command hooks. |
 | `contextlattice_agent_trace` | Contract-valid run trace and exportable run card showing which context, skills that may be helpful, sources, graph touches, handoffs, and checkpoints shaped a session. |
 | `contextlattice_adopt` | Zero-friction adoption front door for status, install guidance, proof, profiles, and CI-style adoption scenarios. |
 | `contextlattice_doctor` | One-command adoption proof for local readiness, lifecycle proof, and trace-visible run shaping evidence. |
@@ -101,6 +103,8 @@ Runner adapter completions write compact `runner_quality_sample.v1` rows when ta
 ```bash
 contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
 contextlattice_agent_adapter state --agent codex --state working --summary "startup active" --pretty
+contextlattice_async_inbox_drain --session-id <session-id>
+contextlattice_async_inbox_hook --session-id <session-id>
 contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 contextlattice_adopt status --pretty
 contextlattice_doctor --agents codex --skip-provider-smoke --pretty

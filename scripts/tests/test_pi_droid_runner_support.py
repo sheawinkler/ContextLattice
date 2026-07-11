@@ -453,6 +453,15 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
                 if path == "/v1/inference/route":
                     return {"route": {"provider": "test", "base_url": "", "reason": "test"}}
                 captured.setdefault("posts", []).append((path, payload))
+                if path == "/telemetry/context-pack-quality/outcome":
+                    return {
+                        "ok": True,
+                        "recorded": True,
+                        "outcome": {
+                            **payload,
+                            "outcome_id": "cpo_task_quality",
+                        },
+                    }
                 return {"ok": True}
 
             def fake_run_adapter(_argv: list[str], env: dict[str, str], *_: Any, **__: Any) -> dict[str, Any]:
@@ -501,13 +510,35 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
             self.assertEqual(row["task_class"], "general")
             self.assertEqual(row["context_pack_quality"]["sample_id"], "cpq_worker")
             self.assertEqual(row["context_pack_quality"]["exact_prompt_tokens_saved"], 1234)
-            status_metadata = captured["posts"][0][1]["metadata"]
+            outcome_posts = [payload for path, payload in captured["posts"] if path == "/telemetry/context-pack-quality/outcome"]
+            self.assertEqual(len(outcome_posts), 1)
+            self.assertEqual(outcome_posts[0]["sample_id"], "cpq_worker")
+            self.assertTrue(outcome_posts[0]["first_pass_success"])
+            self.assertTrue(outcome_posts[0]["calibration_eligible"])
+            status_posts = [payload for path, payload in captured["posts"] if path.endswith("/status")]
+            self.assertEqual(len(status_posts), 1)
+            status_metadata = status_posts[0]["metadata"]
             self.assertEqual(status_metadata["runner_quality"]["context_pack_quality"]["sample_id"], "cpq_worker")
+            self.assertEqual(status_metadata["context_pack_outcome"]["outcome_id"], "cpo_task_quality")
             summary = runner_quality.summarize([row])
             self.assertEqual(summary["by_runner"]["pi"]["success_count"], 1)
             self.assertEqual(summary["by_runner"]["pi"]["exact_prompt_tokens_saved"], 1234)
             self.assertEqual(summary["recommendations"]["mode"], "advisor_only")
             self.assertNotIn("routing_hint", summary)
+
+    def test_context_pack_outcome_skips_when_context_sample_is_missing(self) -> None:
+        worker = load_task_worker()
+        result = worker._post_context_pack_outcome(
+            "http://127.0.0.1:1",
+            task={"id": "task_missing", "payload": {}},
+            context_bundle={},
+            status="succeeded",
+            source="test",
+            calibration_eligible=True,
+            outcome_class="success",
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "context_pack_quality_sample_missing")
 
     def test_legacy_task_agent_cmd_override_still_uses_legacy_command(self) -> None:
         worker = load_task_worker()

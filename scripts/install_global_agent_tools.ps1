@@ -453,6 +453,18 @@ if not exist "%PYTHON_EXE%" (
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
 "@
 
+$asyncInboxHookCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set GO_TOOL=%TOOL_HOME%\bin\contextlattice-agent-tools.exe
+if not exist "%GO_TOOL%" (
+  exit /b 0
+)
+"%GO_TOOL%" async-inbox-drain --timeout 1.5 --max-items 1 %*
+exit /b 0
+"@
+
 $runnerQualityCmd = @"
 @echo off
 set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
@@ -484,6 +496,7 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_memory_topology.cmd") -Valu
 Set-Content -Path (Join-Path $BinDir "contextlattice_source_backfill.cmd") -Value $sourceBackfillCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_skills_index.cmd") -Value $skillsIndexCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_codex_session_store_doctor.cmd") -Value $codexSessionStoreDoctorCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_async_inbox_hook.cmd") -Value $asyncInboxHookCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_runner_quality.cmd") -Value $runnerQualityCmd -Encoding Ascii
 
 function Write-GoNativeCmd {
@@ -505,11 +518,13 @@ if not exist "%GO_TOOL%" (
 $goNativeCommands = @(
     "contextlattice_search",
     "contextlattice_pack",
+    "contextlattice_synthesis_pack",
     "contextlattice_write",
     "contextlattice_adopt",
     "contextlattice_doctor",
     "contextlattice_agent_adapter",
     "contextlattice_agent_session",
+    "contextlattice_async_inbox_drain",
     "contextlattice_agent_trace",
     "contextlattice_run_advisor",
     "contextlattice_agent_runtime_proof",
@@ -558,6 +573,7 @@ Write-Host "Installed global ContextLattice tools to $GlobalHome"
 Write-Host "Open a new terminal and verify:"
 Write-Host "  contextlattice_search -h"
 Write-Host "  contextlattice_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
+Write-Host "  contextlattice_synthesis_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_adopt status --pretty"
 Write-Host "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"
@@ -567,6 +583,8 @@ Write-Host "  contextlattice_agent_session runtime --pretty"
 Write-Host "  contextlattice_agent_runtime_proof --pretty"
 Write-Host "  contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty"
 Write-Host "  contextlattice_context_boundary --pretty"
+Write-Host "  contextlattice_async_inbox_drain --session-id <session-id>"
+Write-Host "  contextlattice_async_inbox_hook --session-id <session-id>"
 Write-Host "  contextlattice_agent_trace --session-id <session-id> --tree"
 Write-Host "  contextlattice_run_advisor --session-id <session-id> --pretty"
 Write-Host "  contextlattice_memory_topology --pretty"

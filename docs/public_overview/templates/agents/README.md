@@ -26,6 +26,8 @@ Global helper CLI tools are auto-installed by `gmake quickstart` and installer f
 - `$HOME/.contextlattice/bin/contextlattice_agent_start`
 - `$HOME/.contextlattice/bin/contextlattice_checkpoint`
 - `$HOME/.contextlattice/bin/contextlattice_agent_session`
+- `$HOME/.contextlattice/bin/contextlattice_async_inbox_drain`
+- `$HOME/.contextlattice/bin/contextlattice_async_inbox_hook`
 - `$HOME/.contextlattice/bin/contextlattice_agent_trace`
 - `$HOME/.contextlattice/bin/contextlattice_agent_adoption_proof`
 - `$HOME/.contextlattice/bin/contextlattice_agent_runtime_doctor`
@@ -40,6 +42,8 @@ contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,herm
 BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
 SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_async_inbox_drain --session-id "$SESSION_ID"
+contextlattice_async_inbox_hook --session-id "$SESSION_ID"
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_skills_index search "browser automation" --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty

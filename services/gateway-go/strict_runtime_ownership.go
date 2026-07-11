@@ -28,6 +28,8 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/memory/search/continuations/{token}", Surface: "retrieval", Owner: sourceOwnerGoNative, Status: "native", Detail: "async retrieval polling", Required: true},
 		{Path: "/memory/context-pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "bounded prompt-ready context packages", Required: true},
 		{Path: "/tools/context_pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool context package wrapper", Required: true},
+		{Path: "/memory/synthesis-pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "deterministic retrieval synthesis pack", Required: true},
+		{Path: "/tools/synthesis_pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool retrieval synthesis wrapper", Required: true},
 		{Path: "/feedback", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "native feedback capture and bounded history", Required: true},
 		{Path: "/preferences", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "native preference context projection from feedback", Required: true},
 		{Path: "/tools/feedback_submit", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool feedback submit wrapper", Required: true},

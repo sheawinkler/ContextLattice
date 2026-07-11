@@ -99,6 +99,8 @@ contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
 contextlattice_adopt proof --agents codex --skip-provider-smoke --pretty
 contextlattice_agent_adapter profiles
 contextlattice_agent_session runtime --pretty
+contextlattice_async_inbox_drain --session-id &lt;session-id&gt;
+contextlattice_async_inbox_hook --session-id &lt;session-id&gt;
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
 contextlattice_run_advisor "what should this agent know before solving the task?" --pretty
 contextlattice_agent_runtime_doctor --pretty
@@ -121,11 +123,16 @@ printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextla
         <div class="kicker">Context compiler</div>
         <h3>Build the next prompt packet from memory</h3>
 <pre><code>contextlattice_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
+contextlattice_synthesis_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
 
 curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
   -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
-  http://127.0.0.1:8075/memory/context-pack | jq '.reference_prompt'</code></pre>
-        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code> that can be handed to Codex, Claude Code, MCP hosts, or a custom LLM app.</p>
+  http://127.0.0.1:8075/memory/context-pack | jq '.reference_prompt'
+
+curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
+  -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
+  http://127.0.0.1:8075/memory/synthesis-pack | jq '.synthesis_pack'</code></pre>
+        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code>. Synthesis Pack v1 adds high-signal findings, topic gravity, graph/cross-project bridges, must-not-forget constraints, next actions, open questions, and semantic tags over that same bounded evidence.</p>
       </article>
     </section>
 
@@ -158,11 +165,13 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 # package the session for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_async_inbox_drain --session-id "$SESSION_ID"
+contextlattice_async_inbox_hook --session-id "$SESSION_ID"
 contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_agent_trace --session-id "$SESSION_ID" --markdown
 contextlattice_run_advisor --session-id "$SESSION_ID" --pretty</code></pre>
-        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain surfaces unseen continuation ready/degraded steering after normal tool boundaries; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
+        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain surfaces unseen continuation progress, ready, or terminal-degraded steering after normal tool boundaries, with pending work labeled warming; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
       </article>
     </section>
 

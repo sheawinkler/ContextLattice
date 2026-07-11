@@ -22,7 +22,7 @@ Operating rules:
 12) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, `contextlattice_agent_lifecycle_state.v1`, and `universal_agent_adapter_response.v1` contract metadata, including `objective_hierarchy` and `objective_lineage`, in downstream handoffs.
 13) If direct search is needed, call POST /memory/search with include_grounding=true and scoped project/topic when known.
 14) If relevant capabilities are unclear, run `contextlattice_skills_index search "<task or tool need>" --pretty` instead of loading every skill.
-15) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events, or run the returned agent_visibility.watch_command so the requesting session receives the completion/degraded steering comment.
+15) If continuation_async is present, return partial results immediately and continue via GET /memory/search/continuations/{token}/events, run the returned agent_visibility.watch_command, or use `contextlattice_async_inbox_drain --session-id <session_id>`. Pending/running work is warming, not degraded; only terminal failures should be labeled degraded.
 16) Retrieval mode semantics:
    - balanced = fast sync now + slow async continuation.
    - deep = broader/lower-cap retrieval budgets but still fail-open; do not wait forever on one lane.
@@ -57,6 +57,8 @@ contextlattice_agent_adapter complete --agent codex --project contextlattice --s
 # package session state for the next model call
 contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
 contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+contextlattice_async_inbox_drain --session-id "$SESSION_ID"
+contextlattice_async_inbox_hook --session-id "$SESSION_ID"
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 
