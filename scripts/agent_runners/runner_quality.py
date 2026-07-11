@@ -200,13 +200,16 @@ def build_runner_quality_sample(
     runner_status = str(result.get("status") or "").strip().lower()
     ok = bool(result.get("ok"))
     duration = _safe_float(result.get("duration_secs"), 0.0)
+    retry_count = _safe_int(metadata.get("retry_count"), 0)
+    repair_required = _safe_bool(metadata.get("repair_required")) or retry_count > 0
     outcome = {
         "task_status": str(task_status or ""),
         "runner_status": runner_status,
-        "first_pass_success": ok and runner_status == "succeeded",
+        "first_pass_success": ok and runner_status == "succeeded" and not repair_required,
+        "repair_required": repair_required,
         "blocked": runner_status in {"blocked", "missing_binary", "invalid_task", "timed_out", "skipped"},
         "failed": (not ok) and runner_status not in {"blocked", "missing_binary", "invalid_task", "timed_out", "skipped"},
-        "retry_count": _safe_int(metadata.get("retry_count"), 0),
+        "retry_count": retry_count,
         "observed_followup_tokens": _safe_int(metadata.get("observed_followup_tokens"), 0),
     }
     sample = {

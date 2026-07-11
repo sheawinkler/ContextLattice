@@ -46,6 +46,7 @@ export type ContextPackQualityEstimate = {
   confidence: TokenImpactConfidence;
   calibrationGrade: ContextPackQualityCalibrationGrade;
   outcomeSamples: number;
+  calibrationOutcomeSamples: number;
   sampleCount: number;
   observedFirstPassRate: number | null;
   observedRepairRate: number | null;
@@ -372,6 +373,7 @@ export function estimateContextPackQuality(overview: unknown): ContextPackQualit
     confidence: "low",
     calibrationGrade: "heuristic",
     outcomeSamples: 0,
+    calibrationOutcomeSamples: 0,
     sampleCount: 0,
     observedFirstPassRate: null,
     observedRepairRate: null,
@@ -485,6 +487,12 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
   ]);
   const sampleCount = firstInt(record, ["sampleCount", "sample_count"]);
   const outcomeSamples = firstInt(record, ["outcomeSampleCount", "outcome_sample_count"]);
+  const hasCalibrationOutcomeSamples =
+    Object.prototype.hasOwnProperty.call(record, "calibrationOutcomeSampleCount") ||
+    Object.prototype.hasOwnProperty.call(record, "calibration_outcome_sample_count");
+  const calibrationOutcomeSamples = hasCalibrationOutcomeSamples
+    ? firstInt(record, ["calibrationOutcomeSampleCount", "calibration_outcome_sample_count"])
+    : outcomeSamples;
   const qualityScore = clampInt(
     firstInt(record, ["averageQualityScore", "average_quality_score", "qualityScore", "quality_score"]),
     0,
@@ -511,9 +519,13 @@ function normalizeContextPackQuality(candidate: unknown): ContextPackQualityEsti
     exactPromptSaved: roundTokenCount(exactPromptSaved),
     qualityScore,
     extraCallsAvoided: roundRatio(record.modeledExtraCallsAvoided ?? record.modeled_extra_calls_avoided),
-    confidence: normalizeConfidence(toText(record.confidence), outcomeSamples >= 20 ? "high" : outcomeSamples > 0 ? "medium" : "low"),
+    confidence: normalizeConfidence(
+      toText(record.confidence),
+      calibrationOutcomeSamples >= 20 ? "high" : calibrationOutcomeSamples > 0 ? "medium" : "low",
+    ),
     calibrationGrade,
     outcomeSamples,
+    calibrationOutcomeSamples,
     sampleCount,
     observedFirstPassRate: firstPass,
     observedRepairRate: repairRate,

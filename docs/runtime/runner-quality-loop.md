@@ -58,6 +58,12 @@ scripts/agent/runner-quality --pretty
 
 The summary reports per-runner sample counts, success/block/failure rates, average duration, average context quality score, exact prompt tokens saved, modeled inference tokens avoided, task-class slices, and advisor-only recommendations. The dashboard and doctor surface the same signal as visibility, not control.
 
+## Outcome Calibration
+
+When a task worker has both a terminal execution result and a context-pack quality sample ID, it posts one deterministic outcome to `/telemetry/context-pack-quality/outcome`. Replays reuse the same outcome identity, so process restart or task replay does not double-count the ledger.
+
+`outcome_sample_count` includes every observed terminal result. `calibration_outcome_sample_count` excludes blocked, missing-binary, timeout, and infrastructure-failure rows from context-quality success and repair rates. Provider token counters are attached only when the runner or provider reports them; ContextLattice never guesses those counters.
+
 ## Interpretation
 
 Use this as operator advice, never automatic dispatch. ContextLattice may tell you which runner looks strongest for similar observed task classes, but it does not dispatch, mutate, merge, or push from this telemetry.
