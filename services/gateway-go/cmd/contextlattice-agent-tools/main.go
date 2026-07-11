@@ -736,6 +736,9 @@ func readEnvValue(path, key string) string {
 	prefix := key + "="
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
 		if line == "" || strings.HasPrefix(line, "#") || !strings.HasPrefix(line, prefix) {
 			continue
 		}
@@ -3182,7 +3185,7 @@ func (c *cli) cmdDiscover(args []string) error {
 			"hook":                   hook,
 			"repo_instruction_check": map[string]any{"ok": false, "reason": "repo_not_requested"},
 		}
-		if runner := runnerDiscoveryMetadata(name, absRepo); len(runner) > 0 {
+		if runner := runnerDiscoveryMetadata(name, absRepo, globalHome); len(runner) > 0 {
 			integration["runner"] = runner
 			integration["install_hint"] = runner["install_hint"]
 		}
@@ -3560,7 +3563,7 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-func runnerDiscoveryMetadata(agent string, repo string) map[string]any {
+func runnerDiscoveryMetadata(agent string, repo string, globalHome string) map[string]any {
 	name := strings.TrimSpace(strings.ToLower(agent))
 	var commands []string
 	var hint string
@@ -3583,9 +3586,9 @@ func runnerDiscoveryMetadata(agent string, repo string) map[string]any {
 			detected = append(detected, command)
 		}
 	}
-	adapter := runnerArtifactPath(repo, adapterRel)
+	adapter := runnerArtifactPath(repo, globalHome, adapterRel)
 	adapterPresent := executableExists(adapter)
-	contractPresent := runnerCapabilityContractPresent(repo)
+	contractPresent := runnerCapabilityContractPresent(repo, globalHome)
 	commandState := "missing"
 	if len(detected) > 0 {
 		commandState = "detected"
@@ -3603,12 +3606,16 @@ func runnerDiscoveryMetadata(agent string, repo string) map[string]any {
 	}
 }
 
-func runnerContextLatticeRoots(repo string) []string {
-	candidates := []string{currentGitRoot()}
+func runnerContextLatticeRoots(repo string, globalHome string) []string {
+	candidates := []string{}
 	if strings.TrimSpace(repo) != "" {
 		if abs, err := filepath.Abs(repo); err == nil {
 			candidates = append(candidates, abs)
 		}
+	}
+	candidates = append(candidates, currentGitRoot())
+	if strings.TrimSpace(globalHome) != "" {
+		candidates = append(candidates, readEnvValue(filepath.Join(globalHome, "agent_hooks.env"), "CONTEXTLATTICE_REPO_ROOT"))
 	}
 	candidates = append(candidates, repoRoot(), ".")
 	seen := map[string]bool{}
@@ -3630,8 +3637,8 @@ func runnerContextLatticeRoots(repo string) []string {
 	return out
 }
 
-func runnerArtifactPath(repo string, rel string) string {
-	roots := runnerContextLatticeRoots(repo)
+func runnerArtifactPath(repo string, globalHome string, rel string) string {
+	roots := runnerContextLatticeRoots(repo, globalHome)
 	for _, root := range roots {
 		path := filepath.Join(root, rel)
 		if executableExists(path) {
@@ -3644,9 +3651,15 @@ func runnerArtifactPath(repo string, rel string) string {
 	return rel
 }
 
-func runnerCapabilityContractPresent(repo string) bool {
-	for _, root := range runnerContextLatticeRoots(repo) {
-		path := filepath.Join(root, "config", "agent_contracts", "agent_output_contracts.json")
+func runnerCapabilityContractPresent(repo string, globalHome string) bool {
+	paths := []string{}
+	if strings.TrimSpace(globalHome) != "" {
+		paths = append(paths, filepath.Join(globalHome, "config", "agent_contracts", "agent_output_contracts.json"))
+	}
+	for _, root := range runnerContextLatticeRoots(repo, globalHome) {
+		paths = append(paths, filepath.Join(root, "config", "agent_contracts", "agent_output_contracts.json"))
+	}
+	for _, path := range uniqueStrings(paths) {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -3778,7 +3791,7 @@ func localAgentDiscoverySummary(globalHome string, names []string, repo string, 
 			"discover_tool":   executableExists(filepath.Join(globalHome, "bin", "contextlattice_agent_discover")),
 			"hook":            agentHookEvidence(name),
 		}
-		if runner := runnerDiscoveryMetadata(name, repo); len(runner) > 0 {
+		if runner := runnerDiscoveryMetadata(name, repo, globalHome); len(runner) > 0 {
 			integration["runner"] = runner
 			integration["install_hint"] = runner["install_hint"]
 		}
