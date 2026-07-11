@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -451,6 +452,134 @@ func TestMinimalContextPackBoundaryPreservesContextAndSynthesisContracts(t *test
 		"writeback_required":   true,
 	}, "codex_gpt5_test", "synthesis_pack", "/memory/synthesis-pack")
 	assertBoundaryContractPassed(t, synthesisPackContractID, synthesisResponse)
+}
+
+func TestForceMinimalContextPackBoundaryPreservesEvidenceKernel(t *testing.T) {
+	items := make([]any, 0, 7)
+	for idx := 0; idx < 7; idx++ {
+		items = append(items, map[string]any{
+			"rank":             idx + 1,
+			"kind":             "decision",
+			"text":             "Preserve evidence before lower-value prompt structure.",
+			"project":          "contextlattice",
+			"file":             fmt.Sprintf("notes/evidence-%d.md", idx),
+			"source":           "qdrant",
+			"topic_path":       "architecture/synthesis",
+			"score":            0.99 - float64(idx)*0.01,
+			"confidence":       0.9,
+			"estimated_tokens": 50,
+			"value_density":    0.8,
+			"why_selected":     []any{"decision", "query_match"},
+		})
+	}
+	pack := testContextPackFixture(items)
+	pack["query"] = "preserve sparse evidence"
+	pack["omitted_high_value_refs"] = items[4:]
+	compiler := anyMap(pack["context_compiler"])
+	compiler["token_budget"] = map[string]any{
+		"active":                        true,
+		"selected_count":                len(items),
+		"used_tokens_estimate":          350,
+		"ranked_evidence_budget_tokens": 500,
+		"compression_level":             "compact",
+	}
+	payload := map[string]any{
+		"ok":                 true,
+		"context_pack":       pack,
+		"context_compiler":   compiler,
+		"reference_prompt":   strings.Repeat("lower-value prompt structure ", 500),
+		"source_coverage":    map[string]any{"configured": []any{"qdrant"}, "returned": []any{"qdrant"}, "complete": true},
+		"writeback_required": true,
+	}
+	stats := agentBoundaryStats{}
+	forceMinimalContextPackResponseBoundary(payload, &stats)
+
+	minimal := anyMap(payload["context_pack"])
+	ranked := contextPackAnyList(minimal["ranked_evidence"])
+	if len(ranked) != 4 {
+		t.Fatalf("expected four-item evidence kernel, got %#v", ranked)
+	}
+	if anyToString(anyMap(ranked[0])["file"]) != "notes/evidence-0.md" {
+		t.Fatalf("expected highest-ranked evidence first, got %#v", ranked[0])
+	}
+	minimalCompiler := anyMap(payload["context_compiler"])
+	if anyToInt(minimalCompiler["ranked_evidence_count"], 0) != 4 || anyToInt(minimalCompiler["pre_boundary_ranked_evidence_count"], 0) != 7 {
+		t.Fatalf("expected reconciled compiler counts, got %#v", minimalCompiler)
+	}
+	minimalBudget := anyMap(minimalCompiler["token_budget"])
+	if anyToInt(minimalBudget["selected_count"], 0) != 4 || anyToInt(minimalBudget["pre_boundary_selected_count"], 0) != 7 {
+		t.Fatalf("expected reconciled token-budget counts, got %#v", minimalBudget)
+	}
+	if promptEvidence := contextPackAnyList(anyMap(minimal["prompt_sections"])["evidence"]); len(promptEvidence) != 4 {
+		t.Fatalf("expected prompt sections to preserve evidence kernel, got %#v", promptEvidence)
+	}
+	if prompt := anyToString(payload["reference_prompt"]); !strings.Contains(prompt, "notes/evidence-0.md") {
+		t.Fatalf("expected rebuilt reference prompt to cite preserved evidence, got %q", prompt)
+	}
+
+	contextResponse := attachContextPackFormatContract(payload)
+	assertBoundaryContractPassed(t, contextPackResponseContractID, contextResponse)
+	assertBoundaryJSONUnderLimit(t, contextPackResponseContractID, contextResponse)
+	s := newTestServer(t, "http://127.0.0.1:1")
+	synthesis := s.buildSynthesisPack(context.Background(), contextResponse, map[string]any{
+		"project": "contextlattice",
+		"query":   "preserve sparse evidence",
+	}, "/memory/synthesis-pack")
+	if findings := contextPackAnyList(synthesis["high_signal_findings"]); len(findings) == 0 {
+		t.Fatalf("expected grounded synthesis findings from evidence kernel, got %#v", synthesis)
+	}
+	if evidenceTrail := contextPackAnyList(synthesis["evidence_trail"]); len(evidenceTrail) == 0 {
+		t.Fatalf("expected grounded synthesis evidence trail, got %#v", synthesis)
+	}
+}
+
+func TestContextPackBoundaryReconcilesIntermediateEvidenceTrim(t *testing.T) {
+	items := make([]any, 0, 11)
+	for idx := 0; idx < 11; idx++ {
+		items = append(items, map[string]any{
+			"rank":             idx + 1,
+			"kind":             "check",
+			"text":             fmt.Sprintf("evidence-%d", idx),
+			"file":             fmt.Sprintf("notes/check-%d.md", idx),
+			"estimated_tokens": 25,
+		})
+	}
+	pack := testContextPackFixture(items)
+	compiler := anyMap(pack["context_compiler"])
+	compiler["token_budget"] = map[string]any{
+		"active":               true,
+		"selected_count":       11,
+		"used_tokens_estimate": 275,
+	}
+	pack["ranked_evidence"] = items[:8]
+	pack["rankedEvidence"] = items[:8]
+	payload := map[string]any{
+		"context_pack":     pack,
+		"context_compiler": compiler,
+		"reference_prompt": "stale pre-boundary prompt",
+		"warnings":         []any{},
+	}
+	stats := agentBoundaryStats{}
+	reconcileContextPackBoundaryMetadata(payload, true, &stats)
+
+	reconciledCompiler := anyMap(payload["context_compiler"])
+	if anyToInt(reconciledCompiler["ranked_evidence_count"], 0) != 8 || anyToInt(reconciledCompiler["pre_boundary_ranked_evidence_count"], 0) != 11 {
+		t.Fatalf("expected truthful ranked evidence counts, got %#v", reconciledCompiler)
+	}
+	reconciledBudget := anyMap(reconciledCompiler["token_budget"])
+	if anyToInt(reconciledBudget["selected_count"], 0) != 8 || anyToInt(reconciledBudget["pre_boundary_selected_count"], 0) != 11 || anyToInt(reconciledBudget["used_tokens_estimate"], 0) != 200 {
+		t.Fatalf("expected truthful token budget counts, got %#v", reconciledBudget)
+	}
+	reconciledPack := anyMap(payload["context_pack"])
+	if promptEvidence := contextPackAnyList(anyMap(reconciledPack["prompt_sections"])["evidence"]); len(promptEvidence) != 8 {
+		t.Fatalf("expected prompt evidence to match returned evidence, got %d", len(promptEvidence))
+	}
+	if prompt := anyToString(payload["reference_prompt"]); strings.Contains(prompt, "notes/check-8.md") || !strings.Contains(prompt, "notes/check-0.md") {
+		t.Fatalf("expected rebuilt prompt to cite only returned evidence, got %q", prompt)
+	}
+	if warnings := contextPackAnyList(payload["warnings"]); len(warnings) != 1 {
+		t.Fatalf("expected one boundary warning, got %#v", warnings)
+	}
 }
 
 func TestAgentBoundaryContractClipsOversizedDreamPayload(t *testing.T) {

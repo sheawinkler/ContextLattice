@@ -58,6 +58,7 @@ func enforceAgentBoundaryContract(contractID string, payload map[string]any) age
 	}
 	sanitizeOverflow := contractID != GeneratedAgentContractContextOverflowRecoveryV1
 	applyAgentBoundaryLimits(payload, limits.MaxStringBytes, positiveListLimit(limits.MaxListItems), sanitizeOverflow, &stats)
+	reconcileAgentBoundaryPayload(contractID, payload, &stats)
 	if limits.MaxTotalJSONBytes > 0 {
 		stats.TotalPasses += shrinkAgentBoundaryPayload(contractID, payload, limits, sanitizeOverflow, &stats)
 	}
@@ -344,6 +345,7 @@ func shrinkAgentBoundaryPayload(
 	shrink := func(maxStringBytes int, maxListItems int) bool {
 		passes++
 		applyAgentBoundaryLimits(payload, maxStringBytes, maxListItems, sanitizeOverflow, stats)
+		reconcileAgentBoundaryPayload(contractID, payload, stats)
 		return jsonByteLen(payload) <= targetBytes
 	}
 
@@ -821,13 +823,119 @@ func compactObjectiveRuntimeBoundary(runtime map[string]any, stats *agentBoundar
 
 func forceMinimalContextPackResponseBoundary(payload map[string]any, stats *agentBoundaryStats) {
 	sourceCoverage := anyMap(payload["source_coverage"])
-	payload["context_pack"] = minimalContextPackBoundary(anyMap(payload["context_pack"]))
+	contextPack := minimalContextPackBoundary(anyMap(payload["context_pack"]))
+	payload["context_pack"] = contextPack
+	payload["context_compiler"] = contextPack["context_compiler"]
+	if _, ok := payload["contextCompiler"]; ok {
+		payload["contextCompiler"] = contextPack["context_compiler"]
+	}
+	payload["reference_prompt"] = contextPackReferencePrompt(anyMap(contextPack["prompt_sections"]))
+	if tokenBudget := anyMap(contextPack["token_budget"]); len(tokenBudget) > 0 {
+		payload["token_budget"] = tokenBudget
+		if _, ok := payload["tokenBudget"]; ok {
+			payload["tokenBudget"] = tokenBudget
+		}
+	}
 	payload["source_coverage"] = minimalSourceCoverageBoundary(sourceCoverage)
 	payload["warnings"] = []any{"ContextLattice context pack was clipped to the output boundary budget."}
 	delete(payload, "retrieval")
 	if stats != nil {
 		stats.OptionalFieldsCompacted++
 	}
+}
+
+func reconcileAgentBoundaryPayload(contractID string, payload map[string]any, stats *agentBoundaryStats) {
+	switch contractID {
+	case contextPackResponseContractID:
+		reconcileContextPackBoundaryMetadata(payload, true, stats)
+	case synthesisPackContractID:
+		reconcileContextPackBoundaryMetadata(payload, false, stats)
+	}
+}
+
+func reconcileContextPackBoundaryMetadata(payload map[string]any, rebuildReferencePrompt bool, stats *agentBoundaryStats) {
+	contextPack := anyMap(payload["context_pack"])
+	if len(contextPack) == 0 {
+		return
+	}
+	rankedEvidence := contextPackAnyList(firstPresentAny(contextPack["ranked_evidence"], contextPack["rankedEvidence"]))
+	compiler := cloneJSONMap(anyMap(firstPresentAny(contextPack["context_compiler"], contextPack["contextCompiler"], payload["context_compiler"], payload["contextCompiler"])))
+	if len(compiler) == 0 {
+		return
+	}
+	previousCount := anyToInt(compiler["ranked_evidence_count"], len(rankedEvidence))
+	preBoundaryCount := anyToInt(compiler["pre_boundary_ranked_evidence_count"], previousCount)
+	compacted := previousCount != len(rankedEvidence)
+	if compacted {
+		compiler["pre_boundary_ranked_evidence_count"] = maxInt(preBoundaryCount, previousCount)
+		compiler["ranked_evidence_count"] = len(rankedEvidence)
+		compiler["complete"] = false
+		compiler["boundary_compacted"] = true
+		if stats != nil {
+			stats.OptionalFieldsCompacted++
+		}
+	}
+	tokenBudget := cloneJSONMap(anyMap(compiler["token_budget"]))
+	if len(tokenBudget) > 0 {
+		previousSelected := anyToInt(tokenBudget["selected_count"], previousCount)
+		if previousSelected != len(rankedEvidence) || compacted {
+			tokenBudget["pre_boundary_selected_count"] = maxInt(anyToInt(tokenBudget["pre_boundary_selected_count"], previousSelected), previousSelected)
+			tokenBudget["selected_count"] = len(rankedEvidence)
+			tokenBudget["used_tokens_estimate"] = boundaryEvidenceTokenEstimate(rankedEvidence)
+			tokenBudget["boundary_compacted"] = true
+			compiler["token_budget"] = tokenBudget
+		}
+	}
+	contextPack["rankedEvidence"] = rankedEvidence
+	contextPack["ranked_evidence"] = rankedEvidence
+	contextPack["contextCompiler"] = compiler
+	contextPack["context_compiler"] = compiler
+	if len(tokenBudget) > 0 {
+		contextPack["tokenBudget"] = tokenBudget
+		contextPack["token_budget"] = tokenBudget
+		payload["token_budget"] = tokenBudget
+		if _, ok := payload["tokenBudget"]; ok {
+			payload["tokenBudget"] = tokenBudget
+		}
+	}
+	promptSections := anyMap(firstPresentAny(contextPack["prompt_sections"], contextPack["promptSections"]))
+	if len(promptSections) > 0 {
+		promptSections["evidence"] = rankedEvidence
+		if len(tokenBudget) > 0 {
+			promptSections["token_budget"] = tokenBudget
+		}
+		contextPack["promptSections"] = promptSections
+		contextPack["prompt_sections"] = promptSections
+		if rebuildReferencePrompt && compacted {
+			payload["reference_prompt"] = contextPackReferencePrompt(promptSections)
+		}
+	}
+	payload["context_pack"] = contextPack
+	payload["context_compiler"] = compiler
+	if _, ok := payload["contextCompiler"]; ok {
+		payload["contextCompiler"] = compiler
+	}
+	if compacted {
+		appendBoundaryWarning(payload, "ContextLattice preserved a compact evidence kernel at the output boundary.")
+	}
+}
+
+func boundaryEvidenceTokenEstimate(items []any) int {
+	total := 0
+	for _, raw := range items {
+		total += anyToInt(anyMap(raw)["estimated_tokens"], 0)
+	}
+	return total
+}
+
+func appendBoundaryWarning(payload map[string]any, warning string) {
+	warnings := contextPackAnyList(payload["warnings"])
+	for _, raw := range warnings {
+		if strings.TrimSpace(anyToString(raw)) == warning {
+			return
+		}
+	}
+	payload["warnings"] = append(warnings, warning)
 }
 
 func forceMinimalDreamModeResponseBoundary(payload map[string]any, stats *agentBoundaryStats) {
@@ -868,62 +976,167 @@ func forceMinimalReviewModeResponseBoundary(payload map[string]any, stats *agent
 
 func minimalContextPackBoundary(existing map[string]any) map[string]any {
 	query := strings.TrimSpace(anyToString(existing["query"]))
-	compiler := anyMap(existing["context_compiler"])
-	if len(compiler) == 0 {
-		compiler = anyMap(existing["contextCompiler"])
+	rankedEvidence := minimalRankedEvidenceBoundary(firstPresentAny(existing["ranked_evidence"], existing["rankedEvidence"]), 4)
+	omittedRefs := minimalRankedEvidenceBoundary(firstPresentAny(existing["omitted_high_value_refs"], existing["omittedHighValueRefs"]), 3)
+	compiler := minimalContextCompilerBoundary(anyMap(firstPresentAny(existing["context_compiler"], existing["contextCompiler"])), rankedEvidence)
+	promptSections := minimalPromptSectionsBoundary(
+		anyMap(firstPresentAny(existing["prompt_sections"], existing["promptSections"])),
+		query,
+		rankedEvidence,
+		omittedRefs,
+		compiler,
+	)
+	tokenBudget := anyMap(compiler["token_budget"])
+	return map[string]any{
+		"query":                   clipUTF8Bytes(sanitizeProviderOverflowText(query), 1000),
+		"facts":                   []any{},
+		"numericFacts":            []any{},
+		"numeric_facts":           []any{},
+		"citations":               []any{},
+		"results":                 []any{},
+		"rankedEvidence":          rankedEvidence,
+		"ranked_evidence":         rankedEvidence,
+		"promptSections":          promptSections,
+		"prompt_sections":         promptSections,
+		"contextCompiler":         compiler,
+		"context_compiler":        compiler,
+		"tokenBudget":             tokenBudget,
+		"token_budget":            tokenBudget,
+		"omittedHighValueRefs":    omittedRefs,
+		"omitted_high_value_refs": omittedRefs,
+		"relevantDecisions":       []any{},
+		"relevant_decisions":      []any{},
+		"filesToRead":             []any{},
+		"files_to_read":           []any{},
+		"filesToAvoid":            []any{},
+		"files_to_avoid":          []any{},
+		"capabilitiesToUse":       []any{},
+		"capabilities_to_use":     []any{},
+		"runbooks":                []any{},
+		"knownFailureModes":       []any{},
+		"known_failure_modes":     []any{},
+		"commands":                []any{},
+		"acceptanceCriteria":      []any{},
+		"acceptance_criteria":     []any{},
+		"agentGuidance":           map[string]any{"schema_id": "contextlattice_agent_guidance.v1", "source": "deterministic_evidence_analysis", "authoritative": false, "themes": []any{}, "risk_markers": []any{}, "candidate_links": []any{}, "missing_evidence": []any{}, "prompt_hints": []any{}},
+		"agent_guidance":          map[string]any{"schema_id": "contextlattice_agent_guidance.v1", "source": "deterministic_evidence_analysis", "authoritative": false, "themes": []any{}, "risk_markers": []any{}, "candidate_links": []any{}, "missing_evidence": []any{}, "prompt_hints": []any{}},
 	}
+}
+
+func minimalRankedEvidenceBoundary(value any, keep int) []any {
+	items := contextPackAnyList(value)
+	out := make([]any, 0, minInt(keep, len(items)))
+	for _, raw := range items {
+		if len(out) >= keep {
+			break
+		}
+		item := anyMap(raw)
+		text := firstNonEmptyStrings(anyToString(item["text"]), anyToString(item["summary"]))
+		text = clipUTF8Bytes(sanitizeProviderOverflowText(strings.TrimSpace(text)), 420)
+		if text == "" {
+			continue
+		}
+		compact := map[string]any{
+			"rank": anyToInt(item["rank"], len(out)+1),
+			"text": text,
+		}
+		for _, key := range []string{"kind", "project", "file", "source", "topic_path", "timestamp", "relation", "edge_direction"} {
+			if value := strings.TrimSpace(anyToString(item[key])); value != "" {
+				compact[key] = clipUTF8Bytes(sanitizeProviderOverflowText(value), 240)
+			}
+		}
+		for _, key := range []string{"score", "confidence", "estimated_tokens", "value_density"} {
+			if value, ok := item[key]; ok {
+				compact[key] = value
+			}
+		}
+		if reason := strings.TrimSpace(anyToString(item["reason"])); reason != "" {
+			compact["reason"] = clipUTF8Bytes(sanitizeProviderOverflowText(reason), 240)
+		}
+		if signals := boundaryStringList(item["why_selected"], 4, 160); len(signals) > 0 {
+			compact["why_selected"] = signals
+		}
+		out = append(out, compact)
+	}
+	return out
+}
+
+func minimalContextCompilerBoundary(existing map[string]any, rankedEvidence []any) map[string]any {
+	compiler := cloneJSONMap(existing)
 	if len(compiler) == 0 {
 		compiler = map[string]any{
-			"schema_id":             "contextlattice_context_compiler.v1",
-			"version":               1,
-			"strategy":              "boundary_minimal",
-			"intended_use":          "preserve a contract-valid context package after boundary compaction",
-			"recommended_surface":   "cli_for_local_agents",
-			"ranked_evidence_count": 0,
+			"schema_id":           "contextlattice_context_compiler.v1",
+			"version":             1,
+			"strategy":            "boundary_minimal",
+			"intended_use":        "preserve a contract-valid context package after boundary compaction",
+			"recommended_surface": "cli_for_local_agents",
 		}
 	}
-	promptSections := anyMap(existing["prompt_sections"])
-	if len(promptSections) == 0 {
-		promptSections = anyMap(existing["promptSections"])
+	currentCount := anyToInt(compiler["ranked_evidence_count"], len(rankedEvidence))
+	preBoundaryCount := maxInt(anyToInt(compiler["pre_boundary_ranked_evidence_count"], currentCount), currentCount)
+	compiler["pre_boundary_ranked_evidence_count"] = preBoundaryCount
+	compiler["ranked_evidence_count"] = len(rankedEvidence)
+	compiler["complete"] = false
+	compiler["boundary_compacted"] = true
+	tokenBudget := cloneJSONMap(anyMap(compiler["token_budget"]))
+	if len(tokenBudget) > 0 {
+		currentSelected := anyToInt(tokenBudget["selected_count"], currentCount)
+		preBoundarySelected := maxInt(anyToInt(tokenBudget["pre_boundary_selected_count"], currentSelected), currentSelected)
+		usedTokens := 0
+		for _, raw := range rankedEvidence {
+			usedTokens += anyToInt(anyMap(raw)["estimated_tokens"], 0)
+		}
+		tokenBudget["pre_boundary_selected_count"] = preBoundarySelected
+		tokenBudget["selected_count"] = len(rankedEvidence)
+		tokenBudget["used_tokens_estimate"] = usedTokens
+		tokenBudget["boundary_compacted"] = true
+		compiler["token_budget"] = tokenBudget
 	}
-	if len(promptSections) == 0 {
-		promptSections = map[string]any{
-			"objective":   query,
-			"task":        query,
-			"next_action": "Broaden retrieval or retry after deferred sources finish.",
+	return compiler
+}
+
+func minimalPromptSectionsBoundary(
+	existing map[string]any,
+	query string,
+	rankedEvidence []any,
+	omittedRefs []any,
+	compiler map[string]any,
+) map[string]any {
+	objective := firstNonEmptyStrings(anyToString(existing["objective"]), query)
+	task := firstNonEmptyStrings(anyToString(existing["task"]), query)
+	nextAction := firstNonEmptyStrings(anyToString(existing["next_action"]), "Inspect the preserved evidence kernel, then broaden retrieval if required.")
+	out := map[string]any{
+		"objective":               clipUTF8Bytes(sanitizeProviderOverflowText(objective), 1000),
+		"task":                    clipUTF8Bytes(sanitizeProviderOverflowText(task), 1000),
+		"next_action":             clipUTF8Bytes(sanitizeProviderOverflowText(nextAction), 1000),
+		"evidence":                rankedEvidence,
+		"omitted_high_value_refs": omittedRefs,
+	}
+	if tokenBudget := anyMap(compiler["token_budget"]); len(tokenBudget) > 0 {
+		out["token_budget"] = tokenBudget
+	}
+	for _, key := range []string{"constraints", "checks", "risks", "files_to_inspect", "commands", "capabilities"} {
+		if values := boundaryStringList(existing[key], 5, 240); len(values) > 0 {
+			out[key] = values
 		}
 	}
-	rankedEvidence := []any{}
-	return map[string]any{
-		"query":               clipUTF8Bytes(sanitizeProviderOverflowText(query), 1000),
-		"facts":               []any{},
-		"numericFacts":        []any{},
-		"numeric_facts":       []any{},
-		"citations":           []any{},
-		"results":             []any{},
-		"rankedEvidence":      rankedEvidence,
-		"ranked_evidence":     rankedEvidence,
-		"promptSections":      promptSections,
-		"prompt_sections":     promptSections,
-		"contextCompiler":     compiler,
-		"context_compiler":    compiler,
-		"relevantDecisions":   []any{},
-		"relevant_decisions":  []any{},
-		"filesToRead":         []any{},
-		"files_to_read":       []any{},
-		"filesToAvoid":        []any{},
-		"files_to_avoid":      []any{},
-		"capabilitiesToUse":   []any{},
-		"capabilities_to_use": []any{},
-		"runbooks":            []any{},
-		"knownFailureModes":   []any{},
-		"known_failure_modes": []any{},
-		"commands":            []any{},
-		"acceptanceCriteria":  []any{},
-		"acceptance_criteria": []any{},
-		"agentGuidance":       map[string]any{"schema_id": "contextlattice_agent_guidance.v1", "source": "deterministic_evidence_analysis", "authoritative": false, "themes": []any{}, "risk_markers": []any{}, "candidate_links": []any{}, "missing_evidence": []any{}, "prompt_hints": []any{}},
-		"agent_guidance":      map[string]any{"schema_id": "contextlattice_agent_guidance.v1", "source": "deterministic_evidence_analysis", "authoritative": false, "themes": []any{}, "risk_markers": []any{}, "candidate_links": []any{}, "missing_evidence": []any{}, "prompt_hints": []any{}},
+	return out
+}
+
+func boundaryStringList(value any, keep int, maxBytes int) []any {
+	items := contextPackAnyList(value)
+	out := make([]any, 0, minInt(keep, len(items)))
+	for _, item := range items {
+		text := strings.TrimSpace(anyToString(item))
+		if text == "" {
+			continue
+		}
+		out = append(out, clipUTF8Bytes(sanitizeProviderOverflowText(text), maxBytes))
+		if len(out) >= keep {
+			break
+		}
 	}
+	return out
 }
 
 func minimalSourceCoverageBoundary(existing map[string]any) map[string]any {
