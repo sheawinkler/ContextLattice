@@ -83,6 +83,7 @@ patterns = [
 ]
 personal_path_raw = os.environ.get('CONTEXTLATTICE_PUBLIC_FORBIDDEN_PATH_RE', '')
 personal_path_pattern = re.compile(personal_path_raw) if personal_path_raw else None
+private_repo_marker = 'sheawinkler/' + 'http-context-and-memory-orchestrator'
 findings = []
 for raw in files:
     path = scan_root / raw
@@ -99,6 +100,8 @@ for raw in files:
     except Exception:
         continue
     for i, line in enumerate(text.splitlines(), 1):
+        if public and private_repo_marker in line:
+            findings.append({'kind': 'private_repo_reference', 'file': raw, 'line': i, 'match': line[:220]})
         if public and personal_path_pattern and personal_path_pattern.search(line):
             findings.append({'kind': 'personal_path', 'file': raw, 'line': i, 'match': line[:220]})
         for kind, pattern in patterns:

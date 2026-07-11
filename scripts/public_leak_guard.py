@@ -39,6 +39,7 @@ BLOCKED_TEXT = (
     _s("private ", "operator ", "docs"),
     _s("private ", "operator ", "runbooks"),
     _s("private ", "runbooks"),
+    _s("sheawinkler/", "http-context-and-memory-orchestrator"),
 )
 
 TEXT_EXTENSIONS = {

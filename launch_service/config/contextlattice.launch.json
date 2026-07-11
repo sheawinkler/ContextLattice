@@ -8,15 +8,15 @@
     "primary_url": "https://contextlattice.io/",
     "docs_url": "https://contextlattice.io/installation.html",
     "troubleshooting_url": "https://contextlattice.io/troubleshooting.html",
-    "repo_url": "https://github.com/sheawinkler/http-context-and-memory-orchestrator",
+    "repo_url": "https://github.com/sheawinkler/ContextLattice",
     "public_overview_url": "https://contextlattice.io/"
   },
   "channels": [
     {
       "tier": "P0",
       "name": "GitHub Release",
-      "listing_url": "https://github.com/sheawinkler/http-context-and-memory-orchestrator/releases/new",
-      "submission_path": "Tag v2.0.0 + release notes + checksums + images",
+      "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
+      "submission_path": "Tag v3.11.0 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v2.0.0",
-      "body": "ContextLattice v2.0.0 is now live.\\n\\nHighlights:\\n- Rust+Go runtime path enabled by default with Python retained as legacy fallback\\n- Live retrieval A/B: mean 4.94x faster, p50 8.57x faster, p95 2.36x faster\\n- HTTP-first, MCP-compatible memory/context/task orchestration with secure local defaults\\n- Durable write fanout across memory-bank, Qdrant, Mongo raw, MindsDB, and optional Letta\\n\\nStart here:\\n- Docs: {docs_url}\\n- Troubleshooting: {troubleshooting_url}\\n- Repo: {repo_url}"
+      "title": "{product_name} v3.11.0",
+      "body": "ContextLattice v3.11.0 is now live.\\n\\nHighlights:\\n- Go/Rust own the active runtime; no Python application service\\n- Live retrieval A/B: mean 4.94x faster, p50 8.57x faster, p95 2.36x faster\\n- HTTP-first, MCP-compatible memory/context/task orchestration with secure local defaults\\n- Durable write fanout across memory-bank, Qdrant, Mongo raw, MindsDB, and optional Letta\\n\\nStart here:\\n- Docs: {docs_url}\\n- Troubleshooting: {troubleshooting_url}\\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v2.0.0 is live.\\n\\nPrivate-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.\\n- Rust+Go runtime defaults with Python rollback path\\n- Live retrieval uplift: ~5x faster mean latency on cutover benchmark\\n- HTTP-first, MCP-compatible interface with federated retrieval + learning rerank\\n\\nStart local-first: {docs_url}\\n\\nFollow-up thread:\\n1) Why long-horizon agent work degrades without memory/context\\n2) How orchestration + retrieval stabilizes quality\\n3) v2.0.0 runtime benchmark and rollout notes"
+      "body": "ContextLattice v3.11.0 is live.\\n\\nPrivate-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.\\n- Go/Rust active runtime with strict native ownership\\n- Live retrieval uplift: ~5x faster mean latency on cutover benchmark\\n- HTTP-first, MCP-compatible interface with federated retrieval + learning rerank\\n\\nStart local-first: {docs_url}\\n\\nFollow-up thread:\\n1) Why long-horizon agent work degrades without memory/context\\n2) How orchestration + retrieval stabilizes quality\\n3) v3.11.0 runtime benchmark and rollout notes"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "Today we are launching ContextLattice v2.0.0.\\n\\nContextLattice is an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator for agent systems.\\n\\nWhy teams use it:\\n- resolve an agentic issue once, then share reusable context across the team and organization\\n- reduces repeated errors in long-running agent workflows\\n- now runs Rust+Go runtime defaults with Python fallback for rollback safety\\n- measured ~5x mean retrieval latency improvement in live A/B cutover validation\\n- ships private-by-default with local-first controls\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
+      "body": "Today we are launching ContextLattice v3.11.0.\\n\\nContextLattice is an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator for agent systems.\\n\\nWhy teams use it:\\n- resolve an agentic issue once, then share reusable context across the team and organization\\n- reduces repeated errors in long-running agent workflows\\n- runs a Go/Rust active runtime with strict native ownership\\n- measured ~5x mean retrieval latency improvement in live A/B cutover validation\\n- ships private-by-default with local-first controls\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",
