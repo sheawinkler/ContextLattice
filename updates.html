@@ -46,9 +46,9 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.10.1 is the public baseline.</h3>
+        <h3>v3.11.2 is the public cognition-core baseline.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.10.1:</strong> agent runner layer, CLI-first quickstart, detected OMP/Mercury instruction hooks, tokenizer-exact prompt economics, bounded token-impact and context-pack quality ledgers, observed outcome telemetry, universal adapter, native agent runtime sessions, Go-first <code>:8075</code>, Python fallback <code>:18075</code>, and Qdrant-first local Lite recall behind one contract.</li>
+          <li><strong>Public v3.11.2:</strong> deterministic Synthesis Packs, evidence-preserving sparse context, async warming, idempotent outcome capture, graph/recall eval evidence, public-core parity, upgrade-safe runner discovery, CLI-first adoption, tokenizer-exact prompt economics, native sessions, and Go/Rust runtime ownership behind one local contract.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
           <li><strong>Promotion policy:</strong> optional adapter-lab work only becomes a public default after benchmark, recall, and soak evidence.</li>
         </ul>
@@ -56,6 +56,68 @@
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-11 · v3.11.2 · Sparse Evidence Preservation</span>
+        <h2>The smallest pack still carries proof.</h2>
+        <p>
+          v3.11.2 changes the final context boundary from an empty shell into an evidence kernel. When a full
+          Context Pack exceeds its output contract, ContextLattice now keeps the four highest-ranked compact
+          evidence cards and rebuilds synthesis from those citations.
+        </p>
+        <ul>
+          <li><strong>Priority:</strong> high-impact evidence survives before duplicated prompt structure.</li>
+          <li><strong>Truthful accounting:</strong> compiler and token-budget metadata report both pre-boundary and returned evidence counts.</li>
+          <li><strong>Grounded synthesis:</strong> forced-minimal packs retain non-empty findings and evidence trails without using an LLM.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-11 · v3.11.1 · Upgrade-Safe Runner Discovery</span>
+        <h2>Long-lived agents can find the current install.</h2>
+        <p>
+          v3.11.1 prevents a stale inherited checkout path from hiding valid Pi and Droid adapters after an
+          in-place ContextLattice upgrade. Discovery now consults the installer-owned root and installed
+          contract registry while preserving explicit repository selection.
+        </p>
+        <ul>
+          <li><strong>Upgrade safety:</strong> agents launched before an install refresh no longer need a manual environment rewrite to see the current runner adapters.</li>
+          <li><strong>Contract truth:</strong> runner capability detection can use the installed, versioned contract registry.</li>
+          <li><strong>Boundaries unchanged:</strong> ContextLattice still does not install third-party harnesses or auto-dispatch work.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-11 · v3.11.0 · Cognition Core</span>
+        <h2>Memory became a decision surface.</h2>
+        <p>
+          v3.11.0 adds deterministic Synthesis Packs, keeps sparse context contract-valid, labels queued
+          retrieval as warming instead of degraded, and closes the outcome loop without letting infrastructure
+          failures poison retrieval calibration.
+        </p>
+        <ul>
+          <li><strong>Synthesis:</strong> CLI and HTTP surfaces turn ranked evidence, topic gravity, graph links, constraints, and open questions into a bounded brief.</li>
+          <li><strong>Honest graph proof:</strong> project graph quality rose from <code>20</code> to <code>74</code>; saved recall passed <code>5/5</code>, while measured graph lift remained <code>0.0</code>, so expansion stays disabled.</li>
+          <li><strong>Outcome loop:</strong> task completions emit deterministic idempotent outcomes, with calibration-eligible samples counted separately.</li>
+          <li><strong>Parity:</strong> 14 public-core capabilities and 13 agent profiles now validate across every distribution.</li>
+          <li><strong>Runtime:</strong> <code>x/crypto</code> is patched and no Python service is part of the active application path.</li>
+        </ul>
+      </article>
+
+      <article class="update-card">
+        <span class="update-meta">2026-07-06 · v3.10.2 · Go-Native Feedback Submit</span>
+        <h2>The feedback loop moved onto the hot path.</h2>
+        <p>
+          v3.10.2 makes <code>/tools/feedback_submit</code> a native Go route with bounded
+          validation, idempotency, preference projection, telemetry, and strict ownership coverage.
+          The active runtime no longer needs a Python backend proxy for agent feedback.
+        </p>
+        <ul>
+          <li><strong>Native route:</strong> <code>/tools/feedback_submit</code> is served by <code>gateway-go</code>.</li>
+          <li><strong>Safety:</strong> duplicate idempotency keys replay safely; mismatched payloads return conflict.</li>
+          <li><strong>Signal:</strong> <code>/preferences</code> and <code>/telemetry/memory</code> expose bounded feedback-derived state.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-06 · v3.10.1 · OMP + Mercury Install Hooks</span>
         <h2>New installs now wire more local agents without another round trip.</h2>
@@ -234,11 +296,11 @@
         <p class="spotlight">
           Staged retrieval still returns fast context first, but continuation progress is now contract-visible across
           HTTP, CLI, session rollups, traces, and the dashboard. Local agents can watch their own session and receive a
-          bounded steering comment when deeper recall is ready or degraded.
+          bounded steering comment when deeper recall is warming, ready, or terminally degraded.
         </p>
         <ul>
           <li><strong>Progress contract:</strong> responses include <code>retrieval_progress.v1</code> with progress, confidence, source state, poll URL, and event URL.</li>
-          <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.ready</code> or <code>retrieval.continuation.degraded</code>.</li>
+          <li><strong>Agent steering:</strong> <code>steering_comment.v1</code> lands in the requesting session as <code>retrieval.continuation.progress</code>, <code>retrieval.continuation.ready</code>, or terminal <code>retrieval.continuation.degraded</code>.</li>
           <li><strong>CLI watch:</strong> <code>contextlattice_agent_session watch --session-id &lt;id&gt; --continuation-token &lt;token&gt; --pretty</code> gives agents a compact terminal inbox.</li>
           <li><strong>Dashboard:</strong> retrieval flow shows the async lane, source states, progress, confidence, and the agent watch command.</li>
         </ul>
