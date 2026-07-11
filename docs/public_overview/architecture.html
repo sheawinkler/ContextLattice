@@ -193,11 +193,11 @@
       <h2>Which language runs what, and why</h2>
       <div class="grid component-grid">
         <article class="card component-card">
-          <h3>Python: fallback and compatibility lane</h3>
+          <h3>Python: compact hooks and development utilities</h3>
           <ul class="spec-list">
-            <li><strong>Runs:</strong> rollback ingress on <code>:18075</code>, compatibility adapters, and selected operator tooling paths.</li>
-            <li><strong>Why:</strong> preserves rollback safety and broad integration coverage while Go/Rust remain default.</li>
-            <li><strong>Efficacy impact:</strong> fail-safe continuity when primary runtime components are unavailable.</li>
+            <li><strong>Runs:</strong> bounded hook glue and optional repo-local development scripts, not an application service.</li>
+            <li><strong>Why:</strong> keeps portable lifecycle hooks and one-shot tooling lightweight without owning live routes.</li>
+            <li><strong>Boundary:</strong> no Python process or fallback ingress is launched by the active public runtime.</li>
           </ul>
         </article>
 
@@ -221,10 +221,10 @@
       </div>
       <article class="card arch-note-card">
         <div class="kicker">Current Runtime Default</div>
-        <h3>Rust+Go enabled, Python fallback retained</h3>
+        <h3>Rust+Go own the active application runtime</h3>
         <ul class="spec-list arch-note-list">
           <li><strong>Default posture:</strong> Rust+Go runtime path is enabled for performance-critical execution.</li>
-          <li><strong>Fallback posture:</strong> Python fallback remains available for rollback safety.</li>
+          <li><strong>Ownership posture:</strong> strict native-route audits reject accidental Python hot-path ownership.</li>
           <li><strong>Verification endpoint:</strong> query <code>GET /migration/runtime</code> to confirm active runtime mode.</li>
           <li><strong>Efficacy focus:</strong> optimize for correct outcomes per request, not raw benchmark numbers alone.</li>
         </ul>
@@ -240,7 +240,7 @@
           <ul class="spec-list">
             <li><strong>Primary interface:</strong> CLI workflows for agents and operators</li>
             <li><strong>Ingress:</strong> <code>gateway-go</code> on <code>:8075</code></li>
-            <li><strong>Fallback:</strong> Python rollback lane on <code>:18075</code></li>
+            <li><strong>Runtime boundary:</strong> no Python service is launched; hook glue remains outside the application path</li>
             <li><strong>Fast memory:</strong> topic rollups, Qdrant, graph neighbors, and bounded context packs</li>
             <li><strong>Slow-source handling:</strong> async continuation by default for tail-latency control</li>
             <li><strong>Objective:</strong> stable local memory with clear operational behavior</li>
@@ -266,7 +266,7 @@ flowchart TD
   C --> D["Fast default: topic_rollups, qdrant"]
   C --> E["Slow async: mindsdb, mongo_raw, letta, memory_bank"]
   E --> F["Continuation events + cache warm"]
-  B --> G["Python fallback :18075 (rollback)"]
+  B --> G["Strict native ownership audit"]
   B --> H["Optional adapter lab"]
   H --> I["Bounded telemetry + operator review"]
   I --> J["Promote only with hard gate evidence"]
