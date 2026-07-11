@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"sort"
@@ -401,6 +402,55 @@ func TestAgentBoundaryContractClipsOversizedContextPackPayload(t *testing.T) {
 	if results, _ := clippedPack["results"].([]any); len(results) > agentBoundaryLimitsForContract(contextPackResponseContractID).MaxListItems {
 		t.Fatalf("expected context_pack.results clipped, got %d", len(results))
 	}
+}
+
+func TestMinimalContextPackBoundaryPreservesContextAndSynthesisContracts(t *testing.T) {
+	pack := minimalContextPackBoundary(map[string]any{"query": "sparse synthesis boundary"})
+	coverage := map[string]any{"configured": []any{"qdrant"}, "returned": []any{}, "complete": false}
+	runAdvisor := buildRunAdvisor(runAdvisorInput{
+		Query:          "sparse synthesis boundary",
+		Project:        "contextlattice",
+		RetrievalMode:  "fast",
+		SourceCoverage: coverage,
+		RankedEvidence: []any{},
+		Surface:        "/memory/context-pack",
+	})
+	contextResponse := attachContextPackFormatContract(map[string]any{
+		"ok":                 true,
+		"context_pack":       pack,
+		"source_coverage":    coverage,
+		"context_compiler":   pack["context_compiler"],
+		"reference_prompt":   "No ranked evidence was available; broaden retrieval.",
+		"run_advisor":        runAdvisor,
+		"writeback_required": true,
+	})
+	assertBoundaryContractPassed(t, contextPackResponseContractID, contextResponse)
+
+	s := newTestServer(t, "http://127.0.0.1:1")
+	synthesis := s.buildSynthesisPack(context.Background(), contextResponse, map[string]any{
+		"project":        "contextlattice",
+		"query":          "sparse synthesis boundary",
+		"retrieval_mode": "fast",
+	}, "/memory/synthesis-pack")
+	synthesisResponse := attachPayloadFormatContract(synthesisPackContractID, map[string]any{
+		"ok":                   true,
+		"schema_id":            synthesisPackContractID,
+		"version":              1,
+		"project":              "contextlattice",
+		"query":                "sparse synthesis boundary",
+		"topic_path":           "",
+		"retrieval_mode":       "fast",
+		"retrieval_intent":     "synthesis",
+		"synthesis_pack":       synthesis,
+		"context_pack":         pack,
+		"source_coverage":      coverage,
+		"reference_prompt":     synthesisPackReferencePrompt(synthesis),
+		"token_impact":         map[string]any{},
+		"context_pack_quality": map[string]any{},
+		"run_advisor":          runAdvisor,
+		"writeback_required":   true,
+	}, "codex_gpt5_test", "synthesis_pack", "/memory/synthesis-pack")
+	assertBoundaryContractPassed(t, synthesisPackContractID, synthesisResponse)
 }
 
 func TestAgentBoundaryContractClipsOversizedDreamPayload(t *testing.T) {
