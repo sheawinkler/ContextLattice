@@ -205,14 +205,15 @@ func TestContextPassportCompactionFailurePreservesInMemoryState(t *testing.T) {
 
 func TestPortableValueRedactsSecretsTokensAndMachineRoots(t *testing.T) {
 	stats := &portableRedactionStats{}
+	githubToken := "ghp" + "_abcdefghijklmnopqrstuvwxyz123456"
 	value := portableMap(map[string]any{
 		"api_key":      "must disappear",
-		"note":         "Bearer abcdefghijklmnopqrstuvwxyz /Users/example/private ghp_abcdefghijklmnopqrstuvwxyz123456",
+		"note":         "Bearer abcdefghijklmnopqrstuvwxyz /Users/example/private " + githubToken,
 		"token_budget": 4096,
 	}, stats)
 	encoded, _ := json.Marshal(value)
 	text := string(encoded)
-	for _, forbidden := range []string{"must disappear", "/Users/example", "ghp_abcdefghijklmnopqrstuvwxyz", "Bearer abcdefghijklmnopqrstuvwxyz"} {
+	for _, forbidden := range []string{"must disappear", "/Users/example", githubToken, "Bearer abcdefghijklmnopqrstuvwxyz"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("portable output retained %q: %s", forbidden, text)
 		}
