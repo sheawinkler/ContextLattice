@@ -2030,6 +2030,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"max-facts":            "max_facts",
 		"agent-id":             "agent_id",
 		"session-id":           "session_id",
+		"task-id":              "task_id",
 		"retries":              "retries",
 		"retry-delay":          "retry_delay",
 		"task-phase":           "task_phase",
@@ -2047,7 +2048,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"no-auto-session": "no_auto_session",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage(commandName + " '<task>' [--project p] [--topic-path t] [--mode balanced] [--full|--debug] [--pretty]")
+		return c.emitUsage(commandName + " '<task>' [--project p] [--task-id id] [--topic-path t] [--mode balanced] [--full|--debug] [--pretty]")
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
@@ -2057,8 +2058,9 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 	project := parsed.string("project", "contextlattice")
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	agentID := parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", envString("MEMMCP_AGENT_ID", "")))
+	taskID := parsed.string("task_id", envString("CONTEXTLATTICE_TASK_ID", derivedAgentTaskID(project, query)))
 	if sessionID == "" && !parsed.bool("no_auto_session") && !autoSessionDisabled() {
-		sessionID = c.ensureSession(project, query, agentID, parsed.float("timeout", 30))
+		sessionID = c.ensureSession(project, query, taskID, agentID, parsed.float("timeout", 30))
 	}
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
 	fullOutput := parsed.bool("full") || parsed.bool("debug")
@@ -2079,6 +2081,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"max_facts":                 parsed.int("max_facts", 24),
 		"agent_id":                  emptyToNil(agentID),
 		"session_id":                emptyToNil(sessionID),
+		"task_id":                   emptyToNil(taskID),
 		"native_cli_implementation": true,
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
@@ -2141,8 +2144,17 @@ func (c *cli) requestWithRetries(path string, payload any, timeout float64, retr
 	return nil, last
 }
 
-func (c *cli) ensureSession(project, objective, agentID string, timeout float64) string {
-	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, map[string]any{}, adapterProfile{}, timeout)
+func derivedAgentTaskID(project, objective string) string {
+	normalizedProject := strings.ToLower(strings.TrimSpace(project))
+	normalizedObjective := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	digest := sha256.Sum256([]byte(normalizedProject + "|" + normalizedObjective))
+	return "task_" + hex.EncodeToString(digest[:])[:24]
+}
+
+func (c *cli) ensureSession(project, objective, taskID, agentID string, timeout float64) string {
+	ownership := adapterOwnership(parsedArgs{})
+	ownership["task_id"] = taskID
+	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, ownership, adapterProfile{}, timeout)
 }
 
 func agentSessionStatusReusable(payload map[string]any, project string, agentID string, reuseKey string) bool {
@@ -2158,8 +2170,11 @@ func agentSessionStatusReusable(payload map[string]any, project string, agentID 
 	if agentID != "" && firstString(session["agent_id"]) != "" && !strings.EqualFold(firstString(session["agent_id"]), agentID) {
 		return false
 	}
-	if reuseKey != "" && firstString(session["reuse_key"]) != "" && !strings.EqualFold(firstString(session["reuse_key"]), reuseKey) {
-		return false
+	if reuseKey != "" {
+		actualReuseKey := firstString(session["reuse_key"])
+		if actualReuseKey == "" || !strings.EqualFold(actualReuseKey, reuseKey) {
+			return false
+		}
 	}
 	return firstString(session["id"]) != ""
 }

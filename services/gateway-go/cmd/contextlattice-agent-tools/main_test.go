@@ -154,7 +154,12 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 func TestPackCommandReusesCachedLiveSession(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
-	writeSessionState("alpha", "sess-cached", "existing task", "codex_test")
+	objective := "continue existing task"
+	taskID := derivedAgentTaskID("alpha", objective)
+	ownership := adapterOwnership(parsedArgs{})
+	ownership["task_id"] = taskID
+	reuseKey := agentSessionReuseKey("alpha", "agent-cli", "codex_test", ownership)
+	writeSessionStateWithExtras("alpha", "sess-cached", objective, "codex_test", map[string]any{"reuse_key": reuseKey, "ownership": ownership})
 	startCalls := 0
 	var packPayload map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +170,7 @@ func TestPackCommandReusesCachedLiveSession(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "unexpected"}})
 		case "/v1/agents/sessions/sess-cached":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
-				"id": "sess-cached", "status": "active", "project": "alpha", "agent_id": "codex_test",
+				"id": "sess-cached", "status": "active", "project": "alpha", "agent_id": "codex_test", "task_id": taskID, "reuse_key": reuseKey,
 			}})
 		case "/memory/context-pack":
 			if err := json.NewDecoder(r.Body).Decode(&packPayload); err != nil {
@@ -186,7 +191,7 @@ func TestPackCommandReusesCachedLiveSession(t *testing.T) {
 	var stdout bytes.Buffer
 	c := newCLI(&stdout, ioDiscard{})
 	c.baseURL = gateway.URL
-	if err := c.run([]string{"contextlattice_pack", "continue existing task", "--project", "alpha", "--agent-id", "codex_test", "--raw"}); err != nil {
+	if err := c.run([]string{"contextlattice_pack", objective, "--project", "alpha", "--agent-id", "codex_test", "--raw"}); err != nil {
 		t.Fatalf("run pack: %v", err)
 	}
 	if startCalls != 0 {
@@ -194,6 +199,74 @@ func TestPackCommandReusesCachedLiveSession(t *testing.T) {
 	}
 	if firstString(packPayload["session_id"]) != "sess-cached" {
 		t.Fatalf("expected cached session id in context request, got %#v", packPayload)
+	}
+	if firstString(packPayload["task_id"]) != taskID {
+		t.Fatalf("expected deterministic task id in context request, got %#v", packPayload)
+	}
+}
+
+func TestPackCommandSeparatesCachedSessionForDifferentTask(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	oldObjective := "old release task"
+	oldTaskID := derivedAgentTaskID("alpha", oldObjective)
+	oldOwnership := adapterOwnership(parsedArgs{})
+	oldOwnership["task_id"] = oldTaskID
+	oldReuseKey := agentSessionReuseKey("alpha", "agent-cli", "codex_test", oldOwnership)
+	writeSessionStateWithExtras("alpha", "sess-old", oldObjective, "codex_test", map[string]any{"reuse_key": oldReuseKey, "ownership": oldOwnership})
+
+	startCalls := 0
+	var startPayload, packPayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/agents/sessions/sess-old":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
+				"id": "sess-old", "status": "active", "project": "alpha", "agent_id": "codex_test", "task_id": oldTaskID, "reuse_key": oldReuseKey,
+			}})
+		case "/v1/agents/sessions/start":
+			startCalls++
+			if err := json.NewDecoder(r.Body).Decode(&startPayload); err != nil {
+				t.Fatalf("decode session start: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
+				"id": "sess-new", "status": "active", "project": "alpha", "agent_id": "codex_test", "task_id": startPayload["task_id"], "reuse_key": startPayload["reuse_key"],
+			}})
+		case "/memory/context-pack":
+			if err := json.NewDecoder(r.Body).Decode(&packPayload); err != nil {
+				t.Fatalf("decode pack request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": agentPacketContractID, "session_id": "sess-new"})
+		case "/v1/agents/sessions/sess-new/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	objective := "new token truth task"
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", objective, "--project", "alpha", "--agent-id", "codex_test", "--raw"}); err != nil {
+		t.Fatalf("run pack: %v", err)
+	}
+	newTaskID := derivedAgentTaskID("alpha", objective)
+	if startCalls != 1 || firstString(startPayload["task_id"]) != newTaskID || newTaskID == oldTaskID {
+		t.Fatalf("different task did not create one distinct session: calls=%d start=%#v", startCalls, startPayload)
+	}
+	if firstString(packPayload["session_id"]) != "sess-new" || firstString(packPayload["task_id"]) != newTaskID {
+		t.Fatalf("context request did not use new task session: %#v", packPayload)
+	}
+}
+
+func TestDerivedAgentTaskIDIsNormalizedAndTaskSpecific(t *testing.T) {
+	first := derivedAgentTaskID("ContextLattice", "  Ship   TOKEN truth ")
+	second := derivedAgentTaskID("contextlattice", "ship token TRUTH")
+	third := derivedAgentTaskID("contextlattice", "ship session truth")
+	if first != second || first == third || !strings.HasPrefix(first, "task_") {
+		t.Fatalf("unexpected derived task identities: first=%s second=%s third=%s", first, second, third)
 	}
 }
 
