@@ -312,6 +312,8 @@ type server struct {
 	memoryStore                     *memoryStore
 	memoryProfilesStore             *memoryProfileStore
 	temporalClaims                  *temporalClaimStore
+	contextPolicy                   *contextPolicyStore
+	skillFoundry                    *skillFoundryStore
 	feedbackStore                   *feedbackStore
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
@@ -1251,6 +1253,16 @@ func newServer() *server {
 		log.Printf("gateway-go temporal claim graph disabled: %v", temporalClaimsErr)
 		temporalClaimsInstance = &temporalClaimStore{enabled: false, claims: map[string]temporalClaim{}, lastError: temporalClaimsErr.Error()}
 	}
+	contextPolicyInstance, contextPolicyErr := newContextPolicyStoreFromEnv()
+	if contextPolicyErr != nil {
+		log.Printf("gateway-go context policy store disabled: %v", contextPolicyErr)
+		contextPolicyInstance = &contextPolicyStore{enabled: false, candidates: map[string]map[string]any{}, evaluations: []map[string]any{}, lastError: contextPolicyErr.Error()}
+	}
+	skillFoundryInstance, skillFoundryErr := newSkillFoundryStoreFromEnv()
+	if skillFoundryErr != nil {
+		log.Printf("gateway-go skill foundry store disabled: %v", skillFoundryErr)
+		skillFoundryInstance = &skillFoundryStore{enabled: false, drafts: map[string]map[string]any{}, evaluations: []map[string]any{}, exports: []map[string]any{}, lastError: skillFoundryErr.Error()}
+	}
 	continuationDurable := newContinuationDurableQueue(policy)
 	t := newRetrievalTelemetry(policy)
 	s := &server{
@@ -1269,6 +1281,8 @@ func newServer() *server {
 		memoryStore:                     memoryStoreInstance,
 		memoryProfilesStore:             newMemoryProfileStore(policy),
 		temporalClaims:                  temporalClaimsInstance,
+		contextPolicy:                   contextPolicyInstance,
+		skillFoundry:                    skillFoundryInstance,
 		feedbackStore:                   feedbackStoreInstance,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
@@ -6939,6 +6953,11 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/claims", s.memoryClaimsWrite)
 	mux.HandleFunc("/memory/claims/query", s.memoryClaimsQuery)
 	mux.HandleFunc("/memory/retrieval/plan", s.memoryRetrievalPlan)
+	mux.HandleFunc("/memory/context-policy/candidate", s.memoryContextPolicyCandidate)
+	mux.HandleFunc("/memory/context-policy/evaluate", s.memoryContextPolicyEvaluate)
+	mux.HandleFunc("/memory/skills/foundry/draft", s.memorySkillFoundryDraft)
+	mux.HandleFunc("/memory/skills/foundry/evaluate", s.memorySkillFoundryEvaluate)
+	mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)
 	mux.HandleFunc("/memory/dream", s.memoryDream)
 	mux.HandleFunc("/memory/review", s.memoryReview)
 	mux.HandleFunc("/feedback", s.feedbackRoute)
@@ -6951,6 +6970,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
 	mux.HandleFunc("/telemetry/claim-graph", s.telemetryClaimGraph)
+	mux.HandleFunc("/telemetry/context-policy", s.telemetryContextPolicy)
+	mux.HandleFunc("/telemetry/skills/foundry", s.telemetrySkillFoundry)
 	mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)
@@ -6984,6 +7005,11 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/tools/claim_write", s.toolsClaimWrite)
 	mux.HandleFunc("/tools/claim_query", s.toolsClaimQuery)
 	mux.HandleFunc("/tools/retrieval_plan", s.toolsRetrievalPlan)
+	mux.HandleFunc("/tools/context_policy_candidate", s.toolsContextPolicyCandidate)
+	mux.HandleFunc("/tools/context_policy_evaluate", s.toolsContextPolicyEvaluate)
+	mux.HandleFunc("/tools/skill_foundry_draft", s.toolsSkillFoundryDraft)
+	mux.HandleFunc("/tools/skill_foundry_evaluate", s.toolsSkillFoundryEvaluate)
+	mux.HandleFunc("/tools/skill_foundry_export", s.toolsSkillFoundryExport)
 	mux.HandleFunc("/tools/dream", s.toolsDream)
 	mux.HandleFunc("/tools/review", s.toolsReview)
 	mux.HandleFunc("/tools/memory_write_batch", s.toolsMemoryWriteBatch)

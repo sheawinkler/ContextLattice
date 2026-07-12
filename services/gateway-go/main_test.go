@@ -33,6 +33,12 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	if os.Getenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED") == "" {
 		t.Setenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED", "false")
 	}
+	if os.Getenv("CONTEXTLATTICE_CONTEXT_POLICY_ENABLED") == "" {
+		t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_ENABLED", "false")
+	}
+	if os.Getenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED") == "" {
+		t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "false")
+	}
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -995,6 +1001,18 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/tools/retrieval_plan", s.toolsRetrievalPlan)`,
 		`mux.HandleFunc("/tools/claim_write", s.toolsClaimWrite)`,
 		`mux.HandleFunc("/tools/claim_query", s.toolsClaimQuery)`,
+		`mux.HandleFunc("/memory/context-policy/candidate", s.memoryContextPolicyCandidate)`,
+		`mux.HandleFunc("/memory/context-policy/evaluate", s.memoryContextPolicyEvaluate)`,
+		`mux.HandleFunc("/tools/context_policy_candidate", s.toolsContextPolicyCandidate)`,
+		`mux.HandleFunc("/tools/context_policy_evaluate", s.toolsContextPolicyEvaluate)`,
+		`mux.HandleFunc("/telemetry/context-policy", s.telemetryContextPolicy)`,
+		`mux.HandleFunc("/memory/skills/foundry/draft", s.memorySkillFoundryDraft)`,
+		`mux.HandleFunc("/memory/skills/foundry/evaluate", s.memorySkillFoundryEvaluate)`,
+		`mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)`,
+		`mux.HandleFunc("/tools/skill_foundry_draft", s.toolsSkillFoundryDraft)`,
+		`mux.HandleFunc("/tools/skill_foundry_evaluate", s.toolsSkillFoundryEvaluate)`,
+		`mux.HandleFunc("/tools/skill_foundry_export", s.toolsSkillFoundryExport)`,
+		`mux.HandleFunc("/telemetry/skills/foundry", s.telemetrySkillFoundry)`,
 		`mux.HandleFunc("/agents/tasks", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/agents/tasks/", s.agentsTasksRoute)`,
 		`mux.HandleFunc("/telemetry/metrics", s.telemetryMetricsRoute)`,
@@ -1069,6 +1087,18 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/tools/retrieval_plan", s.proxy)`,
 		`mux.HandleFunc("/tools/claim_write", s.proxy)`,
 		`mux.HandleFunc("/tools/claim_query", s.proxy)`,
+		`mux.HandleFunc("/memory/context-policy/candidate", s.proxy)`,
+		`mux.HandleFunc("/memory/context-policy/evaluate", s.proxy)`,
+		`mux.HandleFunc("/tools/context_policy_candidate", s.proxy)`,
+		`mux.HandleFunc("/tools/context_policy_evaluate", s.proxy)`,
+		`mux.HandleFunc("/telemetry/context-policy", s.proxy)`,
+		`mux.HandleFunc("/memory/skills/foundry/draft", s.proxy)`,
+		`mux.HandleFunc("/memory/skills/foundry/evaluate", s.proxy)`,
+		`mux.HandleFunc("/memory/skills/foundry/export", s.proxy)`,
+		`mux.HandleFunc("/tools/skill_foundry_draft", s.proxy)`,
+		`mux.HandleFunc("/tools/skill_foundry_evaluate", s.proxy)`,
+		`mux.HandleFunc("/tools/skill_foundry_export", s.proxy)`,
+		`mux.HandleFunc("/telemetry/skills/foundry", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks", s.proxy)`,
 		`mux.HandleFunc("/agents/tasks/", s.proxy)`,
 		`mux.HandleFunc("/telemetry/metrics", s.proxy)`,

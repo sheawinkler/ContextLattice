@@ -352,6 +352,7 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 		"outcome_id":               outcomeID,
 		"sample_id":                sampleID,
 		"task_id":                  taskID,
+		"project":                  clipText(anyToString(sample["project"]), 160),
 		"task_class":               clipText(anyToString(sample["task_class"]), 80),
 		"first_pass_success":       anyToBool(firstPassRaw),
 		"repair_required":          anyToBool(repairRaw),
@@ -361,6 +362,20 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 		"outcome_class":            outcomeClass,
 		"context_attribution":      attribution,
 		"calibration_eligible":     calibrationEligible,
+	}
+	if policyID := clipText(strings.TrimSpace(anyToString(sample["policy_id"])), 160); policyID != "" {
+		entry["policy_id"] = policyID
+	}
+	if policyArm := strings.TrimSpace(strings.ToLower(anyToString(sample["policy_arm"]))); policyArm != "" {
+		switch policyArm {
+		case "control", "candidate", "shadow", "canary":
+			entry["policy_arm"] = policyArm
+		}
+	}
+	if policyPhase := strings.TrimSpace(strings.ToLower(anyToString(sample["policy_phase"]))); policyPhase != "" {
+		if _, ok := contextPolicyPhases[policyPhase]; ok {
+			entry["policy_phase"] = policyPhase
+		}
 	}
 	if providerPromptTokens > 0 {
 		entry["provider_prompt_tokens"] = providerPromptTokens

@@ -31,6 +31,13 @@ var nativeToolNames = map[string]string{
 	"contextlattice_retrieval_plan":                  "retrieval-plan",
 	"contextlattice_claim_write":                     "claim-write",
 	"contextlattice_claim_query":                     "claim-query",
+	"contextlattice_policy_candidate":                "policy-candidate",
+	"contextlattice_policy_evaluate":                 "policy-evaluate",
+	"contextlattice_policy_status":                   "policy-status",
+	"contextlattice_skill_draft":                     "skill-draft",
+	"contextlattice_skill_evaluate":                  "skill-evaluate",
+	"contextlattice_skill_export":                    "skill-export",
+	"contextlattice_skill_foundry_status":            "skill-foundry-status",
 	"contextlattice_write":                           "write",
 	"contextlattice_agent_session":                   "session",
 	"contextlattice_agent_trace":                     "trace",
@@ -113,6 +120,20 @@ func (c *cli) run(argv []string) error {
 		return c.cmdClaimWrite(args)
 	case "claim-query":
 		return c.cmdClaimQuery(args)
+	case "policy-candidate":
+		return c.cmdPolicyCandidate(args)
+	case "policy-evaluate":
+		return c.cmdPolicyEvaluate(args)
+	case "policy-status":
+		return c.cmdPolicyStatus(args)
+	case "skill-draft":
+		return c.cmdSkillDraft(args)
+	case "skill-evaluate":
+		return c.cmdSkillEvaluate(args)
+	case "skill-export":
+		return c.cmdSkillExport(args)
+	case "skill-foundry-status":
+		return c.cmdSkillFoundryStatus(args)
 	case "session":
 		return c.cmdSession(args)
 	case "trace":
@@ -164,6 +185,13 @@ Native commands:
   retrieval-plan                 deterministic advisor-only evidence and source plan
   claim-write                    write or revise a structured temporal claim
   claim-query                    query structured temporal claims as of a point in time
+  policy-candidate               derive an advisory policy candidate from eligible outcomes
+  policy-evaluate                evaluate one bounded shadow/canary lifecycle transition
+  policy-status                  inspect advisory context-policy ledger status
+  skill-draft                    draft a skill from repeated verified workflow runs
+  skill-evaluate                 evaluate a draft on independent holdouts
+  skill-export                   export a passing human-approved skill without activation
+  skill-foundry-status           inspect Skill Foundry ledger status
   write                          memory write/checkpoint
   session                        agent session lifecycle, rollup, context package, trace, runtime
   trace                          alias for session trace
@@ -183,7 +211,8 @@ Native commands:
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
 contextlattice_pack, contextlattice_synthesis_pack, contextlattice_synthesis_pack_v2,
-contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query, contextlattice_write,
+contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query,
+contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft, contextlattice_write,
 contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
@@ -1128,6 +1157,196 @@ func (c *cli) cmdClaimQuery(args []string) error {
 		"include_superseded": parsed.bool("include_superseded"),
 	}
 	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/claims/query", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func payloadFromOptionalFile(path string) (map[string]any, error) {
+	payload := map[string]any{}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return payload, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode payload file: %w", err)
+	}
+	return payload, nil
+}
+
+func (c *cli) cmdPolicyCandidate(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"minimum-outcomes": "minimum_outcomes", "payload-file": "payload_file", "agent-id": "agent_id",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_policy_candidate [--project p] [--minimum-outcomes 20] [--payload-file candidate.json] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	if parsed.has("project") || firstString(payload["project"]) == "" {
+		payload["project"] = parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	}
+	if parsed.has("minimum_outcomes") {
+		payload["minimum_outcomes"] = parsed.int("minimum_outcomes", 20)
+	}
+	if parsed.has("agent_id") || firstString(payload["agent_id"]) == "" {
+		payload["agent_id"] = parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", ""))
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-policy/candidate", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPolicyEvaluate(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"candidate-id": "candidate_id", "minimum-arm-samples": "minimum_arm_samples", "payload-file": "payload_file", "agent-id": "agent_id",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"apply-transition": "apply_transition"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_policy_evaluate --candidate-id <id> [--payload-file arms.json] [--apply-transition] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	if value := parsed.string("candidate_id", ""); value != "" {
+		payload["candidate_id"] = value
+	}
+	if firstString(payload["candidate_id"]) == "" {
+		return errors.New("candidate id is required")
+	}
+	if parsed.has("minimum_arm_samples") {
+		payload["minimum_arm_samples"] = parsed.int("minimum_arm_samples", 10)
+	}
+	if parsed.bool("apply_transition") {
+		payload["apply_transition"] = true
+	}
+	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")))
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-policy/evaluate", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPolicyStatus(args []string) error {
+	parsed := parseArgs(args, commonStringFlags(), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_policy_status [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/context-policy", nil, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdSkillDraft(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"name": "name", "description": "description", "minimum-verified-runs": "minimum_verified_runs", "skill-version": "skill_version", "supersedes": "supersedes", "payload-file": "payload_file", "agent-id": "agent_id",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_skill_draft --payload-file workflow-runs.json [--name skill-name] [--description text] [--skill-version 1] [--supersedes existing-skill] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	for _, key := range []string{"name", "description"} {
+		if value := parsed.string(key, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	if parsed.has("project") || firstString(payload["project"]) == "" {
+		payload["project"] = parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	}
+	if parsed.has("minimum_verified_runs") {
+		payload["minimum_verified_runs"] = parsed.int("minimum_verified_runs", 3)
+	}
+	if parsed.has("skill_version") {
+		payload["skill_version"] = parsed.int("skill_version", 1)
+	}
+	if value := parsed.string("supersedes", ""); value != "" {
+		payload["supersedes"] = value
+	}
+	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")))
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/skills/foundry/draft", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdSkillEvaluate(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"draft-id": "draft_id", "minimum-holdouts": "minimum_holdouts", "payload-file": "payload_file", "agent-id": "agent_id",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_skill_evaluate --draft-id <id> --payload-file holdouts.json [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	if value := parsed.string("draft_id", ""); value != "" {
+		payload["draft_id"] = value
+	}
+	if firstString(payload["draft_id"]) == "" {
+		return errors.New("draft id is required")
+	}
+	if parsed.has("minimum_holdouts") {
+		payload["minimum_holdouts"] = parsed.int("minimum_holdouts", 3)
+	}
+	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")))
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/skills/foundry/evaluate", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdSkillExport(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"draft-id": "draft_id", "approver": "approver", "agent-id": "agent_id",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"human-approved": "human_approved"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_skill_export --draft-id <id> --human-approved --approver <identity> [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{
+		"draft_id": parsed.string("draft_id", ""), "approver": parsed.string("approver", ""),
+		"human_approved": parsed.bool("human_approved"), "agent_id": parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
+	}
+	if firstString(payload["draft_id"]) == "" {
+		return errors.New("draft id is required")
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/skills/foundry/export", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdSkillFoundryStatus(args []string) error {
+	parsed := parseArgs(args, commonStringFlags(), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_skill_foundry_status [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/skills/foundry", nil, parsed.float("timeout", 15))
 	if err != nil {
 		return err
 	}
@@ -2393,6 +2612,9 @@ func adapterStringFlags() map[string]string {
 		"provider-usage-json":            "provider_usage_json",
 		"task-class":                     "task_class",
 		"outcome-source":                 "outcome_source",
+		"policy-id":                      "policy_id",
+		"policy-arm":                     "policy_arm",
+		"policy-phase":                   "policy_phase",
 	})
 }
 
@@ -3094,6 +3316,9 @@ func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string
 		"project":                        project,
 		"task_class":                     parsed.string("task_class", "agent_workflow"),
 		"outcome_source":                 parsed.string("outcome_source", source),
+		"policy_id":                      parsed.string("policy_id", ""),
+		"policy_arm":                     parsed.string("policy_arm", ""),
+		"policy_phase":                   parsed.string("policy_phase", ""),
 		"retry_count":                    parsed.int("retry_count", 0),
 		"followup_tokens":                parsed.int("followup_tokens", 0),
 		"provider_prompt_tokens":         parsed.int("provider_prompt_tokens", 0),
@@ -3135,6 +3360,9 @@ func contextPackOutcomeRequested(parsed parsedArgs) bool {
 		"provider_completion_tokens",
 		"provider_total_tokens",
 		"provider_usage_json",
+		"policy_id",
+		"policy_arm",
+		"policy_phase",
 	} {
 		if parsed.has(key) {
 			return true
@@ -3156,6 +3384,9 @@ func compactOutcomeMetadata(outcome map[string]any) map[string]any {
 		"provider_completion_tokens": outcome["provider_completion_tokens"],
 		"provider_total_tokens":      outcome["provider_total_tokens"],
 		"outcome_source":             outcome["outcome_source"],
+		"policy_id":                  outcome["policy_id"],
+		"policy_arm":                 outcome["policy_arm"],
+		"policy_phase":               outcome["policy_phase"],
 	})
 }
 

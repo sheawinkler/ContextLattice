@@ -499,6 +499,7 @@ def _post_context_pack_outcome(
     else:
         first_pass_success = normalized_status == "succeeded" and not repair_required
     provider_usage = metadata.get("provider_usage") if isinstance(metadata.get("provider_usage"), dict) else {}
+    task_payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
     payload: dict[str, Any] = {
         "sample_id": sample_id,
         "task_id": str(task.get("id") or ""),
@@ -511,7 +512,12 @@ def _post_context_pack_outcome(
         "outcome_class": str(outcome_class or "unspecified")[:80],
         "context_attribution": str(metadata.get("context_attribution") or "observed_execution_result")[:80],
         "calibration_eligible": bool(calibration_eligible),
+        "project": str(task.get("project") or task_payload.get("project") or "")[:160],
     }
+    for field in ("policy_id", "policy_arm", "policy_phase"):
+        value = metadata.get(field, task_payload.get(field))
+        if value is not None and str(value).strip():
+            payload[field] = str(value).strip()[:160]
     for field, keys in {
         "provider_prompt_tokens": ("prompt_tokens", "input_tokens"),
         "provider_completion_tokens": ("completion_tokens", "output_tokens"),
@@ -535,6 +541,9 @@ def _post_context_pack_outcome(
         "outcome_id": str(outcome.get("outcome_id") or ""),
         "outcome_class": str(outcome.get("outcome_class") or payload["outcome_class"]),
         "calibration_eligible": bool(outcome.get("calibration_eligible", calibration_eligible)),
+        "policy_id": str(outcome.get("policy_id") or payload.get("policy_id") or ""),
+        "policy_arm": str(outcome.get("policy_arm") or payload.get("policy_arm") or ""),
+        "policy_phase": str(outcome.get("policy_phase") or payload.get("policy_phase") or ""),
     }
 
 
