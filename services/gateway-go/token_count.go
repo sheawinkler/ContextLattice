@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
+	tiktokenloader "github.com/pkoukk/tiktoken-go-loader"
 )
 
 const defaultContextPackTokenizerEncoding = "o200k_base"
@@ -26,6 +27,11 @@ var contextPackTokenizerCache = struct {
 }{
 	tokenizers: map[string]*tiktoken.Tiktoken{},
 	errors:     map[string]string{},
+}
+
+func init() {
+	// Token accounting must remain exact in offline and network-restricted runtimes.
+	tiktoken.SetBpeLoader(tiktokenloader.NewOfflineLoader())
 }
 
 func contextPackEstimateTokens(text string) int {

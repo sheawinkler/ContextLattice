@@ -486,6 +486,7 @@ func applyTransportTokenImpact(payload map[string]any, count tokenCountResult, s
 	if count.Encoding != "" {
 		impact["tokenizer_encoding"] = count.Encoding
 	}
+	delete(impact, "warning")
 	if net < 0 {
 		impact["confidence"] = "high"
 		impact["warning"] = "Serialized transport exceeds the raw-evidence counterfactual; no token saving is claimed."

@@ -401,6 +401,32 @@ func TestAgentSessionEnsureReusesTaskAndTerminalStateIsAbsorbing(t *testing.T) {
 	}
 }
 
+func TestAgentSessionEnsureDoesNotFallbackPastExplicitReuseKey(t *testing.T) {
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	mainRequest := `{"ensure":true,"reuse_key":"reuse_main","agent":"codex","agent_id":"codex_test","project":"contextlattice","task_id":"same-task","branch":"main"}`
+	status, mainSession := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", mainRequest)
+	if status != http.StatusOK || !anyToBool(mainSession["created"]) {
+		t.Fatalf("create main session: status=%d payload=%#v", status, mainSession)
+	}
+	releaseRequest := `{"ensure":true,"reuse_key":"reuse_release","agent":"codex","agent_id":"codex_test","project":"contextlattice","task_id":"same-task","branch":"release"}`
+	status, releaseSession := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", releaseRequest)
+	if status != http.StatusOK || !anyToBool(releaseSession["created"]) || anyToBool(releaseSession["reused"]) {
+		t.Fatalf("strong reuse key fell back to cross-branch task id: status=%d payload=%#v", status, releaseSession)
+	}
+	if anyToString(anyMap(mainSession["session"])["id"]) == anyToString(anyMap(releaseSession["session"])["id"]) {
+		t.Fatalf("distinct branch reuse keys returned the same session: main=%#v release=%#v", mainSession, releaseSession)
+	}
+}
+
 func TestExpiredAgentSessionIsNotReportedLiveOrReopened(t *testing.T) {
 	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
 	t.Setenv("GO_AGENT_SESSION_IDLE_TTL_SECS", "60")

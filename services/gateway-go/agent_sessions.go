@@ -1480,11 +1480,17 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 		if agentID == "" && agent != "" && !strings.EqualFold(anyToString(row["agent"]), agent) {
 			continue
 		}
-		if reuseKey != "" && strings.EqualFold(anyToString(row["reuse_key"]), reuseKey) {
-			return row
+		if reuseKey != "" {
+			if strings.EqualFold(anyToString(row["reuse_key"]), reuseKey) {
+				return row
+			}
+			continue
 		}
-		if taskID != "" && strings.EqualFold(anyToString(row["task_id"]), taskID) {
-			return row
+		if taskID != "" {
+			if strings.EqualFold(anyToString(row["task_id"]), taskID) {
+				return row
+			}
+			continue
 		}
 		if nativeID != "" && strings.EqualFold(anyToString(row["native_session_id"]), nativeID) {
 			return row

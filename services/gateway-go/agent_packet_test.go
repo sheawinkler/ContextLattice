@@ -49,6 +49,7 @@ func TestAgentPacketIsBoundedDeduplicatedAndTransportInclusive(t *testing.T) {
 		"token_impact": map[string]any{
 			"baseline_tokens_estimate":        6000,
 			"compiled_prompt_tokens_estimate": 900,
+			"warning":                         "stale intermediate transport warning",
 		},
 	}
 	request := map[string]any{
@@ -81,6 +82,27 @@ func TestAgentPacketIsBoundedDeduplicatedAndTransportInclusive(t *testing.T) {
 	}
 	if anyToInt(impact["compiled_prompt_tokens_estimate"], 0) != 900 {
 		t.Fatalf("expected compiled prompt economics to remain separate, got %#v", impact)
+	}
+	if warning := strings.TrimSpace(anyToString(impact["warning"])); warning != "" {
+		t.Fatalf("positive final savings retained a stale warning: %q", warning)
+	}
+}
+
+func TestTransportImpactWarningTracksFinalDelta(t *testing.T) {
+	payload := map[string]any{
+		"token_impact": map[string]any{
+			"baseline_tokens_estimate": 10,
+		},
+	}
+	applyTransportTokenImpact(payload, tokenCountResult{Tokens: 20, Method: "tiktoken", CalibrationGrade: "tokenizer_exact", TokenizerExact: true}, "test", "serialized_test")
+	impact := anyMap(payload["token_impact"])
+	if anyToInt(impact["saved_tokens_estimate"], -1) != 0 || strings.TrimSpace(anyToString(impact["warning"])) == "" {
+		t.Fatalf("negative final delta must retain an explicit no-savings warning: %#v", impact)
+	}
+	applyTransportTokenImpact(payload, tokenCountResult{Tokens: 5, Method: "tiktoken", CalibrationGrade: "tokenizer_exact", TokenizerExact: true}, "test", "serialized_test")
+	impact = anyMap(payload["token_impact"])
+	if anyToInt(impact["saved_tokens_estimate"], 0) != 5 || strings.TrimSpace(anyToString(impact["warning"])) != "" {
+		t.Fatalf("positive final delta must clear an intermediate no-savings warning: %#v", impact)
 	}
 }
 
