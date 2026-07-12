@@ -1,55 +1,77 @@
 agent-context:
-  - AGENTS.md
-  - config/codex/**
-  - scripts/agent/**
-  - scripts/agent_hooks/**
+  - changed-files:
+      - any-glob-to-any-file:
+          - AGENTS.md
+          - config/codex/**
+          - scripts/agent/**
+          - scripts/agent_hooks/**
 
 ci:
-  - .github/**
-  - Makefile
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - Makefile
 
 dashboard:
-  - contextlattice-dashboard/**
+  - changed-files:
+      - any-glob-to-any-file:
+          - contextlattice-dashboard/**
 
 dependencies:
-  - '**/Cargo.lock'
-  - '**/go.sum'
-  - '**/package-lock.json'
-  - '**/package.json'
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/Cargo.lock"
+          - "**/go.sum"
+          - "**/package-lock.json"
+          - "**/package.json"
 
 docker:
-  - Dockerfile*
-  - docker-compose*.yml
-  - '**/Dockerfile*'
+  - changed-files:
+      - any-glob-to-any-file:
+          - "Dockerfile*"
+          - "docker-compose*.yml"
+          - "**/Dockerfile*"
 
 documentation:
-  - '**/*.md'
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
 
 go:
-  - '**/*.go'
-  - '**/go.mod'
-  - '**/go.sum'
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.go"
+          - "**/go.mod"
+          - "**/go.sum"
 
 javascript:
-  - contextlattice-dashboard/**
-  - '**/*.js'
-  - '**/*.jsx'
-  - '**/*.ts'
-  - '**/*.tsx'
+  - changed-files:
+      - any-glob-to-any-file:
+          - contextlattice-dashboard/**
+          - "**/*.js"
+          - "**/*.jsx"
+          - "**/*.ts"
+          - "**/*.tsx"
 
 runtime:
-  - .env.example
-  - config/env/**
-  - docker-compose*.yml
-  - services/gateway-go/**
+  - changed-files:
+      - any-glob-to-any-file:
+          - .env.example
+          - config/env/**
+          - "docker-compose*.yml"
+          - services/gateway-go/**
 
 rust:
-  - '**/*.rs'
-  - '**/Cargo.toml'
-  - '**/Cargo.lock'
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.rs"
+          - "**/Cargo.toml"
+          - "**/Cargo.lock"
 
 security:
-  - contextlattice-dashboard/lib/auth/**
-  - contextlattice-dashboard/lib/callback-url.ts
-  - contextlattice-dashboard/proxy.ts
-  - scripts/agent_hooks/public_leak_guard.sh
+  - changed-files:
+      - any-glob-to-any-file:
+          - contextlattice-dashboard/lib/auth/**
+          - contextlattice-dashboard/lib/callback-url.ts
+          - contextlattice-dashboard/proxy.ts
+          - scripts/agent_hooks/public_leak_guard.sh

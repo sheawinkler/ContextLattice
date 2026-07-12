@@ -70,7 +70,8 @@
     },
     "workflow_lint": "passed",
     "compose_config": "passed_with_runtime_env",
-    "public_boundary_guard": "passed_zero_findings"
+    "public_boundary_guard": "passed_zero_findings",
+    "install_script_negative_test": "passed_expected_estrictallowscripts"
   },
   "economics": {
     "llm_calls": 0,
@@ -79,7 +80,8 @@
     "application_storage_migrations": 0
   },
   "verification": {
-    "public_repo_checks": "pending_pr",
+    "public_repo_checks": "passed_pr_344",
+    "trusted_base_action_annotations": "pending_proof_pr",
     "release_workflow_without_node20_annotations": "pending_release"
   }
 }
