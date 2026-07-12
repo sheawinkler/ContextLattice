@@ -296,7 +296,6 @@ func (s *server) buildContextPackResponse(
 				"context_compiler":               compiled["context_compiler"],
 				"run_advisor":                    runAdvisor,
 				"graph_quality":                  graphQuality,
-				"active_context_policy":          activeContextPolicy,
 				"context_pack_quality_sample_id": anyToString(contextPackQuality["sample_id"]),
 			},
 		})
