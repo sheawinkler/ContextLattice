@@ -8,17 +8,17 @@ Use ContextLattice at http://127.0.0.1:8075 as mandatory memory/context orchestr
 Readiness rule: when starting on a new machine, account, or agent surface, run `contextlattice_adopt status --pretty` first. If local repo instructions are missing, run `contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty`.
 
 Operating rules:
-1) If CLI tools are available, run `contextlattice_agent_adapter bootstrap --agent <profile> --project <project>` before planning/inference and preserve the returned exports/session_id.
+1) If CLI tools are available, run `contextlattice context "<task>" --project <project> --pretty` before planning/inference. It creates or reuses one task session and returns a compact proof-carrying packet.
 2) If CLI tools are unavailable, call POST /v1/agents/preflight with the agent profile, project, topic_path, query, and retrieval_mode.
-3) For scoped recall, use `contextlattice_agent_adapter context-pack --agent <profile> --project <project> --session-id <session_id>` or POST /memory/context-pack.
+3) For scoped recall, keep using `contextlattice context`; use `contextlattice_synthesis_pack_v2 --full` or HTTP only when the full debugging contract is required.
 4) Report semantic agent state when it changes: `contextlattice_agent_adapter state --agent <profile> --session-id <session_id> --state working|awaiting_user|blocked|done --summary "<why>"`.
 5) If scoped search/context is empty or degraded, run one broader project query before concluding there is no context.
-6) During execution, checkpoint key decisions/outcomes with `contextlattice_agent_adapter checkpoint`, `contextlattice_checkpoint`, or POST /memory/write.
+6) During execution, checkpoint key decisions/outcomes with `contextlattice remember "<checkpoint>" --project <project>`.
 7) Before final output, run a final recency retrieval only when the work was long-running, high-risk, or likely affected by recent memory.
 8) Before handoff or compaction, run `contextlattice_agent_adapter handoff --session-id <session_id> --summary "<objective state>"`.
-9) When preparing a difficult new model/problem-solving request, run `contextlattice_agent_session context-package --session-id <session_id>` and use the returned reference package as the factual context scaffold, including the project/topic/session objective lineage.
+9) When resuming or handing work to another model, run `contextlattice resume --project <project>`; use `--full` only for debugging.
 10) When you need to explain what shaped the run, use `contextlattice_agent_trace --session-id <session_id> --tree` or GET /v1/agents/sessions/{session_id}/trace; the trace includes objective lineage, context, skills, sources, graph touches, handoffs, checkpoints, lifecycle state, and ownership.
-11) On normal completion, run `contextlattice_agent_adapter complete --session-id <session_id> --summary "<result>"`. When the runtime knows the outcome, include `--first-pass-success true|false --repair-required true|false --retry-count <n>` plus provider token counters if available; do not guess missing outcome fields.
+11) On normal completion, run `contextlattice finish "<result>" --success`. Use `--repair` or `--failure` honestly; the latest pending retrieval outcome is reported automatically without inventing provider token counters.
 12) Preserve `objective_runtime_state.v1`, `policy_context_package.v1`, `context_pack_response.v1`, `agent_session_rollup.v1`, `agent_prompt_context_package.v1`, `agent_run_trace.v1`, `contextlattice_agent_lifecycle_state.v1`, and `universal_agent_adapter_response.v1` contract metadata, including `objective_hierarchy` and `objective_lineage`, in downstream handoffs.
 13) If direct search is needed, call POST /memory/search with include_grounding=true and scoped project/topic when known.
 14) If relevant capabilities are unclear, run `contextlattice_skills_index search "<task or tool need>" --pretty` instead of loading every skill.
@@ -36,30 +36,20 @@ Operating rules:
 
 Universal adapter helper for CLI agents:
 ```bash
+# prescribed compact workflow
+contextlattice context "<task>" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
+
 # list supported profiles
 contextlattice_adopt status --pretty
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
 contextlattice_agent_adapter profiles
 
-# start/recover a ContextLattice-owned session and bounded preflight package
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-
-# retrieve bounded context against the same session
-contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
-contextlattice_agent_adapter state --agent codex --project contextlattice --session-id "$SESSION_ID" --state working --pretty
-
-# checkpoint and handoff through the shared lifecycle
-contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
-contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
-contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed" --first-pass-success true --repair-required false --retry-count 0
-
-# package session state for the next model call
-contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_async_inbox_drain --session-id "$SESSION_ID"
-contextlattice_async_inbox_hook --session-id "$SESSION_ID"
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+# advanced lifecycle inspection when a harness needs explicit state or trace data
+contextlattice_agent_adapter state --agent codex --state working --summary "task active" --pretty
+contextlattice_agent_trace --session-id <session-id> --tree
 contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
 
 # discover capabilities without bloating the prompt

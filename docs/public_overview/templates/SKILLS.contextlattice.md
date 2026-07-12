@@ -13,31 +13,31 @@ Use this as a reusable skill block for agent frameworks that support skills or t
 
 ### Required Workflow
 1. Retrieve before inference:
-   - `POST /memory/search` with `include_grounding=true`
+   - `contextlattice context "<task>" --project <project> --pretty`
+   - Use `POST /memory/search` only when the CLI is unavailable or the caller is an app/harness integration.
 2. If task scope is broad, gather dense context:
-   - `POST /memory/context-pack`
+   - Keep using `contextlattice context`; request `--full` only for contract debugging.
 3. Use profile defaults:
    - `GET /memory/profiles/{agent_id}`
    - Optional bootstrap: `POST /v1/agents/preflight`
    - On preflight responses, ingest and forward `policy_context_package` (mission + objective + goal + policy contract) into downstream agent handoffs.
    - Preserve any returned `format_contract` or `format_contracts` metadata; contract violations are product signals, not wording suggestions.
 4. During execution, checkpoint durable decisions:
-   - `POST /memory/write`
+   - `contextlattice remember "<checkpoint>" --project <project> --pretty`
 5. Before a hard model handoff or problem-solving prompt, package current session state:
-   - `GET /v1/agents/sessions/{session_id}/rollup`
-   - `GET /v1/agents/sessions/{session_id}/context-package`
-   - Prefer the returned `reference_prompt`/`context_package` over raw logs, including its project/topic/session objective lineage.
+   - `contextlattice resume --project <project> --pretty`
+   - Prefer the returned compact packet over raw logs.
 6. Discover capabilities on demand:
    - `POST /tools/skills_index_search`
    - CLI equivalent: `contextlattice_skills_index search "<task or tool need>" --pretty`
 7. Submit explicit retrieval feedback for learning/rerank:
-   - `POST /tools/feedback_submit` (include `idempotencyKey`)
+   - `contextlattice correct "<note>" --category useful|wrong|stale|superseded --project <project> --pretty`
 8. Before context compaction/summarization, persist objective continuity through the adapter:
    - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`
 9. When agent lifecycle changes, report it without confusing it with retrieval progress:
    - `contextlattice_agent_adapter state --project contextlattice --session-id <session_id> --state working|awaiting_user|blocked|done --summary "<why>"`
-10. Before completion, run one recency retrieval pass:
-   - `POST /memory/search` or `POST /memory/context-pack`
+10. Complete the task and bind its retrieval outcome:
+   - `contextlattice finish "<verified result>" --success|--repair|--failure --project <project> --pretty`
 11. Set caller timeout to match retrieval mode:
    - `fast`: `25s`
    - `balanced`: `60s`

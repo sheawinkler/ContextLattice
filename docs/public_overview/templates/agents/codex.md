@@ -13,13 +13,13 @@ export CONTEXTLATTICE_AGENT_ID=codex_gpt5
 export MEMMCP_AGENT_ID=codex_gpt5
 ```
 
-Preflight:
+Primary workflow:
 ```bash
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+contextlattice doctor --pretty
+contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
 contextlattice_skills_index search "repo conventions testing release" --pretty
 ```
 
@@ -28,4 +28,4 @@ Behavior contract:
 - Codex SessionStart hook template: `config/codex/contextlattice_agent_start.sh`
 - Install Codex hooks: `scripts/install_global_agent_tools.sh --install-codex-hooks`
 - Verify hooks and repo instructions: `contextlattice_adopt status --pretty && contextlattice_doctor --agents codex --skip-provider-smoke --pretty`
-- Before a difficult model call, use the session context package as the bounded factual scaffold; use the run trace when you need to see which context, skills, graph touches, and handoffs shaped the work.
+- Use `contextlattice_agent_trace --session-id <session-id> --tree` only when advanced provenance debugging is needed.

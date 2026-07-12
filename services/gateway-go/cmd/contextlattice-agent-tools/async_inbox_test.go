@@ -84,6 +84,7 @@ func TestAsyncInboxDrainDeliversTerminalItemsAndAcks(t *testing.T) {
 }
 
 func TestPackAutoDrainWritesNoticeToStderrWithoutCorruptingStdout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	var packPayload map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

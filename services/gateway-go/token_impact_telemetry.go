@@ -12,18 +12,22 @@ import (
 )
 
 type tokenImpactTelemetry struct {
-	mu            sync.Mutex
-	limit         int
-	ledger        *tokenImpactLedger
-	samples       []map[string]any
-	sampleCount   int64
-	exactSamples  int64
-	totalBaseline int64
-	totalPacked   int64
-	totalSaved    int64
-	totalPenalty  int64
-	bestRatio     float64
-	lastSampleAt  string
+	mu                        sync.Mutex
+	limit                     int
+	ledger                    *tokenImpactLedger
+	samples                   []map[string]any
+	sampleCount               int64
+	exactSamples              int64
+	totalBaseline             int64
+	totalPacked               int64
+	totalCompiled             int64
+	totalTransport            int64
+	totalNetDelta             int64
+	transportInclusiveSamples int64
+	totalSaved                int64
+	totalPenalty              int64
+	bestRatio                 float64
+	lastSampleAt              string
 }
 
 type tokenImpactLedger struct {
@@ -93,26 +97,31 @@ func (s *server) tokenImpactTelemetrySnapshot() map[string]any {
 
 func defaultTokenImpactTelemetrySnapshot(ledger *tokenImpactLedger) map[string]any {
 	return map[string]any{
-		"schema_id":                "contextlattice_token_impact_telemetry.v1",
-		"version":                  2,
-		"updatedAt":                nowUTCISO(),
-		"sample_count":             0,
-		"exact_sample_count":       0,
-		"calibration_grade":        "heuristic",
-		"confidence":               "low",
-		"estimate_method":          "none",
-		"tokenizer_exact":          false,
-		"baseline_tokens_estimate": 0,
-		"packed_tokens_estimate":   0,
-		"saved_tokens_estimate":    0,
-		"risk_penalty_tokens":      0,
-		"compression_ratio":        0,
-		"average_saved_tokens":     0,
-		"last_sample_at":           nil,
-		"source":                   "/telemetry/token-impact",
-		"measurement_limit":        "No context-pack token_impact samples have been recorded since gateway start.",
-		"storage":                  tokenImpactLedgerPublicStatus(ledger),
-		"samples":                  []any{},
+		"schema_id":                        "contextlattice_token_impact_telemetry.v1",
+		"version":                          3,
+		"updatedAt":                        nowUTCISO(),
+		"sample_count":                     0,
+		"exact_sample_count":               0,
+		"calibration_grade":                "heuristic",
+		"confidence":                       "low",
+		"estimate_method":                  "none",
+		"tokenizer_exact":                  false,
+		"baseline_tokens_estimate":         0,
+		"packed_tokens_estimate":           0,
+		"compiled_prompt_tokens_estimate":  0,
+		"transport_tokens_exact":           0,
+		"net_token_delta":                  0,
+		"transport_inclusive":              false,
+		"transport_inclusive_sample_count": 0,
+		"saved_tokens_estimate":            0,
+		"risk_penalty_tokens":              0,
+		"compression_ratio":                0,
+		"average_saved_tokens":             0,
+		"last_sample_at":                   nil,
+		"source":                           "/telemetry/token-impact",
+		"measurement_limit":                "No context-pack token_impact samples have been recorded since gateway start.",
+		"storage":                          tokenImpactLedgerPublicStatus(ledger),
+		"samples":                          []any{},
 	}
 }
 
@@ -170,7 +179,7 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 	}
 	entry := map[string]any{
 		"schema_id":                "contextlattice_token_impact.v1",
-		"version":                  2,
+		"version":                  3,
 		"capturedAt":               nowUTCISO(),
 		"calibration_grade":        firstNonEmptyStrings(anyToString(sample["calibration_grade"]), "sampled_pack_estimate"),
 		"confidence":               firstNonEmptyStrings(anyToString(sample["confidence"]), "medium"),
@@ -187,6 +196,15 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 		"token_budget_active":      anyToBool(sample["token_budget_active"]),
 		"token_budget_target":      anyToInt(sample["token_budget_target"], 0),
 		"selection_strategy":       anyToString(sample["selection_strategy"]),
+	}
+	if anyToBool(sample["transport_inclusive"]) {
+		transport := anyToInt(sample["transport_tokens_exact"], 0)
+		if transport > 0 {
+			entry["transport_inclusive"] = true
+			entry["transport_tokens_exact"] = transport
+			entry["compiled_prompt_tokens_estimate"] = anyToInt(sample["compiled_prompt_tokens_estimate"], 0)
+			entry["net_token_delta"] = anyToInt(sample["net_token_delta"], baseline-transport)
+		}
 	}
 	if encoding := anyToString(sample["tokenizer_encoding"]); encoding != "" {
 		entry["tokenizer_encoding"] = encoding
@@ -215,6 +233,12 @@ func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) {
 	}
 	t.totalBaseline += int64(baseline)
 	t.totalPacked += int64(packed)
+	if anyToBool(entry["transport_inclusive"]) {
+		t.transportInclusiveSamples++
+		t.totalCompiled += int64(anyToInt(entry["compiled_prompt_tokens_estimate"], 0))
+		t.totalTransport += int64(anyToInt(entry["transport_tokens_exact"], 0))
+		t.totalNetDelta += int64(anyToInt(entry["net_token_delta"], 0))
+	}
 	t.totalSaved += int64(saved)
 	t.totalPenalty += int64(anyToInt(entry["risk_penalty_tokens"], 0))
 	if ratio > t.bestRatio {
@@ -269,27 +293,33 @@ func (t *tokenImpactTelemetry) snapshot() map[string]any {
 	if !tokenizerExact {
 		measurementLimit += " Some rows use fallback estimation because tokenizer accounting was unavailable."
 	}
+	transportComplete := t.transportInclusiveSamples == t.sampleCount
 	payload := map[string]any{
-		"schema_id":                "contextlattice_token_impact_telemetry.v1",
-		"version":                  2,
-		"updatedAt":                nowUTCISO(),
-		"sample_count":             t.sampleCount,
-		"exact_sample_count":       t.exactSamples,
-		"calibration_grade":        calibrationGrade,
-		"confidence":               confidence,
-		"estimate_method":          estimateMethod,
-		"tokenizer_exact":          tokenizerExact,
-		"baseline_tokens_estimate": t.totalBaseline,
-		"packed_tokens_estimate":   t.totalPacked,
-		"saved_tokens_estimate":    t.totalSaved,
-		"risk_penalty_tokens":      t.totalPenalty,
-		"compression_ratio":        ratio,
-		"average_saved_tokens":     averageSaved,
-		"best_compression_ratio":   roundFloat(t.bestRatio, 2),
-		"last_sample_at":           t.lastSampleAt,
-		"source":                   "/telemetry/token-impact",
-		"measurement_limit":        measurementLimit,
-		"storage":                  tokenImpactLedgerPublicStatus(t.ledger),
+		"schema_id":                        "contextlattice_token_impact_telemetry.v1",
+		"version":                          3,
+		"updatedAt":                        nowUTCISO(),
+		"sample_count":                     t.sampleCount,
+		"exact_sample_count":               t.exactSamples,
+		"calibration_grade":                calibrationGrade,
+		"confidence":                       confidence,
+		"estimate_method":                  estimateMethod,
+		"tokenizer_exact":                  tokenizerExact,
+		"baseline_tokens_estimate":         t.totalBaseline,
+		"packed_tokens_estimate":           t.totalPacked,
+		"compiled_prompt_tokens_estimate":  t.totalCompiled,
+		"transport_tokens_exact":           t.totalTransport,
+		"net_token_delta":                  t.totalNetDelta,
+		"transport_inclusive":              transportComplete,
+		"transport_inclusive_sample_count": t.transportInclusiveSamples,
+		"saved_tokens_estimate":            t.totalSaved,
+		"risk_penalty_tokens":              t.totalPenalty,
+		"compression_ratio":                ratio,
+		"average_saved_tokens":             averageSaved,
+		"best_compression_ratio":           roundFloat(t.bestRatio, 2),
+		"last_sample_at":                   t.lastSampleAt,
+		"source":                           "/telemetry/token-impact",
+		"measurement_limit":                measurementLimit,
+		"storage":                          tokenImpactLedgerPublicStatus(t.ledger),
 		"basis": []any{
 			"context_pack_response.token_impact",
 			"raw candidate evidence JSON token count",
@@ -302,6 +332,9 @@ func (t *tokenImpactTelemetry) snapshot() map[string]any {
 			map[string]any{"label": "reliability penalty", "role": "penalty", "tokens": t.totalPenalty, "value": "aggregate", "detail": "reserved for sample-level risk drag"},
 		},
 		"samples": samples,
+	}
+	if !transportComplete {
+		payload["transport_measurement_limit"] = "Transport-exact totals include only transport-inclusive samples; older ledger rows remain excluded rather than inferred."
 	}
 	if encoding := dominantTokenizerEncoding(t.samples); encoding != "" {
 		payload["tokenizer_encoding"] = encoding

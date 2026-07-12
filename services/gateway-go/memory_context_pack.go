@@ -51,13 +51,23 @@ func (s *server) toolsContextPack(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	payload["_suppress_token_impact_recording"] = true
 	response, status, execErr := s.buildContextPackResponse(r.Context(), incomingHeaders, payload)
 	if execErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "context_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
 	}
 	response["tool"] = "context_pack"
-	response = attachPayloadFormatContract(contextPackResponseContractID, response, anyToString(response["agent_id"]), "context_pack", "/tools/context_pack")
+	if anyToString(response["schema_id"]) == agentPacketContractID {
+		response["surface"] = "tools_context_pack"
+		response = finalizeAgentPacket(response)
+	} else {
+		attach := func(value map[string]any) map[string]any {
+			return attachPayloadFormatContract(contextPackResponseContractID, value, anyToString(value["agent_id"]), "context_pack", "/tools/context_pack")
+		}
+		response = finalizeFullTransport(response, attach, "tools_context_pack_transport", "serialized_tools_context_pack_response_json")
+	}
+	s.recordTokenImpact(anyMap(response["token_impact"]))
 	writeJSON(w, status, response)
 }
 
@@ -179,7 +189,6 @@ func (s *server) buildContextPackResponse(
 	contextPack["context_compiler"] = compiled["context_compiler"]
 	referencePrompt := anyToString(compiled["reference_prompt"])
 	tokenImpact := buildContextPackTokenImpact(query, contextPack, compiled, referencePrompt)
-	s.recordTokenImpact(tokenImpact)
 	contextPack["tokenImpact"] = tokenImpact
 	contextPack["token_impact"] = tokenImpact
 	rankedEvidence := contextPackAnyList(compiled["ranked_evidence"])
@@ -270,23 +279,24 @@ func (s *server) buildContextPackResponse(
 			"project":  requestPayload["project"],
 			"summary":  query,
 			"metadata": map[string]any{
-				"endpoint":            "/memory/context-pack",
-				"retrieval_mode":      retrievalMode,
-				"retrieval_intent":    retrievalIntent,
-				"traffic_class":       trafficClass,
-				"source_coverage":     sourceCoverage,
-				"fact_count":          len(facts),
-				"result_count":        len(results),
-				"memory_hits":         len(results),
-				"warnings_count":      len(parseWarnings(response["warnings"])),
-				"objective_state":     anyToString(objectiveRuntime["objective_state"]),
-				"next_action":         anyToString(objectiveRuntime["next_action"]),
-				"objective_runtime":   objectiveRuntime,
-				"objective_hierarchy": objectiveRuntime["objective_hierarchy"],
-				"objective_lineage":   objectiveRuntime["objective_lineage"],
-				"context_compiler":    compiled["context_compiler"],
-				"run_advisor":         runAdvisor,
-				"graph_quality":       graphQuality,
+				"endpoint":                       "/memory/context-pack",
+				"retrieval_mode":                 retrievalMode,
+				"retrieval_intent":               retrievalIntent,
+				"traffic_class":                  trafficClass,
+				"source_coverage":                sourceCoverage,
+				"fact_count":                     len(facts),
+				"result_count":                   len(results),
+				"memory_hits":                    len(results),
+				"warnings_count":                 len(parseWarnings(response["warnings"])),
+				"objective_state":                anyToString(objectiveRuntime["objective_state"]),
+				"next_action":                    anyToString(objectiveRuntime["next_action"]),
+				"objective_runtime":              objectiveRuntime,
+				"objective_hierarchy":            objectiveRuntime["objective_hierarchy"],
+				"objective_lineage":              objectiveRuntime["objective_lineage"],
+				"context_compiler":               compiled["context_compiler"],
+				"run_advisor":                    runAdvisor,
+				"graph_quality":                  graphQuality,
+				"context_pack_quality_sample_id": anyToString(contextPackQuality["sample_id"]),
 			},
 		})
 		if session != nil {
@@ -297,7 +307,23 @@ func (s *server) buildContextPackResponse(
 			}
 		}
 	}
-	return attachContextPackFormatContract(response), status, nil
+	if agentPacketRequested(requestPayload) {
+		packet := finalizeAgentPacket(buildAgentPacket(response, requestPayload, "context_pack"))
+		if !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
+			s.recordTokenImpact(anyMap(packet["token_impact"]))
+		}
+		return packet, status, nil
+	}
+	response = finalizeFullTransport(
+		response,
+		attachContextPackFormatContract,
+		"context_pack_transport",
+		"serialized_context_pack_response_json",
+	)
+	if !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
+		s.recordTokenImpact(anyMap(response["token_impact"]))
+	}
+	return response, status, nil
 }
 
 func contextPackBlocksSlowSourcesByDefault() bool {
@@ -613,6 +639,8 @@ type contextPackEvidenceItem struct {
 	Source          string
 	TopicPath       string
 	Timestamp       string
+	Freshness       string
+	QueryRelevance  float64
 	Confidence      float64
 	EstimatedTokens int
 	WhySelected     []any
@@ -665,7 +693,7 @@ func contextPackTokenBudgetFromRequest(payload map[string]any) contextPackTokenB
 }
 
 func compileContextPackForAgent(query string, contextPack map[string]any, sourceCoverage map[string]any, objectiveCtx objectiveContext, tokenBudget contextPackTokenBudget) map[string]any {
-	allocation := contextPackRankedEvidence(contextPack, tokenBudget)
+	allocation := contextPackRankedEvidence(query, contextPack, tokenBudget)
 	rankedEvidence := allocation.RankedEvidence
 	agentGuidance := buildAgentEvidenceGuidance(agentEvidenceGuidanceInput{
 		Query:          query,
@@ -718,9 +746,10 @@ func compileContextPackForAgent(query string, contextPack map[string]any, source
 	}
 }
 
-func contextPackRankedEvidence(contextPack map[string]any, tokenBudget contextPackTokenBudget) contextPackEvidenceAllocation {
+func contextPackRankedEvidence(query string, contextPack map[string]any, tokenBudget contextPackTokenBudget) contextPackEvidenceAllocation {
 	out := []contextPackEvidenceItem{}
 	seen := map[string]struct{}{}
+	queryTerms := synthesisPackQueryTokens(query)
 	impactSignals := func(kind string, text string, source map[string]any) []any {
 		signals := []any{kind + "_priority"}
 		lower := strings.ToLower(text)
@@ -753,7 +782,7 @@ func contextPackRankedEvidence(contextPack map[string]any, tokenBudget contextPa
 		fileName := strings.TrimSpace(anyToString(source["file"]))
 		sourceName := strings.TrimSpace(anyToString(source["source"]))
 		topicPath := strings.TrimSpace(anyToString(source["topic_path"]))
-		key := strings.Join([]string{kind, project, fileName, sourceName, topicPath, text}, "\x1f")
+		key := normalizeEvidenceText(text)
 		if _, ok := seen[key]; ok {
 			return
 		}
@@ -764,6 +793,45 @@ func contextPackRankedEvidence(contextPack map[string]any, tokenBudget contextPa
 			score += sourceScore * 10
 		}
 		signals := impactSignals(kind, text, source)
+		relevance := lexicalEvidenceAlignment(queryTerms, strings.Join([]string{text, project, fileName, topicPath}, " "))
+		if len(queryTerms) > 0 {
+			score += relevance * 42
+			if relevance >= 0.5 {
+				signals = append(signals, "strong_query_alignment")
+			} else if relevance > 0 {
+				signals = append(signals, "partial_query_alignment")
+			} else {
+				score -= 12
+				signals = append(signals, "no_query_alignment")
+			}
+		}
+		freshness := "undated"
+		statusText := strings.ToLower(strings.TrimSpace(firstNonEmptyStrings(anyToString(source["status"]), anyToString(source["temporal_state"]))))
+		lowerText := strings.ToLower(text)
+		if containsAny(statusText+" "+lowerText, []string{"superseded", "retracted", "obsolete", "deprecated", "outdated"}) {
+			score -= 48
+			freshness = "superseded"
+			signals = append(signals, "superseded_or_retracted")
+		} else if timestamp, ok := parseISOTime(anyToString(source["timestamp"])); ok {
+			age := time.Since(timestamp).Hours() / 24
+			switch {
+			case age <= 7:
+				score += 10
+				freshness = "current"
+			case age <= 30:
+				score += 6
+				freshness = "recent"
+			case age > 365:
+				score -= 20
+				freshness = "stale"
+				signals = append(signals, "stale_evidence")
+			case age > 90:
+				score -= 8
+				freshness = "aging"
+			default:
+				freshness = "dated"
+			}
+		}
 		for _, raw := range signals {
 			switch anyToString(raw) {
 			case "risk_or_contradiction_signal":
@@ -790,6 +858,8 @@ func contextPackRankedEvidence(contextPack map[string]any, tokenBudget contextPa
 			Source:          sourceName,
 			TopicPath:       topicPath,
 			Timestamp:       strings.TrimSpace(anyToString(source["timestamp"])),
+			Freshness:       freshness,
+			QueryRelevance:  roundFloat(relevance, 3),
 			Confidence:      roundFloat(clampFloat(score/100, 0.1, 0.99), 3),
 			EstimatedTokens: estimatedTokens,
 			ValueDensity:    roundFloat(score/float64(maxInt(estimatedTokens, 1)), 4),
@@ -853,6 +923,8 @@ func contextPackRankedEvidence(contextPack map[string]any, tokenBudget contextPa
 			"value_density":    item.ValueDensity,
 			"estimated_tokens": item.EstimatedTokens,
 			"confidence":       item.Confidence,
+			"query_relevance":  item.QueryRelevance,
+			"freshness":        item.Freshness,
 			"reason":           item.Reason,
 			"why_selected":     item.WhySelected,
 			"text":             item.Text,
@@ -1131,29 +1203,30 @@ func buildContextPackTokenImpact(query string, contextPack map[string]any, compi
 	}
 
 	impact := map[string]any{
-		"schema_id":                "contextlattice_token_impact.v1",
-		"version":                  1,
-		"scope":                    "context_pack_response",
-		"calibration_grade":        calibrationGrade,
-		"confidence":               confidence,
-		"estimate_method":          estimateMethod,
-		"tokenizer_exact":          tokenizerExact,
-		"baseline_kind":            "raw_candidate_evidence_prompt_stuffing",
-		"packed_kind":              "compiled_ranked_evidence_reference_prompt",
-		"baseline_tokens_estimate": baselineTokens,
-		"packed_tokens_estimate":   packedTokens,
-		"saved_tokens_estimate":    savedTokens,
-		"compression_ratio":        ratio,
-		"sample_count":             1,
-		"selected_evidence_count":  selectedCount,
-		"omitted_high_value_count": omittedCount,
-		"returned_source_count":    returnedSourceCount,
-		"token_budget_active":      anyToBool(tokenBudget["active"]),
-		"token_budget_target":      anyToInt(tokenBudget["target_context_pack_tokens"], 0),
-		"ranked_evidence_tokens":   anyToInt(tokenBudget["used_tokens_estimate"], anyToInt(compiler["ranked_evidence_tokens_estimate"], 0)),
-		"selection_strategy":       firstNonEmptyStrings(anyToString(tokenBudget["selection_strategy"]), anyToString(compiler["strategy"])),
-		"moat_claim":               "ContextLattice converts raw candidate memory into a bounded, provenance-carrying prompt packet and reports the estimated token delta per pack.",
-		"measurement_limit":        measurementLimit,
+		"schema_id":                       "contextlattice_token_impact.v1",
+		"version":                         1,
+		"scope":                           "context_pack_response",
+		"calibration_grade":               calibrationGrade,
+		"confidence":                      confidence,
+		"estimate_method":                 estimateMethod,
+		"tokenizer_exact":                 tokenizerExact,
+		"baseline_kind":                   "raw_candidate_evidence_prompt_stuffing",
+		"packed_kind":                     "compiled_ranked_evidence_reference_prompt",
+		"baseline_tokens_estimate":        baselineTokens,
+		"packed_tokens_estimate":          packedTokens,
+		"compiled_prompt_tokens_estimate": packedTokens,
+		"saved_tokens_estimate":           savedTokens,
+		"compression_ratio":               ratio,
+		"sample_count":                    1,
+		"selected_evidence_count":         selectedCount,
+		"omitted_high_value_count":        omittedCount,
+		"returned_source_count":           returnedSourceCount,
+		"token_budget_active":             anyToBool(tokenBudget["active"]),
+		"token_budget_target":             anyToInt(tokenBudget["target_context_pack_tokens"], 0),
+		"ranked_evidence_tokens":          anyToInt(tokenBudget["used_tokens_estimate"], anyToInt(compiler["ranked_evidence_tokens_estimate"], 0)),
+		"selection_strategy":              firstNonEmptyStrings(anyToString(tokenBudget["selection_strategy"]), anyToString(compiler["strategy"])),
+		"moat_claim":                      "ContextLattice converts raw candidate memory into a bounded, provenance-carrying prompt packet and reports the estimated token delta per pack.",
+		"measurement_limit":               measurementLimit,
 		"basis": []any{
 			"raw candidate evidence JSON",
 			"compiled reference_prompt",
@@ -1477,10 +1550,18 @@ func contextPackSourceCoverage(searchResponse map[string]any) map[string]any {
 	if len(sourceOwners) == 0 {
 		sourceOwners = anyMap(debug["source_owners"])
 	}
-	configured := anyToStringList(summary["sources"], 100)
+	configured := anyToStringList(summary["configured_sources"], 100)
 	if len(configured) == 0 {
-		configured = anyToStringList(debug["sources"], 100)
+		configured = anyToStringList(debug["configured_sources"], 100)
 	}
+	if len(configured) == 0 {
+		configured = anyToStringList(summary["sources"], 100)
+	}
+	effective := anyToStringList(summary["effective_sources"], 100)
+	if len(effective) == 0 {
+		effective = anyToStringList(summary["sources"], 100)
+	}
+	disabled := anyToStringList(summary["disabled_sources"], 100)
 	returned := anyToStringList(summary["returned_now"], 100)
 	pending := anyToStringList(summary["pending_sources"], 100)
 	warming := anyToStringList(summary["warming_sources"], 100)
@@ -1490,7 +1571,7 @@ func contextPackSourceCoverage(searchResponse map[string]any) map[string]any {
 	skipped := anyToStringList(summary["skipped_sources"], 100)
 	unavailable := anyToStringList(summary["continuation_unavailable_sources"], 100)
 	queriedSet := map[string]struct{}{}
-	for _, list := range [][]string{configured, returned, pending, warming, timedOut, failed, budgetExceeded, skipped, unavailable} {
+	for _, list := range [][]string{effective, returned, pending, warming, timedOut, failed, budgetExceeded, skipped, unavailable} {
 		for _, source := range list {
 			queriedSet[source] = struct{}{}
 		}
@@ -1507,6 +1588,9 @@ func contextPackSourceCoverage(searchResponse map[string]any) map[string]any {
 	complete := len(pending) == 0 && len(warming) == 0 && len(timedOut) == 0 && len(failed) == 0 && len(budgetExceeded) == 0 && len(skipped) == 0 && len(unavailable) == 0
 	return map[string]any{
 		"configured":                     configured,
+		"effective":                      effective,
+		"disabled":                       disabled,
+		"disabled_details":               summary["disabled_source_details"],
 		"queried":                        mapKeysSorted(queriedSet),
 		"returned":                       returned,
 		"pending":                        pending,

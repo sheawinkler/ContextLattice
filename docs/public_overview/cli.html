@@ -88,7 +88,16 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
       <article class="card">
         <div class="kicker">Global helpers</div>
         <h3>Installed wrappers for agents/operators</h3>
-<pre><code>contextlattice_search -h
+<pre><code># prescribed task lifecycle
+contextlattice doctor --pretty
+contextlattice context "what should this agent know before solving the task?" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice correct "retrieval was useful" --category useful --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
+
+# advanced integration and operator surfaces
+contextlattice_search -h
 contextlattice_write -h
 contextlattice_adopt status --pretty
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
@@ -107,7 +116,7 @@ contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_retrieval_plan "what evidence does this task owe?" --project contextlattice --pretty
-contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.15.1 --pretty
+contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.16.0 --pretty
 contextlattice_claim_query "what is current?" --project contextlattice --include-superseded --pretty
 contextlattice_synthesis_pack_v2 "what can the evidence prove?" --project contextlattice --pretty
 contextlattice_policy_candidate --project contextlattice --pretty
@@ -179,22 +188,18 @@ contextlattice_mesh_import --file envelope.json --apply --pretty</code></pre>
       <article class="card">
         <div class="kicker">Context compiler</div>
         <h3>Build the next prompt packet from memory</h3>
-<pre><code>contextlattice_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
+<pre><code># compact agent_packet.v1 is the default
+contextlattice context "ship release notes without missing prior decisions" --project contextlattice --pretty
+
+# full contracts are available for advanced inspection
+contextlattice_synthesis_pack_v2 "prove release readiness" --project contextlattice --full --pretty
+contextlattice_pack "ship release notes without missing prior decisions" --project contextlattice --full --pretty
 contextlattice_synthesis_pack "ship release notes without missing prior decisions" --project contextlattice --pretty
 contextlattice_retrieval_plan "ship release notes without missing proof" --project contextlattice --pretty
 contextlattice_claim_query "current release constraints" --project contextlattice --include-superseded --pretty
-contextlattice_synthesis_pack_v2 "prove release readiness" --project contextlattice --pretty
 contextlattice_policy_candidate --project contextlattice --pretty
-contextlattice_skill_foundry_status --pretty
-
-curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
-  -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
-  http://127.0.0.1:8075/memory/context-pack | jq '.reference_prompt'
-
-curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
-  -d '{"project":"contextlattice","query":"ship release notes without missing prior decisions","retrieval_mode":"balanced"}' \
-  http://127.0.0.1:8075/memory/synthesis-pack | jq '.synthesis_pack'</code></pre>
-        <p class="muted-note">The compiler returns ranked evidence, files to inspect, checks, risks, source coverage, and a bounded <code>reference_prompt</code>. Synthesis Pack v1 groups that evidence. Synthesis Pack v2 adds claim-level support, opposition, temporal state, confidence decomposition, causal context, and missing-proof disclosure. The retrieval planner is advisor-only and never silently activates policy.</p>
+contextlattice_skill_foundry_status --pretty</code></pre>
+        <p class="muted-note"><code>contextlattice context</code> returns a bounded proof-carrying packet with evidence, uncertainty, next actions, and an explicit act/verify/abstain gate. Full compiler contracts remain available for harness authors and debugging. The retrieval planner is advisor-only and never silently activates policy.</p>
       </article>
     </section>
 
@@ -203,11 +208,14 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
         <div class="kicker">Agent runtime contract</div>
         <h3>Give every agent the same memory spine</h3>
 <pre><code># one-command live proof
-contextlattice_adopt status --pretty
-contextlattice_doctor --agents codex --skip-provider-smoke --pretty
-contextlattice_agent_runtime_proof --pretty
+contextlattice doctor --pretty
+contextlattice context "ship the current task" --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice correct "retrieval was stale" --category stale --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
 
-# prove the same lifecycle across configured profiles
+# cross-profile adoption proof remains available to operators
 contextlattice_adopt proof --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --skip-provider-smoke --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 
@@ -233,7 +241,7 @@ contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,h
 contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_agent_trace --session-id "$SESSION_ID" --markdown
 contextlattice_run_advisor --session-id "$SESSION_ID" --pretty</code></pre>
-        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain surfaces unseen continuation progress, ready, or terminal-degraded steering after normal tool boundaries, with pending work labeled warming; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
+        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain delivers terminal continuation steering and can expose running work as warming when explicitly requested; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
       </article>
     </section>
 

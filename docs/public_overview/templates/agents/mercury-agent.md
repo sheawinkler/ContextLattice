@@ -15,13 +15,13 @@ export CONTEXTLATTICE_AGENT_ID=mercury_agent
 export MEMMCP_AGENT_ID=mercury_agent
 ```
 
-Preflight:
+Primary workflow:
 ```bash
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent mercury-agent --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_adapter context-pack --agent mercury-agent --project contextlattice --session-id "$SESSION_ID" --pretty
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+contextlattice doctor --pretty
+contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
 contextlattice_skills_index search "repo conventions testing release" --pretty
 ```
 

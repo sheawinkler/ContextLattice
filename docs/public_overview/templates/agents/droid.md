@@ -15,7 +15,7 @@ Paste into Droid/custom instructions when available:
 ```text
 Use ContextLattice at http://127.0.0.1:8075 as the local memory and context contract.
 Use stable agent_id droid_agent.
-Before non-trivial work, obtain a scoped ContextLattice bootstrap/context pack through CLI, MCP, or HTTP. If no tool path is available, ask for the current context pack instead of guessing.
+Before non-trivial work, run contextlattice context "<task>" --project <project> --pretty. Use MCP or HTTP only when the CLI is unavailable; never guess missing context.
 Use explicit cwd or worktree for code mutation.
 Use contextlattice_agent_adapter state to report idle, working, awaiting_user, blocked, or done when possible.
 Write concise checkpoints for durable decisions and a short handoff before compaction, thread transfer, or account transfer.
@@ -23,13 +23,13 @@ Do not auto-merge, git push, or treat ContextLattice context as prompt filler.
 Post-compaction readback is optional and bounded; use it only when the prior objective state is needed.
 ```
 
-Operator preflight:
+Operator workflow:
 
 ```bash
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent droid --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+CONTEXTLATTICE_AGENT_ID=droid_agent contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
 ```
 
 Optional runner execution:

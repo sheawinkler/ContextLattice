@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 21,
-  "updated_at": "2026-07-12T08:14:06Z",
+  "registry_version": 22,
+  "updated_at": "2026-07-12T15:10:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -772,6 +772,144 @@
         "format_contract.schema_id": "context_pack_response.v1"
       }
     },
+    "agent_packet.v1": {
+      "contract_version": 1,
+      "payload_kind": "compact_prompt_ready_agent_packet",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_a_bounded_packet_with_explicit_uncertainty_and_no_unsupported_claims_or_raw_retrieval_payload",
+      "max_total_json_bytes": 16000,
+      "max_string_bytes": 4000,
+      "max_list_items": 16,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "surface",
+        "query",
+        "project",
+        "topic_path",
+        "session_id",
+        "prompt",
+        "evidence",
+        "provenance",
+        "uncertainty",
+        "decision_gate",
+        "next_actions",
+        "continuation",
+        "outcome",
+        "token_budget",
+        "token_impact",
+        "writeback_required",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "surface": "string",
+        "query": "string",
+        "project": "string",
+        "topic_path": "string",
+        "session_id": "string",
+        "prompt": "string",
+        "evidence": "list[object]",
+        "provenance": "object",
+        "uncertainty": "object",
+        "decision_gate": "object",
+        "next_actions": "list[object]",
+        "continuation": "object",
+        "outcome": "object",
+        "token_budget": "object",
+        "token_impact": "object",
+        "writeback_required": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "provenance": [
+          "source_count",
+          "sources",
+          "citation_count"
+        ],
+        "uncertainty": [
+          "status",
+          "evidence_alignment",
+          "source_complete",
+          "reasons"
+        ],
+        "decision_gate": [
+          "decision",
+          "refusal",
+          "reasons",
+          "policy"
+        ],
+        "continuation": [
+          "status",
+          "result_state",
+          "token",
+          "pending_sources"
+        ],
+        "outcome": [
+          "sample_id",
+          "session_id",
+          "command"
+        ],
+        "token_budget": [
+          "target_tokens",
+          "hard_limit_tokens",
+          "actual_tokens",
+          "within_hard_limit"
+        ],
+        "token_impact": [
+          "baseline_tokens_estimate",
+          "transport_tokens_exact",
+          "saved_tokens_estimate",
+          "net_token_delta",
+          "transport_inclusive"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "contract_valid",
+          "truncated",
+          "omitted_counts",
+          "actual_json_bytes",
+          "max_total_json_bytes",
+          "max_string_bytes",
+          "max_list_items",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "token_impact.transport_inclusive",
+        "token_budget.within_hard_limit"
+      ],
+      "required_string_contains": {
+        "schema_id": "agent_packet.v1",
+        "format_contract.schema_id": "agent_packet.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "raw_contextlattice_json",
+        "raw_retrieval_payload",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "secret",
+        "secrets",
+        "authorization"
+      ],
+      "forbidden_scope": "recursive",
+      "max_bytes_by_path": {
+        "query": 1600,
+        "prompt": 3000,
+        "uncertainty.reasons": 2000,
+        "outcome.command": 1000
+      }
+    },
     "synthesis_pack.v1": {
       "contract_version": 1,
       "payload_kind": "synthesis_pack",
@@ -827,6 +965,7 @@
           "query",
           "topic_path",
           "summary",
+          "decision_gate",
           "high_signal_findings",
           "topic_gravity",
           "cross_project_bridges",
@@ -843,6 +982,12 @@
           "score",
           "basis",
           "limits"
+        ],
+        "synthesis_pack.decision_gate": [
+          "decision",
+          "refusal",
+          "reasons",
+          "policy"
         ],
         "synthesis_pack.synthesis_trace": [
           "mode",
@@ -2477,6 +2622,7 @@
           "project",
           "query",
           "summary",
+          "decision_gate",
           "proof_claims",
           "claim_count",
           "temporal_claims",
@@ -2499,6 +2645,12 @@
           "llm_used",
           "basis",
           "inference_boundary"
+        ],
+        "synthesis_pack.decision_gate": [
+          "decision",
+          "refusal",
+          "reasons",
+          "policy"
         ],
         "retrieval_plan": [
           "schema_id",

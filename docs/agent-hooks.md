@@ -54,6 +54,7 @@ Installed commands:
 
 | Command | Purpose |
 | --- | --- |
+| `contextlattice` | Primary compact workflow: `context`, `resume`, `remember`, `finish`, `correct`, and `doctor`. |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, state, event, and completion. |
 | `contextlattice_agent_discover` | Best-effort local agent discovery for profile authority, process evidence, hook evidence, repo instruction evidence, and lifecycle explanations. |
@@ -110,7 +111,7 @@ OMP and Mercury are instruction-hook integrations, not bundled harnesses. Instal
 - OMP: `$HOME/.omp/agent/AGENTS.md`
 - Mercury: `$HOME/.mercury/soul.md`
 
-Use `scripts/install_global_agent_tools.sh --no-agent-hooks` or `contextlattice_adopt install --no-install-agent-hooks` to opt out. These hooks teach the detected agent to run ContextLattice bootstrap/context-pack/checkpoint/handoff commands; they do not install OMP or Mercury binaries.
+Use `scripts/install_global_agent_tools.sh --no-agent-hooks` or `contextlattice_adopt install --no-install-agent-hooks` to opt out. These hooks teach the detected agent the compact `contextlattice context/resume/remember/finish/correct/doctor` workflow; they do not install OMP or Mercury binaries.
 Runner adapter completions write compact `runner_quality_sample.v1` rows when task-agent workers can access the ledger. Inspect them with primary CLI command `contextlattice_runner_quality --pretty` or repo-local development fallback `scripts/agent/runner-quality --pretty`.
 | `contextlattice_recall_quality_gate` | Recall eval/telemetry pre-release gate. |
 | `contextlattice_resource_pressure_guard` | Host disk/RAM/container runtime pressure sampler. |
@@ -126,18 +127,17 @@ Runner adapter completions write compact `runner_quality_sample.v1` rows when ta
 ## Recommended startup sequence
 
 ```bash
-contextlattice_agent_adapter bootstrap --agent codex --project contextlattice --pretty
-contextlattice_agent_adapter state --agent codex --state working --summary "startup active" --pretty
-contextlattice_async_inbox_drain --session-id <session-id>
-contextlattice_async_inbox_hook --session-id <session-id>
-contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
-contextlattice_adopt status --pretty
-contextlattice_doctor --agents codex --skip-provider-smoke --pretty
-contextlattice_doctor --agents claude-code --skip-provider-smoke --pretty
-contextlattice_doctor --agents opencode --skip-provider-smoke --pretty
-contextlattice_agent_runtime_proof --pretty
-contextlattice_agent_trace --session-id <session-id> --tree
+contextlattice doctor --pretty
+contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice correct "retrieval was useful" --category useful --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
 ```
+
+Adapter, trace, discovery, and adoption commands remain available as advanced
+harness-integration and debugging surfaces; agents do not need them for the
+normal task lifecycle.
 
 Agent lifecycle state is separate from retrieval lifecycle state. Use
 `idle`, `working`, `awaiting_user`, `blocked`, or `done` for the agent itself;

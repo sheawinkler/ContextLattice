@@ -2406,6 +2406,189 @@ body,
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.cl-agent-workbench {
+  display: grid;
+  gap: 1rem;
+  border-color: var(--cl-line-strong);
+}
+
+.cl-packet-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.28fr) auto;
+  gap: 0.65rem;
+  align-items: end;
+}
+
+.cl-packet-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--cl-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.cl-packet-form input {
+  width: 100%;
+  min-height: 2.55rem;
+  border: 1px solid var(--cl-line);
+  border-radius: 0;
+  background: #080806;
+  color: var(--cl-paper);
+  font: 0.82rem/1.3 var(--cl-mono);
+  padding: 0.65rem 0.72rem;
+  outline: none;
+}
+
+.cl-packet-form input:focus {
+  border-color: var(--cl-accent);
+  box-shadow: inset 3px 0 0 var(--cl-accent);
+}
+
+.cl-packet-result {
+  display: grid;
+  gap: 1rem;
+  border-top: 1px solid var(--cl-line);
+  padding-top: 1rem;
+}
+
+.cl-packet-verdict {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--cl-line);
+  background: #080806;
+}
+
+.cl-packet-verdict > div {
+  display: grid;
+  gap: 0.4rem;
+  border-right: 1px solid var(--cl-line);
+  padding: 0.75rem;
+}
+
+.cl-packet-verdict > div:last-child {
+  border-right: 0;
+}
+
+.cl-packet-verdict strong {
+  color: var(--cl-paper);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+}
+
+.cl-gate {
+  width: max-content;
+  padding: 0.18rem 0.38rem;
+}
+
+.cl-gate--act {
+  background: var(--cl-green);
+  color: #071107 !important;
+}
+
+.cl-gate--verify {
+  background: var(--cl-amber);
+  color: #171006 !important;
+}
+
+.cl-gate--abstain {
+  background: var(--cl-red);
+  color: #160505 !important;
+}
+
+.cl-packet-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr);
+  gap: 1rem;
+}
+
+.cl-packet-evidence,
+.cl-packet-actions {
+  min-width: 0;
+}
+
+.cl-packet-evidence-row {
+  display: grid;
+  grid-template-columns: 2.1rem minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: start;
+  border-top: 1px solid rgba(216, 207, 184, 0.16);
+  padding: 0.68rem 0;
+}
+
+.cl-packet-evidence-row p,
+.cl-packet-action-row strong,
+.cl-packet-action-row small {
+  margin: 0;
+}
+
+.cl-packet-evidence-row p {
+  color: var(--cl-paper);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.cl-packet-evidence-row small,
+.cl-packet-action-row small {
+  display: block;
+  margin-top: 0.28rem;
+  color: var(--cl-dim);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.cl-packet-rank {
+  color: var(--cl-amber);
+  font: 1.5rem/0.8 var(--cl-pixel);
+}
+
+.cl-packet-score {
+  color: var(--cl-accent);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.cl-packet-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: start;
+  border-top: 1px solid rgba(216, 207, 184, 0.16);
+  padding: 0.68rem 0;
+}
+
+.cl-packet-action-row strong {
+  color: var(--cl-paper);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.cl-packet-action-row code {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--cl-accent);
+  font: 0.7rem/1.45 var(--cl-mono);
+  overflow-wrap: anywhere;
+}
+
+.cl-copy-button {
+  border: 1px solid var(--cl-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--cl-paper);
+  font: 700 0.64rem/1 var(--cl-mono);
+  letter-spacing: 0.1em;
+  padding: 0.48rem;
+  text-transform: uppercase;
+}
+
+.cl-copy-button:hover {
+  border-color: var(--cl-accent);
+  color: var(--cl-accent);
+}
+
 .cl-capability-grid,
 .cl-project-grid,
 .cl-service-grid,
@@ -2614,6 +2797,11 @@ body,
   .cl-form-grid--inline {
     grid-template-columns: 1fr;
   }
+
+  .cl-packet-form,
+  .cl-packet-columns {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 680px) {
@@ -2638,5 +2826,17 @@ body,
   .cl-definition-grid,
   .cl-settings-row {
     grid-template-columns: 1fr;
+  }
+
+  .cl-packet-verdict {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cl-packet-verdict > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .cl-packet-verdict > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--cl-line);
   }
 }

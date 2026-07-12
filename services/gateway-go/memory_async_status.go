@@ -191,25 +191,8 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		}
 		source := strings.TrimSpace(strings.ToLower(anyToString(event["source"])))
 		status := strings.TrimSpace(strings.ToLower(anyToString(event["status"])))
-		eventName := strings.TrimSpace(strings.ToLower(anyToString(event["event"])))
 		if source != "" {
-			switch {
-			case eventName == "queued" || status == "queued":
-				sourceState[source] = "queued"
-			case eventName == "completed":
-				if status == "ok" || status == "succeeded" {
-					sourceState[source] = "completed"
-				} else {
-					sourceState[source] = "failed"
-				}
-			case eventName == "skipped":
-				if status == "" {
-					status = "skipped"
-				}
-				sourceState[source] = status
-			case status != "":
-				sourceState[source] = status
-			}
+			sourceState[source] = advanceContinuationSourceState(sourceState[source], continuationEventState(event))
 		}
 		if status == "error" || status == "failed" {
 			lastError = strings.TrimSpace(anyToString(event["error"]))
@@ -229,7 +212,7 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 	returnedNow := []string{}
 	for source, state := range sourceState {
 		switch {
-		case state == "queued" || state == "running" || state == "pending":
+		case state == "pending":
 			pendingSources = append(pendingSources, source)
 		case continuationStateFailed(state):
 			failedSources = append(failedSources, source)
@@ -291,7 +274,7 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 		weightedTotal += expected
 
 		switch strings.ToLower(strings.TrimSpace(state)) {
-		case "queued", "running", "pending":
+		case "pending":
 			ratio := 0.0
 			if expected > 0 {
 				ratio = elapsedSecs / expected
@@ -369,7 +352,7 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 	continuationPollURL := "/memory/search/continuations/" + token
 	continuationEventsURL := "/memory/search/continuations/" + token + "/events"
 	sourceSummary := map[string]any{
-		"sources":                 []string{},
+		"sources":                 mapKeysSorted(toSourceStringSet(sourceState)),
 		"returned_now":            returnedNow,
 		"pending_sources":         pendingSources,
 		"warming_sources":         pendingSources,
@@ -450,21 +433,56 @@ func (s *server) continuationStatusPayload(token string, includeResult bool) (ma
 }
 
 func continuationStateFailed(state string) bool {
-	switch strings.TrimSpace(strings.ToLower(state)) {
-	case "error",
-		"failed",
-		"max_inflight",
-		"max_inflight_per_source",
-		"cooldown",
-		"inflight_per_source",
-		"pressure_shed",
-		"queue_pressure",
-		"invalid_source",
-		"skipped":
-		return true
-	default:
-		return false
+	return strings.EqualFold(strings.TrimSpace(state), "failed")
+}
+
+func toSourceStringSet(values map[string]string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for source := range values {
+		out[source] = struct{}{}
 	}
+	return out
+}
+
+func continuationEventState(event map[string]any) string {
+	eventName := strings.TrimSpace(strings.ToLower(anyToString(event["event"])))
+	status := strings.TrimSpace(strings.ToLower(anyToString(event["status"])))
+	switch eventName {
+	case "completed":
+		if status == "ok" || status == "succeeded" || status == "success" || status == "ready" || status == "empty" {
+			return "ready"
+		}
+		return "failed"
+	case "dropped", "failed":
+		return "failed"
+	case "queued", "running", "deferred", "deferred_retry", "retrying", "heartbeat", "skipped":
+		if status == "invalid_source" || status == "durable_max_attempts" || status == "unavailable" {
+			return "failed"
+		}
+		return "pending"
+	default:
+		switch status {
+		case "ok", "succeeded", "success", "ready":
+			return "ready"
+		case "error", "failed", "invalid_source", "durable_max_attempts", "unavailable":
+			return "failed"
+		default:
+			// Unknown queue states must never be interpreted as returned evidence.
+			return "pending"
+		}
+	}
+}
+
+func advanceContinuationSourceState(current string, next string) string {
+	current = strings.TrimSpace(strings.ToLower(current))
+	next = strings.TrimSpace(strings.ToLower(next))
+	if current == "ready" || current == "failed" {
+		return current
+	}
+	if next == "ready" || next == "failed" || next == "pending" {
+		return next
+	}
+	return "pending"
 }
 
 func continuationAgentEventType(status string, resultState string) string {

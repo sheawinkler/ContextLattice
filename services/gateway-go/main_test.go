@@ -2598,9 +2598,16 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	}
 	baselineTokens := anyToInt(tokenImpact["baseline_tokens_estimate"], 0)
 	packedTokens := anyToInt(tokenImpact["packed_tokens_estimate"], 0)
+	compiledPromptTokens := anyToInt(tokenImpact["compiled_prompt_tokens_estimate"], 0)
 	savedTokens := anyToInt(tokenImpact["saved_tokens_estimate"], 0)
-	if baselineTokens <= packedTokens || savedTokens != baselineTokens-packedTokens {
-		t.Fatalf("expected positive token savings, got baseline=%d packed=%d saved=%d payload=%#v", baselineTokens, packedTokens, savedTokens, tokenImpact)
+	if baselineTokens <= compiledPromptTokens {
+		t.Fatalf("expected compiled prompt compression, got baseline=%d compiled=%d payload=%#v", baselineTokens, compiledPromptTokens, tokenImpact)
+	}
+	if !anyToBool(tokenImpact["transport_inclusive"]) || anyToInt(tokenImpact["transport_tokens_exact"], 0) != packedTokens {
+		t.Fatalf("expected transport-inclusive token accounting, got %#v", tokenImpact)
+	}
+	if anyToInt(tokenImpact["net_token_delta"], 0) != baselineTokens-packedTokens || savedTokens != maxInt(0, baselineTokens-packedTokens) {
+		t.Fatalf("expected honest transport delta, got baseline=%d packed=%d saved=%d payload=%#v", baselineTokens, packedTokens, savedTokens, tokenImpact)
 	}
 	if anyToString(tokenImpact["calibration_grade"]) != "tokenizer_exact" ||
 		anyToString(tokenImpact["estimate_method"]) != "tiktoken" ||
@@ -2620,7 +2627,7 @@ func TestGatewayContextPackUsesImpactTokenBudgetAllocator(t *testing.T) {
 	if qualitySampleID == "" || !strings.HasPrefix(qualitySampleID, "cpq_") {
 		t.Fatalf("expected stable quality sample id, got %#v", contextPackQuality)
 	}
-	if anyToInt(contextPackQuality["exact_prompt_tokens_saved"], 0) != savedTokens ||
+	if anyToInt(contextPackQuality["exact_prompt_tokens_saved"], 0) != baselineTokens-compiledPromptTokens ||
 		anyToInt(contextPackQuality["modeled_inference_tokens_avoided"], 0) <= 0 ||
 		anyToInt(contextPackQuality["quality_score"], 0) <= 0 {
 		t.Fatalf("expected quality sample to include exact savings and modeled avoidance, got %#v", contextPackQuality)
