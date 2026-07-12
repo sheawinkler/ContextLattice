@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 18;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 20;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -22,8 +22,16 @@ pub const AGENT_TASK_LEASE_V1: &str = "agent_task_lease.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
 pub const ANTI_SCHEMING_PROTOCOL_V1: &str = "anti_scheming_protocol.v1";
 pub const CODEX_COMPACT_HOOK_STDOUT_V1: &str = "codex_compact_hook_stdout.v1";
+pub const CONTEXT_MESH_ENVELOPE_V1: &str = "context_mesh_envelope.v1";
+pub const CONTEXT_MESH_GRANT_V1: &str = "context_mesh_grant.v1";
+pub const CONTEXT_MESH_IMPORT_V1: &str = "context_mesh_import.v1";
+pub const CONTEXT_MESH_REVOCATION_V1: &str = "context_mesh_revocation.v1";
 pub const CONTEXT_OVERFLOW_RECOVERY_V1: &str = "context_overflow_recovery.v1";
 pub const CONTEXT_PACK_RESPONSE_V1: &str = "context_pack_response.v1";
+pub const CONTEXT_PASSPORT_V1: &str = "context_passport.v1";
+pub const CONTEXT_PASSPORT_DIFF_V1: &str = "context_passport_diff.v1";
+pub const CONTEXT_PASSPORT_REPLAY_V1: &str = "context_passport_replay.v1";
+pub const CONTEXT_PASSPORT_VERIFY_V1: &str = "context_passport_verify.v1";
 pub const CONTEXT_POLICY_CANDIDATE_V1: &str = "context_policy_candidate.v1";
 pub const CONTEXT_POLICY_EVALUATION_V1: &str = "context_policy_evaluation.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
@@ -60,8 +68,16 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_TASK_RESULT_V1,
     ANTI_SCHEMING_PROTOCOL_V1,
     CODEX_COMPACT_HOOK_STDOUT_V1,
+    CONTEXT_MESH_ENVELOPE_V1,
+    CONTEXT_MESH_GRANT_V1,
+    CONTEXT_MESH_IMPORT_V1,
+    CONTEXT_MESH_REVOCATION_V1,
     CONTEXT_OVERFLOW_RECOVERY_V1,
     CONTEXT_PACK_RESPONSE_V1,
+    CONTEXT_PASSPORT_V1,
+    CONTEXT_PASSPORT_DIFF_V1,
+    CONTEXT_PASSPORT_REPLAY_V1,
+    CONTEXT_PASSPORT_VERIFY_V1,
     CONTEXT_POLICY_CANDIDATE_V1,
     CONTEXT_POLICY_EVALUATION_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
@@ -155,6 +171,30 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: CONTEXT_MESH_ENVELOPE_V1,
+        payload_kind: "transport_neutral_encrypted_context_envelope",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_MESH_GRANT_V1,
+        payload_kind: "signed_project_scoped_mesh_grant",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_MESH_IMPORT_V1,
+        payload_kind: "verified_context_mesh_reconciliation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_MESH_REVOCATION_V1,
+        payload_kind: "signed_local_mesh_revocation_tombstone",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: CONTEXT_OVERFLOW_RECOVERY_V1,
         payload_kind: "context_overflow_recovery",
         contract_version: 1,
@@ -163,6 +203,30 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTEXT_PACK_RESPONSE_V1,
         payload_kind: "context_pack_response",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_PASSPORT_V1,
+        payload_kind: "signed_replayable_context_passport",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_PASSPORT_DIFF_V1,
+        payload_kind: "context_passport_diff",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_PASSPORT_REPLAY_V1,
+        payload_kind: "context_passport_replay_plan",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_PASSPORT_VERIFY_V1,
+        payload_kind: "context_passport_verification",
         contract_version: 1,
         required_output_mode: "json_object",
     },

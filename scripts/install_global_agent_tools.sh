@@ -33,6 +33,17 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_skill_evaluate
   contextlattice_skill_export
   contextlattice_skill_foundry_status
+  contextlattice_passport_export
+  contextlattice_passport_verify
+  contextlattice_passport_diff
+  contextlattice_passport_replay
+  contextlattice_passport_import
+  contextlattice_passport_status
+  contextlattice_mesh_identity
+  contextlattice_mesh_grant
+  contextlattice_mesh_export
+  contextlattice_mesh_import
+  contextlattice_mesh_status
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
@@ -655,6 +666,17 @@ GO_NATIVE_COMMANDS=(
   contextlattice_skill_evaluate
   contextlattice_skill_export
   contextlattice_skill_foundry_status
+  contextlattice_passport_export
+  contextlattice_passport_verify
+  contextlattice_passport_diff
+  contextlattice_passport_replay
+  contextlattice_passport_import
+  contextlattice_passport_status
+  contextlattice_mesh_identity
+  contextlattice_mesh_grant
+  contextlattice_mesh_export
+  contextlattice_mesh_import
+  contextlattice_mesh_status
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
@@ -883,6 +905,17 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_draft"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_evaluate"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_export"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_foundry_status"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_export"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_verify"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_diff"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_replay"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_import"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_status"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_mesh_identity"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_mesh_grant"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_mesh_export"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_mesh_import"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_mesh_status"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
@@ -920,6 +953,10 @@ log "  contextlattice_claim_query 'current release state' --project contextlatti
 log "  contextlattice_policy_candidate --project contextlattice --pretty"
 log "  contextlattice_policy_status --pretty"
 log "  contextlattice_skill_foundry_status --pretty"
+log "  contextlattice_passport_export 'portable task context' --project contextlattice --output passport.json --pretty"
+log "  contextlattice_passport_verify --file passport.json --pretty"
+log "  contextlattice_mesh_identity --pretty"
+log "  contextlattice_mesh_status --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_adopt status --pretty"

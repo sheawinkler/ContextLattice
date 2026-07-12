@@ -530,6 +530,17 @@ $goNativeCommands = @(
     "contextlattice_skill_evaluate",
     "contextlattice_skill_export",
     "contextlattice_skill_foundry_status",
+    "contextlattice_passport_export",
+    "contextlattice_passport_verify",
+    "contextlattice_passport_diff",
+    "contextlattice_passport_replay",
+    "contextlattice_passport_import",
+    "contextlattice_passport_status",
+    "contextlattice_mesh_identity",
+    "contextlattice_mesh_grant",
+    "contextlattice_mesh_export",
+    "contextlattice_mesh_import",
+    "contextlattice_mesh_status",
     "contextlattice_write",
     "contextlattice_adopt",
     "contextlattice_doctor",
@@ -591,6 +602,10 @@ Write-Host "  contextlattice_claim_query `"current project state`" --project con
 Write-Host "  contextlattice_policy_candidate --project contextlattice --pretty"
 Write-Host "  contextlattice_policy_status --pretty"
 Write-Host "  contextlattice_skill_foundry_status --pretty"
+Write-Host "  contextlattice_passport_export `"portable task context`" --project contextlattice --output passport.json --pretty"
+Write-Host "  contextlattice_passport_verify --file passport.json --pretty"
+Write-Host "  contextlattice_mesh_identity --pretty"
+Write-Host "  contextlattice_mesh_status --pretty"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_adopt status --pretty"
 Write-Host "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"

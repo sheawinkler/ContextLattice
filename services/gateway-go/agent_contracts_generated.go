@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 18
+const GeneratedAgentContractRegistryVersion = 20
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -23,8 +23,16 @@ const GeneratedAgentContractAgentTaskLeaseV1 = "agent_task_lease.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
+const GeneratedAgentContractContextMeshEnvelopeV1 = "context_mesh_envelope.v1"
+const GeneratedAgentContractContextMeshGrantV1 = "context_mesh_grant.v1"
+const GeneratedAgentContractContextMeshImportV1 = "context_mesh_import.v1"
+const GeneratedAgentContractContextMeshRevocationV1 = "context_mesh_revocation.v1"
 const GeneratedAgentContractContextOverflowRecoveryV1 = "context_overflow_recovery.v1"
 const GeneratedAgentContractContextPackResponseV1 = "context_pack_response.v1"
+const GeneratedAgentContractContextPassportV1 = "context_passport.v1"
+const GeneratedAgentContractContextPassportDiffV1 = "context_passport_diff.v1"
+const GeneratedAgentContractContextPassportReplayV1 = "context_passport_replay.v1"
+const GeneratedAgentContractContextPassportVerifyV1 = "context_passport_verify.v1"
 const GeneratedAgentContractContextPolicyCandidateV1 = "context_policy_candidate.v1"
 const GeneratedAgentContractContextPolicyEvaluationV1 = "context_policy_evaluation.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
@@ -61,8 +69,16 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentTaskResultV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
 	GeneratedAgentContractCodexCompactHookStdoutV1,
+	GeneratedAgentContractContextMeshEnvelopeV1,
+	GeneratedAgentContractContextMeshGrantV1,
+	GeneratedAgentContractContextMeshImportV1,
+	GeneratedAgentContractContextMeshRevocationV1,
 	GeneratedAgentContractContextOverflowRecoveryV1,
 	GeneratedAgentContractContextPackResponseV1,
+	GeneratedAgentContractContextPassportV1,
+	GeneratedAgentContractContextPassportDiffV1,
+	GeneratedAgentContractContextPassportReplayV1,
+	GeneratedAgentContractContextPassportVerifyV1,
 	GeneratedAgentContractContextPolicyCandidateV1,
 	GeneratedAgentContractContextPolicyEvaluationV1,
 	GeneratedAgentContractContractAcknowledgementV1,
@@ -156,6 +172,30 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractContextMeshEnvelopeV1,
+		PayloadKind:        "transport_neutral_encrypted_context_envelope",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextMeshGrantV1,
+		PayloadKind:        "signed_project_scoped_mesh_grant",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextMeshImportV1,
+		PayloadKind:        "verified_context_mesh_reconciliation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextMeshRevocationV1,
+		PayloadKind:        "signed_local_mesh_revocation_tombstone",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractContextOverflowRecoveryV1,
 		PayloadKind:        "context_overflow_recovery",
 		ContractVersion:    1,
@@ -164,6 +204,30 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContextPackResponseV1,
 		PayloadKind:        "context_pack_response",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPassportV1,
+		PayloadKind:        "signed_replayable_context_passport",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPassportDiffV1,
+		PayloadKind:        "context_passport_diff",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPassportReplayV1,
+		PayloadKind:        "context_passport_replay_plan",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPassportVerifyV1,
+		PayloadKind:        "context_passport_verification",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

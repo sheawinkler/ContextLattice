@@ -79,6 +79,17 @@ Installed commands:
 | `contextlattice_skill_evaluate` | Test a draft against independent holdouts with training-leakage rejection. |
 | `contextlattice_skill_export` | Export a passing skill only after explicit named human approval; never auto-installs it. |
 | `contextlattice_skill_foundry_status` | Inspect Skill Foundry drafts, evaluations, exports, and bounded-ledger health. |
+| `contextlattice_passport_export` | Compile and sign a bounded proof-carrying context manifest; `--output` avoids repeating the artifact in agent context. |
+| `contextlattice_passport_verify` | Verify Passport digest, Ed25519 signature, validity window, and schema. |
+| `contextlattice_passport_diff` | Compare signed Passport revisions without inference. |
+| `contextlattice_passport_replay` | Render a validated replay request without executing imported content. |
+| `contextlattice_passport_import` | Explicitly persist a verified Passport with conflict-preserving lineage reconciliation. |
+| `contextlattice_passport_status` | Inspect Passport identity, lineages, conflicts, and bounded storage. |
+| `contextlattice_mesh_identity` | Return only the local public Ed25519/age identity; private keys never leave the data volume. |
+| `contextlattice_mesh_grant` | Create, list, or revoke signed project-scoped recipient grants. |
+| `contextlattice_mesh_export` | Encrypt a stored Passport to explicit age X25519 grants; ContextLattice performs no delivery. |
+| `contextlattice_mesh_import` | Decrypt and verify an envelope, dry-run by default, then apply only with `--apply`. |
+| `contextlattice_mesh_status` | Inspect bounded grants, revocations, receipts, limits, and the no-transport boundary. |
 | `contextlattice_source_backfill` | Optional development helper, installed with `--include-dev-python-tools`, for bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres. |
 | `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
 | `contextlattice_runner_quality` | Primary CLI for bounded runner-quality telemetry and advisor-only runner recommendations. |

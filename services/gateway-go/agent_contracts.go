@@ -363,6 +363,7 @@ func preflightContractsSummary(findings []map[string]any, stats agentBoundarySta
 }
 
 func attachPayloadFormatContract(contractID string, payload map[string]any, agentID string, lane string, endpoint string) map[string]any {
+	normalizeAgentContractPayloadMapInPlace(payload)
 	metadata := contractMetadata(contractID)
 	stats := agentBoundaryStatsFromMetadata(payload["format_contract"])
 	payload["format_contract"] = metadata
@@ -454,12 +455,15 @@ func attachWritebackFormatContract(payload map[string]any, item normalizedWrite,
 }
 
 func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any {
+	normalizeAgentContractPayloadMapInPlace(payload)
+	ensurePreflightContextPackObject(payload)
 	stats := agentBoundaryStatsFromMetadata(payload["format_contracts"])
 	payload["format_contracts"] = preflightContractsSummary(nil, agentBoundaryStats{}, payload)
 	findings := []map[string]any{}
 	for pass := 0; pass < 5; pass++ {
 		sanitizePreflightSearchBoundary(payload)
 		stats = mergeAgentBoundaryStats(stats, enforceAgentBoundaryContract(agentPreflightResponseContractID, payload))
+		ensurePreflightContextPackObject(payload)
 		findings = validateAgentContractPayload(agentPreflightResponseContractID, payload)
 		payload["format_contracts"] = preflightContractsSummary(findings, stats, payload)
 		postStampFindings := validateAgentContractPayload(agentPreflightResponseContractID, payload)
@@ -478,6 +482,19 @@ func attachAgentPreflightFormatContracts(payload map[string]any) map[string]any 
 	}
 	recordAgentContractBoundary(anyToString(payload["agent_id"]), agentPreflightResponseContractID, "preflight", "/v1/agents/preflight", findings)
 	return payload
+}
+
+func ensurePreflightContextPackObject(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	if _, ok := payload["context_pack"].(map[string]any); ok {
+		return
+	}
+	payload["context_pack"] = map[string]any{
+		"ok": false, "degraded": true, "result_state": "unavailable",
+		"warnings": []any{"Context pack was unavailable during agent preflight."},
+	}
 }
 
 func recordAgentContractBoundary(agentID string, schemaID string, lane string, endpoint string, findings []map[string]any) {
@@ -576,8 +593,11 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 	if contract == nil {
 		return []map[string]any{{"reason": "missing_contract", "contract_id": contractID}}
 	}
-	object, ok := payload.(map[string]any)
-	if !ok {
+	object, normalizeErr := normalizeAgentContractJSONObject(payload)
+	if normalizeErr != nil {
+		return []map[string]any{{"reason": "payload_not_json", "detail": normalizeErr.Error(), "contract_id": contractID}}
+	}
+	if object == nil {
 		return []map[string]any{{"reason": "payload_not_object", "contract_id": contractID}}
 	}
 	findings := []map[string]any{}
@@ -711,6 +731,59 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 		}
 	}
 	return findings
+}
+
+func needsAgentContractJSONNormalization(value any) bool {
+	switch typed := value.(type) {
+	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return false
+	case map[string]any:
+		for _, nested := range typed {
+			if needsAgentContractJSONNormalization(nested) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, nested := range typed {
+			if needsAgentContractJSONNormalization(nested) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
+}
+
+func normalizeAgentContractJSONObject(payload any) (map[string]any, error) {
+	if object, ok := payload.(map[string]any); ok && !needsAgentContractJSONNormalization(object) {
+		return object, nil
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	var normalized any
+	if err := json.Unmarshal(encoded, &normalized); err != nil {
+		return nil, err
+	}
+	object, _ := normalized.(map[string]any)
+	return object, nil
+}
+
+func normalizeAgentContractPayloadMapInPlace(payload map[string]any) {
+	if payload == nil || !needsAgentContractJSONNormalization(payload) {
+		return
+	}
+	normalized, err := normalizeAgentContractJSONObject(payload)
+	if err != nil || normalized == nil {
+		return
+	}
+	clear(payload)
+	for key, value := range normalized {
+		payload[key] = value
+	}
 }
 
 func dottedPathGet(payload map[string]any, dottedPath string) (any, bool) {

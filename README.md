@@ -30,6 +30,8 @@ ContextLattice provides a single memory contract for agentic systems:
 - Advisor-only retrieval planning plus proof-carrying synthesis that exposes support, opposition, uncertainty, missing proof, and causal context instead of laundering recall into certainty.
 - Outcome-trained policy candidates that must survive shadow and controlled canary gates one phase at a time before promotion can even be recommended.
 - Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports.
+- Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
+- Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
@@ -37,9 +39,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.13.0` is the current public learning-core baseline: the v3.12 Temporal Claim Graph, adaptive planning, and Proof-Carrying Synthesis v2 now feed an outcome-trained context-policy lifecycle and Skill Foundry. Candidates train only on calibration-eligible outcomes, advance one phase at a time, and never mutate public runtime policy. Repeated verified workflows need independent holdouts and explicit human approval before ContextLattice exports an inactive skill artifact. The full deterministic synthesis, sparse-context preservation, async continuation, graph evidence, CLI-first agent integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory suite remains intact.
+`v3.14.0` is the current public portable-context baseline: signed Context Passports package bounded proof, objective state, lineage, capability requirements, expiry, deterministic diffs, and non-executing replay plans. Context Mesh encrypts those Passports to explicit project-scoped age X25519 recipients and preserves divergent imports as branches instead of overwriting them. ContextLattice performs no delivery network calls. The v3.13 outcome-trained policy and Skill Foundry, v3.12 cognition proof core, sparse-context preservation, async continuation, graph evidence, CLI-first integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory suite remain intact.
 
-## Public Runtime Stack (v3.13)
+## Public Runtime Stack (v3.14)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -65,8 +67,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.13.0 \
-  --statement "The current public release is 3.13.0." \
+  --object 3.14.0 \
+  --statement "The current public release is 3.14.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -83,9 +85,14 @@ contextlattice_policy_status --pretty
 contextlattice_skill_draft --payload-file workflow-runs.json --pretty
 contextlattice_skill_evaluate --draft-id <draft-id> --payload-file holdouts.json --pretty
 contextlattice_skill_export --draft-id <draft-id> --human-approved --approver <identity> --pretty
+
+# Carry a signed evidence packet to another machine without carrying the machine with it.
+contextlattice_passport_export "prepare the release handoff" --project contextlattice --output passport.json --pretty
+contextlattice_passport_verify --file passport.json --pretty
+contextlattice_mesh_identity --pretty
 ```
 
-The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. See [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md) and [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md) for contracts, safety boundaries, and HTTP fallbacks.
+The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. Passport replay never executes imported text, and Mesh never owns transport. See [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md), [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md), and [`docs/context-passport-mesh.md`](docs/context-passport-mesh.md) for contracts, safety boundaries, and HTTP fallbacks.
 
 ## Quickstart
 
@@ -227,6 +234,8 @@ contextlattice_search -h
 contextlattice_write -h
 contextlattice_checkpoint -h
 contextlattice_skills_index search "browser automation" --pretty
+contextlattice_passport_export "portable task context" --project my-project --output passport.json --pretty
+contextlattice_mesh_status --pretty
 ```
 
 - `contextlattice_agent_adapter` is the first-class lifecycle helper for bootstrap, context-pack, checkpoint, handoff, state, event, and completion flows.
@@ -238,6 +247,8 @@ contextlattice_skills_index search "browser automation" --pretty
 - `contextlattice_pack` compiles a bounded prompt-ready packet with ranked evidence, files to inspect, risks, checks, source coverage, and a `reference_prompt`.
 - `contextlattice_checkpoint` writes a checkpoint and verifies readback.
 - `contextlattice_skills_index` discovers capabilities without loading every skill into startup context.
+- `contextlattice_passport_*` signs, verifies, diffs, replays, and imports bounded context without executing imported instructions.
+- `contextlattice_mesh_*` manages public recipient identity, grants, encrypted file/JSON envelopes, dry-run reconciliation, and explicit apply; transport remains caller-owned.
 - `contextlattice_source_backfill` is an optional development helper, installed with `scripts/install_global_agent_tools.sh --include-dev-python-tools`, for bounded data imports.
 - Hook pack details: `docs/agent-hooks.md`.
 
@@ -377,7 +388,9 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.14.0.md` (signed Context Passport and encrypted Context Mesh)
   - `docs/releases/v3.13.0.md` (outcome-trained canary policy and Skill Foundry)
+  - `docs/releases/v3.14.0.md` (signed Context Passports and encrypted Context Mesh)
   - `docs/releases/v3.12.0.md` (Temporal Claim Graph, adaptive retrieval planning, and Proof-Carrying Synthesis v2)
   - `docs/releases/v3.11.2.md` (evidence-preserving sparse Context Packs and grounded deterministic synthesis)
   - `docs/releases/v3.11.1.md` (upgrade-safe runner discovery across long-lived agent environments)
