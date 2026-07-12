@@ -647,6 +647,9 @@ func (s *server) contextPolicyEvaluation(payload map[string]any) (map[string]any
 	if _, ok := contextPolicyPhases[phase]; !ok || phase == "insufficient_evidence" {
 		return nil, candidate, errors.New("candidate is not eligible for evaluation")
 	}
+	if phase == "promoted" || phase == "rolled_back" {
+		return nil, candidate, errors.New("candidate lifecycle is terminal; create a new evidence-bound candidate")
+	}
 	control := anyMap(payload["control"])
 	canary := anyMap(payload["canary"])
 	evidenceSource := "operator_supplied_metrics"

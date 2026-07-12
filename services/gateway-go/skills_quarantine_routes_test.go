@@ -10,6 +10,16 @@ import (
 	"testing"
 )
 
+func TestSkillsIndexRootsUseNativePathListSeparator(t *testing.T) {
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", first+string(os.PathListSeparator)+second)
+	roots := skillsIndexRoots()
+	if len(roots) != 2 || roots[0] != filepath.Clean(first) || roots[1] != filepath.Clean(second) {
+		t.Fatalf("unexpected native path-list parsing: %#v", roots)
+	}
+}
+
 func writeSkillsSearchStub(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

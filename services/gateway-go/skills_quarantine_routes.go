@@ -86,7 +86,9 @@ func skillsIndexRoots() []string {
 	}
 	seen := map[string]struct{}{}
 	roots := []string{}
-	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == ':' || r == ',' || r == '\n' || r == '\t' }) {
+	separator := string(os.PathListSeparator)
+	normalizedList := strings.NewReplacer(",", separator, "\n", separator, "\t", separator).Replace(raw)
+	for _, item := range filepath.SplitList(normalizedList) {
 		root := strings.TrimSpace(item)
 		if root == "" {
 			continue

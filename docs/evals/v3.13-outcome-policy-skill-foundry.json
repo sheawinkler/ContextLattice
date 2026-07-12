@@ -27,6 +27,7 @@
     "mixed operator and persisted arm evidence is rejected",
     "candidate identity binds its calibration evidence digest",
     "candidate regeneration and stale transitions cannot regress lifecycle state",
+    "promoted and rolled-back candidates reject further evaluation",
     "public promotion never activates runtime policy",
     "skill draft requires three stable verified runs",
     "training and holdout identities cannot overlap",
