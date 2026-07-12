@@ -39,7 +39,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.15.0` is the current public graph-efficacy baseline: bounded identity-first repair reconnects durable memories without an unbounded write pass, explicit neighbor holdouts measure graph lift separately from direct recall, and graph targets must hydrate into token-budgeted evidence before they count. Skill Foundry drafts gain terminal, immutable, non-destructive retirement. Signed Context Passports, encrypted Context Mesh, the v3.13 learning core, v3.12 cognition proof core, sparse-context preservation, async continuation, CLI-first integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory remain intact.
+`v3.15.1` is the current public baseline: every ContextLattice-owned JavaScript surface now converges on Node 24 LTS, from local version files and package engines through containers and release actions, with a fail-closed runtime audit and reviewed install-script policy. Bounded identity-first repair reconnects durable memories without an unbounded write pass, explicit neighbor holdouts measure graph lift separately from direct recall, and graph targets must hydrate into token-budgeted evidence before they count. Skill Foundry drafts retain terminal, immutable, non-destructive retirement. Signed Context Passports, encrypted Context Mesh, the learning and proof cores, sparse-context preservation, async continuation, CLI-first integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory remain intact.
 
 ## Public Runtime Stack (v3.15)
 
@@ -67,8 +67,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.15.0 \
-  --statement "The current public release is 3.15.0." \
+  --object 3.15.1 \
+  --statement "The current public release is 3.15.1." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -390,6 +390,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.15.1.md` (Node 24 LTS convergence across local tooling, containers, packages, and release actions)
   - `docs/releases/v3.15.0.md` (bounded graph repair, explicit graph efficacy, hydrated neighbors, and durable Foundry retirement)
   - `docs/releases/v3.14.0.md` (signed Context Passport and encrypted Context Mesh)
   - `docs/releases/v3.13.0.md` (outcome-trained canary policy and Skill Foundry)

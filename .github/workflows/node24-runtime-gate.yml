@@ -1,0 +1,61 @@
+name: Node 24 Runtime Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".node-version"
+      - ".nvmrc"
+      - "Dockerfile.dashboard"
+      - "Dockerfile.memorymcp"
+      - "Dockerfile.mcp-gateway"
+      - "contextlattice-dashboard/**"
+      - "scripts/node24_runtime_audit.py"
+      - "scripts/tests/test_node24_runtime_audit.py"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  node24-runtime:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "file:/tmp/contextlattice-dashboard-ci.db"
+      NEXTAUTH_SECRET: "node24-runtime-gate-only"
+      NEXTAUTH_URL: "http://127.0.0.1:3000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: contextlattice-dashboard/package-lock.json
+
+      - name: Audit Node runtime contracts
+        run: |
+          python3 scripts/tests/test_node24_runtime_audit.py
+          python3 scripts/node24_runtime_audit.py --check-local --pretty
+
+      - name: Verify selected runtime
+        run: |
+          node --version
+          npm --version
+          node -e 'if (process.versions.node.split(".")[0] !== "24") process.exit(1)'
+
+      - name: Install dashboard dependencies
+        working-directory: contextlattice-dashboard
+        run: npm ci
+
+      - name: Test dashboard
+        working-directory: contextlattice-dashboard
+        run: npm test
+
+      - name: Build dashboard
+        working-directory: contextlattice-dashboard
+        run: npm run build

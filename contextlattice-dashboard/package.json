@@ -2,6 +2,11 @@
   "name": "contextlattice-dashboard",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": ">=24.18.0 <25",
+    "npm": ">=11.16.0 <12"
+  },
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
@@ -31,7 +36,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/node": "20.11.30",
+    "@types/node": "^24.13.3",
     "@types/nodemailer": "^8.0.0",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
@@ -47,5 +52,14 @@
     "qs": "6.15.2",
     "ws": "8.21.0",
     "uuid": "11.1.1"
+  },
+  "allowScripts": {
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true,
+    "bufferutil@4.1.0": true,
+    "fsevents@2.3.3": true,
+    "prisma@5.22.0": true,
+    "sharp@0.34.5": true,
+    "utf-8-validate@5.0.10": true
   }
 }

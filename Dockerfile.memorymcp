@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:24.18.0-alpine
 ENV npm_config_yes=true \
     npm_config_update_notifier=false \
     NODE_OPTIONS="--dns-result-order=ipv4first" \
@@ -11,11 +11,11 @@ RUN apk add --no-cache bash \
 WORKDIR /app
 # IMPORTANT: run the gateway and spawn the memory-bank MCP via stdio; expose as streamable HTTP on /mcp
 # PORT is provided via env MEMORYMCP_HTTP_PORT (default 59081)
-CMD sh -lc "supergateway \
+CMD ["sh", "-lc", "exec supergateway \
   --stdio 'mcp-server-memory-bank' \
   --outputTransport streamableHttp \
   --stateful \
   --sessionTimeout ${SUPERGATEWAY_SESSION_TIMEOUT_MS:-300000} \
   --logLevel ${SUPERGATEWAY_LOG_LEVEL:-none} \
   --port ${MEMORYMCP_HTTP_PORT:-59081} \
-  --streamableHttpPath /mcp"
+  --streamableHttpPath /mcp"]

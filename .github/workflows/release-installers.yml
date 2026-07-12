@@ -24,7 +24,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name || inputs.tag }}
@@ -61,7 +61,7 @@ jobs:
         run: bash scripts/macos_sign_notarize_release.sh dist/ContextLattice-macOS-universal.dmg
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-dmg
           path: dist/ContextLattice-macOS-universal.dmg
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name || inputs.tag }}
@@ -93,14 +93,14 @@ jobs:
         run: bash scripts/build_windows_msi.sh
 
       - name: Upload Linux bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux
           path: dist/ContextLattice-linux-bootstrap.tar.gz
           if-no-files-found: error
 
       - name: Upload MSI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-msi
           path: dist/ContextLattice-windows-x64.msi
@@ -115,14 +115,14 @@ jobs:
       - build-linux-and-msi
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
 
       - name: Publish/overwrite release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || inputs.tag }}
           fail_on_unmatched_files: true
