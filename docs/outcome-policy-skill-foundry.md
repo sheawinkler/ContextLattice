@@ -23,7 +23,8 @@ Candidate lifecycle:
 4. `promoted` or `rolled_back`: one transition per evaluation. A material
    regression goes directly to rollback; phases cannot be skipped. Replaying
    candidate generation cannot reset a later phase, and stale concurrent
-   transitions are rejected.
+   transitions are rejected. Both terminal phases reject further evaluation;
+   new evidence creates a new evidence-bound candidate.
 
 Public v3.13 is advisory. Even a `promoted` record reports
 `runtime_activation=false`. Entitled distributions may add operator-controlled

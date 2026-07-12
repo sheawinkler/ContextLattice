@@ -114,6 +114,21 @@ func TestContextPolicyHardRegressionRollsBack(t *testing.T) {
 	}
 }
 
+func TestContextPolicyTerminalPhasesRejectFurtherEvaluation(t *testing.T) {
+	for _, phase := range []string{"promoted", "rolled_back"} {
+		t.Run(phase, func(t *testing.T) {
+			id := "ctxpol_terminal_" + phase
+			s := &server{contextPolicy: &contextPolicyStore{candidates: map[string]map[string]any{
+				id: {"candidate_id": id, "project": "contextlattice", "status": phase},
+			}}}
+			_, _, err := s.contextPolicyEvaluation(map[string]any{"candidate_id": id})
+			if err == nil || !strings.Contains(err.Error(), "terminal") {
+				t.Fatalf("expected terminal lifecycle rejection, got %v", err)
+			}
+		})
+	}
+}
+
 func TestContextPolicyTrainingIsProjectScoped(t *testing.T) {
 	t.Setenv("GO_CONTEXT_PACK_QUALITY_LEDGER_ENABLED", "false")
 	s := &server{contextPackQuality: newContextPackQualityTelemetry(100), contextPolicy: &contextPolicyStore{candidates: map[string]map[string]any{}}}
