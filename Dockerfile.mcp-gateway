@@ -1,3 +1,7 @@
-FROM ghcr.io/tbxark/mcp-proxy:latest
-# Base is Alpine; add Node.js+npm (which also gives you npx)
-RUN apk add --no-cache nodejs npm
+FROM ghcr.io/tbxark/mcp-proxy:v0.43.2 AS mcp-proxy
+
+FROM node:24.18.0-bookworm-slim
+COPY --from=mcp-proxy /main /main
+
+ENTRYPOINT ["/main"]
+CMD ["--config", "/config/config.json"]

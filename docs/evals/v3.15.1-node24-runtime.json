@@ -1,0 +1,85 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "node24_runtime_convergence",
+  "lane": "public",
+  "release_train": "v3.15.1",
+  "recorded_at": "2026-07-12T10:33:00Z",
+  "baseline": {
+    "node_runtime_contract": "absent",
+    "live_dashboard_node": "20.20.2",
+    "live_memorymcp_node": "20.20.2",
+    "live_mcp_hub_node": "24.12.0",
+    "node20_era_action_references": 10,
+    "release_finding": "The v3.15.0 installer workflow passed only after GitHub forced deprecated Node 20 actions onto Node 24 and emitted deprecation annotations."
+  },
+  "target": {
+    "node": "24.18.0",
+    "node_status": "lts",
+    "npm": "11.16.0",
+    "scope": [
+      "local_shell",
+      "nvm_default",
+      "dashboard_package",
+      "project_owned_containers",
+      "github_actions"
+    ]
+  },
+  "implementation": {
+    "root_version_files": true,
+    "strict_package_engines": true,
+    "node24_type_definitions": true,
+    "exact_container_patch_pins": true,
+    "dedicated_node24_ci": true,
+    "offline_runtime_audit": true,
+    "reviewed_install_script_pins": 7,
+    "strict_unreviewed_install_scripts": true,
+    "mcp_gateway_stale_alpine_assumption_removed": true,
+    "action_majors": {
+      "actions_checkout": 7,
+      "actions_setup_node": 6,
+      "actions_setup_go": 6,
+      "actions_upload_artifact": 7,
+      "actions_download_artifact": 8,
+      "actions_labeler": 6,
+      "softprops_action_gh_release": 3
+    }
+  },
+  "local_verification": {
+    "node": "24.18.0",
+    "npm": "11.16.0",
+    "npm_clean_install": "passed",
+    "npm_audit_vulnerabilities": 0,
+    "unreviewed_install_scripts": 0,
+    "dashboard_tests": {
+      "passed": 18,
+      "failed": 0
+    },
+    "dashboard_production_build": {
+      "status": "passed",
+      "routes": 78
+    },
+    "container_builds": {
+      "dashboard": "passed_node_24.18.0_cacheonly",
+      "memorymcp": "passed_identical_definition_node_24.18.0",
+      "mcp_gateway": "passed_identical_definition_node_24.18.0"
+    },
+    "runtime_audit": "passed_zero_findings",
+    "runtime_audit_tests": {
+      "passed": 5,
+      "failed": 0
+    },
+    "workflow_lint": "passed",
+    "compose_config": "passed_with_runtime_env",
+    "public_boundary_guard": "passed_zero_findings"
+  },
+  "economics": {
+    "llm_calls": 0,
+    "provider_tokens": 0,
+    "docker_cache_scope": "external_buildkit_cache",
+    "application_storage_migrations": 0
+  },
+  "verification": {
+    "public_repo_checks": "pending_pr",
+    "release_workflow_without_node20_annotations": "pending_release"
+  }
+}
