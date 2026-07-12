@@ -155,6 +155,7 @@ def main() -> int:
         path = global_home / rel
         checks.append(check(f"hook_runtime:{rel}", path.is_file(), path=str(path)))
     for name in [
+        "contextlattice",
         "contextlattice_pre_compaction_write",
         "contextlattice_post_compaction_read",
         "contextlattice_adopt",

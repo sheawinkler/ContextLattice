@@ -49,13 +49,23 @@ func (s *server) toolsSynthesisPack(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	payload["_suppress_final_token_impact_recording"] = true
 	response, status, execErr := s.buildSynthesisPackResponse(r.Context(), incomingHeaders, payload, "/tools/synthesis_pack")
 	if execErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "synthesis_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
 	}
 	response["tool"] = "synthesis_pack"
-	response = attachPayloadFormatContract(synthesisPackContractID, response, anyToString(response["agent_id"]), "synthesis_pack", "/tools/synthesis_pack")
+	if anyToString(response["schema_id"]) == agentPacketContractID {
+		response["surface"] = "tools_synthesis_pack"
+		response = finalizeAgentPacket(response)
+	} else {
+		attach := func(value map[string]any) map[string]any {
+			return attachPayloadFormatContract(synthesisPackContractID, value, anyToString(value["agent_id"]), "synthesis_pack", "/tools/synthesis_pack")
+		}
+		response = finalizeFullTransport(response, attach, "tools_synthesis_pack_transport", "serialized_tools_synthesis_pack_response_json")
+	}
+	s.recordTokenImpact(anyMap(response["token_impact"]))
 	writeJSON(w, status, response)
 }
 
@@ -66,6 +76,7 @@ func (s *server) buildSynthesisPackResponse(
 	surface string,
 ) (map[string]any, int, error) {
 	requestPayload := cloneMap(payload)
+	packetRequested := agentPacketRequested(requestPayload)
 	if strings.TrimSpace(anyToString(requestPayload["retrieval_intent"])) == "" {
 		requestPayload["retrieval_intent"] = "synthesis"
 	}
@@ -76,7 +87,12 @@ func (s *server) buildSynthesisPackResponse(
 		requestPayload["max_facts"] = 32
 	}
 
-	contextResponse, status, execErr := s.buildContextPackResponse(ctx, incomingHeaders, requestPayload)
+	contextRequest := cloneMap(requestPayload)
+	delete(contextRequest, "output_mode")
+	delete(contextRequest, "projection")
+	delete(contextRequest, "response_mode")
+	contextRequest["_suppress_token_impact_recording"] = true
+	contextResponse, status, execErr := s.buildContextPackResponse(ctx, incomingHeaders, contextRequest)
 	if execErr != nil {
 		return nil, 0, execErr
 	}
@@ -153,7 +169,21 @@ func (s *server) buildSynthesisPackResponse(
 			}
 		}
 	}
-	return attachPayloadFormatContract(synthesisPackContractID, response, agentID, "synthesis_pack", surface), status, nil
+	if packetRequested {
+		packet := finalizeAgentPacket(buildAgentPacket(response, requestPayload, "synthesis_pack"))
+		if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
+			s.recordTokenImpact(anyMap(packet["token_impact"]))
+		}
+		return packet, status, nil
+	}
+	attach := func(value map[string]any) map[string]any {
+		return attachPayloadFormatContract(synthesisPackContractID, value, agentID, "synthesis_pack", surface)
+	}
+	response = finalizeFullTransport(response, attach, "synthesis_pack_transport", "serialized_synthesis_pack_response_json")
+	if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
+		s.recordTokenImpact(anyMap(response["token_impact"]))
+	}
+	return response, status, nil
 }
 
 func (s *server) buildSynthesisPack(ctx context.Context, contextResponse map[string]any, requestPayload map[string]any, surface string) map[string]any {
@@ -170,6 +200,8 @@ func (s *server) buildSynthesisPack(ctx context.Context, contextResponse map[str
 	openQuestions := synthesisPackOpenQuestions(anyMap(contextResponse["source_coverage"]), contextPackAnyList(contextResponse["omitted_high_value_refs"]), rankedEvidence, topicGravity)
 	semanticTags := synthesisPackSemanticTags(query, contextPack, highSignal, topicGravity, crossProject, anyMap(contextResponse["source_coverage"]))
 	quality := synthesisPackQuality(highSignal, topicGravity, crossProject, anyMap(contextResponse["source_coverage"]), anyMap(contextResponse["context_pack_quality"]))
+	decisionGate := synthesisDecisionGate(highSignal, anyMap(contextResponse["source_coverage"]), quality)
+	nextActions = synthesisActionsForDecisionGate(decisionGate, nextActions)
 	evidenceTrail := synthesisPackEvidenceTrail(contextPack, highSignal, 12)
 	trace := map[string]any{
 		"mode":                 "deterministic_v1",
@@ -187,6 +219,7 @@ func (s *server) buildSynthesisPack(ctx context.Context, contextResponse map[str
 		"query":                    query,
 		"topic_path":               topicPath,
 		"summary":                  synthesisPackSummary(highSignal, topicGravity, crossProject, anyMap(contextResponse["source_coverage"])),
+		"decision_gate":            decisionGate,
 		"high_signal_findings":     highSignal,
 		"topic_gravity":            topicGravity,
 		"cross_project_bridges":    crossProject,
@@ -216,13 +249,15 @@ func synthesisPackEvidenceCards(items []any, limit int) []any {
 			continue
 		}
 		card := map[string]any{
-			"rank":           anyToInt(item["rank"], len(out)+1),
-			"kind":           strings.TrimSpace(anyToString(item["kind"])),
-			"text":           text,
-			"score":          roundFloat(anyToFloat(item["score"]), 3),
-			"confidence":     anyToFloat(item["confidence"]),
-			"why_it_matters": synthesisPackWhyItMatters(item),
-			"citation":       contextPackEvidenceCitation(item),
+			"rank":            anyToInt(item["rank"], len(out)+1),
+			"kind":            strings.TrimSpace(anyToString(item["kind"])),
+			"text":            text,
+			"score":           roundFloat(anyToFloat(item["score"]), 3),
+			"confidence":      anyToFloat(item["confidence"]),
+			"query_relevance": anyToFloat(item["query_relevance"]),
+			"freshness":       anyToString(item["freshness"]),
+			"why_it_matters":  synthesisPackWhyItMatters(item),
+			"citation":        contextPackEvidenceCitation(item),
 		}
 		for _, key := range []string{"project", "file", "source", "topic_path", "timestamp", "relation", "edge_direction"} {
 			if value := strings.TrimSpace(anyToString(item[key])); value != "" {
@@ -235,6 +270,66 @@ func synthesisPackEvidenceCards(items []any, limit int) []any {
 		out = append(out, card)
 	}
 	return out
+}
+
+func synthesisDecisionGate(highSignal []any, sourceCoverage map[string]any, quality map[string]any) map[string]any {
+	maxAlignment := 0.0
+	alignmentTotal := 0.0
+	alignmentCount := 0
+	for _, raw := range highSignal {
+		relevance := anyToFloat(anyMap(raw)["query_relevance"])
+		if relevance > maxAlignment {
+			maxAlignment = relevance
+		}
+		alignmentTotal += relevance
+		alignmentCount++
+	}
+	meanAlignment := 0.0
+	if alignmentCount > 0 {
+		meanAlignment = alignmentTotal / float64(alignmentCount)
+	}
+	decision := "act"
+	reasons := []any{}
+	if len(highSignal) == 0 || maxAlignment < 0.15 {
+		decision = "abstain"
+		reasons = append(reasons, "No selected evidence is sufficiently aligned with the request.")
+	} else if !anyToBool(sourceCoverage["complete"]) || maxAlignment < 0.35 || anyToString(quality["status"]) == "sparse" {
+		decision = "verify"
+		reasons = append(reasons, "Evidence is relevant but incomplete, weakly aligned, or sparse; verify local truth before acting.")
+	} else {
+		reasons = append(reasons, "Selected evidence is request-aligned and effective source coverage is complete.")
+	}
+	return map[string]any{
+		"decision":                decision,
+		"evidence_alignment_max":  roundFloat(maxAlignment, 3),
+		"evidence_alignment_mean": roundFloat(meanAlignment, 3),
+		"source_complete":         anyToBool(sourceCoverage["complete"]),
+		"refusal":                 decision == "abstain",
+		"reasons":                 reasons,
+		"policy":                  "act only on aligned, provenance-carrying evidence; verify partial truth; abstain from unsupported action",
+	}
+}
+
+func synthesisActionsForDecisionGate(gate map[string]any, actions []any) []any {
+	decision := strings.ToLower(strings.TrimSpace(anyToString(gate["decision"])))
+	if decision == "act" {
+		return actions
+	}
+	safe := []any{
+		map[string]any{
+			"label": "inspect_provenance", "command": "", "reason": "Inspect cited files or source records before changing external state.", "source": "decision_gate",
+		},
+	}
+	if decision == "abstain" {
+		safe = append(safe, map[string]any{
+			"label": "retrieve_broader_context", "command": "", "reason": "Broaden or deepen retrieval; the current evidence does not support action.", "source": "decision_gate",
+		})
+		return safe
+	}
+	safe = append(safe, map[string]any{
+		"label": "run_local_verification", "command": "", "reason": "Use deterministic checks to resolve the remaining evidence gap.", "source": "decision_gate",
+	})
+	return safe
 }
 
 func synthesisPackWhyItMatters(item map[string]any) string {
@@ -706,9 +801,11 @@ func synthesisPackSummary(highSignal []any, topicGravity []any, crossProject []a
 }
 
 func synthesisPackReferencePrompt(pack map[string]any) string {
+	gate := anyMap(pack["decision_gate"])
 	lines := []string{
 		"Use this ContextLattice Synthesis Pack v1 as the decision spine for the next reasoning step.",
 		"Summary: " + anyToString(pack["summary"]),
+		"Decision gate: " + firstNonEmptyStrings(anyToString(gate["decision"]), "verify") + ".",
 		"Rule: treat high_signal_findings and evidence_trail as observed evidence; treat synthesis_quality/open_questions as deterministic guidance, not facts.",
 		"",
 		"High-signal findings:",

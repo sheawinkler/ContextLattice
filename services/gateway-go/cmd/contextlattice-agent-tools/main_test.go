@@ -75,6 +75,7 @@ func TestSearchCommandUsesGoNativeHTTPPayload(t *testing.T) {
 }
 
 func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	var packPayload map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +151,221 @@ func TestPackCommandMarksNativeCLIAndSession(t *testing.T) {
 	}
 }
 
+func TestPackCommandReusesCachedLiveSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	writeSessionState("alpha", "sess-cached", "existing task", "codex_test")
+	startCalls := 0
+	var packPayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/agents/sessions/start":
+			startCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "unexpected"}})
+		case "/v1/agents/sessions/sess-cached":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
+				"id": "sess-cached", "status": "active", "project": "alpha", "agent_id": "codex_test",
+			}})
+		case "/memory/context-pack":
+			if err := json.NewDecoder(r.Body).Decode(&packPayload); err != nil {
+				t.Fatalf("decode pack request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "schema_id": agentPacketContractID, "session_id": "sess-cached",
+				"context_pack_quality": map[string]any{"sample_id": "cpq_cached"},
+			})
+		case "/v1/agents/sessions/sess-cached/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", "continue existing task", "--project", "alpha", "--agent-id", "codex_test", "--raw"}); err != nil {
+		t.Fatalf("run pack: %v", err)
+	}
+	if startCalls != 0 {
+		t.Fatalf("cached live session caused %d duplicate start calls", startCalls)
+	}
+	if firstString(packPayload["session_id"]) != "sess-cached" {
+		t.Fatalf("expected cached session id in context request, got %#v", packPayload)
+	}
+}
+
+func TestAgentSessionReuseKeySeparatesBranches(t *testing.T) {
+	base := map[string]any{"repo": "contextlattice", "branch": "main", "worktree": "/repo", "cwd": "/repo"}
+	other := map[string]any{"repo": "contextlattice", "branch": "release", "worktree": "/repo", "cwd": "/repo"}
+	mainKey := agentSessionReuseKey("contextlattice", "codex", "codex_test", base)
+	releaseKey := agentSessionReuseKey("contextlattice", "codex", "codex_test", other)
+	if mainKey == releaseKey {
+		t.Fatalf("branch change did not create a distinct session identity: %s", mainKey)
+	}
+}
+
+func TestAdapterCompleteAutomaticallyReportsPendingContextOutcome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	writeSessionStateWithExtras("alpha", "sess-finish", "finish task", "codex_test", map[string]any{
+		"latest_context_pack_quality": map[string]any{"sample_id": "cpq_finish", "reported": false},
+	})
+	var outcomePayload map[string]any
+	eventTypes := []string{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/telemetry/context-pack-quality/outcome":
+			if err := json.NewDecoder(r.Body).Decode(&outcomePayload); err != nil {
+				t.Fatalf("decode outcome request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":      true,
+				"outcome": map[string]any{"schema_id": "contextlattice_context_pack_outcome.v1", "outcome_id": "outcome_finish", "sample_id": "cpq_finish", "first_pass_success": true, "repair_required": false},
+			})
+		case "/v1/agents/sessions/event":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode session event: %v", err)
+			}
+			eventTypes = append(eventTypes, firstString(payload["type"]))
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-finish"}})
+		case "/v1/agents/sessions/sess-finish/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice", "finish", "--session-id", "sess-finish", "--project", "alpha",
+		"--agent", "codex", "--agent-id", "codex_test", "--summary", "verified complete", "--raw",
+	}); err != nil {
+		t.Fatalf("adapter complete: %v output=%s", err, stdout.String())
+	}
+	if !asBool(outcomePayload["first_pass_success"]) || asBool(outcomePayload["repair_required"]) || firstString(outcomePayload["sample_id"]) != "cpq_finish" {
+		t.Fatalf("automatic finish outcome is not a first-pass success: %#v", outcomePayload)
+	}
+	if len(eventTypes) != 2 || eventTypes[0] != "context_pack.outcome_reported" || eventTypes[1] != "session.completed" {
+		t.Fatalf("outcome was not bound before terminal completion: %#v", eventTypes)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if firstString(asMap(output["result"])["outcome_mode"]) != "automatic_success" {
+		t.Fatalf("expected automatic outcome mode, got %#v", output)
+	}
+	quality := asMap(readSessionState("alpha")["latest_context_pack_quality"])
+	if !asBool(quality["reported"]) || firstString(quality["outcome_id"]) != "outcome_finish" {
+		t.Fatalf("pending outcome was not retired after durable report: %#v", quality)
+	}
+}
+
+func TestUnifiedContextAndResumeCommandsUseCompactContracts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var contextPayload map[string]any
+	resumeCompact := false
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/memory/synthesis-pack/v2":
+			if err := json.NewDecoder(r.Body).Decode(&contextPayload); err != nil {
+				t.Fatalf("decode context request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": agentPacketContractID, "surface": "synthesis_pack_v2"})
+		case "/v1/agents/sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "sessions": []any{map[string]any{"id": "sess-resume", "status": "active", "project": "alpha"}}})
+		case "/v1/agents/sessions/sess-resume/context-package":
+			resumeCompact = r.URL.Query().Get("view") == "compact"
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": agentPacketContractID, "surface": "session_resume", "session_id": "sess-resume", "project": "alpha"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var contextOut bytes.Buffer
+	c := newCLI(&contextOut, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice", "context", "prove current task", "--project", "alpha", "--no-auto-session", "--raw"}); err != nil {
+		t.Fatalf("context command: %v", err)
+	}
+	if firstString(contextPayload["output_mode"]) != agentPacketContractID || asInt(contextPayload["hard_limit_tokens"]) != defaultAgentPacketHardTokens {
+		t.Fatalf("unified context did not request compact proof synthesis: %#v", contextPayload)
+	}
+
+	var resumeOut bytes.Buffer
+	c = newCLI(&resumeOut, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice", "resume", "--project", "alpha", "--raw"}); err != nil {
+		t.Fatalf("resume command: %v", err)
+	}
+	if !resumeCompact {
+		t.Fatalf("resume did not request compact session packet")
+	}
+}
+
+func TestUnifiedCorrectSeparatesFeedbackFromFactualClaimMutation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	writeSessionStateWithExtras("alpha", "sess-correct", "correct task", "codex_test", map[string]any{
+		"latest_context_pack_quality": map[string]any{"sample_id": "cpq_correct", "reported": false},
+	})
+	var feedbackPayload map[string]any
+	var claimPayload map[string]any
+	var outcomePayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/tools/feedback_submit":
+			_ = json.NewDecoder(r.Body).Decode(&feedbackPayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "feedback": map[string]any{"id": "feedback-correct"}})
+		case "/memory/claims":
+			_ = json.NewDecoder(r.Body).Decode(&claimPayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "claim": map[string]any{"claim_id": "claim_new"}})
+		case "/telemetry/context-pack-quality/outcome":
+			_ = json.NewDecoder(r.Body).Decode(&outcomePayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "outcome": map[string]any{"outcome_id": "outcome_correct", "sample_id": "cpq_correct"}})
+		case "/v1/agents/sessions/event":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-correct"}})
+		case "/v1/agents/sessions/sess-correct/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice", "correct", "The current release is v4", "--category", "wrong", "--factual",
+		"--subject", "public release", "--predicate", "version", "--object", "v4", "--target-claim-id", "claim_old",
+		"--session-id", "sess-correct", "--project", "alpha", "--agent-id", "codex_test", "--raw",
+	}); err != nil {
+		t.Fatalf("correct command: %v output=%s", err, stdout.String())
+	}
+	metadata := asMap(feedbackPayload["metadata"])
+	if !asBool(metadata["factual"]) || firstString(metadata["category"]) != "wrong" {
+		t.Fatalf("correction feedback lost category boundary: %#v", feedbackPayload)
+	}
+	if values := firstList(claimPayload["contradicts"]); len(values) != 1 || firstString(values[0]) != "claim_old" || len(firstList(claimPayload["supersedes"])) != 0 {
+		t.Fatalf("wrong factual correction did not create explicit contradiction: %#v", claimPayload)
+	}
+	if asBool(outcomePayload["first_pass_success"]) || !asBool(outcomePayload["repair_required"]) {
+		t.Fatalf("negative correction did not train retrieval outcome: %#v", outcomePayload)
+	}
+}
+
 func TestSynthesisPackCommandUsesNativeEndpoint(t *testing.T) {
 	var captured map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +413,9 @@ func TestSynthesisPackCommandUsesNativeEndpoint(t *testing.T) {
 	}
 	if captured["retrieval_mode"] != "fast" {
 		t.Fatalf("expected fast retrieval mode, got %#v", captured)
+	}
+	if captured["output_mode"] != agentPacketContractID || asInt(captured["hard_limit_tokens"]) != defaultAgentPacketHardTokens {
+		t.Fatalf("expected compact agent packet request by default, got %#v", captured)
 	}
 	var output map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
@@ -949,6 +1168,135 @@ func TestDiscoverHermesDoesNotCountHermesUltraOrSelfCommands(t *testing.T) {
 		t.Fatalf("unexpected process match: %#v", process)
 	}
 }
+
+func TestAsyncInboxDrainDeliversTerminalItemsAndAcks(t *testing.T) {
+	ackPath := filepath.Join(t.TempDir(), "async-seen.json")
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/sessions/sess-async/rollup" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"rollup": map[string]any{
+				"agent_inbox": map[string]any{
+					"items": []map[string]any{
+						{
+							"event_id":         "evt-ready",
+							"type":             "retrieval.continuation.ready",
+							"status":           "completed",
+							"result_state":     "ready",
+							"message":          "Async retrieval is ready; slow-source evidence has finished warming for this request.",
+							"suggested_action": "Rerun context packaging before finalizing.",
+							"token":            "cont-ready",
+							"progress_pct":     100,
+						},
+						{
+							"event_id":         "evt-progress",
+							"type":             "retrieval.continuation.progress",
+							"status":           "running",
+							"result_state":     "pending",
+							"message":          "Async retrieval is still warming.",
+							"suggested_action": "Keep working.",
+							"token":            "cont-progress",
+							"progress_pct":     25,
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_async_inbox_drain", "--session-id", "sess-async", "--ack-path", ackPath}); err != nil {
+		t.Fatalf("run async inbox drain: %v", err)
+	}
+	rendered := stdout.String()
+	if !strings.Contains(rendered, "ContextLattice async retrieval ready") || !strings.Contains(rendered, "cont-ready") {
+		t.Fatalf("expected ready async notice, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "still warming") || strings.Contains(rendered, "cont-progress") {
+		t.Fatalf("progress item should not be delivered by default:\n%s", rendered)
+	}
+
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice_async_inbox_drain", "--session-id", "sess-async", "--ack-path", ackPath}); err != nil {
+		t.Fatalf("run second async inbox drain: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("expected acked item to stay quiet, got:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice_async_inbox_drain", "--session-id", "sess-async", "--ack-path", ackPath, "--include-progress", "--peek"}); err != nil {
+		t.Fatalf("run async inbox drain with progress: %v", err)
+	}
+	rendered = stdout.String()
+	if !strings.Contains(rendered, "ContextLattice async retrieval warming") || !strings.Contains(rendered, "cont-progress") {
+		t.Fatalf("expected progress item to render as warming, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "ContextLattice async retrieval ready") {
+		t.Fatalf("progress item must not render as ready, got:\n%s", rendered)
+	}
+}
+
+func TestPackAutoDrainWritesNoticeToStderrWithoutCorruptingStdout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	var packPayload map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/sessions/start":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-pack-drain"}})
+		case "/memory/context-pack":
+			if err := json.NewDecoder(r.Body).Decode(&packPayload); err != nil {
+				t.Fatalf("decode pack request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "context_pack": map[string]any{"facts": []any{}}})
+		case "/v1/agents/sessions/sess-pack-drain/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"rollup": map[string]any{
+					"agent_inbox": map[string]any{
+						"items": []map[string]any{{
+							"event_id":         "evt-pack-ready",
+							"type":             "retrieval.continuation.ready",
+							"status":           "completed",
+							"result_state":     "ready",
+							"message":          "Async retrieval is ready.",
+							"suggested_action": "Rerun context packaging.",
+							"token":            "cont-pack",
+							"progress_pct":     100,
+						}},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout, stderr bytes.Buffer
+	c := newCLI(&stdout, &stderr)
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_pack", "native pack", "--project", "alpha", "--mode", "fast", "--raw"}); err != nil {
+		t.Fatalf("run pack: %v", err)
+	}
+	if packPayload["session_id"] != "sess-pack-drain" {
+		t.Fatalf("expected session id from auto session: %#v", packPayload)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("stdout should remain valid JSON, got %q: %v", stdout.String(), err)
+	}
+	if !strings.Contains(stderr.String(), "ContextLattice async retrieval ready") || !strings.Contains(stderr.String(), "cont-pack") {
+		t.Fatalf("expected async notice on stderr, got:\n%s", stderr.String())
+	}
+}
+
 func TestTraceCommandRendersTree(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/agents/sessions/sess-trace/trace" {

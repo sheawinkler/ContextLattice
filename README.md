@@ -39,14 +39,15 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.15.1` is the current public baseline: every ContextLattice-owned JavaScript surface now converges on Node 24 LTS, from local version files and package engines through containers and release actions, with a fail-closed runtime audit and reviewed install-script policy. Bounded identity-first repair reconnects durable memories without an unbounded write pass, explicit neighbor holdouts measure graph lift separately from direct recall, and graph targets must hydrate into token-budgeted evidence before they count. Skill Foundry drafts retain terminal, immutable, non-destructive retirement. Signed Context Passports, encrypted Context Mesh, the learning and proof cores, sparse-context preservation, async continuation, CLI-first integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory remain intact.
+`v3.16.0` is the current public baseline. The normal agent path is one compact, proof-carrying packet instead of a parade of oversized internal contracts. One task keeps one live session; idle and terminal sessions stop impersonating active work. Async sources move monotonically from warming to one terminal truth. Retrieval learns from ordinary `finish` and `correct` commands, while weak or contradictory evidence forces verify or abstain instead of manufacturing certainty. Transport-inclusive token economics, session truth, outcome learning, and the copy-only Agent Packet workbench now share the same dashboard. Node 24 LTS convergence, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain intact behind the same CLI-first contract.
 
-## Public Runtime Stack (v3.15)
+## Public Runtime Stack (v3.16)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
 - Retrieval policy: staged fast-return, async continuation lifecycle, and impact-per-token allocation.
-- Primary interface: CLI helpers such as `contextlattice_adopt`, `contextlattice_agent_adapter`, `contextlattice_pack`, `contextlattice_checkpoint`, `contextlattice_agent_session`, and `contextlattice_runner_quality`.
+- Primary interface: `contextlattice context|resume|remember|finish|correct|doctor`.
+- Advanced CLI helpers such as `contextlattice_adopt`, `contextlattice_agent_adapter`, `contextlattice_agent_session`, and `contextlattice_runner_quality` remain available for integration and debugging.
 - Companion surfaces: dashboard for visibility, HTTP for app integration, and MCP-compatible clients for host/harness integrations.
 - Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
 - Public single-container lite vector default: `topic_rollups` only.
@@ -59,6 +60,15 @@ ContextLattice provides a single memory contract for agentic systems:
 The CLI is the prescribed agent interface. HTTP and MCP remain integration fallbacks.
 
 ```bash
+# Normal task lifecycle: compact context, one reusable session, automatic outcome learning.
+contextlattice doctor --pretty
+contextlattice context "debug the current release regression" --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice correct "retrieval was stale" --category stale --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
+
+# Advanced cognition and operator surfaces follow.
 # Ask what evidence should be retrieved, from where, and when to stop.
 contextlattice_retrieval_plan "debug the current release regression" --project contextlattice --pretty
 
@@ -67,8 +77,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.15.1 \
-  --statement "The current public release is 3.15.1." \
+  --object 3.16.0 \
+  --statement "The current public release is 3.16.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -390,6 +400,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.16.0.md` (compact Agent Packet, session truth, monotonic async, outcome learning, unified CLI, and proof workbench)
   - `docs/releases/v3.15.1.md` (Node 24 LTS convergence across local tooling, containers, packages, and release actions)
   - `docs/releases/v3.15.0.md` (bounded graph repair, explicit graph efficacy, hydrated neighbors, and durable Foundry retirement)
   - `docs/releases/v3.14.0.md` (signed Context Passport and encrypted Context Mesh)

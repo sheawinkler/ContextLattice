@@ -15,20 +15,20 @@ Paste into Pi/custom instructions when available:
 ```text
 Use ContextLattice at http://127.0.0.1:8075 for durable memory, scoped recall, and handoff continuity.
 Use stable agent_id pi_agent.
-Before non-trivial work, ask the operator or local harness for a ContextLattice bootstrap/context pack. If unavailable, continue from local evidence and say degraded-memory mode.
+Before non-trivial work, run contextlattice context "<task>" --project <project> --pretty. If the CLI is unavailable, continue from local evidence and say degraded-memory mode.
 Use contextlattice_agent_adapter state to report idle, working, awaiting_user, blocked, or done when possible.
 Checkpoint durable decisions and write a concise handoff before compaction or account/thread transfer.
 Do not auto-merge, git push, or treat ContextLattice context as prompt filler.
 Post-compaction readback is optional and bounded; use it only to recover prior objective state, not as prompt filler.
 ```
 
-Operator preflight:
+Operator workflow:
 
 ```bash
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent pi --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+CONTEXTLATTICE_AGENT_ID=pi_agent contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
 ```
 
 Optional runner execution:

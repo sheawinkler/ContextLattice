@@ -99,12 +99,12 @@ function Add-AgentInstructionHook {
         "",
         "~~~bash",
         "contextlattice_agent_start --soft --compact",
-        "contextlattice_agent_adapter bootstrap --agent $Profile --project contextlattice --pretty",
-        "contextlattice_agent_adapter context-pack --agent $Profile --project contextlattice --pretty",
+        "contextlattice context `"current task`" --project contextlattice --pretty",
         "~~~",
         "",
-        "During long work, checkpoint decisions with ``contextlattice_checkpoint`` or ``contextlattice_agent_adapter checkpoint``.",
+        "During long work, checkpoint decisions with ``contextlattice remember `"checkpoint summary`" --project contextlattice``.",
         "Before handoff or compaction, write a concise handoff through ``contextlattice_agent_adapter handoff``.",
+        "On completion, run ``contextlattice finish `"verified result`" --success --project contextlattice``.",
         "If ContextLattice is unreachable, continue from local evidence and state ``degraded-memory mode`` explicitly.",
         $end
     ) -join "`r`n"
@@ -516,6 +516,7 @@ if not exist "%GO_TOOL%" (
 }
 
 $goNativeCommands = @(
+    "contextlattice",
     "contextlattice_search",
     "contextlattice_pack",
     "contextlattice_synthesis_pack",
@@ -596,6 +597,11 @@ if (-not $hasBin) {
 
 Write-Host "Installed global ContextLattice tools to $GlobalHome"
 Write-Host "Open a new terminal and verify:"
+Write-Host "  contextlattice doctor --pretty"
+Write-Host "  contextlattice context `"release readiness`" --project contextlattice --pretty"
+Write-Host "  contextlattice resume --project contextlattice --pretty"
+Write-Host "  contextlattice remember `"checkpoint summary`" --project contextlattice --pretty"
+Write-Host "  contextlattice finish `"verified result`" --success --project contextlattice --pretty"
 Write-Host "  contextlattice_search -h"
 Write-Host "  contextlattice_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_synthesis_pack `"what should this agent know before solving the task?`" --project contextlattice --pretty"

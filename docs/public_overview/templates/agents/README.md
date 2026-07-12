@@ -19,6 +19,7 @@ They also enforce the default context-compaction handoff (`compaction-handoff`) 
 Templates are contract-aware but intentionally light: agents should preserve `format_contract` metadata from ContextLattice, not echo it in every human-facing answer.
 
 Global helper CLI tools are auto-installed by `gmake quickstart` and installer flows:
+- `$HOME/.contextlattice/bin/contextlattice` (prescribed task lifecycle)
 - `$HOME/.contextlattice/bin/contextlattice_adopt`
 - `$HOME/.contextlattice/bin/contextlattice_agent_adapter`
 - `$HOME/.contextlattice/bin/contextlattice_search`
@@ -36,15 +37,16 @@ Global helper CLI tools are auto-installed by `gmake quickstart` and installer f
 Preferred startup:
 
 ```bash
+contextlattice doctor --pretty
+contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint summary" --project contextlattice --pretty
+contextlattice finish "verified result" --success --project contextlattice --pretty
+
+# adoption and advanced proof surfaces
 contextlattice_adopt status --pretty
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty
 contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_async_inbox_drain --session-id "$SESSION_ID"
-contextlattice_async_inbox_hook --session-id "$SESSION_ID"
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
 contextlattice_skills_index search "browser automation" --pretty
 contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
 ```

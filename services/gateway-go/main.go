@@ -351,6 +351,7 @@ type server struct {
 	continuationSubscribers         map[string][]chan map[string]any
 	continuationHistory             map[string][]map[string]any
 	continuationExpiry              map[string]time.Time
+	continuationSteeringState       map[string]string
 	continuationDurable             *continuationDurableQueue
 	qdrantWriteFanoutSem            chan struct{}
 	pgvectorWriteFanoutSem          chan struct{}
@@ -1323,6 +1324,7 @@ func newServer() *server {
 		continuationSubscribers:         make(map[string][]chan map[string]any),
 		continuationHistory:             make(map[string][]map[string]any),
 		continuationExpiry:              make(map[string]time.Time),
+		continuationSteeringState:       make(map[string]string),
 		continuationDurable:             continuationDurable,
 		qdrantWriteFanoutSem:            make(chan struct{}, qdrantWriteFanoutAsyncMaxInflight()),
 		pgvectorWriteFanoutSem:          make(chan struct{}, pgvectorWriteFanoutAsyncMaxInflight()),
@@ -1919,16 +1921,24 @@ func (s *server) toolsOpsQueueStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type agentPreflightRequest struct {
-	Project       string `json:"project"`
-	TopicPath     string `json:"topic_path"`
-	Query         string `json:"query"`
-	RetrievalMode string `json:"retrieval_mode"`
-	AgentID       string `json:"agent_id"`
-	Agent         string `json:"agent"`
-	SessionID     string `json:"session_id"`
-	Mission       string `json:"mission"`
-	Objective     string `json:"objective"`
-	Goal          string `json:"goal"`
+	Project       string         `json:"project"`
+	TopicPath     string         `json:"topic_path"`
+	Query         string         `json:"query"`
+	RetrievalMode string         `json:"retrieval_mode"`
+	AgentID       string         `json:"agent_id"`
+	Agent         string         `json:"agent"`
+	SessionID     string         `json:"session_id"`
+	Mission       string         `json:"mission"`
+	Objective     string         `json:"objective"`
+	Goal          string         `json:"goal"`
+	TaskID        string         `json:"task_id"`
+	Repo          string         `json:"repo"`
+	Branch        string         `json:"branch"`
+	Worktree      string         `json:"worktree"`
+	CWD           string         `json:"cwd"`
+	NativeSession string         `json:"native_session_id"`
+	ReuseKey      string         `json:"reuse_key"`
+	AgentState    map[string]any `json:"agent_state"`
 }
 
 func applyPreflightContextPackControls(dst map[string]any, src map[string]any) {
@@ -2227,6 +2237,7 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 	var preflightSession map[string]any
 	if s.agentSessions != nil {
 		startPayload := map[string]any{
+			"ensure":              true,
 			"session_id":          sessionID,
 			"agent":               profileKey,
 			"agent_id":            reqBody.AgentID,
@@ -2234,6 +2245,14 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			"objective":           firstNonEmptyStrings(objectiveCtx.SessionObjective, objectiveCtx.Objective, reqBody.Query),
 			"mission":             objectiveCtx.Mission,
 			"goal":                objectiveCtx.Goal,
+			"task_id":             reqBody.TaskID,
+			"repo":                reqBody.Repo,
+			"branch":              reqBody.Branch,
+			"worktree":            reqBody.Worktree,
+			"cwd":                 reqBody.CWD,
+			"native_session_id":   reqBody.NativeSession,
+			"reuse_key":           reqBody.ReuseKey,
+			"agent_state":         reqBody.AgentState,
 			"objective_hierarchy": objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 			"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 			"status":              "active",
@@ -2244,10 +2263,14 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 				"endpoint":            r.URL.Path,
 				"objective_hierarchy": objectiveCtx.hierarchy(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 				"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
+				"ownership": map[string]any{
+					"task_id": reqBody.TaskID, "repo": reqBody.Repo, "branch": reqBody.Branch,
+					"worktree": reqBody.Worktree, "cwd": reqBody.CWD, "native_session_id": reqBody.NativeSession,
+				},
 			},
 			"tags": []any{"agent-runtime", "preflight"},
 		}
-		if created, startErr := s.agentSessions.start(startPayload); startErr == nil {
+		if created, _, startErr := s.agentSessions.startOrReuse(startPayload); startErr == nil {
 			preflightSession = created
 			sessionID = anyToString(created["id"])
 			_ = s.recordAgentSessionEvent(sessionID, "agent.preflight.started", map[string]any{
@@ -5017,6 +5040,7 @@ func (s *server) pruneContinuationLocked(now time.Time) {
 		delete(s.continuationExpiry, token)
 		delete(s.continuationHistory, token)
 		delete(s.continuationSubscribers, token)
+		delete(s.continuationSteeringState, token)
 	}
 }
 
@@ -5128,7 +5152,6 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		}
 		payload = continuationEventWithRequest(baseRequest, payload)
 		s.publishContinuationEvent(streamToken, payload)
-		s.emitContinuationSteering(baseRequest, streamToken, source, payload)
 		return false, shedReason, shedDetail
 	}
 	select {
@@ -5142,7 +5165,6 @@ func (s *server) scheduleContinuationWarmWithStatus(
 			"reason": reason,
 		})
 		s.publishContinuationEvent(streamToken, payload)
-		s.emitContinuationSteering(baseRequest, streamToken, source, payload)
 		return false, "max_inflight", map[string]any{
 			"pending_count": s.continuationQueueSnapshot().Pending,
 		}
@@ -5162,7 +5184,6 @@ func (s *server) scheduleContinuationWarmWithStatus(
 		}
 		skipPayload = continuationEventWithRequest(baseRequest, skipPayload)
 		s.publishContinuationEvent(streamToken, skipPayload)
-		s.emitContinuationSteering(baseRequest, streamToken, source, skipPayload)
 		statusPayload := map[string]any{}
 		if reserveCooldown > 0 {
 			statusPayload["cooldown_remaining_secs"] = roundFloat(reserveCooldown, 3)
@@ -5786,12 +5807,29 @@ func (s *server) executeRetrieval(
 	if len(resolvedSources) == 0 {
 		resolvedSources = append([]string{sourceQdrant}, resolvedSources...)
 	}
+	configuredSources := normalizeSourceList(resolvedSources)
+	disabledSources := []string{}
+	disabledSourceDetails := map[string]any{}
+	effectiveSources := make([]string, 0, len(configuredSources))
+	for _, source := range configuredSources {
+		status, owner, detail := s.strictRuntimeLaneStatus(source)
+		if strings.EqualFold(status, "disabled") && s.strictNoPythonRuntime {
+			disabledSources = append(disabledSources, source)
+			disabledSourceDetails[source] = map[string]any{"status": status, "owner": owner, "detail": detail}
+			continue
+		}
+		effectiveSources = append(effectiveSources, source)
+	}
+	resolvedSources = effectiveSources
 
 	fastSet := toSourceSet(s.retrieval.fastSources)
 	slowSet := toSourceSet(s.retrieval.slowSources)
 	fastSources, slowSources := classifySources(resolvedSources, fastSet, slowSet)
 
 	warnings := []string{}
+	if len(disabledSources) > 0 {
+		warnings = append(warnings, "Configured retrieval sources disabled by runtime policy and excluded from effective coverage: "+strings.Join(disabledSources, ", ")+".")
+	}
 	objectiveCapture := map[string]any{
 		"enabled": objectiveContextCaptureEnabled(),
 		"status":  "skipped",
@@ -6447,6 +6485,9 @@ func (s *server) executeRetrieval(
 		"retrieval_mode":      retrievalMode,
 		"retrieval_intent":    retrievalIntent,
 		"sources":             resolvedSources,
+		"configured_sources":  configuredSources,
+		"effective_sources":   effectiveSources,
+		"disabled_sources":    disabledSources,
 		"source_counts":       sourceCounts,
 		"source_errors":       sourceErrors,
 		"source_owners":       sourceOwnerBySource,
@@ -6613,7 +6654,11 @@ func (s *server) executeRetrieval(
 		"timeout_contract_violations": s.timeoutContractViolations.Load(),
 		"drift":                       s.driftSnapshot(),
 		"source_summary": map[string]any{
-			"sources":                          resolvedSources,
+			"sources":                          effectiveSources,
+			"configured_sources":               configuredSources,
+			"effective_sources":                effectiveSources,
+			"disabled_sources":                 disabledSources,
+			"disabled_source_details":          disabledSourceDetails,
 			"returned_now":                     returnedSources,
 			"pending_sources":                  deferredCandidates,
 			"warming_sources":                  warmingSources,

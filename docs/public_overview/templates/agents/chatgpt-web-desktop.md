@@ -10,10 +10,8 @@ Follow the full operating contract in docs/public_overview/templates/agents/univ
 
 Operator preflight:
 ```bash
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent chatgpt-web --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
+CONTEXTLATTICE_AGENT_ID=chatgpt_web_agent contextlattice context "current task" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
 contextlattice_skills_index search "current task capability" --pretty
 
 # Direct HTTP fallback for web-only environments:
@@ -22,4 +20,4 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${CONTEXTLATTICE_OR
   http://127.0.0.1:8075/v1/agents/preflight | jq
 ```
 
-For a hard follow-up prompt, provide ChatGPT the returned `reference_prompt` from the session context package instead of raw logs. Use the run trace when you need a compact explanation of which context, skills, graph touches, and handoffs shaped the work.
+For a hard follow-up prompt, provide ChatGPT the compact packet instead of raw logs. Use the run trace only for advanced provenance debugging.

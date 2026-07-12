@@ -2,6 +2,31 @@ package main
 
 import "strings"
 
+func (s *server) claimContinuationSteering(token string, status string, resultState string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	state := "progress"
+	if strings.EqualFold(strings.TrimSpace(status), "completed") {
+		state = "terminal:" + strings.ToLower(strings.TrimSpace(resultState))
+	}
+	s.continuationMu.Lock()
+	defer s.continuationMu.Unlock()
+	if s.continuationSteeringState == nil {
+		s.continuationSteeringState = map[string]string{}
+	}
+	previous := s.continuationSteeringState[token]
+	if strings.HasPrefix(previous, "terminal:") || previous == state {
+		return false
+	}
+	if state == "progress" && previous != "" {
+		return false
+	}
+	s.continuationSteeringState[token] = state
+	return true
+}
+
 func continuationRequestSessionID(request map[string]any) string {
 	return strings.TrimSpace(firstNonEmptyStrings(
 		anyToString(request["session_id"]),
@@ -50,6 +75,10 @@ func (s *server) emitContinuationSteering(request map[string]any, token string, 
 	status := anyToString(statusPayload["status"])
 	lifecycle := anyMap(statusPayload["retrieval_lifecycle"])
 	progressBase := anyMap(statusPayload["retrieval_progress"])
+	resultState := firstNonEmptyStrings(anyToString(progressBase["result_state"]), anyToString(lifecycle["result_state"]))
+	if !s.claimContinuationSteering(token, status, resultState) {
+		return
+	}
 	sourceSummary := anyMap(progressBase["source_summary"])
 	if len(sourceSummary) == 0 {
 		sourceSummary = anyMap(anyMap(statusPayload["result"])["source_summary"])
@@ -61,7 +90,7 @@ func (s *server) emitContinuationSteering(request map[string]any, token string, 
 	progress := buildRetrievalProgressPayload(
 		token,
 		status,
-		firstNonEmptyStrings(anyToString(progressBase["result_state"]), anyToString(lifecycle["result_state"])),
+		resultState,
 		firstNonEmptyStrings(anyToString(progressBase["created_at"]), anyToString(statusPayload["created_at"])),
 		firstNonEmptyStrings(anyToString(progressBase["updated_at"]), anyToString(statusPayload["updated_at"])),
 		firstNonEmptyStrings(anyToString(progressBase["completed_at"]), anyToString(statusPayload["completed_at"])),

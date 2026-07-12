@@ -160,16 +160,16 @@ curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
 
 Runtime:
 - Orchestrator: http://127.0.0.1:8075
-- API key: CONTEXTLATTICE_ORCHESTRATOR_API_KEY from my local .env
+- The CLI reads local runtime configuration; do not print secrets.
 
 Required behavior:
-1) Before planning, call POST /memory/search with a compact query and project/topic filters.
-2) During long tasks, checkpoint major decisions and outcomes with POST /memory/write.
-3) Submit quality feedback with POST /tools/feedback_submit (use idempotencyKey).
-4) Before a hard follow-up prompt, use POST /memory/context-pack or GET /v1/agents/sessions/{session_id}/context-package and pass the returned reference_prompt plus ranked evidence instead of raw logs.
-5) Before final answer, run one more POST /memory/search for recency.
-6) Keep writes compact (summaries, decisions, diffs), never dump full transcripts.
-7) If /memory/* fails, continue task and report degraded memory mode explicitly.</code></pre>
+1) Before planning, run contextlattice context "&lt;task&gt;" --project &lt;project&gt; --pretty.
+2) Continue work with contextlattice resume --project &lt;project&gt; --pretty; never replay raw transcripts.
+3) Save durable progress with contextlattice remember "&lt;checkpoint&gt;" --project &lt;project&gt; --pretty.
+4) Report retrieval quality with contextlattice correct "&lt;note&gt;" --category useful|wrong|stale|superseded.
+5) Finish with contextlattice finish "&lt;verified result&gt;" --success|--repair|--failure.
+6) Run contextlattice doctor --pretty when readiness is unclear.
+7) Use HTTP only when the CLI is unavailable or you are implementing a harness/app integration.</code></pre>
         <ul class="spec-list">
           <li><strong>Best practice:</strong> include <code>projectName</code>, <code>fileName</code>, and topic path on every write.</li>
           <li><strong>Timeout guidance:</strong> fast reads <code>25s</code>, balanced reads <code>60s</code>, deep/slow-source reads <code>75s</code>.</li>
@@ -185,41 +185,22 @@ Required behavior:
         <div class="kicker">Profile-aware preflight</div>
         <h3>Deep integration for Codex, Claude Code, OpenCode, Hermes, OMP, Mercury, ChatGPT, Claude</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
-        <p>Use profile-aware preflight so each agent gets a stable <code>agent_id</code>, topic scope, and query defaults before work begins.</p>
-<pre><code># generic profile-aware preflight
-curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
-  -d '{"agent":"claude-code","project":"contextlattice"}' \
-  http://127.0.0.1:8075/v1/agents/preflight | jq
+        <p>The CLI resolves the detected profile, stable <code>agent_id</code>, task session, topic scope, and query defaults without making users assemble lifecycle calls.</p>
+<pre><code># prescribed profile-aware workflow
+contextlattice doctor --pretty
+contextlattice context "release readiness" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
+contextlattice remember "checkpoint saved" --project contextlattice --pretty
+contextlattice finish "release verified" --success --project contextlattice --pretty
 
-# compatibility alias (codex)
-curl -fsS -H "content-type: application/json" -H "x-api-key: ${ORCH_KEY}" \
-  -d '{"project":"contextlattice"}' \
-  http://127.0.0.1:8075/v1/codex/preflight | jq
-
-# local helper script
-python3 scripts/agent_orchestration.py preflight-agent claude-code contextlattice
-python3 scripts/agent_orchestration.py preflight-agent opencode contextlattice
-python3 scripts/agent_orchestration.py preflight-agent hermes-agent contextlattice
-python3 scripts/agent_orchestration.py preflight-agent omp contextlattice
-python3 scripts/agent_orchestration.py preflight-agent mercury-agent contextlattice
-
-# auto-installed global CLI wrappers ($HOME/.contextlattice/bin)
-contextlattice_agent_start --soft --compact
-contextlattice_search --query "release readiness" --project contextlattice --topic-path runbooks/codex-integration
-contextlattice_pack "release readiness" --project contextlattice --pretty
-contextlattice_write --project contextlattice --file notes/codex/checkpoint.md --content "checkpoint saved" --topic-path runbooks/codex-integration
-printf '%s\n' "checkpoint saved" | contextlattice_checkpoint --project contextlattice --topic-path runbooks/codex-integration --file notes/codex/checkpoint.md --stdin
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
+# adoption and capability discovery
+contextlattice_adopt status --pretty
+contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty
 contextlattice_skills_index search "browser automation" --pretty
-contextlattice_search -h
-contextlattice_write -h
-contextlattice_checkpoint -h</code></pre>
+contextlattice_agent_adapter profiles</code></pre>
         <ul class="spec-list">
           <li><strong>Profiles supported:</strong> <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, <code>chatgpt-desktop</code>, <code>claude-web</code>, <code>claude-desktop</code>.</li>
-          <li><strong>Context compiler:</strong> <code>contextlattice_pack</code> and <code>contextlattice_agent_session context-package</code> turn current objective state, ranked evidence, missing sources, risks, files, and next action into a bounded reference packet.</li>
+          <li><strong>Context compiler:</strong> <code>contextlattice context</code> turns current objective state, ranked evidence, missing sources, risks, files, and next action into a bounded <code>agent_packet.v1</code>.</li>
           <li><strong>Skills Index:</strong> <code>contextlattice_skills_index</code> searches active configured skill roots such as <code>$CODEX_HOME/skills</code> without loading every skill body.</li>
           <li><strong>Template path:</strong> <code>docs/public_overview/templates/agents/</code> (copy-ready prompts and setup blocks).</li>
           <li><strong>Endpoint remains pinned:</strong> <code>http://127.0.0.1:8075</code>.</li>

@@ -16,6 +16,7 @@ import {
   toNumber,
   toText,
 } from "@/lib/dashboardMetrics";
+import { AgentPacketWorkbench } from "@/components/AgentPacketWorkbench";
 
 type JsonResult = {
   data: any | null;
@@ -120,6 +121,11 @@ function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatSigned(value: number): string {
+  if (!value) return "0";
+  return `${value > 0 ? "+" : "-"}${formatCompact(Math.abs(value))}`;
+}
+
 export function CommandCenterDashboard() {
   const [state, setState] = useState<DashboardState>(EMPTY_STATE);
   const [loading, setLoading] = useState(true);
@@ -164,6 +170,17 @@ export function CommandCenterDashboard() {
   );
   const contextPackQuality = useMemo(() => estimateContextPackQuality(overview), [overview]);
   const runnerQuality = useMemo(() => estimateRunnerQuality(overview), [overview]);
+  const tokenTruth = asRecord(asRecord(overview).tokenImpact);
+  const tokenSampleCount = toInt(tokenTruth.sample_count);
+  const transportSampleCount = toInt(tokenTruth.transport_inclusive_sample_count);
+  const transportTokensExact = toNumber(tokenTruth.transport_tokens_exact);
+  const compiledPromptTokens = toNumber(tokenTruth.compiled_prompt_tokens_estimate);
+  const netTokenDelta = toNumber(tokenTruth.net_token_delta);
+  const transportComplete = tokenSampleCount > 0 && transportSampleCount === tokenSampleCount;
+  const agentRuntime = asRecord(asRecord(overview).agentRuntime);
+  const liveSessionCount = toInt(agentRuntime.live ?? agentRuntime.active);
+  const expiredSessionCount = toInt(agentRuntime.expired);
+  const totalSessionCount = toInt(agentRuntime.total);
   const memoryTelemetry = asRecord(asRecord(overview).memoryTelemetry);
   const memoryBank = asRecord(memoryTelemetry.memoryBank);
   const fanout = asRecord(memoryTelemetry.fanout);
@@ -173,7 +190,7 @@ export function CommandCenterDashboard() {
     .map(([source, metrics]) => ({ source, metrics }))
     .sort((a, b) => toNumber(asRecord(b.metrics).p95Ms) - toNumber(asRecord(a.metrics).p95Ms))
     .slice(0, 7);
-  const sessions = asArray(asRecord(asRecord(overview).agentRuntime).sessions).slice(0, 5);
+  const sessions = asArray(agentRuntime.sessions).slice(0, 5);
   const topPaths = asArray(asRecord(mindmap).topPaths).slice(0, 8);
   const statusWarnings = asArray(asRecord(asRecord(overview).status).warnings).map(String);
   const endpointErrors = Object.values(asRecord(asRecord(overview).errors)).map(String);
@@ -220,22 +237,29 @@ export function CommandCenterDashboard() {
 
       <section className="cl-metric-grid" aria-busy={loading}>
         <MetricCard
-          label={
-            tokenImpact.calibrationGrade === "heuristic"
-              ? "estimated tokens saved"
-              : tokenImpact.calibrationGrade === "tokenizer_exact"
-                ? "exact tokens saved"
-                : "sampled tokens saved"
-          }
+          label="token truth"
+          value={transportSampleCount ? formatCompact(transportTokensExact) : "--"}
+          detail={`${transportSampleCount}/${tokenSampleCount} wire-measured · net ${formatSigned(netTokenDelta)} · compiled ${formatCompact(compiledPromptTokens)}`}
+          tone={transportSampleCount && netTokenDelta < 0 ? "warn" : transportComplete ? "good" : "neutral"}
+          compactValue={!transportSampleCount}
+        />
+        <MetricCard
+          label={tokenImpact.calibrationGrade === "heuristic" ? "estimated context savings" : "measured context savings"}
           value={formatCompact(tokenImpact.estimatedSaved)}
           detail={`${tokenImpact.compressionRatio}x compression · ${tokenImpact.confidence} confidence`}
           tone="hot"
         />
         <MetricCard
-          label="context packet delta"
-          value={formatCompact(tokenImpact.packedTokens)}
-          detail={`${formatCompact(tokenImpact.baselineTokens)} baseline · ${formatCompact(tokenImpact.estimatedSaved)} saved`}
-          tone={tokenImpact.calibrationGrade === "heuristic" ? "neutral" : "good"}
+          label="session truth"
+          value={formatCompact(liveSessionCount)}
+          detail={`${formatCompact(totalSessionCount)} total · ${formatCompact(expiredSessionCount)} expired · ${formatCompact(agentRuntime.idle_ttl_seconds)}s idle TTL`}
+          tone={liveSessionCount > 0 ? "good" : "neutral"}
+        />
+        <MetricCard
+          label="learning loop"
+          value={formatCompact(contextPackQuality.outcomeSamples)}
+          detail={`${contextPackQuality.observedFirstPassRate === null ? "--" : formatPercent(contextPackQuality.observedFirstPassRate)} first pass · ${contextPackQuality.observedRepairRate === null ? "--" : formatPercent(contextPackQuality.observedRepairRate)} repair`}
+          tone={contextPackQuality.outcomeSamples > 0 ? "good" : "neutral"}
         />
         <MetricCard
           label="modeled inference avoided"
@@ -288,6 +312,8 @@ export function CommandCenterDashboard() {
           compactValue={diskPressure.toLowerCase() === "tracked"}
         />
       </section>
+
+      <AgentPacketWorkbench />
 
       <div className="cl-dashboard-grid">
         <section className="cl-panel cl-panel--wide">
@@ -428,7 +454,7 @@ export function CommandCenterDashboard() {
               <p className="cl-kicker">active agents</p>
               <h3>Sessions carrying memory forward</h3>
             </div>
-            <span className="cl-badge">{formatCompact(toInt(asRecord(asRecord(overview).agentRuntime).active))} active</span>
+            <span className="cl-badge">{formatCompact(liveSessionCount)} live</span>
           </div>
           <div className="cl-session-list">
             {sessions.length ? sessions.map((session) => <SessionRow key={toText(asRecord(session).id)} session={session} />) : (

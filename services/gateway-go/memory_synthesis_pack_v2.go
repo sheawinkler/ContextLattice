@@ -52,13 +52,23 @@ func (s *server) toolsSynthesisPackV2(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	payload["_suppress_final_token_impact_recording"] = true
 	response, status, execErr := s.buildSynthesisPackV2Response(r.Context(), incomingHeaders, payload, "/tools/synthesis_pack_v2")
 	if execErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "synthesis_pack_v2_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
 	}
 	response["tool"] = "synthesis_pack_v2"
-	response = attachPayloadFormatContract(synthesisPackV2ContractID, response, anyToString(response["agent_id"]), "synthesis_pack_v2", "/tools/synthesis_pack_v2")
+	if anyToString(response["schema_id"]) == agentPacketContractID {
+		response["surface"] = "tools_synthesis_pack_v2"
+		response = finalizeAgentPacket(response)
+	} else {
+		attach := func(value map[string]any) map[string]any {
+			return attachPayloadFormatContract(synthesisPackV2ContractID, value, anyToString(value["agent_id"]), "synthesis_pack_v2", "/tools/synthesis_pack_v2")
+		}
+		response = finalizeFullTransport(response, attach, "tools_synthesis_pack_v2_transport", "serialized_tools_synthesis_pack_v2_response_json")
+	}
+	s.recordTokenImpact(anyMap(response["token_impact"]))
 	writeJSON(w, status, response)
 }
 
@@ -69,10 +79,16 @@ func (s *server) buildSynthesisPackV2Response(
 	surface string,
 ) (map[string]any, int, error) {
 	requestPayload := cloneMap(payload)
+	packetRequested := agentPacketRequested(requestPayload)
 	if strings.TrimSpace(anyToString(requestPayload["retrieval_intent"])) == "" {
 		requestPayload["retrieval_intent"] = "proof_synthesis"
 	}
-	legacy, status, err := s.buildSynthesisPackResponse(ctx, incomingHeaders, requestPayload, surface)
+	legacyRequest := cloneMap(requestPayload)
+	delete(legacyRequest, "output_mode")
+	delete(legacyRequest, "projection")
+	delete(legacyRequest, "response_mode")
+	legacyRequest["_suppress_final_token_impact_recording"] = true
+	legacy, status, err := s.buildSynthesisPackResponse(ctx, incomingHeaders, legacyRequest, surface)
 	if err != nil || status >= http.StatusBadRequest || !anyToBool(legacy["ok"]) {
 		return legacy, status, err
 	}
@@ -88,13 +104,24 @@ func (s *server) buildSynthesisPackV2Response(
 	proofClaims, excluded := proofClaimsFromSynthesis(project, contextPackAnyList(legacyPack["high_signal_findings"]), claimRows)
 	contradictions := proofContradictionSummary(claimRows)
 	causalChains := proofCausalChains(claimRows)
-	retrievalPlan := s.buildAdaptiveRetrievalPlan(map[string]any{
+	retrievalPlanInput := map[string]any{
 		"query": query, "project": project, "topic_path": topicPath,
 		"retrieval_mode": legacy["retrieval_mode"], "retrieval_intent": "proof_synthesis",
 		"token_budget":         firstNonNil(requestPayload["token_budget"], requestPayload["max_prompt_tokens"]),
 		"evidence_obligations": requestPayload["evidence_obligations"],
-	})
+	}
+	for _, key := range []string{
+		"agent_context_budget_tokens", "model_context_window_tokens", "reserved_response_tokens",
+		"already_loaded_tokens", "target_context_pack_tokens", "hard_limit_tokens",
+	} {
+		if value, exists := requestPayload[key]; exists {
+			retrievalPlanInput[key] = value
+		}
+	}
+	retrievalPlan := s.buildAdaptiveRetrievalPlan(retrievalPlanInput)
 	proofCoverage := proofCoverageSummary(proofClaims, contextPackAnyList(retrievalPlan["evidence_obligations"]))
+	decisionGate := proofSynthesisDecisionGate(anyMap(legacyPack["decision_gate"]), proofClaims, contradictions, proofCoverage)
+	recommendedActions := synthesisActionsForDecisionGate(decisionGate, contextPackAnyList(legacyPack["recommended_next_actions"]))
 
 	v2Pack := map[string]any{
 		"schema_id":                   synthesisPackV2ContractID,
@@ -110,10 +137,11 @@ func (s *server) buildSynthesisPackV2Response(
 		"contradictions":              contradictions,
 		"causal_chains":               causalChains,
 		"proof_coverage":              proofCoverage,
+		"decision_gate":               decisionGate,
 		"topic_gravity":               legacyPack["topic_gravity"],
 		"cross_project_bridges":       legacyPack["cross_project_bridges"],
 		"must_not_forget":             proofMustNotForget(legacyPack, proofClaims),
-		"recommended_next_actions":    legacyPack["recommended_next_actions"],
+		"recommended_next_actions":    recommendedActions,
 		"open_questions":              proofOpenQuestions(legacyPack, contradictions, proofClaims),
 		"semantic_tags":               appendUniqueAny(contextPackAnyList(legacyPack["semantic_tags"]), []any{"synthesis_pack_v2", "proof_carrying", "temporal_claim_graph"}, 32),
 		"synthesis_quality":           proofSynthesisQuality(legacyPack, proofClaims, contradictions),
@@ -151,7 +179,21 @@ func (s *server) buildSynthesisPackV2Response(
 			response[key] = value
 		}
 	}
-	return attachPayloadFormatContract(synthesisPackV2ContractID, response, anyToString(response["agent_id"]), "synthesis_pack_v2", surface), status, nil
+	if packetRequested {
+		packet := finalizeAgentPacket(buildAgentPacket(response, requestPayload, "synthesis_pack_v2"))
+		if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
+			s.recordTokenImpact(anyMap(packet["token_impact"]))
+		}
+		return packet, status, nil
+	}
+	attach := func(value map[string]any) map[string]any {
+		return attachPayloadFormatContract(synthesisPackV2ContractID, value, anyToString(value["agent_id"]), "synthesis_pack_v2", surface)
+	}
+	response = finalizeFullTransport(response, attach, "synthesis_pack_v2_transport", "serialized_synthesis_pack_v2_response_json")
+	if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
+		s.recordTokenImpact(anyMap(response["token_impact"]))
+	}
+	return response, status, nil
 }
 
 func relevantTemporalClaims(query string, findings []any, candidates []temporalClaim, limit int) []temporalClaim {
@@ -437,6 +479,37 @@ func proofCoverageSummary(claims []any, obligations []any) map[string]any {
 		"limited_claims": limited, "evidence_obligation_count": len(obligations),
 		"claim_support_rate": roundFloat(coverage, 4),
 	}
+}
+
+func proofSynthesisDecisionGate(legacy map[string]any, claims []any, contradictions []any, coverage map[string]any) map[string]any {
+	gate := cloneAnyMap(legacy)
+	decision := strings.ToLower(strings.TrimSpace(anyToString(gate["decision"])))
+	if decision == "" {
+		decision = "verify"
+	}
+	reasons := contextPackAnyList(gate["reasons"])
+	supportRate := anyToFloat(coverage["claim_support_rate"])
+	switch {
+	case decision == "abstain":
+		// The proof layer may tighten a gate, never loosen an epistemic refusal.
+	case len(contradictions) > 0:
+		decision = "verify"
+		reasons = append(reasons, "Temporal claim graph contains unresolved contradictions.")
+	case len(claims) == 0:
+		decision = "verify"
+		reasons = append(reasons, "No proof-carrying claim survived bounded evidence validation.")
+	case supportRate < 0.6:
+		decision = "verify"
+		reasons = append(reasons, "Proof support rate is below the action threshold.")
+	}
+	gate["decision"] = decision
+	gate["refusal"] = decision == "abstain"
+	gate["reasons"] = agentSessionListLimit(reasons, 6)
+	gate["claim_support_rate"] = roundFloat(supportRate, 4)
+	gate["supported_claim_count"] = anyToInt(coverage["supported_claims"], 0)
+	gate["contradiction_count"] = len(contradictions)
+	gate["proof_policy"] = "proof may tighten act to verify or abstain; it never loosens an upstream refusal"
+	return gate
 }
 
 func proofMustNotForget(legacy map[string]any, proofClaims []any) []any {

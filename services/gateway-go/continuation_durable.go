@@ -681,6 +681,7 @@ func (s *server) enqueueContinuationDurable(
 	if len(scheduleDetail) > 0 {
 		payload["queue"] = cloneAnyMap(scheduleDetail)
 	}
+	payload = continuationEventWithRequest(baseRequest, payload)
 	s.publishContinuationEvent(streamToken, payload)
 	return true, nil
 }
@@ -712,6 +713,10 @@ func (s *server) scheduleOrDeferContinuation(
 		detail,
 	)
 	if deferred {
+		trigger := continuationEventWithRequest(baseRequest, map[string]any{
+			"event": "deferred", "status": "durable_queued", "source": source, "reason": reason,
+		})
+		s.emitContinuationSteering(baseRequest, streamToken, source, trigger)
 		return "deferred", "durable_queued", detail
 	}
 	resultDetail := cloneAnyMap(detail)
@@ -719,6 +724,11 @@ func (s *server) scheduleOrDeferContinuation(
 	if durableErr != nil {
 		resultDetail["durable_error"] = durableErr.Error()
 	}
+	terminal := continuationEventWithRequest(baseRequest, map[string]any{
+		"event": "dropped", "status": "unavailable", "source": source, "reason": reason,
+	})
+	s.publishContinuationEvent(streamToken, terminal)
+	s.emitContinuationSteering(baseRequest, streamToken, source, terminal)
 	return "unavailable", status, resultDetail
 }
 
@@ -784,7 +794,7 @@ func (s *server) drainContinuationDurableQueue() {
 			continue
 		}
 		if dropped {
-			s.publishContinuationEvent(job.StreamToken, map[string]any{
+			terminal := continuationEventWithRequest(job.BaseRequest, map[string]any{
 				"event":   "dropped",
 				"status":  "durable_max_attempts",
 				"source":  job.Source,
@@ -792,9 +802,11 @@ func (s *server) drainContinuationDurableQueue() {
 				"job_id":  job.ID,
 				"attempt": job.Attempts + 1,
 			})
+			s.publishContinuationEvent(job.StreamToken, terminal)
+			s.emitContinuationSteering(job.BaseRequest, job.StreamToken, job.Source, terminal)
 			continue
 		}
-		s.publishContinuationEvent(job.StreamToken, map[string]any{
+		retryEvent := continuationEventWithRequest(job.BaseRequest, map[string]any{
 			"event":         "deferred_retry",
 			"status":        status,
 			"source":        job.Source,
@@ -803,5 +815,6 @@ func (s *server) drainContinuationDurableQueue() {
 			"retry_in_secs": roundFloat(delay.Seconds(), 3),
 			"attempt":       job.Attempts + 1,
 		})
+		s.publishContinuationEvent(job.StreamToken, retryEvent)
 	}
 }

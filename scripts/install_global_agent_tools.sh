@@ -18,6 +18,7 @@ usage() {
 Usage: scripts/install_global_agent_tools.sh [options]
 
 Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates:
+  contextlattice
   contextlattice-agent-tools
   contextlattice_search
   contextlattice_pack
@@ -209,12 +210,12 @@ Before substantial planning or coding, retrieve scoped context:
 
 \`\`\`bash
 contextlattice_agent_start --soft --compact
-contextlattice_agent_adapter bootstrap --agent ${profile} --project contextlattice --pretty
-contextlattice_agent_adapter context-pack --agent ${profile} --project contextlattice --pretty
+contextlattice context "current task" --project contextlattice --pretty
 \`\`\`
 
-During long work, checkpoint decisions with \`contextlattice_checkpoint\` or \`contextlattice_agent_adapter checkpoint\`.
+During long work, checkpoint decisions with \`contextlattice remember "checkpoint summary" --project contextlattice\`.
 Before handoff or compaction, write a concise handoff through \`contextlattice_agent_adapter handoff\`.
+On completion, run \`contextlattice finish "verified result" --success --project contextlattice\`.
 If ContextLattice is unreachable, continue from local evidence and state \`degraded-memory mode\` explicitly.
 <!-- <<< contextlattice-agent-install:${profile} <<< -->
 EOF
@@ -655,6 +656,7 @@ chmod +x \
 build_go_agent_tools
 
 GO_NATIVE_COMMANDS=(
+  contextlattice
   contextlattice_search
   contextlattice_pack
   contextlattice_synthesis_pack
@@ -953,6 +955,11 @@ if [[ "$INCLUDE_DEV_PYTHON_TOOLS" == "1" ]]; then
 fi
 log ""
 log "Open a new shell (or run: export PATH=\"\$HOME/.contextlattice/bin:\$PATH\") then test:"
+log "  contextlattice doctor --pretty"
+log "  contextlattice context 'release readiness' --project contextlattice --pretty"
+log "  contextlattice resume --project contextlattice --pretty"
+log "  contextlattice remember 'checkpoint summary' --project contextlattice --pretty"
+log "  contextlattice finish 'verified result' --success --project contextlattice --pretty"
 log "  contextlattice_search -h"
 log "  contextlattice_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_synthesis_pack 'release readiness' --project contextlattice --pretty"

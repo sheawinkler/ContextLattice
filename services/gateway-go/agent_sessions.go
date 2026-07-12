@@ -19,6 +19,7 @@ const (
 	defaultAgentSessionMaxRecords     = 512
 	defaultAgentSessionMaxEvents      = 256
 	defaultAgentSessionMaxMetadataMap = 48
+	defaultAgentSessionIdleTTLSeconds = 12 * 60 * 60
 )
 
 func parseISOTime(raw string) (time.Time, bool) {
@@ -45,11 +46,14 @@ func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
 	return parseJSONMap(bodyBytes)
 }
 
+var errAgentSessionTerminal = errors.New("agent session is terminal")
+
 type agentSessionStore struct {
 	mu        sync.Mutex
 	path      string
 	maxKeep   int
 	maxEvents int
+	idleTTL   time.Duration
 	sessions  map[string]map[string]any
 	order     []string
 	events    map[string][]map[string]any
@@ -71,6 +75,7 @@ func newAgentSessionStoreFromEnv() (*agentSessionStore, error) {
 		path:      agentSessionsPath(),
 		maxKeep:   maxInt(16, envInt("GO_AGENT_SESSION_MAX_RECORDS", defaultAgentSessionMaxRecords)),
 		maxEvents: maxInt(16, envInt("GO_AGENT_SESSION_MAX_EVENTS_PER_SESSION", defaultAgentSessionMaxEvents)),
+		idleTTL:   time.Duration(maxInt(60, envInt("GO_AGENT_SESSION_IDLE_TTL_SECS", defaultAgentSessionIdleTTLSeconds))) * time.Second,
 		sessions:  map[string]map[string]any{},
 		order:     []string{},
 		events:    map[string][]map[string]any{},
@@ -236,6 +241,8 @@ func normalizeAgentSessionStatus(raw string) string {
 		return "paused"
 	case "canceled", "cancelled":
 		return "canceled"
+	case "expired", "stale", "timed_out":
+		return "expired"
 	default:
 		return "active"
 	}
@@ -243,7 +250,7 @@ func normalizeAgentSessionStatus(raw string) string {
 
 func agentSessionTerminal(status string) bool {
 	switch normalizeAgentSessionStatus(status) {
-	case "completed", "failed", "canceled":
+	case "completed", "failed", "canceled", "expired":
 		return true
 	default:
 		return false
@@ -308,6 +315,46 @@ func normalizeAgentLifecyclePayload(value any, fallbackStatus string) map[string
 		}
 	}
 	return out
+}
+
+func agentSessionEffectiveStatus(row map[string]any, now time.Time, idleTTL time.Duration) string {
+	status := normalizeAgentSessionStatus(anyToString(row["status"]))
+	if agentSessionTerminal(status) {
+		return status
+	}
+	state := anyMap(row["agent_state"])
+	if expiresAt, ok := parseISOTime(anyToString(state["expires_at"])); ok && !now.Before(expiresAt) {
+		return "expired"
+	}
+	lastAt, ok := parseISOTime(firstNonEmptyStrings(
+		anyToString(row["last_event_at"]),
+		anyToString(row["updated_at"]),
+		anyToString(state["updated_at"]),
+		anyToString(row["started_at"]),
+	))
+	if !ok {
+		return status
+	}
+	ttl := idleTTL
+	if seconds := anyToInt(state["ttl_seconds"], 0); seconds > 0 {
+		ttl = time.Duration(seconds) * time.Second
+	}
+	if ttl > 0 && now.Sub(lastAt) >= ttl {
+		return "expired"
+	}
+	return status
+}
+
+func (s *agentSessionStore) effectiveSessionLocked(row map[string]any, now time.Time) map[string]any {
+	copyRow := cloneAnyMap(row)
+	status := agentSessionEffectiveStatus(copyRow, now, s.idleTTL)
+	copyRow["status"] = status
+	copyRow["stale"] = status == "expired"
+	copyRow["idle_ttl_seconds"] = int(s.idleTTL.Seconds())
+	if status == "expired" {
+		copyRow["expired_at"] = now.UTC().Format(time.RFC3339)
+	}
+	return copyRow
 }
 
 func agentSessionOwnership(session map[string]any) map[string]any {
@@ -981,6 +1028,73 @@ func buildAgentPromptContextPackage(session map[string]any, events []map[string]
 	return attachPayloadFormatContract(agentPromptContextPackageContractID, payload, anyToString(rollup["agent_id"]), "prompt_context_package", "/v1/agents/sessions/{session_id}/context-package")
 }
 
+func buildAgentSessionPacket(session map[string]any, events []map[string]any, now time.Time) map[string]any {
+	full := buildAgentPromptContextPackage(session, events, now)
+	rollup := anyMap(full["rollup"])
+	ranked := []any{}
+	for i := len(events) - 1; i >= 0 && len(ranked) < 8; i-- {
+		event := events[i]
+		text := strings.TrimSpace(anyToString(event["summary"]))
+		if text == "" || anyToString(event["type"]) == "session.started" {
+			continue
+		}
+		ranked = append(ranked, map[string]any{
+			"kind":      agentSessionPhase(anyToString(event["type"])),
+			"text":      text,
+			"score":     1.0,
+			"project":   session["project"],
+			"source":    "agent_session_ledger",
+			"timestamp": event["created_at"],
+			"citation":  "session " + anyToString(session["id"]) + " event " + anyToString(event["id"]),
+		})
+	}
+	baseline := contextPackCountAnyTokens(full)
+	compiled := contextPackCountTokens(anyToString(full["reference_prompt"]))
+	response := map[string]any{
+		"ok":         true,
+		"query":      anyToString(session["objective"]),
+		"project":    anyToString(session["project"]),
+		"session_id": anyToString(session["id"]),
+		"agent_id":   anyToString(session["agent_id"]),
+		"context_pack": map[string]any{
+			"query":           anyToString(session["objective"]),
+			"project":         anyToString(session["project"]),
+			"ranked_evidence": ranked,
+			"files_to_read":   []any{},
+		},
+		"source_coverage": map[string]any{
+			"configured": []any{"agent_session_ledger"}, "effective": []any{"agent_session_ledger"},
+			"returned": []any{"agent_session_ledger"}, "complete": true,
+		},
+		"synthesis_pack": map[string]any{
+			"decision_gate": map[string]any{
+				"decision": "verify", "refusal": false,
+				"reasons": []any{"Resume from bounded session evidence, then verify current local state before mutation."},
+				"policy":  "session history restores intent but does not replace current repository or runtime proof",
+			},
+			"recommended_next_actions": []any{
+				map[string]any{"label": "verify_local_state", "command": "", "reason": "Session memory may lag the current worktree or runtime."},
+			},
+		},
+		"token_impact": map[string]any{
+			"baseline_tokens_estimate":        baseline.Tokens,
+			"compiled_prompt_tokens_estimate": compiled.Tokens,
+		},
+		"writeback_required": true,
+	}
+	packet := buildAgentPacket(response, map[string]any{
+		"output_mode": agentPacketContractID, "target_context_pack_tokens": defaultAgentPacketTargetTokens,
+		"hard_limit_tokens": defaultAgentPacketHardTokens,
+	}, "session_resume")
+	packet["prompt"] = clipText(anyToString(full["reference_prompt"]), 3000)
+	packet["session"] = compactAgentSessionRow(session)
+	packet["session_rollup"] = map[string]any{
+		"status": rollup["status"], "objective_state": rollup["objective_state"], "next_action": rollup["next_action"],
+		"memory_contribution": rollup["memory_contribution"], "risk_summary": rollup["risk_summary"],
+	}
+	return finalizeAgentPacket(packet)
+}
+
 func compactAgentTraceSourceSummary(metadata map[string]any) map[string]any {
 	returnedSources := map[string]struct{}{}
 	pendingSources := map[string]struct{}{}
@@ -1293,6 +1407,7 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 		"cwd":                 clipText(strings.TrimSpace(anyToString(payload["cwd"])), 320),
 		"task_id":             clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_id"]), anyToString(payload["taskId"]))), 160),
 		"native_session_id":   clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["native_session_id"]), anyToString(payload["nativeSessionId"]))), 180),
+		"reuse_key":           clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["reuse_key"]), anyToString(payload["reuseKey"]))), 240),
 		"agent_state":         normalizeAgentLifecyclePayload(payload["agent_state"], status),
 		"objective":           clipText(strings.TrimSpace(anyToString(payload["objective"])), 1200),
 		"mission":             clipText(strings.TrimSpace(anyToString(payload["mission"])), 1200),
@@ -1344,12 +1459,64 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 	}
 }
 
-func (s *agentSessionStore) start(payload map[string]any) (map[string]any, error) {
+func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.Time) map[string]any {
+	reuseKey := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["reuse_key"]), anyToString(payload["reuseKey"])))
+	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["project_name"])))
+	agentID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_id"]), anyToString(payload["agentId"])))
+	agent := strings.TrimSpace(anyToString(payload["agent"]))
+	taskID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_id"]), anyToString(payload["taskId"])))
+	nativeID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["native_session_id"]), anyToString(payload["nativeSessionId"])))
+	for i := len(s.order) - 1; i >= 0; i-- {
+		row := s.sessions[s.order[i]]
+		if len(row) == 0 || agentSessionTerminal(agentSessionEffectiveStatus(row, now, s.idleTTL)) {
+			continue
+		}
+		if project != "" && !strings.EqualFold(anyToString(row["project"]), project) {
+			continue
+		}
+		if agentID != "" && !strings.EqualFold(anyToString(row["agent_id"]), agentID) {
+			continue
+		}
+		if agentID == "" && agent != "" && !strings.EqualFold(anyToString(row["agent"]), agent) {
+			continue
+		}
+		if reuseKey != "" && strings.EqualFold(anyToString(row["reuse_key"]), reuseKey) {
+			return row
+		}
+		if taskID != "" && strings.EqualFold(anyToString(row["task_id"]), taskID) {
+			return row
+		}
+		if nativeID != "" && strings.EqualFold(anyToString(row["native_session_id"]), nativeID) {
+			return row
+		}
+	}
+	return nil
+}
+
+func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any, bool, error) {
 	if s == nil {
-		return nil, errors.New("agent session store unavailable")
+		return nil, false, errors.New("agent session store unavailable")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	ensure := anyToBool(firstNonEmptyAny(payload["ensure"], payload["reuse_existing"], payload["reuseExisting"]))
+	explicitID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["session_id"]), anyToString(payload["sessionId"]), anyToString(payload["id"])))
+	if explicitID != "" {
+		if existing := s.sessions[explicitID]; len(existing) > 0 {
+			if agentSessionTerminal(agentSessionEffectiveStatus(existing, now, s.idleTTL)) {
+				return nil, false, errAgentSessionTerminal
+			}
+			if ensure {
+				return s.effectiveSessionLocked(existing, now), true, nil
+			}
+		}
+	}
+	if ensure {
+		if existing := s.findReusableLocked(payload, now); len(existing) > 0 {
+			return s.effectiveSessionLocked(existing, now), true, nil
+		}
+	}
 	record := normalizeAgentSessionStart(payload, "")
 	id := anyToString(record["id"])
 	if existing, ok := s.sessions[id]; ok {
@@ -1370,9 +1537,24 @@ func (s *agentSessionStore) start(payload map[string]any) (map[string]any, error
 	}
 	s.enforceBoundsLocked()
 	if err := s.persistLocked(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return cloneAnyMap(record), nil
+	return cloneAnyMap(record), false, nil
+}
+
+func (s *agentSessionStore) start(payload map[string]any) (map[string]any, error) {
+	record, _, err := s.startOrReuse(payload)
+	return record, err
+}
+
+func agentSessionAllowsPostTerminalEvent(eventType string) bool {
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	return strings.Contains(eventType, "outcome") ||
+		strings.Contains(eventType, "feedback") ||
+		strings.Contains(eventType, "correction") ||
+		strings.Contains(eventType, "claim") ||
+		strings.Contains(eventType, "retrieval.continuation") ||
+		strings.Contains(eventType, "audit")
 }
 
 func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any) (map[string]any, map[string]any, error) {
@@ -1399,6 +1581,15 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	}
 	event := normalizeAgentSessionEvent(sessionID, payload)
 	eventType := anyToString(event["type"])
+	terminalStatus := agentSessionEffectiveStatus(session, time.Now().UTC(), s.idleTTL)
+	terminalBefore := agentSessionTerminal(terminalStatus)
+	if terminalBefore && !agentSessionAllowsPostTerminalEvent(eventType) {
+		return nil, nil, errAgentSessionTerminal
+	}
+	if terminalBefore {
+		// Effective expiry is absorbing even when a post-terminal audit/outcome arrives.
+		session["status"] = terminalStatus
+	}
 	createdAt := anyToString(event["created_at"])
 	if anyToString(event["agent"]) == "" && anyToString(session["agent"]) != "" {
 		event["agent"] = session["agent"]
@@ -1451,7 +1642,7 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	if nextAction := strings.TrimSpace(anyToString(metadata["next_action"])); nextAction != "" {
 		session["next_action"] = clipText(nextAction, 720)
 	}
-	if statePayload := anyMap(metadata["agent_state"]); len(statePayload) > 0 {
+	if statePayload := anyMap(metadata["agent_state"]); !terminalBefore && len(statePayload) > 0 {
 		state := normalizeAgentLifecyclePayload(statePayload, anyToString(event["status"]))
 		session["agent_state"] = state
 		for _, key := range []string{"task_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
@@ -1467,31 +1658,33 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 			}
 		}
 	}
-	switch eventType {
-	case "session.completed", "agent.session.completed":
-		session["status"] = "completed"
-		session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "done", "authority": "self_report", "source": eventType}), "completed")
-		session["completed_at"] = createdAt
-	case "session.failed", "agent.session.failed":
-		session["status"] = "failed"
-		session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "blocked", "authority": "self_report", "source": eventType}), "failed")
-		session["completed_at"] = createdAt
-	case "session.blocked", "agent.session.blocked":
-		session["status"] = "blocked"
-		session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "blocked", "authority": "self_report", "source": eventType}), "blocked")
-		session["completed_at"] = ""
-	case "session.canceled", "agent.session.canceled":
-		session["status"] = "canceled"
-		session["completed_at"] = createdAt
-	default:
-		if !agentSessionTerminal(anyToString(session["status"])) {
-			if state := anyToString(anyMap(session["agent_state"])["state"]); state != "" {
-				session["status"] = normalizeAgentSessionStatus(state)
-			} else {
-				session["status"] = "active"
-			}
+	if !terminalBefore {
+		switch eventType {
+		case "session.completed", "agent.session.completed":
+			session["status"] = "completed"
+			session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "done", "authority": "self_report", "source": eventType}), "completed")
+			session["completed_at"] = createdAt
+		case "session.failed", "agent.session.failed":
+			session["status"] = "failed"
+			session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "blocked", "authority": "self_report", "source": eventType}), "failed")
+			session["completed_at"] = createdAt
+		case "session.blocked", "agent.session.blocked":
+			session["status"] = "blocked"
+			session["agent_state"] = normalizeAgentLifecyclePayload(firstNonEmptyAny(metadata["agent_state"], map[string]any{"state": "blocked", "authority": "self_report", "source": eventType}), "blocked")
+			session["completed_at"] = ""
+		case "session.canceled", "agent.session.canceled":
+			session["status"] = "canceled"
+			session["completed_at"] = createdAt
+		default:
 			if !agentSessionTerminal(anyToString(session["status"])) {
-				session["completed_at"] = ""
+				if state := anyToString(anyMap(session["agent_state"])["state"]); state != "" {
+					session["status"] = normalizeAgentSessionStatus(state)
+				} else {
+					session["status"] = "active"
+				}
+				if !agentSessionTerminal(anyToString(session["status"])) {
+					session["completed_at"] = ""
+				}
 			}
 		}
 	}
@@ -1508,7 +1701,25 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	return cloneAnyMap(session), cloneAnyMap(event), nil
 }
 
-func (s *agentSessionStore) list(status string, project string, agent string, limit int) []map[string]any {
+func compactAgentSessionRow(row map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{
+		"id", "agent", "agent_id", "project", "status", "objective", "task_id", "native_session_id",
+		"reuse_key", "started_at", "updated_at", "last_event_at", "last_event_type", "event_count",
+		"stale", "expired_at", "idle_ttl_seconds",
+	} {
+		if value, exists := row[key]; exists {
+			out[key] = value
+		}
+	}
+	out["objective"] = clipText(anyToString(out["objective"]), 240)
+	if ownership := agentSessionOwnership(row); len(ownership) > 0 {
+		out["ownership"] = ownership
+	}
+	return out
+}
+
+func (s *agentSessionStore) list(status string, project string, agent string, limit int, compact bool, includeStale bool) []map[string]any {
 	if s == nil {
 		return []map[string]any{}
 	}
@@ -1526,7 +1737,12 @@ func (s *agentSessionStore) list(status string, project string, agent string, li
 		if !ok {
 			continue
 		}
-		if status != "" && status != "all" && normalizeAgentSessionStatus(anyToString(row["status"])) != normalizeAgentSessionStatus(status) {
+		copyRow := s.effectiveSessionLocked(row, now)
+		effectiveStatus := anyToString(copyRow["status"])
+		if !includeStale && effectiveStatus == "expired" && normalizeAgentSessionStatus(status) != "expired" {
+			continue
+		}
+		if status != "" && status != "all" && effectiveStatus != normalizeAgentSessionStatus(status) {
 			continue
 		}
 		if project != "" && !strings.EqualFold(anyToString(row["project"]), project) {
@@ -1535,8 +1751,11 @@ func (s *agentSessionStore) list(status string, project string, agent string, li
 		if agent != "" && !strings.EqualFold(anyToString(row["agent"]), agent) && !strings.EqualFold(anyToString(row["agent_id"]), agent) {
 			continue
 		}
-		copyRow := cloneAnyMap(row)
-		copyRow["rollup"] = buildAgentSessionRollup(copyRow, s.events[id], now)
+		if compact {
+			copyRow = compactAgentSessionRow(copyRow)
+		} else {
+			copyRow["rollup"] = buildAgentSessionRollup(copyRow, s.events[id], now)
+		}
 		rows = append(rows, copyRow)
 		if len(rows) >= limit {
 			break
@@ -1560,7 +1779,7 @@ func (s *agentSessionStore) get(sessionID string) (map[string]any, []map[string]
 	for _, event := range s.events[sessionID] {
 		events = append(events, cloneAnyMap(event))
 	}
-	return cloneAnyMap(row), events, true
+	return s.effectiveSessionLocked(row, time.Now().UTC()), events, true
 }
 
 func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
@@ -1581,14 +1800,14 @@ func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
 		if !ok {
 			continue
 		}
-		status := normalizeAgentSessionStatus(anyToString(row["status"]))
+		copyRow := s.effectiveSessionLocked(row, now)
+		status := anyToString(copyRow["status"])
 		counts[status] += 1
-		contribution := normalizeAgentContribution(anyMap(row["memory_contribution"]))
+		contribution := normalizeAgentContribution(anyMap(copyRow["memory_contribution"]))
 		score := anyToInt(contribution["score"], 0)
 		scoreSum += score
 		scoreCount += 1
-		if len(active) < limit {
-			copyRow := cloneAnyMap(row)
+		if !agentSessionTerminal(status) && len(active) < limit {
 			copyRow["memory_contribution"] = contribution
 			if lastAt, ok := parseISOTime(anyToString(row["last_event_at"])); ok {
 				copyRow["last_event_age_secs"] = roundFloat(now.Sub(lastAt).Seconds(), 3)
@@ -1611,9 +1830,12 @@ func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
 		"blocked":                 counts["blocked"],
 		"paused":                  counts["paused"],
 		"canceled":                counts["canceled"],
+		"expired":                 counts["expired"],
+		"live":                    counts["active"] + counts["paused"] + counts["blocked"],
 		"avg_memory_contribution": avg,
 		"max_records":             s.maxKeep,
 		"max_events_per_session":  s.maxEvents,
+		"idle_ttl_seconds":        int(s.idleTTL.Seconds()),
 		"sessions":                active,
 	}
 }
@@ -1681,9 +1903,12 @@ func (s *server) agentsSessionsCollection(w http.ResponseWriter, r *http.Request
 		status := strings.TrimSpace(r.URL.Query().Get("status"))
 		project := strings.TrimSpace(r.URL.Query().Get("project"))
 		agent := strings.TrimSpace(r.URL.Query().Get("agent"))
+		compact := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "compact")
+		includeStale := anyToBool(r.URL.Query().Get("include_stale"))
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":       true,
-			"sessions": s.agentSessions.list(status, project, agent, limit),
+			"view":     map[bool]string{true: "compact", false: "full"}[compact],
+			"sessions": s.agentSessions.list(status, project, agent, limit, compact, includeStale),
 		})
 	case http.MethodPost:
 		s.agentsSessionsStart(w, r)
@@ -1702,33 +1927,41 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
-	session, err := s.agentSessions.start(payload)
+	session, reused, err := s.agentSessions.startOrReuse(payload)
 	if err != nil {
+		if errors.Is(err, errAgentSessionTerminal) {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_terminal", "detail": "terminal or expired sessions cannot be reopened; start a new session id"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "agent session start failed", "detail": err.Error()})
 		return
 	}
-	_, startedEvent, eventErr := s.agentSessions.appendEvent(anyToString(session["id"]), map[string]any{
-		"type":     "session.started",
-		"agent":    session["agent"],
-		"agent_id": session["agent_id"],
-		"project":  session["project"],
-		"summary":  session["objective"],
-		"metadata": map[string]any{
-			"repo":              session["repo"],
-			"branch":            session["branch"],
-			"worktree":          session["worktree"],
-			"cwd":               session["cwd"],
-			"task_id":           session["task_id"],
-			"native_session_id": session["native_session_id"],
-			"agent_state":       session["agent_state"],
-			"ownership":         agentSessionOwnership(session),
-			"tags":              session["tags"],
-		},
-	})
+	var startedEvent map[string]any
+	var eventErr error
+	if !reused {
+		_, startedEvent, eventErr = s.agentSessions.appendEvent(anyToString(session["id"]), map[string]any{
+			"type":     "session.started",
+			"agent":    session["agent"],
+			"agent_id": session["agent_id"],
+			"project":  session["project"],
+			"summary":  session["objective"],
+			"metadata": map[string]any{
+				"repo":              session["repo"],
+				"branch":            session["branch"],
+				"worktree":          session["worktree"],
+				"cwd":               session["cwd"],
+				"task_id":           session["task_id"],
+				"native_session_id": session["native_session_id"],
+				"agent_state":       session["agent_state"],
+				"ownership":         agentSessionOwnership(session),
+				"tags":              session["tags"],
+			},
+		})
+	}
 	if eventErr == nil {
 		session, _, _ = s.agentSessions.get(anyToString(session["id"]))
 	}
-	response := map[string]any{"ok": true, "session": session}
+	response := map[string]any{"ok": true, "session": session, "created": !reused, "reused": reused}
 	if startedEvent != nil {
 		response["event"] = startedEvent
 	}
@@ -1778,6 +2011,9 @@ func (s *server) agentsSessionContextPackage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	payload := buildAgentPromptContextPackage(session, events, time.Now().UTC())
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "compact") {
+		payload = buildAgentSessionPacket(session, events, time.Now().UTC())
+	}
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -1817,6 +2053,10 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 		}
 		session, event, err := s.agentSessions.appendEvent(sessionID, payload)
 		if err != nil {
+			if errors.Is(err, errAgentSessionTerminal) {
+				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_terminal", "detail": "terminal or expired session state is absorbing"})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "agent session event failed", "detail": err.Error()})
 			return
 		}

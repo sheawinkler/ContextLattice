@@ -4,7 +4,9 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
 
 ## 1) Retrieval Before Inference (Required)
 - Before planning, coding, or reasoning, retrieve context first from ContextLattice.
-- Use `POST /memory/search` with:
+- Prefer the compact CLI: `contextlattice context "<task>" --project <project> --pretty`.
+- Use `contextlattice resume --project <project> --pretty` to recover the current task/session without dumping raw history.
+- Only when the CLI is unavailable, use `POST /memory/search` with:
   - `query` (task-focused)
   - `project` and/or `topic_path` when known
   - `agent_id` (stable per agent)
@@ -33,6 +35,7 @@ Copy this into your own repo as `AGENTS.md` (or merge into your existing instruc
   - `codex`, `claude-code`, `opencode`, `hermes-agent`, `hermes-ultra`, `omp`, `mercury-agent`, `pi`, `droid`
   - `chatgpt-web`, `chatgpt-desktop`, `claude-web`, `claude-desktop`
 - Global helper CLIs (auto-installed by quickstart/installers):
+  - `contextlattice` (primary context/resume/remember/finish/correct/doctor workflow)
   - `contextlattice_agent_start` (hook-first startup guard)
   - `contextlattice_agent_adapter` (profile bootstrap, context-pack, lifecycle state, checkpoint, handoff)
   - `contextlattice_agent_discover` (best-effort local agent process/profile/hook/repo-instruction discovery)
@@ -49,17 +52,16 @@ contextlattice_agent_start --soft --compact
 
 Agent-session default:
 ```bash
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_agent_adapter state --agent codex --session-id "$SESSION_ID" --state working --pretty
+contextlattice context "<task>" --project contextlattice --pretty
+contextlattice resume --project contextlattice --pretty
 ```
 
 ## 3) Checkpoints and Conditional Recency Pass
 - During long tasks, write concise checkpoints via `POST /memory/write`.
 - Prefer `contextlattice_checkpoint` when you need write verification; otherwise keep checkpoints concise and avoid unnecessary readback context.
 - Preserve `format_contract`, `format_contracts`, and `policy_context_package` fields returned by ContextLattice in downstream handoffs; do not invent or strip contract metadata.
-- When a task outcome is known, submit retrieval quality feedback via `POST /tools/feedback_submit` with an `idempotencyKey`.
+- When a task outcome is known, run `contextlattice finish "<verified result>" --success`; it binds the latest pending retrieval outcome automatically.
+- Use `contextlattice correct "<note>" --category useful|wrong|stale|superseded` for feedback. Factual mutation additionally requires `--factual` and explicit claim fields.
 - Before final output, run a recency retrieval pass (`/memory/search` or `/memory/context-pack`) when the task was long-running, high-risk, or likely affected by recent memory.
 - Before any context-compaction handoff, persist objective state through the adapter:
   - `contextlattice_agent_adapter handoff --project contextlattice --session-id <session_id> --summary "<objective summary>"`

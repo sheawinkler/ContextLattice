@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func postAgentSessionJSON(t *testing.T, url string, body string) (int, map[string]any) {
@@ -336,5 +337,165 @@ func TestBlockedSessionCanRecoverWithoutCompletedAt(t *testing.T) {
 	lifecycle := anyMap(anyMap(recovered["rollup"])["agent_lifecycle"])
 	if anyToString(lifecycle["state"]) != "working" {
 		t.Fatalf("expected lifecycle to recover to working, got %#v", lifecycle)
+	}
+}
+
+func TestAgentSessionEnsureReusesTaskAndTerminalStateIsAbsorbing(t *testing.T) {
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	request := `{
+		"ensure":true,
+		"reuse_key":"reuse_task_620",
+		"agent":"codex",
+		"agent_id":"codex_gpt5_test",
+		"project":"contextlattice",
+		"task_id":"issue-620",
+		"objective":"implement one task one session"
+	}`
+	status, created := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", request)
+	if status != http.StatusOK || !anyToBool(created["created"]) || anyToBool(created["reused"]) {
+		t.Fatalf("expected first ensure to create one session, status=%d payload=%#v", status, created)
+	}
+	sessionID := anyToString(anyMap(created["session"])["id"])
+	status, reused := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", request)
+	if status != http.StatusOK || !anyToBool(reused["reused"]) || anyToString(anyMap(reused["session"])["id"]) != sessionID {
+		t.Fatalf("expected exact task ensure to reuse %s, status=%d payload=%#v", sessionID, status, reused)
+	}
+	if anyToInt(anyMap(reused["session"])["event_count"], 0) != 1 {
+		t.Fatalf("reused ensure must not append another session.started event: %#v", reused)
+	}
+
+	status, listed := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions?project=contextlattice&view=compact")
+	rows := contextPackAnyList(listed["sessions"])
+	if status != http.StatusOK || len(rows) != 1 || len(anyMap(anyMap(rows[0])["rollup"])) != 0 {
+		t.Fatalf("expected one compact session row without heavyweight rollup, status=%d payload=%#v", status, listed)
+	}
+
+	status, completed := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{"session_id":"`+sessionID+`","type":"session.completed","status":"completed"}`)
+	if status != http.StatusOK || anyToString(anyMap(completed["session"])["status"]) != "completed" {
+		t.Fatalf("expected terminal completion, status=%d payload=%#v", status, completed)
+	}
+	status, correction := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
+		"session_id":"`+sessionID+`","type":"correction.recorded","status":"active",
+		"metadata":{"agent_state":{"state":"working","authority":"self_report","source":"late-correction"}}
+	}`)
+	correctionSession := anyMap(correction["session"])
+	if status != http.StatusOK || anyToString(correctionSession["status"]) != "completed" || anyToString(anyMap(correctionSession["agent_state"])["state"]) != "done" {
+		t.Fatalf("post-terminal correction mutated absorbing lifecycle state, status=%d payload=%#v", status, correction)
+	}
+	status, conflict := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", `{"ensure":true,"session_id":"`+sessionID+`","project":"contextlattice","agent_id":"codex_gpt5_test"}`)
+	if status != http.StatusConflict || anyToString(conflict["error"]) != "agent_session_terminal" {
+		t.Fatalf("terminal session id reopened instead of conflicting, status=%d payload=%#v", status, conflict)
+	}
+	status, replacement := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", request)
+	if status != http.StatusOK || !anyToBool(replacement["created"]) || anyToString(anyMap(replacement["session"])["id"]) == sessionID {
+		t.Fatalf("expected a fresh task epoch after terminal completion, status=%d payload=%#v", status, replacement)
+	}
+}
+
+func TestExpiredAgentSessionIsNotReportedLiveOrReopened(t *testing.T) {
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	t.Setenv("GO_AGENT_SESSION_IDLE_TTL_SECS", "60")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+
+	status, started := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", `{
+		"session_id":"sess-expired",
+		"agent":"codex",
+		"agent_id":"codex_gpt5_test",
+		"project":"contextlattice",
+		"objective":"expire stale presence",
+		"agent_state":{"state":"working","authority":"hook","source":"test","expires_at":"2020-01-01T00:00:00Z"}
+	}`)
+	if status != http.StatusOK || !anyToBool(started["ok"]) {
+		t.Fatalf("expected session creation before effective expiry projection, status=%d payload=%#v", status, started)
+	}
+	status, item := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-expired")
+	if status != http.StatusOK || anyToString(anyMap(item["session"])["status"]) != "expired" {
+		t.Fatalf("expected expired effective status, status=%d payload=%#v", status, item)
+	}
+	status, conflict := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{"session_id":"sess-expired","type":"agent.state.working","status":"active"}`)
+	if status != http.StatusConflict || anyToString(conflict["error"]) != "agent_session_terminal" {
+		t.Fatalf("expired session accepted a reopening event, status=%d payload=%#v", status, conflict)
+	}
+	status, outcome := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
+		"session_id":"sess-expired","type":"context_pack.outcome_reported","status":"active",
+		"metadata":{"agent_state":{"state":"working","authority":"self_report","source":"late-outcome"}}
+	}`)
+	if status != http.StatusOK || anyToString(anyMap(outcome["session"])["status"]) != "expired" {
+		t.Fatalf("allowed post-expiry outcome reopened session, status=%d payload=%#v", status, outcome)
+	}
+	status, runtime := getAgentSessionJSON(t, gateway.URL+"/telemetry/agents/runtime?limit=8")
+	if status != http.StatusOK || anyToInt(runtime["expired"], 0) != 1 || anyToInt(runtime["live"], -1) != 0 || len(contextPackAnyList(runtime["sessions"])) != 0 {
+		t.Fatalf("expired session leaked into live runtime, status=%d payload=%#v", status, runtime)
+	}
+}
+
+func TestAgentSessionIdleTTLUsesLatestEventBeforeStaleAgentStateTimestamp(t *testing.T) {
+	now := time.Now().UTC()
+	row := map[string]any{
+		"status":        "active",
+		"started_at":    now.Add(-24 * time.Hour).Format(time.RFC3339),
+		"last_event_at": now.Add(-5 * time.Minute).Format(time.RFC3339),
+		"agent_state": map[string]any{
+			"state": "working", "updated_at": now.Add(-18 * time.Hour).Format(time.RFC3339),
+		},
+	}
+	if got := agentSessionEffectiveStatus(row, now, time.Hour); got != "active" {
+		t.Fatalf("recent checkpoint lost to stale agent-state timestamp: got %s", got)
+	}
+}
+
+func TestAgentSessionCompactResumeUsesBoundedPacket(t *testing.T) {
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	s := newTestServer(t, backend.URL)
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+	status, _ := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/start", `{
+		"session_id":"sess-resume","agent":"codex","agent_id":"codex_test","project":"contextlattice",
+		"objective":"resume bounded task truth","task_id":"issue-620"
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("start status=%d", status)
+	}
+	status, _ = postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{
+		"session_id":"sess-resume","type":"checkpoint.written","summary":"packet and session tests passed"
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("checkpoint status=%d", status)
+	}
+	status, packet := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-resume/context-package?view=compact")
+	if status != http.StatusOK || anyToString(packet["schema_id"]) != agentPacketContractID || anyToString(packet["surface"]) != "session_resume" {
+		t.Fatalf("expected compact resume packet, status=%d payload=%#v", status, packet)
+	}
+	assertBoundaryContractPassed(t, agentPacketContractID, packet)
+	if anyToString(anyMap(packet["decision_gate"])["decision"]) != "verify" {
+		t.Fatalf("session memory should require current-local-state verification: %#v", packet["decision_gate"])
+	}
+	if _, leaked := packet["context_package"]; leaked {
+		t.Fatalf("compact resume leaked heavyweight prompt package: %#v", packet)
+	}
+	count := contextPackCountAnyTokens(packet)
+	if count.Tokens > defaultAgentPacketHardTokens || anyToInt(anyMap(packet["token_budget"])["actual_tokens"], 0) != count.Tokens {
+		t.Fatalf("resume packet token accounting mismatch count=%d budget=%#v", count.Tokens, packet["token_budget"])
 	}
 }

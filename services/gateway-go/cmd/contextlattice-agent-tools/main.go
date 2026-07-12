@@ -22,7 +22,12 @@ import (
 	"time"
 )
 
-const defaultBaseURL = "http://127.0.0.1:8075"
+const (
+	defaultBaseURL                 = "http://127.0.0.1:8075"
+	agentPacketContractID          = "agent_packet.v1"
+	defaultAgentPacketTargetTokens = 2000
+	defaultAgentPacketHardTokens   = 4000
+)
 
 var nativeToolNames = map[string]string{
 	"contextlattice_search":                          "search",
@@ -119,6 +124,18 @@ func (c *cli) run(argv []string) error {
 		args = args[1:]
 	}
 	switch command {
+	case "context":
+		return c.cmdContext(args)
+	case "resume":
+		return c.cmdResume(args)
+	case "remember":
+		return c.adapterCheckpoint(args)
+	case "finish":
+		return c.adapterComplete(args)
+	case "correct":
+		return c.cmdCorrect(args)
+	case "doctor":
+		return c.cmdRuntimeDoctor(args)
 	case "search":
 		return c.cmdSearch(args)
 	case "write":
@@ -218,9 +235,17 @@ func (c *cli) usage() error {
 	_, err := fmt.Fprintln(c.stdout, `ContextLattice native agent tools
 
 Usage:
-  contextlattice-agent-tools <command> [args]
+  contextlattice <command> [args]
 
-Native commands:
+Primary workflow:
+  context <task>                  compact proof-carrying context for the task
+  resume [--session-id id]        compact task/session state for continuation
+  remember <checkpoint>           durable checkpoint bound to the current session
+  finish <summary>                complete the session and report retrieval outcome
+  correct <note> --category kind  record useful/wrong/stale/superseded feedback
+  doctor                          verify local CLI, gateway, and agent integration health
+
+Advanced/compatibility commands:
   search                         lifecycle-aware memory search
   pack                           bounded context package
   synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
@@ -722,6 +747,7 @@ func contextPackTokenBudgetStringFlags() map[string]string {
 		"already-loaded-tokens":       "already_loaded_tokens",
 		"target-context-pack-tokens":  "target_context_pack_tokens",
 		"budget-tokens":               "target_context_pack_tokens",
+		"hard-limit-tokens":           "hard_limit_tokens",
 	}
 }
 
@@ -1123,6 +1149,189 @@ func resolveContent(parsed parsedArgs) (string, error) {
 
 func (c *cli) cmdPack(args []string) error {
 	return c.cmdPackWithRoute(args, "contextlattice_pack", "/memory/context-pack", "context-pack")
+}
+
+func (c *cli) cmdContext(args []string) error {
+	return c.cmdPackWithRoute(args, "contextlattice", "/memory/synthesis-pack/v2", "context")
+}
+
+func (c *cli) cmdResume(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"session-id": "session_id", "agent-id": "agent_id", "limit": "limit",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"full": "full"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice resume [--session-id <id>] [--project <project>] [--full] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
+	if sessionID == "" && len(parsed.pos) > 0 {
+		sessionID = parsed.pos[0]
+	}
+	if sessionID == "" {
+		sessionID = firstString(readSessionState(project)["session_id"])
+		if sessionID != "" {
+			if cached, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID), nil, parsed.float("timeout", 10)); err != nil || !agentSessionStatusReusable(cached, project, parsed.string("agent_id", ""), "") {
+				sessionID = ""
+			}
+		}
+	}
+	if sessionID == "" {
+		values := url.Values{}
+		values.Set("project", project)
+		values.Set("limit", strconv.Itoa(parsed.int("limit", 20)))
+		values.Set("view", "compact")
+		values.Set("include_stale", "false")
+		listed, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions?"+values.Encode(), nil, parsed.float("timeout", 10))
+		if err != nil {
+			return err
+		}
+		rows := asList(listed["sessions"])
+		for _, raw := range rows {
+			row := asMap(raw)
+			status := strings.ToLower(firstString(row["status"]))
+			if status == "active" || status == "paused" || status == "blocked" {
+				sessionID = firstString(row["id"])
+				break
+			}
+		}
+		if sessionID == "" && len(rows) > 0 {
+			sessionID = firstString(asMap(rows[0])["id"])
+		}
+	}
+	if sessionID == "" {
+		return errors.New("no resumable ContextLattice session found")
+	}
+	path := "/v1/agents/sessions/" + url.PathEscape(sessionID) + "/context-package"
+	if !parsed.bool("full") {
+		path += "?view=compact"
+	}
+	raw, _, err := c.requestJSON(context.Background(), http.MethodGet, path, nil, parsed.float("timeout", 10))
+	if err != nil {
+		return err
+	}
+	writeSessionState(project, sessionID, firstString(raw["query"], asMap(raw["session"])["objective"]), parsed.string("agent_id", firstString(raw["agent_id"])))
+	return c.emit(raw, parsed.bool("pretty") || !parsed.bool("raw"))
+}
+
+func normalizeCorrectionCategory(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "useful", "helpful", "right", "correct":
+		return "useful", nil
+	case "wrong", "incorrect", "false":
+		return "wrong", nil
+	case "stale", "outdated":
+		return "stale", nil
+	case "superseded", "replaced":
+		return "superseded", nil
+	default:
+		return "", errors.New("--category must be useful, wrong, stale, or superseded")
+	}
+}
+
+func (c *cli) cmdCorrect(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(adapterStringFlags(), map[string]string{
+		"category": "category", "target-claim-id": "target_claim_id", "new-claim-id": "new_claim_id",
+		"subject": "subject", "predicate": "predicate", "object": "object", "statement": "statement",
+	}), mergeBoolFlags(adapterBoolFlags(), map[string]string{"factual": "factual"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice correct '<note>' --category useful|wrong|stale|superseded [--factual --subject s --predicate p --object o --target-claim-id id] [--project p] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	category, err := normalizeCorrectionCategory(parsed.string("category", ""))
+	if err != nil {
+		return err
+	}
+	content := strings.TrimSpace(firstNonEmpty(parsed.string("content", ""), parsed.string("statement", ""), strings.Join(parsed.pos, " ")))
+	if content == "" {
+		return errors.New("correction note is required")
+	}
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	profile := resolveAdapterProfile(parsed)
+	sessionID := resolveOutcomeSessionID(parsed, project)
+	targetClaimID := parsed.string("target_claim_id", "")
+	factual := parsed.bool("factual")
+	if factual {
+		if parsed.string("subject", "") == "" || parsed.string("predicate", "") == "" || parsed.string("object", "") == "" {
+			return errors.New("factual correction requires --subject, --predicate, and --object")
+		}
+		if category != "useful" && targetClaimID == "" {
+			return errors.New("wrong, stale, or superseded factual correction requires --target-claim-id")
+		}
+	}
+	positive := category == "useful"
+	feedbackPayload := map[string]any{
+		"project": project, "source": "agent", "task_id": parsed.string("task_id", ""),
+		"rating":    map[bool]int{true: 5, false: 1}[positive],
+		"sentiment": map[bool]string{true: "good", false: "bad"}[positive],
+		"tags":      []any{"contextlattice-correction", category},
+		"content":   content, "topic_path": parsed.string("topic_path", "agent/corrections"),
+		"metadata": map[string]any{
+			"schema_id": "contextlattice_correction.v1", "category": category, "factual": factual,
+			"session_id": sessionID, "agent_id": profile.agentID, "target_claim_id": targetClaimID,
+		},
+		"idempotencyKey": "correction_" + hex.EncodeToString(sha256Sum([]byte(strings.Join([]string{project, sessionID, category, content, targetClaimID}, "\x00"))))[:24],
+	}
+	feedback, _, feedbackErr := c.requestJSON(context.Background(), http.MethodPost, "/tools/feedback_submit", feedbackPayload, parsed.float("timeout", 10))
+	findings := errorFinding(feedbackErr)
+	claimResult := map[string]any{}
+	if factual && feedbackErr == nil {
+		claimPayload := dropEmpty(map[string]any{
+			"claim_id": parsed.string("new_claim_id", ""), "project": project,
+			"subject": parsed.string("subject", ""), "predicate": parsed.string("predicate", ""), "object": parsed.string("object", ""),
+			"statement": content, "topic_path": parsed.string("topic_path", "claims/corrections"),
+			"status": "active", "confidence": 1.0, "agent_id": profile.agentID, "session_id": sessionID,
+			"verification": map[string]any{"status": "verified", "method": "explicit_user_or_agent_correction", "checked_at": time.Now().UTC().Format(time.RFC3339)},
+			"provenance":   map[string]any{"source": "contextlattice_cli_correct", "category": category},
+		})
+		if targetClaimID != "" {
+			if category == "wrong" {
+				claimPayload["contradicts"] = []any{targetClaimID}
+			} else {
+				claimPayload["supersedes"] = []any{targetClaimID}
+			}
+		}
+		claimResult, _, err = c.requestJSON(context.Background(), http.MethodPost, "/memory/claims", claimPayload, parsed.float("timeout", 10))
+		findings = append(findings, errorFinding(err)...)
+	}
+	outcomeResult := map[string]any{}
+	if sampleID := resolvePendingContextPackQualitySampleID(parsed, project); sampleID != "" {
+		parsed.values["context_pack_quality_sample_id"] = sampleID
+		parsed.values["first_pass_success"] = strconv.FormatBool(positive)
+		parsed.values["repair_required"] = strconv.FormatBool(!positive)
+		if !positive {
+			parsed.values["retry_count"] = "1"
+		}
+		var outcomeFindings []map[string]any
+		outcomeResult, _, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "cli_correction")
+		findings = append(findings, outcomeFindings...)
+	}
+	event := map[string]any{}
+	if sessionID != "" {
+		event, _, err = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
+			"session_id": sessionID, "agent": profile.agent, "agent_id": profile.agentID, "project": project,
+			"type": "correction.recorded", "summary": truncate(category+": "+content, 360),
+			"metadata": map[string]any{"category": category, "factual": factual, "target_claim_id": targetClaimID},
+		}, parsed.float("timeout", 10))
+		findings = append(findings, errorFinding(err)...)
+	}
+	ok := len(findings) == 0 && feedbackErr == nil && !explicitFalse(feedback["ok"]) && !explicitFalse(claimResult["ok"]) && !explicitFalse(outcomeResult["ok"])
+	if err := c.emit(map[string]any{
+		"ok": ok, "schema_id": "contextlattice_correction.v1", "category": category, "factual": factual,
+		"session_id": sessionID, "feedback": feedback["feedback"], "claim": claimResult["claim"], "outcome": outcomeResult["outcome"], "event": event, "findings": findings,
+	}, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
+		return err
+	}
+	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
+	if !ok {
+		return errors.New("correction recording failed")
+	}
+	return nil
+}
+
+func sha256Sum(value []byte) []byte {
+	digest := sha256.Sum256(value)
+	return digest[:]
 }
 
 func (c *cli) cmdSynthesisPack(args []string) error {
@@ -1829,13 +2038,16 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
 		"blocking":        "blocking",
 		"nonblocking":     "nonblocking",
+		"compact":         "compact",
+		"full":            "full",
+		"debug":           "debug",
 		"soft":            "soft",
 		"strict":          "strict",
 		"auto-session":    "auto_session",
 		"no-auto-session": "no_auto_session",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage(commandName + " '<task>' [--project p] [--topic-path t] [--mode balanced] [--pretty]")
+		return c.emitUsage(commandName + " '<task>' [--project p] [--topic-path t] [--mode balanced] [--full|--debug] [--pretty]")
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
@@ -1849,6 +2061,8 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		sessionID = c.ensureSession(project, query, agentID, parsed.float("timeout", 30))
 	}
 	blocking := parsed.bool("blocking") && !parsed.bool("nonblocking")
+	fullOutput := parsed.bool("full") || parsed.bool("debug")
+	packetSurface := route == "/memory/context-pack" || route == "/memory/synthesis-pack" || route == "/memory/synthesis-pack/v2"
 	payload := map[string]any{
 		"query":                     query,
 		"project":                   project,
@@ -1857,7 +2071,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"topicPath":                 emptyToNil(parsed.string("topic_path", "")),
 		"retrieval_mode":            parsed.string("mode", "balanced"),
 		"include_grounding":         true,
-		"include_retrieval_debug":   true,
+		"include_retrieval_debug":   fullOutput,
 		"combined_sources":          true,
 		"wait_for_slow_sources":     blocking,
 		"sync_slow_sources":         blocking,
@@ -1868,6 +2082,13 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"native_cli_implementation": true,
 	}
 	addContextPackTokenBudgetArgs(payload, parsed)
+	if packetSurface && !fullOutput {
+		payload["output_mode"] = agentPacketContractID
+		if _, exists := payload["target_context_pack_tokens"]; !exists {
+			payload["target_context_pack_tokens"] = defaultAgentPacketTargetTokens
+		}
+		payload["hard_limit_tokens"] = minInt(maxInt(parsed.int("hard_limit_tokens", defaultAgentPacketHardTokens), defaultAgentPacketTargetTokens), defaultAgentPacketHardTokens)
+	}
 	if value := parsed.string("task_phase", ""); value != "" {
 		payload["task_phase"] = value
 	}
@@ -1891,7 +2112,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 	}
 	qualitySampleID := firstString(qualitySample["sample_id"])
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
-	if commandName != "contextlattice_pack" {
+	if commandName != "contextlattice_pack" && firstString(out["schema_id"]) != agentPacketContractID {
 		out["tool"] = commandName
 		out["pack_surface"] = sessionTag
 	}
@@ -1924,6 +2145,39 @@ func (c *cli) ensureSession(project, objective, agentID string, timeout float64)
 	return c.ensureSessionForAgent(project, objective, envString("CONTEXTLATTICE_AGENT", "agent-cli"), agentID, map[string]any{}, adapterProfile{}, timeout)
 }
 
+func agentSessionStatusReusable(payload map[string]any, project string, agentID string, reuseKey string) bool {
+	session := asMap(payload["session"])
+	status := strings.ToLower(firstString(session["status"]))
+	switch status {
+	case "completed", "failed", "canceled", "cancelled", "expired":
+		return false
+	}
+	if project != "" && firstString(session["project"]) != "" && !strings.EqualFold(firstString(session["project"]), project) {
+		return false
+	}
+	if agentID != "" && firstString(session["agent_id"]) != "" && !strings.EqualFold(firstString(session["agent_id"]), agentID) {
+		return false
+	}
+	if reuseKey != "" && firstString(session["reuse_key"]) != "" && !strings.EqualFold(firstString(session["reuse_key"]), reuseKey) {
+		return false
+	}
+	return firstString(session["id"]) != ""
+}
+
+func agentSessionReuseKey(project, agent, agentID string, ownership map[string]any) string {
+	parts := []string{
+		project, agent, agentID,
+		firstString(ownership["task_id"]),
+		firstString(ownership["native_session_id"]),
+		firstString(ownership["repo"]),
+		firstString(ownership["branch"]),
+		firstString(ownership["worktree"]),
+		firstString(ownership["cwd"]),
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return "reuse_" + hex.EncodeToString(digest[:])[:24]
+}
+
 func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, ownership map[string]any, profile adapterProfile, timeout float64) string {
 	if agent == "" {
 		agent = envString("CONTEXTLATTICE_AGENT", "agent-cli")
@@ -1934,8 +2188,16 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 	if len(ownership) == 0 {
 		ownership = adapterOwnership(parsedArgs{})
 	}
+	reuseKey := agentSessionReuseKey(project, agent, agentID, ownership)
+	if cachedID := firstString(readSessionState(project)["session_id"]); cachedID != "" {
+		if raw, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(cachedID), nil, minFloat(timeout, 5)); err == nil && agentSessionStatusReusable(raw, project, agentID, reuseKey) {
+			return cachedID
+		}
+	}
 	state := buildAgentLifecycleState(parsedArgs{}, profile, "working")
 	payload := map[string]any{
+		"ensure":            true,
+		"reuse_key":         reuseKey,
 		"project":           project,
 		"objective":         objective,
 		"agent":             agent,
@@ -1947,7 +2209,7 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 		"task_id":           ownership["task_id"],
 		"native_session_id": ownership["native_session_id"],
 		"agent_state":       state,
-		"tags":              []string{"auto-session", "context-pack", "go-native-cli"},
+		"tags":              []string{"auto-session", "one-task-one-session", "context-pack", "go-native-cli"},
 		"metadata": map[string]any{
 			"tool":            "contextlattice_pack",
 			"ownership":       ownership,
@@ -1962,12 +2224,15 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 	session := asMap(raw["session"])
 	id := firstString(session["id"], raw["session_id"])
 	if id != "" {
-		writeSessionState(project, id, objective, agentID)
+		writeSessionStateWithExtras(project, id, objective, agentID, map[string]any{"reuse_key": reuseKey, "ownership": ownership})
 	}
 	return id
 }
 
 func normalizePackOutput(raw map[string]any, query string, budget int) map[string]any {
+	if firstString(raw["schema_id"]) == agentPacketContractID {
+		return raw
+	}
 	if _, ok := raw["task_summary"]; ok {
 		return raw
 	}
@@ -2055,19 +2320,22 @@ func (c *cli) cmdSession(args []string) error {
 
 func sessionCommonFlags() (map[string]string, map[string]string) {
 	return mergeStringFlags(commonStringFlags(), map[string]string{
-		"session-id":    "session_id",
-		"agent":         "agent",
-		"agent-id":      "agent_id",
-		"mission":       "mission",
-		"goal":          "goal",
-		"repo":          "repo",
-		"branch":        "branch",
-		"cwd":           "cwd",
-		"tag":           "tag",
-		"metadata-json": "metadata_json",
-		"summary":       "summary",
-		"status":        "status",
-		"limit":         "limit",
+		"session-id":        "session_id",
+		"agent":             "agent",
+		"agent-id":          "agent_id",
+		"mission":           "mission",
+		"goal":              "goal",
+		"repo":              "repo",
+		"branch":            "branch",
+		"cwd":               "cwd",
+		"worktree":          "worktree",
+		"task-id":           "task_id",
+		"native-session-id": "native_session_id",
+		"tag":               "tag",
+		"metadata-json":     "metadata_json",
+		"summary":           "summary",
+		"status":            "status",
+		"limit":             "limit",
 	}), commonBoolFlags()
 }
 
@@ -2080,18 +2348,27 @@ func (c *cli) sessionStart(kind string, args []string) error {
 		return errors.New("objective is required")
 	}
 	payload := map[string]any{
-		"session_id": parsed.string("session_id", ""),
-		"agent":      parsed.string("agent", envString("CONTEXTLATTICE_AGENT", "")),
-		"agent_id":   parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
-		"project":    parsed.string("project", "contextlattice"),
-		"objective":  objective,
-		"mission":    parsed.string("mission", ""),
-		"goal":       parsed.string("goal", ""),
-		"repo":       parsed.string("repo", gitValue("config", "--get", "remote.origin.url")),
-		"branch":     parsed.string("branch", gitValue("branch", "--show-current")),
-		"cwd":        parsed.string("cwd", currentWorkingDir()),
-		"tags":       []string{"go-native-cli", kind},
-		"metadata":   parseJSONObject(parsed.string("metadata_json", "")),
+		"session_id":        parsed.string("session_id", ""),
+		"agent":             parsed.string("agent", envString("CONTEXTLATTICE_AGENT", "")),
+		"agent_id":          parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
+		"project":           parsed.string("project", "contextlattice"),
+		"objective":         objective,
+		"mission":           parsed.string("mission", ""),
+		"goal":              parsed.string("goal", ""),
+		"repo":              parsed.string("repo", gitValue("config", "--get", "remote.origin.url")),
+		"branch":            parsed.string("branch", gitValue("branch", "--show-current")),
+		"cwd":               parsed.string("cwd", currentWorkingDir()),
+		"worktree":          parsed.string("worktree", currentWorkingDir()),
+		"task_id":           parsed.string("task_id", ""),
+		"native_session_id": parsed.string("native_session_id", envString("CONTEXTLATTICE_NATIVE_SESSION_ID", "")),
+		"tags":              []string{"go-native-cli", kind},
+		"metadata":          parseJSONObject(parsed.string("metadata_json", "")),
+	}
+	if kind == "ensure" {
+		payload["ensure"] = true
+		payload["reuse_key"] = agentSessionReuseKey(
+			firstString(payload["project"]), firstString(payload["agent"]), firstString(payload["agent_id"]), payload,
+		)
 	}
 	payload = dropEmpty(payload)
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/start", payload, parsed.float("timeout", 10))
@@ -2172,10 +2449,14 @@ func (c *cli) sessionGet(kind string, args []string) error {
 
 func (c *cli) sessionList(args []string) error {
 	stringsFlags, bools := sessionCommonFlags()
-	parsed := parseArgs(args, stringsFlags, bools)
+	parsed := parseArgs(args, stringsFlags, mergeBoolFlags(bools, map[string]string{"full": "full", "include-stale": "include_stale"}))
 	c.applyBaseURL(parsed)
 	values := url.Values{}
 	values.Set("limit", strconv.Itoa(parsed.int("limit", 20)))
+	if !parsed.bool("full") {
+		values.Set("view", "compact")
+	}
+	values.Set("include_stale", strconv.FormatBool(parsed.bool("include_stale")))
 	for _, key := range []string{"status", "project", "agent"} {
 		if value := parsed.string(key, ""); value != "" {
 			values.Set(key, value)
@@ -2995,6 +3276,8 @@ func (c *cli) adapterBootstrap(args []string) error {
 	agent := parsed.string("agent", "codex")
 	profile := resolveAdapterProfile(parsed)
 	query := parsed.string("query", parsed.string("objective", agent+" preflight connectivity and retrieval"))
+	ownership := adapterOwnership(parsed)
+	reuseKey := agentSessionReuseKey(parsed.string("project", "contextlattice"), agent, parsed.string("agent_id", profile.agentID), ownership)
 	payload := dropEmpty(map[string]any{
 		"agent":             agent,
 		"agent_id":          parsed.string("agent_id", ""),
@@ -3011,6 +3294,7 @@ func (c *cli) adapterBootstrap(args []string) error {
 		"worktree":          adapterOwnership(parsed)["worktree"],
 		"cwd":               adapterOwnership(parsed)["cwd"],
 		"native_session_id": adapterOwnership(parsed)["native_session_id"],
+		"reuse_key":         reuseKey,
 		"agent_state":       buildAgentLifecycleState(parsed, profile, "working"),
 	})
 	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/preflight", payload, parsed.float("timeout", 45))
@@ -3021,7 +3305,7 @@ func (c *cli) adapterBootstrap(args []string) error {
 	}
 	ok := err == nil && !explicitFalse(raw["ok"]) && len(findings) == 0
 	if sessionID != "" {
-		writeSessionState(parsed.string("project", "contextlattice"), sessionID, query, parsed.string("agent_id", ""))
+		writeSessionStateWithExtras(parsed.string("project", "contextlattice"), sessionID, query, parsed.string("agent_id", profile.agentID), map[string]any{"reuse_key": reuseKey, "ownership": ownership})
 	}
 	if err := c.emit(adapterResponse("bootstrap", ok, firstString(raw["agent"], agent), firstString(raw["agent_id"], payload["agent_id"]), parsed.string("project", "contextlattice"), sessionID, map[string]any{"preflight": compactPreflightForAdapter(raw), "agent_state": payload["agent_state"], "ownership": adapterOwnership(parsed)}, findings), parsed.bool("pretty")); err != nil {
 		return err
@@ -3085,6 +3369,10 @@ func adapterBoolFlags() map[string]string {
 		"stdin":                       "stdin",
 		"strict":                      "strict",
 		"report-context-pack-outcome": "report_context_pack_outcome",
+		"no-outcome":                  "no_outcome",
+		"success":                     "success",
+		"failure":                     "failure",
+		"repair":                      "repair",
 	})
 }
 
@@ -3157,6 +3445,7 @@ func recordContextPackQualityPending(project, sessionID, objective, agentID stri
 			"query_hash":    quality["query_hash"],
 			"quality_score": quality["quality_score"],
 			"captured_at":   firstString(quality["capturedAt"], quality["captured_at"], time.Now().UTC().Format(time.RFC3339)),
+			"reported":      false,
 		},
 	})
 }
@@ -3170,7 +3459,22 @@ func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string)
 	}
 	state := readSessionState(project)
 	quality := asMap(state["latest_context_pack_quality"])
+	if asBool(quality["reported"]) {
+		return ""
+	}
 	return firstString(quality["sample_id"])
+}
+
+func markContextPackQualityReported(project string, sessionID string, outcome map[string]any) {
+	state := readSessionState(project)
+	quality := asMap(state["latest_context_pack_quality"])
+	if len(quality) == 0 {
+		return
+	}
+	quality["reported"] = true
+	quality["reported_at"] = time.Now().UTC().Format(time.RFC3339)
+	quality["outcome_id"] = outcome["outcome_id"]
+	writeSessionStateWithExtras(project, sessionID, firstString(state["objective"]), firstString(state["agent_id"]), map[string]any{"latest_context_pack_quality": quality})
 }
 
 func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentID string) (string, error) {
@@ -3860,6 +4164,9 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 	findings := errorFinding(postErr)
 	event := map[string]any{}
 	outcome := asMap(raw["outcome"])
+	if postErr == nil {
+		markContextPackQualityReported(project, sessionID, outcome)
+	}
 	if postErr == nil && sessionID != "" {
 		var postEventErr error
 		event, _, postEventErr = c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
@@ -3921,26 +4228,62 @@ func (c *cli) adapterComplete(args []string) error {
 	if err != nil {
 		return err
 	}
+	outcomeResult := map[string]any{}
+	outcomeEvent := map[string]any{}
+	findings := []map[string]any{}
+	outcomeMode := "skipped_no_pending_sample"
+	outcomeRequested := contextPackOutcomeRequested(parsed)
+	pendingSampleID := resolvePendingContextPackQualitySampleID(parsed, project)
+	if !parsed.bool("no_outcome") && !outcomeRequested && pendingSampleID != "" {
+		switch {
+		case parsed.bool("failure"):
+			parsed.values["first_pass_success"] = "false"
+			parsed.values["repair_required"] = "true"
+			parsed.values["retry_count"] = "1"
+			outcomeMode = "automatic_failure"
+		case parsed.bool("repair"):
+			parsed.values["first_pass_success"] = "false"
+			parsed.values["repair_required"] = "true"
+			parsed.values["retry_count"] = "1"
+			outcomeMode = "automatic_repair"
+		default:
+			parsed.values["first_pass_success"] = "true"
+			parsed.values["repair_required"] = "false"
+			parsed.values["retry_count"] = "0"
+			outcomeMode = "automatic_success"
+		}
+		outcomeRequested = true
+	} else if outcomeRequested {
+		outcomeMode = "explicit"
+	} else if parsed.bool("no_outcome") {
+		outcomeMode = "explicitly_disabled"
+	}
+	if outcomeRequested {
+		var outcomeFindings []map[string]any
+		outcomeResult, outcomeEvent, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_complete")
+		findings = append(findings, outcomeFindings...)
+	}
+	eventType := "session.completed"
+	eventStatus := "completed"
+	state := "done"
+	if parsed.bool("failure") {
+		eventType = "session.failed"
+		eventStatus = "failed"
+		state = "blocked"
+	}
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", map[string]any{
 		"session_id": sessionID,
 		"agent":      profile.agent,
 		"agent_id":   profile.agentID,
 		"project":    project,
-		"type":       "session.completed",
+		"type":       eventType,
 		"summary":    summary,
-		"status":     "completed",
-		"metadata":   mergeAdapterMetadata(parsed, profile, "done"),
+		"status":     eventStatus,
+		"metadata":   mergeAdapterMetadata(parsed, profile, state),
 	}, parsed.float("timeout", 10))
-	findings := errorFinding(eventErr)
-	outcomeResult := map[string]any{}
-	outcomeEvent := map[string]any{}
-	if contextPackOutcomeRequested(parsed) {
-		var outcomeFindings []map[string]any
-		outcomeResult, outcomeEvent, outcomeFindings = c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_complete")
-		findings = append(findings, outcomeFindings...)
-	}
+	findings = append(findings, errorFinding(eventErr)...)
 	ok := len(findings) == 0 && asBool(event["ok"])
-	if err := c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent}, findings), parsed.bool("pretty")); err != nil {
+	if err := c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent, "outcome_mode": outcomeMode}, findings), parsed.bool("pretty")); err != nil {
 		return err
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
