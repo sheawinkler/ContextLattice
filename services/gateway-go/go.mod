@@ -9,6 +9,7 @@ require (
 	github.com/klauspost/compress v1.17.6
 	github.com/lib/pq v1.10.9
 	github.com/pkoukk/tiktoken-go v0.1.8
+	github.com/pkoukk/tiktoken-go-loader v0.0.2
 	go.mongodb.org/mongo-driver/v2 v2.7.0
 )
 
