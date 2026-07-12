@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -277,6 +278,124 @@ func TestAgentSessionReuseKeySeparatesBranches(t *testing.T) {
 	releaseKey := agentSessionReuseKey("contextlattice", "codex", "codex_test", other)
 	if mainKey == releaseKey {
 		t.Fatalf("branch change did not create a distinct session identity: %s", mainKey)
+	}
+}
+
+func TestContextPackQualitySampleReadsAgentPacketOutcome(t *testing.T) {
+	quality := contextPackQualitySample(map[string]any{
+		"schema_id": agentPacketContractID,
+		"outcome":   map[string]any{"sample_id": "cpq_packet"},
+	})
+	if firstString(quality["sample_id"]) != "cpq_packet" {
+		t.Fatalf("agent packet outcome did not expose pending quality sample: %#v", quality)
+	}
+}
+
+func TestPendingContextOutcomeIsSessionScopedAndBounded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	recordContextPackQualityPending("alpha", "sess-a", "task a", "codex_test", map[string]any{"sample_id": "cpq-a"})
+	recordContextPackQualityPending("alpha", "sess-b", "task b", "codex_test", map[string]any{"sample_id": "cpq-b"})
+	parsedA := parsedArgs{values: map[string]string{"session_id": "sess-a"}}
+	parsedB := parsedArgs{values: map[string]string{"session_id": "sess-b"}}
+	if got := resolvePendingContextPackQualitySampleID(parsedA, "alpha"); got != "cpq-a" {
+		t.Fatalf("session A resolved wrong pending sample: %q", got)
+	}
+	if got := resolvePendingContextPackQualitySampleID(parsedB, "alpha"); got != "cpq-b" {
+		t.Fatalf("session B resolved wrong pending sample: %q", got)
+	}
+	markContextPackQualityReported("alpha", "sess-a", map[string]any{"outcome_id": "outcome-a"})
+	if got := resolvePendingContextPackQualitySampleID(parsedA, "alpha"); got != "" {
+		t.Fatalf("reported session A sample remained pending: %q", got)
+	}
+	if got := resolvePendingContextPackQualitySampleID(parsedB, "alpha"); got != "cpq-b" {
+		t.Fatalf("reporting session A retired session B sample: %q", got)
+	}
+	for index := 0; index < 40; index++ {
+		recordContextPackQualityPending("alpha", fmt.Sprintf("sess-%02d", index), "bounded task", "codex_test", map[string]any{"sample_id": fmt.Sprintf("cpq-%02d", index)})
+	}
+	bySession := asMap(readSessionState("alpha")["pending_context_pack_quality_by_session"])
+	if len(bySession) != 32 {
+		t.Fatalf("pending session sample map is not bounded: %d", len(bySession))
+	}
+}
+
+func TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	var contextPayload, outcomePayload map[string]any
+	eventTypes := []string{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/agents/sessions/start":
+			var startPayload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&startPayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
+				"id": "sess-packet-finish", "status": "active", "project": "alpha", "agent_id": startPayload["agent_id"],
+				"task_id": startPayload["task_id"], "reuse_key": startPayload["reuse_key"],
+			}})
+		case "/memory/synthesis-pack/v2":
+			_ = json.NewDecoder(r.Body).Decode(&contextPayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "schema_id": agentPacketContractID, "session_id": "sess-packet-finish",
+				"outcome":      map[string]any{"sample_id": "cpq-packet-finish", "command": "contextlattice finish"},
+				"token_impact": map[string]any{"transport_tokens_exact": 100, "tokenizer_exact": true},
+			})
+		case "/v1/agents/sessions/sess-packet-finish/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		case "/v1/agents/sessions/sess-packet-finish":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{
+				"id": "sess-packet-finish", "status": "active", "project": "alpha",
+			}})
+		case "/telemetry/context-pack-quality/outcome":
+			_ = json.NewDecoder(r.Body).Decode(&outcomePayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "outcome": map[string]any{
+				"schema_id": "contextlattice_context_pack_outcome.v1", "outcome_id": "outcome-packet-finish", "sample_id": "cpq-packet-finish",
+			}})
+		case "/v1/agents/sessions/event":
+			var event map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&event)
+			eventTypes = append(eventTypes, firstString(event["type"]))
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": map[string]any{"id": "sess-packet-finish"}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice", "context", "packet outcome bridge", "--project", "alpha", "--raw"}); err != nil {
+		t.Fatalf("context command: %v", err)
+	}
+	var packet map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &packet); err != nil {
+		t.Fatalf("decode packet: %v", err)
+	}
+	if firstString(asMap(packet["outcome"])["sample_id"]) != "cpq-packet-finish" || packet["outcome_report"] != nil {
+		t.Fatalf("CLI mutated finalized packet outcome surface: %#v", packet)
+	}
+	if firstString(contextPayload["task_id"]) == "" {
+		t.Fatalf("context request omitted task identity: %#v", contextPayload)
+	}
+
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice", "finish", "packet outcome complete", "--success", "--project", "alpha", "--raw"}); err != nil {
+		t.Fatalf("finish command: %v output=%s", err, stdout.String())
+	}
+	if firstString(outcomePayload["sample_id"]) != "cpq-packet-finish" || !asBool(outcomePayload["first_pass_success"]) || asBool(outcomePayload["repair_required"]) {
+		t.Fatalf("packet outcome did not seed automatic finish: %#v", outcomePayload)
+	}
+	if len(eventTypes) != 2 || eventTypes[0] != "context_pack.outcome_reported" || eventTypes[1] != "session.completed" {
+		t.Fatalf("packet outcome lifecycle order is wrong: %#v", eventTypes)
+	}
+	var finished map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &finished); err != nil {
+		t.Fatalf("decode finish output: %v", err)
+	}
+	if firstString(asMap(finished["result"])["outcome_mode"]) != "automatic_success" {
+		t.Fatalf("expected automatic packet outcome, got %#v", finished)
 	}
 }
 

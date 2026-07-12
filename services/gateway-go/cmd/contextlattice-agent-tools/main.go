@@ -2119,7 +2119,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		out["tool"] = commandName
 		out["pack_surface"] = sessionTag
 	}
-	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 {
+	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 && firstString(out["schema_id"]) != agentPacketContractID {
 		out["outcome_report"] = report
 	}
 	if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
@@ -3428,6 +3428,9 @@ func contextPackQualitySample(payload map[string]any) map[string]any {
 	if quality := asMap(firstMap(pack["context_pack_quality"], pack["contextPackQuality"])); len(quality) > 0 {
 		return quality
 	}
+	if sampleID := firstString(asMap(payload["outcome"])["sample_id"]); sampleID != "" {
+		return map[string]any{"sample_id": sampleID}
+	}
 	return map[string]any{}
 }
 
@@ -3454,14 +3457,37 @@ func recordContextPackQualityPending(project, sessionID, objective, agentID stri
 	if sampleID == "" || sessionID == "" {
 		return
 	}
+	pendingQuality := map[string]any{
+		"sample_id":     sampleID,
+		"query_hash":    quality["query_hash"],
+		"quality_score": quality["quality_score"],
+		"captured_at":   firstString(quality["capturedAt"], quality["captured_at"], time.Now().UTC().Format(time.RFC3339)),
+		"reported":      false,
+	}
+	state := readSessionState(project)
+	bySession := asMap(state["pending_context_pack_quality_by_session"])
+	bySession[sessionID] = pendingQuality
+	if len(bySession) > 32 {
+		keys := make([]string, 0, len(bySession))
+		for key := range bySession {
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			left := firstString(asMap(bySession[keys[i]])["captured_at"])
+			right := firstString(asMap(bySession[keys[j]])["captured_at"])
+			if left == right {
+				return keys[i] < keys[j]
+			}
+			return left < right
+		})
+		for len(keys) > 32 {
+			delete(bySession, keys[0])
+			keys = keys[1:]
+		}
+	}
 	writeSessionStateWithExtras(project, sessionID, objective, agentID, map[string]any{
-		"latest_context_pack_quality": map[string]any{
-			"sample_id":     sampleID,
-			"query_hash":    quality["query_hash"],
-			"quality_score": quality["quality_score"],
-			"captured_at":   firstString(quality["capturedAt"], quality["captured_at"], time.Now().UTC().Format(time.RFC3339)),
-			"reported":      false,
-		},
+		"latest_context_pack_quality":             pendingQuality,
+		"pending_context_pack_quality_by_session": bySession,
 	})
 }
 
@@ -3473,6 +3499,18 @@ func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string)
 		return sampleID
 	}
 	state := readSessionState(project)
+	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", firstString(state["session_id"])))
+	if sessionID != "" {
+		if quality := asMap(asMap(state["pending_context_pack_quality_by_session"])[sessionID]); len(quality) > 0 {
+			if asBool(quality["reported"]) {
+				return ""
+			}
+			return firstString(quality["sample_id"])
+		}
+		if firstString(state["session_id"]) != sessionID {
+			return ""
+		}
+	}
 	quality := asMap(state["latest_context_pack_quality"])
 	if asBool(quality["reported"]) {
 		return ""
@@ -3482,20 +3520,36 @@ func resolvePendingContextPackQualitySampleID(parsed parsedArgs, project string)
 
 func markContextPackQualityReported(project string, sessionID string, outcome map[string]any) {
 	state := readSessionState(project)
-	quality := asMap(state["latest_context_pack_quality"])
+	bySession := asMap(state["pending_context_pack_quality_by_session"])
+	quality := asMap(bySession[sessionID])
+	if len(quality) == 0 && firstString(state["session_id"]) == sessionID {
+		quality = asMap(state["latest_context_pack_quality"])
+	}
 	if len(quality) == 0 {
 		return
 	}
 	quality["reported"] = true
 	quality["reported_at"] = time.Now().UTC().Format(time.RFC3339)
 	quality["outcome_id"] = outcome["outcome_id"]
-	writeSessionStateWithExtras(project, sessionID, firstString(state["objective"]), firstString(state["agent_id"]), map[string]any{"latest_context_pack_quality": quality})
+	bySession[sessionID] = quality
+	extras := map[string]any{"pending_context_pack_quality_by_session": bySession}
+	latest := asMap(state["latest_context_pack_quality"])
+	if firstString(state["session_id"]) == sessionID || firstString(latest["sample_id"]) == firstString(quality["sample_id"]) {
+		extras["latest_context_pack_quality"] = quality
+	}
+	writeSessionStateWithExtras(project, sessionID, firstString(state["objective"]), firstString(state["agent_id"]), extras)
 }
 
 func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentID string) (string, error) {
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
 	if sessionID != "" {
 		return sessionID, nil
+	}
+	if cachedID := firstString(readSessionState(project)["session_id"]); cachedID != "" {
+		cached, _, cachedErr := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(cachedID), nil, minFloat(parsed.float("timeout", 30), 5))
+		if cachedErr == nil && agentSessionStatusReusable(cached, project, "", "") {
+			return cachedID, nil
+		}
 	}
 	profile := resolveAdapterProfile(parsed)
 	sessionID = c.ensureSessionForAgent(project, objective, profile.agent, agentID, adapterOwnership(parsed), profile, parsed.float("timeout", 30))
