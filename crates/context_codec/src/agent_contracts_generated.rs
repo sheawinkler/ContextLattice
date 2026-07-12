@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 22;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 23;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -35,6 +35,7 @@ pub const CONTEXT_PASSPORT_REPLAY_V1: &str = "context_passport_replay.v1";
 pub const CONTEXT_PASSPORT_VERIFY_V1: &str = "context_passport_verify.v1";
 pub const CONTEXT_POLICY_CANDIDATE_V1: &str = "context_policy_candidate.v1";
 pub const CONTEXT_POLICY_EVALUATION_V1: &str = "context_policy_evaluation.v1";
+pub const CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1: &str = "contextlattice_lifecycle_receipt.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const OBJECTIVE_RUNTIME_STATE_V1: &str = "objective_runtime_state.v1";
@@ -83,6 +84,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_PASSPORT_VERIFY_V1,
     CONTEXT_POLICY_CANDIDATE_V1,
     CONTEXT_POLICY_EVALUATION_V1,
+    CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
     DREAM_MODE_RESPONSE_V1,
     OBJECTIVE_RUNTIME_STATE_V1,
@@ -249,6 +251,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTEXT_POLICY_EVALUATION_V1,
         payload_kind: "context_policy_canary_evaluation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
+        payload_kind: "contextlattice_lifecycle_receipt",
         contract_version: 1,
         required_output_mode: "json_object",
     },

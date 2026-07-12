@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 22
+const GeneratedAgentContractRegistryVersion = 23
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -36,6 +36,7 @@ const GeneratedAgentContractContextPassportReplayV1 = "context_passport_replay.v
 const GeneratedAgentContractContextPassportVerifyV1 = "context_passport_verify.v1"
 const GeneratedAgentContractContextPolicyCandidateV1 = "context_policy_candidate.v1"
 const GeneratedAgentContractContextPolicyEvaluationV1 = "context_policy_evaluation.v1"
+const GeneratedAgentContractContextlatticeLifecycleReceiptV1 = "contextlattice_lifecycle_receipt.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
@@ -84,6 +85,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextPassportVerifyV1,
 	GeneratedAgentContractContextPolicyCandidateV1,
 	GeneratedAgentContractContextPolicyEvaluationV1,
+	GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
@@ -250,6 +252,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContextPolicyEvaluationV1,
 		PayloadKind:        "context_policy_canary_evaluation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextlatticeLifecycleReceiptV1,
+		PayloadKind:        "contextlattice_lifecycle_receipt",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

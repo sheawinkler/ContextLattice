@@ -129,9 +129,9 @@ func (c *cli) run(argv []string) error {
 	case "resume":
 		return c.cmdResume(args)
 	case "remember":
-		return c.adapterCheckpoint(args)
+		return c.adapterCheckpoint(args, true)
 	case "finish":
-		return c.adapterComplete(args)
+		return c.adapterComplete(args, true)
 	case "correct":
 		return c.cmdCorrect(args)
 	case "doctor":
@@ -3258,7 +3258,7 @@ func (c *cli) cmdAdapter(args []string) error {
 	case "context-pack":
 		return c.adapterContextPack(args)
 	case "checkpoint":
-		return c.adapterCheckpoint(args)
+		return c.adapterCheckpoint(args, false)
 	case "handoff":
 		return c.adapterHandoff(args)
 	case "state":
@@ -3268,7 +3268,7 @@ func (c *cli) cmdAdapter(args []string) error {
 	case "outcome":
 		return c.adapterOutcome(args)
 	case "complete":
-		return c.adapterComplete(args)
+		return c.adapterComplete(args, false)
 	default:
 		return fmt.Errorf("unknown contextlattice_agent_adapter command %q", sub)
 	}
@@ -3388,6 +3388,7 @@ func adapterBoolFlags() map[string]string {
 		"success":                     "success",
 		"failure":                     "failure",
 		"repair":                      "repair",
+		"full":                        "full",
 	})
 }
 
@@ -3582,6 +3583,82 @@ func adapterResponse(command string, ok bool, agent, agentID, project, sessionID
 			},
 		},
 	}
+}
+
+func compactLifecycleEvent(raw map[string]any) map[string]any {
+	event := asMap(raw["event"])
+	if len(event) == 0 {
+		event = raw
+	}
+	session := asMap(raw["session"])
+	rollup := asMap(raw["rollup"])
+	return dropEmpty(map[string]any{
+		"id":         firstString(event["id"], raw["event_id"]),
+		"type":       firstString(event["type"], raw["event_type"]),
+		"status":     firstString(event["status"], session["status"], rollup["status"]),
+		"created_at": firstString(event["created_at"], raw["created_at"], raw["timestamp"]),
+	})
+}
+
+func lifecycleReceiptFormatContract() map[string]any {
+	return map[string]any{
+		"registry_id":          generatedAgentContractRegistryID,
+		"registry_version":     generatedAgentContractRegistryVersion,
+		"schema_id":            generatedLifecycleReceiptContractID,
+		"contract_version":     1,
+		"required_output_mode": "json_object",
+		"validator":            "contextlattice.boundary.v1",
+		"validation":           map[string]any{"status": "passed", "errors": []any{}},
+	}
+}
+
+func compactCheckpointReceipt(ok bool, project, sessionID, fileName, topicPath, content string, write, event map[string]any, findings []map[string]any) map[string]any {
+	status := "recorded"
+	if !ok {
+		status = "failed"
+	}
+	writeResult := asMap(write["result"])
+	return map[string]any{
+		"ok":         ok,
+		"schema_id":  generatedLifecycleReceiptContractID,
+		"command":    "remember",
+		"project":    project,
+		"session_id": sessionID,
+		"status":     status,
+		"checkpoint": dropEmpty(map[string]any{
+			"write_id":      firstString(write["id"], write["write_id"], writeResult["id"]),
+			"file":          fileName,
+			"topic_path":    topicPath,
+			"content_bytes": len([]byte(content)),
+		}),
+		"event":           compactLifecycleEvent(event),
+		"findings":        findings,
+		"format_contract": lifecycleReceiptFormatContract(),
+	}
+}
+
+func compactCompletionReceipt(ok bool, project, sessionID, status, agentState, summary, outcomeMode string, outcome, event map[string]any, findings []map[string]any) map[string]any {
+	if !ok && status == "completed" {
+		status = "failed"
+	}
+	receipt := map[string]any{
+		"ok":              ok,
+		"schema_id":       generatedLifecycleReceiptContractID,
+		"command":         "finish",
+		"project":         project,
+		"session_id":      sessionID,
+		"status":          status,
+		"agent_state":     agentState,
+		"summary":         truncate(summary, 360),
+		"outcome_mode":    outcomeMode,
+		"event":           compactLifecycleEvent(event),
+		"findings":        findings,
+		"format_contract": lifecycleReceiptFormatContract(),
+	}
+	if len(outcome) > 0 {
+		receipt["outcome"] = compactOutcomeMetadata(outcome)
+	}
+	return receipt
 }
 
 func compactPreflightForAdapter(raw map[string]any) map[string]any {
@@ -3890,9 +3967,12 @@ func (c *cli) adapterContextPack(args []string) error {
 	return nil
 }
 
-func (c *cli) adapterCheckpoint(args []string) error {
+func (c *cli) adapterCheckpoint(args []string, compactDefault bool) error {
 	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
 	if parsed.bool("help") {
+		if compactDefault {
+			return c.emitUsage("contextlattice remember '<checkpoint>' [--session-id <id>] [--project <project>] [--full] [--pretty]")
+		}
 		return c.emitUsage("contextlattice_agent_adapter checkpoint --session-id <id> --content '<summary>' [--file notes/agent-adapters/checkpoint.md] --pretty")
 	}
 	c.applyBaseURL(parsed)
@@ -3956,7 +4036,7 @@ func (c *cli) adapterCheckpoint(args []string) error {
 	}, parsed.float("timeout", 10))
 	findings := errorFinding(eventErr)
 	ok := len(findings) == 0 && asBool(write["ok"])
-	if err := c.emit(adapterResponse("checkpoint", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	fullResponse := adapterResponse("checkpoint", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"writeback": map[string]any{
 			"ok":         asBool(write["ok"]),
 			"kind":       "checkpoint",
@@ -3967,7 +4047,12 @@ func (c *cli) adapterCheckpoint(args []string) error {
 			"write":      write,
 			"event":      event,
 		},
-	}, findings), parsed.bool("pretty")); err != nil {
+	}, findings)
+	output := fullResponse
+	if compactDefault && !parsed.bool("full") {
+		output = compactCheckpointReceipt(ok, project, sessionID, fileName, topicPath, content, write, event, findings)
+	}
+	if err := c.emit(output, parsed.bool("pretty")); err != nil {
 		return err
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
@@ -4208,6 +4293,7 @@ func contextPackOutcomeRequested(parsed parsedArgs) bool {
 func compactOutcomeMetadata(outcome map[string]any) map[string]any {
 	return dropEmpty(map[string]any{
 		"schema_id":                  firstString(outcome["schema_id"], "contextlattice_context_pack_outcome.v1"),
+		"outcome_id":                 outcome["outcome_id"],
 		"sample_id":                  outcome["sample_id"],
 		"task_class":                 outcome["task_class"],
 		"first_pass_success":         outcome["first_pass_success"],
@@ -4281,9 +4367,12 @@ func (c *cli) adapterOutcome(args []string) error {
 	return nil
 }
 
-func (c *cli) adapterComplete(args []string) error {
+func (c *cli) adapterComplete(args []string, compactDefault bool) error {
 	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
 	if parsed.bool("help") {
+		if compactDefault {
+			return c.emitUsage("contextlattice finish '<summary>' [--success|--failure|--repair] [--session-id <id>] [--no-outcome] [--full] [--pretty]")
+		}
 		return c.emitUsage("contextlattice_agent_adapter complete --session-id <id> --summary '<result>' [--first-pass-success true|false --repair-required true|false --retry-count n] --pretty")
 	}
 	c.applyBaseURL(parsed)
@@ -4352,7 +4441,12 @@ func (c *cli) adapterComplete(args []string) error {
 	}, parsed.float("timeout", 10))
 	findings = append(findings, errorFinding(eventErr)...)
 	ok := len(findings) == 0 && asBool(event["ok"])
-	if err := c.emit(adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent, "outcome_mode": outcomeMode}, findings), parsed.bool("pretty")); err != nil {
+	fullResponse := adapterResponse("complete", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{"event": event, "outcome": outcomeResult["outcome"], "outcome_event": outcomeEvent, "outcome_mode": outcomeMode}, findings)
+	output := fullResponse
+	if compactDefault && !parsed.bool("full") {
+		output = compactCompletionReceipt(ok, project, sessionID, eventStatus, state, summary, outcomeMode, asMap(outcomeResult["outcome"]), event, findings)
+	}
+	if err := c.emit(output, parsed.bool("pretty")); err != nil {
 		return err
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
