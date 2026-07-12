@@ -29,6 +29,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: services/gateway-go/go.mod
+          cache-dependency-path: services/gateway-go/go.sum
 
       - name: Run agent context gate
         run: scripts/agent/audit-agent-context
