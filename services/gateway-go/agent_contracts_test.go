@@ -804,6 +804,25 @@ func assertBoundaryContractPassed(t *testing.T, contractID string, payload map[s
 	}
 }
 
+func TestAgentPreflightContractKeepsUnavailableContextPackTyped(t *testing.T) {
+	contextPack := testContextPackFixture([]any{})
+	pack := map[string]any{"ok": true, "context_pack": contextPack, "context_compiler": contextPack["context_compiler"]}
+	objectiveRuntime := buildObjectiveRuntimeState("codex", "codex_test", "contextlattice", "tests", "preflight", "balanced", "sess-test", objectiveContext{}, "agent.preflight.completed")
+	policy := buildPolicyContextPackage("codex", "codex_test", "contextlattice", "tests", "preflight", "balanced", pack, pack, nil, objectiveRuntime, objectiveContext{})
+	payload := map[string]any{
+		"ok": true, "service": "gateway-go", "agent": "codex", "agent_id": "codex_test",
+		"project": "contextlattice", "query": "preflight", "topic_path": "tests",
+		"retrieval_mode": "balanced", "context_pack": nil,
+		"objective_runtime": objectiveRuntime, "policy_context_package": policy,
+	}
+	attachAgentPreflightFormatContracts(payload)
+	assertBoundaryContractPassed(t, agentPreflightResponseContractID, payload)
+	returnedPack := anyMap(payload["context_pack"])
+	if len(returnedPack) == 0 || !anyToBool(returnedPack["degraded"]) || anyToString(returnedPack["result_state"]) != "unavailable" {
+		t.Fatalf("unavailable context pack lost typed degraded envelope: %#v", payload["context_pack"])
+	}
+}
+
 func assertBoundaryJSONUnderLimit(t *testing.T, contractID string, payload map[string]any) {
 	t.Helper()
 	limits := agentBoundaryLimitsForContract(contractID)

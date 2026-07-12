@@ -16,7 +16,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.13.0 + release notes + checksums + images",
+      "submission_path": "Tag v3.14.0 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.13.0",
-      "body": "ContextLattice v3.13.0 is now live.\n\nHighlights:\n- calibration-eligible outcomes become bounded context-policy candidates\n- one-step shadow and controlled canary gates block instant promotion\n- Skill Foundry turns repeated verified workflows into independently evaluated drafts\n- named human approval exports an inactive skill artifact; nothing auto-installs\n- Go/Rust own the active runtime; no Python application service\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.14.0",
+      "body": "ContextLattice v3.14.0 is now live.\n\nHighlights:\n- signed Context Passports carry bounded proof, lineage, objective state, and capabilities\n- deterministic verify, diff, replay-plan, and conflict-safe import workflows\n- age v1 encrypts Passports to explicit project-scoped X25519 recipients\n- signed revocations deny stale grants locally\n- ContextLattice performs no transport or delivery network calls\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.13.0 is live.\n\nMemory can learn without grabbing the wheel.\n- outcomes become policy evidence, not hidden configuration\n- candidates survive shadow and controlled canary gates one phase at a time\n- repeated verified wins become skill drafts\n- separate holdouts and named approval stand between a draft and export\n\nStart local-first: {docs_url}\n\nFollow-up thread:\n1) Why learning and permission must stay separate\n2) Why canaries need token and repair guardrails\n3) Why generated skills need holdout evidence"
+      "body": "ContextLattice v3.14.0 is live.\n\nYour agent's working truth can finally travel without losing its proof.\n- signed Context Passports bind claims, evidence, lineage, and objective state\n- verify and diff before trust; replay only returns a plan\n- Context Mesh encrypts to explicit project-scoped recipients\n- divergent imports become branches instead of overwrites\n- ContextLattice never becomes the transport\n\nStart local-first: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "Today we are launching ContextLattice v3.13.0.\n\nContextLattice is the local-first memory and context infrastructure for serious agent systems.\n\nWhat changed:\n- calibration-eligible outcomes produce bounded context-policy candidates\n- one-step shadow and controlled canary gates prevent instant promotion\n- repeated verified workflows become Skill Foundry drafts\n- independent holdouts and named human approval are required before inactive export\n- the active runtime remains Go/Rust with strict native ownership\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "Today we are launching ContextLattice v3.14.0.\n\nContextLattice is the local-first memory and context infrastructure for serious agent systems.\n\nWhat changed:\n- signed Context Passports make proof-carrying context portable\n- deterministic verification, diffs, and replay plans keep trust explicit\n- age v1 encrypts Passports to project-scoped X25519 recipients\n- revocation and conflict-preserving imports fail closed\n- ContextLattice performs no transport and imported content never becomes instructions\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

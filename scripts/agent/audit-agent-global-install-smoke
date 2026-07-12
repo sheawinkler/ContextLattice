@@ -171,6 +171,17 @@ def main() -> int:
         "contextlattice_skill_evaluate",
         "contextlattice_skill_export",
         "contextlattice_skill_foundry_status",
+        "contextlattice_passport_export",
+        "contextlattice_passport_verify",
+        "contextlattice_passport_diff",
+        "contextlattice_passport_replay",
+        "contextlattice_passport_import",
+        "contextlattice_passport_status",
+        "contextlattice_mesh_identity",
+        "contextlattice_mesh_grant",
+        "contextlattice_mesh_export",
+        "contextlattice_mesh_import",
+        "contextlattice_mesh_status",
     ]:
         path = bin_dir / name
         checks.append(check(f"wrapper:{name}", executable(path), path=str(path)))

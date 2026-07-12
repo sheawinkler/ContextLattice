@@ -143,6 +143,8 @@ func (s *server) capabilityMapPayload() map[string]any {
 			},
 			"outcomeContextPolicy": s.contextPolicy.snapshot(),
 			"skillFoundry":         s.skillFoundry.snapshot(),
+			"contextPassport":      s.contextPassports.snapshot(),
+			"contextMesh":          s.contextMesh.snapshot(),
 		},
 		"tools": map[string]any{
 			"dream":                     true,
@@ -197,6 +199,8 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	contextPolicyStatus := s.contextPolicy.snapshot()
 	skillFoundryStatus := s.skillFoundry.snapshot()
+	contextPassportStatus := s.contextPassports.snapshot()
+	contextMeshStatus := s.contextMesh.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":        true,
 		"timestamp": nowUTCISO(),
@@ -213,6 +217,14 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 			"skillFoundry": map[string]any{
 				"enabled": skillFoundryStatus["enabled"], "draft_count": skillFoundryStatus["draft_count"],
 				"evaluation_count": skillFoundryStatus["evaluation_count"], "last_error": anyMap(skillFoundryStatus["storage"])["last_error"],
+			},
+			"contextPassport": map[string]any{
+				"enabled": contextPassportStatus["enabled"], "passport_count": contextPassportStatus["passport_count"],
+				"lineage_count": contextPassportStatus["lineage_count"], "conflict_count": contextPassportStatus["conflict_count"],
+			},
+			"contextMesh": map[string]any{
+				"enabled": contextMeshStatus["enabled"], "grant_count": contextMeshStatus["grant_count"],
+				"receipt_count": contextMeshStatus["receipt_count"], "private_key_exported": false,
 			},
 		},
 		"trading": map[string]any{

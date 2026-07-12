@@ -317,6 +317,104 @@ func TestOutcomePolicyAndSkillFoundryCommandsUseNativeEndpoints(t *testing.T) {
 	}
 }
 
+func TestPassportAndMeshCommandsUseNativeEndpoints(t *testing.T) {
+	captured := map[string][]map[string]any{}
+	passport := map[string]any{"schema_id": "context_passport.v1", "passport_id": "passport_test", "project": "alpha"}
+	envelope := map[string]any{"schema_id": "context_mesh_envelope.v1", "envelope_id": "mesh_test", "project": "alpha"}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		payload := map[string]any{}
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode %s: %v", r.URL.Path, err)
+			}
+		}
+		captured[r.URL.Path] = append(captured[r.URL.Path], payload)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "schema_id": "test.v1", "passport": passport, "envelope": envelope,
+		})
+	}))
+	defer gateway.Close()
+
+	temp := t.TempDir()
+	passportFile := filepath.Join(temp, "passport.json")
+	envelopeFile := filepath.Join(temp, "envelope.json")
+	if raw, err := json.Marshal(passport); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(passportFile, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := json.Marshal(envelope); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(envelopeFile, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	passportOutput := filepath.Join(temp, "passport-output.json")
+	meshOutput := filepath.Join(temp, "mesh-output.json")
+	if err := os.WriteFile(passportOutput, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"passport-export", []string{"contextlattice_passport_export", "portable task", "--project", "alpha", "--output", passportOutput, "--raw"}, "/memory/context-passport/export"},
+		{"passport-verify", []string{"contextlattice_passport_verify", "--file", passportFile, "--raw"}, "/memory/context-passport/verify"},
+		{"passport-import", []string{"contextlattice_passport_import", "--file", passportFile, "--project", "alpha", "--raw"}, "/memory/context-passport/import"},
+		{"passport-diff", []string{"contextlattice_passport_diff", "--base-file", passportFile, "--target-file", passportFile, "--raw"}, "/memory/context-passport/diff"},
+		{"passport-replay", []string{"contextlattice_passport_replay", "--file", passportFile, "--agent-id", "codex", "--raw"}, "/memory/context-passport/replay"},
+		{"passport-status", []string{"contextlattice_passport_status", "--raw"}, "/telemetry/context-passport"},
+		{"mesh-identity", []string{"contextlattice_mesh_identity", "--raw"}, "/memory/context-mesh/identity"},
+		{"mesh-grant-list", []string{"contextlattice_mesh_grant", "list", "--raw"}, "/memory/context-mesh/grants"},
+		{"mesh-grant-create", []string{"contextlattice_mesh_grant", "create", "--recipient-id", "peer", "--recipient", "age1test", "--projects", "alpha", "--raw"}, "/memory/context-mesh/grants"},
+		{"mesh-grant-revoke", []string{"contextlattice_mesh_grant", "revoke", "--grant-id", "grant_test", "--raw"}, "/memory/context-mesh/grants/revoke"},
+		{"mesh-export", []string{"contextlattice_mesh_export", "--passport-id", "passport_test", "--grant-ids", "grant_test", "--output", meshOutput, "--raw"}, "/memory/context-mesh/export"},
+		{"mesh-import", []string{"contextlattice_mesh_import", "--file", envelopeFile, "--apply", "--raw"}, "/memory/context-mesh/import"},
+		{"mesh-status", []string{"contextlattice_mesh_status", "--raw"}, "/telemetry/context-mesh"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			c := newCLI(&stdout, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.run(tc.args); err != nil {
+				t.Fatalf("run %s: %v", tc.name, err)
+			}
+			if len(captured[tc.path]) == 0 {
+				t.Fatalf("expected %s, captured=%#v", tc.path, captured)
+			}
+		})
+	}
+	if !asBool(captured["/memory/context-mesh/import"][0]["apply"]) {
+		t.Fatalf("mesh import did not preserve explicit apply: %#v", captured["/memory/context-mesh/import"])
+	}
+	for _, path := range []string{passportOutput, meshOutput} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("artifact %s mode/error: %v %v", path, info, err)
+		}
+	}
+}
+
+func TestPortableArtifactReadRejectsOversizedInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.json")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate((16 << 20) + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPortableArtifact(path, "passport"); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("oversized artifact error = %v", err)
+	}
+}
+
 func TestSkillsIndexCommandUsesNativeEndpoint(t *testing.T) {
 	var captured map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

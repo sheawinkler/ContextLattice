@@ -1,7 +1,7 @@
 {
   "schema_id": "contextlattice_public_core_capabilities.v1",
   "version": 1,
-  "release_train": "v3.13",
+  "release_train": "v3.14",
   "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
   "invariants": [
     "public_core_is_present_in_every_distribution",
@@ -23,7 +23,9 @@
     {
       "id": "memory.write.v1",
       "summary": "Validated durable memory writes and native feedback writeback remain available through one local contract.",
-      "contracts": ["writeback_result.v1"],
+      "contracts": [
+        "writeback_result.v1"
+      ],
       "artifacts": [
         "services/gateway-go/write_ingress.go",
         "services/gateway-go/strict_runtime_ownership.go"
@@ -32,7 +34,9 @@
     {
       "id": "context_pack.v1",
       "summary": "Impact-per-token context compilation returns bounded ranked evidence and prompt sections.",
-      "contracts": ["context_pack_response.v1"],
+      "contracts": [
+        "context_pack_response.v1"
+      ],
       "artifacts": [
         "services/gateway-go/memory_context_pack.go",
         "scripts/agent/contextlattice-pack"
@@ -41,7 +45,9 @@
     {
       "id": "synthesis_pack.v1",
       "summary": "Deterministic synthesis groups evidence, bridges topics, preserves constraints, and proposes next actions.",
-      "contracts": ["synthesis_pack.v1"],
+      "contracts": [
+        "synthesis_pack.v1"
+      ],
       "artifacts": [
         "services/gateway-go/memory_synthesis_pack.go",
         "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
@@ -50,7 +56,10 @@
     {
       "id": "temporal_claim_graph.v1",
       "summary": "Structured time-aware claims preserve provenance, validity, supersession, contradiction, causality, verification, branch, and commit identity.",
-      "contracts": ["temporal_claim.v1", "temporal_claim_query.v1"],
+      "contracts": [
+        "temporal_claim.v1",
+        "temporal_claim_query.v1"
+      ],
       "artifacts": [
         "services/gateway-go/temporal_claim_graph.go",
         "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
@@ -59,7 +68,9 @@
     {
       "id": "adaptive_retrieval_planner.v1",
       "summary": "Advisor-only deterministic planning assigns evidence obligations, sources, token budgets, graph expansion, and marginal-value stop conditions without silently changing retrieval policy.",
-      "contracts": ["retrieval_plan.v1"],
+      "contracts": [
+        "retrieval_plan.v1"
+      ],
       "artifacts": [
         "services/gateway-go/adaptive_retrieval_planner.go",
         "services/gateway-go/context_pack_quality_telemetry.go"
@@ -68,7 +79,9 @@
     {
       "id": "proof_carrying_synthesis.v2",
       "summary": "Every synthesized finding carries bounded support, opposition, temporal state, confidence decomposition, missing proof, and causal context; unsupported findings are excluded.",
-      "contracts": ["synthesis_pack.v2"],
+      "contracts": [
+        "synthesis_pack.v2"
+      ],
       "artifacts": [
         "services/gateway-go/memory_synthesis_pack_v2.go",
         "services/gateway-go/memory_synthesis_pack.go"
@@ -77,7 +90,10 @@
     {
       "id": "outcome_context_policy.v1",
       "summary": "Calibration-eligible outcomes produce advisory candidates that advance one phase at a time through shadow and controlled canary evidence without mutating public runtime policy.",
-      "contracts": ["context_policy_candidate.v1", "context_policy_evaluation.v1"],
+      "contracts": [
+        "context_policy_candidate.v1",
+        "context_policy_evaluation.v1"
+      ],
       "artifacts": [
         "services/gateway-go/outcome_context_policy.go",
         "services/gateway-go/context_pack_quality_telemetry.go"
@@ -86,7 +102,11 @@
     {
       "id": "skill_foundry.v1",
       "summary": "Repeated verified workflows become bounded skill drafts, independent holdouts block leakage, and human approval exports inactive artifacts for normal Skills Index review.",
-      "contracts": ["skill_draft.v1", "skill_evaluation.v1", "skill_export.v1"],
+      "contracts": [
+        "skill_draft.v1",
+        "skill_evaluation.v1",
+        "skill_export.v1"
+      ],
       "artifacts": [
         "services/gateway-go/skill_foundry.go",
         "services/gateway-go/skills_quarantine_routes.go"
@@ -104,7 +124,11 @@
     {
       "id": "agent_lifecycle.v1",
       "summary": "Agent state, sessions, traces, checkpoints, and handoffs are distinct from retrieval lifecycle.",
-      "contracts": ["contextlattice_agent_lifecycle_state.v1", "agent_session_rollup.v1", "agent_run_trace.v1"],
+      "contracts": [
+        "contextlattice_agent_lifecycle_state.v1",
+        "agent_session_rollup.v1",
+        "agent_run_trace.v1"
+      ],
       "artifacts": [
         "services/gateway-go/agent_sessions.go",
         "scripts/agent/contextlattice-agent-adapter"
@@ -113,7 +137,10 @@
     {
       "id": "async_retrieval_warming.v1",
       "summary": "Deferred retrieval reports warming progress until ready or terminally degraded.",
-      "contracts": ["retrieval_progress.v1", "steering_comment.v1"],
+      "contracts": [
+        "retrieval_progress.v1",
+        "steering_comment.v1"
+      ],
       "artifacts": [
         "services/gateway-go/continuation_steering.go",
         "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
@@ -122,7 +149,9 @@
     {
       "id": "agent_adoption.v1",
       "summary": "Install, discovery, doctor, managed repo instructions, and lifecycle proof are one bounded adoption flow.",
-      "contracts": ["universal_agent_adapter_response.v1"],
+      "contracts": [
+        "universal_agent_adapter_response.v1"
+      ],
       "artifacts": [
         "scripts/agent/contextlattice-adopt",
         "scripts/agent/audit-agent-repo-integration",
@@ -142,7 +171,11 @@
     {
       "id": "pi_droid_runners.v1",
       "summary": "Safe repo-local Pi and Droid adapters execute external runners without moving subprocess ownership into gateway-go.",
-      "contracts": ["runner_capability.v1", "runner_result.v1", "agent_task_lease.v1"],
+      "contracts": [
+        "runner_capability.v1",
+        "runner_result.v1",
+        "agent_task_lease.v1"
+      ],
       "artifacts": [
         "scripts/agent_runners/pi_runner.py",
         "scripts/agent_runners/droid_runner.py",
@@ -152,7 +185,9 @@
     {
       "id": "runner_quality.v1",
       "summary": "Bounded observed runner outcomes support advisor-only comparisons and never auto-dispatch work.",
-      "contracts": ["runner_quality_sample.v1"],
+      "contracts": [
+        "runner_quality_sample.v1"
+      ],
       "artifacts": [
         "services/gateway-go/runner_quality_telemetry.go",
         "scripts/agent_runners/runner_quality.py",
@@ -186,6 +221,35 @@
       "artifacts": [
         "services/gateway-go/inference.go",
         "scripts/inference_template_conformance.sh"
+      ]
+    },
+    {
+      "id": "context_passport.v1",
+      "summary": "Signed bounded context manifests preserve claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and non-executing replay across machines.",
+      "contracts": [
+        "context_passport.v1",
+        "context_passport_verify.v1",
+        "context_passport_diff.v1",
+        "context_passport_replay.v1"
+      ],
+      "artifacts": [
+        "services/gateway-go/context_passport.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go",
+        "docs/context-passport-mesh.md"
+      ]
+    },
+    {
+      "id": "context_mesh.v1",
+      "summary": "Explicit project-scoped grants encrypt signed passports to native age X25519 recipients; verified imports preserve divergent branches and ContextLattice never owns transport.",
+      "contracts": [
+        "context_mesh_grant.v1",
+        "context_mesh_envelope.v1",
+        "context_mesh_import.v1"
+      ],
+      "artifacts": [
+        "services/gateway-go/context_mesh.go",
+        "services/gateway-go/context_passport.go",
+        "docs/context-passport-mesh.md"
       ]
     }
   ]

@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 18,
-  "updated_at": "2026-07-12T00:00:00Z",
+  "registry_version": 20,
+  "updated_at": "2026-07-12T02:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -2907,6 +2907,555 @@
         "raw_logs"
       ],
       "forbidden_scope": "recursive"
+    },
+    "context_passport.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_replayable_context_passport",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unsigned_expired_oversized_or_scope_invalid_passports_without_mutating_ordinary_memory",
+      "max_total_json_bytes": 240000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "passport",
+        "recorded",
+        "reconciliation",
+        "private_key_exported",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "passport": "object",
+        "recorded": "bool",
+        "reconciliation": "object",
+        "private_key_exported": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ],
+        "passport": [
+          "schema_id",
+          "version",
+          "passport_id",
+          "lineage_id",
+          "project",
+          "revision",
+          "created_at",
+          "expires_at",
+          "issuer",
+          "scope",
+          "objective",
+          "claims",
+          "evidence",
+          "lineage",
+          "capabilities",
+          "redactions",
+          "replay",
+          "content_digest",
+          "signature"
+        ],
+        "passport.issuer": [
+          "instance_id",
+          "signing_key_id",
+          "signing_public_key"
+        ],
+        "passport.signature": [
+          "algorithm",
+          "key_id",
+          "value"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_passport.v1",
+        "passport.schema_id": "context_passport.v1",
+        "format_contract.schema_id": "context_passport.v1"
+      }
+    },
+    "context_passport_verify.v1": {
+      "contract_version": 1,
+      "payload_kind": "context_passport_verification",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_findings_without_importing_or_replaying_invalid_content",
+      "max_total_json_bytes": 60000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "passport_id",
+        "project",
+        "valid",
+        "findings",
+        "signature_valid",
+        "digest_valid",
+        "private_key_exported",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "passport_id": "string",
+        "project": "string",
+        "valid": "bool",
+        "findings": "list",
+        "signature_valid": "bool",
+        "digest_valid": "bool",
+        "private_key_exported": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_passport_verify.v1",
+        "format_contract.schema_id": "context_passport_verify.v1"
+      }
+    },
+    "context_passport_diff.v1": {
+      "contract_version": 1,
+      "payload_kind": "context_passport_diff",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unverified_inputs_and_return_no_inferred_diff",
+      "max_total_json_bytes": 90000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "diff",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "diff": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ],
+        "diff": [
+          "schema_id",
+          "version",
+          "base_passport_id",
+          "target_passport_id",
+          "same_lineage",
+          "base_revision",
+          "target_revision",
+          "claims",
+          "evidence",
+          "capabilities_added",
+          "capabilities_removed",
+          "scope_changed",
+          "objective_changed",
+          "replay_changed",
+          "parent_link_valid"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_passport_diff.v1",
+        "diff.schema_id": "context_passport_diff.v1",
+        "format_contract.schema_id": "context_passport_diff.v1"
+      }
+    },
+    "context_passport_replay.v1": {
+      "contract_version": 1,
+      "payload_kind": "context_passport_replay_plan",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_a_validated_plan_only_and_never_execute_imported_instructions",
+      "max_total_json_bytes": 90000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "passport_id",
+        "project",
+        "replay_request",
+        "missing_capabilities",
+        "findings",
+        "execution_performed",
+        "ordinary_memory_mutated",
+        "instruction_boundary",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "passport_id": "string",
+        "project": "string",
+        "replay_request": "object",
+        "missing_capabilities": "list",
+        "findings": "list",
+        "execution_performed": "bool",
+        "ordinary_memory_mutated": "bool",
+        "instruction_boundary": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_passport_replay.v1",
+        "format_contract.schema_id": "context_passport_replay.v1"
+      }
+    },
+    "context_mesh_grant.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_project_scoped_mesh_grant",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_non_x25519_expired_unsigned_or_unscoped_grants",
+      "max_total_json_bytes": 90000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "grant",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "grant": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ],
+        "grant": [
+          "schema_id",
+          "version",
+          "grant_id",
+          "recipient_id",
+          "recipient",
+          "recipient_key_id",
+          "projects",
+          "capabilities",
+          "status",
+          "created_at",
+          "expires_at",
+          "issuer",
+          "signature"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_mesh_grant.v1",
+        "format_contract.schema_id": "context_mesh_grant.v1"
+      }
+    },
+    "context_mesh_revocation.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_local_mesh_revocation_tombstone",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "record_a_signed_local_tombstone_without_requiring_the_original_grant",
+      "max_total_json_bytes": 90000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "grant",
+        "revocation",
+        "tombstone_only",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "grant": "object",
+        "revocation": "object",
+        "tombstone_only": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ],
+        "revocation": [
+          "schema_id",
+          "version",
+          "grant_id",
+          "revoked_at",
+          "reason",
+          "issuer",
+          "signature"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_mesh_revocation.v1",
+        "revocation.schema_id": "context_mesh_revocation.v1",
+        "format_contract.schema_id": "context_mesh_revocation.v1"
+      }
+    },
+    "context_mesh_envelope.v1": {
+      "contract_version": 1,
+      "payload_kind": "transport_neutral_encrypted_context_envelope",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_inactive_grants_or_oversized_payloads_and_never_deliver_over_a_network",
+      "max_total_json_bytes": 700000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "envelope",
+        "delivery_performed",
+        "transport_owned_by_contextlattice",
+        "private_key_exported",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "envelope": "object",
+        "delivery_performed": "bool",
+        "transport_owned_by_contextlattice": "bool",
+        "private_key_exported": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ],
+        "envelope": [
+          "schema_id",
+          "version",
+          "envelope_id",
+          "project",
+          "created_at",
+          "expires_at",
+          "sender",
+          "grant_ids",
+          "recipient_key_ids",
+          "encryption",
+          "ciphertext",
+          "ciphertext_bytes",
+          "ciphertext_digest",
+          "envelope_digest",
+          "signature",
+          "transport"
+        ],
+        "envelope.encryption": [
+          "format",
+          "recipient_type",
+          "key_agreement",
+          "payload_cipher",
+          "multi_recipient"
+        ],
+        "envelope.transport": [
+          "delivery_performed",
+          "transport_owned_by_contextlattice",
+          "mode",
+          "network_calls"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_mesh_envelope.v1",
+        "envelope.schema_id": "context_mesh_envelope.v1",
+        "format_contract.schema_id": "context_mesh_envelope.v1"
+      }
+    },
+    "context_mesh_import.v1": {
+      "contract_version": 1,
+      "payload_kind": "verified_context_mesh_reconciliation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "decrypt_verify_and_plan_before_explicit_apply_while_preserving_conflicts_as_branches",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 524288,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "envelope_id",
+        "passport_id",
+        "project",
+        "reconciliation",
+        "applied",
+        "dry_run",
+        "ordinary_memory_mutated",
+        "transport_owned_by_contextlattice",
+        "private_key_exported",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "envelope_id": "string",
+        "passport_id": "string",
+        "project": "string",
+        "reconciliation": "object",
+        "applied": "bool",
+        "dry_run": "bool",
+        "ordinary_memory_mutated": "bool",
+        "transport_owned_by_contextlattice": "bool",
+        "private_key_exported": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "mesh_identity"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "context_mesh_import.v1",
+        "format_contract.schema_id": "context_mesh_import.v1"
+      }
     }
   }
 }

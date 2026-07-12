@@ -1,0 +1,76 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "release": "v3.14.0",
+  "component": "context_passport_and_encrypted_context_mesh",
+  "baseline": {
+    "release": "v3.13.0",
+    "behavior": "Proof-carrying context, temporal claims, objective state, outcome policy, and Skill Foundry were durable on one ContextLattice instance but had no signed portable artifact or encrypted recipient-scoped exchange format."
+  },
+  "metrics": {
+    "passport_sign_verify_median_ns_per_op": 88792,
+    "passport_sign_verify_bytes_per_op": 10985,
+    "passport_sign_verify_allocs_per_op": 157,
+    "mesh_encrypt_decrypt_median_ns_per_op": 967342,
+    "mesh_encrypt_decrypt_bytes_per_op": 279818,
+    "mesh_encrypt_decrypt_allocs_per_op": 981,
+    "benchmark_runs": 5,
+    "model_calls": 0,
+    "external_network_calls": 0,
+    "delivery_calls": 0
+  },
+  "holdouts": [
+    "identity files remain owner-only and public metadata contains no private key material",
+    "Passport digest, signature, identity, validity window, and parent linkage fail closed on tamper",
+    "secret-bearing keys, token-like literals, and machine-local roots are removed before signing",
+    "identical imports are idempotent and divergent same-revision imports remain conflict branches",
+    "conflict-free Passport batches become visible atomically and incomplete transaction groups are ignored on reload",
+    "failed compaction preserves the complete in-memory Passport state",
+    "Mesh grants are signed, project-scoped, capability-bound, expiring, and locally revocable",
+    "inner and outer Mesh signatures bind ciphertext, sender, grant, recipient, project, expiry, and Passport digest",
+    "wrong-recipient, ciphertext-tamper, project-mismatch, expiry, and revocation paths fail closed",
+    "Mesh import defaults to dry-run and mutates the Passport ledger only after explicit apply",
+    "replay returns validated inputs without executing imported content or mutating ordinary memory",
+    "all Passport and Mesh HTTP success envelopes report contract_valid=true",
+    "CLI artifact output is owner-only, atomically replaced, and bounded on read",
+    "ContextLattice performs no envelope transport or delivery network call"
+  ],
+  "cost": {
+    "passport_store": "bounded append-only NDJSON with complete-batch recovery and newest-record compaction",
+    "mesh_store": "bounded atomic JSON containing public grants, local revocation tombstones, and compact receipts",
+    "identity": "one local owner-only Ed25519 and age X25519 key file",
+    "llm": "none",
+    "transport": "caller-owned"
+  },
+  "failures": [
+    {
+      "stage": "runtime_contract_test",
+      "failure": "nested Go structs serialized correctly but were rejected before serialization by the boundary validator",
+      "resolution": "normalize typed values to their exact JSON wire representation once before validation and added real HTTP contract tests"
+    },
+    {
+      "stage": "durability_review",
+      "failure": "existing cognition ledger environment variables were documented but not mapped into the gateway container, leaving state in the replaceable container layer",
+      "resolution": "mapped claim, policy, Skill Foundry, Passport, identity, and Mesh stores into the existing durable data volume and added compose assertions"
+    },
+    {
+      "stage": "compaction_failure_review",
+      "failure": "Passport compaction pruned in-memory records before the replacement ledger rename succeeded",
+      "resolution": "defer in-memory pruning until after successful atomic replacement and force filesystem failure in regression coverage"
+    },
+    {
+      "stage": "pressure_test",
+      "failure": "an unavailable backend context pack could leave preflight context_pack null under concurrent test pressure",
+      "resolution": "preserve a typed degraded unavailable envelope so preflight remains contract-valid without fabricating evidence"
+    }
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test ./... -count=1",
+    "cd services/gateway-go && go vet ./...",
+    "cd services/gateway-go && go test -race -run 'Test(ContextPassport|ContextMesh|PortableValue|StrictJSON|AgentContract|PreflightRoutesClipOversizedBackendPayloads)' -count=1 .",
+    "cd services/gateway-go && go test -run '^$' -bench 'BenchmarkContext(PassportSignVerify|MeshEncryptDecrypt)$' -benchmem -count=5 .",
+    "cd crates && cargo test -p context_codec",
+    "scripts/agent/audit-agent-output-contracts --pretty",
+    "scripts/agent/audit-agent-global-install-smoke --pretty",
+    "docker --context orbstack compose config"
+  ]
+}

@@ -53,6 +53,14 @@ REQUIRED_CONTRACTS = (
     "skill_draft.v1",
     "skill_evaluation.v1",
     "skill_export.v1",
+    "context_passport.v1",
+    "context_passport_verify.v1",
+    "context_passport_diff.v1",
+    "context_passport_replay.v1",
+    "context_mesh_grant.v1",
+    "context_mesh_revocation.v1",
+    "context_mesh_envelope.v1",
+    "context_mesh_import.v1",
     "run_advisor.v1",
     "contract_acknowledgement.v1",
     "writeback_result.v1",
@@ -527,6 +535,188 @@ def sample_skill_export() -> dict[str, Any]:
         "installation_note": "Review and install through the normal Skills Index workflow.",
     }
     return attach_format_contract("skill_export.v1", {"ok": True, "schema_id": "skill_export.v1", "export": exported, "draft": draft, "recorded": True})
+
+
+def sample_context_passport() -> dict[str, Any]:
+    issuer = {
+        "instance_id": "cli_audit",
+        "agent_id": "codex_gpt5",
+        "signing_key_id": "ed25519:audit",
+        "signing_public_key": "audit-public-key",
+    }
+    passport = {
+        "schema_id": "context_passport.v1",
+        "version": 1,
+        "passport_id": "passport_audit",
+        "lineage_id": "lineage_audit",
+        "project": "contextlattice",
+        "revision": 1,
+        "created_at": "2026-07-12T00:00:00Z",
+        "expires_at": "2026-07-19T00:00:00Z",
+        "issuer": issuer,
+        "scope": {"project": "contextlattice", "topic_path": "runbooks/codex-integration"},
+        "objective": {"objective": "verify portable context"},
+        "claims": [{"portable_id": "claim_audit", "statement": "portable context is signed"}],
+        "evidence": [{"portable_id": "evidence_audit", "content_ref": "sha256:audit"}],
+        "lineage": {"source_schema": "synthesis_pack.v2"},
+        "capabilities": ["context_passport.v1", "proof_carrying_synthesis.v2"],
+        "redactions": {"applied": False, "secret_keys_removed": 0},
+        "replay": {"project": "contextlattice", "query": "portable context", "retrieval_mode": "balanced"},
+        "content_digest": "sha256:audit",
+        "signature": {"algorithm": "Ed25519", "key_id": "ed25519:audit", "value": "audit-signature"},
+    }
+    return attach_format_contract(
+        "context_passport.v1",
+        {
+            "ok": True,
+            "schema_id": "context_passport.v1",
+            "passport": passport,
+            "recorded": True,
+            "reconciliation": {"action": "record_root", "conflict": False},
+            "private_key_exported": False,
+        },
+    )
+
+
+def sample_context_passport_verify() -> dict[str, Any]:
+    return attach_format_contract(
+        "context_passport_verify.v1",
+        {
+            "ok": True,
+            "schema_id": "context_passport_verify.v1",
+            "passport_id": "passport_audit",
+            "project": "contextlattice",
+            "valid": True,
+            "findings": [],
+            "signature_valid": True,
+            "digest_valid": True,
+            "private_key_exported": False,
+        },
+    )
+
+
+def sample_context_passport_diff() -> dict[str, Any]:
+    return attach_format_contract(
+        "context_passport_diff.v1",
+        {
+            "ok": True,
+            "schema_id": "context_passport_diff.v1",
+            "diff": {
+                "schema_id": "context_passport_diff.v1",
+                "version": 1,
+                "base_passport_id": "passport_a",
+                "target_passport_id": "passport_b",
+                "same_lineage": True,
+                "base_revision": 1,
+                "target_revision": 2,
+                "claims": {"added": [], "removed": [], "changed": []},
+                "evidence": {"added": [], "removed": [], "changed": []},
+                "capabilities_added": [],
+                "capabilities_removed": [],
+                "scope_changed": False,
+                "objective_changed": False,
+                "replay_changed": False,
+                "parent_link_valid": True,
+            },
+        },
+    )
+
+
+def sample_context_passport_replay() -> dict[str, Any]:
+    return attach_format_contract(
+        "context_passport_replay.v1",
+        {
+            "ok": True,
+            "schema_id": "context_passport_replay.v1",
+            "passport_id": "passport_audit",
+            "project": "contextlattice",
+            "replay_request": {"project": "contextlattice", "query": "portable context"},
+            "missing_capabilities": [],
+            "findings": [],
+            "execution_performed": False,
+            "ordinary_memory_mutated": False,
+            "instruction_boundary": "replay returns validated context inputs only",
+        },
+    )
+
+
+def sample_context_mesh_grant() -> dict[str, Any]:
+    grant = {
+        "schema_id": "context_mesh_grant.v1",
+        "version": 1,
+        "grant_id": "grant_audit",
+        "recipient_id": "peer-audit",
+        "recipient": "age1audit",
+        "recipient_key_id": "age-x25519:audit",
+        "projects": ["contextlattice"],
+        "capabilities": ["context_mesh_import.v1", "context_passport.v1"],
+        "status": "active",
+        "created_at": "2026-07-12T00:00:00Z",
+        "expires_at": "2026-07-19T00:00:00Z",
+        "issuer": {"instance_id": "cli_audit", "signing_key_id": "ed25519:audit", "signing_public_key": "audit-public-key"},
+        "signature": {"algorithm": "Ed25519", "key_id": "ed25519:audit", "value": "audit-signature"},
+    }
+    return attach_format_contract("context_mesh_grant.v1", {"ok": True, "schema_id": "context_mesh_grant.v1", "grant": grant})
+
+
+def sample_context_mesh_revocation() -> dict[str, Any]:
+    revocation = {
+        "schema_id": "context_mesh_revocation.v1",
+        "version": 1,
+        "grant_id": "grant_audit",
+        "revoked_at": "2026-07-12T00:00:00Z",
+        "reason": "operator_revoked",
+        "issuer": {"instance_id": "cli_audit", "signing_key_id": "ed25519:audit", "signing_public_key": "audit-public-key"},
+        "signature": {"algorithm": "Ed25519", "key_id": "ed25519:audit", "value": "audit-signature"},
+    }
+    return attach_format_contract(
+        "context_mesh_revocation.v1",
+        {"ok": True, "schema_id": "context_mesh_revocation.v1", "grant": {}, "revocation": revocation, "tombstone_only": True},
+    )
+
+
+def sample_context_mesh_envelope() -> dict[str, Any]:
+    envelope = {
+        "schema_id": "context_mesh_envelope.v1",
+        "version": 1,
+        "envelope_id": "mesh_audit",
+        "project": "contextlattice",
+        "created_at": "2026-07-12T00:00:00Z",
+        "expires_at": "2026-07-13T00:00:00Z",
+        "sender": {"instance_id": "cli_audit", "signing_key_id": "ed25519:audit", "signing_public_key": "audit-public-key", "mesh_key_id": "age-x25519:sender", "mesh_recipient": "age1sender"},
+        "grant_ids": ["grant_audit"],
+        "recipient_key_ids": ["age-x25519:audit"],
+        "encryption": {"format": "age-encryption.org/v1", "recipient_type": "X25519", "key_agreement": "X25519", "payload_cipher": "ChaCha20-Poly1305", "multi_recipient": False},
+        "ciphertext": "YWdlLWF1ZGl0",
+        "ciphertext_bytes": 9,
+        "ciphertext_digest": "sha256:audit",
+        "envelope_digest": "sha256:envelope-audit",
+        "signature": {"algorithm": "Ed25519", "key_id": "ed25519:audit", "value": "audit-signature"},
+        "transport": {"delivery_performed": False, "transport_owned_by_contextlattice": False, "mode": "caller_supplied_file_or_json", "network_calls": 0},
+    }
+    return attach_format_contract(
+        "context_mesh_envelope.v1",
+        {"ok": True, "schema_id": "context_mesh_envelope.v1", "envelope": envelope, "delivery_performed": False, "transport_owned_by_contextlattice": False, "private_key_exported": False},
+    )
+
+
+def sample_context_mesh_import() -> dict[str, Any]:
+    return attach_format_contract(
+        "context_mesh_import.v1",
+        {
+            "ok": True,
+            "schema_id": "context_mesh_import.v1",
+            "envelope_id": "mesh_audit",
+            "passport_id": "passport_audit",
+            "project": "contextlattice",
+            "reconciliation": {"action": "record_root", "conflict": False},
+            "applied": False,
+            "dry_run": True,
+            "ordinary_memory_mutated": False,
+            "transport_owned_by_contextlattice": False,
+            "private_key_exported": False,
+        },
+    )
 
 
 def sample_retrieval_progress() -> dict[str, Any]:
@@ -1401,6 +1591,14 @@ def run_audit() -> list[dict[str, Any]]:
         ("skill_draft.v1", sample_skill_draft()),
         ("skill_evaluation.v1", sample_skill_evaluation()),
         ("skill_export.v1", sample_skill_export()),
+        ("context_passport.v1", sample_context_passport()),
+        ("context_passport_verify.v1", sample_context_passport_verify()),
+        ("context_passport_diff.v1", sample_context_passport_diff()),
+        ("context_passport_replay.v1", sample_context_passport_replay()),
+        ("context_mesh_grant.v1", sample_context_mesh_grant()),
+        ("context_mesh_revocation.v1", sample_context_mesh_revocation()),
+        ("context_mesh_envelope.v1", sample_context_mesh_envelope()),
+        ("context_mesh_import.v1", sample_context_mesh_import()),
         ("contract_acknowledgement.v1", sample_contract_ack()),
         ("agent_span.v1", sample_agent_span()),
         ("agent_flight_recorder_event.v1", sample_flight_event()),

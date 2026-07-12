@@ -314,6 +314,8 @@ type server struct {
 	temporalClaims                  *temporalClaimStore
 	contextPolicy                   *contextPolicyStore
 	skillFoundry                    *skillFoundryStore
+	contextPassports                *contextPassportStore
+	contextMesh                     *contextMeshStore
 	feedbackStore                   *feedbackStore
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
@@ -1263,6 +1265,16 @@ func newServer() *server {
 		log.Printf("gateway-go skill foundry store disabled: %v", skillFoundryErr)
 		skillFoundryInstance = &skillFoundryStore{enabled: false, drafts: map[string]map[string]any{}, evaluations: []map[string]any{}, exports: []map[string]any{}, lastError: skillFoundryErr.Error()}
 	}
+	contextPassportInstance, contextPassportErr := newContextPassportStoreFromEnv()
+	if contextPassportErr != nil {
+		log.Printf("gateway-go context passport store disabled: %v", contextPassportErr)
+		contextPassportInstance = &contextPassportStore{enabled: false, passports: map[string]contextPassport{}, reconciliations: map[string]contextPassportReconciliation{}, lastError: contextPassportErr.Error()}
+	}
+	contextMeshInstance, contextMeshErr := newContextMeshStoreFromEnv(contextPassportInstance)
+	if contextMeshErr != nil {
+		log.Printf("gateway-go context mesh disabled: %v", contextMeshErr)
+		contextMeshInstance = &contextMeshStore{enabled: false, grants: map[string]contextMeshGrant{}, revocations: map[string]contextMeshRevocation{}, receipts: []contextMeshReceipt{}, lastError: contextMeshErr.Error()}
+	}
 	continuationDurable := newContinuationDurableQueue(policy)
 	t := newRetrievalTelemetry(policy)
 	s := &server{
@@ -1283,6 +1295,8 @@ func newServer() *server {
 		temporalClaims:                  temporalClaimsInstance,
 		contextPolicy:                   contextPolicyInstance,
 		skillFoundry:                    skillFoundryInstance,
+		contextPassports:                contextPassportInstance,
+		contextMesh:                     contextMeshInstance,
 		feedbackStore:                   feedbackStoreInstance,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
@@ -6958,6 +6972,16 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/skills/foundry/draft", s.memorySkillFoundryDraft)
 	mux.HandleFunc("/memory/skills/foundry/evaluate", s.memorySkillFoundryEvaluate)
 	mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)
+	mux.HandleFunc("/memory/context-passport/export", s.memoryContextPassportExport)
+	mux.HandleFunc("/memory/context-passport/verify", s.memoryContextPassportVerify)
+	mux.HandleFunc("/memory/context-passport/diff", s.memoryContextPassportDiff)
+	mux.HandleFunc("/memory/context-passport/replay", s.memoryContextPassportReplay)
+	mux.HandleFunc("/memory/context-passport/import", s.memoryContextPassportImport)
+	mux.HandleFunc("/memory/context-mesh/identity", s.memoryContextMeshIdentity)
+	mux.HandleFunc("/memory/context-mesh/grants", s.memoryContextMeshGrants)
+	mux.HandleFunc("/memory/context-mesh/grants/revoke", s.memoryContextMeshGrantRevoke)
+	mux.HandleFunc("/memory/context-mesh/export", s.memoryContextMeshExport)
+	mux.HandleFunc("/memory/context-mesh/import", s.memoryContextMeshImport)
 	mux.HandleFunc("/memory/dream", s.memoryDream)
 	mux.HandleFunc("/memory/review", s.memoryReview)
 	mux.HandleFunc("/feedback", s.feedbackRoute)
@@ -6972,6 +6996,8 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/claim-graph", s.telemetryClaimGraph)
 	mux.HandleFunc("/telemetry/context-policy", s.telemetryContextPolicy)
 	mux.HandleFunc("/telemetry/skills/foundry", s.telemetrySkillFoundry)
+	mux.HandleFunc("/telemetry/context-passport", s.telemetryContextPassport)
+	mux.HandleFunc("/telemetry/context-mesh", s.telemetryContextMesh)
 	mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)

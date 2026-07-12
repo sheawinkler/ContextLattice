@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,17 @@ var nativeToolNames = map[string]string{
 	"contextlattice_skill_evaluate":                  "skill-evaluate",
 	"contextlattice_skill_export":                    "skill-export",
 	"contextlattice_skill_foundry_status":            "skill-foundry-status",
+	"contextlattice_passport_export":                 "passport-export",
+	"contextlattice_passport_verify":                 "passport-verify",
+	"contextlattice_passport_diff":                   "passport-diff",
+	"contextlattice_passport_replay":                 "passport-replay",
+	"contextlattice_passport_import":                 "passport-import",
+	"contextlattice_passport_status":                 "passport-status",
+	"contextlattice_mesh_identity":                   "mesh-identity",
+	"contextlattice_mesh_grant":                      "mesh-grant",
+	"contextlattice_mesh_export":                     "mesh-export",
+	"contextlattice_mesh_import":                     "mesh-import",
+	"contextlattice_mesh_status":                     "mesh-status",
 	"contextlattice_write":                           "write",
 	"contextlattice_agent_session":                   "session",
 	"contextlattice_agent_trace":                     "trace",
@@ -134,6 +146,28 @@ func (c *cli) run(argv []string) error {
 		return c.cmdSkillExport(args)
 	case "skill-foundry-status":
 		return c.cmdSkillFoundryStatus(args)
+	case "passport-export":
+		return c.cmdPassportExport(args)
+	case "passport-verify":
+		return c.cmdPassportVerify(args)
+	case "passport-diff":
+		return c.cmdPassportDiff(args)
+	case "passport-replay":
+		return c.cmdPassportReplay(args)
+	case "passport-import":
+		return c.cmdPassportImport(args)
+	case "passport-status":
+		return c.cmdPassportStatus(args)
+	case "mesh-identity":
+		return c.cmdMeshIdentity(args)
+	case "mesh-grant":
+		return c.cmdMeshGrant(args)
+	case "mesh-export":
+		return c.cmdMeshExport(args)
+	case "mesh-import":
+		return c.cmdMeshImport(args)
+	case "mesh-status":
+		return c.cmdMeshStatus(args)
 	case "session":
 		return c.cmdSession(args)
 	case "trace":
@@ -192,6 +226,17 @@ Native commands:
   skill-evaluate                 evaluate a draft on independent holdouts
   skill-export                   export a passing human-approved skill without activation
   skill-foundry-status           inspect Skill Foundry ledger status
+  passport-export                create a signed bounded replayable context manifest
+  passport-verify                verify passport digest, signature, and expiry
+  passport-diff                  compare two passport revisions deterministically
+  passport-replay                render a verified replay request without executing it
+  passport-import                explicitly persist a verified local passport
+  passport-status                inspect bounded passport storage and public identity
+  mesh-identity                  print the local public age/Ed25519 identity only
+  mesh-grant                     create/list/revoke project-scoped recipient grants
+  mesh-export                    encrypt a stored passport for explicit grants
+  mesh-import                    decrypt and dry-run or explicitly apply an envelope
+  mesh-status                    inspect grants, receipts, limits, and transport boundary
   write                          memory write/checkpoint
   session                        agent session lifecycle, rollup, context package, trace, runtime
   trace                          alias for session trace
@@ -212,7 +257,8 @@ Native commands:
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
 contextlattice_pack, contextlattice_synthesis_pack, contextlattice_synthesis_pack_v2,
 contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query,
-contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft, contextlattice_write,
+contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft,
+contextlattice_passport_export, contextlattice_mesh_export, contextlattice_write,
 contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
@@ -1347,6 +1393,387 @@ func (c *cli) cmdSkillFoundryStatus(args []string) error {
 	}
 	c.applyBaseURL(parsed)
 	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/skills/foundry", nil, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func loadPortableArtifact(path, nestedKey string) (any, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("artifact file is required")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	const maxPortableArtifactBytes = 16 << 20
+	raw, err := io.ReadAll(io.LimitReader(file, maxPortableArtifactBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxPortableArtifactBytes {
+		return nil, fmt.Errorf("artifact file exceeds %d byte limit", maxPortableArtifactBytes)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("decode artifact file: %w", err)
+	}
+	if object := asMap(value); nestedKey != "" {
+		if nested := object[nestedKey]; nested != nil {
+			return nested, nil
+		}
+	}
+	return value, nil
+}
+
+func writePrivateJSONArtifact(path string, value any) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(raw, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		// Windows does not replace an existing destination with os.Rename.
+		targetInfo, statErr := os.Lstat(path)
+		if runtime.GOOS != "windows" || statErr != nil || targetInfo.IsDir() {
+			return err
+		}
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return err
+		}
+		if retryErr := os.Rename(tmpPath, path); retryErr != nil {
+			return retryErr
+		}
+	}
+	removeTemp = false
+	return os.Chmod(path, 0o600)
+}
+
+func (c *cli) cmdPassportExport(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"ttl-secs": "ttl_secs", "expires-at": "expires_at", "parent-passport-id": "parent_passport_id",
+		"agent-id": "agent_id", "session-id": "session_id", "branch": "branch", "commit": "commit",
+		"token-budget": "token_budget", "capabilities": "capabilities", "output": "output", "payload-file": "payload_file",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"blocking": "blocking"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_passport_export '<task>' --project <project> [--ttl-secs 604800] [--parent-passport-id <id>] [--output passport.json] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
+	if query != "" {
+		payload["query"] = query
+	}
+	if firstString(payload["query"]) == "" {
+		return errors.New("passport query is required")
+	}
+	payload["project"] = firstNonEmpty(parsed.string("project", ""), firstString(payload["project"]), envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	for _, key := range []string{"topic_path", "expires_at", "parent_passport_id", "agent_id", "session_id", "branch", "commit"} {
+		if value := parsed.string(key, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	if parsed.has("mode") {
+		payload["retrieval_mode"] = parsed.string("mode", "balanced")
+	}
+	if parsed.has("ttl_secs") {
+		payload["ttl_secs"] = parsed.int("ttl_secs", 604800)
+	}
+	if parsed.has("token_budget") {
+		payload["token_budget"] = parsed.int("token_budget", 0)
+	}
+	if value := parsed.string("capabilities", ""); value != "" {
+		payload["capabilities"] = splitCSV(value)
+	}
+	if parsed.bool("blocking") {
+		payload["blocking"] = true
+		payload["sync_slow_sources"] = true
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/export", payload, parsed.float("timeout", 60))
+	if err != nil {
+		return err
+	}
+	outputPath := parsed.string("output", "")
+	if err := writePrivateJSONArtifact(outputPath, result["passport"]); err != nil {
+		return err
+	}
+	if outputPath != "" {
+		delete(result, "passport")
+		result["artifact_written"] = true
+		result["artifact_kind"] = "context_passport.v1"
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPassportVerify(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"file": "file"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"allow-expired": "allow_expired"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_passport_verify --file passport.json [--allow-expired] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	passport, err := loadPortableArtifact(parsed.string("file", ""), "passport")
+	if err != nil {
+		return err
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/verify", map[string]any{"passport": passport, "allow_expired": parsed.bool("allow_expired")}, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPassportImport(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"file": "file"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"allow-expired": "allow_expired"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_passport_import --file passport.json [--project <project>] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	passport, err := loadPortableArtifact(parsed.string("file", ""), "passport")
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"passport": passport, "allow_expired": parsed.bool("allow_expired")}
+	if project := parsed.string("project", ""); project != "" {
+		payload["project"] = project
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/import", payload, parsed.float("timeout", 20))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPassportDiff(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"base-file": "base_file", "target-file": "target_file",
+		"base-passport-id": "base_passport_id", "target-passport-id": "target_passport_id",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_passport_diff --base-file old.json --target-file new.json OR --base-passport-id <id> --target-passport-id <id> --pretty")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{}
+	if path := parsed.string("base_file", ""); path != "" {
+		value, err := loadPortableArtifact(path, "passport")
+		if err != nil {
+			return err
+		}
+		payload["base"] = value
+	}
+	if path := parsed.string("target_file", ""); path != "" {
+		value, err := loadPortableArtifact(path, "passport")
+		if err != nil {
+			return err
+		}
+		payload["target"] = value
+	}
+	for _, key := range []string{"base_passport_id", "target_passport_id"} {
+		if value := parsed.string(key, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/diff", payload, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPassportReplay(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"file": "file", "passport-id": "passport_id", "agent-id": "agent_id",
+		"session-id": "session_id", "token-budget": "token_budget",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_passport_replay --file passport.json OR --passport-id <id> [--agent-id <id>] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{}
+	if path := parsed.string("file", ""); path != "" {
+		passport, err := loadPortableArtifact(path, "passport")
+		if err != nil {
+			return err
+		}
+		payload["passport"] = passport
+	}
+	for _, key := range []string{"passport_id", "project", "agent_id", "session_id"} {
+		if value := parsed.string(key, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	if parsed.has("token_budget") {
+		payload["token_budget"] = parsed.int("token_budget", 0)
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-passport/replay", payload, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPassportStatus(args []string) error {
+	parsed := parseArgs(args, commonStringFlags(), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_passport_status [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/context-passport", nil, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdMeshIdentity(args []string) error {
+	parsed := parseArgs(args, commonStringFlags(), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_mesh_identity [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/memory/context-mesh/identity", nil, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdMeshGrant(args []string) error {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		return c.emitUsage("contextlattice_mesh_grant {create|list|revoke} [options]")
+	}
+	subcommand := args[0]
+	parsed := parseArgs(args[1:], mergeStringFlags(commonStringFlags(), map[string]string{
+		"recipient-id": "recipient_id", "recipient": "recipient", "projects": "projects",
+		"capabilities": "capabilities", "ttl-secs": "ttl_secs", "expires-at": "expires_at",
+		"grant-id": "grant_id", "reason": "reason",
+	}), commonBoolFlags())
+	c.applyBaseURL(parsed)
+	switch subcommand {
+	case "list":
+		result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/memory/context-mesh/grants", nil, parsed.float("timeout", 15))
+		if err != nil {
+			return err
+		}
+		return c.emit(result, !parsed.bool("raw"))
+	case "create":
+		payload := map[string]any{
+			"recipient_id": parsed.string("recipient_id", ""), "recipient": parsed.string("recipient", ""),
+			"projects":     splitCSV(firstNonEmpty(parsed.string("projects", ""), parsed.string("project", ""))),
+			"capabilities": splitCSV(parsed.string("capabilities", "")),
+		}
+		if parsed.has("ttl_secs") {
+			payload["ttl_secs"] = parsed.int("ttl_secs", 604800)
+		}
+		if value := parsed.string("expires_at", ""); value != "" {
+			payload["expires_at"] = value
+		}
+		result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-mesh/grants", payload, parsed.float("timeout", 15))
+		if err != nil {
+			return err
+		}
+		return c.emit(result, !parsed.bool("raw"))
+	case "revoke":
+		result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-mesh/grants/revoke", map[string]any{"grant_id": parsed.string("grant_id", ""), "reason": parsed.string("reason", "operator_revoked")}, parsed.float("timeout", 15))
+		if err != nil {
+			return err
+		}
+		return c.emit(result, !parsed.bool("raw"))
+	default:
+		return fmt.Errorf("unknown contextlattice_mesh_grant command %q", subcommand)
+	}
+}
+
+func (c *cli) cmdMeshExport(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"passport-id": "passport_id", "grant-ids": "grant_ids", "expires-at": "expires_at", "output": "output",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_mesh_export --passport-id <id> --grant-ids <id,id> [--output envelope.json] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{"passport_id": parsed.string("passport_id", ""), "grant_ids": splitCSV(parsed.string("grant_ids", ""))}
+	if value := parsed.string("expires_at", ""); value != "" {
+		payload["expires_at"] = value
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-mesh/export", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	outputPath := parsed.string("output", "")
+	if err := writePrivateJSONArtifact(outputPath, result["envelope"]); err != nil {
+		return err
+	}
+	if outputPath != "" {
+		delete(result, "envelope")
+		result["artifact_written"] = true
+		result["artifact_kind"] = "context_mesh_envelope.v1"
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdMeshImport(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"file": "file"}), mergeBoolFlags(commonBoolFlags(), map[string]string{"apply": "apply"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_mesh_import --file envelope.json [--apply] --pretty")
+	}
+	c.applyBaseURL(parsed)
+	envelope, err := loadPortableArtifact(parsed.string("file", ""), "envelope")
+	if err != nil {
+		return err
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/context-mesh/import", map[string]any{"envelope": envelope, "apply": parsed.bool("apply")}, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdMeshStatus(args []string) error {
+	parsed := parseArgs(args, commonStringFlags(), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_mesh_status [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/context-mesh", nil, parsed.float("timeout", 15))
 	if err != nil {
 		return err
 	}
