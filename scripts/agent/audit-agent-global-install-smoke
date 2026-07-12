@@ -164,6 +164,13 @@ def main() -> int:
         "contextlattice_retrieval_plan",
         "contextlattice_claim_write",
         "contextlattice_claim_query",
+        "contextlattice_policy_candidate",
+        "contextlattice_policy_evaluate",
+        "contextlattice_policy_status",
+        "contextlattice_skill_draft",
+        "contextlattice_skill_evaluate",
+        "contextlattice_skill_export",
+        "contextlattice_skill_foundry_status",
     ]:
         path = bin_dir / name
         checks.append(check(f"wrapper:{name}", executable(path), path=str(path)))

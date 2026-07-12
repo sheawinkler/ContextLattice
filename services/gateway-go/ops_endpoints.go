@@ -141,6 +141,8 @@ func (s *server) capabilityMapPayload() map[string]any {
 				"deterministic": true,
 				"llm_used":      false,
 			},
+			"outcomeContextPolicy": s.contextPolicy.snapshot(),
+			"skillFoundry":         s.skillFoundry.snapshot(),
 		},
 		"tools": map[string]any{
 			"dream":                     true,
@@ -149,6 +151,11 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"retrieval_plan":            true,
 			"claim_write":               true,
 			"claim_query":               true,
+			"context_policy_candidate":  true,
+			"context_policy_evaluate":   true,
+			"skill_foundry_draft":       true,
+			"skill_foundry_evaluate":    true,
+			"skill_foundry_export":      true,
 			"memory_write_batch":        true,
 			"ops_queue_status":          true,
 			"feedback_submit":           true,
@@ -188,6 +195,8 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	if s.retrieval.telemetryBatchEnabled {
 		batchSize = s.retrieval.telemetryBatchSize
 	}
+	contextPolicyStatus := s.contextPolicy.snapshot()
+	skillFoundryStatus := s.skillFoundry.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":        true,
 		"timestamp": nowUTCISO(),
@@ -197,6 +206,14 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 			"continuationMaxInflight": queueCap,
 			"continuationCooldowns":   cooldownActive,
 			"temporalClaimGraph":      s.temporalClaims.snapshot(),
+			"contextPolicy": map[string]any{
+				"enabled": contextPolicyStatus["enabled"], "candidate_count": contextPolicyStatus["candidate_count"],
+				"evaluation_count": contextPolicyStatus["evaluation_count"], "last_error": anyMap(contextPolicyStatus["storage"])["last_error"],
+			},
+			"skillFoundry": map[string]any{
+				"enabled": skillFoundryStatus["enabled"], "draft_count": skillFoundryStatus["draft_count"],
+				"evaluation_count": skillFoundryStatus["evaluation_count"], "last_error": anyMap(skillFoundryStatus["storage"])["last_error"],
+			},
 		},
 		"trading": map[string]any{
 			"updatedAt":     nil,

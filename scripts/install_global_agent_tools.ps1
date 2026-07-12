@@ -523,6 +523,13 @@ $goNativeCommands = @(
     "contextlattice_retrieval_plan",
     "contextlattice_claim_write",
     "contextlattice_claim_query",
+    "contextlattice_policy_candidate",
+    "contextlattice_policy_evaluate",
+    "contextlattice_policy_status",
+    "contextlattice_skill_draft",
+    "contextlattice_skill_evaluate",
+    "contextlattice_skill_export",
+    "contextlattice_skill_foundry_status",
     "contextlattice_write",
     "contextlattice_adopt",
     "contextlattice_doctor",
@@ -581,6 +588,9 @@ Write-Host "  contextlattice_synthesis_pack `"what should this agent know before
 Write-Host "  contextlattice_synthesis_pack_v2 `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_retrieval_plan `"what should this agent know before solving the task?`" --project contextlattice --pretty"
 Write-Host "  contextlattice_claim_query `"current project state`" --project contextlattice --pretty"
+Write-Host "  contextlattice_policy_candidate --project contextlattice --pretty"
+Write-Host "  contextlattice_policy_status --pretty"
+Write-Host "  contextlattice_skill_foundry_status --pretty"
 Write-Host "  contextlattice_write -h"
 Write-Host "  contextlattice_adopt status --pretty"
 Write-Host "  contextlattice_doctor --agents codex --skip-provider-smoke --pretty"

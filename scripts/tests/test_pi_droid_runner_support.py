@@ -492,7 +492,13 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
                     worker._run_adapter = fake_run_adapter
                     worker._handle_task(
                         "http://127.0.0.1:8075",
-                        {"id": "task_quality", "title": "Run", "project": "contextlattice", "agent": "pi", "payload": {}},
+                        {
+                            "id": "task_quality",
+                            "title": "Run",
+                            "project": "contextlattice",
+                            "agent": "pi",
+                            "payload": {"policy_id": "ctxpol_test", "policy_arm": "canary", "policy_phase": "canary"},
+                        },
                         "pi",
                         "auto",
                         "model",
@@ -515,6 +521,9 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
             self.assertEqual(outcome_posts[0]["sample_id"], "cpq_worker")
             self.assertTrue(outcome_posts[0]["first_pass_success"])
             self.assertTrue(outcome_posts[0]["calibration_eligible"])
+            self.assertEqual(outcome_posts[0]["policy_id"], "ctxpol_test")
+            self.assertEqual(outcome_posts[0]["policy_arm"], "canary")
+            self.assertEqual(outcome_posts[0]["policy_phase"], "canary")
             status_posts = [payload for path, payload in captured["posts"] if path.endswith("/status")]
             self.assertEqual(len(status_posts), 1)
             status_metadata = status_posts[0]["metadata"]

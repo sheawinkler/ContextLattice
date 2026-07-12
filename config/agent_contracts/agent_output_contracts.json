@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 17,
-  "updated_at": "2026-07-11T00:00:00Z",
+  "registry_version": 18,
+  "updated_at": "2026-07-12T00:00:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -2541,6 +2541,370 @@
         "secrets",
         "api_key",
         "password"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_policy_candidate.v1": {
+      "contract_version": 1,
+      "payload_kind": "outcome_trained_context_policy_candidate",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_insufficient_evidence_without_recording_or_mutating_runtime_policy",
+      "max_total_json_bytes": 90000,
+      "max_string_bytes": 4000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "candidate",
+        "recorded",
+        "status",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "candidate": "object",
+        "recorded": "bool",
+        "status": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "candidate": [
+          "schema_id",
+          "version",
+          "candidate_id",
+          "project",
+          "status",
+          "mode",
+          "created_at",
+          "updated_at",
+          "minimum_outcomes",
+          "eligible_outcomes",
+          "evidence_sha256",
+          "policy",
+          "evidence",
+          "lifecycle",
+          "activation"
+        ],
+        "candidate.activation": [
+          "allowed",
+          "runtime_mutation",
+          "reason"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "context_policy_candidate.v1",
+        "candidate.schema_id": "context_policy_candidate.v1",
+        "candidate.mode": "advisor_only",
+        "format_contract.schema_id": "context_policy_candidate.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_prompt",
+        "raw_logs"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_policy_evaluation.v1": {
+      "contract_version": 1,
+      "payload_kind": "context_policy_canary_evaluation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "hold_or_roll_back_without_skipping_lifecycle_phases_or_mutating_runtime_policy",
+      "max_total_json_bytes": 100000,
+      "max_string_bytes": 4000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "evaluation",
+        "candidate",
+        "recorded",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "evaluation": "object",
+        "candidate": "object",
+        "recorded": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "evaluation": [
+          "schema_id",
+          "version",
+          "evaluation_id",
+          "candidate_id",
+          "project",
+          "evaluated_at",
+          "previous_phase",
+          "recommended_phase",
+          "recorded_phase",
+          "decision",
+          "reason",
+          "transition_applied",
+          "one_step_only",
+          "control",
+          "canary",
+          "minimum_arm_samples",
+          "guardrails",
+          "beneficial",
+          "evidence_source",
+          "runtime_activation",
+          "activation_boundary"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "context_policy_evaluation.v1",
+        "evaluation.schema_id": "context_policy_evaluation.v1",
+        "format_contract.schema_id": "context_policy_evaluation.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_prompt",
+        "raw_logs"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "skill_draft.v1": {
+      "contract_version": 1,
+      "payload_kind": "verified_workflow_skill_draft",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unstable_or_unverified_workflows_without_creating_a_draft",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 12000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "draft",
+        "recorded",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "draft": "object",
+        "recorded": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "draft": [
+          "schema_id",
+          "version",
+          "draft_id",
+          "project",
+          "name",
+          "description",
+          "status",
+          "skill_version",
+          "supersedes",
+          "draft_fingerprint",
+          "created_at",
+          "updated_at",
+          "workflow_signature",
+          "steps",
+          "checks",
+          "minimum_verified_runs",
+          "verified_run_count",
+          "training_run_ids",
+          "provenance",
+          "existing_skill_collision",
+          "evaluation",
+          "activation",
+          "retirement",
+          "skill_markdown"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "skill_draft.v1",
+        "draft.schema_id": "skill_draft.v1",
+        "format_contract.schema_id": "skill_draft.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_logs"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "skill_evaluation.v1": {
+      "contract_version": 1,
+      "payload_kind": "independent_skill_holdout_evaluation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_training_holdout_overlap_and_keep_the_draft_inactive",
+      "max_total_json_bytes": 100000,
+      "max_string_bytes": 6000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "evaluation",
+        "draft",
+        "recorded",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "evaluation": "object",
+        "draft": "object",
+        "recorded": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "evaluation": [
+          "schema_id",
+          "version",
+          "evaluation_id",
+          "draft_id",
+          "draft_fingerprint",
+          "project",
+          "evaluated_at",
+          "passed",
+          "pass_rate",
+          "holdout_count",
+          "minimum_holdouts",
+          "training_holdout_overlap",
+          "holdout_evidence_required",
+          "results",
+          "recommendation",
+          "activation_state",
+          "human_approval_required"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "skill_evaluation.v1",
+        "evaluation.schema_id": "skill_evaluation.v1",
+        "evaluation.activation_state": "inactive",
+        "format_contract.schema_id": "skill_evaluation.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_logs"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "skill_export.v1": {
+      "contract_version": 1,
+      "payload_kind": "human_approved_inactive_skill_export",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "require_passing_holdouts_and_explicit_human_approval_without_automatic_installation",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 16000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "export",
+        "draft",
+        "recorded",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "export": "object",
+        "draft": "object",
+        "recorded": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "export": [
+          "schema_id",
+          "version",
+          "export_id",
+          "draft_id",
+          "draft_fingerprint",
+          "project",
+          "name",
+          "exported_at",
+          "skill_version",
+          "supersedes",
+          "human_approved",
+          "approver",
+          "skill_markdown",
+          "content_sha256",
+          "suggested_relative_path",
+          "activation_state",
+          "automatic_activation",
+          "retirement",
+          "installation_note"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "skill_export.v1",
+        "export.schema_id": "skill_export.v1",
+        "export.activation_state": "inactive",
+        "format_contract.schema_id": "skill_export.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_logs"
       ],
       "forbidden_scope": "recursive"
     }

@@ -28,6 +28,8 @@ ContextLattice provides a single memory contract for agentic systems:
 - Bounded async inbox delivery that reports queued work as warming and surfaces terminal continuation results at normal CLI boundaries.
 - Temporal claims that preserve what was true, when it was true, what replaced it, what contradicts it, and the evidence behind each assertion.
 - Advisor-only retrieval planning plus proof-carrying synthesis that exposes support, opposition, uncertainty, missing proof, and causal context instead of laundering recall into certainty.
+- Outcome-trained policy candidates that must survive shadow and controlled canary gates one phase at a time before promotion can even be recommended.
+- Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
@@ -35,9 +37,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.12.0` is the current public cognition-core baseline: Temporal Claim Graph, adaptive advisor-only retrieval planning, Proof-Carrying Synthesis v2, deterministic Synthesis Packs, evidence-preserving sparse context, async continuation warming, idempotent outcome capture, saved recall evaluation, typed graph evidence, a cross-distribution capability manifest, Go-native feedback, upgrade-safe optional Pi/Droid runner discovery, detected OMP/Mercury hooks, runner-quality guidance, tokenizer-exact prompt economics, Skills Index discovery, native sessions, checkpoints, handoffs, and durable memory behind one local contract.
+`v3.13.0` is the current public learning-core baseline: the v3.12 Temporal Claim Graph, adaptive planning, and Proof-Carrying Synthesis v2 now feed an outcome-trained context-policy lifecycle and Skill Foundry. Candidates train only on calibration-eligible outcomes, advance one phase at a time, and never mutate public runtime policy. Repeated verified workflows need independent holdouts and explicit human approval before ContextLattice exports an inactive skill artifact. The full deterministic synthesis, sparse-context preservation, async continuation, graph evidence, CLI-first agent integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory suite remains intact.
 
-## Public Runtime Stack (v3.12)
+## Public Runtime Stack (v3.13)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -63,8 +65,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.12.0 \
-  --statement "The current public release is 3.12.0." \
+  --object 3.13.0 \
+  --statement "The current public release is 3.13.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -72,9 +74,18 @@ contextlattice_claim_query "current public release" --project contextlattice --i
 
 # Return claim-level support, opposition, temporal state, uncertainty, and missing proof.
 contextlattice_synthesis_pack_v2 "prove release readiness" --project contextlattice --pretty
+
+# Derive a candidate only from calibration-eligible outcomes, then inspect it.
+contextlattice_policy_candidate --project contextlattice --pretty
+contextlattice_policy_status --pretty
+
+# Build from repeated verified runs, test separate holdouts, then export only with approval.
+contextlattice_skill_draft --payload-file workflow-runs.json --pretty
+contextlattice_skill_evaluate --draft-id <draft-id> --payload-file holdouts.json --pretty
+contextlattice_skill_export --draft-id <draft-id> --human-approved --approver <identity> --pretty
 ```
 
-The planner is `shadow_only`: it recommends source/query/token strategy but never silently changes retrieval policy. See [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md) for contracts, safety boundaries, and HTTP fallbacks.
+The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. See [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md) and [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md) for contracts, safety boundaries, and HTTP fallbacks.
 
 ## Quickstart
 
@@ -366,6 +377,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.13.0.md` (outcome-trained canary policy and Skill Foundry)
   - `docs/releases/v3.12.0.md` (Temporal Claim Graph, adaptive retrieval planning, and Proof-Carrying Synthesis v2)
   - `docs/releases/v3.11.2.md` (evidence-preserving sparse Context Packs and grounded deterministic synthesis)
   - `docs/releases/v3.11.1.md` (upgrade-safe runner discovery across long-lived agent environments)

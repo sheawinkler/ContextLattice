@@ -1,0 +1,64 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "release": "v3.13.0",
+  "component": "outcome_context_policy_and_skill_foundry",
+  "baseline": {
+    "release": "v3.12.0",
+    "behavior": "Context-pack outcomes calibrated telemetry and informed a shadow-only planner, but no persisted policy lifecycle or verified workflow-to-skill pipeline existed."
+  },
+  "metrics": {
+    "policy_candidate_100_outcomes_median_ns_per_op": 261342,
+    "policy_candidate_100_outcomes_bytes_per_op": 284760,
+    "policy_candidate_100_outcomes_allocs_per_op": 1079,
+    "canary_gate_median_ns_per_op": 1082,
+    "canary_gate_bytes_per_op": 2320,
+    "canary_gate_allocs_per_op": 24,
+    "skill_draft_20_runs_median_ns_per_op": 91512,
+    "skill_draft_20_runs_bytes_per_op": 58270,
+    "skill_draft_20_runs_allocs_per_op": 1004,
+    "model_calls": 0,
+    "external_network_calls": 0
+  },
+  "holdouts": [
+    "candidate requires calibration-eligible outcomes",
+    "policy lifecycle advances exactly one phase",
+    "material canary regression rolls back",
+    "shadow observations cannot satisfy a canary sample floor",
+    "mixed operator and persisted arm evidence is rejected",
+    "candidate identity binds its calibration evidence digest",
+    "candidate regeneration and stale transitions cannot regress lifecycle state",
+    "public promotion never activates runtime policy",
+    "skill draft requires three stable verified runs",
+    "training and holdout identities cannot overlap",
+    "holdouts require explicit identities and bounded evidence references",
+    "materially changed skill drafts receive new evaluation identities",
+    "identical skill draft replay cannot regress evaluated or exported state",
+    "skill export requires passing holdouts and named human approval",
+    "public skill export does not write into active skill roots",
+    "policy and foundry state reload from bounded ledgers"
+  ],
+  "cost": {
+    "candidate_generation_note": "The administrative candidate path defensively clones at most the bounded in-memory telemetry window; it is not on retrieval or inference hot paths.",
+    "storage": "bounded NDJSON with current-state-preserving compaction",
+    "llm": "none"
+  },
+  "failures": [
+    {
+      "stage": "initial_contract_test",
+      "failure": "generated registry version drift after adding contracts",
+      "resolution": "regenerated and committed Go and Rust contract identities before further testing"
+    },
+    {
+      "stage": "precommit_integrity_review",
+      "failure": "mixed arm provenance, cross-phase samples, and mutable draft identity were not covered by the initial tests",
+      "resolution": "made evidence sources atomic, phase-scoped persisted rows, evidence-bound candidate and draft identities, proof-bearing holdouts, and regression tests"
+    }
+  ],
+  "reproduction": [
+    "cd services/gateway-go && go test ./... -count=1",
+    "cd services/gateway-go && go test -race -run 'Test(ContextPolicy|SkillFoundry)' -count=1",
+    "cd services/gateway-go && go test -run '^$' -bench 'Benchmark(ContextPolicyCandidate100Outcomes|ContextPolicyCanaryGate|SkillFoundryDraft20Runs)$' -benchmem -count=5",
+    "scripts/agent/audit-agent-output-contracts --pretty",
+    "scripts/agent/audit-agent-global-install-smoke --pretty"
+  ]
+}

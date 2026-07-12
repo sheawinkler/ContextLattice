@@ -264,6 +264,59 @@ func TestCognitionProofCommandsUseNativeEndpoints(t *testing.T) {
 	}
 }
 
+func TestOutcomePolicyAndSkillFoundryCommandsUseNativeEndpoints(t *testing.T) {
+	captured := map[string]map[string]any{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		payload := map[string]any{}
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode %s: %v", r.URL.Path, err)
+			}
+		}
+		captured[r.URL.Path] = payload
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "test.v1"})
+	}))
+	defer gateway.Close()
+
+	payloadPath := filepath.Join(t.TempDir(), "payload.json")
+	if err := os.WriteFile(payloadPath, []byte(`{"workflow_runs":[],"holdouts":[],"control":{},"canary":{}}`), 0o600); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	cases := []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"policy-candidate", []string{"contextlattice_policy_candidate", "--project", "alpha", "--minimum-outcomes", "20", "--raw"}, "/memory/context-policy/candidate"},
+		{"policy-evaluate", []string{"contextlattice_policy_evaluate", "--candidate-id", "ctxpol_test", "--payload-file", payloadPath, "--apply-transition", "--raw"}, "/memory/context-policy/evaluate"},
+		{"skill-draft", []string{"contextlattice_skill_draft", "--payload-file", payloadPath, "--name", "bounded-proof", "--description", "Bounded proof", "--raw"}, "/memory/skills/foundry/draft"},
+		{"skill-evaluate", []string{"contextlattice_skill_evaluate", "--draft-id", "skilldraft_test", "--payload-file", payloadPath, "--raw"}, "/memory/skills/foundry/evaluate"},
+		{"skill-export", []string{"contextlattice_skill_export", "--draft-id", "skilldraft_test", "--human-approved", "--approver", "owner", "--raw"}, "/memory/skills/foundry/export"},
+		{"policy-status", []string{"contextlattice_policy_status", "--raw"}, "/telemetry/context-policy"},
+		{"foundry-status", []string{"contextlattice_skill_foundry_status", "--raw"}, "/telemetry/skills/foundry"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			c := newCLI(&stdout, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.run(tc.args); err != nil {
+				t.Fatalf("run %s: %v", tc.name, err)
+			}
+			if _, ok := captured[tc.path]; !ok {
+				t.Fatalf("expected %s, captured=%#v", tc.path, captured)
+			}
+		})
+	}
+	if !asBool(captured["/memory/context-policy/evaluate"]["apply_transition"]) {
+		t.Fatalf("expected explicit transition flag: %#v", captured["/memory/context-policy/evaluate"])
+	}
+	if !asBool(captured["/memory/skills/foundry/export"]["human_approved"]) {
+		t.Fatalf("expected explicit human approval: %#v", captured["/memory/skills/foundry/export"])
+	}
+}
+
 func TestSkillsIndexCommandUsesNativeEndpoint(t *testing.T) {
 	var captured map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

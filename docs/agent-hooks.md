@@ -72,6 +72,13 @@ Installed commands:
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
 | `contextlattice_synthesis_pack_v2` | Proof-carrying synthesis with claim-level support, opposition, temporal state, confidence decomposition, and missing-proof disclosure. |
+| `contextlattice_policy_candidate` | Derive a bounded advisory context-policy candidate from calibration-eligible outcomes. |
+| `contextlattice_policy_evaluate` | Record one shadow/canary lifecycle evaluation without mutating public runtime policy. |
+| `contextlattice_policy_status` | Inspect policy candidates, phases, evaluations, and bounded-ledger health. |
+| `contextlattice_skill_draft` | Convert repeated verified workflow-run evidence into an inactive skill draft. |
+| `contextlattice_skill_evaluate` | Test a draft against independent holdouts with training-leakage rejection. |
+| `contextlattice_skill_export` | Export a passing skill only after explicit named human approval; never auto-installs it. |
+| `contextlattice_skill_foundry_status` | Inspect Skill Foundry drafts, evaluations, exports, and bounded-ledger health. |
 | `contextlattice_source_backfill` | Optional development helper, installed with `--include-dev-python-tools`, for bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres. |
 | `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
 | `contextlattice_runner_quality` | Primary CLI for bounded runner-quality telemetry and advisor-only runner recommendations. |

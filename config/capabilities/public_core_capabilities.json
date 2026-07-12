@@ -1,7 +1,7 @@
 {
   "schema_id": "contextlattice_public_core_capabilities.v1",
   "version": 1,
-  "release_train": "v3.12",
+  "release_train": "v3.13",
   "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
   "invariants": [
     "public_core_is_present_in_every_distribution",
@@ -72,6 +72,24 @@
       "artifacts": [
         "services/gateway-go/memory_synthesis_pack_v2.go",
         "services/gateway-go/memory_synthesis_pack.go"
+      ]
+    },
+    {
+      "id": "outcome_context_policy.v1",
+      "summary": "Calibration-eligible outcomes produce advisory candidates that advance one phase at a time through shadow and controlled canary evidence without mutating public runtime policy.",
+      "contracts": ["context_policy_candidate.v1", "context_policy_evaluation.v1"],
+      "artifacts": [
+        "services/gateway-go/outcome_context_policy.go",
+        "services/gateway-go/context_pack_quality_telemetry.go"
+      ]
+    },
+    {
+      "id": "skill_foundry.v1",
+      "summary": "Repeated verified workflows become bounded skill drafts, independent holdouts block leakage, and human approval exports inactive artifacts for normal Skills Index review.",
+      "contracts": ["skill_draft.v1", "skill_evaluation.v1", "skill_export.v1"],
+      "artifacts": [
+        "services/gateway-go/skill_foundry.go",
+        "services/gateway-go/skills_quarantine_routes.go"
       ]
     },
     {

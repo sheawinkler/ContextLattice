@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 17
+const GeneratedAgentContractRegistryVersion = 18
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -25,6 +25,8 @@ const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
 const GeneratedAgentContractContextOverflowRecoveryV1 = "context_overflow_recovery.v1"
 const GeneratedAgentContractContextPackResponseV1 = "context_pack_response.v1"
+const GeneratedAgentContractContextPolicyCandidateV1 = "context_policy_candidate.v1"
+const GeneratedAgentContractContextPolicyEvaluationV1 = "context_policy_evaluation.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
@@ -36,6 +38,9 @@ const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
 const GeneratedAgentContractRunnerCapabilityV1 = "runner_capability.v1"
 const GeneratedAgentContractRunnerQualitySampleV1 = "runner_quality_sample.v1"
 const GeneratedAgentContractRunnerResultV1 = "runner_result.v1"
+const GeneratedAgentContractSkillDraftV1 = "skill_draft.v1"
+const GeneratedAgentContractSkillEvaluationV1 = "skill_evaluation.v1"
+const GeneratedAgentContractSkillExportV1 = "skill_export.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
 const GeneratedAgentContractSynthesisPackV1 = "synthesis_pack.v1"
 const GeneratedAgentContractSynthesisPackV2 = "synthesis_pack.v2"
@@ -58,6 +63,8 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractCodexCompactHookStdoutV1,
 	GeneratedAgentContractContextOverflowRecoveryV1,
 	GeneratedAgentContractContextPackResponseV1,
+	GeneratedAgentContractContextPolicyCandidateV1,
+	GeneratedAgentContractContextPolicyEvaluationV1,
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
@@ -69,6 +76,9 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractRunnerCapabilityV1,
 	GeneratedAgentContractRunnerQualitySampleV1,
 	GeneratedAgentContractRunnerResultV1,
+	GeneratedAgentContractSkillDraftV1,
+	GeneratedAgentContractSkillEvaluationV1,
+	GeneratedAgentContractSkillExportV1,
 	GeneratedAgentContractSteeringCommentV1,
 	GeneratedAgentContractSynthesisPackV1,
 	GeneratedAgentContractSynthesisPackV2,
@@ -158,6 +168,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractContextPolicyCandidateV1,
+		PayloadKind:        "outcome_trained_context_policy_candidate",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPolicyEvaluationV1,
+		PayloadKind:        "context_policy_canary_evaluation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractContractAcknowledgementV1,
 		PayloadKind:        "contract_acknowledgement",
 		ContractVersion:    1,
@@ -220,6 +242,24 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractRunnerResultV1,
 		PayloadKind:        "runner_result",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractSkillDraftV1,
+		PayloadKind:        "verified_workflow_skill_draft",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractSkillEvaluationV1,
+		PayloadKind:        "independent_skill_holdout_evaluation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractSkillExportV1,
+		PayloadKind:        "human_approved_inactive_skill_export",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

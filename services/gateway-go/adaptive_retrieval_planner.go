@@ -169,6 +169,7 @@ func (s *server) buildAdaptiveRetrievalPlan(payload map[string]any) map[string]a
 
 	quality := s.contextPackQualityTelemetrySnapshot()
 	calibrationOutcomes := anyToInt(quality["calibration_outcome_sample_count"], 0)
+	policyAdvice := s.contextPolicy.advisoryCandidate(project)
 	graphRequested := taskPhase == "research" || taskPhase == "debug" || strings.Contains(strings.ToLower(query), "cross-project") || strings.Contains(strings.ToLower(query), "linkage")
 	claimRequested := taskPhase != "orient" || strings.Contains(strings.ToLower(query), "decision") || strings.Contains(strings.ToLower(query), "current")
 	queryPlan := retrievalQueryPlan(query, taskPhase, obligations)
@@ -207,12 +208,13 @@ func (s *server) buildAdaptiveRetrievalPlan(payload map[string]any) map[string]a
 			"stop_on_no_new_supported_claims":       true,
 			"stop_on_budget_exhaustion":             true,
 		},
+		"context_policy_advice": policyAdvice,
 		"calibration": map[string]any{
 			"outcome_samples":                calibrationOutcomes,
 			"grade":                          quality["calibration_grade"],
 			"activation_eligible":            false,
 			"minimum_outcomes_for_candidate": 20,
-			"reason":                         "v3.12 planner is advisor-only; outcome-trained activation requires a later canary contract",
+			"reason":                         "v3.13 exposes outcome-trained candidates and canary evidence while the public planner remains advisor-only",
 		},
 		"proof": map[string]any{
 			"inputs":        []any{"configured source policy", "observed source reliability", "observed p95 latency", "context-pack quality calibration", "task-phase evidence obligations"},

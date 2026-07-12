@@ -26,6 +26,13 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_retrieval_plan
   contextlattice_claim_write
   contextlattice_claim_query
+  contextlattice_policy_candidate
+  contextlattice_policy_evaluate
+  contextlattice_policy_status
+  contextlattice_skill_draft
+  contextlattice_skill_evaluate
+  contextlattice_skill_export
+  contextlattice_skill_foundry_status
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
@@ -641,6 +648,13 @@ GO_NATIVE_COMMANDS=(
   contextlattice_retrieval_plan
   contextlattice_claim_write
   contextlattice_claim_query
+  contextlattice_policy_candidate
+  contextlattice_policy_evaluate
+  contextlattice_policy_status
+  contextlattice_skill_draft
+  contextlattice_skill_evaluate
+  contextlattice_skill_export
+  contextlattice_skill_foundry_status
   contextlattice_write
   contextlattice_adopt
   contextlattice_doctor
@@ -862,6 +876,13 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack_v2"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_retrieval_plan"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_claim_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_claim_query"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_policy_candidate"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_policy_evaluate"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_policy_status"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_draft"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_evaluate"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_export"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_foundry_status"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_adopt"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_doctor"
@@ -896,6 +917,9 @@ log "  contextlattice_synthesis_pack 'release readiness' --project contextlattic
 log "  contextlattice_synthesis_pack_v2 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_retrieval_plan 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_claim_query 'current release state' --project contextlattice --pretty"
+log "  contextlattice_policy_candidate --project contextlattice --pretty"
+log "  contextlattice_policy_status --pretty"
+log "  contextlattice_skill_foundry_status --pretty"
 log "  contextlattice_write -h"
 log "  contextlattice_agent_adapter profiles"
 log "  contextlattice_adopt status --pretty"

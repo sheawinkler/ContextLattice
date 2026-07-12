@@ -37,6 +37,8 @@ func (s *server) statusPayload() map[string]any {
 			"temporalClaimGraph": s.temporalClaims.snapshot(),
 			"retrievalPlanner":   map[string]any{"mode": "advisor", "activation_state": "shadow_only"},
 			"synthesisContract":  synthesisPackV2ContractID,
+			"contextPolicy":      s.contextPolicy.snapshot(),
+			"skillFoundry":       s.skillFoundry.snapshot(),
 		},
 		"metadataContract": metadataContractSnapshot(),
 	}

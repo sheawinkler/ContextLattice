@@ -48,6 +48,11 @@ REQUIRED_CONTRACTS = (
     "temporal_claim.v1",
     "temporal_claim_query.v1",
     "retrieval_plan.v1",
+    "context_policy_candidate.v1",
+    "context_policy_evaluation.v1",
+    "skill_draft.v1",
+    "skill_evaluation.v1",
+    "skill_export.v1",
     "run_advisor.v1",
     "contract_acknowledgement.v1",
     "writeback_result.v1",
@@ -384,6 +389,144 @@ def sample_synthesis_pack_v2() -> dict[str, Any]:
             "writeback_required": True,
         },
     )
+
+
+def sample_context_policy_candidate() -> dict[str, Any]:
+    candidate = {
+        "schema_id": "context_policy_candidate.v1",
+        "version": 1,
+        "candidate_id": "ctxpol_audit",
+        "project": "contextlattice",
+        "status": "candidate",
+        "mode": "advisor_only",
+        "created_at": "2026-07-12T00:00:00Z",
+        "updated_at": "2026-07-12T00:00:00Z",
+        "minimum_outcomes": 20,
+        "eligible_outcomes": 24,
+        "evidence_sha256": "evidence-audit-sha256",
+        "policy": {"target_context_tokens": 4000, "minimum_source_diversity": 2, "require_proof_support": True},
+        "evidence": {"metrics": {"sample_count": 24}, "outcome_ids": ["outcome_audit"], "calibration_eligible_only": True},
+        "lifecycle": {"current_phase": "candidate", "allowed_transitions": ["shadow", "rolled_back"], "one_step_only": True},
+        "activation": {"allowed": False, "runtime_mutation": False, "reason": "public core is advisory only"},
+    }
+    return attach_format_contract(
+        "context_policy_candidate.v1",
+        {"ok": True, "schema_id": "context_policy_candidate.v1", "candidate": candidate, "recorded": True, "status": "candidate"},
+    )
+
+
+def sample_context_policy_evaluation() -> dict[str, Any]:
+    candidate = sample_context_policy_candidate()["candidate"]
+    evaluation = {
+        "schema_id": "context_policy_evaluation.v1",
+        "version": 1,
+        "evaluation_id": "ctxeval_audit",
+        "candidate_id": candidate["candidate_id"],
+        "project": "contextlattice",
+        "evaluated_at": "2026-07-12T00:00:00Z",
+        "previous_phase": "candidate",
+        "recommended_phase": "shadow",
+        "recorded_phase": "shadow",
+        "decision": "advance",
+        "reason": "Calibration-eligible historical outcomes support shadow observation.",
+        "transition_applied": True,
+        "one_step_only": True,
+        "control": {"sample_count": 0},
+        "canary": {"sample_count": 0},
+        "minimum_arm_samples": 0,
+        "guardrails": [],
+        "beneficial": False,
+        "evidence_source": "persisted_outcomes",
+        "runtime_activation": False,
+        "activation_boundary": "Advisory promotion never mutates live retrieval in the public core.",
+    }
+    candidate["status"] = "shadow"
+    return attach_format_contract(
+        "context_policy_evaluation.v1",
+        {"ok": True, "schema_id": "context_policy_evaluation.v1", "evaluation": evaluation, "candidate": candidate, "recorded": True},
+    )
+
+
+def sample_skill_draft() -> dict[str, Any]:
+    draft = {
+        "schema_id": "skill_draft.v1",
+        "version": 1,
+        "draft_id": "skilldraft_audit",
+        "project": "contextlattice",
+        "name": "bounded-release-proof",
+        "description": "Use for repeatable bounded release proof.",
+        "status": "draft",
+        "skill_version": 1,
+        "supersedes": "",
+        "draft_fingerprint": "draft-audit-sha256",
+        "created_at": "2026-07-12T00:00:00Z",
+        "updated_at": "2026-07-12T00:00:00Z",
+        "workflow_signature": "abc123",
+        "steps": ["Inspect state", "Run verification"],
+        "checks": ["Tests pass"],
+        "minimum_verified_runs": 3,
+        "verified_run_count": 3,
+        "training_run_ids": ["run-1", "run-2", "run-3"],
+        "provenance": [{"run_id": "run-1", "evidence_refs": ["check:run-1"]}],
+        "existing_skill_collision": {"detected": False, "matches": [], "index": "native_active_skills"},
+        "evaluation": {"required": True, "minimum_holdouts": 3, "training_holdout_separation": True},
+        "activation": {"state": "inactive", "automatic": False, "reason": "holdouts and approval required"},
+        "retirement": {"automatic": False, "superseded_skill": "", "reason": "explicit action required"},
+        "skill_markdown": "---\nname: bounded-release-proof\ndescription: Use for repeatable bounded release proof.\n---\n",
+    }
+    return attach_format_contract("skill_draft.v1", {"ok": True, "schema_id": "skill_draft.v1", "draft": draft, "recorded": True})
+
+
+def sample_skill_evaluation() -> dict[str, Any]:
+    draft = sample_skill_draft()["draft"]
+    draft["status"] = "evaluated"
+    evaluation = {
+        "schema_id": "skill_evaluation.v1",
+        "version": 1,
+        "evaluation_id": "skilleval_audit",
+        "draft_id": draft["draft_id"],
+        "draft_fingerprint": draft["draft_fingerprint"],
+        "project": "contextlattice",
+        "evaluated_at": "2026-07-12T00:00:00Z",
+        "passed": True,
+        "pass_rate": 1.0,
+        "holdout_count": 3,
+        "minimum_holdouts": 3,
+        "training_holdout_overlap": False,
+        "holdout_evidence_required": True,
+        "results": [{"holdout_id": "holdout-1", "passed": True, "evidence_refs": ["check:holdout-1"]}],
+        "recommendation": "human_review",
+        "activation_state": "inactive",
+        "human_approval_required": True,
+    }
+    return attach_format_contract("skill_evaluation.v1", {"ok": True, "schema_id": "skill_evaluation.v1", "evaluation": evaluation, "draft": draft, "recorded": True})
+
+
+def sample_skill_export() -> dict[str, Any]:
+    draft = sample_skill_draft()["draft"]
+    draft["status"] = "exported"
+    exported = {
+        "schema_id": "skill_export.v1",
+        "version": 1,
+        "export_id": "skillexport_audit",
+        "draft_id": draft["draft_id"],
+        "draft_fingerprint": draft["draft_fingerprint"],
+        "project": "contextlattice",
+        "name": draft["name"],
+        "exported_at": "2026-07-12T00:00:00Z",
+        "skill_version": 1,
+        "supersedes": "",
+        "human_approved": True,
+        "approver": "release-owner",
+        "skill_markdown": draft["skill_markdown"],
+        "content_sha256": "abc123",
+        "suggested_relative_path": "bounded-release-proof/SKILL.md",
+        "activation_state": "inactive",
+        "automatic_activation": False,
+        "retirement": draft["retirement"],
+        "installation_note": "Review and install through the normal Skills Index workflow.",
+    }
+    return attach_format_contract("skill_export.v1", {"ok": True, "schema_id": "skill_export.v1", "export": exported, "draft": draft, "recorded": True})
 
 
 def sample_retrieval_progress() -> dict[str, Any]:
@@ -1253,6 +1396,11 @@ def run_audit() -> list[dict[str, Any]]:
         ("temporal_claim_query.v1", sample_temporal_claim_query()),
         ("retrieval_plan.v1", sample_retrieval_plan()),
         ("synthesis_pack.v2", sample_synthesis_pack_v2()),
+        ("context_policy_candidate.v1", sample_context_policy_candidate()),
+        ("context_policy_evaluation.v1", sample_context_policy_evaluation()),
+        ("skill_draft.v1", sample_skill_draft()),
+        ("skill_evaluation.v1", sample_skill_evaluation()),
+        ("skill_export.v1", sample_skill_export()),
         ("contract_acknowledgement.v1", sample_contract_ack()),
         ("agent_span.v1", sample_agent_span()),
         ("agent_flight_recorder_event.v1", sample_flight_event()),
