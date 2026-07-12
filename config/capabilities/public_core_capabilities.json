@@ -1,7 +1,7 @@
 {
   "schema_id": "contextlattice_public_core_capabilities.v1",
   "version": 1,
-  "release_train": "v3.14",
+  "release_train": "v3.15",
   "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
   "invariants": [
     "public_core_is_present_in_every_distribution",
@@ -105,7 +105,8 @@
       "contracts": [
         "skill_draft.v1",
         "skill_evaluation.v1",
-        "skill_export.v1"
+        "skill_export.v1",
+        "skill_retirement.v1"
       ],
       "artifacts": [
         "services/gateway-go/skill_foundry.go",
@@ -205,12 +206,14 @@
     },
     {
       "id": "memory_graph_recall.v1",
-      "summary": "Typed edges, graph neighbors, saved recall evaluation, and graph-lift telemetry share one native evidence loop.",
+      "summary": "Typed edges, bounded hot-corpus repair, explicit graph-neighbor holdouts, saved recall evaluation, and undiluted graph-lift telemetry share one native evidence loop.",
       "contracts": [],
       "artifacts": [
         "services/gateway-go/memory_edges.go",
         "services/gateway-go/memory_graph_telemetry.go",
         "services/gateway-go/memory_recall_eval_saved_native.go",
+        "services/gateway-go/memory_edge_backfill.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go",
         "scripts/agent/recall-quality-eval"
       ]
     },

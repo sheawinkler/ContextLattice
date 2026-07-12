@@ -47,6 +47,7 @@ def main() -> int:
     parser.add_argument("--write", action="store_true", help="Apply eligible high-confidence edges. Defaults to dry-run.")
     parser.add_argument("--min-confidence", type=float, default=0.95)
     parser.add_argument("--max-candidates", type=int, default=50000)
+    parser.add_argument("--max-writes", type=int, default=5000, help="Hard cap on new edges persisted in one write run.")
     parser.add_argument("--max-history-lines", type=int, default=20000)
     parser.add_argument("--topic-peer-limit", type=int, default=2)
     parser.add_argument("--include-inferred", action="store_true", help="Include bounded inferred_related scoring candidates.")
@@ -66,6 +67,7 @@ def main() -> int:
         "dry_run": not args.write,
         "min_confidence": args.min_confidence,
         "max_candidates": args.max_candidates,
+        "max_writes": args.max_writes,
         "max_history_lines": args.max_history_lines,
         "topic_peer_limit": args.topic_peer_limit,
         "include_low_confidence_audit": not args.skip_low_confidence_audit,

@@ -29,7 +29,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Temporal claims that preserve what was true, when it was true, what replaced it, what contradicts it, and the evidence behind each assertion.
 - Advisor-only retrieval planning plus proof-carrying synthesis that exposes support, opposition, uncertainty, missing proof, and causal context instead of laundering recall into certainty.
 - Outcome-trained policy candidates that must survive shadow and controlled canary gates one phase at a time before promotion can even be recommended.
-- Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports.
+- Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports with explicit, non-destructive draft retirement.
 - Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
 - Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
@@ -39,9 +39,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.14.0` is the current public portable-context baseline: signed Context Passports package bounded proof, objective state, lineage, capability requirements, expiry, deterministic diffs, and non-executing replay plans. Context Mesh encrypts those Passports to explicit project-scoped age X25519 recipients and preserves divergent imports as branches instead of overwriting them. ContextLattice performs no delivery network calls. The v3.13 outcome-trained policy and Skill Foundry, v3.12 cognition proof core, sparse-context preservation, async continuation, graph evidence, CLI-first integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory suite remain intact.
+`v3.15.0` is the current public graph-efficacy baseline: bounded identity-first repair reconnects durable memories without an unbounded write pass, explicit neighbor holdouts measure graph lift separately from direct recall, and graph targets must hydrate into token-budgeted evidence before they count. Skill Foundry drafts gain terminal, immutable, non-destructive retirement. Signed Context Passports, encrypted Context Mesh, the v3.13 learning core, v3.12 cognition proof core, sparse-context preservation, async continuation, CLI-first integration, Skills Index, native sessions, checkpoints, handoffs, and durable memory remain intact.
 
-## Public Runtime Stack (v3.14)
+## Public Runtime Stack (v3.15)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -67,8 +67,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.14.0 \
-  --statement "The current public release is 3.14.0." \
+  --object 3.15.0 \
+  --statement "The current public release is 3.15.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -85,6 +85,7 @@ contextlattice_policy_status --pretty
 contextlattice_skill_draft --payload-file workflow-runs.json --pretty
 contextlattice_skill_evaluate --draft-id <draft-id> --payload-file holdouts.json --pretty
 contextlattice_skill_export --draft-id <draft-id> --human-approved --approver <identity> --pretty
+contextlattice_skill_retire --draft-id <draft-id> --operator <identity> --reason "temporary proof completed" --pretty
 
 # Carry a signed evidence packet to another machine without carrying the machine with it.
 contextlattice_passport_export "prepare the release handoff" --project contextlattice --output passport.json --pretty
@@ -310,13 +311,14 @@ Optional constrained-disk guard: set `QDRANT_HOT_STORAGE_MAX_BYTES` to make laun
 - `POST /v1/memory/neighbors` returns explicit/inferred edge neighbors merged with semantic/topic neighbors.
 
 ```bash
-./scripts/agent/memory-edge-backfill
-./scripts/agent/memory-edge-backfill --include-inferred --min-confidence 0.90
-./scripts/agent/memory-edge-backfill --write
-./scripts/agent/memory-edge-inferred-retrofill --all-projects
-./scripts/agent/memory-edge-inferred-retrofill --all-projects --profile exploratory
-./scripts/agent/memory-edge-inferred-retrofill --all-projects --profile exploratory --write --confirm-retrofill ALL_PROJECTS
-./scripts/agent/memory-edge-inferred-retrofill --project hermes-agent-ultra --corpus disk --profile exploratory
+contextlattice_memory_graph_repair --project my-project --pretty
+contextlattice_memory_graph_repair --project my-project --write --confirm-project my-project --max-writes 500 --pretty
+contextlattice_memory_graph_efficacy --refresh-cases --project my-project --graph-max-cases 3 --pretty
+
+# Repo-local advanced fallback; inferred scoring is opt-in.
+./scripts/agent/memory-edge-backfill --project my-project --max-writes 500
+./scripts/agent/memory-edge-backfill --project my-project --include-inferred --min-confidence 0.90
+./scripts/agent/memory-edge-inferred-retrofill --project my-project --corpus disk --profile exploratory
 ```
 
 ## Source Backfill
@@ -388,9 +390,9 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.15.0.md` (bounded graph repair, explicit graph efficacy, hydrated neighbors, and durable Foundry retirement)
   - `docs/releases/v3.14.0.md` (signed Context Passport and encrypted Context Mesh)
   - `docs/releases/v3.13.0.md` (outcome-trained canary policy and Skill Foundry)
-  - `docs/releases/v3.14.0.md` (signed Context Passports and encrypted Context Mesh)
   - `docs/releases/v3.12.0.md` (Temporal Claim Graph, adaptive retrieval planning, and Proof-Carrying Synthesis v2)
   - `docs/releases/v3.11.2.md` (evidence-preserving sparse Context Packs and grounded deterministic synthesis)
   - `docs/releases/v3.11.1.md` (upgrade-safe runner discovery across long-lived agent environments)

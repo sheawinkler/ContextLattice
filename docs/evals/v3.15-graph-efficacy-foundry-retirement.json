@@ -1,0 +1,100 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "graph_efficacy_and_foundry_retirement",
+  "release_train": "v3.15",
+  "recorded_at": "2026-07-12T08:14:06Z",
+  "baseline": {
+    "graph_edge_count": 24237,
+    "hot_index_doc_count": 15098,
+    "connected_hot_docs": 2,
+    "saved_recall_cases": 7,
+    "saved_recall_recall_at_5": 1.0,
+    "saved_recall_mrr": 1.0,
+    "saved_recall_graph_expected_hits": 0,
+    "saved_recall_graph_lift": 0.0,
+    "recent_context_pack_graph_used": 0,
+    "recent_context_pack_samples": 20,
+    "foundry_drafts": 1,
+    "foundry_retirements": 0,
+    "finding": "Graph storage was active, but current hot-memory identities barely intersected persisted edges and the saved holdout could not measure graph contribution."
+  },
+  "implementation": {
+    "bounded_edge_writes": true,
+    "existing_edge_scan_progress": true,
+    "identity_first_order": [
+      "references",
+      "same_session",
+      "same_topic",
+      "inferred_related_opt_in"
+    ],
+    "explicit_graph_holdouts": true,
+    "graph_neighbor_content_hydration": true,
+    "direct_recall_gate_separate": true,
+    "direct_baseline_fetches_at_least_k": true,
+    "zero_expectation_cases_excluded_from_graph_denominator": true,
+    "foundry_retirement_terminal": true,
+    "foundry_retirement_deletes_evidence": false,
+    "foundry_retirement_runtime_mutation": false
+  },
+  "holdout": {
+    "case_kind": "graph_neighbor",
+    "direct_expectation_field": "expected_files",
+    "graph_expectation_field": "graph_expected_files",
+    "minimum_graph_cases": 1,
+    "pass_condition": "direct recall passes and explicit graph lift is positive with at least one added expected graph hit"
+  },
+  "economics": {
+    "llm_calls": 0,
+    "provider_tokens": 0,
+    "network_scope": "local_gateway_only",
+    "write_amplification_control": "max_writes_per_run",
+    "inferred_scoring_default": "off"
+  },
+  "latency": {
+    "baseline_saved_eval_p95_ms": 761.502,
+    "post_change_saved_eval_p95_ms": null,
+    "post_change_repair_duration_ms": null
+  },
+  "failures": [
+    {
+      "stage": "baseline",
+      "failure": "saved recall cases had zero graph expectations",
+      "resolution": "add explicit graph-neighbor holdouts and a separate graph denominator"
+    },
+    {
+      "stage": "baseline",
+      "failure": "candidate caps could be consumed before high-confidence session edges",
+      "resolution": "process explicit references and session identity before topic and opt-in inferred candidates"
+    },
+    {
+      "stage": "adversarial_review",
+      "failure": "graph holdouts initially forced a one-result direct baseline, which could manufacture apparent graph lift",
+      "resolution": "fetch at least the full evaluation K and count only graph targets absent from that direct top-K set"
+    },
+    {
+      "stage": "adversarial_review",
+      "failure": "a graph-free refresh could otherwise continue into saved evaluation",
+      "resolution": "require successful refresh plus at least one explicit graph holdout before evaluation"
+    }
+  ],
+  "reproduction": [
+    "contextlattice_memory_graph_repair --project <project> --pretty",
+    "contextlattice_memory_graph_repair --project <project> --write --confirm-project <project> --max-writes 500 --pretty",
+    "contextlattice_memory_graph_efficacy --refresh-cases --project <project> --graph-max-cases 3 --pretty",
+    "contextlattice_skill_retire --draft-id <draft-id> --operator <identity> --reason <reason> --pretty"
+  ],
+  "verification": {
+    "focused_go_tests": "passed",
+    "full_go_tests": "passed_after_adversarial_review",
+    "focused_go_race_tests": "passed",
+    "go_vet": "passed",
+    "contract_audit": "passed",
+    "rust_contract_tests": "passed",
+    "global_installer_smoke": "passed_64_checks",
+    "json_python_shell_static_checks": "passed",
+    "powershell_parse": "not_run_pwsh_unavailable",
+    "live_repair": "pending_merged_deployment",
+    "live_graph_efficacy": "pending_merged_deployment",
+    "live_foundry_retirement": "pending_merged_deployment"
+  }
+}

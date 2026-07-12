@@ -22,6 +22,7 @@ type memoryEdgeBackfillRequest struct {
 	IncludeEphemeral    bool
 	MinConfidence       float64
 	MaxCandidates       int
+	MaxWrites           int
 	MaxHistoryLines     int
 	TopicPeerLimit      int
 	SampleLimit         int
@@ -70,6 +71,7 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 		IncludeLowAudit:     true,
 		MinConfidence:       0.95,
 		MaxCandidates:       50000,
+		MaxWrites:           50000,
 		MaxHistoryLines:     policy.historyStartupMaxLines,
 		TopicPeerLimit:      2,
 		SampleLimit:         20,
@@ -110,6 +112,12 @@ func normalizeMemoryEdgeBackfillRequest(payload map[string]any, policy memorySto
 		req.MaxCandidates = anyToInt(payload["max_candidates"], req.MaxCandidates)
 	}
 	req.MaxCandidates = clampInt(req.MaxCandidates, 1, 200000)
+	if _, ok := payload["max_writes"]; ok {
+		req.MaxWrites = anyToInt(payload["max_writes"], req.MaxWrites)
+	} else {
+		req.MaxWrites = req.MaxCandidates
+	}
+	req.MaxWrites = clampInt(req.MaxWrites, 1, 200000)
 	if _, ok := payload["max_history_lines"]; ok {
 		req.MaxHistoryLines = anyToInt(payload["max_history_lines"], req.MaxHistoryLines)
 	}
@@ -373,12 +381,12 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 	for _, doc := range docs {
 		generator.knownIDs[strings.ToLower(doc.MemoryID)] = doc
 	}
-	generator.generateTopicEdges(ctx)
 	generator.generateReferenceEdges(ctx)
+	generator.generateHistorySequenceEdges(ctx, historyEntries, "same_session", 0.98)
+	generator.generateTopicEdges(ctx)
 	if req.IncludeInferred {
 		generator.generateInferredRelatedEdges(ctx)
 	}
-	generator.generateHistorySequenceEdges(ctx, historyEntries, "same_session", 0.98)
 	if req.IncludeLowAudit {
 		generator.generateHistorySequenceEdges(ctx, historyEntries, "same_agent", 0.82)
 	}
@@ -397,6 +405,8 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		totalExisting += stat.Existing
 		totalSkipped += stat.SkippedBelowConfidence
 	}
+	missingCandidates := maxInt(0, totalEligible-totalExisting)
+	remainingWrites := maxInt(0, missingCandidates-totalWritten)
 	return map[string]any{
 		"ok":                           len(generator.errorsList) == 0,
 		"dry_run":                      req.DryRun,
@@ -409,12 +419,15 @@ func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req m
 		"scanned_history_entries":      len(historyEntries),
 		"generated":                    totalGenerated,
 		"eligible":                     totalEligible,
-		"would_write":                  totalEligible - totalExisting,
+		"would_write":                  missingCandidates,
 		"written":                      totalWritten,
+		"remaining_writes":             remainingWrites,
 		"existing":                     totalExisting,
 		"skipped_below_confidence":     totalSkipped,
 		"truncated":                    generator.truncated,
 		"max_candidates":               req.MaxCandidates,
+		"max_writes":                   req.MaxWrites,
+		"write_limit_reached":          !req.DryRun && generator.writeLimitReached,
 		"min_confidence":               req.MinConfidence,
 		"topic_peer_limit":             req.TopicPeerLimit,
 		"include_cold":                 req.IncludeCold,
@@ -445,7 +458,9 @@ type memoryEdgeBackfillGenerator struct {
 	sampleRows             []map[string]any
 	seen                   map[string]struct{}
 	generated              int
+	written                int
 	truncated              bool
+	writeLimitReached      bool
 	skippedLowValueDocs    int
 	skippedLowValueHistory int
 	qualityTotal           int
@@ -526,11 +541,16 @@ func (g *memoryEdgeBackfillGenerator) add(ctx context.Context, candidate memoryE
 	if g.request.DryRun {
 		return
 	}
+	if g.written >= g.request.MaxWrites {
+		g.writeLimitReached = true
+		return
+	}
 	if _, err := g.store.upsertMemoryEdge(ctx, candidate.Edge); err != nil {
 		g.errorsList = append(g.errorsList, candidate.Edge.EdgeID+": "+err.Error())
 		return
 	}
 	stat.Written += 1
+	g.written += 1
 }
 
 func (g *memoryEdgeBackfillGenerator) recordQualityAudit(candidate memoryEdgeBackfillCandidate, quality map[string]any) {
@@ -565,7 +585,7 @@ func (g *memoryEdgeBackfillGenerator) qualityAudit() map[string]any {
 		"average_confidence":  roundFloat(avg, 4),
 		"min_confidence":      g.request.MinConfidence,
 		"audit_first":         g.request.DryRun,
-		"write_gate":          "confidence_and_existing_edge",
+		"write_gate":          "confidence_existing_edge_and_max_writes",
 		"recommendation":      "Use high-confidence same-topic/reference/session edges as retrieval context; treat inferred_related edges as supporting signals until sampled in recall evals.",
 	}
 }

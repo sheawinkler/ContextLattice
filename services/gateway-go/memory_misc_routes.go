@@ -492,7 +492,9 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 	minHits := clampInt(anyToInt(payload["min_hits"], 1), 1, 1000)
 	project := strings.TrimSpace(anyToString(payload["project"]))
 	topicPrefix := strings.TrimSpace(anyToString(payload["topic_prefix"]))
-	refreshed := s.buildRefreshedRecallEvalCaseSet(maxCases, minHits, project, topicPrefix)
+	includeGraphCases := anyToBool(payload["include_graph_cases"])
+	graphMaxCases := clampInt(anyToInt(payload["graph_max_cases"], 3), 0, 5)
+	refreshed := s.buildRefreshedRecallEvalCaseSetWithGraph(maxCases, minHits, project, topicPrefix, includeGraphCases, graphMaxCases)
 	path := resolveRecallEvalCasesPath()
 	raw, err := json.MarshalIndent(refreshed, "", "  ")
 	if err != nil {
@@ -524,13 +526,15 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 		"ok":              anyToBool(refreshedHealth["valid"]),
 		"case_set_health": refreshedHealth,
 		"savedCaseSet": map[string]any{
-			"path":           path,
-			"version":        refreshed["version"],
-			"updatedAt":      refreshed["updatedAt"],
-			"count":          len(casesAny),
-			"maxCases":       maxCases,
-			"minHits":        minHits,
-			"caseSetHealthy": anyToBool(refreshedHealth["valid"]),
+			"path":              path,
+			"version":           refreshed["version"],
+			"updatedAt":         refreshed["updatedAt"],
+			"count":             len(casesAny),
+			"maxCases":          maxCases,
+			"minHits":           minHits,
+			"graphCaseCount":    anyToInt(refreshed["graphCaseCount"], 0),
+			"graphCasesEnabled": includeGraphCases,
+			"caseSetHealthy":    anyToBool(refreshedHealth["valid"]),
 		},
 	}
 	if anyToBool(payload["run_evaluation"]) {
@@ -547,16 +551,24 @@ func (s *server) memoryRecallEvaluateSaved(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, project string, topicPrefix string) map[string]any {
+	return s.buildRefreshedRecallEvalCaseSetWithGraph(maxCases, minHits, project, topicPrefix, false, 0)
+}
+
+func (s *server) buildRefreshedRecallEvalCaseSetWithGraph(maxCases int, minHits int, project string, topicPrefix string, includeGraph bool, graphMaxCases int) map[string]any {
 	maxCases = clampInt(maxCases, 1, 20)
+	graphMaxCases = clampInt(graphMaxCases, 0, minInt(5, maxInt(0, maxCases-1)))
 	if minHits < 1 {
 		minHits = 1
 	}
 	project = strings.TrimSpace(project)
 	topicPrefix = recallEvalNormalizeTopicPath(topicPrefix)
 	cases := make([]map[string]any, 0, maxCases)
+	graphCases := make([]map[string]any, 0, graphMaxCases)
+	var candidateDocs []memoryStoreDoc
 	if s.memoryStore != nil && s.memoryStore.policy.enabled {
 		docs, err := s.memoryStore.collectDocs(context.Background(), project)
 		if err == nil {
+			candidateDocs = docs
 			cases = recallEvalCasesFromDocs(docs, maxCases, minHits, project, topicPrefix)
 		}
 		if len(cases) == 0 {
@@ -613,8 +625,22 @@ func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, proj
 			cases = cases[:maxCases]
 		}
 	}
+	if includeGraph && graphMaxCases > 0 && len(candidateDocs) > 0 && len(cases) > 0 {
+		graphCases = s.recallEvalGraphCasesFromDocs(context.Background(), candidateDocs, cases, graphMaxCases)
+		if len(graphCases) > 0 {
+			directLimit := maxInt(1, maxCases-len(graphCases))
+			if len(cases) > directLimit {
+				cases = cases[:directLimit]
+			}
+			cases = append(cases, graphCases...)
+		}
+	}
+	version := 1
+	if includeGraph {
+		version = 2
+	}
 	return map[string]any{
-		"version":   1,
+		"version":   version,
 		"updatedAt": nowUTCISO(),
 		"k":         defaultRecallEvalK,
 		"gate": map[string]any{
@@ -622,7 +648,9 @@ func (s *server) buildRefreshedRecallEvalCaseSet(maxCases int, minHits int, proj
 			"minMrr":              defaultRecallEvalGateMinMRR,
 			"minNumericExactness": defaultRecallEvalGateMinNumeric,
 		},
-		"cases": cases,
+		"cases":             cases,
+		"graphCaseCount":    len(graphCases),
+		"graphCasesEnabled": includeGraph,
 	}
 }
 
@@ -700,6 +728,75 @@ func recallEvalCasesFromDocs(docs []memoryStoreDoc, maxCases int, minHits int, p
 		}
 	}
 	return cases
+}
+
+func (s *server) recallEvalGraphCasesFromDocs(ctx context.Context, docs []memoryStoreDoc, directCases []map[string]any, maxCases int) []map[string]any {
+	if s == nil || s.memoryStore == nil || maxCases < 1 {
+		return []map[string]any{}
+	}
+	docsByID := make(map[string]memoryStoreDoc, len(docs))
+	for _, doc := range docs {
+		_, _, memoryID, _, err := canonicalMemoryID(doc.Project + "::" + doc.FileName)
+		if err == nil {
+			docsByID[strings.ToLower(memoryID)] = doc
+		}
+	}
+	allowedRelations := map[string]struct{}{"references": {}, "same_session": {}, "same_topic": {}}
+	seenEdges := map[string]struct{}{}
+	graphCases := make([]map[string]any, 0, maxCases)
+	for _, direct := range directCases {
+		project := strings.TrimSpace(anyToString(direct["project"]))
+		expectedFiles := sortedKeys(normalizeExpectedFileTokens(direct["expected_files"]))
+		if project == "" || len(expectedFiles) != 1 {
+			continue
+		}
+		_, _, seedID, _, err := canonicalMemoryID(project + "::" + expectedFiles[0])
+		if err != nil {
+			continue
+		}
+		edges, err := s.memoryStore.listMemoryEdges(ctx, memoryEdgeQuery{MemoryID: seedID, Project: project, Limit: 100})
+		if err != nil {
+			continue
+		}
+		for _, edge := range edges {
+			if edge.Confidence < 0.95 {
+				continue
+			}
+			if _, allowed := allowedRelations[edge.Relation]; !allowed {
+				continue
+			}
+			candidateID := edge.TargetID
+			if strings.EqualFold(candidateID, seedID) {
+				candidateID = edge.SourceID
+			}
+			_, _, canonicalCandidate, _, err := canonicalMemoryID(candidateID)
+			if err != nil || strings.EqualFold(canonicalCandidate, seedID) {
+				continue
+			}
+			target, exists := docsByID[strings.ToLower(canonicalCandidate)]
+			if !exists || strings.TrimSpace(target.FileName) == "" {
+				continue
+			}
+			if _, duplicate := seenEdges[edge.EdgeID]; duplicate {
+				continue
+			}
+			seenEdges[edge.EdgeID] = struct{}{}
+			graphCase := cloneMap(direct)
+			graphCase["id"] = "graph-" + sha256Hex(seedID + "\x00" + edge.EdgeID)[:20]
+			graphCase["case_kind"] = "graph_neighbor"
+			graphCase["graph_seed_memory_id"] = seedID
+			graphCase["graph_target_memory_id"] = canonicalCandidate
+			graphCase["graph_expected_files"] = []string{target.FileName}
+			graphCase["graph_expected_relations"] = []string{edge.Relation}
+			graphCase["graph_min_confidence"] = 0.95
+			graphCases = append(graphCases, graphCase)
+			break
+		}
+		if len(graphCases) >= maxCases {
+			break
+		}
+	}
+	return graphCases
 }
 
 func recallEvalSummarySnippets(row map[string]any) []string {

@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 20
+const GeneratedAgentContractRegistryVersion = 21
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -49,6 +49,7 @@ const GeneratedAgentContractRunnerResultV1 = "runner_result.v1"
 const GeneratedAgentContractSkillDraftV1 = "skill_draft.v1"
 const GeneratedAgentContractSkillEvaluationV1 = "skill_evaluation.v1"
 const GeneratedAgentContractSkillExportV1 = "skill_export.v1"
+const GeneratedAgentContractSkillRetirementV1 = "skill_retirement.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
 const GeneratedAgentContractSynthesisPackV1 = "synthesis_pack.v1"
 const GeneratedAgentContractSynthesisPackV2 = "synthesis_pack.v2"
@@ -95,6 +96,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractSkillDraftV1,
 	GeneratedAgentContractSkillEvaluationV1,
 	GeneratedAgentContractSkillExportV1,
+	GeneratedAgentContractSkillRetirementV1,
 	GeneratedAgentContractSteeringCommentV1,
 	GeneratedAgentContractSynthesisPackV1,
 	GeneratedAgentContractSynthesisPackV2,
@@ -324,6 +326,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractSkillExportV1,
 		PayloadKind:        "human_approved_inactive_skill_export",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractSkillRetirementV1,
+		PayloadKind:        "explicit_inactive_skill_draft_retirement",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

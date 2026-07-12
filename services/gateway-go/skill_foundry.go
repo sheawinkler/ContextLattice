@@ -19,12 +19,13 @@ const (
 	skillDraftContractID       = "skill_draft.v1"
 	skillEvaluationContractID  = "skill_evaluation.v1"
 	skillExportContractID      = "skill_export.v1"
+	skillRetirementContractID  = "skill_retirement.v1"
 	skillFoundryStatusSchemaID = "skill_foundry_status.v1"
 )
 
 var skillFoundryNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,63}$`)
 
-var skillFoundryStatusRank = map[string]int{"draft": 0, "evaluated": 1, "exported": 2}
+var skillFoundryStatusRank = map[string]int{"draft": 0, "evaluated": 1, "exported": 2, "retired": 3}
 
 type skillFoundryStore struct {
 	mu              sync.RWMutex
@@ -37,6 +38,7 @@ type skillFoundryStore struct {
 	drafts          map[string]map[string]any
 	evaluations     []map[string]any
 	exports         []map[string]any
+	retirements     []map[string]any
 	logEntries      int
 	parseErrors     int
 	compactionCount int
@@ -54,6 +56,7 @@ func newSkillFoundryStoreFromEnv() (*skillFoundryStore, error) {
 		drafts:      map[string]map[string]any{},
 		evaluations: make([]map[string]any, 0, 100),
 		exports:     make([]map[string]any, 0, 100),
+		retirements: make([]map[string]any, 0, 100),
 	}
 	if !store.enabled || strings.TrimSpace(store.path) == "" {
 		store.enabled = false
@@ -95,19 +98,49 @@ func (s *skillFoundryStore) load() error {
 			s.evaluations = append(s.evaluations, cloneMap(row))
 		case skillExportContractID:
 			s.exports = append(s.exports, cloneMap(row))
+		case skillRetirementContractID:
+			s.retirements = append(s.retirements, cloneMap(row))
 		}
 		s.logEntries++
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan skill foundry ledger: %w", err)
 	}
+	s.reconcileRetirementsLocked()
 	s.trimLocked()
 	return nil
+}
+
+// A retirement row is written before its terminal draft snapshot. Reconcile it
+// on load so a process interruption between those rows cannot revive a draft.
+func (s *skillFoundryStore) reconcileRetirementsLocked() {
+	for _, retirement := range s.retirements {
+		draftID := anyToString(retirement["draft_id"])
+		draft := s.drafts[draftID]
+		if len(draft) == 0 || anyToString(retirement["draft_fingerprint"]) != anyToString(draft["draft_fingerprint"]) {
+			continue
+		}
+		retiredAt := anyToString(retirement["retired_at"])
+		draft["status"] = "retired"
+		draft["updated_at"] = retiredAt
+		draft["activation"] = map[string]any{
+			"state": "inactive", "automatic": false,
+			"reason": "Retired drafts cannot be exported or activated.",
+		}
+		draft["retirement"] = map[string]any{
+			"state": "retired", "automatic": false,
+			"retirement_id": retirement["retirement_id"], "reason": retirement["reason"],
+			"operator": retirement["operator"], "retired_at": retiredAt,
+			"deletion_performed": false,
+		}
+		s.drafts[draftID] = draft
+	}
 }
 
 func (s *skillFoundryStore) trimLocked() {
 	s.evaluations = retainLatestGroupedRows(s.evaluations, "draft_id", s.maxEntries)
 	s.exports = retainLatestGroupedRows(s.exports, "draft_id", s.maxEntries)
+	s.retirements = retainLatestGroupedRows(s.retirements, "draft_id", s.maxEntries)
 	if len(s.drafts) <= s.maxEntries {
 		return
 	}
@@ -145,6 +178,20 @@ func (s *skillFoundryStore) latestEvaluation(draftID string) map[string]any {
 	return nil
 }
 
+func (s *skillFoundryStore) latestRetirement(draftID string) map[string]any {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := len(s.retirements) - 1; i >= 0; i-- {
+		if anyToString(s.retirements[i]["draft_id"]) == draftID {
+			return cloneMap(s.retirements[i])
+		}
+	}
+	return nil
+}
+
 func (s *skillFoundryStore) record(rows ...map[string]any) error {
 	if s == nil || !s.enabled {
 		return errors.New("skill foundry store disabled")
@@ -161,6 +208,11 @@ func (s *skillFoundryStore) record(rows ...map[string]any) error {
 					if approval := anyMap(existing["approval"]); len(approval) > 0 {
 						merged["approval"] = cloneMap(approval)
 					}
+					if anyToString(existing["status"]) == "retired" {
+						merged["updated_at"] = existing["updated_at"]
+						merged["retirement"] = cloneMap(anyMap(existing["retirement"]))
+						merged["activation"] = cloneMap(anyMap(existing["activation"]))
+					}
 				}
 				s.drafts[id] = cloneMap(merged)
 				rows[index] = merged
@@ -170,6 +222,8 @@ func (s *skillFoundryStore) record(rows ...map[string]any) error {
 			s.evaluations = append(s.evaluations, cloneMap(row))
 		case skillExportContractID:
 			s.exports = append(s.exports, cloneMap(row))
+		case skillRetirementContractID:
+			s.retirements = append(s.retirements, cloneMap(row))
 		}
 	}
 	s.trimLocked()
@@ -236,9 +290,11 @@ func (s *skillFoundryStore) compactLockedIO() error {
 	}
 	evaluations := append([]map[string]any{}, s.evaluations...)
 	exports := append([]map[string]any{}, s.exports...)
+	retirements := append([]map[string]any{}, s.retirements...)
 	s.mu.RUnlock()
 	sort.Slice(drafts, func(i, j int) bool { return anyToString(drafts[i]["draft_id"]) < anyToString(drafts[j]["draft_id"]) })
 	history := append(evaluations, exports...)
+	history = append(history, retirements...)
 	rows := append(drafts, history...)
 	tmp := s.path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
@@ -310,7 +366,7 @@ func (s *skillFoundryStore) snapshot() map[string]any {
 	return map[string]any{
 		"schema_id": skillFoundryStatusSchemaID, "version": 1, "enabled": s.enabled,
 		"activation_state": "inactive", "automatic_activation": false,
-		"draft_count": len(s.drafts), "evaluation_count": len(s.evaluations), "export_count": len(s.exports),
+		"draft_count": len(s.drafts), "evaluation_count": len(s.evaluations), "export_count": len(s.exports), "retirement_count": len(s.retirements),
 		"status_counts": statusCounts, "drafts": items,
 		"storage":    map[string]any{"enabled": s.enabled, "max_bytes": s.maxBytes, "max_entries": s.maxEntries, "log_entries": s.logEntries, "parse_errors": s.parseErrors, "compaction_count": s.compactionCount, "last_persisted_at": s.lastPersistedAt, "last_error": s.lastError},
 		"updated_at": nowUTCISO(),
@@ -449,6 +505,11 @@ func (s *server) buildSkillDraft(payload map[string]any) (map[string]any, error)
 		if approval := anyMap(existing["approval"]); len(approval) > 0 {
 			draft["approval"] = cloneMap(approval)
 		}
+		if anyToString(existing["status"]) == "retired" {
+			draft["updated_at"] = existing["updated_at"]
+			draft["retirement"] = cloneMap(anyMap(existing["retirement"]))
+			draft["activation"] = cloneMap(anyMap(existing["activation"]))
+		}
 	}
 	return draft, nil
 }
@@ -504,6 +565,9 @@ func (s *server) evaluateSkillDraft(payload map[string]any) (map[string]any, map
 	}
 	if anyToString(draft["status"]) == "exported" {
 		return nil, draft, errors.New("exported drafts are immutable; create a new version for further evaluation")
+	}
+	if anyToString(draft["status"]) == "retired" {
+		return nil, draft, errors.New("retired drafts are terminal and cannot be evaluated")
 	}
 	training := map[string]struct{}{}
 	for _, raw := range contextPackAnyList(draft["training_run_ids"]) {
@@ -575,6 +639,9 @@ func (s *server) exportSkillDraft(payload map[string]any) (map[string]any, map[s
 	if len(draft) == 0 {
 		return nil, nil, errors.New("draft not found")
 	}
+	if anyToString(draft["status"]) == "retired" {
+		return nil, draft, errors.New("retired drafts are terminal and cannot be exported")
+	}
 	evaluation := s.skillFoundry.latestEvaluation(draftID)
 	if !anyToBool(evaluation["passed"]) {
 		return nil, draft, errors.New("a passing independent holdout evaluation is required")
@@ -611,6 +678,51 @@ func (s *server) exportSkillDraft(payload map[string]any) (map[string]any, map[s
 		"installation_note": "Review and install this exported artifact through the normal Skills Index workflow.",
 	}
 	return export, draft, nil
+}
+
+func (s *server) retireSkillDraft(payload map[string]any) (map[string]any, map[string]any, bool, error) {
+	draftID := strings.TrimSpace(anyToString(payload["draft_id"]))
+	if draftID == "" {
+		return nil, nil, false, errors.New("draft_id is required")
+	}
+	draft := s.skillFoundry.draft(draftID)
+	if len(draft) == 0 {
+		return nil, nil, false, errors.New("draft not found")
+	}
+	reason := clipText(strings.TrimSpace(anyToString(payload["reason"])), 500)
+	if reason == "" {
+		return nil, draft, false, errors.New("reason is required")
+	}
+	operator := clipText(strings.TrimSpace(anyToString(payload["operator"])), 160)
+	if operator == "" {
+		return nil, draft, false, errors.New("operator is required")
+	}
+	if strings.EqualFold(anyToString(anyMap(draft["activation"])["state"]), "active") {
+		return nil, draft, false, errors.New("active skills must be deactivated before their Foundry draft can be retired")
+	}
+	if existing := s.skillFoundry.latestRetirement(draftID); len(existing) > 0 {
+		if anyToString(existing["reason"]) != reason || anyToString(existing["operator"]) != operator {
+			return nil, draft, false, errors.New("draft is already retired with immutable reason and operator evidence")
+		}
+		return existing, draft, false, nil
+	}
+	now := nowUTCISO()
+	retirementID := "skillretire_" + sha256Hex(draftID + "\x00" + anyToString(draft["draft_fingerprint"]) + "\x00" + operator + "\x00" + reason)[:24]
+	retirement := map[string]any{
+		"schema_id": skillRetirementContractID, "version": 1,
+		"retirement_id": retirementID, "draft_id": draftID, "draft_fingerprint": draft["draft_fingerprint"],
+		"project": draft["project"], "name": draft["name"], "status": "retired", "reason": reason,
+		"operator": operator, "retired_at": now, "automatic": false, "deletion_performed": false,
+		"runtime_mutation": false, "activation_state": "inactive",
+	}
+	draft["status"] = "retired"
+	draft["updated_at"] = now
+	draft["activation"] = map[string]any{"state": "inactive", "automatic": false, "reason": "Retired drafts cannot be exported or activated."}
+	draft["retirement"] = map[string]any{
+		"state": "retired", "automatic": false, "retirement_id": retirementID,
+		"reason": reason, "operator": operator, "retired_at": now, "deletion_performed": false,
+	}
+	return retirement, draft, true, nil
 }
 
 func foundryCollisionSuperseded(collision map[string]any, supersedes string) bool {
@@ -652,6 +764,8 @@ func (s *server) handleSkillFoundryDraft(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	s.skillLifecycleMu.Lock()
+	defer s.skillLifecycleMu.Unlock()
 	draft, err := s.buildSkillDraft(payload)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "skill_draft_failed", "detail": err.Error()})
@@ -694,6 +808,8 @@ func (s *server) handleSkillFoundryEvaluate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	s.skillLifecycleMu.Lock()
+	defer s.skillLifecycleMu.Unlock()
 	evaluation, draft, err := s.evaluateSkillDraft(payload)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "skill_evaluation_failed", "detail": err.Error()})
@@ -720,6 +836,36 @@ func (s *server) memorySkillFoundryExport(w http.ResponseWriter, r *http.Request
 	}
 	s.handleSkillFoundryExport(w, r, false)
 }
+
+func (s *server) memorySkillFoundryRetire(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
+		return
+	}
+	payload, err := readOptionalJSONBody(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	s.skillLifecycleMu.Lock()
+	defer s.skillLifecycleMu.Unlock()
+	retirement, draft, created, err := s.retireSkillDraft(payload)
+	if err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "skill_retirement_failed", "detail": err.Error()})
+		return
+	}
+	if created {
+		if err := s.skillFoundry.record(retirement, draft); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "skill_retirement_persist_failed", "detail": err.Error()})
+			return
+		}
+	}
+	response := map[string]any{"ok": true, "schema_id": skillRetirementContractID, "retirement": retirement, "draft": draft, "recorded": created, "idempotent": !created}
+	writeJSON(w, http.StatusOK, attachPayloadFormatContract(skillRetirementContractID, response, anyToString(payload["agent_id"]), "skill_retirement", r.URL.Path))
+}
 func (s *server) toolsSkillFoundryExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -736,6 +882,8 @@ func (s *server) handleSkillFoundryExport(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	s.skillLifecycleMu.Lock()
+	defer s.skillLifecycleMu.Unlock()
 	exported, draft, err := s.exportSkillDraft(payload)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "skill_export_failed", "detail": err.Error()})

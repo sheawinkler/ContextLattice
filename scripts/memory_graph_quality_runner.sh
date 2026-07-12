@@ -15,7 +15,8 @@ args+=(--profile "${CONTEXTLATTICE_GRAPH_QUALITY_PROFILE:-balanced}")
 args+=(--corpus "${CONTEXTLATTICE_GRAPH_QUALITY_CORPUS:-auto}")
 args+=(--max-projects "${CONTEXTLATTICE_GRAPH_QUALITY_MAX_PROJECTS:-12}")
 args+=(--max-write-edges "${CONTEXTLATTICE_GRAPH_QUALITY_MAX_WRITE_EDGES:-500}")
-args+=(--max-candidates "${CONTEXTLATTICE_GRAPH_QUALITY_MAX_CANDIDATES:-20000}")
+args+=(--max-candidates "${CONTEXTLATTICE_GRAPH_QUALITY_MAX_CANDIDATES:-50000}")
+args+=(--max-history-lines "${CONTEXTLATTICE_GRAPH_QUALITY_MAX_HISTORY_LINES:-20000}")
 args+=(--inferred-scan-limit "${CONTEXTLATTICE_GRAPH_QUALITY_INFERRED_SCAN_LIMIT:-5000}")
 args+=(--stale-inferred-days "${CONTEXTLATTICE_GRAPH_QUALITY_STALE_INFERRED_DAYS:-30}")
 args+=(--timeout "${CONTEXTLATTICE_GRAPH_QUALITY_TIMEOUT_SECS:-180}")
@@ -23,6 +24,9 @@ args+=(--pretty)
 
 if [[ "${CONTEXTLATTICE_GRAPH_QUALITY_ALLOW_DISK:-0}" == "1" ]]; then
   args+=(--allow-disk)
+fi
+if [[ "${CONTEXTLATTICE_GRAPH_QUALITY_INCLUDE_INFERRED:-0}" == "1" ]]; then
+  args+=(--include-inferred)
 fi
 if [[ "${CONTEXTLATTICE_GRAPH_QUALITY_WRITE:-0}" == "1" ]]; then
   args+=(--write)

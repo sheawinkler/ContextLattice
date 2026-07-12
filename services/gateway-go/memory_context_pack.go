@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (s *server) memoryContextPack(w http.ResponseWriter, r *http.Request) {
@@ -371,6 +372,7 @@ func (s *server) enrichContextPackWithGraph(
 	graphRows := []any{}
 	seeds := 0
 	candidates := 0
+	hydrationFailures := 0
 	for _, raw := range results {
 		if seeds >= seedLimit || len(graphRows) >= totalLimit {
 			break
@@ -404,6 +406,11 @@ func (s *server) enrichContextPackWithGraph(
 			if len(rendered) == 0 {
 				continue
 			}
+			rendered = s.hydrateContextPackGraphNeighbor(rendered)
+			if !anyToBool(rendered["hydrated"]) {
+				hydrationFailures++
+				continue
+			}
 			key := strings.ToLower(strings.Join([]string{
 				anyToString(rendered["memory_id"]),
 				anyToString(rendered["relation"]),
@@ -426,6 +433,7 @@ func (s *server) enrichContextPackWithGraph(
 	signals["seed_count"] = seeds
 	signals["candidate_count"] = candidates
 	signals["added_evidence_count"] = len(graphRows)
+	signals["hydration_failure_count"] = hydrationFailures
 	relationSignals := map[string]any{}
 	for relation, count := range relationCounts {
 		relationSignals[relation] = count
@@ -435,8 +443,8 @@ func (s *server) enrichContextPackWithGraph(
 	if len(graphRows) == 0 {
 		quality["status"] = "empty"
 		quality["score"] = 35
-		quality["skipped_reason"] = "no first-hop graph neighbors for ranked seed memories"
-		quality["recommendation"] = "Run memory-edge-backfill or disk-corpus inferred retrofill for older projects when graph recall should help."
+		quality["skipped_reason"] = "no hydrated first-hop graph neighbors for ranked seed memories"
+		quality["recommendation"] = "Run bounded graph repair and verify that every edge target still resolves to durable memory."
 		contextPack["graph_neighbors"] = []any{}
 		contextPack["graphNeighbors"] = []any{}
 		contextPack["graph_context"] = quality
@@ -456,6 +464,42 @@ func (s *server) enrichContextPackWithGraph(
 	contextPack["graph_context"] = quality
 	contextPack["graphContext"] = quality
 	return quality
+}
+
+func (s *server) hydrateContextPackGraphNeighbor(row map[string]any) map[string]any {
+	out := cloneMap(row)
+	out["hydrated"] = false
+	out["hydration_status"] = "unavailable"
+	if s == nil || s.memoryStore == nil {
+		return out
+	}
+	project := strings.TrimSpace(anyToString(out["project"]))
+	fileName := strings.TrimSpace(anyToString(out["file"]))
+	if project == "" || fileName == "" {
+		return out
+	}
+	content, info, err := s.memoryStore.readFile(project, fileName)
+	if err != nil {
+		out["hydration_status"] = "missing"
+		return out
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		out["hydration_status"] = "empty"
+		return out
+	}
+	excerpt := clipText(trimmed, 1200)
+	out["edge_summary"] = out["summary"]
+	out["summary"] = excerpt
+	out["content_excerpt"] = excerpt
+	out["content_ref"] = "sha256:" + sha256Hex(content)
+	out["content_truncated"] = len(excerpt) < len(trimmed)
+	out["hydrated"] = true
+	out["hydration_status"] = "hydrated"
+	if info != nil {
+		out["updated_at"] = info.ModTime().UTC().Format(time.RFC3339Nano)
+	}
+	return out
 }
 
 func contextPackGraphMemoryID(row map[string]any) string {

@@ -293,6 +293,7 @@ func TestOutcomePolicyAndSkillFoundryCommandsUseNativeEndpoints(t *testing.T) {
 		{"skill-draft", []string{"contextlattice_skill_draft", "--payload-file", payloadPath, "--name", "bounded-proof", "--description", "Bounded proof", "--raw"}, "/memory/skills/foundry/draft"},
 		{"skill-evaluate", []string{"contextlattice_skill_evaluate", "--draft-id", "skilldraft_test", "--payload-file", payloadPath, "--raw"}, "/memory/skills/foundry/evaluate"},
 		{"skill-export", []string{"contextlattice_skill_export", "--draft-id", "skilldraft_test", "--human-approved", "--approver", "owner", "--raw"}, "/memory/skills/foundry/export"},
+		{"skill-retire", []string{"contextlattice_skill_retire", "--draft-id", "skilldraft_test", "--operator", "owner", "--reason", "smoke complete", "--raw"}, "/memory/skills/foundry/retire"},
 		{"policy-status", []string{"contextlattice_policy_status", "--raw"}, "/telemetry/context-policy"},
 		{"foundry-status", []string{"contextlattice_skill_foundry_status", "--raw"}, "/telemetry/skills/foundry"},
 	}
@@ -314,6 +315,78 @@ func TestOutcomePolicyAndSkillFoundryCommandsUseNativeEndpoints(t *testing.T) {
 	}
 	if !asBool(captured["/memory/skills/foundry/export"]["human_approved"]) {
 		t.Fatalf("expected explicit human approval: %#v", captured["/memory/skills/foundry/export"])
+	}
+}
+
+func TestMemoryGraphRepairAndEfficacyCommandsUseBoundedNativeEndpoints(t *testing.T) {
+	captured := map[string][]map[string]any{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		payload := map[string]any{}
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode %s: %v", r.URL.Path, err)
+			}
+		}
+		captured[r.URL.Path] = append(captured[r.URL.Path], payload)
+		switch r.URL.Path {
+		case "/memory/recall/eval-cases/refresh":
+			graphCaseCount := 2
+			if firstString(payload["project"]) == "empty-graph" {
+				graphCaseCount = 0
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "savedCaseSet": map[string]any{"graphCaseCount": graphCaseCount},
+			})
+		case "/memory/recall/evaluate/saved":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "passed": true,
+				"metrics": map[string]any{"directPassed": true, "graphEfficacyStatus": "passed", "graphContribution": map[string]any{"status": "passed"}},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		}
+	}))
+	defer gateway.Close()
+
+	for _, args := range [][]string{
+		{"contextlattice_memory_graph_repair", "--project", "alpha", "--max-writes", "25", "--raw"},
+		{"contextlattice_memory_graph_efficacy", "--refresh-cases", "--project", "alpha", "--graph-max-cases", "2", "--raw"},
+	} {
+		var stdout bytes.Buffer
+		c := newCLI(&stdout, ioDiscard{})
+		c.baseURL = gateway.URL
+		if err := c.run(args); err != nil {
+			t.Fatalf("run %s: %v output=%s", args[0], err, stdout.String())
+		}
+	}
+	repair := captured["/v1/memory/edges/backfill"][0]
+	if !asBool(repair["dry_run"]) || asInt(repair["max_writes"]) != 25 || asBool(repair["include_inferred"]) {
+		t.Fatalf("expected dry-run identity-first repair payload: %#v", repair)
+	}
+	refresh := captured["/memory/recall/eval-cases/refresh"][0]
+	if !asBool(refresh["include_graph_cases"]) || asInt(refresh["graph_max_cases"]) != 2 {
+		t.Fatalf("expected graph-aware refresh payload: %#v", refresh)
+	}
+	if len(captured["/memory/recall/evaluate/saved"]) != 1 {
+		t.Fatalf("expected one saved evaluation request: %#v", captured)
+	}
+
+	var failedStdout bytes.Buffer
+	failedCLI := newCLI(&failedStdout, ioDiscard{})
+	failedCLI.baseURL = gateway.URL
+	if err := failedCLI.run([]string{"contextlattice_memory_graph_efficacy", "--refresh-cases", "--project", "empty-graph", "--raw"}); err == nil || !strings.Contains(err.Error(), "no graph holdouts") {
+		t.Fatalf("graph-free refresh must fail before evaluation, got err=%v output=%s", err, failedStdout.String())
+	}
+	if len(captured["/memory/recall/evaluate/saved"]) != 1 {
+		t.Fatalf("failed refresh must not evaluate stale cases: %#v", captured)
+	}
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_memory_graph_repair", "--project", "alpha", "--write", "--raw"}); err == nil || !strings.Contains(err.Error(), "confirm-project") {
+		t.Fatalf("write mode must require exact project confirmation, got %v", err)
 	}
 }
 

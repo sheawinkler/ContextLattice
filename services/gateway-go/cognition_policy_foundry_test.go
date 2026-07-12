@@ -333,6 +333,126 @@ func TestSkillFoundryRequiresIndependentHoldoutsAndHumanApproval(t *testing.T) {
 	}
 }
 
+func TestSkillFoundryRetirementIsTerminalIdempotentAndDurable(t *testing.T) {
+	ledger := filepath.Join(t.TempDir(), "foundry.ndjson")
+	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "true")
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", ledger)
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", "false")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", t.TempDir())
+	s := newTestServer(t, "http://127.0.0.1:1")
+	draftInput := map[string]any{
+		"project": "contextlattice", "name": "retire-smoke-proof", "description": "Temporary Foundry smoke proof.",
+		"workflow_runs": foundryRuns("retire-train-", 3),
+	}
+	draft, err := s.buildSkillDraft(draftInput)
+	if err != nil {
+		t.Fatalf("build draft: %v", err)
+	}
+	if err := s.skillFoundry.record(draft); err != nil {
+		t.Fatalf("record draft: %v", err)
+	}
+	gateway := httptest.NewServer(buildMux(s))
+	defer gateway.Close()
+	body := `{"draft_id":"` + anyToString(draft["draft_id"]) + `","operator":"release-owner","reason":"smoke artifact completed its purpose"}`
+	first := postJSONForTest(t, gateway.URL+"/memory/skills/foundry/retire", body)
+	assertBoundaryContractPassed(t, skillRetirementContractID, first)
+	retirement := anyMap(first["retirement"])
+	if anyToString(retirement["status"]) != "retired" || anyToBool(retirement["deletion_performed"]) || anyToBool(retirement["runtime_mutation"]) {
+		t.Fatalf("retirement must be terminal and non-destructive: %#v", first)
+	}
+	if anyToString(anyMap(first["draft"])["status"]) != "retired" || !anyToBool(first["recorded"]) {
+		t.Fatalf("expected first retirement to persist: %#v", first)
+	}
+	second := postJSONForTest(t, gateway.URL+"/memory/skills/foundry/retire", body)
+	if !anyToBool(second["idempotent"]) || anyToBool(second["recorded"]) || anyToString(anyMap(second["retirement"])["retirement_id"]) != anyToString(retirement["retirement_id"]) {
+		t.Fatalf("repeat retirement must be idempotent: %#v", second)
+	}
+	if _, _, err := s.evaluateSkillDraft(map[string]any{"draft_id": draft["draft_id"], "holdouts": foundryRuns("retire-holdout-", 3)}); err == nil || !strings.Contains(err.Error(), "terminal") {
+		t.Fatalf("retired draft must reject evaluation, got %v", err)
+	}
+	replayed, err := s.buildSkillDraft(draftInput)
+	if err != nil {
+		t.Fatalf("rebuild retired draft: %v", err)
+	}
+	if anyToString(replayed["status"]) != "retired" || anyToString(anyMap(replayed["retirement"])["retirement_id"]) != anyToString(retirement["retirement_id"]) {
+		t.Fatalf("identical draft replay must preserve terminal retirement evidence: %#v", replayed)
+	}
+	reloaded, err := newSkillFoundryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("reload foundry: %v", err)
+	}
+	if anyToString(reloaded.draft(anyToString(draft["draft_id"]))["status"]) != "retired" || len(reloaded.latestRetirement(anyToString(draft["draft_id"]))) == 0 {
+		t.Fatalf("retirement must survive reload: %#v", reloaded.snapshot())
+	}
+}
+
+func TestSkillFoundryRetirementRecoversPartialLedgerAppend(t *testing.T) {
+	ledger := filepath.Join(t.TempDir(), "foundry.ndjson")
+	t.Setenv("CONTEXTLATTICE_CONTEXT_POLICY_ENABLED", "false")
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "true")
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", ledger)
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", "false")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", t.TempDir())
+	s := newTestServer(t, "http://127.0.0.1:1")
+	draft, err := s.buildSkillDraft(map[string]any{
+		"project": "contextlattice", "name": "partial-retirement-proof", "description": "Retirement recovery proof.",
+		"workflow_runs": foundryRuns("partial-retire-", 3),
+	})
+	if err != nil {
+		t.Fatalf("build draft: %v", err)
+	}
+	if err := s.skillFoundry.record(draft); err != nil {
+		t.Fatalf("record draft: %v", err)
+	}
+	retirement, _, created, err := s.retireSkillDraft(map[string]any{
+		"draft_id": draft["draft_id"], "operator": "release-owner", "reason": "simulate interrupted append",
+	})
+	if err != nil || !created {
+		t.Fatalf("build retirement: created=%v err=%v", created, err)
+	}
+	draftLine, _ := json.Marshal(draft)
+	retirementLine, _ := json.Marshal(retirement)
+	partial := append(append(append([]byte{}, draftLine...), '\n'), retirementLine...)
+	partial = append(partial, '\n')
+	if err := os.WriteFile(ledger, partial, 0o600); err != nil {
+		t.Fatalf("write partial ledger: %v", err)
+	}
+	reloaded, err := newSkillFoundryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("reload partial ledger: %v", err)
+	}
+	recovered := reloaded.draft(anyToString(draft["draft_id"]))
+	if anyToString(recovered["status"]) != "retired" || anyToString(anyMap(recovered["retirement"])["retirement_id"]) != anyToString(retirement["retirement_id"]) {
+		t.Fatalf("retirement tombstone must dominate a stale draft snapshot: %#v", recovered)
+	}
+}
+
+func TestSkillFoundryRetirementRejectsActiveSkill(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "true")
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", filepath.Join(t.TempDir(), "foundry.ndjson"))
+	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", "false")
+	t.Setenv("ORCH_SKILLS_INDEX_ROOTS", t.TempDir())
+	s := newTestServer(t, "http://127.0.0.1:1")
+	draft, err := s.buildSkillDraft(map[string]any{
+		"project": "contextlattice", "name": "active-retirement-guard", "description": "Active retirement guard.",
+		"workflow_runs": foundryRuns("active-retire-", 3),
+	})
+	if err != nil {
+		t.Fatalf("build draft: %v", err)
+	}
+	if err := s.skillFoundry.record(draft); err != nil {
+		t.Fatalf("record draft: %v", err)
+	}
+	s.skillFoundry.mu.Lock()
+	s.skillFoundry.drafts[anyToString(draft["draft_id"])]["activation"] = map[string]any{"state": "active", "automatic": false}
+	s.skillFoundry.mu.Unlock()
+	_, _, _, err = s.retireSkillDraft(map[string]any{"draft_id": draft["draft_id"], "operator": "owner", "reason": "should block"})
+	if err == nil || !strings.Contains(err.Error(), "deactivated") {
+		t.Fatalf("expected active-skill retirement rejection, got %v", err)
+	}
+}
+
 func TestSkillFoundryRejectsTrainingHoldoutLeakage(t *testing.T) {
 	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "true")
 	t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", filepath.Join(t.TempDir(), "foundry.ndjson"))

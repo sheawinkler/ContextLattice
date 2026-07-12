@@ -141,8 +141,11 @@ def compact_backfill_summary(stage: str, body: dict[str, Any]) -> dict[str, Any]
         "eligible": as_int(body.get("eligible")),
         "would_write": as_int(body.get("would_write")),
         "written": as_int(body.get("written")),
+        "remaining_writes": as_int(body.get("remaining_writes")),
         "existing": as_int(body.get("existing")),
         "truncated": bool(body.get("truncated", False)),
+        "write_limit_reached": bool(body.get("write_limit_reached", False)),
+        "max_writes": as_int(body.get("max_writes")),
         "inferred_generated": as_int(inferred.get("generated")),
         "inferred_eligible": as_int(inferred.get("eligible")),
         "inferred_written": as_int(inferred.get("written")),
@@ -152,15 +155,19 @@ def compact_backfill_summary(stage: str, body: dict[str, Any]) -> dict[str, Any]
 
 def backfill_payload(project: str, corpus: str, args: argparse.Namespace, dry_run: bool) -> dict[str, Any]:
     preset = PROFILE_PRESETS[args.profile]
+    relations = ["references", "same_session", "same_topic"]
+    if args.include_inferred:
+        relations.append("inferred_related")
     return {
         "dry_run": dry_run,
         "project": project,
         "corpus": corpus,
-        "relations": ["same_topic", "references", "same_session", "inferred_related"],
-        "include_inferred": True,
+        "relations": relations,
+        "include_inferred": args.include_inferred,
         "include_low_confidence_audit": False,
         "min_confidence": preset["min_confidence"],
         "max_candidates": args.max_candidates,
+        "max_writes": args.max_write_edges,
         "max_history_lines": args.max_history_lines,
         "topic_peer_limit": args.topic_peer_limit,
         "sample_limit": args.sample_limit,
@@ -223,7 +230,7 @@ def evaluate_project(row: dict[str, Any], detail: dict[str, Any], args: argparse
         if "low_edge_density" not in reasons:
             reasons.append("low_edge_density")
         computed_score -= 10 if density >= 0.50 else 25
-    if as_int(row.get("inferred_edges")) == 0 and docs >= args.min_docs:
+    if args.include_inferred and as_int(row.get("inferred_edges")) == 0 and docs >= args.min_docs:
         needs_backfill = True
         if "missing_inferred_edges" not in reasons:
             reasons.append("missing_inferred_edges")
@@ -267,13 +274,6 @@ def repair_project(project: dict[str, Any], args: argparse.Namespace) -> dict[st
     if preflight.get("truncated") and not args.allow_truncated:
         return {"action": "write_blocked", "reason": "preflight_truncated", "preflight": preflight_summary}
     would_write = as_int(preflight.get("would_write"))
-    if would_write > args.max_write_edges:
-        return {
-            "action": "write_blocked",
-            "reason": "would_write_exceeds_cap",
-            "max_write_edges": args.max_write_edges,
-            "preflight": preflight_summary,
-        }
     if not args.write:
         return {"action": "preflight_only", "preflight": preflight_summary}
     if not write_allowed(args):
@@ -311,6 +311,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corpus", choices=("auto", "history_index", "disk"), default="auto")
     parser.add_argument("--allow-disk", action="store_true", help="Allow auto mode to choose disk corpus for high-isolation projects.")
     parser.add_argument("--include-ephemeral", action="store_true")
+    parser.add_argument("--include-inferred", action="store_true", help="Opt in to bounded inferred_related scoring after explicit/session identity edges.")
     parser.add_argument("--max-projects", type=int, default=12)
     parser.add_argument("--min-docs", type=int, default=2)
     parser.add_argument("--min-density", type=float, default=1.0)
@@ -320,7 +321,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--anchor-degree-ratio", type=float, default=0.25)
     parser.add_argument("--anchor-degree-min", type=int, default=12)
     parser.add_argument("--anchor-sample-limit", type=int, default=5)
-    parser.add_argument("--max-candidates", type=int, default=20000)
+    parser.add_argument("--max-candidates", type=int, default=50000)
     parser.add_argument("--max-history-lines", type=int, default=2000)
     parser.add_argument("--topic-peer-limit", type=int, default=2)
     parser.add_argument("--inferred-scan-limit", type=int, default=5000)
