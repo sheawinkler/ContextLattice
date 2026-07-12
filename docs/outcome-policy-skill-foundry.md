@@ -71,10 +71,11 @@ Promotion boundaries:
    references; boolean assertions alone are rejected.
 3. Export requires `human_approved=true` and a named approver.
 4. Export does not write into an active skill root or activate anything.
-5. Same-name exports must declare the skill they supersede; retirement remains
-   an explicit Skills Index action. Collision state is refreshed at export,
-   not trusted from an older draft snapshot.
-6. Installation remains a separate Skills Index review action.
+5. Same-name exports must declare the skill they supersede. Draft retirement is
+   explicit, terminal, immutable, and non-destructive. Retirement changes draft
+   history only and never uninstalls a separately installed skill.
+6. Collision state is refreshed at export, not trusted from an older draft snapshot.
+7. Installation remains a separate Skills Index review action.
 
 Primary CLI:
 
@@ -83,6 +84,7 @@ contextlattice_skill_draft --payload-file workflow-runs.json --pretty
 contextlattice_skill_draft --payload-file workflow-runs.json --skill-version 2 --supersedes bounded-release-proof --pretty
 contextlattice_skill_evaluate --draft-id <id> --payload-file holdouts.json --pretty
 contextlattice_skill_export --draft-id <id> --human-approved --approver <identity> --pretty
+contextlattice_skill_retire --draft-id <id> --operator <identity> --reason "temporary proof completed" --pretty
 contextlattice_skill_foundry_status --pretty
 ```
 
@@ -120,10 +122,12 @@ integration:
 - `POST /memory/skills/foundry/draft`
 - `POST /memory/skills/foundry/evaluate`
 - `POST /memory/skills/foundry/export`
+- `POST /memory/skills/foundry/retire`
 - `GET /telemetry/skills/foundry`
 
-Tool-call hosts use the corresponding `/tools/context_policy_*` and
-`/tools/skill_foundry_*` wrappers.
+Tool-call hosts use the existing `/tools/context_policy_*` and Foundry
+draft/evaluate/export wrappers. Retirement stays CLI/HTTP-only so lifecycle
+hygiene does not increase the agent tool surface.
 
 ## Persistence and limits
 
@@ -131,7 +135,9 @@ Both ledgers are bounded NDJSON stores under the configured ContextLattice data
 root. They support fsync and compaction. Current candidate/draft state is kept
 when history is trimmed, along with the newest evaluation per candidate or
 draft. Public status responses report counts and errors, not filesystem paths.
-Replaying an identical draft cannot regress `evaluated` or `exported` state.
+Replaying an identical draft cannot regress `evaluated`, `exported`, or
+`retired` state. Retirement records operator, reason, timestamp, fingerprint,
+and explicit proof that no deletion or runtime mutation occurred.
 
 Contracts:
 
@@ -140,3 +146,4 @@ Contracts:
 - `skill_draft.v1`
 - `skill_evaluation.v1`
 - `skill_export.v1`
+- `skill_retirement.v1`

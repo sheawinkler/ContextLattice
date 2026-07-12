@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 20,
-  "updated_at": "2026-07-12T02:00:00Z",
+  "registry_version": 21,
+  "updated_at": "2026-07-12T08:14:06Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -3456,6 +3456,86 @@
         "schema_id": "context_mesh_import.v1",
         "format_contract.schema_id": "context_mesh_import.v1"
       }
+    },
+    "skill_retirement.v1": {
+      "contract_version": 1,
+      "payload_kind": "explicit_inactive_skill_draft_retirement",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_active_or_missing_drafts_without_deletion_or_runtime_mutation",
+      "max_total_json_bytes": 120000,
+      "max_string_bytes": 16000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "retirement",
+        "draft",
+        "recorded",
+        "idempotent",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "retirement": "object",
+        "draft": "object",
+        "recorded": "bool",
+        "idempotent": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "retirement": [
+          "schema_id",
+          "version",
+          "retirement_id",
+          "draft_id",
+          "draft_fingerprint",
+          "project",
+          "name",
+          "status",
+          "reason",
+          "operator",
+          "retired_at",
+          "automatic",
+          "deletion_performed",
+          "runtime_mutation",
+          "activation_state"
+        ],
+        "draft": [
+          "schema_id",
+          "draft_id",
+          "status",
+          "updated_at",
+          "activation",
+          "retirement"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "skill_retirement.v1",
+        "retirement.schema_id": "skill_retirement.v1",
+        "retirement.status": "retired",
+        "retirement.activation_state": "inactive",
+        "draft.status": "retired",
+        "format_contract.schema_id": "skill_retirement.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_logs"
+      ],
+      "forbidden_scope": "recursive"
     }
   }
 }

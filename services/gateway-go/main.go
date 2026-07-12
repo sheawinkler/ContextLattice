@@ -314,6 +314,7 @@ type server struct {
 	temporalClaims                  *temporalClaimStore
 	contextPolicy                   *contextPolicyStore
 	skillFoundry                    *skillFoundryStore
+	skillLifecycleMu                sync.Mutex
 	contextPassports                *contextPassportStore
 	contextMesh                     *contextMeshStore
 	feedbackStore                   *feedbackStore
@@ -6972,6 +6973,7 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/skills/foundry/draft", s.memorySkillFoundryDraft)
 	mux.HandleFunc("/memory/skills/foundry/evaluate", s.memorySkillFoundryEvaluate)
 	mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)
+	mux.HandleFunc("/memory/skills/foundry/retire", s.memorySkillFoundryRetire)
 	mux.HandleFunc("/memory/context-passport/export", s.memoryContextPassportExport)
 	mux.HandleFunc("/memory/context-passport/verify", s.memoryContextPassportVerify)
 	mux.HandleFunc("/memory/context-passport/diff", s.memoryContextPassportDiff)

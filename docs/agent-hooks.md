@@ -67,6 +67,8 @@ Installed commands:
 | `contextlattice_agent_adoption_proof` | Matrix proof that configured agent profiles can use the same memory lifecycle and expose skills/context/session/graph/handoff evidence. |
 | `contextlattice_agent_runtime_doctor` | Local helper, hook, wrapper, and gateway drift audit. |
 | `contextlattice_memory_topology` | Memory topology audit for base/default lanes, full backend fabric, partition keys, clusters, and graph health. |
+| `contextlattice_memory_graph_repair` | Audit or apply identity-first hot-corpus edges with dry-run default, exact project confirmation, and a hard per-run write cap. |
+| `contextlattice_memory_graph_efficacy` | Generate explicit graph-neighbor holdouts and require healthy direct recall plus positive, hydrated graph contribution. |
 | `contextlattice_skills_index` | Skills Index search CLI for discovering capabilities without bloating startup context. |
 | `contextlattice_retrieval_plan` | Advisor-only evidence obligations, source/query plan, token allocation, graph expansion advice, and marginal-value stop conditions. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
@@ -78,7 +80,8 @@ Installed commands:
 | `contextlattice_skill_draft` | Convert repeated verified workflow-run evidence into an inactive skill draft. |
 | `contextlattice_skill_evaluate` | Test a draft against independent holdouts with training-leakage rejection. |
 | `contextlattice_skill_export` | Export a passing skill only after explicit named human approval; never auto-installs it. |
-| `contextlattice_skill_foundry_status` | Inspect Skill Foundry drafts, evaluations, exports, and bounded-ledger health. |
+| `contextlattice_skill_retire` | Persist an immutable terminal tombstone for an inactive draft; never deletes evidence or mutates runtime. |
+| `contextlattice_skill_foundry_status` | Inspect Skill Foundry drafts, evaluations, exports, retirements, and bounded-ledger health. |
 | `contextlattice_passport_export` | Compile and sign a bounded proof-carrying context manifest; `--output` avoids repeating the artifact in agent context. |
 | `contextlattice_passport_verify` | Verify Passport digest, Ed25519 signature, validity window, and schema. |
 | `contextlattice_passport_diff` | Compare signed Passport revisions without inference. |
@@ -356,14 +359,19 @@ Graph quality repair is a bounded maintenance lane over that telemetry:
 
 ```bash
 scripts/agent/memory-graph-quality --all-projects --pretty
-scripts/agent/memory-graph-quality --project contextlattice --write --confirm-repair contextlattice --pretty
+contextlattice_memory_graph_repair --project my-project --pretty
+contextlattice_memory_graph_repair --project my-project --write --confirm-project my-project --max-writes 500 --pretty
+contextlattice_memory_graph_efficacy --refresh-cases --project my-project --graph-max-cases 3 --pretty
 make memory-graph-quality-install
 ```
 
 The job scores isolated docs, stale inferred edges, sparse density, and
 over-connected anchors. It always runs a dry-run preflight before writes, caps
-candidate and write counts, and only writes when explicit confirmation is
-provided. The launchd runner defaults to dry-run mode; set
+candidate and per-run write counts, scans past existing edges on later batches,
+and only writes when explicit confirmation is provided. Graph efficacy cases
+carry separate direct seed and graph target expectations, so direct recall and
+graph lift cannot masquerade as each other. A graph hit must hydrate the target
+memory into a bounded excerpt; a dangling edge cannot pass. The launchd runner defaults to dry-run mode; set
 `CONTEXTLATTICE_GRAPH_QUALITY_WRITE=1` before install to enable scheduled
 bounded repairs.
 

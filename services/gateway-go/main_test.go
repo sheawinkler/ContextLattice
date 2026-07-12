@@ -1009,6 +1009,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/skills/foundry/draft", s.memorySkillFoundryDraft)`,
 		`mux.HandleFunc("/memory/skills/foundry/evaluate", s.memorySkillFoundryEvaluate)`,
 		`mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)`,
+		`mux.HandleFunc("/memory/skills/foundry/retire", s.memorySkillFoundryRetire)`,
 		`mux.HandleFunc("/tools/skill_foundry_draft", s.toolsSkillFoundryDraft)`,
 		`mux.HandleFunc("/tools/skill_foundry_evaluate", s.toolsSkillFoundryEvaluate)`,
 		`mux.HandleFunc("/tools/skill_foundry_export", s.toolsSkillFoundryExport)`,
@@ -1095,6 +1096,7 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/skills/foundry/draft", s.proxy)`,
 		`mux.HandleFunc("/memory/skills/foundry/evaluate", s.proxy)`,
 		`mux.HandleFunc("/memory/skills/foundry/export", s.proxy)`,
+		`mux.HandleFunc("/memory/skills/foundry/retire", s.proxy)`,
 		`mux.HandleFunc("/tools/skill_foundry_draft", s.proxy)`,
 		`mux.HandleFunc("/tools/skill_foundry_evaluate", s.proxy)`,
 		`mux.HandleFunc("/tools/skill_foundry_export", s.proxy)`,
@@ -1598,14 +1600,25 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
   "k": 3,
   "gate": {"minRecallAtK": 0.0, "minMrr": 0.0, "minNumericExactness": 0.0},
   "cases": [
+	    {
+	      "id": "graph-lift",
+	      "query": "target by neighbor",
+	      "limit": 1,
+      "project": "alpha",
+      "topic_path": "recall/graph",
+      "sources": ["qdrant"],
+      "expected_files": ["notes/seed.md"],
+      "graph_expected_files": ["notes/target.md"],
+      "case_kind": "graph_neighbor"
+    },
     {
-      "id": "graph-lift",
-      "query": "target by neighbor",
+      "id": "direct-only",
+      "query": "seed direct recall",
       "limit": 3,
       "project": "alpha",
       "topic_path": "recall/graph",
       "sources": ["qdrant"],
-      "expected_files": ["notes/target.md"]
+      "expected_files": ["notes/seed.md"]
     }
   ]
 }`),
@@ -1615,12 +1628,18 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
 	}
 	t.Setenv("ORCH_RECALL_EVAL_CASES_PATH", recallCasesPath)
 
+	requestedLimits := []int{}
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/v1/retrieval/query" {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}
+		requestPayload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode retrieval request: %v", err)
+		}
+		requestedLimits = append(requestedLimits, anyToInt(anyMap(requestPayload["request"])["limit"], 0))
 		_, _ = w.Write([]byte(`{"results":[{"project":"alpha","file":"notes/seed.md","memory_id":"alpha::notes/seed.md","summary":"seed only","source":"qdrant","score":0.91}],"warnings":[]}`))
 	}))
 	defer backend.Close()
@@ -1668,8 +1687,11 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
 		t.Fatalf("decode response payload: %v", err)
 	}
 	metrics, _ := payload["metrics"].(map[string]any)
-	if anyToFloat64(metrics["recallAtK"], -1) != 0 {
-		t.Fatalf("expected top-k miss before graph expansion, got %#v", metrics)
+	if anyToFloat64(metrics["recallAtK"], -1) != 1 || !anyToBool(metrics["directPassed"]) {
+		t.Fatalf("expected direct seed recall to remain healthy, got %#v", metrics)
+	}
+	if len(requestedLimits) != 2 || requestedLimits[0] < 3 || requestedLimits[1] < 3 {
+		t.Fatalf("saved eval must fetch at least K direct results, got limits=%v", requestedLimits)
 	}
 	if anyToFloat64(metrics["graphLift"], 0) != 1 {
 		t.Fatalf("expected graph lift to recover the case, got metrics=%#v cases=%#v", metrics, payload["cases"])
@@ -1678,10 +1700,16 @@ func TestMemoryRecallEvaluateSavedScoresGraphContribution(t *testing.T) {
 	if anyToInt(graphContribution["helpedCases"], 0) != 1 {
 		t.Fatalf("expected one helped graph case, got %#v", graphContribution)
 	}
+	if anyToInt(graphContribution["explicitCases"], 0) != 1 || anyToString(graphContribution["status"]) != "passed" {
+		t.Fatalf("expected explicit graph efficacy gate to pass, got %#v", graphContribution)
+	}
+	if anyToInt(graphContribution["evaluatedCases"], 0) != 1 {
+		t.Fatalf("direct-only cases with zero graph expectations must not dilute lift: %#v", graphContribution)
+	}
 	cases, _ := payload["cases"].([]any)
 	caseReport, _ := cases[0].(map[string]any)
 	caseGraph, _ := caseReport["graph_contribution"].(map[string]any)
-	if !anyToBool(caseGraph["helped"]) || anyToInt(caseGraph["added_expected_hit_count"], 0) != 1 {
+	if !anyToBool(caseGraph["helped"]) || anyToInt(caseGraph["added_expected_hit_count"], 0) != 1 || anyToInt(caseGraph["added_hydrated_expected_hit_count"], 0) != 1 {
 		t.Fatalf("expected per-case graph contribution, got %#v", caseGraph)
 	}
 }
@@ -1754,6 +1782,9 @@ func TestMemoryContextPackIncludesBoundedGraphNeighbors(t *testing.T) {
 	if anyToString(neighbor["file"]) != "notes/target.md" || anyToString(neighbor["relation"]) != "supports" {
 		t.Fatalf("expected target graph neighbor, got %#v", neighbor)
 	}
+	if !anyToBool(neighbor["hydrated"]) || !strings.Contains(anyToString(neighbor["summary"]), "target memory") || anyToString(neighbor["content_ref"]) == "" {
+		t.Fatalf("expected bounded target-memory hydration, got %#v", neighbor)
+	}
 	rankedEvidence := contextPackAnyList(pack["ranked_evidence"])
 	foundGraphEvidence := false
 	for _, raw := range rankedEvidence {
@@ -1778,6 +1809,22 @@ func TestMemoryContextPackIncludesBoundedGraphNeighbors(t *testing.T) {
 	signals := anyMap(graphQuality["signals"])
 	if anyToInt(signals["added_evidence_count"], 0) != 1 {
 		t.Fatalf("expected one added graph evidence signal, got %#v", signals)
+	}
+	if err := os.Remove(filepath.Join(root, "alpha", "notes", "target.md")); err != nil {
+		t.Fatalf("remove graph target: %v", err)
+	}
+	danglingPack := map[string]any{"results": []any{map[string]any{
+		"project": "alpha", "file": "notes/seed.md", "memory_id": "alpha::notes/seed.md",
+		"summary": "seed memory", "topic_path": "graph/test",
+	}}}
+	danglingQuality := s.enrichContextPackWithGraph(context.Background(), danglingPack, map[string]any{
+		"project": "alpha", "topic_path": "graph/test",
+	})
+	if len(contextPackAnyList(danglingPack["graph_neighbors"])) != 0 || anyToBool(danglingQuality["used"]) {
+		t.Fatalf("dangling graph targets must not become context evidence: pack=%#v quality=%#v", danglingPack, danglingQuality)
+	}
+	if anyToInt(anyMap(danglingQuality["signals"])["hydration_failure_count"], 0) != 1 {
+		t.Fatalf("expected one explicit hydration failure signal: %#v", danglingQuality)
 	}
 }
 
@@ -2067,6 +2114,7 @@ func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
 	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
 	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
 	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))
+	t.Setenv("GO_MEMORY_GRAPH_EDGE_PATH", filepath.Join(root, "_contextlattice", "memory_edges.ndjson"))
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 
 	s := newServer()
@@ -2089,7 +2137,15 @@ func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
 		}
 	}
 
-	refreshed := s.buildRefreshedRecallEvalCaseSet(5, 1, "contextlattice", "contextlattice/recall-quality-loop")
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		SourceID: "contextlattice::notes/releases/v3.3.37-recall-quality-loop.md", TargetID: "contextlattice::notes/ops/live-recall-gate.md",
+		Relation: "same_session", Project: "contextlattice", TopicPath: "contextlattice/recall-quality-loop",
+		Confidence: 0.98, CreatedAt: nowUTCISO(), Source: memoryEdgeSource,
+	}); err != nil {
+		t.Fatalf("seed graph edge: %v", err)
+	}
+
+	refreshed := s.buildRefreshedRecallEvalCaseSetWithGraph(5, 1, "contextlattice", "contextlattice/recall-quality-loop", true, 1)
 	cases, _ := refreshed["cases"].([]map[string]any)
 	if len(cases) == 0 {
 		t.Fatalf("expected refreshed recall cases, got %#v", refreshed)
@@ -2107,6 +2163,13 @@ func TestRecallEvalCasesRefreshUsesLiveFileBackedMemory(t *testing.T) {
 		if anyToString(item["project"]) != "contextlattice" {
 			t.Fatalf("expected case to stay project-scoped, got %#v", item)
 		}
+	}
+	if anyToInt(refreshed["graphCaseCount"], 0) != 1 {
+		t.Fatalf("expected one high-confidence graph holdout, got %#v", refreshed)
+	}
+	graphCase := cases[len(cases)-1]
+	if anyToString(graphCase["case_kind"]) != "graph_neighbor" || len(anyToStringSlice(graphCase["graph_expected_files"])) != 1 || anyToInt(graphCase["limit"], 0) < defaultRecallEvalK {
+		t.Fatalf("expected explicit graph target fields, got %#v", graphCase)
 	}
 }
 

@@ -53,6 +53,7 @@ REQUIRED_CONTRACTS = (
     "skill_draft.v1",
     "skill_evaluation.v1",
     "skill_export.v1",
+    "skill_retirement.v1",
     "context_passport.v1",
     "context_passport_verify.v1",
     "context_passport_diff.v1",
@@ -535,6 +536,43 @@ def sample_skill_export() -> dict[str, Any]:
         "installation_note": "Review and install through the normal Skills Index workflow.",
     }
     return attach_format_contract("skill_export.v1", {"ok": True, "schema_id": "skill_export.v1", "export": exported, "draft": draft, "recorded": True})
+
+
+def sample_skill_retirement() -> dict[str, Any]:
+    draft = sample_skill_draft()["draft"]
+    draft["status"] = "retired"
+    draft["updated_at"] = "2026-07-12T08:14:06Z"
+    draft["activation"] = {"state": "inactive", "automatic": False, "reason": "Retired drafts cannot be activated."}
+    draft["retirement"] = {
+        "state": "retired",
+        "automatic": False,
+        "retirement_id": "skillretire_audit",
+        "reason": "smoke artifact completed its purpose",
+        "operator": "release-owner",
+        "retired_at": "2026-07-12T08:14:06Z",
+        "deletion_performed": False,
+    }
+    retirement = {
+        "schema_id": "skill_retirement.v1",
+        "version": 1,
+        "retirement_id": "skillretire_audit",
+        "draft_id": draft["draft_id"],
+        "draft_fingerprint": draft["draft_fingerprint"],
+        "project": draft["project"],
+        "name": draft["name"],
+        "status": "retired",
+        "reason": "smoke artifact completed its purpose",
+        "operator": "release-owner",
+        "retired_at": "2026-07-12T08:14:06Z",
+        "automatic": False,
+        "deletion_performed": False,
+        "runtime_mutation": False,
+        "activation_state": "inactive",
+    }
+    return attach_format_contract(
+        "skill_retirement.v1",
+        {"ok": True, "schema_id": "skill_retirement.v1", "retirement": retirement, "draft": draft, "recorded": True, "idempotent": False},
+    )
 
 
 def sample_context_passport() -> dict[str, Any]:
@@ -1591,6 +1629,7 @@ def run_audit() -> list[dict[str, Any]]:
         ("skill_draft.v1", sample_skill_draft()),
         ("skill_evaluation.v1", sample_skill_evaluation()),
         ("skill_export.v1", sample_skill_export()),
+        ("skill_retirement.v1", sample_skill_retirement()),
         ("context_passport.v1", sample_context_passport()),
         ("context_passport_verify.v1", sample_context_passport_verify()),
         ("context_passport_diff.v1", sample_context_passport_diff()),

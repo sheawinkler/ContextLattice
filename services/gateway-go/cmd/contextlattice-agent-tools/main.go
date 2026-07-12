@@ -38,6 +38,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_skill_draft":                     "skill-draft",
 	"contextlattice_skill_evaluate":                  "skill-evaluate",
 	"contextlattice_skill_export":                    "skill-export",
+	"contextlattice_skill_retire":                    "skill-retire",
 	"contextlattice_skill_foundry_status":            "skill-foundry-status",
 	"contextlattice_passport_export":                 "passport-export",
 	"contextlattice_passport_verify":                 "passport-verify",
@@ -65,6 +66,8 @@ var nativeToolNames = map[string]string{
 	"contextlattice_agent_discover":                  "discover",
 	"contextlattice_runner_quality":                  "runner-quality",
 	"contextlattice_memory_topology":                 "memory-topology",
+	"contextlattice_memory_graph_repair":             "memory-graph-repair",
+	"contextlattice_memory_graph_efficacy":           "memory-graph-efficacy",
 	"contextlattice_skills_index":                    "skills-index",
 	"contextlattice_async_inbox_drain":               "async-inbox-drain",
 }
@@ -144,6 +147,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdSkillEvaluate(args)
 	case "skill-export":
 		return c.cmdSkillExport(args)
+	case "skill-retire":
+		return c.cmdSkillRetire(args)
 	case "skill-foundry-status":
 		return c.cmdSkillFoundryStatus(args)
 	case "passport-export":
@@ -194,6 +199,10 @@ func (c *cli) run(argv []string) error {
 		return c.cmdAdopt(args)
 	case "memory-topology":
 		return c.cmdMemoryTopology(args)
+	case "memory-graph-repair":
+		return c.cmdMemoryGraphRepair(args)
+	case "memory-graph-efficacy":
+		return c.cmdMemoryGraphEfficacy(args)
 	case "skills-index":
 		return c.cmdSkillsIndex(args)
 	case "async-inbox-drain":
@@ -225,6 +234,7 @@ Native commands:
   skill-draft                    draft a skill from repeated verified workflow runs
   skill-evaluate                 evaluate a draft on independent holdouts
   skill-export                   export a passing human-approved skill without activation
+  skill-retire                   durably retire an inactive draft without deletion
   skill-foundry-status           inspect Skill Foundry ledger status
   passport-export                create a signed bounded replayable context manifest
   passport-verify                verify passport digest, signature, and expiry
@@ -251,6 +261,8 @@ Native commands:
   runner-quality                 bounded adapter quality telemetry and advisor-only recommendations
   adopt                          status/doctor/proof compatibility front door
   memory-topology                audit /telemetry/storage memory topology
+  memory-graph-repair            audit or apply bounded identity-first hot-corpus edges
+  memory-graph-efficacy          refresh graph holdouts and prove measured graph contribution
   skills-index                   active Skills Index search/reindex helper
   async-inbox-drain              bounded async continuation inbox drain for any agent
 
@@ -1380,6 +1392,28 @@ func (c *cli) cmdSkillExport(args []string) error {
 		return errors.New("draft id is required")
 	}
 	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/skills/foundry/export", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdSkillRetire(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"draft-id": "draft_id", "operator": "operator", "reason": "reason", "agent-id": "agent_id",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_skill_retire --draft-id <id> --operator <identity> --reason <reason> [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload := map[string]any{
+		"draft_id": parsed.string("draft_id", ""), "operator": parsed.string("operator", ""),
+		"reason": parsed.string("reason", ""), "agent_id": parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
+	}
+	if firstString(payload["draft_id"]) == "" || firstString(payload["operator"]) == "" || firstString(payload["reason"]) == "" {
+		return errors.New("draft id, operator, and reason are required")
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/skills/foundry/retire", payload, parsed.float("timeout", 30))
 	if err != nil {
 		return err
 	}
@@ -4646,6 +4680,102 @@ func (c *cli) cmdMemoryTopology(args []string) error {
 		ok = ok && asBool(check["ok"])
 	}
 	return c.emit(map[string]any{"ok": ok, "schema_id": "contextlattice_memory_topology_audit.v1", "checks": checks, "topology": topology}, parsed.bool("pretty"))
+}
+
+func (c *cli) cmdMemoryGraphRepair(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"corpus": "corpus", "min-confidence": "min_confidence", "max-candidates": "max_candidates",
+		"max-writes": "max_writes", "max-history-lines": "max_history_lines", "confirm-project": "confirm_project",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"write": "write", "include-inferred": "include_inferred"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_memory_graph_repair --project <project> [--write --confirm-project <project>] [--max-writes 500] [--include-inferred] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", ""))
+	if project == "" {
+		return errors.New("project is required")
+	}
+	write := parsed.bool("write")
+	if write && parsed.string("confirm_project", "") != project {
+		return errors.New("--write requires --confirm-project to exactly match --project")
+	}
+	relations := []any{"same_topic", "references", "same_session"}
+	if parsed.bool("include_inferred") {
+		relations = append(relations, "inferred_related")
+	}
+	payload := map[string]any{
+		"dry_run": !write, "project": project, "corpus": parsed.string("corpus", "history_index"),
+		"relations": relations, "include_inferred": parsed.bool("include_inferred"), "include_low_confidence_audit": false,
+		"min_confidence": parsed.float("min_confidence", 0.95), "max_candidates": parsed.int("max_candidates", 50000),
+		"max_writes": parsed.int("max_writes", 500), "max_history_lines": parsed.int("max_history_lines", 20000),
+		"sample_limit": 20,
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/memory/edges/backfill", payload, parsed.float("timeout", 180))
+	if err != nil {
+		return err
+	}
+	if err := c.emit(result, !parsed.bool("raw")); err != nil {
+		return err
+	}
+	if explicitFalse(result["ok"]) {
+		return errors.New("memory graph repair did not complete cleanly")
+	}
+	return nil
+}
+
+func (c *cli) cmdMemoryGraphEfficacy(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"max-cases": "max_cases", "graph-max-cases": "graph_max_cases", "min-hits": "min_hits", "k": "k",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"refresh-cases": "refresh_cases", "include-retrieval-debug": "include_retrieval_debug"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_memory_graph_efficacy [--refresh-cases --project <project>] [--max-cases 12] [--graph-max-cases 3] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	project := parsed.string("project", envString("CONTEXTLATTICE_PROJECT", ""))
+	var refresh map[string]any
+	if parsed.bool("refresh_cases") {
+		if project == "" {
+			return errors.New("--refresh-cases requires --project")
+		}
+		refreshPayload := map[string]any{
+			"project": project, "max_cases": parsed.int("max_cases", 12), "graph_max_cases": parsed.int("graph_max_cases", 3),
+			"min_hits": parsed.int("min_hits", 1), "include_graph_cases": true,
+		}
+		var err error
+		refresh, _, err = c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/eval-cases/refresh", refreshPayload, parsed.float("timeout", 60))
+		if err != nil {
+			return err
+		}
+		if explicitFalse(refresh["ok"]) {
+			return errors.New("graph-aware recall case refresh failed")
+		}
+		if asInt(asMap(refresh["savedCaseSet"])["graphCaseCount"]) < 1 {
+			return errors.New("graph-aware recall case refresh produced no graph holdouts")
+		}
+	}
+	evalPayload := map[string]any{"include_retrieval_debug": parsed.bool("include_retrieval_debug")}
+	if parsed.has("k") {
+		evalPayload["k"] = parsed.int("k", 5)
+	}
+	evaluation, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/recall/evaluate/saved", evalPayload, parsed.float("timeout", 180))
+	if err != nil {
+		return err
+	}
+	metrics := asMap(evaluation["metrics"])
+	graph := asMap(metrics["graphContribution"])
+	status := firstString(metrics["graphEfficacyStatus"], graph["status"], "unmeasured")
+	ok := asBool(metrics["directPassed"]) && status == "passed"
+	result := map[string]any{
+		"ok": ok, "schema_id": "memory_graph_efficacy_cli.v1", "project": project,
+		"status": status, "refresh": refresh, "evaluation": evaluation,
+	}
+	if err := c.emit(result, !parsed.bool("raw")); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("memory graph efficacy gate %s", status)
+	}
+	return nil
 }
 
 func (c *cli) cmdSkillsIndex(args []string) error {

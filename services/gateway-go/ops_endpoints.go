@@ -158,6 +158,7 @@ func (s *server) capabilityMapPayload() map[string]any {
 			"skill_foundry_draft":       true,
 			"skill_foundry_evaluate":    true,
 			"skill_foundry_export":      true,
+			"skill_foundry_retire":      true,
 			"memory_write_batch":        true,
 			"ops_queue_status":          true,
 			"feedback_submit":           true,

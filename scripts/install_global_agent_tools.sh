@@ -32,7 +32,10 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_skill_draft
   contextlattice_skill_evaluate
   contextlattice_skill_export
+  contextlattice_skill_retire
   contextlattice_skill_foundry_status
+  contextlattice_memory_graph_repair
+  contextlattice_memory_graph_efficacy
   contextlattice_passport_export
   contextlattice_passport_verify
   contextlattice_passport_diff
@@ -665,7 +668,10 @@ GO_NATIVE_COMMANDS=(
   contextlattice_skill_draft
   contextlattice_skill_evaluate
   contextlattice_skill_export
+  contextlattice_skill_retire
   contextlattice_skill_foundry_status
+  contextlattice_memory_graph_repair
+  contextlattice_memory_graph_efficacy
   contextlattice_passport_export
   contextlattice_passport_verify
   contextlattice_passport_diff
@@ -904,7 +910,10 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_policy_status"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_draft"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_evaluate"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_export"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_retire"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_skill_foundry_status"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_memory_graph_repair"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_memory_graph_efficacy"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_export"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_verify"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_passport_diff"
@@ -953,6 +962,7 @@ log "  contextlattice_claim_query 'current release state' --project contextlatti
 log "  contextlattice_policy_candidate --project contextlattice --pretty"
 log "  contextlattice_policy_status --pretty"
 log "  contextlattice_skill_foundry_status --pretty"
+log "  contextlattice_memory_graph_repair --project contextlattice --pretty"
 log "  contextlattice_passport_export 'portable task context' --project contextlattice --output passport.json --pretty"
 log "  contextlattice_passport_verify --file passport.json --pretty"
 log "  contextlattice_mesh_identity --pretty"

@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 20;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 21;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -48,6 +48,7 @@ pub const RUNNER_RESULT_V1: &str = "runner_result.v1";
 pub const SKILL_DRAFT_V1: &str = "skill_draft.v1";
 pub const SKILL_EVALUATION_V1: &str = "skill_evaluation.v1";
 pub const SKILL_EXPORT_V1: &str = "skill_export.v1";
+pub const SKILL_RETIREMENT_V1: &str = "skill_retirement.v1";
 pub const STEERING_COMMENT_V1: &str = "steering_comment.v1";
 pub const SYNTHESIS_PACK_V1: &str = "synthesis_pack.v1";
 pub const SYNTHESIS_PACK_V2: &str = "synthesis_pack.v2";
@@ -94,6 +95,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     SKILL_DRAFT_V1,
     SKILL_EVALUATION_V1,
     SKILL_EXPORT_V1,
+    SKILL_RETIREMENT_V1,
     STEERING_COMMENT_V1,
     SYNTHESIS_PACK_V1,
     SYNTHESIS_PACK_V2,
@@ -323,6 +325,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: SKILL_EXPORT_V1,
         payload_kind: "human_approved_inactive_skill_export",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: SKILL_RETIREMENT_V1,
+        payload_kind: "explicit_inactive_skill_draft_retirement",
         contract_version: 1,
         required_output_mode: "json_object",
     },

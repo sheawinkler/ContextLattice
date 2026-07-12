@@ -114,6 +114,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	graphExpectedHitCount := 0
 	graphAddedExpectedHitCount := 0
 	graphHelpedCases := 0
+	graphExplicitCases := 0
 	caseReports := make([]map[string]any, 0, len(cfg.Cases))
 
 	for idx, rawCase := range cfg.Cases {
@@ -149,9 +150,12 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			continue
 		}
 
+		// Fetch at least K direct results so graph lift cannot be manufactured by
+		// truncating the direct baseline below the evaluation window.
+		directLimit := maxInt(clampInt(anyToInt(rawCase["limit"], 10), 1, 100), k)
 		reqPayload := map[string]any{
 			"query":                   query,
-			"limit":                   clampInt(anyToInt(rawCase["limit"], 10), 1, 100),
+			"limit":                   directLimit,
 			"project":                 strings.TrimSpace(anyToString(rawCase["project"])),
 			"topic_path":              strings.TrimSpace(anyToString(rawCase["topic_path"])),
 			"retrieval_mode":          normalizeRetrievalMode(anyToString(rawCase["retrieval_mode"])),
@@ -216,6 +220,15 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		expectedFiles := normalizeExpectedFileTokens(rawCase["expected_files"])
 		expectedTerms := normalizeExpectedTerms(rawCase["expected_substrings"])
 		expectedNumeric := normalizeExpectedNumeric(rawCase["expected_numeric"])
+		graphExpectedFiles := normalizeExpectedFileTokens(rawCase["graph_expected_files"])
+		graphExpectedTerms := normalizeExpectedTerms(rawCase["graph_expected_substrings"])
+		reportedGraphExpectedFiles := sortedKeys(graphExpectedFiles)
+		reportedGraphExpectedTerms := append([]string(nil), graphExpectedTerms...)
+		hasExplicitGraphExpectations := len(graphExpectedFiles) > 0 || len(graphExpectedTerms) > 0
+		if !hasExplicitGraphExpectations {
+			graphExpectedFiles = expectedFiles
+			graphExpectedTerms = expectedTerms
+		}
 		matchedFiles := matchedExpectedFilesWithinK(results, expectedFiles, k)
 		caseCitationCoverage := 1.0
 		if len(expectedFiles) > 0 {
@@ -225,11 +238,16 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		graphContribution := s.evaluateRecallGraphContribution(
 			context.Background(),
 			results,
-			expectedFiles,
-			expectedTerms,
+			graphExpectedFiles,
+			graphExpectedTerms,
 			k,
 			strings.TrimSpace(anyToString(reqPayload["project"])),
 		)
+		if hasExplicitGraphExpectations {
+			graphContribution["expectation_mode"] = "explicit_graph"
+		} else {
+			graphContribution["expectation_mode"] = "direct_fallback"
+		}
 
 		matchedRank := matchRankWithinK(results, expectedFiles, expectedTerms, k)
 		hit := matchedRank != nil
@@ -251,14 +269,20 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 				lowConfidenceCases += 1
 			}
 			sourceDiversitySum += float64(len(caseSources))
-			graphEvaluatedCases += 1
-			graphSeedCount += anyToInt(graphContribution["seed_count"], 0)
-			graphCandidateCount += anyToInt(graphContribution["candidate_count"], 0)
-			graphAddedCandidateCount += anyToInt(graphContribution["added_candidate_count"], 0)
-			graphExpectedHitCount += anyToInt(graphContribution["expected_hit_count"], 0)
-			graphAddedExpectedHitCount += anyToInt(graphContribution["added_expected_hit_count"], 0)
-			if !hit && anyToBool(graphContribution["helped"]) {
-				graphHelpedCases += 1
+			graphEligible := hasExplicitGraphExpectations
+			if graphEligible {
+				graphEvaluatedCases += 1
+				graphSeedCount += anyToInt(graphContribution["seed_count"], 0)
+				graphCandidateCount += anyToInt(graphContribution["candidate_count"], 0)
+				graphAddedCandidateCount += anyToInt(graphContribution["added_candidate_count"], 0)
+				graphExpectedHitCount += anyToInt(graphContribution["expected_hit_count"], 0)
+				graphAddedExpectedHitCount += anyToInt(graphContribution["added_expected_hit_count"], 0)
+				if hasExplicitGraphExpectations {
+					graphExplicitCases += 1
+				}
+				if anyToBool(graphContribution["helped"]) {
+					graphHelpedCases += 1
+				}
 			}
 		}
 		numericExpectedTotal += len(expectedNumeric)
@@ -267,32 +291,37 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		citationMatchedTotal += len(matchedFiles)
 
 		report := map[string]any{
-			"id":                        caseID,
-			"query":                     query,
-			"k":                         k,
-			"hit":                       hit,
-			"matched_rank":              matchedRank,
-			"reciprocal_rank":           roundFloat(reciprocalRank, 6),
-			"has_expectations":          hasExpectations,
-			"result_count":              len(results),
-			"top_score":                 roundFloat(topResultScore(results), 6),
-			"expected_files":            sortedKeys(expectedFiles),
-			"expected_substrings":       expectedTerms,
-			"expected_numeric":          expectedNumeric,
-			"matched_numeric":           numericMatches,
-			"matched_files":             matchedFiles,
-			"citation_coverage":         roundFloat(caseCitationCoverage, 6),
-			"source_diversity":          len(caseSources),
-			"sources":                   caseSources,
-			"latency_ms":                roundFloat(latencyMs, 3),
-			"graph_contribution":        graphContribution,
-			"warnings":                  parseWarnings(searchResp["warnings"]),
-			"retrieval_mode":            searchResp["retrieval_mode"],
-			"agent_id":                  searchResp["agent_id"],
-			"retry_attempts":            0,
-			"transient_retry_triggered": false,
-			"transient_retry_recovered": false,
-			"attempt_modes":             []string{normalizeRetrievalMode(anyToString(searchResp["retrieval_mode"]))},
+			"id":                                  caseID,
+			"query":                               query,
+			"k":                                   k,
+			"hit":                                 hit,
+			"matched_rank":                        matchedRank,
+			"reciprocal_rank":                     roundFloat(reciprocalRank, 6),
+			"has_expectations":                    hasExpectations,
+			"result_count":                        len(results),
+			"top_score":                           roundFloat(topResultScore(results), 6),
+			"expected_files":                      sortedKeys(expectedFiles),
+			"expected_substrings":                 expectedTerms,
+			"graph_expected_files":                reportedGraphExpectedFiles,
+			"graph_expected_substrings":           reportedGraphExpectedTerms,
+			"graph_effective_expected_files":      sortedKeys(graphExpectedFiles),
+			"graph_effective_expected_substrings": graphExpectedTerms,
+			"graph_expectations_explicit":         hasExplicitGraphExpectations,
+			"expected_numeric":                    expectedNumeric,
+			"matched_numeric":                     numericMatches,
+			"matched_files":                       matchedFiles,
+			"citation_coverage":                   roundFloat(caseCitationCoverage, 6),
+			"source_diversity":                    len(caseSources),
+			"sources":                             caseSources,
+			"latency_ms":                          roundFloat(latencyMs, 3),
+			"graph_contribution":                  graphContribution,
+			"warnings":                            parseWarnings(searchResp["warnings"]),
+			"retrieval_mode":                      searchResp["retrieval_mode"],
+			"agent_id":                            searchResp["agent_id"],
+			"retry_attempts":                      0,
+			"transient_retry_triggered":           false,
+			"transient_retry_recovered":           false,
+			"attempt_modes":                       []string{normalizeRetrievalMode(anyToString(searchResp["retrieval_mode"]))},
 		}
 		if includeRetrievalDebug {
 			report["retrieval"] = searchResp["retrieval_debug"]
@@ -322,10 +351,23 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		avgSourceDiversity = sourceDiversitySum / float64(evaluatedCases)
 		noHitRate = float64(noHitCases) / float64(evaluatedCases)
 		lowConfidenceRate = float64(lowConfidenceCases) / float64(evaluatedCases)
-		graphLift = float64(graphHelpedCases) / float64(evaluatedCases)
+	}
+	if graphEvaluatedCases > 0 {
+		graphLift = float64(graphHelpedCases) / float64(graphEvaluatedCases)
 	}
 	avgLatencyMs, p95LatencyMs := recallLatencyStats(latencyValues)
-	passed := evaluatedCases > 0 && recallAtK >= gate.MinRecallAtK && mrr >= gate.MinMRR && numericExactness >= gate.MinNumericExactly
+	directPassed := evaluatedCases > 0 && recallAtK >= gate.MinRecallAtK && mrr >= gate.MinMRR && numericExactness >= gate.MinNumericExactly
+	graphEfficacyStatus := "unmeasured"
+	graphPassed := false
+	if graphEvaluatedCases > 0 {
+		graphEfficacyStatus = "failed"
+		graphPassed = graphHelpedCases > 0 && graphAddedExpectedHitCount > 0 && graphLift > 0
+		if graphPassed {
+			graphEfficacyStatus = "passed"
+		}
+	}
+	graphRequired := graphExplicitCases > 0
+	passed := directPassed && (!graphRequired || graphPassed)
 	qualityStatus := recallEvalQualityStatus(passed, evaluatedCases, recallAtK, mrr, numericExactness)
 	metrics := map[string]any{
 		"k":                      k,
@@ -346,7 +388,9 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"p95LatencyMs":           roundFloat(p95LatencyMs, 3),
 		"durationMs":             roundFloat(float64(time.Since(evaluationStartedAt).Microseconds())/1000.0, 3),
 		"qualityStatus":          qualityStatus,
+		"directPassed":           directPassed,
 		"graphEvaluatedCases":    graphEvaluatedCases,
+		"graphExplicitCases":     graphExplicitCases,
 		"graphSeedCount":         graphSeedCount,
 		"graphCandidateCount":    graphCandidateCount,
 		"graphAddedCandidates":   graphAddedCandidateCount,
@@ -354,8 +398,12 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"graphAddedExpectedHits": graphAddedExpectedHitCount,
 		"graphHelpedCases":       graphHelpedCases,
 		"graphLift":              roundFloat(graphLift, 6),
+		"graphPassed":            graphPassed,
+		"graphRequired":          graphRequired,
+		"graphEfficacyStatus":    graphEfficacyStatus,
 		"graphContribution": map[string]any{
 			"evaluatedCases":         graphEvaluatedCases,
+			"explicitCases":          graphExplicitCases,
 			"seedCount":              graphSeedCount,
 			"candidateCount":         graphCandidateCount,
 			"addedCandidateCount":    graphAddedCandidateCount,
@@ -363,6 +411,9 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			"addedExpectedHitCount":  graphAddedExpectedHitCount,
 			"helpedCases":            graphHelpedCases,
 			"lift":                   roundFloat(graphLift, 6),
+			"passed":                 graphPassed,
+			"required":               graphRequired,
+			"status":                 graphEfficacyStatus,
 			"neighborLimitPerSeed":   recallEvalGraphNeighborLimit(),
 			"memoryGraphStoreActive": s.memoryGraphBackend() != nil,
 		},
@@ -386,6 +437,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"maxSourceErrorRate":    0.0,
 		"sourceDiversity":       roundFloat(avgSourceDiversity, 3),
 		"graphLift":             roundFloat(graphLift, 6),
+		"graphEfficacyStatus":   graphEfficacyStatus,
 		"graphExpectedHitCount": graphExpectedHitCount,
 		"graphHelpedCases":      graphHelpedCases,
 		"avgLatencyMs":          roundFloat(avgLatencyMs, 3),
@@ -403,6 +455,8 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			"minRecallAtK":        gate.MinRecallAtK,
 			"minMrr":              gate.MinMRR,
 			"minNumericExactness": gate.MinNumericExactly,
+			"graphRequired":       graphRequired,
+			"minGraphLift":        0.0,
 		},
 		"cases": caseReports,
 		"savedCaseSet": map[string]any{
@@ -575,6 +629,7 @@ func defaultSavedRecallEvalConfig(path string) recallEvalSavedConfig {
 func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 	issues := make([]map[string]any, 0)
 	invalidCases := map[int]struct{}{}
+	graphCaseCount := 0
 	addIssue := func(idx int, rawCase map[string]any, code string, detail string, fix string) {
 		caseID := strings.TrimSpace(anyToString(rawCase["id"]))
 		if caseID == "" {
@@ -600,6 +655,9 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 		project := strings.TrimSpace(anyToString(rawCase["project"]))
 		topicPath := recallEvalNormalizeCaseTopic(anyToString(rawCase["topic_path"]))
 		expectedFiles := sortedKeys(normalizeExpectedFileTokens(rawCase["expected_files"]))
+		graphExpectedFiles := sortedKeys(normalizeExpectedFileTokens(rawCase["graph_expected_files"]))
+		graphExpectedTerms := normalizeExpectedTerms(rawCase["graph_expected_substrings"])
+		graphCase := strings.EqualFold(strings.TrimSpace(anyToString(rawCase["case_kind"])), "graph_neighbor") || len(graphExpectedFiles) > 0 || len(graphExpectedTerms) > 0
 		if _, ok := defaultIDs[caseID]; ok {
 			addIssue(idx, rawCase, "default_fallback_case", "case matches the built-in fallback recall surface", "Refresh saved cases from live memory with /memory/recall/eval-cases/refresh after writing file-backed memory.")
 		}
@@ -620,6 +678,14 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 		if len(expectedFiles) > 1 {
 			addIssue(idx, rawCase, "multi_file_rollup_case", "case expects multiple files from a broad rollup", "Split this into one case per expected file, or refresh from file-backed memory docs.")
 		}
+		if graphCase {
+			graphCaseCount++
+			if len(graphExpectedFiles) != 1 {
+				addIssue(idx, rawCase, "invalid_graph_expected_file", "graph case must name exactly one graph_expected_files target", "Refresh with include_graph_cases=true or set one high-confidence neighboring memory file.")
+			} else if len(expectedFiles) == 1 && strings.EqualFold(expectedFiles[0], graphExpectedFiles[0]) {
+				addIssue(idx, rawCase, "graph_target_matches_seed", "graph case target matches its direct-recall seed", "Choose a distinct neighboring memory as graph_expected_files.")
+			}
+		}
 	}
 	status := "healthy"
 	if len(issues) > 0 {
@@ -630,6 +696,7 @@ func validateSavedRecallEvalCaseSet(cfg recallEvalSavedConfig) map[string]any {
 		"status":             status,
 		"case_count":         len(cfg.Cases),
 		"invalid_case_count": len(invalidCases),
+		"graph_case_count":   graphCaseCount,
 		"issue_count":        len(issues),
 		"issues":             issues,
 		"agent_instructions": recallEvalCaseSetAgentInstructions(),
@@ -646,7 +713,7 @@ func recallEvalNormalizeCaseTopic(value string) string {
 
 func recallEvalCaseSetAgentInstructions() []string {
 	return []string{
-		"Refresh saved recall cases from live file-backed memory: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":12,\"min_hits\":1}.",
+		"Refresh saved recall cases from live file-backed memory: POST /memory/recall/eval-cases/refresh with {\"project\":\"<project>\",\"topic_prefix\":\"<topic/path>\",\"max_cases\":12,\"min_hits\":1,\"include_graph_cases\":true,\"graph_max_cases\":3}.",
 		"If refresh has no eligible memory, write durable memory first: POST /memory/write with projectName, fileName, topicPath, and content, then refresh the saved eval cases.",
 		"Each saved recall eval case must include project, topic_path, query, limit, and exactly one expected_files item naming the file the query should recover.",
 		"Do not use built-in fallback case IDs, empty project, topic_path root, or broad rollup cases with multiple expected_files.",
@@ -872,15 +939,18 @@ func recallEvalGraphNeighborLimit() int {
 
 func recallGraphContributionUnavailable(reason string) map[string]any {
 	return map[string]any{
-		"enabled":                  false,
-		"reason":                   reason,
-		"seed_count":               0,
-		"candidate_count":          0,
-		"added_candidate_count":    0,
-		"expected_hit_count":       0,
-		"added_expected_hit_count": 0,
-		"helped":                   false,
-		"relations":                []string{},
+		"enabled":                           false,
+		"reason":                            reason,
+		"seed_count":                        0,
+		"candidate_count":                   0,
+		"added_candidate_count":             0,
+		"expected_hit_count":                0,
+		"added_expected_hit_count":          0,
+		"edge_expected_match_count":         0,
+		"hydrated_expected_hit_count":       0,
+		"added_hydrated_expected_hit_count": 0,
+		"helped":                            false,
+		"relations":                         []string{},
 	}
 }
 
@@ -982,14 +1052,25 @@ func (s *server) evaluateRecallGraphContribution(
 
 	matchedCandidateIDs := make([]string, 0)
 	addedMatchedCandidateIDs := make([]string, 0)
+	edgeExpectedMatchCount := 0
+	hydratedExpectedHitCount := 0
+	addedHydratedExpectedHitCount := 0
 	for candidateID, row := range candidateRows {
 		if !resultHitsExpectations(row, expectedFiles, expectedTerms) {
 			continue
 		}
+		edgeExpectedMatchCount += 1
+		row = s.hydrateContextPackGraphNeighbor(row)
+		candidateRows[candidateID] = row
+		if !anyToBool(row["hydrated"]) {
+			continue
+		}
 		expectedHitCount += 1
+		hydratedExpectedHitCount += 1
 		matchedCandidateIDs = append(matchedCandidateIDs, candidateID)
 		if _, exists := topIDs[candidateID]; !exists {
 			addedExpectedHitCount += 1
+			addedHydratedExpectedHitCount += 1
 			addedMatchedCandidateIDs = append(addedMatchedCandidateIDs, candidateID)
 		}
 	}
@@ -1001,17 +1082,20 @@ func (s *server) evaluateRecallGraphContribution(
 	}
 	sortStrings(relations)
 	return map[string]any{
-		"enabled":                  true,
-		"seed_count":               len(seedIDs),
-		"candidate_count":          len(candidateRows),
-		"added_candidate_count":    addedCandidateCount,
-		"expected_hit_count":       expectedHitCount,
-		"added_expected_hit_count": addedExpectedHitCount,
-		"helped":                   addedExpectedHitCount > 0,
-		"relations":                relations,
-		"relation_counts":          relationCounts,
-		"matched_memory_ids":       matchedCandidateIDs,
-		"added_matched_memory_ids": addedMatchedCandidateIDs,
+		"enabled":                           true,
+		"seed_count":                        len(seedIDs),
+		"candidate_count":                   len(candidateRows),
+		"added_candidate_count":             addedCandidateCount,
+		"expected_hit_count":                expectedHitCount,
+		"added_expected_hit_count":          addedExpectedHitCount,
+		"edge_expected_match_count":         edgeExpectedMatchCount,
+		"hydrated_expected_hit_count":       hydratedExpectedHitCount,
+		"added_hydrated_expected_hit_count": addedHydratedExpectedHitCount,
+		"helped":                            addedHydratedExpectedHitCount > 0,
+		"relations":                         relations,
+		"relation_counts":                   relationCounts,
+		"matched_memory_ids":                matchedCandidateIDs,
+		"added_matched_memory_ids":          addedMatchedCandidateIDs,
 	}
 }
 

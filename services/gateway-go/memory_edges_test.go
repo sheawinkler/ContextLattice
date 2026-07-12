@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -391,6 +392,68 @@ func TestMemoryEdgesBackfillDryRunWriteAndIdempotency(t *testing.T) {
 	}
 	if anyToInt(repeatRun["existing"], 0) == 0 {
 		t.Fatalf("repeat backfill should report existing edges, got %#v", repeatRun)
+	}
+}
+
+func TestMemoryEdgesBackfillMaxWritesMakesBoundedForwardProgress(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	for index := 0; index < 5; index++ {
+		write := normalizedWrite{
+			project: "alpha", fileName: fmt.Sprintf("notes/batch-%d.md", index), content: "bounded graph repair",
+			topicPath: "runbooks/bounded-repair", agentID: "agent-a", sessionID: "session-batch",
+		}
+		if _, _, err := s.memoryStore.put(write); err != nil {
+			t.Fatalf("seed memory write: %v", err)
+		}
+	}
+	payload := `{"dry_run":false,"project":"alpha","relations":["same_session"],"max_candidates":100,"max_writes":1,"sample_limit":5}`
+	first := postEdgeBackfillForTest(t, gateway.URL, payload)
+	if anyToInt(first["written"], 0) != 1 || !anyToBool(first["write_limit_reached"]) || anyToInt(first["remaining_writes"], 0) < 1 {
+		t.Fatalf("expected one bounded write with remaining work: %#v", first)
+	}
+	second := postEdgeBackfillForTest(t, gateway.URL, payload)
+	if anyToInt(second["written"], 0) != 1 {
+		t.Fatalf("second batch must scan past existing edges and make progress: %#v", second)
+	}
+	remaining := anyToInt(second["remaining_writes"], 0)
+	for attempt := 0; attempt < 10 && remaining > 0; attempt++ {
+		next := postEdgeBackfillForTest(t, gateway.URL, payload)
+		remaining = anyToInt(next["remaining_writes"], 0)
+	}
+	if remaining != 0 {
+		t.Fatalf("bounded batches did not converge, remaining=%d", remaining)
+	}
+	final := postEdgeBackfillForTest(t, gateway.URL, payload)
+	if anyToInt(final["written"], -1) != 0 || anyToInt(final["remaining_writes"], -1) != 0 {
+		t.Fatalf("converged repair must be idempotent: %#v", final)
+	}
+}
+
+func TestRecallGraphContributionRejectsDanglingExpectedEdge(t *testing.T) {
+	s, gateway := newMemoryGraphTestServer(t, true)
+	defer gateway.Close()
+	if _, _, err := s.memoryStore.put(normalizedWrite{
+		project: "alpha", fileName: "notes/seed.md", content: "seed memory", topicPath: "graph/dangling",
+	}); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	if _, err := s.memoryStore.upsertMemoryEdge(context.Background(), memoryEdgeEntry{
+		SourceID: "alpha::notes/seed.md", TargetID: "alpha::notes/missing.md", Relation: "same_session",
+		Project: "alpha", TopicPath: "graph/dangling", Confidence: 0.98, CreatedAt: nowUTCISO(), Source: memoryEdgeSource,
+	}); err != nil {
+		t.Fatalf("seed dangling edge: %v", err)
+	}
+	contribution := s.evaluateRecallGraphContribution(
+		context.Background(),
+		[]map[string]any{{"project": "alpha", "file": "notes/seed.md", "memory_id": "alpha::notes/seed.md"}},
+		normalizeExpectedFileTokens([]string{"notes/missing.md"}),
+		nil,
+		1,
+		"alpha",
+	)
+	if anyToInt(contribution["edge_expected_match_count"], 0) != 1 || anyToInt(contribution["hydrated_expected_hit_count"], -1) != 0 || anyToBool(contribution["helped"]) {
+		t.Fatalf("dangling edge must not count as useful graph recall: %#v", contribution)
 	}
 }
 
