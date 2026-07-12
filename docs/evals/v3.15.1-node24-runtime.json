@@ -81,7 +81,7 @@
   },
   "verification": {
     "public_repo_checks": "passed_pr_344",
-    "trusted_base_action_annotations": "pending_proof_pr",
+    "trusted_base_action_annotations": "passed_pr_346_zero_node20_annotations",
     "release_workflow_without_node20_annotations": "pending_release"
   }
 }
