@@ -71,6 +71,7 @@ REQUIRED_CONTRACTS = (
     "codex_compact_hook_stdout.v1",
     "context_overflow_recovery.v1",
     "objective_runtime_state.v1",
+    "contextlattice_lifecycle_receipt.v1",
     "universal_agent_adapter_response.v1",
     "agent_session_rollup.v1",
     "agent_prompt_context_package.v1",
@@ -1502,6 +1503,35 @@ def sample_universal_agent_adapter_response(registry: dict[str, Any]) -> dict[st
     )
 
 
+def sample_contextlattice_lifecycle_receipt(registry: dict[str, Any]) -> dict[str, Any]:
+    return attach_format_contract(
+        "contextlattice_lifecycle_receipt.v1",
+        {
+            "ok": True,
+            "schema_id": "contextlattice_lifecycle_receipt.v1",
+            "command": "finish",
+            "project": "contextlattice",
+            "session_id": "sess_receipt",
+            "status": "completed",
+            "agent_state": "done",
+            "summary": "verified completion",
+            "outcome_mode": "automatic_success",
+            "outcome": {
+                "schema_id": "contextlattice_context_pack_outcome.v1",
+                "outcome_id": "outcome_receipt",
+                "sample_id": "cpq_receipt",
+            },
+            "event": {
+                "id": "evt_receipt",
+                "type": "session.completed",
+                "status": "completed",
+            },
+            "findings": [],
+        },
+        registry,
+    )
+
+
 def sample_agent_session_rollup(registry: dict[str, Any]) -> dict[str, Any]:
     return attach_format_contract(
         "agent_session_rollup.v1",
@@ -1706,6 +1736,7 @@ def run_audit() -> list[dict[str, Any]]:
         ("a2a_readiness_profile.v1", sample_a2a_readiness()),
         ("context_overflow_recovery.v1", sample_context_overflow_recovery()),
         ("objective_runtime_state.v1", sample_objective_runtime(registry)),
+        ("contextlattice_lifecycle_receipt.v1", sample_contextlattice_lifecycle_receipt(registry)),
         ("universal_agent_adapter_response.v1", sample_universal_agent_adapter_response(registry)),
         ("agent_session_rollup.v1", sample_agent_session_rollup(registry)),
         ("agent_prompt_context_package.v1", sample_agent_prompt_context_package(registry)),

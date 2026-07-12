@@ -394,12 +394,12 @@ func TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket(t *testing.T) 
 	if err := json.Unmarshal(stdout.Bytes(), &finished); err != nil {
 		t.Fatalf("decode finish output: %v", err)
 	}
-	if firstString(asMap(finished["result"])["outcome_mode"]) != "automatic_success" {
+	if firstString(finished["outcome_mode"]) != "automatic_success" {
 		t.Fatalf("expected automatic packet outcome, got %#v", finished)
 	}
 }
 
-func TestAdapterCompleteAutomaticallyReportsPendingContextOutcome(t *testing.T) {
+func TestUnifiedFinishAutomaticallyReportsPendingContextOutcome(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	writeSessionStateWithExtras("alpha", "sess-finish", "finish task", "codex_test", map[string]any{
@@ -452,13 +452,101 @@ func TestAdapterCompleteAutomaticallyReportsPendingContextOutcome(t *testing.T) 
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
-	if firstString(asMap(output["result"])["outcome_mode"]) != "automatic_success" {
+	if firstString(output["outcome_mode"]) != "automatic_success" {
 		t.Fatalf("expected automatic outcome mode, got %#v", output)
 	}
 	quality := asMap(readSessionState("alpha")["latest_context_pack_quality"])
 	if !asBool(quality["reported"]) || firstString(quality["outcome_id"]) != "outcome_finish" {
 		t.Fatalf("pending outcome was not retired after durable report: %#v", quality)
 	}
+}
+
+func TestUnifiedLifecycleReceiptsStayCompactAndFullAdapterOutputRemainsAvailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	huge := strings.Repeat("backend-internal-payload-", 3000)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/memory/write":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "write-compact", "internal": huge})
+		case "/v1/agents/sessions/event":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			status := firstString(payload["status"], "active")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"event": map[string]any{
+					"id": "evt-compact", "type": payload["type"], "status": status, "created_at": "2026-07-12T00:00:00Z",
+				},
+				"rollup": map[string]any{"internal": huge},
+			})
+		case "/v1/agents/sessions/sess-compact/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice", "remember", "bounded checkpoint", "--session-id", "sess-compact", "--project", "alpha", "--pretty"}); err != nil {
+		t.Fatalf("compact remember: %v output=%s", err, stdout.String())
+	}
+	if stdout.Len() > 2000 || strings.Contains(stdout.String(), huge[:100]) {
+		t.Fatalf("remember receipt leaked oversized backend data: bytes=%d", stdout.Len())
+	}
+	rememberBytes := stdout.Len()
+	var remember map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &remember); err != nil {
+		t.Fatalf("decode remember receipt: %v", err)
+	}
+	if firstString(remember["schema_id"]) != "contextlattice_lifecycle_receipt.v1" || firstString(remember["command"]) != "remember" || firstString(asMap(remember["event"])["id"]) != "evt-compact" {
+		t.Fatalf("unexpected remember receipt: %#v", remember)
+	}
+
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice", "finish", "verified compact completion", "--session-id", "sess-compact", "--project", "alpha", "--success", "--pretty"}); err != nil {
+		t.Fatalf("compact finish: %v output=%s", err, stdout.String())
+	}
+	if stdout.Len() > 2000 || strings.Contains(stdout.String(), huge[:100]) {
+		t.Fatalf("finish receipt leaked oversized backend data: bytes=%d", stdout.Len())
+	}
+	finishBytes := stdout.Len()
+	var finish map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &finish); err != nil {
+		t.Fatalf("decode finish receipt: %v", err)
+	}
+	if firstString(finish["schema_id"]) != "contextlattice_lifecycle_receipt.v1" || firstString(finish["status"]) != "completed" || firstString(finish["outcome_mode"]) != "skipped_no_pending_sample" {
+		t.Fatalf("unexpected finish receipt: %#v", finish)
+	}
+
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice", "finish", "full completion", "--session-id", "sess-compact", "--project", "alpha", "--full", "--raw"}); err != nil {
+		t.Fatalf("full unified finish: %v output=%s", err, stdout.String())
+	}
+	var full map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &full); err != nil {
+		t.Fatalf("decode full unified finish: %v", err)
+	}
+	if firstString(full["schema_id"]) != "universal_agent_adapter_response.v1" || len(asMap(full["adapter_contract"])) == 0 || len(asMap(full["result"])) == 0 {
+		t.Fatalf("--full did not preserve adapter response: %#v", full)
+	}
+
+	stdout.Reset()
+	if err := c.run([]string{"contextlattice_agent_adapter", "complete", "--summary", "adapter completion", "--session-id", "sess-compact", "--project", "alpha", "--raw"}); err != nil {
+		t.Fatalf("advanced adapter complete: %v output=%s", err, stdout.String())
+	}
+	var adapter map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &adapter); err != nil {
+		t.Fatalf("decode advanced adapter output: %v", err)
+	}
+	if firstString(adapter["schema_id"]) != "universal_agent_adapter_response.v1" || len(asMap(adapter["adapter_contract"])) == 0 {
+		t.Fatalf("advanced adapter output was compacted unexpectedly: %#v", adapter)
+	}
+	t.Logf("remember_receipt_bytes=%d finish_receipt_bytes=%d injected_backend_bytes=%d", rememberBytes, finishBytes, len(huge))
 }
 
 func TestUnifiedContextAndResumeCommandsUseCompactContracts(t *testing.T) {

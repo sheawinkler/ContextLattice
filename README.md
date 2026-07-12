@@ -39,7 +39,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.16.0` is the current public baseline. The normal agent path is one compact, proof-carrying packet instead of a parade of oversized internal contracts. One task keeps one live session; idle and terminal sessions stop impersonating active work. Async sources move monotonically from warming to one terminal truth. Retrieval learns from ordinary `finish` and `correct` commands, while weak or contradictory evidence forces verify or abstain instead of manufacturing certainty. Transport-inclusive token economics, session truth, outcome learning, and the copy-only Agent Packet workbench now share the same dashboard. Node 24 LTS convergence, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain intact behind the same CLI-first contract.
+`v3.16.1` is the current public baseline. The normal agent path is one compact, proof-carrying packet instead of a parade of oversized internal contracts, and ordinary `remember` and `finish` receipts no longer drag advanced adapter rollups back into the prompt. One task keeps one live session; idle and terminal sessions stop impersonating active work. Async sources move monotonically from warming to one terminal truth. Retrieval learns from ordinary `finish` and `correct` commands, while weak or contradictory evidence forces verify or abstain instead of manufacturing certainty. Transport-inclusive token economics, session truth, outcome learning, and the copy-only Agent Packet workbench now share the same dashboard. Node 24 LTS convergence, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain intact behind the same CLI-first contract.
 
 ## Public Runtime Stack (v3.16)
 
@@ -77,8 +77,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.16.0 \
-  --statement "The current public release is 3.16.0." \
+  --object 3.16.1 \
+  --statement "The current public release is 3.16.1." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -400,6 +400,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.16.1.md` (contract-valid compact lifecycle receipts for the primary CLI)
   - `docs/releases/v3.16.0.md` (compact Agent Packet, session truth, monotonic async, outcome learning, unified CLI, and proof workbench)
   - `docs/releases/v3.15.1.md` (Node 24 LTS convergence across local tooling, containers, packages, and release actions)
   - `docs/releases/v3.15.0.md` (bounded graph repair, explicit graph efficacy, hydrated neighbors, and durable Foundry retirement)

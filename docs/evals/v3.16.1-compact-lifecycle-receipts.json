@@ -1,0 +1,59 @@
+{
+  "schema_id": "contextlattice_eval_ledger.v1",
+  "feature": "compact_lifecycle_receipts",
+  "lane": "public",
+  "release_train": "v3.16.1",
+  "recorded_at": "2026-07-12T22:48:00Z",
+  "baseline": {
+    "command": "contextlattice finish --pretty",
+    "observed_failure": "successful lifecycle operations serialized advanced adapter contracts and recursive session rollups into the primary CLI response",
+    "observed_output_tokens_before_truncation": 14282,
+    "contract": "universal_agent_adapter_response.v1"
+  },
+  "target": {
+    "default_receipt_max_bytes": 2000,
+    "registered_contract_max_bytes": 4096,
+    "forbidden_default_surfaces": [
+      "adapter_contract",
+      "result",
+      "rollup",
+      "session",
+      "raw_contextlattice_json"
+    ],
+    "full_output_escape_hatch": true,
+    "advanced_adapter_compatibility": true
+  },
+  "holdout": {
+    "kind": "synthetic_oversized_backend_response",
+    "injected_backend_bytes": 75000,
+    "remember_receipt_bytes": 873,
+    "finish_receipt_bytes": 811,
+    "backend_payload_bytes_leaked": 0,
+    "remember_under_target": true,
+    "finish_under_target": true,
+    "full_output_preserved": true,
+    "advanced_adapter_output_preserved": true
+  },
+  "cost": {
+    "llm_calls": 0,
+    "provider_tokens": 0,
+    "new_services": 0,
+    "new_routes": 0,
+    "new_tool_count": 0
+  },
+  "latency": {
+    "focused_holdout_secs": 0.807,
+    "extra_network_calls": 0
+  },
+  "reproduction": {
+    "focused": "go test -run TestUnifiedLifecycleReceiptsStayCompactAndFullAdapterOutputRemainsAvailable -count=1 -v ./cmd/contextlattice-agent-tools",
+    "stability": "go test -run 'TestUnifiedLifecycleReceiptsStayCompactAndFullAdapterOutputRemainsAvailable|TestUnifiedContextSeedsAutomaticFinishOutcomeFromAgentPacket|TestUnifiedFinishAutomaticallyReportsPendingContextOutcome' -count=10 ./cmd/contextlattice-agent-tools",
+    "contract_audit": "scripts/agent/audit-agent-output-contracts --pretty",
+    "generated_contracts": "scripts/agent/generate-agent-contract-types --check --pretty",
+    "rust": "cd crates && cargo test -p context_codec"
+  },
+  "failure_evidence": {
+    "caught_by": "final scoped ContextLattice readback after v3.16.0 release",
+    "release_decision": "ship immediate v3.16.1 rather than report the compact-default acceptance lane complete"
+  }
+}
