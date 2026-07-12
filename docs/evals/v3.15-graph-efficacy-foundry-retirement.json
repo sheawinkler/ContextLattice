@@ -2,7 +2,7 @@
   "schema_id": "contextlattice_eval_ledger.v1",
   "feature": "graph_efficacy_and_foundry_retirement",
   "release_train": "v3.15",
-  "recorded_at": "2026-07-12T08:14:06Z",
+  "recorded_at": "2026-07-12T09:22:43Z",
   "baseline": {
     "graph_edge_count": 24237,
     "hot_index_doc_count": 15098,
@@ -43,6 +43,52 @@
     "minimum_graph_cases": 1,
     "pass_condition": "direct recall passes and explicit graph lift is positive with at least one added expected graph hit"
   },
+  "live_proof": {
+    "runtime": {
+      "health": "passed",
+      "strict_native_required_routes": 80,
+      "strict_native_violations": 0,
+      "restart_health": "passed"
+    },
+    "graph_repair": {
+      "projects_evaluated": 2,
+      "generated_candidates": 45256,
+      "eligible_high_confidence_edges": 15259,
+      "preexisting_eligible_edges": 1,
+      "written_edges": 15258,
+      "skipped_below_confidence": 29997,
+      "remaining_writes_after_apply": 0,
+      "idempotence_projects_zero_remaining": 2,
+      "inferred_edges_enabled": false,
+      "resulting_persisted_edge_count": 39495,
+      "persisted_edge_store_bytes": 28438253,
+      "restart_loaded_edges": 39495,
+      "restart_skipped_policy": 0
+    },
+    "graph_efficacy": {
+      "saved_cases": 11,
+      "explicit_graph_cases": 3,
+      "graph_helped_cases": 3,
+      "graph_added_candidates": 13,
+      "graph_added_expected_hits": 3,
+      "graph_lift": 1.0,
+      "direct_passed": true,
+      "direct_recall_at_5": 1.0,
+      "direct_mrr": 1.0,
+      "citation_coverage": 1.0,
+      "post_restart_passed": true
+    },
+    "foundry_retirement": {
+      "retirements": 1,
+      "first_write_recorded": true,
+      "replay_idempotent": true,
+      "replay_recorded": false,
+      "deletion_performed": false,
+      "runtime_mutation": false,
+      "post_restart_status": "retired",
+      "storage_parse_errors": 0
+    }
+  },
   "economics": {
     "llm_calls": 0,
     "provider_tokens": 0,
@@ -52,8 +98,11 @@
   },
   "latency": {
     "baseline_saved_eval_p95_ms": 761.502,
-    "post_change_saved_eval_p95_ms": null,
-    "post_change_repair_duration_ms": null
+    "post_change_saved_eval_p95_ms": 1827.453,
+    "post_change_saved_eval_avg_ms": 1367.375,
+    "post_change_saved_eval_duration_ms": 15056.036,
+    "post_change_repair_duration_ms": 6800,
+    "post_change_repair_scope": "two_project_combined_wall_time"
   },
   "failures": [
     {
@@ -75,6 +124,21 @@
       "stage": "adversarial_review",
       "failure": "a graph-free refresh could otherwise continue into saved evaluation",
       "resolution": "require successful refresh plus at least one explicit graph holdout before evaluation"
+    },
+    {
+      "stage": "adversarial_review",
+      "failure": "a dangling graph target could otherwise count as useful context",
+      "resolution": "hydrate targets from durable memory and give no efficacy or Context Pack credit when hydration fails"
+    },
+    {
+      "stage": "adversarial_review",
+      "failure": "an interrupted retirement append could leave a stale draft snapshot after its tombstone",
+      "resolution": "make the retirement tombstone authoritative during ledger replay"
+    },
+    {
+      "stage": "adversarial_review",
+      "failure": "concurrent Foundry lifecycle mutations could race terminal retirement",
+      "resolution": "serialize draft, evaluation, export, retirement, activation, and deactivation mutations"
     }
   ],
   "reproduction": [
@@ -93,8 +157,9 @@
     "global_installer_smoke": "passed_64_checks",
     "json_python_shell_static_checks": "passed",
     "powershell_parse": "not_run_pwsh_unavailable",
-    "live_repair": "pending_merged_deployment",
-    "live_graph_efficacy": "pending_merged_deployment",
-    "live_foundry_retirement": "pending_merged_deployment"
+    "strict_native_ownership": "passed_80_required_routes_zero_violations",
+    "live_repair": "passed_15258_edges_written_zero_remaining",
+    "live_graph_efficacy": "passed_direct_and_graph_before_and_after_restart",
+    "live_foundry_retirement": "passed_recorded_idempotent_and_restart_persisted"
   }
 }
