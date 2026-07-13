@@ -43,26 +43,45 @@ if [[ -n "$REF" ]]; then
 fi
 
 files=()
+append_files() {
+  local file
+  while IFS= read -r file; do
+    [[ -n "$file" ]] && files+=("$file")
+  done
+}
 if [[ -n "$REF" ]]; then
   if [[ "$MODE" == "all" ]]; then
-    mapfile -t files < <(git ls-tree -r --name-only "$REF")
+    append_files < <(git ls-tree -r --name-only "$REF")
   elif git rev-parse --verify "$BASE" >/dev/null 2>&1; then
-    mapfile -t files < <(git diff --name-only "${BASE}...${REF}")
+    if git merge-base "$BASE" "$REF" >/dev/null 2>&1; then
+      DIFF_FILES="${TMP_DIR}/diff-files.txt"
+      git diff --name-only "${BASE}...${REF}" >"$DIFF_FILES" || fail "diff failed for ${BASE}...${REF}"
+      append_files <"$DIFF_FILES"
+    else
+      append_files < <(git ls-tree -r --name-only "$REF")
+    fi
   else
-    mapfile -t files < <(git ls-tree -r --name-only "$REF")
+    append_files < <(git ls-tree -r --name-only "$REF")
   fi
 elif [[ "$MODE" == "all" ]]; then
-  mapfile -t files < <(git ls-files)
+  append_files < <(git ls-files)
 else
   if git rev-parse --verify "$BASE" >/dev/null 2>&1; then
-    mapfile -t files < <(git diff --name-only "$BASE"...HEAD; git diff --name-only; git diff --name-only --cached)
+    append_files < <(git diff --name-only "$BASE"...HEAD; git diff --name-only; git diff --name-only --cached; git ls-files --others --exclude-standard)
   else
-    mapfile -t files < <(git diff --name-only; git diff --name-only --cached)
+    append_files < <(git diff --name-only; git diff --name-only --cached; git ls-files --others --exclude-standard)
   fi
-  mapfile -t files < <(printf '%s\n' "${files[@]:-}" | sed '/^$/d' | sort -u)
+  unique_files=()
+  while IFS= read -r file; do
+    [[ -n "$file" ]] && unique_files+=("$file")
+  done < <(printf '%s\n' "${files[@]:-}" | sed '/^$/d' | sort -u)
+  files=("${unique_files[@]}")
 fi
 
 if [[ "${#files[@]}" -eq 0 ]]; then
+  if [[ -n "$REF" ]] && [[ -n "$(git ls-tree -r --name-only "$REF" | sed -n '1p')" ]]; then
+    fail "ref scan resolved to zero files: $REF"
+  fi
   emit_json_kv ok=true scanned=0 mode="$MODE"
   exit 0
 fi
@@ -83,7 +102,6 @@ patterns = [
 ]
 personal_path_raw = os.environ.get('CONTEXTLATTICE_PUBLIC_FORBIDDEN_PATH_RE', '')
 personal_path_pattern = re.compile(personal_path_raw) if personal_path_raw else None
-private_repo_marker = 'sheawinkler/' + 'http-context-and-memory-orchestrator'
 findings = []
 for raw in files:
     path = scan_root / raw
@@ -100,8 +118,6 @@ for raw in files:
     except Exception:
         continue
     for i, line in enumerate(text.splitlines(), 1):
-        if public and private_repo_marker in line:
-            findings.append({'kind': 'private_repo_reference', 'file': raw, 'line': i, 'match': line[:220]})
         if public and personal_path_pattern and personal_path_pattern.search(line):
             findings.append({'kind': 'personal_path', 'file': raw, 'line': i, 'match': line[:220]})
         for kind, pattern in patterns:

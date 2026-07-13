@@ -2,14 +2,14 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
 usage() {
   cat <<'USAGE'
 Usage: branch_lane_guard.sh [--lane auto|private|public|public-paid] [--ref <git-ref>]
 
-Enforces lane-specific repository hygiene. Public lanes must not carry private
-paths or machine-specific storage references.
+Enforces existing lane-specific repository hygiene.
 
 Lane model:
   private     origin/main; everything allowed.
@@ -66,15 +66,89 @@ fi
 if [[ "$LANE" == "public-paid" ]]; then
   while IFS= read -r path; do
     case "$path" in
-      private_docs/*|private/*|*.private.md)
+      docs/private/*|private_docs/*|private/*|*.private.md|\
+      .github/workflows/capability-parity.yml|\
+      config/env/premium_dev.env|\
+      scripts/agent/audit-private-paid-superset|\
+      scripts/launch_private_dev.sh|\
+      scripts/setup_paid_local_env.sh|\
+      scripts/tests/test_private_dev_posture.py)
         printf '[branch_lane_guard] BLOCK private-only path in %s lane: %s\n' "$LANE" "$path" >&2
+        blocked=1
+        ;;
+      .backup/*|dev/backups/*|development/*|logs/*|\
+      *.pid|*.bak|*.bak.*|*.tmp|\
+      .env|*/.env|.env_*|*/.env_*|\
+      .ops/snapshots/*)
+        printf '[branch_lane_guard] BLOCK tracked scratch/backup path in %s lane: %s\n' "$LANE" "$path" >&2
         blocked=1
         ;;
     esac
   done < <(git ls-tree -r --name-only "$REF")
 fi
 
+if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
+  internal_dev_pattern='private[- ]development|private-dev|keyless (superset|bypass)|unlocked superset'
+  if git grep -n -I -i -E "$internal_dev_pattern" "$REF" -- \
+      README.md docs/public_overview docs/releases launch_service packaging \
+      >/tmp/contextlattice_internal_dev_doc_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_internal_dev_doc_hits.txt >&2
+    blocked=1
+  fi
+fi
+
 if [[ "$LANE" == "public" ]]; then
+  internal_doc_reference='docs/private/|private_docs/'
+  if git grep -n -I -E "$internal_doc_reference" "$REF" -- \
+      README.md docs/public_overview docs/releases launch_service packaging \
+      >/tmp/contextlattice_internal_doc_reference_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_internal_doc_reference_hits.txt >&2
+    blocked=1
+  fi
+fi
+
+if [[ "$LANE" == "public" ]]; then
+  blocklist="${CONTEXTLATTICE_PUBLIC_SYNC_BLOCKLIST:-${ROOT}/config/public_sync_blocklist.txt}"
+  if [[ -f "$blocklist" ]]; then
+    while IFS= read -r pattern; do
+      pattern="${pattern%%#*}"
+      pattern="$(printf '%s' "$pattern" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [[ -n "$pattern" ]] || continue
+      while IFS= read -r path; do
+        # shellcheck disable=SC2254 # Blocklist entries are intentional globs.
+        case "$path" in
+          $pattern)
+            printf '[branch_lane_guard] BLOCK public-sync pattern %s: %s\n' "$pattern" "$path" >&2
+            blocked=1
+            ;;
+        esac
+      done < <(git ls-tree -r --name-only "$REF")
+    done <"$blocklist"
+  fi
+
+  paid_gateway_pattern='GO_(PAID|V4)_ENTITLEMENT|enforce(Paid|V4)Entitlement|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+  if git grep -n -I -E "$paid_gateway_pattern" "$REF" -- services/gateway-go >/tmp/contextlattice_paid_gateway_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_paid_gateway_hits.txt >&2
+    blocked=1
+  fi
+
+  paid_ui_pattern='(/api/billing/(download|downloads|download-token|entitlement|summary|stripe|paypal|solana-pay|kraken)|/api/support/diagnostics|/api/telemetry/pro-analytics|exportSupportDiagnostics|HostedArtifacts)'
+  if git grep -n -I -E "$paid_ui_pattern" "$REF" -- contextlattice-dashboard/app contextlattice-dashboard/components >/tmp/contextlattice_paid_ui_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_paid_ui_hits.txt >&2
+    blocked=1
+  fi
+
+  paid_distribution_pattern='Set-PaidRuntimePosture|apply_paid_runtime_posture|set_env_value.*GO_V4_|Set-EnvValue.*GO_V4_|EXPECTED_SOURCE_REF.*public-paid/main|SOURCE_TRACKING_REF.*public-paid/main'
+  if git grep -n -I -E "$paid_distribution_pattern" "$REF" -- \
+      packaging scripts/build_release_payload.sh scripts/build_linux_bundle.sh \
+      scripts/build_macos_dmg.sh scripts/build_windows_msi.sh \
+      >/tmp/contextlattice_paid_distribution_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_paid_distribution_hits.txt >&2
+    blocked=1
+  fi
+fi
+
+if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
   machine_pattern="${CONTEXTLATTICE_PUBLIC_FORBIDDEN_PATH_RE:-}"
   if [[ -n "$machine_pattern" ]]; then
     if [[ "$REF" == "HEAD" ]]; then

@@ -6,7 +6,6 @@ import { ensureWorkspaceActive, requireActiveWorkspaceId } from "@/lib/workspace
 import { checkUsageLimits } from "@/lib/usage/budgets";
 import { estimateTokensFromText, recordUsageEvent } from "@/lib/usage/events";
 import { recordAuditLog } from "@/lib/audit";
-import { getWorkspacePlan, requireActiveSubscription } from "@/lib/billing/entitlements";
 
 export async function POST(request: Request) {
   const session = await getDashboardSession();
@@ -41,15 +40,6 @@ export async function POST(request: Request) {
     );
   }
 
-  try {
-    await requireActiveSubscription(workspaceId);
-  } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message || "Subscription required" },
-      { status: 402 },
-    );
-  }
-
   const body = await request.json();
   const projectName = String(body?.projectName || "").trim();
   if (!projectName) {
@@ -58,40 +48,6 @@ export async function POST(request: Request) {
   const content = typeof body?.content === "string" ? body.content : "";
   const tokens = estimateTokensFromText(content);
   const enforceBudgets = process.env.ENFORCE_BUDGETS !== "false";
-  const plan = await getWorkspacePlan(workspaceId);
-  if (plan.entitlements.maxWriteBytes !== null) {
-    if (content.length > plan.entitlements.maxWriteBytes) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `Payload exceeds ${plan.entitlements.maxWriteBytes} bytes for ${plan.planId} plan.`,
-        },
-        { status: 413 },
-      );
-    }
-  }
-  if (plan.entitlements.maxProjects !== null) {
-    try {
-      const projects = await callOrchestrator("/projects");
-      const names = Array.isArray(projects?.projects)
-        ? projects.projects.map((p: any) => p?.name).filter(Boolean)
-        : [];
-      if (!names.includes(projectName) && names.length >= plan.entitlements.maxProjects) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Project limit reached for ${plan.planId} plan.`,
-          },
-          { status: 402 },
-        );
-      }
-    } catch (err: any) {
-      return NextResponse.json(
-        { ok: false, error: err?.message || "Failed to validate project limits" },
-        { status: 502 },
-      );
-    }
-  }
   if (enforceBudgets && workspaceId) {
     const limits = await checkUsageLimits(workspaceId, { tokens });
     if (!limits.ok) {

@@ -50,16 +50,19 @@ Note: the reachable Qwable repos are under `usermma/...`; the `useremma/...` spe
 Download to an external disk or another explicit model cache, then run the server with the ContextLattice-safe final-content template:
 
 ```bash
+export CONTEXTLATTICE_MODEL_DIR="${CONTEXTLATTICE_MODEL_DIR:-$HOME/.cache/contextlattice/models}"
+model_path="$CONTEXTLATTICE_MODEL_DIR/usermma/Qwable-9B-Claude-Fable-5-mlx-8Bit"
+
 huggingface-cli download usermma/Qwable-9B-Claude-Fable-5-mlx-8Bit \
-  --local-dir /path/to/models/Qwable-9B-Claude-Fable-5-mlx-8Bit
+  --local-dir "$model_path"
 
 scripts/inference_mlx_server.sh \
-  --model /path/to/models/Qwable-9B-Claude-Fable-5-mlx-8Bit \
+  --model "$model_path" \
   --template-profile qwen-final-content
 
 export ORCH_INFER_PROVIDER=mlx
 export MLX_API_BASE=http://127.0.0.1:18087/v1
-export TASK_MODEL=/path/to/models/Qwable-9B-Claude-Fable-5-mlx-8Bit
+export TASK_MODEL="$model_path"
 scripts/inference_template_conformance.sh --provider mlx --model "$TASK_MODEL"
 ```
 

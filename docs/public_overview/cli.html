@@ -37,6 +37,9 @@
       <span class="badge">CLI</span>
       <h1>Install, launch, and validate Context Lattice from terminal in minutes.</h1>
       <p class="sub">Use these commands as the canonical local flow for public and premium lanes, including prompt-ready context compilation before expensive agent reasoning.</p>
+      <!-- BEGIN GENERATED COMMERCIAL TRUTH: cli-release-summary -->
+      <p class="muted-note">Current release: <code>v3.17.0</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>
+      <!-- END GENERATED COMMERCIAL TRUTH: cli-release-summary -->
     </section>
 
     <section class="section">
@@ -116,7 +119,9 @@ contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_retrieval_plan "what evidence does this task owe?" --project contextlattice --pretty
-contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.16.0 --pretty
+<!-- BEGIN GENERATED COMMERCIAL TRUTH: cli-release-claim -->
+contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.17.0 --pretty
+<!-- END GENERATED COMMERCIAL TRUTH: cli-release-claim -->
 contextlattice_claim_query "what is current?" --project contextlattice --include-superseded --pretty
 contextlattice_synthesis_pack_v2 "what can the evidence prove?" --project contextlattice --pretty
 contextlattice_policy_candidate --project contextlattice --pretty
@@ -217,31 +222,8 @@ contextlattice finish "verified result" --success --project contextlattice --pre
 
 # cross-profile adoption proof remains available to operators
 contextlattice_adopt proof --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --skip-provider-smoke --pretty
-contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty
-
-# start or recover a ContextLattice-owned session
-BOOTSTRAP_JSON="$(contextlattice_agent_adapter bootstrap --agent codex --project contextlattice)"
-SESSION_ID="$(printf '%s' "$BOOTSTRAP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
-
-# retrieve bounded context against that session
-contextlattice_agent_adapter context-pack --agent codex --project contextlattice --session-id "$SESSION_ID" --pretty
-contextlattice_agent_adapter state --agent codex --project contextlattice --session-id "$SESSION_ID" --state working --pretty
-
-# write durable progress and handoff state
-contextlattice_agent_adapter checkpoint --agent codex --project contextlattice --session-id "$SESSION_ID" --content "checkpoint summary"
-contextlattice_agent_adapter handoff --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "handoff summary"
-contextlattice_agent_adapter complete --agent codex --project contextlattice --session-id "$SESSION_ID" --summary "completed" --first-pass-success true --repair-required false --retry-count 0
-
-# package the session for the next model call
-contextlattice_agent_session rollup --session-id "$SESSION_ID" --pretty
-contextlattice_agent_session context-package --session-id "$SESSION_ID" --pretty
-contextlattice_async_inbox_drain --session-id "$SESSION_ID"
-contextlattice_async_inbox_hook --session-id "$SESSION_ID"
-contextlattice_agent_discover --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --repo . --pretty
-contextlattice_agent_trace --session-id "$SESSION_ID" --tree
-contextlattice_agent_trace --session-id "$SESSION_ID" --markdown
-contextlattice_run_advisor --session-id "$SESSION_ID" --pretty</code></pre>
-        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain delivers terminal continuation steering and can expose running work as warming when explicitly requested; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
+contextlattice_agent_adoption_proof --skip-provider-smoke --progress --pretty</code></pre>
+        <p class="muted-note">Use profiles such as <code>codex</code>, <code>claude-code</code>, <code>opencode</code>, <code>hermes-agent</code>, <code>hermes-ultra</code>, <code>omp</code>, <code>mercury-agent</code>, <code>pi</code>, <code>droid</code>, <code>chatgpt-web</code>, and <code>claude-web</code> to keep handoffs consistent across runtimes. The adoption proof reports which skills, context package, session events, graph touches, and handoffs shaped each profile run; the async inbox drain surfaces unseen continuation progress/ready/terminal-degraded steering after normal tool boundaries, with running or pending work labeled warming rather than degraded; runtimes with post-tool hooks can bind the async inbox hook for the same fail-open path; the trace command turns the same evidence into a terminal view or exportable run card; Run Advisor turns that evidence into prompt readiness and next-action guidance.</p>
       </article>
     </section>
 

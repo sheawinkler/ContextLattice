@@ -9,29 +9,25 @@
   },
   "scripts": {
     "dev": "next dev --webpack",
+    "prebuild": "prisma generate",
     "build": "next build --webpack",
     "start": "next start",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "billing:reconcile": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/reconcile_billing.ts",
-    "billing:reconcile:stripe": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/reconcile_stripe.ts",
-    "billing:reconcile:paypal": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/reconcile_paypal.ts",
-    "billing:reconcile:coinbase": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/reconcile_coinbase.ts",
     "audit:export": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/export_audit_logs.ts",
     "audit:prune": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --require ts-node/register scripts/prune_audit_logs.ts",
+    "pretest": "prisma generate",
     "test": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' node --require tsconfig-paths/register --test --require ts-node/register tests/auth-boundary.test.ts tests/dashboardMetrics.test.ts tests/overrides-api.test.ts tests/overrides-panel.test.tsx tests/sidecar-health-api.test.ts tests/sidecar-health-panel.test.tsx tests/charts-panel.test.tsx tests/alerts-panel.test.tsx tests/strategy-panel.test.tsx tests/recall-quality-panel.test.tsx tests/retrieval-panel.test.tsx tests/continuations-api.test.ts tests/agent-packet-api.test.ts tests/agent-packet-panel.test.tsx"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",
     "@prisma/client": "^5.20.0",
-    "@solana/web3.js": "^1.98.2",
     "bcryptjs": "^2.4.3",
     "next": "16.2.6",
     "next-auth": "^4.24.7",
     "nodemailer": "^9.0.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "stripe": "^14.21.0",
     "ts-node": "^10.9.2"
   },
   "devDependencies": {

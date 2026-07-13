@@ -6,6 +6,7 @@ DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 PKG_DIR="${ROOT_DIR}/packaging/windows"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-msi.XXXXXX")"
 STAGE_DIR="${TMP_DIR}/stage"
+PAYLOAD_BUILD_DIR="${TMP_DIR}/payload-build"
 WIX_IMAGE="${WIX_IMAGE:-marco98/msitools:latest}"
 WIX_PLATFORM="${WIX_PLATFORM:-linux/amd64}"
 MSI_ARCH="${MSI_ARCH:-x64}"
@@ -13,6 +14,7 @@ MSI_NAME="${MSI_NAME:-ContextLattice-windows-${MSI_ARCH}.msi}"
 MSI_PATH="${DIST_DIR}/${MSI_NAME}"
 VERSION_RAW="${MSI_VERSION:-$(git -C "${ROOT_DIR}" describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")}"
 VERSION="$(echo "${VERSION_RAW}" | sed -E 's/^[^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+RELEASE_LANE="${RELEASE_LANE:-public}"
 
 cleanup() {
   rm -rf "${TMP_DIR}"
@@ -23,6 +25,11 @@ if [[ ! -d "${PKG_DIR}" ]]; then
   echo "ERROR: missing packaging directory: ${PKG_DIR}" >&2
   exit 1
 fi
+
+[[ "${RELEASE_LANE}" == "public" ]] || {
+  echo "ERROR: the public repository builds only RELEASE_LANE=public MSIs." >&2
+  exit 1
+}
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker is required to build MSI from macOS/Linux." >&2
@@ -38,10 +45,27 @@ mkdir -p "${DIST_DIR}" "${STAGE_DIR}"
 
 cp "${PKG_DIR}/ContextLattice-Install.cmd" "${STAGE_DIR}/"
 cp "${PKG_DIR}/ContextLattice-Monitor.cmd" "${STAGE_DIR}/"
-cp "${PKG_DIR}/Install-ContextLattice.ps1" "${STAGE_DIR}/"
+sed "s/@RELEASE_LANE@/${RELEASE_LANE}/g" \
+  "${PKG_DIR}/Install-ContextLattice.ps1" > "${STAGE_DIR}/Install-ContextLattice.ps1"
 cp "${PKG_DIR}/Monitor-ContextLattice.ps1" "${STAGE_DIR}/"
 cp "${PKG_DIR}/README.txt" "${STAGE_DIR}/"
 cp "${PKG_DIR}/contextlattice.wxs" "${STAGE_DIR}/"
+
+PAYLOAD_OUT_DIR="${PAYLOAD_BUILD_DIR}" \
+PAYLOAD_FORMATS="zip" \
+RELEASE_LANE="${RELEASE_LANE}" \
+  bash "${ROOT_DIR}/scripts/build_release_payload.sh"
+mkdir -p "${STAGE_DIR}/payload"
+cp \
+  "${PAYLOAD_BUILD_DIR}/contextlattice-payload.zip" \
+  "${PAYLOAD_BUILD_DIR}/contextlattice-payload.zip.sha256" \
+  "${PAYLOAD_BUILD_DIR}/contextlattice-release.json" \
+  "${STAGE_DIR}/payload/"
+
+if [[ ! -s "${STAGE_DIR}/payload/contextlattice-payload.zip" ]]; then
+  echo "ERROR: ${RELEASE_LANE} Windows MSI payload is missing." >&2
+  exit 1
+fi
 
 if [[ -f "${MSI_PATH}" ]]; then
   rm -f "${MSI_PATH}"

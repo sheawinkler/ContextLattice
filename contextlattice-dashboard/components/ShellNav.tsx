@@ -13,7 +13,6 @@ const CORE_NAV_LINKS = [
 
 const HOSTED_NAV_LINKS = [
   { href: "/pricing", label: "Pricing" },
-  { href: "/billing", label: "Billing" },
 ];
 
 function displayName(session: any): string {

@@ -9,9 +9,6 @@ const PUBLIC_ROUTES = [
   "/pricing",
   "/api/auth",
   "/api/public",
-  "/api/billing/stripe/webhook",
-  "/api/billing/paypal/webhook",
-  "/api/billing/coinbase/webhook",
 ];
 
 function sanitizeRoutePath(rawPathname: string): string {

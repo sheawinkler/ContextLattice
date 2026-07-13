@@ -23,6 +23,47 @@ if [[ "$PUBLIC_BRANCH" == "$DEFAULT_BRANCH" && "${ALLOW_SYNC_TO_DEFAULT_BRANCH:-
   exit 1
 fi
 
+if [[ "${SKIP_PUBLIC_OVERVIEW_BOUNDARY_GUARD:-0}" != "1" ]]; then
+  python3 - "$PUBLIC_SOURCE_DIR" "$REPO_ROOT/docs/architecture/scaling-memory.md" <<'PY'
+from pathlib import Path
+import sys
+
+roots = [Path(arg) for arg in sys.argv[1:]]
+markers = [
+    "Private" + "/" + "Public Sync Notes",
+    "publish_" + "execution_" + "tracker",
+    "launch_" + "channel_" + "copybook",
+    "submission_" + "requirements",
+    "internal" + "-planning",
+    "internal " + "docs",
+    "internal " + "documentation",
+    "private " + "operator",
+    "private " + "operator " + "docs",
+    "private " + "operator " + "runbooks",
+    "private " + "runbooks",
+]
+text_exts = {"", ".bash", ".cjs", ".css", ".go", ".html", ".js", ".json", ".md", ".mjs", ".py", ".rs", ".sh", ".toml", ".txt", ".yaml", ".yml"}
+findings = []
+for root in roots:
+    paths = root.rglob("*") if root.is_dir() else [root]
+    for path in paths:
+        if not path.is_file() or path.suffix.lower() not in text_exts:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for marker in markers:
+            if marker in text:
+                findings.append((path, marker))
+if findings:
+    print("Refusing to sync public overview; public-boundary markers found:", file=sys.stderr)
+    for path, marker in findings:
+        print(f"- {path}: {marker}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+fi
+
 rm -rf "$PUBLIC_DIR"
 mkdir -p "$(dirname "$PUBLIC_DIR")"
 
@@ -54,6 +95,7 @@ if [[ -d "$PUBLIC_SOURCE_DIR" ]]; then
   cp "$PUBLIC_SOURCE_DIR/troubleshooting.html" "$PUBLIC_DIR/troubleshooting.html"
   cp "$PUBLIC_SOURCE_DIR/contact.html" "$PUBLIC_DIR/contact.html"
   cp "$PUBLIC_SOURCE_DIR/llms.txt" "$PUBLIC_DIR/llms.txt"
+  cp "$PUBLIC_SOURCE_DIR/commercial-truth.json" "$PUBLIC_DIR/commercial-truth.json"
   cp "$PUBLIC_SOURCE_DIR/styles.css" "$PUBLIC_DIR/styles.css"
   if [[ -f "$PUBLIC_SOURCE_DIR/CNAME" ]]; then
     cp "$PUBLIC_SOURCE_DIR/CNAME" "$PUBLIC_DIR/CNAME"
