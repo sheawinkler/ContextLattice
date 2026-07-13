@@ -1,217 +1,146 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useSession } from "next-auth/react";
-import { dashboardClientAuthRequired } from "@/lib/authMode";
+import { useState } from "react";
 
-type DownloadAsset = {
-  id: string;
+type CommandStep = {
   label: string;
-  fileName: string;
-  route: string;
+  command: string;
 };
 
-type DownloadCatalog = {
-  planId: string;
-  expiresInMinutesDefault: number;
-  assets: DownloadAsset[];
-};
+const INSTALL_STEPS: CommandStep[] = [
+  {
+    label: "01 // clone",
+    command: "git clone https://github.com/sheawinkler/ContextLattice.git",
+  },
+  { label: "02 // enter", command: "cd ContextLattice" },
+  { label: "03 // configure", command: "cp .env.example .env" },
+  { label: "04 // launch", command: "gmake quickstart" },
+];
 
-type TokenLink = {
-  id: string;
-  label: string;
-  fileName: string;
-  expiresInMinutes: number;
-  url: string;
-};
+const VERIFY_STEPS: CommandStep[] = [
+  { label: "doctor", command: "contextlattice doctor --pretty" },
+  { label: "runtime health", command: "curl -fsS http://127.0.0.1:8075/health | jq" },
+  { label: "local monitor", command: "gmake monitor-open" },
+];
 
-type DashboardSessionLike = {
-  user?: { email?: string | null } | null;
-} | null;
+const ADOPT_STEPS: CommandStep[] = [
+  { label: "detect", command: "contextlattice_adopt status --pretty" },
+  {
+    label: "integrate",
+    command:
+      "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --pretty",
+  },
+  {
+    label: "verify",
+    command:
+      "contextlattice_adopt integrate --repo . --agents codex,claude-code,opencode,hermes-agent,hermes-ultra,omp,mercury-agent,pi,droid --check --pretty",
+  },
+];
 
-const AGENT_PROMPT = `Navigate to github.com/sheawinkler/contextlattice, install ContextLattice using the documented quickstart, run the doctor, then integrate only with agent harnesses that are actually installed on this machine. Configure hooks/agent files for the detected agents, verify ContextLattice recall/writeback works, and report exact commands plus any skipped integrations.`;
+const INSTALL_COMMANDS = INSTALL_STEPS.map((step) => step.command).join("\n");
 
-function CopyableCommand({ label, command }: { label: string; command: string }) {
+const AGENT_PROMPT = `Install the open-source ContextLattice repository from https://github.com/sheawinkler/ContextLattice using its documented quickstart. Run contextlattice doctor --pretty, then integrate the current repository only with agent harnesses already installed on this machine. Verify the managed integration with contextlattice_adopt integrate --check, do not install third-party agent CLIs, and report the exact commands plus any skipped integrations.`;
+
+function CopyButton({ value, idleLabel = "Copy" }: { value: string; idleLabel?: string }) {
   const [copied, setCopied] = useState(false);
+
   async function copy() {
-    await navigator.clipboard.writeText(command);
+    await navigator.clipboard.writeText(value);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   }
+
+  return (
+    <button className="cl-button" type="button" onClick={copy}>
+      {copied ? "Copied" : idleLabel}
+    </button>
+  );
+}
+
+function CopyableCommand({ label, command }: CommandStep) {
   return (
     <div className="cl-command-card">
       <div>
         <span className="cl-label">{label}</span>
         <code>{command}</code>
       </div>
-      <button className="cl-button" type="button" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+      <CopyButton value={command} />
     </div>
   );
 }
 
-function HostedArtifacts({ authRequired, session }: { authRequired: boolean; session: DashboardSessionLike }) {
-  const [catalog, setCatalog] = useState<DownloadCatalog | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [tokenLinks, setTokenLinks] = useState<TokenLink[]>([]);
-  const [issuedKey, setIssuedKey] = useState<string | null>(null);
-  const [issuedPrefix, setIssuedPrefix] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!authRequired) {
-      setMessage("Hosted paid artifacts are disabled in local OSS mode.");
-      return;
-    }
-    let mounted = true;
-    fetch("/api/billing/downloads", { cache: "no-store" })
-      .then(async (res) => ({ status: res.status, data: await res.json() }))
-      .then(({ status, data }) => {
-        if (!mounted) return;
-        if (status === 402) {
-          setMessage(data?.error || "Active subscription required for premium artifacts.");
-          return;
-        }
-        if (status === 401) {
-          setMessage(authRequired ? "Sign in to access hosted artifacts." : "Hosted paid artifacts are disabled in local OSS mode.");
-          return;
-        }
-        if (!data?.ok) {
-          setMessage(data?.error || "Hosted artifact catalog is not available here.");
-          return;
-        }
-        setCatalog(data);
-      })
-      .catch(() => {
-        if (mounted) setMessage("Hosted artifact catalog is not available here.");
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [authRequired]);
-
-  const hasAssets = useMemo(() => (catalog?.assets?.length || 0) > 0, [catalog]);
-  const canIssueRuntimeKey = authRequired && !!session?.user?.email && !!catalog?.planId;
-
-  async function issueTimedLinks(email: boolean) {
-    setBusy(email ? "email-links" : "links");
-    setMessage(null);
-    try {
-      const res = await fetch("/api/billing/download-token", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ttlMinutes: catalog?.expiresInMinutesDefault || 120, email }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data?.error || "Failed to issue download links.");
-        return;
-      }
-      setTokenLinks(data.links || []);
-      setMessage(email ? "Timed links generated; email delivery attempted." : "Timed download links generated.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function issueRuntimeKey() {
-    setBusy("runtime-key");
-    setMessage(null);
-    try {
-      const res = await fetch("/api/billing/entitlement/issue", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rotate: false }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data?.error || "Failed to issue runtime key.");
-        return;
-      }
-      setIssuedKey(data?.key?.apiKey || null);
-      setIssuedPrefix(data?.key?.prefix || null);
-      setMessage("Premium runtime key issued. Store it now; it is shown once.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <section className="cl-panel">
-      <div className="cl-section-head">
-        <div>
-          <p className="cl-kicker">hosted lane</p>
-          <h3>Paid artifacts and runtime keys</h3>
-        </div>
-        <span className="cl-badge">{authRequired ? "auth enabled" : "local mode"}</span>
-      </div>
-      <p className="cl-panel-note">
-        This section only matters for hosted/paid deployments. Local open-source dashboard usage does not require login or premium downloads.
-      </p>
-      {session?.user?.email ? <p className="cl-panel-note">Signed in as {session.user.email}</p> : null}
-      {hasAssets ? (
-        <div className="cl-artifact-grid">
-          {catalog!.assets.map((asset) => (
-            <a key={asset.id} className="cl-artifact-card" href={asset.route}>
-              <strong>{asset.label}</strong>
-              <span>{asset.fileName}</span>
-            </a>
-          ))}
-        </div>
-      ) : null}
-      <div className="cl-button-row">
-        <button className="cl-button" disabled={!hasAssets || busy !== null} onClick={() => issueTimedLinks(false)} type="button">
-          {busy === "links" ? "Generating" : "Generate links"}
-        </button>
-        <button className="cl-button" disabled={!hasAssets || busy !== null} onClick={() => issueTimedLinks(true)} type="button">
-          {busy === "email-links" ? "Emailing" : "Generate + email"}
-        </button>
-        <button className="cl-button" disabled={!canIssueRuntimeKey || busy !== null} onClick={issueRuntimeKey} type="button">
-          {busy === "runtime-key" ? "Issuing" : "Issue runtime key"}
-        </button>
-      </div>
-      {!canIssueRuntimeKey ? (
-        <p className="cl-panel-note">Runtime keys are issued only to signed-in users with an active paid entitlement.</p>
-      ) : null}
-      {tokenLinks.length ? (
-        <div className="cl-link-stack">
-          {tokenLinks.map((link) => (
-            <a key={link.id} href={link.url}>{link.label} · expires in {link.expiresInMinutes}m</a>
-          ))}
-        </div>
-      ) : null}
-      {issuedPrefix ? <p className="cl-panel-note">Key prefix: <code>{issuedPrefix}</code></p> : null}
-      {issuedKey ? <code className="cl-secret-output">{issuedKey}</code> : null}
-      {message ? <p className="cl-panel-note">{message}</p> : null}
-    </section>
-  );
-}
-
-function InstallContent({ authRequired, session }: { authRequired: boolean; session: DashboardSessionLike }) {
+export function InstallArtifactsPage() {
   return (
     <div className="cl-page cl-install-page">
       <section className="cl-hero cl-hero--compact">
         <div className="cl-hero-copy">
-          <p className="cl-kicker">Install // local agent memory</p>
-          <h2>Turn the machine on. Then let agents plug in.</h2>
+          <p className="cl-kicker">Install // OSS local runtime</p>
+          <h2>Start local. Stay in control.</h2>
           <p>
-            This page is not a shopping mall. It is the local install and integration desk: CLI, agent prompt, doctor, and hosted artifact lane only when that deployment supports it.
+            Clone the public repository, launch the local stack, and drive ContextLattice from the CLI. No dashboard account is required.
           </p>
         </div>
+        <aside className="cl-overview-stamp" aria-label="Installation profile">
+          <span className="cl-label">primary interface</span>
+          <strong>CLI</strong>
+          <span>Open source / local-first / Compose v2</span>
+        </aside>
       </section>
 
       <section className="cl-panel">
         <div className="cl-section-head">
           <div>
             <p className="cl-kicker">fast path</p>
-            <h3>Install and verify</h3>
+            <h3>Clone, configure, launch</h3>
           </div>
-          <a className="cl-text-link" href="https://github.com/sheawinkler/contextlattice" target="_blank" rel="noreferrer">GitHub</a>
+          <CopyButton value={INSTALL_COMMANDS} idleLabel="Copy all" />
+        </div>
+        <p className="cl-panel-note">
+          Requires a Compose v2-compatible container runtime plus <code>gmake</code>, <code>jq</code>, <code>rg</code>, <code>python3</code>, and <code>curl</code>.
+        </p>
+        <div className="cl-command-grid">
+          {INSTALL_STEPS.map((step) => (
+            <CopyableCommand key={step.label} {...step} />
+          ))}
+        </div>
+      </section>
+
+      <section className="cl-panel">
+        <div className="cl-section-head">
+          <div>
+            <p className="cl-kicker">runtime truth</p>
+            <h3>Verify before integrating</h3>
+          </div>
+          <a
+            className="cl-text-link"
+            href="https://github.com/sheawinkler/ContextLattice#quickstart"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read quickstart
+          </a>
         </div>
         <div className="cl-command-grid">
-          <CopyableCommand label="clone" command="git clone https://github.com/sheawinkler/contextlattice.git" />
-          <CopyableCommand label="enter" command="cd contextlattice" />
-          <CopyableCommand label="doctor" command="contextlattice doctor" />
-          <CopyableCommand label="agent integration" command="contextlattice_agent_integrate --detect --doctor" />
+          {VERIFY_STEPS.map((step) => (
+            <CopyableCommand key={step.label} {...step} />
+          ))}
+        </div>
+      </section>
+
+      <section className="cl-panel">
+        <div className="cl-section-head">
+          <div>
+            <p className="cl-kicker">agent adoption</p>
+            <h3>Wire only what is installed</h3>
+          </div>
+        </div>
+        <p className="cl-panel-note">
+          Run these commands from the repository you want to integrate. Detection skips unsupported or missing agent harnesses.
+        </p>
+        <div className="cl-command-grid">
+          {ADOPT_STEPS.map((step) => (
+            <CopyableCommand key={step.label} {...step} />
+          ))}
         </div>
       </section>
 
@@ -219,44 +148,27 @@ function InstallContent({ authRequired, session }: { authRequired: boolean; sess
         <div className="cl-section-head">
           <div>
             <p className="cl-kicker">agent prompt</p>
-            <h3>For any agent already reading this page</h3>
+            <h3>Hand the setup to an agent</h3>
           </div>
-          <button className="cl-button" type="button" onClick={() => navigator.clipboard.writeText(AGENT_PROMPT)}>Copy prompt</button>
+          <CopyButton value={AGENT_PROMPT} idleLabel="Copy prompt" />
         </div>
         <pre className="cl-prompt-box">{AGENT_PROMPT}</pre>
-        <p className="cl-panel-note">
-          The integration flow should detect installed harnesses and skip missing ones. It should not invent agent configs for tools that are not present.
-        </p>
       </section>
 
       <section className="cl-panel">
         <div className="cl-section-head">
           <div>
             <p className="cl-kicker">local surfaces</p>
-            <h3>What gets wired</h3>
+            <h3>What the quickstart provides</h3>
           </div>
         </div>
         <div className="cl-surface-grid">
-          <article><strong>CLI</strong><span>write, search, policy pack, checkpoint, doctor</span></article>
-          <article><strong>Hooks</strong><span>pre/post compaction, handoff, lifecycle events</span></article>
-          <article><strong>Agent files</strong><span>AGENTS.md, CLAUDE.md style guidance, harness-specific profiles where detected</span></article>
-          <article><strong>Memory lanes</strong><span>topic rollups, qdrant, pgvector, raw ledger, deep recall</span></article>
+          <article><strong>CLI lifecycle</strong><span>context, resume, remember, correct, finish, and doctor</span></article>
+          <article><strong>Local dashboard</strong><span>runtime, retrieval, session, and memory visibility on your machine</span></article>
+          <article><strong>Agent adapters</strong><span>managed instructions and hooks for detected harnesses</span></article>
+          <article><strong>Durable memory</strong><span>project-scoped writes, staged retrieval, and bounded continuation</span></article>
         </div>
       </section>
-
-      <HostedArtifacts authRequired={authRequired} session={session} />
     </div>
   );
-}
-
-function InstallWithSession() {
-  const { data: session } = useSession();
-  return <InstallContent authRequired session={session} />;
-}
-
-export function InstallArtifactsPage() {
-  if (dashboardClientAuthRequired()) {
-    return <InstallWithSession />;
-  }
-  return <InstallContent authRequired={false} session={null} />;
 }

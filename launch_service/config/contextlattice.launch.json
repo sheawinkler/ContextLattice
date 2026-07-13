@@ -1,14 +1,14 @@
 {
   "product_name": "ContextLattice",
-  "category": "MCP Server / AI Infrastructure",
-  "launch_window": "Catch-up execution wave: Monday, February 23, 2026",
-  "one_liner": "Private-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.",
-  "primary_cta": "Start local-first in minutes with `gmake quickstart`.",
+  "category": "Agent Memory Infrastructure",
+  "launch_window": "ContextLattice v3.17 release wave: July 2026",
+  "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
+  "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
   "metadata": {
     "primary_url": "https://contextlattice.io/",
     "docs_url": "https://contextlattice.io/installation.html",
     "troubleshooting_url": "https://contextlattice.io/troubleshooting.html",
-    "repo_url": "https://github.com/sheawinkler/ContextLattice",
+    "repo_url": "https://github.com/sheawinkler/contextlattice",
     "public_overview_url": "https://contextlattice.io/"
   },
   "channels": [
@@ -16,7 +16,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.15.0 + release notes + checksums + images",
+      "submission_path": "Tag v3.17.0 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.15.0",
-      "body": "ContextLattice v3.15.0 is now live.\n\nHighlights:\n- bounded identity-first repair reconnects durable memory without an unbounded write pass\n- explicit graph-neighbor holdouts separate direct recall from graph lift\n- graph targets must hydrate into token-budgeted evidence before they count\n- inactive Skill Foundry drafts gain terminal, non-destructive retirement\n- no model call and no new MCP tool surface\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.17.0",
+      "body": "ContextLattice v3.17.0 turns product promises into executable proof.\n\nHighlights:\n- one canonical contract now owns plans, prices, feature IDs, and release identity\n- paid artifacts carry the actual paid runtime instead of cloning a public fallback\n- runtime licenses are signed, installation-bound, proof-of-possession credentials\n- premium downloads hide private origins and verify every byte before delivery\n- production runtime enforcement fails closed\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.15.0 is live.\n\nA graph is not intelligence because it stores edges. It earns that name when it recovers evidence ordinary ranking misses and proves the gain.\n- identity-first repair is bounded and dry-run first\n- direct recall and graph lift are measured separately\n- dangling edges cannot become context evidence\n- obsolete Foundry drafts retire without deleting proof\n\nStart local-first: {docs_url}"
+      "body": "ContextLattice v3.17.0 is live.\n\nThis release makes the commercial boundary as rigorous as the memory engine behind it. One contract drives the promise. Paid artifacts carry the product. Runtime licenses prove both entitlement and installation possession. Production fails closed.\n\nStart local-first: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "Today we are launching ContextLattice v3.15.0.\n\nContextLattice is the local-first memory and context infrastructure for serious agent systems.\n\nWhat changed:\n- bounded identity-first repair reconnects the hot memory corpus\n- explicit graph holdouts prove contribution without masking direct-recall regressions\n- graph neighbors hydrate into bounded evidence before entering Context Packs\n- Skill Foundry retirement is terminal, immutable, and non-destructive\n- the complete loop requires zero model calls and adds zero MCP tools\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "Today we are launching ContextLattice v3.17.0.\n\nContextLattice is the durable intelligence layer for serious agent systems.\n\nWhat changed:\n- one canonical contract drives plans, pricing, feature IDs, and release identity\n- paid artifacts are deterministic, self-contained, and provenance-checked\n- runtime licenses are Ed25519-signed and bound to a client-side installation key\n- premium downloads verify origin, size, and digest without exposing private URLs\n- production enforcement fails closed\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

@@ -370,6 +370,8 @@ def finalize_context_pack_payload(payload: dict[str, Any], budget_chars: int) ->
         "task_summary": str(payload.get("task_summary") or "")[:120],
         "context_budget_chars": budget_chars,
         "clipped": True,
+        "session_id": payload.get("session_id") or "",
+        "agent_id": payload.get("agent_id") or "",
         "source_coverage": tiny_coverage,
         "token_budget": token_budget,
         "omitted_high_value_refs": omitted_high_value_refs[:2],

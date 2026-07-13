@@ -1,7 +1,7 @@
 {
   "schema_id": "contextlattice_public_core_capabilities.v1",
   "version": 1,
-  "release_train": "v3.15",
+  "release_train": "v3.17",
   "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
   "invariants": [
     "public_core_is_present_in_every_distribution",

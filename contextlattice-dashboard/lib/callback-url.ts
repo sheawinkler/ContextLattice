@@ -1,4 +1,4 @@
-const SAFE_CALLBACK_URL_FALLBACK = "/billing";
+const SAFE_CALLBACK_URL_FALLBACK = "/console";
 const SAFE_BASE_URL = "http://127.0.0.1";
 const DECODE_MAX_ITERATIONS = 3;
 

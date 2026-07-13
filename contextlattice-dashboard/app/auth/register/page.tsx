@@ -99,14 +99,14 @@ export default function RegisterPage() {
       redirect: false,
       email,
       password,
-      callbackUrl: "/billing",
+      callbackUrl: "/console",
     });
     if (login?.error) {
       setError("Account created, but login failed. Try signing in.");
       setLoading(false);
       return;
     }
-    router.push("/billing");
+    router.push("/console");
   }
 
   return (
@@ -170,7 +170,7 @@ export default function RegisterPage() {
                   className={providerClass(provider.id, enabled)}
                   onClick={
                     enabled
-                      ? () => signIn(provider.id, { callbackUrl: "/billing" })
+                      ? () => signIn(provider.id, { callbackUrl: "/console" })
                       : undefined
                   }
                   disabled={!enabled}

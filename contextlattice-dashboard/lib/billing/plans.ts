@@ -1,54 +1,49 @@
+import {
+  COMMERCIAL_PLANS,
+  COMMERCIAL_TRUTH,
+  type CommercialPlanId,
+} from "@/lib/billing/commercial.generated";
+
 export type Plan = {
-  id: string;
+  id: CommercialPlanId;
   name: string;
   description: string;
-  monthly: number;
-  annual: number;
+  monthly: number | null;
+  annual: number | null;
   seats: string;
   features: string[];
+  featureIds: readonly string[];
+  paid: boolean;
+  purchasable: boolean;
+  customPricing: boolean;
 };
 
-export const PLANS: Plan[] = [
-  {
-    id: "starter",
-    name: "Starter",
-    description: "Solo builders and small agents.",
-    monthly: 19,
-    annual: 190,
-    seats: "1-2 seats",
-    features: [
-      "HTTP-preferred MCP",
-      "Private memory bank",
-      "Qdrant recall",
-      "Basic observability",
-    ],
-  },
-  {
-    id: "team",
-    name: "Team",
-    description: "Product teams shipping agent workflows.",
-    monthly: 79,
-    annual: 790,
-    seats: "Up to 10 seats",
-    features: [
-      "Everything in Starter",
-      "Shared workspaces",
-      "Usage dashboards",
-      "Priority support",
-    ],
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    description: "Security, compliance, and scale.",
-    monthly: 249,
-    annual: 2490,
-    seats: "Custom seats",
-    features: [
-      "SSO / SAML",
-      "Private networking",
-      "Custom retention",
-      "Dedicated support",
-    ],
-  },
-];
+const featureLabels = new Map(
+  COMMERCIAL_TRUTH.features.map((feature) => [feature.id, feature.buyer_label]),
+);
+
+function seatLabel(plan: (typeof COMMERCIAL_PLANS)[number]): string {
+  if (plan.limits.included_seats !== null) {
+    return `${plan.limits.included_seats} included seats; custom contract`;
+  }
+  if (plan.id === "team") return "Team workspace";
+  if (plan.id === "starter") return "Single operator";
+  if (plan.id === "operator") return "Advanced operator";
+  return "Local use";
+}
+
+export const ALL_PLANS: Plan[] = COMMERCIAL_PLANS.map((plan) => ({
+  id: plan.id,
+  name: plan.buyer_label,
+  description: plan.description,
+  monthly: plan.pricing.monthly_usd,
+  annual: plan.pricing.annual_usd,
+  seats: seatLabel(plan),
+  features: plan.feature_ids.map((featureId) => featureLabels.get(featureId) || featureId),
+  featureIds: plan.feature_ids,
+  paid: plan.paid,
+  purchasable: plan.self_serve_purchasable,
+  customPricing: plan.pricing.custom,
+}));
+
+export const PLANS = ALL_PLANS.filter((plan) => plan.paid);

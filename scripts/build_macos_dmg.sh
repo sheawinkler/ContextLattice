@@ -8,20 +8,27 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+PKG_DIR="${ROOT_DIR}/packaging/linux"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-dmg.XXXXXX")"
 STAGE_DIR="${TMP_DIR}/ContextLattice"
+PAYLOAD_BUILD_DIR="${TMP_DIR}/payload-build"
 APP_NAME="ContextLattice"
 DMG_NAME="${DMG_NAME:-ContextLattice-macOS-universal.dmg}"
 DMG_PATH="${DIST_DIR}/${DMG_NAME}"
-REPO_URL="${REPO_URL:-https://github.com/sheawinkler/ContextLattice.git}"
+RELEASE_LANE="${RELEASE_LANE:-public}"
 APP_BUNDLE_VERSION="${APP_BUNDLE_VERSION:-${RELEASE_TAG:-${GITHUB_REF_NAME:-0.0.0}}}"
 APP_BUNDLE_VERSION="${APP_BUNDLE_VERSION#v}"
 APP_BUNDLE_VERSION="${APP_BUNDLE_VERSION%%[-+]*}"
 MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-13.0}"
-MACOS_CODESIGN_IDENTITY="${CONTEXTLATTICE_MACOS_CODESIGN_IDENTITY:-${PAID_MACOS_CODESIGN_IDENTITY:-}}"
+MACOS_CODESIGN_IDENTITY="${CONTEXTLATTICE_MACOS_CODESIGN_IDENTITY:-}"
 MACOS_SIGN_APPS="${CONTEXTLATTICE_MACOS_SIGN_APPS:-auto}"
 MACOS_SIGNING_REQUIRED="${CONTEXTLATTICE_MACOS_SIGNING_REQUIRED:-false}"
 MACOS_CODESIGN_TIMESTAMP="${CONTEXTLATTICE_MACOS_CODESIGN_TIMESTAMP:-true}"
+
+[[ "${RELEASE_LANE}" == "public" ]] || {
+  echo "ERROR: the public repository builds only RELEASE_LANE=public DMGs." >&2
+  exit 1
+}
 
 if [[ ! "${APP_BUNDLE_VERSION}" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
   APP_BUNDLE_VERSION="0.0.0"
@@ -33,6 +40,11 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "${DIST_DIR}" "${STAGE_DIR}"
+
+PAYLOAD_OUT_DIR="${PAYLOAD_BUILD_DIR}" \
+PAYLOAD_FORMATS="tar.gz" \
+RELEASE_LANE="${RELEASE_LANE}" \
+  bash "${ROOT_DIR}/scripts/build_release_payload.sh"
 
 is_truthy() {
   case "${1:-}" in
@@ -141,14 +153,14 @@ if [[ -t 1 ]]; then
 fi
 
 if command -v osascript >/dev/null 2>&1; then
-  /usr/bin/osascript \\
-    -e 'on run argv' \\
-    -e 'set launcherPath to item 1 of argv' \\
-    -e 'tell application "Terminal"' \\
-    -e 'activate' \\
-    -e 'do script quoted form of launcherPath' \\
-    -e 'end tell' \\
-    -e 'end run' \\
+  /usr/bin/osascript \
+    -e 'on run argv' \
+    -e 'set launcherPath to item 1 of argv' \
+    -e 'tell application "Terminal"' \
+    -e 'activate' \
+    -e 'do script quoted form of launcherPath' \
+    -e 'end tell' \
+    -e 'end run' \
     "\${LAUNCH_SCRIPT}" >/dev/null
 else
   exec "\${LAUNCH_SCRIPT}"
@@ -157,124 +169,16 @@ EOF_EXEC
   chmod +x "${app_path}/Contents/MacOS/${executable_name}"
 }
 
-cat > "${STAGE_DIR}/ContextLattice.command" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
+sed "s/@RELEASE_LANE@/${RELEASE_LANE}/g" \
+  "${PKG_DIR}/ContextLattice-Install.sh" > "${STAGE_DIR}/ContextLattice.command"
 
-REPO_URL="${REPO_URL:-https://github.com/sheawinkler/ContextLattice.git}"
-TARGET_DIR="${TARGET_DIR:-$HOME/ContextLattice}"
-
-echo "== ContextLattice installer =="
-echo "Repo: ${REPO_URL}"
-echo "Target: ${TARGET_DIR}"
-
-if ! command -v git >/dev/null 2>&1; then
-  echo "ERROR: git is required. Install Xcode Command Line Tools first." >&2
-  exit 1
-fi
-
-if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: Docker is required. Install Docker Desktop, then rerun this installer." >&2
-  exit 1
-fi
-
-if [[ ! -d "${TARGET_DIR}/.git" ]]; then
-  git clone "${REPO_URL}" "${TARGET_DIR}"
-else
-  git -C "${TARGET_DIR}" pull --ff-only || true
-fi
-
-if ! command -v gmake >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    brew install make jq ripgrep
-  else
-    echo "ERROR: gmake is required. Install Homebrew then run: brew install make jq ripgrep" >&2
-    exit 1
-  fi
-fi
-
-cd "${TARGET_DIR}"
-QUICKSTART_PROFILE_DEFAULT="${QUICKSTART_PROFILE_DEFAULT:-lite}" gmake quickstart
-if [[ -x ./scripts/install_global_agent_tools.sh ]]; then
-  ./scripts/install_global_agent_tools.sh --quiet || true
-fi
-
-INSTR_DIR="${TARGET_DIR}/setup"
-INSTR_FILE="${INSTR_DIR}/agent_smoke_write_read.md"
-AGENT_INSTR_FILE="${INSTR_DIR}/agent_contextlattice_instructions.md"
-UNIVERSAL_TEMPLATE_FILE="${TARGET_DIR}/docs/public_overview/templates/agents/universal.md"
-mkdir -p "${INSTR_DIR}"
-
-if [[ -f "${UNIVERSAL_TEMPLATE_FILE}" ]]; then
-  cp "${UNIVERSAL_TEMPLATE_FILE}" "${AGENT_INSTR_FILE}"
-else
-  cat > "${AGENT_INSTR_FILE}" <<'EOF_AGENT'
-# ContextLattice Agent Contract
-
-Use ContextLattice at http://127.0.0.1:8075 for every task:
-- read context before inference (`POST /memory/search`, `include_grounding=true`)
-- use `POST /memory/context-pack` for broad tasks
-- checkpoint key progress via `POST /memory/write`
-- final recency read before final output
-- use async continuation token/events when returned
-- use `POST /v1/memory/neighbors` for graph-neighbor recall
-EOF_AGENT
-fi
-
-cat > "${INSTR_FILE}" <<'EOF_SMOKE'
-# ContextLattice Agent Smoke Test (Write -> Read)
-
-Before running this smoke test, paste the operating contract from:
-- `~/ContextLattice/setup/agent_contextlattice_instructions.md`
-
-Use this exact sequence after install to confirm your agent can write and read memory through the orchestrator.
-
-```bash
-export CONTEXTLATTICE_ORCHESTRATOR_URL="http://127.0.0.1:8075"
-export MEMMCP_ORCHESTRATOR_URL="http://127.0.0.1:8075"
-export ORCH_KEY="$(awk -F= '/^CONTEXTLATTICE_ORCHESTRATOR_API_KEY=/{print substr($0,index($0,"=")+1)}' "$HOME/ContextLattice/.env" | tail -1)"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-FILE_NAME="setup/smoke_${STAMP}.md"
-
-# 1) Write memory
-curl -sS -X POST "$CONTEXTLATTICE_ORCHESTRATOR_URL/memory/write" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: ${ORCH_KEY}" \
-  -d "{\"projectName\":\"contextlattice\",\"fileName\":\"${FILE_NAME}\",\"content\":\"smoke write ${STAMP}\",\"topicPath\":\"runbooks/setup/smoke\"}" | jq .
-
-# 2) Read memory
-curl -sS -X POST "$CONTEXTLATTICE_ORCHESTRATOR_URL/memory/search" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: ${ORCH_KEY}" \
-  -d "{\"project\":\"contextlattice\",\"query\":\"smoke write ${STAMP}\",\"topic_path\":\"runbooks/setup/smoke\",\"include_grounding\":true}" | jq .
-```
-
-Expected:
-- write returns `ok: true`
-- read returns at least one matching result
-EOF_SMOKE
-
-if command -v pbcopy >/dev/null 2>&1; then
-  pbcopy < "${AGENT_INSTR_FILE}" || true
-  echo "Copied agent operating instructions to clipboard."
-fi
-echo "Agent smoke instructions: ${INSTR_FILE}"
-echo "Agent operating instructions: ${AGENT_INSTR_FILE}"
-
-if [[ -x ./scripts/open_monitoring.sh ]]; then
-  ./scripts/open_monitoring.sh || true
-fi
-
-echo "ContextLattice installed. Use the Monitoring.command launcher for health checks."
-EOF
-
-cat > "${STAGE_DIR}/Monitoring.command" <<'EOF'
+cat > "${STAGE_DIR}/Monitoring.command" <<'EOF_MONITOR'
 #!/usr/bin/env bash
 set -euo pipefail
 
 TARGET_DIR="${TARGET_DIR:-$HOME/ContextLattice}"
 if [[ ! -d "${TARGET_DIR}" ]]; then
-  echo "ERROR: ${TARGET_DIR} not found. Run ContextLattice.command first." >&2
+  echo "ERROR: ${TARGET_DIR} not found. Run ContextLattice first." >&2
   exit 1
 fi
 
@@ -282,34 +186,33 @@ cd "${TARGET_DIR}"
 if [[ -x ./scripts/open_monitoring.sh ]]; then
   ./scripts/open_monitoring.sh
 else
-  echo "Monitoring script missing. Re-pull repo and retry." >&2
+  echo "ERROR: monitoring script is absent from the installed payload." >&2
   exit 1
 fi
-EOF
+EOF_MONITOR
 
-cat > "${STAGE_DIR}/README.txt" <<EOF
-ContextLattice macOS DMG Bootstrap
-=================================
+cat > "${STAGE_DIR}/README.txt" <<EOF_README
+ContextLattice macOS Release DMG
+================================
 
-This DMG installs the local ContextLattice stack through the same public repo
-used by technical users, but in a lower-friction launcher format.
+This DMG contains a ${RELEASE_LANE} lane payload from ${RELEASE_TAG}.
+No repository clone or pull is used during installation.
 
 Included:
-- ContextLattice.command  : clone/update + gmake quickstart
-- Monitoring.command      : open dashboard + health/status checks
-- setup/agent_contextlattice_instructions.md : copy-ready agent instruction contract
-- setup/agent_smoke_write_read.md : operator write/read verification flow
+- ContextLattice.app and ContextLattice.command: verify, extract/update, and launch
+- ContextLattice Monitoring.app and Monitoring.command: local health/status tools
+- contextlattice-release.json: bounded lane/tag/commit identity
 
-Requirements:
-- Docker Desktop installed and running
-- git (Xcode command line tools)
-- Homebrew (recommended; installer will use it if gmake is missing)
+For deterministic extraction without Docker or network:
+  ./ContextLattice.command --extract-only --install-dir /tmp/contextlattice
 
-Repo:
-${REPO_URL}
-EOF
+Atomic updates preserve .env, .data, data, and backups inside the install
+directory. Modified legacy checkouts and unmanaged non-empty directories are
+refused instead of overwritten.
+EOF_README
 
 chmod +x "${STAGE_DIR}/ContextLattice.command" "${STAGE_DIR}/Monitoring.command"
+cp "${PAYLOAD_BUILD_DIR}/contextlattice-release.json" "${STAGE_DIR}/contextlattice-release.json"
 
 write_app_bundle \
   "${STAGE_DIR}/ContextLattice.app" \
@@ -317,6 +220,12 @@ write_app_bundle \
   "io.contextlattice.ContextLattice" \
   "ContextLattice" \
   "${STAGE_DIR}/ContextLattice.command"
+mkdir -p "${STAGE_DIR}/ContextLattice.app/Contents/Resources/payload"
+cp \
+  "${PAYLOAD_BUILD_DIR}/contextlattice-payload.tar.gz" \
+  "${PAYLOAD_BUILD_DIR}/contextlattice-payload.tar.gz.sha256" \
+  "${PAYLOAD_BUILD_DIR}/contextlattice-release.json" \
+  "${STAGE_DIR}/ContextLattice.app/Contents/Resources/payload/"
 
 write_app_bundle \
   "${STAGE_DIR}/ContextLattice Monitoring.app" \
@@ -324,6 +233,11 @@ write_app_bundle \
   "io.contextlattice.ContextLatticeMonitoring" \
   "ContextLatticeMonitoring" \
   "${STAGE_DIR}/Monitoring.command"
+
+if [[ ! -s "${STAGE_DIR}/ContextLattice.app/Contents/Resources/payload/contextlattice-payload.tar.gz" ]]; then
+  echo "ERROR: ${RELEASE_LANE} macOS payload is missing." >&2
+  exit 1
+fi
 
 sign_app_bundle "${STAGE_DIR}/ContextLattice.app"
 sign_app_bundle "${STAGE_DIR}/ContextLattice Monitoring.app"

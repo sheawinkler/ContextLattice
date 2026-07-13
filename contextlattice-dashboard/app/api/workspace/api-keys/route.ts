@@ -3,7 +3,6 @@ import { prisma } from "@/lib/db";
 import { generateApiKey } from "@/lib/auth/apiKeys";
 import { requireUserWorkspaceId } from "@/lib/workspace";
 import { recordAuditLog } from "@/lib/audit";
-import { getWorkspacePlan, requireActiveSubscription } from "@/lib/billing/entitlements";
 
 export async function GET() {
   const session = await getDashboardSession();
@@ -16,8 +15,6 @@ export async function GET() {
     where: { workspaceId, revokedAt: null },
     orderBy: { createdAt: "desc" },
   });
-  const plan = await getWorkspacePlan(workspaceId);
-
   return Response.json({
     ok: true,
     keys: keys.map((key) => ({
@@ -28,8 +25,8 @@ export async function GET() {
       createdAt: key.createdAt,
       lastUsedAt: key.lastUsedAt,
     })),
-    planId: plan.planId,
-    limit: plan.entitlements.maxApiKeys,
+    planId: "free",
+    limit: null,
   });
 }
 
@@ -45,29 +42,6 @@ export async function POST(request: Request) {
     ? body.scopes.join(",")
     : String(body?.scopes || "memory:write,usage:write");
   const workspaceId = await requireUserWorkspaceId(session.user.id);
-  try {
-    await requireActiveSubscription(workspaceId);
-  } catch (err: any) {
-    return Response.json(
-      { ok: false, error: err?.message || "Subscription required" },
-      { status: 402 },
-    );
-  }
-  const plan = await getWorkspacePlan(workspaceId);
-  if (plan.entitlements.maxApiKeys !== null) {
-    const existingCount = await prisma.apiKey.count({
-      where: { workspaceId, revokedAt: null },
-    });
-    if (existingCount >= plan.entitlements.maxApiKeys) {
-      return Response.json(
-        {
-          ok: false,
-          error: `API key limit reached for ${plan.planId} plan.`,
-        },
-        { status: 402 },
-      );
-    }
-  }
   const { apiKey, prefix, keyHash } = generateApiKey();
 
   const record = await prisma.apiKey.create({

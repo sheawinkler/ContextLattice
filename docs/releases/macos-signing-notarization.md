@@ -74,7 +74,7 @@ Local-only notarytool profile path:
 Use a keychain profile for local release runs. Prefer API key secrets for GitHub
 Actions because hosted runners do not have your local Keychain profile.
 
-The scripts also accept the older `PAID_MACOS_*` names for compatibility.
+Use the canonical `CONTEXTLATTICE_MACOS_*` names for all public releases.
 
 ## Configure GitHub Secrets
 

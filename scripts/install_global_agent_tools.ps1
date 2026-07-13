@@ -510,7 +510,7 @@ if not exist "%GO_TOOL%" (
   echo Missing %GO_TOOL%. Run scripts\install_global_agent_tools.ps1 first.
   exit /b 1
 )
-"%GO_TOOL%" %*
+"%GO_TOOL%" $Name %*
 "@
     Set-Content -Path (Join-Path $BinDir "$Name.cmd") -Value $cmd -Encoding Ascii
 }

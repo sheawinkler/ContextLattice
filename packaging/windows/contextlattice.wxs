@@ -19,13 +19,18 @@
       <ComponentRef Id="cmpInstallPs1" />
       <ComponentRef Id="cmpMonitorPs1" />
       <ComponentRef Id="cmpReadme" />
+      <ComponentRef Id="cmpPayloadZip" />
+      <ComponentRef Id="cmpPayloadChecksum" />
+      <ComponentRef Id="cmpPayloadMetadata" />
     </Feature>
   </Product>
 
   <Fragment>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFilesFolder">
-        <Directory Id="INSTALLDIR" Name="ContextLattice" />
+        <Directory Id="INSTALLDIR" Name="ContextLattice">
+          <Directory Id="PAYLOADDIR" Name="payload" />
+        </Directory>
       </Directory>
     </Directory>
   </Fragment>
@@ -46,6 +51,20 @@
       </Component>
       <Component Id="cmpReadme" Guid="*">
         <File Id="filReadme" Source="README.txt" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="PAYLOADDIR">
+      <Component Id="cmpPayloadZip" Guid="*">
+        <File Id="filPayloadZip" Source="payload/contextlattice-payload.zip" KeyPath="yes" />
+      </Component>
+      <Component Id="cmpPayloadChecksum" Guid="*">
+        <File Id="filPayloadChecksum" Source="payload/contextlattice-payload.zip.sha256" KeyPath="yes" />
+      </Component>
+      <Component Id="cmpPayloadMetadata" Guid="*">
+        <File Id="filPayloadMetadata" Source="payload/contextlattice-release.json" KeyPath="yes" />
       </Component>
     </DirectoryRef>
   </Fragment>

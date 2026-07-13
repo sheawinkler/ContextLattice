@@ -4199,13 +4199,7 @@ func TestTelemetryNativeRoutesStayGoOwnedInStrictRuntime(t *testing.T) {
 	}
 }
 
-func TestMaintenanceRouteMethodGateAndProtectedEntitlement(t *testing.T) {
-	t.Setenv("GO_PAID_ENTITLEMENT_MODE", "enforce")
-	t.Setenv("GO_PAID_ENTITLEMENT_DEV_ALLOW", "false")
-	t.Setenv("GO_PAID_ENTITLEMENT_PROTECTED_PATHS", "/maintenance/diagnostics")
-	t.Setenv("GO_PAID_ENTITLEMENT_ALLOWED_PLANS", "team,enterprise")
-	t.Setenv("GO_PAID_ENTITLEMENT_ALLOWED_ROLES", "owner,admin")
-
+func TestMaintenanceRouteMethodGate(t *testing.T) {
 	backendCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalls += 1
@@ -4227,28 +4221,26 @@ func TestMaintenanceRouteMethodGateAndProtectedEntitlement(t *testing.T) {
 		t.Fatalf("maintenance method gate request failed: %v", err)
 	}
 	defer respMethod.Body.Close()
-	if respMethod.StatusCode != http.StatusPaymentRequired {
+	if respMethod.StatusCode != http.StatusMethodNotAllowed {
 		body, _ := io.ReadAll(respMethod.Body)
-		t.Fatalf("expected 402 for protected maintenance path without entitlement, got %d body=%s", respMethod.StatusCode, string(body))
+		t.Fatalf("expected 405 for unsupported maintenance method, got %d body=%s", respMethod.StatusCode, string(body))
 	}
 
-	reqEntitled, err := http.NewRequest(http.MethodGet, gateway.URL+"/maintenance/diagnostics", nil)
+	reqAllowed, err := http.NewRequest(http.MethodGet, gateway.URL+"/maintenance/diagnostics", nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	reqEntitled.Header.Set("X-ContextLattice-Plan", "team")
-	reqEntitled.Header.Set("X-ContextLattice-Workspace-Role", "owner")
-	respEntitled, err := http.DefaultClient.Do(reqEntitled)
+	respAllowed, err := http.DefaultClient.Do(reqAllowed)
 	if err != nil {
-		t.Fatalf("maintenance entitled request failed: %v", err)
+		t.Fatalf("maintenance allowed request failed: %v", err)
 	}
-	defer respEntitled.Body.Close()
-	if respEntitled.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(respEntitled.Body)
-		t.Fatalf("expected 200 for entitled maintenance request, got %d body=%s", respEntitled.StatusCode, string(body))
+	defer respAllowed.Body.Close()
+	if respAllowed.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(respAllowed.Body)
+		t.Fatalf("expected 200 for supported maintenance request, got %d body=%s", respAllowed.StatusCode, string(body))
 	}
 	if backendCalls != 1 {
-		t.Fatalf("expected one backend call for entitled maintenance request, got %d", backendCalls)
+		t.Fatalf("expected one backend call for supported maintenance request, got %d", backendCalls)
 	}
 }
 

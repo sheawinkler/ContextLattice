@@ -19,14 +19,6 @@ type ApiKey = {
   lastUsedAt?: string | null;
 };
 
-type ScimToken = {
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: string;
-  lastUsedAt?: string | null;
-};
-
 type Budget = {
   tokenLimit?: number | null;
   costLimitUsd?: number | null;
@@ -69,9 +61,6 @@ export default function SettingsPage() {
   const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
   const [keyLimit, setKeyLimit] = useState<number | null>(null);
   const [planId, setPlanId] = useState<string | null>(null);
-  const [scimTokens, setScimTokens] = useState<ScimToken[]>([]);
-  const [newScimName, setNewScimName] = useState("");
-  const [newScimTokenValue, setNewScimTokenValue] = useState<string | null>(null);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [tokenLimit, setTokenLimit] = useState<string>("");
@@ -97,13 +86,6 @@ export default function SettingsPage() {
     setPlanId(typeof data.planId === "string" ? data.planId : null);
   }
 
-  async function loadScimTokens() {
-    const res = await fetch("/api/workspace/scim-tokens");
-    if (!res.ok) return;
-    const data = await res.json();
-    setScimTokens(data.tokens || []);
-  }
-
   async function loadBudget() {
     const res = await fetch("/api/workspace/budget");
     if (!res.ok) return;
@@ -124,7 +106,6 @@ export default function SettingsPage() {
     void loadKeys();
     void loadBudget();
     void loadAuditLogs();
-    void loadScimTokens();
   }, []);
 
   async function createKey() {
@@ -159,41 +140,6 @@ export default function SettingsPage() {
       return;
     }
     void loadKeys();
-  }
-
-  async function createScimToken() {
-    const name = newScimName.trim();
-    if (!name) {
-      setMessage("Name the SCIM token before creating it.");
-      return;
-    }
-    setMessage(null);
-    setNewScimTokenValue(null);
-    const res = await fetch("/api/workspace/scim-tokens", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setMessage(data?.error || "Failed to create SCIM token");
-      return;
-    }
-    setNewScimTokenValue(data.token?.token || null);
-    setNewScimName("");
-    void loadScimTokens();
-  }
-
-  async function revokeScimToken(id: string) {
-    setMessage(null);
-    const res = await fetch(`/api/workspace/scim-tokens/${id}`, {
-      method: "DELETE",
-    });
-    if (!res.ok) {
-      setMessage("Failed to revoke SCIM token");
-      return;
-    }
-    void loadScimTokens();
   }
 
   async function saveBudget() {
@@ -326,36 +272,6 @@ export default function SettingsPage() {
                   <span>{key.prefix}... / {key.scopes || "default scopes"} / created {formatDate(key.createdAt)}</span>
                 </div>
                 <button className="cl-text-button" onClick={() => revokeKey(key.id)} type="button">Revoke</button>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="cl-panel cl-settings-card">
-          <div className="cl-section-head">
-            <div>
-              <p className="cl-kicker">identity sync</p>
-              <h3>SCIM provisioning</h3>
-            </div>
-            <span className="cl-badge">enterprise</span>
-          </div>
-          <p className="cl-panel-note">Generate SCIM tokens for IdP wiring. Provisioning controls stay explicit and audit logged.</p>
-          <div className="cl-form-grid cl-form-grid--inline">
-            <label className="cl-field">
-              <span>Token name</span>
-              <input value={newScimName} onChange={(e) => setNewScimName(e.target.value)} placeholder="example: Okta SCIM" />
-            </label>
-            <button className="cl-button cl-button--secondary" onClick={createScimToken} disabled={!newScimName.trim()} type="button">Create token</button>
-          </div>
-          {newScimTokenValue ? <SecretOutput label="new scim token" value={newScimTokenValue} /> : null}
-          <div className="cl-settings-list">
-            {scimTokens.length === 0 ? <p className="cl-empty">No SCIM tokens yet.</p> : scimTokens.map((token) => (
-              <div className="cl-settings-row" key={token.id}>
-                <div>
-                  <strong>{token.name}</strong>
-                  <span>{token.prefix}... / created {formatDate(token.createdAt)}</span>
-                </div>
-                <button className="cl-text-button" onClick={() => revokeScimToken(token.id)} type="button">Revoke</button>
               </div>
             ))}
           </div>

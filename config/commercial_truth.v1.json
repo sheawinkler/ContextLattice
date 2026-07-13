@@ -1,0 +1,266 @@
+{
+  "schema_id": "contextlattice_commercial_truth.v1",
+  "schema_version": 1,
+  "contract_version": 1,
+  "product": {
+    "name": "ContextLattice",
+    "version": "3.17.0",
+    "stable_tag": "v3.17.0",
+    "release_train": "3.17",
+    "primary_interface": "cli",
+    "python_role": "build_and_development_tooling_only"
+  },
+  "currency": "USD",
+  "features": [
+    {
+      "id": "cli_workflows",
+      "buyer_label": "CLI workflows",
+      "description": "Install, retrieve context, checkpoint, resume, correct, finish, and diagnose from the command line."
+    },
+    {
+      "id": "local_go_rust_runtime",
+      "buyer_label": "Local-first Go/Rust runtime",
+      "description": "Run the primary application path locally without a required Python application service."
+    },
+    {
+      "id": "durable_memory",
+      "buyer_label": "Durable memory",
+      "description": "Persist project-scoped memory and retrieve it through the supported local runtime."
+    },
+    {
+      "id": "staged_retrieval",
+      "buyer_label": "Staged retrieval",
+      "description": "Use fast retrieval first and bounded continuation for deeper configured sources."
+    },
+    {
+      "id": "agent_session_context",
+      "buyer_label": "Agent session context",
+      "description": "Package bounded context, checkpoints, and lifecycle state for agent work."
+    },
+    {
+      "id": "dashboard_visibility",
+      "buyer_label": "Dashboard visibility",
+      "description": "Inspect runtime, retrieval, session, and memory status in the dashboard."
+    },
+    {
+      "id": "premium_artifact_downloads",
+      "buyer_label": "Premium artifact downloads",
+      "description": "Access entitlement-gated premium download artifacts."
+    },
+    {
+      "id": "premium_runtime_keys",
+      "buyer_label": "Signed runtime licenses",
+      "description": "Issue signed runtime licenses that remain verifiable offline without contacting a live entitlement service."
+    },
+    {
+      "id": "shared_workspace_controls",
+      "buyer_label": "Shared workspace controls",
+      "description": "Use existing workspace roles, keys, and shared account controls."
+    },
+    {
+      "id": "pro_analytics",
+      "buyer_label": "Plan-gated analytics",
+      "description": "Access the existing role- and plan-gated analytics surface."
+    },
+    {
+      "id": "protected_runtime_operations",
+      "buyer_label": "Protected runtime operations",
+      "description": "Access existing entitlement-protected inference, maintenance, policy, skill, and mesh operations."
+    },
+    {
+      "id": "scim_token_management",
+      "buyer_label": "SCIM token management",
+      "description": "Issue and manage the existing enterprise SCIM token surface."
+    }
+  ],
+  "plans": [
+    {
+      "id": "free",
+      "buyer_label": "Free",
+      "description": "Local-first core for individual builders and evaluation.",
+      "paid": false,
+      "self_serve_purchasable": false,
+      "pricing": {
+        "monthly_usd": 0,
+        "annual_usd": 0,
+        "custom": false
+      },
+      "limits": {
+        "max_api_keys": null,
+        "max_projects": null,
+        "max_write_bytes": null,
+        "included_seats": null
+      },
+      "feature_ids": [
+        "cli_workflows",
+        "local_go_rust_runtime",
+        "durable_memory",
+        "staged_retrieval",
+        "agent_session_context",
+        "dashboard_visibility"
+      ]
+    },
+    {
+      "id": "starter",
+      "buyer_label": "Starter",
+      "description": "Paid single-operator access to hosted artifacts and protected runtime operations.",
+      "paid": true,
+      "self_serve_purchasable": true,
+      "pricing": {
+        "monthly_usd": 24,
+        "annual_usd": 240,
+        "custom": false
+      },
+      "limits": {
+        "max_api_keys": 3,
+        "max_projects": 5,
+        "max_write_bytes": 50000,
+        "included_seats": null
+      },
+      "feature_ids": [
+        "cli_workflows",
+        "local_go_rust_runtime",
+        "durable_memory",
+        "staged_retrieval",
+        "agent_session_context",
+        "dashboard_visibility",
+        "premium_artifact_downloads",
+        "premium_runtime_keys",
+        "protected_runtime_operations"
+      ]
+    },
+    {
+      "id": "team",
+      "buyer_label": "Team",
+      "description": "Shared workspace and analytics access for teams shipping agent workflows.",
+      "paid": true,
+      "self_serve_purchasable": true,
+      "pricing": {
+        "monthly_usd": 99,
+        "annual_usd": 990,
+        "custom": false
+      },
+      "limits": {
+        "max_api_keys": 10,
+        "max_projects": 25,
+        "max_write_bytes": 200000,
+        "included_seats": null
+      },
+      "feature_ids": [
+        "cli_workflows",
+        "local_go_rust_runtime",
+        "durable_memory",
+        "staged_retrieval",
+        "agent_session_context",
+        "dashboard_visibility",
+        "premium_artifact_downloads",
+        "premium_runtime_keys",
+        "shared_workspace_controls",
+        "pro_analytics",
+        "protected_runtime_operations"
+      ]
+    },
+    {
+      "id": "operator",
+      "buyer_label": "Operator",
+      "description": "Advanced operator lane for protected runtime operations and analytics.",
+      "paid": true,
+      "self_serve_purchasable": true,
+      "pricing": {
+        "monthly_usd": 299,
+        "annual_usd": 2990,
+        "custom": false
+      },
+      "limits": {
+        "max_api_keys": null,
+        "max_projects": null,
+        "max_write_bytes": null,
+        "included_seats": null
+      },
+      "feature_ids": [
+        "cli_workflows",
+        "local_go_rust_runtime",
+        "durable_memory",
+        "staged_retrieval",
+        "agent_session_context",
+        "dashboard_visibility",
+        "premium_artifact_downloads",
+        "premium_runtime_keys",
+        "pro_analytics",
+        "protected_runtime_operations"
+      ]
+    },
+    {
+      "id": "enterprise",
+      "buyer_label": "Enterprise",
+      "description": "Custom-priced enterprise access with existing workspace and provisioning controls.",
+      "paid": true,
+      "self_serve_purchasable": false,
+      "pricing": {
+        "monthly_usd": null,
+        "annual_usd": null,
+        "custom": true
+      },
+      "limits": {
+        "max_api_keys": 100,
+        "max_projects": null,
+        "max_write_bytes": null,
+        "included_seats": 100
+      },
+      "feature_ids": [
+        "cli_workflows",
+        "local_go_rust_runtime",
+        "durable_memory",
+        "staged_retrieval",
+        "agent_session_context",
+        "dashboard_visibility",
+        "premium_artifact_downloads",
+        "premium_runtime_keys",
+        "shared_workspace_controls",
+        "pro_analytics",
+        "protected_runtime_operations",
+        "scim_token_management"
+      ]
+    }
+  ],
+  "aliases": {
+    "exact": {
+      "pro": "operator",
+      "business": "team"
+    },
+    "patterns": [
+      {
+        "pattern": "^enterprise-seats-[0-9]+$",
+        "target": "enterprise"
+      }
+    ]
+  },
+  "paid_route_contract": {
+    "feature_id": "protected_runtime_operations",
+    "eligible_plan_ids": [
+      "starter",
+      "team",
+      "operator",
+      "enterprise"
+    ],
+    "allowed_roles": [
+      "owner",
+      "admin"
+    ],
+    "routes": [
+      "/v1/inference/route",
+      "/v1/inference/chat",
+      "/v1/inference/runtime-policy",
+      "/v1/inference/embedding-policy",
+      "/maintenance/storage/run",
+      "/maintenance/memory/graph/prune-volatile",
+      "/maintenance/telemetry/blob-gc",
+      "/migration/runtime",
+      "/memory/context-policy/activate",
+      "/memory/context-policy/deactivate",
+      "/memory/skills/foundry/activate",
+      "/memory/skills/foundry/deactivate",
+      "/memory/context-mesh/orchestrate"
+    ]
+  }
+}

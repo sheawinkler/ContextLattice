@@ -4,7 +4,6 @@ import { checkUsageLimits, getUsageSummary } from "@/lib/usage/budgets";
 import { extractApiKey, authenticateApiKey, hasScope } from "@/lib/auth/apiKeys";
 import { ensureWorkspaceActive, requireActiveWorkspaceId } from "@/lib/workspace";
 import { recordAuditLog } from "@/lib/audit";
-import { requireActiveSubscription } from "@/lib/billing/entitlements";
 
 export async function POST(request: Request) {
   const rawKey = extractApiKey(request);
@@ -37,15 +36,6 @@ export async function POST(request: Request) {
     return Response.json(
       { ok: false, error: err?.message || "Workspace unavailable" },
       { status: 403 },
-    );
-  }
-
-  try {
-    await requireActiveSubscription(workspaceId);
-  } catch (err: any) {
-    return Response.json(
-      { ok: false, error: err?.message || "Subscription required" },
-      { status: 402 },
     );
   }
 

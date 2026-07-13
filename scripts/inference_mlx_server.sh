@@ -69,8 +69,7 @@ if [[ -n "$CHAT_TEMPLATE" && ! -f "$CHAT_TEMPLATE" ]]; then
 fi
 
 export KMP_DUPLICATE_LIB_OK="${KMP_DUPLICATE_LIB_OK:-TRUE}"
-DEFAULT_CACHE_ROOT="${CONTEXTLATTICE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/contextlattice}"
-export HF_HOME="${HF_HOME:-${DEFAULT_CACHE_ROOT}/huggingface}"
+export HF_HOME="${HF_HOME:-${CONTEXTLATTICE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/contextlattice}/huggingface}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
 
 args=(--model "$MODEL" --host "$HOST" --port "$PORT")

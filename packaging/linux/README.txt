@@ -1,29 +1,32 @@
-ContextLattice Linux Bootstrap Bundle
-=====================================
+ContextLattice Linux Release Bundle
+===================================
 
-This Linux bundle installs bootstrap scripts for local ContextLattice operation.
+This bundle contains a lane-bound, checksummed ContextLattice payload from the
+release tag. Installation and extraction do not clone or pull a repository.
 
-Included files:
+Included:
 - ContextLattice-Install.sh
 - ContextLattice-Monitor.sh
+- payload/contextlattice-payload.tar.gz
+- payload/contextlattice-payload.tar.gz.sha256
+- payload/contextlattice-release.json
 
-Default install path:
-- $HOME/ContextLattice
+Examples:
+- Install/update and launch: ./ContextLattice-Install.sh
+- Install/update full stack: ./ContextLattice-Install.sh --full
+- Offline extraction test: ./ContextLattice-Install.sh --extract-only --install-dir /tmp/contextlattice
+- Install/update without launch: ./ContextLattice-Install.sh --no-launch
 
-How to use:
-1) Run ./ContextLattice-Install.sh
-2) Wait for Docker compose stack launch
-3) Run ./ContextLattice-Monitor.sh for health/status/telemetry checks
-4) Open a new terminal and verify global helpers:
-   - contextlattice_search -h
-   - contextlattice_write -h
+Atomic updates preserve only .env, .data, data, and backups inside the install
+directory. Docker volumes live outside that replacement. A modified legacy Git
+checkout or unmanaged non-empty directory is refused instead of overwritten.
+The installer verifies release identity and checksums before atomically replacing
+tracked application files.
 
-Requirements:
+Launch requirements:
 - Docker Engine/Desktop with Compose v2
-- git
-- curl
-- jq
-- internet access for repository clone/pull
+- curl (recommended for local health checks)
 
-Repository:
-https://github.com/sheawinkler/ContextLattice
+Extraction requirements:
+- tar
+- sha256sum or shasum

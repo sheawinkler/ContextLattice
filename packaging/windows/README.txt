@@ -1,29 +1,30 @@
-ContextLattice Windows MSI Bootstrap
-====================================
+ContextLattice Windows MSI Release Bundle
+=========================================
 
-This MSI installs bootstrap scripts for local ContextLattice operation on Windows.
+The MSI embeds a lane-bound, checksummed ContextLattice ZIP payload from the
+release tag. Installation and extraction do not clone or pull a repository.
 
 Installed files:
 - ContextLattice-Install.cmd
 - ContextLattice-Monitor.cmd
 - Install-ContextLattice.ps1
 - Monitor-ContextLattice.ps1
+- payload\contextlattice-payload.zip
+- payload\contextlattice-payload.zip.sha256
+- payload\contextlattice-release.json
 
-Default install path:
-- C:\Program Files\ContextLattice
+Examples:
+- Install/update and launch: ContextLattice-Install.cmd
+- Offline extraction test: ContextLattice-Install.cmd -ExtractOnly -InstallDir C:\Temp\ContextLattice
+- Install/update without launch: ContextLattice-Install.cmd -NoLaunch
 
-How to use:
-1) Open "ContextLattice-Install.cmd" as Administrator.
-2) Wait for Docker compose stack launch.
-3) Open "ContextLattice-Monitor.cmd" for health/status/telemetry checks.
-4) Open a new terminal and verify global helpers:
-   - contextlattice_search -h
-   - contextlattice_write -h
+Atomic updates preserve only .env, .data, data, and backups inside the install
+directory. Docker volumes live outside that replacement. A modified legacy Git
+checkout or unmanaged non-empty directory is refused instead of overwritten.
+The installer verifies release identity and checksums before atomically replacing
+tracked application files.
 
-Requirements:
-- Docker Desktop (running)
-- Git for Windows
-- Internet access for repository clone/pull
+Launch requirement:
+- Docker Desktop with Compose v2
 
-Repository:
-https://github.com/sheawinkler/ContextLattice
+Extraction uses built-in PowerShell Expand-Archive and Get-FileHash.

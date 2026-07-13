@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""Audit canonical commercial plan, release, generated, and entitlement-route truth."""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import re
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+
+STATIC_PAGES = (
+    Path("docs/public_overview/premium.html"),
+    Path("docs/public_overview/index.html"),
+    Path("docs/public_overview/index-orb-white.html"),
+    Path("docs/public_overview/llms.txt"),
+    Path("docs/public_overview/cli.html"),
+    Path("docs/public_overview/installation.html"),
+)
+ENV_PATHS = (
+    Path(".env.example"),
+    Path("config/env/premium_dev.env"),
+    Path("config/env/premium_prod.env"),
+    Path("contextlattice-dashboard/.env.example"),
+)
+
+
+def load_generator(root: Path) -> ModuleType:
+    path = root / "scripts/generate_commercial_truth.py"
+    spec = importlib.util.spec_from_file_location("contextlattice_generate_commercial_truth", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load generator: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def finding(code: str, path: str, detail: str) -> dict[str, str]:
+    return {"code": code, "path": path, "detail": detail}
+
+
+def read_text(root: Path, relative: Path) -> str:
+    path = root / relative
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def audit_generated(
+    root: Path,
+    generator: ModuleType,
+    findings: list[dict[str, str]],
+) -> dict[str, Any] | None:
+    try:
+        contract = generator.load_contract(root)
+        clean, drift = generator.generate(root, check=True)
+    except Exception as exc:  # ContractError is owned by the dynamically loaded module.
+        findings.append(finding("contract_or_generator_invalid", str(generator.CONTRACT_PATH), str(exc)))
+        return None
+    if not clean:
+        for path in drift:
+            findings.append(finding("generated_drift", path, "run scripts/generate_commercial_truth.py"))
+    return contract
+
+
+def audit_public_json(
+    root: Path,
+    generator: ModuleType,
+    contract: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> None:
+    relative = Path("docs/public_overview/commercial-truth.json")
+    try:
+        actual = json.loads(read_text(root, relative))
+    except json.JSONDecodeError as exc:
+        findings.append(finding("public_json_invalid", str(relative), str(exc)))
+        return
+    expected = generator.public_payload(contract)
+    if actual != expected:
+        findings.append(finding("public_json_mismatch", str(relative), "public JSON is not the canonical projection"))
+    serialized = json.dumps(actual, ensure_ascii=True)
+    forbidden = ("/Users/", "/Volumes/", "file://", "BEGIN PRIVATE KEY", "password=")
+    for token in forbidden:
+        if token.lower() in serialized.lower():
+            findings.append(finding("public_json_private_data", str(relative), f"contains forbidden token {token!r}"))
+
+
+def audit_static_pages(
+    root: Path,
+    contract: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> None:
+    version = contract["product"]["version"]
+    train = contract["product"]["release_train"]
+    version_patterns = (
+        (re.compile(r"Current public release:</strong>\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
+        (re.compile(r"Current release:\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
+        (re.compile(r"Current public release baseline is v(\d+\.\d+\.\d+)"), version),
+        (re.compile(r"current_version --object (\d+\.\d+\.\d+)"), version),
+        (re.compile(r"Public Lane: v(\d+\.\d+)"), train),
+        (re.compile(r"App version lane:</strong> Public <code>v(\d+\.\d+)\.x</code>"), train),
+        (re.compile(r"<strong>Public <code>v(\d+\.\d+)\.x</code>"), train),
+        (re.compile(r"<h3>Public v(\d+\.\d+) \(current release train\)</h3>"), train),
+    )
+    for relative in STATIC_PAGES:
+        text = read_text(root, relative)
+        if not text:
+            findings.append(finding("static_page_missing", str(relative), "commercial truth target is missing"))
+            continue
+        lower = text.lower()
+        if "cli" not in lower or ("primary" not in lower and "canonical local flow" not in lower):
+            findings.append(finding("cli_not_primary", str(relative), "page does not identify CLI as primary"))
+        if re.search(r"\bv4\b|version\s*4", text, flags=re.IGNORECASE):
+            findings.append(finding("unreleased_v4_copy", str(relative), "static commercial page mentions unreleased v4"))
+        for pattern, expected in version_patterns:
+            for match in pattern.finditer(text):
+                if match.group(1) != expected:
+                    findings.append(
+                        finding(
+                            "stale_product_version",
+                            str(relative),
+                            f"found {match.group(1)}, expected {expected}",
+                        )
+                    )
+
+
+def parse_go_protected_routes(root: Path) -> tuple[set[str], str]:
+    candidates = (
+        Path("services/gateway-go/entitlement_policy.go"),
+        Path("services/gateway-go/memory_misc_routes.go"),
+    )
+    for relative in candidates:
+        text = read_text(root, relative)
+        if not text:
+            continue
+        match = re.search(r'defaultEntitlementProtectedPaths\s*=\s*"([^"]+)"', text)
+        if match:
+            return {item.strip() for item in match.group(1).split(",") if item.strip()}, str(relative)
+        match = re.search(
+            r'parseHTTPPathSet\(\s*os\.Getenv\("GO_V4_ENTITLEMENT_PROTECTED_PATHS"\),\s*"([^"]+)"',
+            text,
+            flags=re.DOTALL,
+        )
+        if match:
+            return {item.strip() for item in match.group(1).split(",") if item.strip()}, str(relative)
+    return set(), "services/gateway-go"
+
+
+def env_value(text: str, key: str) -> str | None:
+    match = re.search(rf"(?m)^{re.escape(key)}=(.*)$", text)
+    return match.group(1).strip() if match else None
+
+
+def audit_protected_routes(
+    root: Path,
+    contract: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> None:
+    contract_routes = set(contract["paid_route_contract"]["routes"])
+    code_routes, source = parse_go_protected_routes(root)
+    # The public repository publishes the buyer-facing route contract but must
+    # not contain the paid runtime implementation that enforces it.
+    if code_routes and code_routes != contract_routes:
+        missing = sorted(code_routes - contract_routes)
+        extra = sorted(contract_routes - code_routes)
+        findings.append(
+            finding(
+                "protected_route_contract_drift",
+                source,
+                f"missing_from_contract={missing}; extra_in_contract={extra}",
+            )
+        )
+
+    for relative in ENV_PATHS:
+        text = read_text(root, relative)
+        configured = env_value(text, "GO_V4_ENTITLEMENT_PROTECTED_PATHS")
+        if configured is None or configured == "":
+            continue
+        env_routes = {item.strip() for item in configured.split(",") if item.strip()}
+        if env_routes != contract_routes:
+            missing = sorted(contract_routes - env_routes)
+            extra = sorted(env_routes - contract_routes)
+            findings.append(
+                finding(
+                    "protected_route_env_drift",
+                    str(relative),
+                    f"missing={missing}; extra={extra}",
+                )
+            )
+
+    paid_plan_ids = {plan["id"] for plan in contract["plans"] if plan["paid"]}
+    eligible = set(contract["paid_route_contract"]["eligible_plan_ids"])
+    if eligible != paid_plan_ids:
+        findings.append(
+            finding(
+                "paid_route_plan_coverage",
+                "config/commercial_truth.v1.json",
+                f"eligible={sorted(eligible)}; paid={sorted(paid_plan_ids)}",
+            )
+        )
+
+
+def audit_active_catalogs(
+    root: Path,
+    findings: list[dict[str, str]],
+    warnings: list[dict[str, str]],
+) -> None:
+    direct_catalogs = (
+        (Path("contextlattice-dashboard/lib/billing/plans.ts"), "export const PLANS", "direct dashboard plan catalog"),
+        (Path("contextlattice-dashboard/lib/billing/entitlements.ts"), "const PLAN_LIMITS", "direct entitlement limit catalog"),
+    )
+    for relative, marker, detail in direct_catalogs:
+        text = read_text(root, relative)
+        if marker in text and "commercial.generated" not in text:
+            findings.append(finding("competing_active_catalog", str(relative), detail))
+
+    price_pattern = re.compile(r"(?m)^PLAN_PRICE_[A-Z0-9_]+_USD=\d+(?:\.\d+)?\s*$")
+    for relative in ENV_PATHS:
+        text = read_text(root, relative)
+        if price_pattern.search(text):
+            findings.append(
+                finding(
+                    "competing_active_price_catalog",
+                    str(relative),
+                    "numeric PLAN_PRICE_* values compete with canonical prices",
+                )
+            )
+
+    config_root = root / "config"
+    if not config_root.exists():
+        return
+    searchable_extensions = {".py", ".ts", ".tsx", ".js", ".mjs", ".sh", ".yml", ".yaml", ".toml", ".md"}
+    searchable: list[tuple[Path, str]] = []
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in searchable_extensions:
+            continue
+        relative = path.relative_to(root)
+        if any(part in {"node_modules", ".next", ".git", "archive", "bench", "logs"} for part in relative.parts):
+            continue
+        try:
+            searchable.append((relative, path.read_text(encoding="utf-8", errors="ignore")))
+        except OSError:
+            continue
+    for candidate in config_root.rglob("*.json"):
+        relative = candidate.relative_to(root)
+        if relative == Path("config/commercial_truth.v1.json"):
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or not isinstance(payload.get("plans"), list):
+            continue
+        needle_path = str(relative)
+        needle_name = candidate.name
+        references = [
+            str(path)
+            for path, text in searchable
+            if path != relative and (needle_path in text or needle_name in text)
+        ]
+        if references:
+            findings.append(
+                finding(
+                    "competing_active_json_catalog",
+                    str(relative),
+                    f"referenced_by={sorted(references)}",
+                )
+            )
+        else:
+            warnings.append(
+                finding(
+                    "inactive_legacy_catalog",
+                    str(relative),
+                    "contains plans but no active code/build reference was found",
+                )
+            )
+
+
+def audit_release_publish_inputs(
+    root: Path,
+    contract: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> None:
+    relative = Path("launch_service/config/contextlattice.launch.json")
+    text = read_text(root, relative)
+    if not text:
+        findings.append(finding("release_publish_input_missing", str(relative), "launch publication input is missing"))
+        return
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        findings.append(finding("release_publish_input_invalid", str(relative), str(exc)))
+        return
+    expected = contract["product"]["stable_tag"]
+    allowed = {expected}
+    observed = set(re.findall(r"v\d+\.\d+\.\d+(?:-origin)?", json.dumps(payload, ensure_ascii=True)))
+    stale = sorted(observed - allowed)
+    if stale or expected not in observed:
+        findings.append(
+            finding(
+                "release_publish_version_drift",
+                str(relative),
+                f"observed={sorted(observed)}; expected={sorted(allowed)}",
+            )
+        )
+    primary_cta = str(payload.get("primary_cta", "")).lower()
+    if "cli" not in primary_cta:
+        findings.append(finding("release_publish_cli_not_primary", str(relative), "primary CTA must name the CLI"))
+
+
+def run_audit(root: Path, release_tag: str = "") -> dict[str, Any]:
+    findings: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    try:
+        generator = load_generator(root)
+    except Exception as exc:
+        findings.append(finding("generator_unavailable", "scripts/generate_commercial_truth.py", str(exc)))
+        return {"schema_id": "contextlattice_commercial_truth_audit.v1", "ok": False, "findings": findings, "warnings": warnings}
+
+    contract = audit_generated(root, generator, findings)
+    if contract is not None:
+        audit_public_json(root, generator, contract, findings)
+        audit_static_pages(root, contract, findings)
+        audit_protected_routes(root, contract, findings)
+        audit_active_catalogs(root, findings, warnings)
+        audit_release_publish_inputs(root, contract, findings)
+        if release_tag and release_tag != contract["product"]["stable_tag"]:
+            findings.append(
+                finding(
+                    "release_tag_drift",
+                    "config/commercial_truth.v1.json",
+                    f"release_tag={release_tag}; expected={contract['product']['stable_tag']}",
+                )
+            )
+
+    return {
+        "schema_id": "contextlattice_commercial_truth_audit.v1",
+        "ok": not findings,
+        "contract": "config/commercial_truth.v1.json",
+        "product_version": contract["product"]["version"] if contract else None,
+        "findings": findings,
+        "warnings": warnings,
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="", help="Repository root; defaults to the audit script repository.")
+    parser.add_argument("--release-tag", default="", help="Optional release tag that must match the contract.")
+    parser.add_argument("--pretty", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
+    payload = run_audit(root, release_tag=args.release_tag)
+    print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
