@@ -16,7 +16,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.17.0 + release notes + checksums + images",
+      "submission_path": "Tag v3.17.2 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.17.0",
-      "body": "ContextLattice v3.17.0 turns product promises into executable proof.\n\nHighlights:\n- one canonical contract now owns plans, prices, feature IDs, and release identity\n- paid artifacts carry the actual paid runtime instead of cloning a public fallback\n- runtime licenses are signed, installation-bound, proof-of-possession credentials\n- premium downloads hide private origins and verify every byte before delivery\n- production runtime enforcement fails closed\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.17.2",
+      "body": "ContextLattice v3.17.2 puts model storage exactly where the operator says it belongs.\n\nHighlights:\n- OLLAMA_DATA moves local model blobs to any explicit absolute path\n- startup verifies the running Ollama mount instead of trusting configuration by implication\n- shipped environment profiles are sourceable contracts, not display-only examples\n- quickstart defaults remain unchanged\n- existing distribution and entitlement boundaries remain unchanged\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.17.0 is live.\n\nThis release makes the commercial boundary as rigorous as the memory engine behind it. One contract drives the promise. Paid artifacts carry the product. Runtime licenses prove both entitlement and installation possession. Production fails closed.\n\nStart local-first: {docs_url}"
+      "body": "ContextLattice v3.17.2 is live.\n\nLocal-first should not mean internal-disk-first. Point OLLAMA_DATA at the storage you chose; ContextLattice now proves the live mount before the runtime proceeds. Same CLI-first engine. No new daemon. No silent disk surprise.\n\nStart local-first: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "Today we are launching ContextLattice v3.17.0.\n\nContextLattice is the durable intelligence layer for serious agent systems.\n\nWhat changed:\n- one canonical contract drives plans, pricing, feature IDs, and release identity\n- paid artifacts are deterministic, self-contained, and provenance-checked\n- runtime licenses are Ed25519-signed and bound to a client-side installation key\n- premium downloads verify origin, size, and digest without exposing private URLs\n- production enforcement fails closed\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "Today we are launching ContextLattice v3.17.2.\n\nContextLattice is the durable intelligence layer for serious agent systems. It should not annex your system disk to prove it.\n\nWhat changed:\n- operators can place Ollama model data on any explicit absolute path\n- startup verifies the live container mount and rejects drift\n- shipped environment profiles are now directly shell-sourceable\n- quickstart defaults and entitlement boundaries remain unchanged\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

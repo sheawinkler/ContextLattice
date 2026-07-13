@@ -39,7 +39,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.17.0` is the current public baseline. One generated contract now owns release identity, plan names, stable feature IDs, pricing, limits, and paid-route eligibility without shipping the paid enforcement or billing implementation in the open-source tree. Public installers carry a deterministic, lane-stamped runtime payload instead of cloning a mutable repository during setup. Tiny context packs preserve agent and session identity under severe budgets, while the compact Agent Packet, outcome learning, transport-inclusive token economics, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain behind the same CLI-first contract.
+`v3.17.2` is the current public baseline. Local model storage can live on any operator-chosen absolute path, and startup now proves the Ollama mount instead of trusting configuration by implication. Shipped environment profiles are shell-sourceable contracts rather than display-only examples. Tiny context packs preserve agent and session identity under severe budgets, while the compact Agent Packet, outcome learning, transport-inclusive token economics, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain behind the same CLI-first contract.
 
 ## Public Runtime Stack (v3.17)
 
@@ -77,8 +77,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.17.0 \
-  --statement "The current public release is 3.17.0." \
+  --object 3.17.2 \
+  --statement "The current public release is 3.17.2." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -402,6 +402,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.17.2.md` (operator-chosen Ollama storage, verified mount truth, and sourceable environment profiles)
   - `docs/releases/v3.17.0.md` (canonical commercial truth, self-contained installers, strict public boundary, and tiny-pack identity)
   - `docs/releases/v3.16.1.md` (contract-valid compact lifecycle receipts for the primary CLI)
   - `docs/releases/v3.16.0.md` (compact Agent Packet, session truth, monotonic async, outcome learning, unified CLI, and proof workbench)

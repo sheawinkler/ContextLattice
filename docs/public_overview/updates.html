@@ -46,16 +46,31 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.17.0 makes every product promise resolve to one verifiable artifact.</h3>
+        <h3>v3.17.2 puts model storage exactly where the operator says it belongs.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.17.0:</strong> one generated contract owns release identity, plans, features, pricing, limits, and protected-route eligibility.</li>
+          <li><strong>Public v3.17.2:</strong> set one absolute <code>OLLAMA_DATA</code> path and keep model blobs off a constrained system disk.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
-          <li><strong>Distribution integrity:</strong> every release lane proves its own contents; paid artifacts never fall back to cloning the public repository.</li>
+          <li><strong>Mount truth:</strong> startup verifies the live Ollama bind source and rejects drift before it becomes a storage surprise.</li>
         </ul>
       </article>
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-13 · v3.17.2 · Your Models. Your Disk.</span>
+        <h2>Local-first should not mean internal-disk-first.</h2>
+        <p>
+          ContextLattice now lets operators place Ollama model data on any explicit absolute path while preserving
+          the existing home-directory default. The runtime verifies what was mounted, not merely what was requested.
+        </p>
+        <ul>
+          <li><strong>One deliberate override:</strong> <code>OLLAMA_DATA</code> moves model blobs without changing quickstart behavior for everyone else.</li>
+          <li><strong>Proof before pressure:</strong> the storage verifier checks the running container's actual source and fails on mount drift.</li>
+          <li><strong>Executable configuration:</strong> shipped environment profiles quote human-readable values correctly and can be sourced directly by Bash.</li>
+          <li><strong>No new dependency:</strong> the feature uses the existing Compose and verification path; no storage daemon or migration service was added.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-12 · v3.17.0 · One Promise. One Proof.</span>
         <h2>Paid stopped being a label. It became a cryptographic boundary.</h2>
