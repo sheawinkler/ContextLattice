@@ -91,6 +91,7 @@ for tool in "${required_tools[@]}"; do
 done
 
 services=(
+  "ollama|OLLAMA_DATA|/root/.ollama"
   "pgvector-db|PGVECTOR_DATA|/home/postgres/pgdata/data"
   "qdrant|QDRANT_STORAGE|/qdrant/storage"
   "mongo|MONGO_DATA|/data/db"
@@ -120,11 +121,19 @@ expected_volume_name() {
 
 storage_suffix_for_env_key() {
   case "$1" in
+    OLLAMA_DATA) echo "ollama" ;;
     PGVECTOR_DATA) echo "pgvector_data" ;;
     QDRANT_STORAGE) echo "qdrant_storage" ;;
     MONGO_DATA) echo "mongo_data" ;;
     MEMORY_BANK_DATA) echo "memory_bank_data" ;;
     *) echo "" ;;
+  esac
+}
+
+default_storage_value_for_env_key() {
+  case "$1" in
+    OLLAMA_DATA) echo "${HOME}/.ollama" ;;
+    *) storage_suffix_for_env_key "$1" ;;
   esac
 }
 
@@ -254,7 +263,7 @@ verify_service() {
   local expected="${!env_key:-}"
   expected="$(echo "${expected:-}" | xargs)"
   if [[ -z "$expected" ]]; then
-    expected="$(storage_suffix_for_env_key "$env_key")"
+    expected="$(default_storage_value_for_env_key "$env_key")"
     if [[ -z "$expected" ]]; then
       log "[storage-mount-check] skip $service ($env_key unset)"
       return 0
