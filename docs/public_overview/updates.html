@@ -46,16 +46,32 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.17.2 puts model storage exactly where the operator says it belongs.</h3>
+        <h3>v3.17.3 makes trust a runtime property, not a promise.</h3>
         <ul class="spec-list">
-          <li><strong>Public v3.17.2:</strong> set one absolute <code>OLLAMA_DATA</code> path and keep model blobs off a constrained system disk.</li>
+          <li><strong>Private by default:</strong> sensitive local stores migrate to owner-only access without an all-at-once rewrite.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
-          <li><strong>Mount truth:</strong> startup verifies the live Ollama bind source and rejects drift before it becomes a storage surprise.</li>
+          <li><strong>Execution truth:</strong> approval, evidence thresholds, temporal status, and native route ownership now fail honestly.</li>
         </ul>
       </article>
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-13 · v3.17.3 · Trust Before Magic.</span>
+        <h2>Before memory gets more magical, its floor gets harder.</h2>
+        <p>
+          ContextLattice now turns six quiet assumptions into enforced contracts: private storage, pre-execution approval,
+          evidence-qualified runner advice, time-aware recall, canonical task routes, and exact native route ownership.
+        </p>
+        <ul>
+          <li><strong>Owner-only means owner-only:</strong> sensitive files use restrictive POSIX modes or protected Windows ACLs, with bounded resumable migration and symlink containment.</li>
+          <li><strong>No approval, no work:</strong> blocked tasks stop before routing, context expansion, inference, adapters, or memory writeback.</li>
+          <li><strong>Advice earns its confidence:</strong> sparse runners stay visible, but recommendations require a real sample floor.</li>
+          <li><strong>History stays honest:</strong> retracted claims leave default current-state recall while remaining explicitly queryable.</li>
+          <li><strong>One contract, one gateway:</strong> task guidance uses canonical routes and strict native ownership is tested against the registered mux.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-13 · v3.17.2 · Your Models. Your Disk.</span>
         <h2>Local-first should not mean internal-disk-first.</h2>
