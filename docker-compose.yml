@@ -1335,6 +1335,7 @@ services:
       GO_WRITE_TELEMETRY_FILE_PATTERNS: ${GO_WRITE_TELEMETRY_FILE_PATTERNS:-index__*.json,*_agg-latest.json,*_agg-*.json,*__agg-*.json,telemetry__*.json,*__state__*.json,*__stats__*.json,*__snapshots__*.json,*__health__*.json,*__allocations__*.json}
       GO_WRITE_TELEMETRY_MARKERS: ${GO_WRITE_TELEMETRY_MARKERS:-telemetry,metrics,__state__,__stats__,__snapshots__,__health__,__allocations__,_agg-,queue__}
       GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES: ${GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES:-decisions,decision,discoveries,discovery,learnings,learning,ideas,notes,runbooks,architecture,projects,knowledge,handoffs,checkpoints,analysis,findings,plans,objectives,missions,skills}
+      GO_WRITE_DURABLE_MEMORY_FILE_PATTERNS: ${GO_WRITE_DURABLE_MEMORY_FILE_PATTERNS:-}
       GO_WRITE_FANOUT_EXCLUDE_TARGETS: ${GO_WRITE_FANOUT_EXCLUDE_TARGETS:-mindsdb}
       GO_WRITE_BATCH_CONCURRENCY: ${GO_WRITE_BATCH_CONCURRENCY:-4}
       GO_TELEMETRY_SINK_ENABLED: ${GO_TELEMETRY_SINK_ENABLED:-true}

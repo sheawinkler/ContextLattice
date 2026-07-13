@@ -82,6 +82,40 @@ func TestWritePolicyDurableTopicDoesNotShieldRawTelemetryArtifact(t *testing.T) 
 	}
 }
 
+func TestWritePolicyDurableRuntimeStateFileOverridesTelemetryPattern(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled: true,
+		telemetryFilePatterns:     []string{"*__state__*.json"},
+		telemetryMarkers:          []string{"__state__"},
+		durableMemoryFilePatterns: []string{"runtime__state__*.json"},
+	}
+	item := normalizedWrite{
+		project:  "project-alpha",
+		fileName: "runtime__state__latest.json",
+		content:  `{"generation":21,"positions":[]}`,
+	}
+	if policy.isTelemetryLike(item) {
+		t.Fatal("expected configured runtime state snapshot to remain durable memory")
+	}
+}
+
+func TestWritePolicyUnlistedRuntimeStateRemainsTelemetry(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled: true,
+		telemetryFilePatterns:     []string{"*__state__*.json"},
+		telemetryMarkers:          []string{"__state__"},
+		durableMemoryFilePatterns: []string{"runtime__state__*.json"},
+	}
+	item := normalizedWrite{
+		project:  "project-alpha",
+		fileName: "discovery__state__latest.json",
+		content:  `{"round":1}`,
+	}
+	if !policy.isTelemetryLike(item) {
+		t.Fatal("expected unlisted runtime state to remain telemetry")
+	}
+}
+
 func TestWritePolicyRequiredValidation(t *testing.T) {
 	policy := writeIngressPolicy{strictRequiredFields: true}
 	if err := policy.validateWrite(normalizedWrite{project: " ", fileName: "x", content: "x"}); err == nil {

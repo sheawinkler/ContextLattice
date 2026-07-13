@@ -562,6 +562,7 @@ services:
       ORCH_INFER_AUTO_PROBE_TTL_SECS: ${ORCH_INFER_AUTO_PROBE_TTL_SECS:-10}
       ORCH_INFER_AUTO_FALLBACK_PROVIDER: ${ORCH_INFER_AUTO_FALLBACK_PROVIDER:-ollama}
       GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES: ${GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES:-decisions,decision,discoveries,discovery,learnings,learning,ideas,notes,runbooks,architecture,projects,knowledge,handoffs,checkpoints,analysis,findings,plans,objectives,missions,skills}
+      GO_WRITE_DURABLE_MEMORY_FILE_PATTERNS: ${GO_WRITE_DURABLE_MEMORY_FILE_PATTERNS:-}
       ORCH_SKILLS_QUARANTINE_ENABLED: ${ORCH_SKILLS_QUARANTINE_ENABLED:-true}
       ORCH_SKILLS_QUARANTINE_SEARCH_CMD: ${ORCH_SKILLS_QUARANTINE_SEARCH_CMD:-/opt/contextlattice/skills/bin/codex-skills-quarantine-search}
       ORCH_SKILLS_QUARANTINE_REINDEX_CMD: ${ORCH_SKILLS_QUARANTINE_REINDEX_CMD:-/opt/contextlattice/skills/bin/codex-skills-quarantine-reindex}

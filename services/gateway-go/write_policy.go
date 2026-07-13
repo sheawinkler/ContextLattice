@@ -16,6 +16,7 @@ type writeIngressPolicy struct {
 	telemetryFilePatterns      []string
 	telemetryMarkers           []string
 	durableMemoryTopicPrefixes []string
+	durableMemoryFilePatterns  []string
 	fanoutExcludeTargets       []string
 	batchConcurrency           int
 }
@@ -55,6 +56,10 @@ func loadWriteIngressPolicy() writeIngressPolicy {
 		durableMemoryTopicPrefixes: csvLowerListEnv(
 			"GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES",
 			"decisions,decision,discoveries,discovery,learnings,learning,ideas,notes,runbooks,architecture,projects,knowledge,handoffs,checkpoints,analysis,findings,plans,objectives,missions,skills",
+		),
+		durableMemoryFilePatterns: csvLowerListEnv(
+			"GO_WRITE_DURABLE_MEMORY_FILE_PATTERNS",
+			"",
 		),
 		fanoutExcludeTargets: normalizeFanoutTargets(
 			csvLowerListEnv("GO_WRITE_FANOUT_EXCLUDE_TARGETS", "mindsdb"),
@@ -247,6 +252,9 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 	if !p.telemetryIsolationEnabled {
 		return false
 	}
+	if p.isDurableMemoryFile(item.fileName) {
+		return false
+	}
 	normalizedTopic := normalizeTopic(item.topicPath)
 	hardTelemetryFile := p.isHardTelemetryFile(item.fileName)
 	if normalizedTopic != "" && p.isDurableMemoryTopic(normalizedTopic) && !hardTelemetryFile {
@@ -273,6 +281,19 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 	lowerTopic := strings.ToLower(normalizedTopic)
 	for _, marker := range p.telemetryMarkers {
 		if marker != "" && strings.Contains(lowerTopic, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p writeIngressPolicy) isDurableMemoryFile(fileName string) bool {
+	lowerFile := strings.ToLower(strings.TrimSpace(fileName))
+	if lowerFile == "" {
+		return false
+	}
+	for _, pattern := range p.durableMemoryFilePatterns {
+		if globMatches(pattern, lowerFile) {
 			return true
 		}
 	}
