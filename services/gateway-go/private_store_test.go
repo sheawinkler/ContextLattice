@@ -29,9 +29,14 @@ func TestOwnerOnlyMigrationIsBoundedResumableAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
+		filepath.Join(root, "foo", "inside.md"),
+		filepath.Join(root, "foo-bar", "inside.md"),
 		filepath.Join(root, "project", "one.md"),
 		filepath.Join(root, "project", "topic", "two.md"),
 	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte("private"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -62,12 +67,51 @@ func TestOwnerOnlyMigrationIsBoundedResumableAndIdempotent(t *testing.T) {
 		t.Fatalf("idempotent completed migration failed: %v", err)
 	}
 	assertMode(t, root, 0o700)
+	assertMode(t, filepath.Join(root, "foo"), 0o700)
+	assertMode(t, filepath.Join(root, "foo", "inside.md"), 0o600)
+	assertMode(t, filepath.Join(root, "foo-bar"), 0o700)
+	assertMode(t, filepath.Join(root, "foo-bar", "inside.md"), 0o600)
 	assertMode(t, filepath.Join(root, "project"), 0o700)
 	assertMode(t, filepath.Join(root, "project", "topic"), 0o700)
 	assertMode(t, filepath.Join(root, "project", "one.md"), 0o600)
 	assertMode(t, filepath.Join(root, "project", "topic", "two.md"), 0o600)
 	assertMode(t, ownerOnlyStatePath(root), 0o600)
 	assertMode(t, outside, 0o644)
+}
+
+func TestOwnerOnlyMigrationResumeDecisionMatchesWalkDirOrder(t *testing.T) {
+	tests := []struct {
+		name      string
+		rel       string
+		cursor    string
+		isDir     bool
+		skipEntry bool
+		skipDir   bool
+	}{
+		{name: "cursor ancestor remains traversable", rel: "foo", cursor: "foo/inside.md", isDir: true, skipEntry: true},
+		{name: "completed sibling subtree is pruned", rel: "alpha", cursor: "foo/inside.md", isDir: true, skipEntry: true, skipDir: true},
+		{name: "hyphenated later sibling is processed", rel: "foo-bar", cursor: "foo/inside.md", isDir: true},
+		{name: "cursor entry is skipped", rel: "foo/inside.md", cursor: "foo/inside.md", skipEntry: true},
+		{name: "later nested entry is processed", rel: "foo/later.md", cursor: "foo/inside.md"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			skipEntry, skipDir := ownerOnlyMigrationResumeDecision(test.rel, test.cursor, test.isDir)
+			if skipEntry != test.skipEntry || skipDir != test.skipDir {
+				t.Fatalf(
+					"ownerOnlyMigrationResumeDecision(%q, %q, %t) = (%t, %t), want (%t, %t)",
+					test.rel,
+					test.cursor,
+					test.isDir,
+					skipEntry,
+					skipDir,
+					test.skipEntry,
+					test.skipDir,
+				)
+			}
+		})
+	}
 }
 
 func TestOwnerOnlyMigrationRejectsEscapingSymlink(t *testing.T) {

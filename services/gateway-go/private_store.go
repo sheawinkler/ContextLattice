@@ -204,6 +204,57 @@ func persistOwnerOnlyMigrationState(path string, state ownerOnlyMigrationState) 
 	return writeOwnerOnlyAtomicFile(path, raw, true)
 }
 
+func ownerOnlyWalkPathParts(path string) []string {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(path))))
+	if clean == "" || clean == "." {
+		return nil
+	}
+	return strings.Split(clean, "/")
+}
+
+func compareOwnerOnlyWalkPaths(left string, right string) int {
+	leftParts := ownerOnlyWalkPathParts(left)
+	rightParts := ownerOnlyWalkPathParts(right)
+	shared := len(leftParts)
+	if len(rightParts) < shared {
+		shared = len(rightParts)
+	}
+	for index := 0; index < shared; index++ {
+		if compared := strings.Compare(leftParts[index], rightParts[index]); compared != 0 {
+			return compared
+		}
+	}
+	return len(leftParts) - len(rightParts)
+}
+
+func ownerOnlyWalkPathIsAncestor(ancestor string, descendant string) bool {
+	ancestorParts := ownerOnlyWalkPathParts(ancestor)
+	descendantParts := ownerOnlyWalkPathParts(descendant)
+	if len(ancestorParts) >= len(descendantParts) {
+		return false
+	}
+	for index := range ancestorParts {
+		if ancestorParts[index] != descendantParts[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func ownerOnlyMigrationResumeDecision(rel string, cursor string, isDir bool) (skipEntry bool, skipDir bool) {
+	if strings.TrimSpace(cursor) == "" {
+		return false, false
+	}
+	compared := compareOwnerOnlyWalkPaths(rel, cursor)
+	if compared > 0 {
+		return false, false
+	}
+	if isDir && compared < 0 && !ownerOnlyWalkPathIsAncestor(rel, cursor) {
+		return true, true
+	}
+	return true, false
+}
+
 func migrateOwnerOnlyStore(root string) error {
 	root = filepath.Clean(strings.TrimSpace(root))
 	if root == "" || root == "." {
@@ -243,7 +294,11 @@ func migrateOwnerOnlyStore(root string) error {
 		if rel == "." || filepath.Clean(path) == filepath.Clean(statePath) {
 			return nil
 		}
-		if state.Cursor != "" && rel <= state.Cursor {
+		skipEntry, skipDir := ownerOnlyMigrationResumeDecision(rel, state.Cursor, entry.IsDir())
+		if skipEntry {
+			if skipDir {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if processed >= limit {
