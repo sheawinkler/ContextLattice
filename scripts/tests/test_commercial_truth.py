@@ -52,8 +52,8 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "3.17.3")
-        self.assertEqual(contract["product"]["stable_tag"], "v3.17.3")
+        self.assertEqual(contract["product"]["version"], "3.17.4")
+        self.assertEqual(contract["product"]["stable_tag"], "v3.17.4")
         self.assertEqual(contract["product"]["release_train"], "3.17")
         self.assertEqual(contract["product"]["primary_interface"], "cli")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
@@ -95,7 +95,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("/Volumes/", payload)
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
-        self.assertEqual(json.loads(payload)["product"]["version"], "3.17.3")
+        self.assertEqual(json.loads(payload)["product"]["version"], "3.17.4")
 
     def test_pages_sync_publishes_commercial_truth(self) -> None:
         sync_script = (ROOT / "scripts/sync_public_overview.sh").read_text(encoding="utf-8")
@@ -149,6 +149,7 @@ class CommercialTruthTests(unittest.TestCase):
             for path in (ROOT / "services/gateway-go").glob("*.go")
         )
         self.assertNotIn("GO_V4_ENTITLEMENT", gateway_source)
+        self.assertNotIn("GO_V4_MACHINE_BINDING", gateway_source)
         self.assertNotIn("runtimeLicenseVerifier", gateway_source)
 
     def test_audit_rejects_stale_release_publish_input(self) -> None:
@@ -157,7 +158,7 @@ class CommercialTruthTests(unittest.TestCase):
             copy_fixture(fixture)
             launch = fixture / "launch_service/config/contextlattice.launch.json"
             launch.write_text(
-                launch.read_text(encoding="utf-8").replace("v3.17.3", "v9.9.9", 1),
+                launch.read_text(encoding="utf-8").replace("v3.17.4", "v9.9.9", 1),
                 encoding="utf-8",
             )
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)

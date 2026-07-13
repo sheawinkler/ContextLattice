@@ -27,7 +27,6 @@ func TestMain(m *testing.M) {
 		"CONTEXTLATTICE_CONTEXT_MESH_STATE_PATH":         filepath.Join(testRoot, "context_mesh_state.json"),
 		"CONTEXTLATTICE_COGNITION_ACTIVATION_STATE_PATH": filepath.Join(testRoot, "cognition_activation.json"),
 		"CONTEXTLATTICE_SKILL_ACTIVATION_ROOT":           filepath.Join(testRoot, "skills"),
-		"GO_V4_MACHINE_BINDING_STATE_PATH":               filepath.Join(testRoot, "machine_binding.json"),
 		"GO_TELEMETRY_SPOOL_PATH":                        filepath.Join(testRoot, "telemetry_spool.ndjson"),
 		"AGENT_MEMORY_PROFILE_PATH":                      filepath.Join(testRoot, "agent_memory_profiles.json"),
 		"ORCH_RECALL_EVAL_CASES_PATH":                    filepath.Join(testRoot, "recall_eval_cases.json"),
