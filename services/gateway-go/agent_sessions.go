@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -80,6 +81,10 @@ func newAgentSessionStoreFromEnv() (*agentSessionStore, error) {
 		order:     []string{},
 		events:    map[string][]map[string]any{},
 	}
+	dedicatedParent := strings.TrimSpace(os.Getenv("GO_AGENT_SESSIONS_PATH")) == "" && strings.TrimSpace(os.Getenv("GO_AGENT_SESSION_LEDGER_PATH")) == ""
+	if err := prepareOwnerOnlyFile(store.path, dedicatedParent); err != nil {
+		return store, fmt.Errorf("prepare owner-only agent session store: %w", err)
+	}
 	if err := store.load(); err != nil {
 		return store, err
 	}
@@ -153,9 +158,6 @@ func (s *agentSessionStore) persistLocked() error {
 	if strings.TrimSpace(s.path) == "" {
 		return errors.New("agent session store path is empty")
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
 	sessions := make([]map[string]any, 0, len(s.order))
 	for _, id := range s.order {
 		if row, ok := s.sessions[id]; ok {
@@ -178,7 +180,7 @@ func (s *agentSessionStore) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeAtomicFile(s.path, raw, 0o644)
+	return writeOwnerOnlyAtomicFile(s.path, raw, false)
 }
 
 func (s *agentSessionStore) enforceBoundsLocked() {
@@ -1828,7 +1830,7 @@ func (s *agentSessionStore) runtimeSnapshot(limit int) map[string]any {
 	}
 	return map[string]any{
 		"enabled":                 true,
-		"path":                    s.path,
+		"store_ref":               ownerOnlyStoreRef("agent_sessions"),
 		"total":                   len(s.sessions),
 		"active":                  counts["active"],
 		"completed":               counts["completed"],

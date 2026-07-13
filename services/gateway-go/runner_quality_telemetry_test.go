@@ -93,8 +93,21 @@ func TestRunnerQualityTelemetrySummarizesLedgerAdvisorOnly(t *testing.T) {
 		t.Fatalf("runner quality telemetry must not expose routing_hint: %#v", payload)
 	}
 	recommendations := anyMap(payload["recommendations"])
-	if anyToString(recommendations["mode"]) != "advisor_only" || anyToString(recommendations["top_runner"]) != "pi" {
-		t.Fatalf("expected advisor-only pi recommendation, got %#v", recommendations)
+	if anyToString(recommendations["mode"]) != "advisor_only" || anyToString(recommendations["top_runner"]) != "" {
+		t.Fatalf("expected advisor-only summary without a sparse top runner, got %#v", recommendations)
+	}
+	if anyToString(recommendations["confidence"]) != "insufficient_samples" {
+		t.Fatalf("expected insufficient sample confidence, got %#v", recommendations)
+	}
+	candidates := contextPackAnyList(recommendations["candidates"])
+	if len(candidates) != 2 {
+		t.Fatalf("expected sparse candidates to remain visible, got %#v", recommendations)
+	}
+	for _, rawCandidate := range candidates {
+		candidate := anyMap(rawCandidate)
+		if anyToBool(candidate["recommendation_eligible"]) || anyToString(candidate["eligibility"]) != "insufficient_samples" {
+			t.Fatalf("expected sparse candidate to be marked ineligible, got %#v", candidate)
+		}
 	}
 	storage := anyMap(payload["storage"])
 	if !anyToBool(storage["exists"]) || anyToInt(storage["parse_errors"], 0) != 1 {
@@ -103,5 +116,53 @@ func TestRunnerQualityTelemetrySummarizesLedgerAdvisorOnly(t *testing.T) {
 	encodedPayload, _ := json.Marshal(payload)
 	if strings.Contains(string(encodedPayload), ledgerPath) || strings.Contains(string(encodedPayload), "runner_quality_ledger.ndjson") {
 		t.Fatalf("telemetry response leaked local ledger path: %s", string(encodedPayload))
+	}
+}
+
+func TestRunnerQualityRecommendationsPromoteOnlyEligibleRunner(t *testing.T) {
+	recommendations := runnerQualityRecommendations(map[string]any{
+		"pi": map[string]any{
+			"sample_count": 1, "success_rate": 1.0, "blocked_rate": 0.0, "failure_rate": 0.0,
+		},
+		"droid": map[string]any{
+			"sample_count": 5, "success_rate": 0.8, "blocked_rate": 0.0, "failure_rate": 0.2,
+		},
+	}, 6, "scout")
+	if got := anyToString(recommendations["top_runner"]); got != "droid" {
+		t.Fatalf("expected only eligible runner to be promoted, got %q in %#v", got, recommendations)
+	}
+	candidates := contextPackAnyList(recommendations["candidates"])
+	if len(candidates) != 2 || anyToString(anyMap(candidates[0])["runner"]) != "pi" {
+		t.Fatalf("expected higher-scoring sparse runner to remain visible, got %#v", candidates)
+	}
+	if anyToBool(anyMap(candidates[0])["recommendation_eligible"]) {
+		t.Fatalf("sparse runner must not become recommendation eligible: %#v", candidates[0])
+	}
+}
+
+func TestRunnerQualityRecommendationsKeepTopEligibleRunnerVisible(t *testing.T) {
+	byRunner := map[string]any{
+		"eligible": map[string]any{
+			"sample_count": 5, "success_rate": 0.0, "blocked_rate": 0.0, "failure_rate": 1.0,
+		},
+	}
+	for _, runner := range []string{"sparse-a", "sparse-b", "sparse-c", "sparse-d", "sparse-e"} {
+		byRunner[runner] = map[string]any{
+			"sample_count": 1, "success_rate": 1.0, "blocked_rate": 0.0, "failure_rate": 0.0,
+		}
+	}
+	recommendations := runnerQualityRecommendations(byRunner, 10, "review")
+	if got := anyToString(recommendations["top_runner"]); got != "eligible" {
+		t.Fatalf("expected eligible runner recommendation, got %q", got)
+	}
+	visible := false
+	for _, raw := range contextPackAnyList(recommendations["candidates"]) {
+		if anyToString(anyMap(raw)["runner"]) == "eligible" {
+			visible = true
+			break
+		}
+	}
+	if !visible {
+		t.Fatalf("top eligible runner must remain in bounded candidates: %#v", recommendations)
 	}
 }

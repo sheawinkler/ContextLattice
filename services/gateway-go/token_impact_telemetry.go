@@ -64,7 +64,15 @@ func newTokenImpactLedgerFromEnv() *tokenImpactLedger {
 	}
 	maxBytes := int64(clampInt(envInt("GO_TOKEN_IMPACT_LEDGER_MAX_BYTES", 2*1024*1024), 64*1024, 64*1024*1024))
 	maxSamples := clampInt(envInt("GO_TOKEN_IMPACT_LEDGER_MAX_SAMPLES", 1000), 20, 20000)
-	return &tokenImpactLedger{enabled: enabled, path: path, maxBytes: maxBytes, maxSamples: maxSamples}
+	ledger := &tokenImpactLedger{enabled: enabled, path: path, maxBytes: maxBytes, maxSamples: maxSamples}
+	if enabled {
+		dedicatedParent := strings.TrimSpace(os.Getenv("GO_TOKEN_IMPACT_LEDGER_PATH")) == ""
+		if err := prepareOwnerOnlyFile(path, dedicatedParent); err != nil {
+			ledger.enabled = false
+			ledger.lastError = err.Error()
+		}
+	}
+	return ledger
 }
 
 func tokenImpactLedgerPath() string {
@@ -431,11 +439,7 @@ func (l *tokenImpactLedger) append(entry map[string]any) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
-		l.writeErrors++
-		return err
-	}
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := openOwnerOnlyAppend(l.path, false)
 	if err != nil {
 		l.writeErrors++
 		return err
@@ -489,7 +493,7 @@ func (l *tokenImpactLedger) pruneLocked() error {
 		encodedRows[i], encodedRows[j] = encodedRows[j], encodedRows[i]
 	}
 	tmp := l.path + ".tmp"
-	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, ownerOnlyFileMode)
 	if err != nil {
 		return err
 	}
@@ -502,7 +506,10 @@ func (l *tokenImpactLedger) pruneLocked() error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, l.path)
+	if err := os.Rename(tmp, l.path); err != nil {
+		return err
+	}
+	return ensureOwnerOnlyFile(l.path)
 }
 
 func (l *tokenImpactLedger) readRowsUnlocked() ([]map[string]any, int, error) {

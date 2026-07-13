@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -254,11 +255,12 @@ func (s *server) memoryRecallEvalCases(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := loadSavedRecallEvalConfig()
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to load saved recall eval cases", "detail": err.Error()})
+		log.Printf("saved recall eval case load failed: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to load saved recall eval cases", "code": "storage_access_error"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":            cfg.Path,
+		"case_set_id":     ownerOnlyStoreRef("recall_eval_cases"),
 		"version":         cfg.Version,
 		"updatedAt":       cfg.UpdatedAt,
 		"k":               cfg.K,
@@ -307,12 +309,14 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to encode refreshed cases", "detail": err.Error()})
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to create recall eval directory", "detail": err.Error()})
+	if err := prepareOwnerOnlyFile(path, strings.TrimSpace(os.Getenv("ORCH_RECALL_EVAL_CASES_PATH")) == ""); err != nil {
+		log.Printf("recall eval store preparation failed: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to create recall eval directory", "code": "storage_access_error"})
 		return
 	}
-	if err := writeAtomicFile(path, raw, 0o644); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to persist refreshed recall eval cases", "detail": err.Error()})
+	if err := writeOwnerOnlyAtomicFile(path, raw, false); err != nil {
+		log.Printf("recall eval store write failed: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to persist refreshed recall eval cases", "code": "storage_io_error"})
 		return
 	}
 	casesAny, _ := refreshed["cases"].([]map[string]any)
@@ -332,7 +336,7 @@ func (s *server) memoryRecallEvalCasesRefresh(w http.ResponseWriter, r *http.Req
 		"ok":              anyToBool(refreshedHealth["valid"]),
 		"case_set_health": refreshedHealth,
 		"savedCaseSet": map[string]any{
-			"path":              path,
+			"case_set_id":       ownerOnlyStoreRef("recall_eval_cases"),
 			"version":           refreshed["version"],
 			"updatedAt":         refreshed["updatedAt"],
 			"count":             len(casesAny),

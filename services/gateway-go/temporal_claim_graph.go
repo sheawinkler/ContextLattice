@@ -103,6 +103,9 @@ func newTemporalClaimStoreFromEnv() (*temporalClaimStore, error) {
 		store.enabled = false
 		return store, nil
 	}
+	if err := prepareOwnerOnlyFile(store.path, strings.TrimSpace(os.Getenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH")) == ""); err != nil {
+		return store, err
+	}
 	if err := store.load(); err != nil {
 		return store, err
 	}
@@ -399,9 +402,6 @@ func (s *temporalClaimStore) appendBatchLocked(claims []temporalClaim) error {
 	if len(claims) == 0 {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("create temporal claim directory: %w", err)
-	}
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
@@ -410,7 +410,7 @@ func (s *temporalClaimStore) appendBatchLocked(claims []temporalClaim) error {
 			return fmt.Errorf("encode temporal claim: %w", err)
 		}
 	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
 		return fmt.Errorf("open temporal claim ledger for append: %w", err)
 	}
@@ -447,9 +447,6 @@ func (s *temporalClaimStore) trimLocked() {
 }
 
 func (s *temporalClaimStore) compactLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
 	tmp := s.path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -519,6 +516,9 @@ func (s *temporalClaimStore) query(q temporalClaimQuery) []temporalClaim {
 			continue
 		}
 		if status == "superseded" && !q.IncludeSuperseded {
+			continue
+		}
+		if status == "retracted" && q.Status != "retracted" {
 			continue
 		}
 		score := temporalClaimTermScore(claim, terms)

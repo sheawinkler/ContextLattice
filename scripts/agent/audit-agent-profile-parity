@@ -15,6 +15,21 @@ from _common import emit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROFILE_PATH = "config/agents/agent_profiles.json"
 TEMPLATE_DIR = "docs/public_overview/templates/agents"
+TASK_ROUTE_GUIDANCE_PATHS = (
+    "docs/public_overview/templates/agents/universal.md",
+    "docs/human_agent_instruction_playbook.md",
+)
+REQUIRED_TASK_ROUTES = (
+    "/agents/tasks",
+    "/agents/tasks/next",
+    "/agents/tasks/{task_id}",
+    "/agents/tasks/{task_id}/status",
+    "/agents/tasks/{task_id}/approve",
+    "/agents/tasks/{task_id}/replay",
+    "/agents/tasks/recover-leases",
+    "/agents/tasks/deadletter",
+    "/agents/tasks/runtime",
+)
 DEFAULT_REFS = "WORKTREE,refs/remotes/origin/main,refs/remotes/public/main,refs/remotes/public-paid/main,refs/remotes/origin/public-paid/main"
 TEMPLATE_COVERAGE = {
     "codex": "codex.md",
@@ -99,6 +114,16 @@ def inspect_ref(ref: str) -> dict[str, Any]:
             continue
         if expected not in templates:
             findings.append({"reason": "profile_template_missing", "ref": ref, "profile": profile, "template": expected})
+    for path in TASK_ROUTE_GUIDANCE_PATHS:
+        guidance_ok, guidance = load_file(git_ref, path)
+        if not guidance_ok:
+            findings.append({"reason": "task_route_guidance_unavailable", "ref": ref, "path": path})
+            continue
+        if "/v1/tasks" in guidance:
+            findings.append({"reason": "legacy_task_route_in_guidance", "ref": ref, "path": path})
+        for route in REQUIRED_TASK_ROUTES:
+            if route not in guidance:
+                findings.append({"reason": "canonical_task_route_missing", "ref": ref, "path": path, "route": route})
     return {
         "ref": ref,
         "git_ref": git_ref,

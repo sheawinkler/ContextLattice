@@ -35,12 +35,22 @@ func newTelemetrySpoolFromEnv() *telemetrySpool {
 	if strings.TrimSpace(spoolPath) == "" {
 		enabled = false
 	}
-	return &telemetrySpool{
+	spool := &telemetrySpool{
 		enabled:    enabled,
 		path:       spoolPath,
 		backupPath: spoolPath + ".1",
 		maxBytes:   maxBytes,
 	}
+	if spool.enabled {
+		dedicatedParent := strings.TrimSpace(os.Getenv("GO_TELEMETRY_SPOOL_PATH")) == ""
+		if err := prepareOwnerOnlyFile(spool.path, dedicatedParent); err != nil {
+			spool.enabled = false
+		}
+		if err := prepareOwnerOnlyFile(spool.backupPath, dedicatedParent); err != nil {
+			spool.enabled = false
+		}
+	}
+	return spool
 }
 
 func (s *telemetrySpool) spoolWrite(item normalizedWrite, sourcePath string, ingestErr error) (map[string]any, error) {
@@ -49,10 +59,6 @@ func (s *telemetrySpool) spoolWrite(item normalizedWrite, sourcePath string, ing
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return nil, fmt.Errorf("create telemetry spool dir: %w", err)
-	}
 
 	entry := map[string]any{
 		"schema_version": telemetrySpoolSchemaVersion,
@@ -79,7 +85,7 @@ func (s *telemetrySpool) spoolWrite(item normalizedWrite, sourcePath string, ing
 	if err := s.rotateIfNeededLocked(int64(len(raw))); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
 		return nil, fmt.Errorf("open telemetry spool: %w", err)
 	}
@@ -93,7 +99,7 @@ func (s *telemetrySpool) spoolWrite(item normalizedWrite, sourcePath string, ing
 	eventID := "spool_" + hex.EncodeToString(sum[:8])
 	return map[string]any{
 		"event_id":    eventID,
-		"spool_ref":   filepath.Base(s.path) + ":" + eventID,
+		"spool_ref":   ownerOnlyStoreRef("telemetry_spool") + ":" + eventID,
 		"spool_bytes": len(raw),
 	}, nil
 }
@@ -134,11 +140,10 @@ func (s *telemetrySpool) snapshot() map[string]any {
 		exists = true
 	}
 	return map[string]any{
-		"enabled":    s.enabled,
-		"path":       s.path,
-		"backupPath": s.backupPath,
-		"maxBytes":   s.maxBytes,
-		"exists":     exists,
-		"sizeBytes":  sizeBytes,
+		"enabled":   s.enabled,
+		"store_ref": ownerOnlyStoreRef("telemetry_spool"),
+		"maxBytes":  s.maxBytes,
+		"exists":    exists,
+		"sizeBytes": sizeBytes,
 	}
 }

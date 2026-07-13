@@ -661,6 +661,14 @@ def _handle_task(
     base_url_override: str | None,
     api_key: Optional[str],
 ) -> None:
+    if task.get("approval_required") and not task.get("approved"):
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {"status": "blocked", "message": "Awaiting approval"},
+        )
+        return
+
     control_plane_url = str(
         os.getenv("TASK_INFERENCE_CONTROL_PLANE_URL", DEFAULT_INFERENCE_CONTROL_PLANE_URL)
     ).strip() or orchestrator_url
@@ -745,13 +753,6 @@ def _handle_task(
     lifecycle = context_bundle.get("lifecycle") if isinstance(context_bundle.get("lifecycle"), dict) else {}
     pending_sources = lifecycle.get("pending_sources") if isinstance(lifecycle.get("pending_sources"), list) else []
 
-    if task.get("approval_required") and not task.get("approved"):
-        _post(
-            orchestrator_url,
-            f"/agents/tasks/{task['id']}/status",
-            {"status": "blocked", "message": "Awaiting approval"},
-        )
-        return
     cmd = _runner_cmd_for_agent(agent_choice)
     route_provider = str(route_payload.get("provider") or provider)
     route_base_url = str(route_payload.get("base_url") or (base_url_override or ""))

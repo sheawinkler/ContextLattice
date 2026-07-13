@@ -57,7 +57,7 @@ Supported profiles:
 8. For graph relationships: `POST /v1/memory/neighbors`.
 9. For skill discovery before loading new skills: `GET|POST /v1/skills/quarantine/search` (`query`, optional `limit`, `min_score`, `show_terms`) or alias `GET|POST /v1/skills/index/search`.
 10. For async continuation: use `continuation_async` token and stream `GET /memory/search/continuations/{token}/events`, or run the returned `agent_visibility.watch_command` to receive progress, completion, or terminal-degraded steering inside the agent session.
-11. For queued orchestration: `/v1/tasks/submit`, `/v1/tasks/claim`, `/v1/tasks/status`, `/v1/tasks/metrics`.
+11. For queued orchestration: `POST|GET /agents/tasks`, `POST /agents/tasks/next`, `GET /agents/tasks/{task_id}`, `POST /agents/tasks/{task_id}/status`, `POST /agents/tasks/{task_id}/approve`, `POST /agents/tasks/{task_id}/replay`, `POST /agents/tasks/recover-leases`, `GET /agents/tasks/deadletter`, and `GET /agents/tasks/runtime`.
 
 Hook docs:
 - `docs/agent-hooks.md`

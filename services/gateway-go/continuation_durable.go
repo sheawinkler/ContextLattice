@@ -93,7 +93,7 @@ func newContinuationDurableQueue(policy retrievalPolicy) *continuationDurableQue
 		queue.lastError = "durable continuation dir is empty"
 		return queue
 	}
-	if err := os.MkdirAll(queue.dir, 0o755); err != nil {
+	if err := migrateOwnerOnlyStore(queue.dir); err != nil {
 		queue.enabled = false
 		queue.lastError = err.Error()
 		log.Printf("gateway-go continuation durable queue disabled: %v", err)

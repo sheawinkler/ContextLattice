@@ -275,6 +275,8 @@ func runnerQualityRateFloat(value float64, total int) float64 {
 	return roundFloat(value/float64(total), 3)
 }
 
+const runnerQualityMinimumSamplesPerRunner = 5
+
 func runnerQualityRecommendations(byRunner map[string]any, sampleCount int, taskClass string) map[string]any {
 	type candidate struct {
 		Payload map[string]any
@@ -299,14 +301,20 @@ func runnerQualityRecommendations(byRunner map[string]any, sampleCount int, task
 			score -= minFloat(duration, 300.0) * 0.015
 		}
 		payload := map[string]any{
-			"runner":                runner,
-			"score":                 roundFloat(score, 3),
-			"sample_count":          total,
-			"success_rate":          successRate,
-			"blocked_rate":          blockedRate,
-			"failure_rate":          failureRate,
-			"average_duration_secs": duration,
-			"reason":                runnerQualityReason(successRate, blockedRate, failureRate, total),
+			"runner":                  runner,
+			"score":                   roundFloat(score, 3),
+			"sample_count":            total,
+			"success_rate":            successRate,
+			"blocked_rate":            blockedRate,
+			"failure_rate":            failureRate,
+			"average_duration_secs":   duration,
+			"recommendation_eligible": total >= runnerQualityMinimumSamplesPerRunner,
+			"eligibility":             "eligible",
+			"samples_remaining":       maxInt(0, runnerQualityMinimumSamplesPerRunner-total),
+			"reason":                  runnerQualityReason(successRate, blockedRate, failureRate, total),
+		}
+		if total < runnerQualityMinimumSamplesPerRunner {
+			payload["eligibility"] = "insufficient_samples"
 		}
 		candidates = append(candidates, candidate{Payload: payload, Score: score, Count: total, Runner: runner})
 	}
@@ -320,32 +328,50 @@ func runnerQualityRecommendations(byRunner map[string]any, sampleCount int, task
 		return candidates[i].Runner < candidates[j].Runner
 	})
 	items := make([]any, 0, minInt(len(candidates), 5))
-	comparable := 0
+	eligibleCount := 0
+	topRunner := ""
+	var topEligiblePayload map[string]any
 	for _, candidate := range candidates {
-		if candidate.Count >= 2 {
-			comparable++
+		if candidate.Count >= runnerQualityMinimumSamplesPerRunner {
+			eligibleCount++
+			if topRunner == "" {
+				topRunner = candidate.Runner
+				topEligiblePayload = candidate.Payload
+			}
 		}
 		if len(items) < 5 {
 			items = append(items, candidate.Payload)
 		}
 	}
+	if topEligiblePayload != nil {
+		topVisible := false
+		for _, raw := range items {
+			if anyToString(anyMap(raw)["runner"]) == topRunner {
+				topVisible = true
+				break
+			}
+		}
+		if !topVisible {
+			if len(items) < 5 {
+				items = append(items, topEligiblePayload)
+			} else {
+				items[len(items)-1] = topEligiblePayload
+			}
+		}
+	}
 	confidence := "high"
-	if sampleCount < 3 {
+	if eligibleCount == 0 {
 		confidence = "insufficient_samples"
-	} else if sampleCount < 10 || comparable < 2 {
+	} else if eligibleCount < 2 {
 		confidence = "low"
 	} else if sampleCount < 30 {
 		confidence = "medium"
-	}
-	topRunner := ""
-	if len(candidates) > 0 {
-		topRunner = candidates[0].Runner
 	}
 	return map[string]any{
 		"mode":                       "advisor_only",
 		"basis":                      "observed_bounded_runner_quality_samples",
 		"task_class":                 taskClass,
-		"minimum_samples_per_runner": 5,
+		"minimum_samples_per_runner": runnerQualityMinimumSamplesPerRunner,
 		"confidence":                 confidence,
 		"top_runner":                 topRunner,
 		"candidates":                 items,
