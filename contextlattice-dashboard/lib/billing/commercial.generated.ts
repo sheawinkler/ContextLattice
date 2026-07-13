@@ -2,15 +2,15 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "df736c3b993f780a63f61265849c5d40a795d71ac285327ef4e7b3d7628eaadd";
+export const COMMERCIAL_CONTRACT_SHA256 = "7daec7ac7739618b4f7ca4eacbf9f04fc7bbf6cd14543e1bb27077ab2f143e64";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.17.3",
-    "stable_tag": "v3.17.3",
+    "version": "3.17.4",
+    "stable_tag": "v3.17.4",
     "release_train": "3.17",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
@@ -268,7 +268,7 @@ export const COMMERCIAL_TRUTH = {
       "/memory/context-mesh/orchestrate"
     ]
   },
-  "contract_sha256": "df736c3b993f780a63f61265849c5d40a795d71ac285327ef4e7b3d7628eaadd"
+  "contract_sha256": "7daec7ac7739618b4f7ca4eacbf9f04fc7bbf6cd14543e1bb27077ab2f143e64"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

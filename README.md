@@ -39,7 +39,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.17.3` is the current public baseline. Sensitive local stores now migrate to owner-only access with bounded, resumable repair; task approval stops work before routing or context expansion; runner advice requires enough evidence; default temporal recall excludes retracted claims; and strict native ownership is checked against the routes the gateway actually registers. Tiny context packs preserve agent and session identity under severe budgets, while the compact Agent Packet, outcome learning, transport-inclusive token economics, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain behind the same CLI-first contract.
+`v3.17.4` is the current public baseline. It carries the six v3.17.3 runtime trust contracts and locks the public artifact boundary so paid-only machine-binding vocabulary cannot enter the public gateway tree. Tiny context packs preserve agent and session identity under severe budgets, while the compact Agent Packet, outcome learning, transport-inclusive token economics, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain behind the same CLI-first contract.
 
 ## Public Runtime Stack (v3.17)
 
@@ -77,8 +77,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.17.3 \
-  --statement "The current public release is 3.17.3." \
+  --object 3.17.4 \
+  --statement "The current public release is 3.17.4." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -402,6 +402,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.17.4.md` (regression-locked public artifact boundary and complete installer publication)
   - `docs/releases/v3.17.3.md` (owner-only local stores, approval-before-work, evidence-qualified advice, and exact runtime truth)
   - `docs/releases/v3.17.2.md` (operator-chosen Ollama storage, verified mount truth, and sourceable environment profiles)
   - `docs/releases/v3.17.0.md` (canonical commercial truth, self-contained installers, strict public boundary, and tiny-pack identity)
