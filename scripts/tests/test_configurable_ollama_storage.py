@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,30 @@ class ConfigurableOllamaStorageTests(unittest.TestCase):
         self.assertIn('"ollama|OLLAMA_DATA|/root/.ollama"', verifier)
         self.assertIn('OLLAMA_DATA) echo "${HOME}/.ollama"', verifier)
         self.assertIn('OLLAMA_DATA) echo "ollama"', verifier)
+
+    def test_shipped_env_profiles_are_shell_sourceable(self) -> None:
+        candidates = (
+            ROOT / ".env.example",
+            ROOT / "config" / "env" / "premium_prod.env",
+            ROOT / "contextlattice-dashboard" / ".env.example",
+        )
+        for profile in candidates:
+            if not profile.exists():
+                continue
+            with self.subTest(profile=profile.relative_to(ROOT)):
+                completed = subprocess.run(
+                    [
+                        "bash",
+                        "-e",
+                        "-c",
+                        'set -a; source "$1"; set +a',
+                        "sourceability-test",
+                        str(profile),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
 
 
 if __name__ == "__main__":
