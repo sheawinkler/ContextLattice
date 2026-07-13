@@ -25,6 +25,7 @@ BLOCKED_PATHS = {
 
 BLOCKED_PATH_PREFIXES = (
     _s("archive/", "internal", "-planning/"),
+    ".ops/",
 )
 
 BLOCKED_TEXT = (

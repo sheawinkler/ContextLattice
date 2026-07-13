@@ -91,7 +91,7 @@ import json, os, pathlib, re, sys
 public = sys.argv[1] == '1'
 scan_root = pathlib.Path(sys.argv[2])
 files = sys.argv[3:]
-blocked_paths = ('docs/private/', 'private_docs/', 'private/')
+blocked_paths = ('docs/private/', 'private_docs/', 'private/', '.ops/')
 text_suffixes = {'.md','.txt','.sh','.py','.go','.rs','.ts','.tsx','.js','.jsx','.json','.yml','.yaml','.env','.example','.html','.css','.toml','.csv','.lock','.mjs'}
 patterns = [
     ('stripe_live_secret', re.compile(r'\bsk_live_[A-Za-z0-9]{16,}\b')),

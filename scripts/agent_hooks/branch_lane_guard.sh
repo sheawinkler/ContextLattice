@@ -55,7 +55,7 @@ blocked=0
 if [[ "$LANE" == "public" ]]; then
   while IFS= read -r path; do
     case "$path" in
-      docs/private/*|private_docs/*|private/*)
+      docs/private/*|private_docs/*|private/*|.ops/*)
         printf '[branch_lane_guard] BLOCK private path in %s lane: %s\n' "$LANE" "$path" >&2
         blocked=1
         ;;

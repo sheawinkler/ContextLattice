@@ -5,6 +5,7 @@
 docs/private/*
 private/*
 *.private.md
+.ops/*
 
 # Cross-private CI fetches private branch refs and must remain private-only.
 .github/workflows/capability-parity.yml
