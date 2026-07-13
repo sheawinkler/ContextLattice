@@ -156,7 +156,7 @@ services:
   ollama:
     image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.1}
     ports: ["${HOST_BIND_ADDRESS:-127.0.0.1}:11434:11434"]  # expose to host for testing
-    volumes: ["${HOME}/.ollama:/root/.ollama"]
+    volumes: ["${OLLAMA_DATA:-${HOME}/.ollama}:/root/.ollama"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]

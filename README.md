@@ -314,6 +314,8 @@ Runner quality is intentionally separate from both lifecycle surfaces. It is adv
 
 Optional constrained-disk guard: set `QDRANT_HOT_STORAGE_MAX_BYTES` to make launch/storage verification fail before the Qdrant hot lane exceeds your chosen byte ceiling. This is a guardrail, not a filesystem quota.
 
+Optional external model storage: set `OLLAMA_DATA` to an absolute path to keep local Ollama model blobs off a constrained internal disk. When unset, the existing home-directory model store remains the backward-compatible default; startup storage verification rejects mount drift.
+
 ## Memory Graph
 
 - `GET|POST /v1/memory/edges` persists explicit typed relationships.
