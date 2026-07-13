@@ -52,10 +52,8 @@
   "allowScripts": {
     "@prisma/client@5.22.0": true,
     "@prisma/engines@5.22.0": true,
-    "bufferutil@4.1.0": true,
     "fsevents@2.3.3": true,
     "prisma@5.22.0": true,
-    "sharp@0.34.5": true,
-    "utf-8-validate@5.0.10": true
+    "sharp@0.34.5": true
   }
 }
