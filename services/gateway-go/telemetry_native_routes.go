@@ -819,14 +819,11 @@ func (s *server) persistTradingSnapshot(snapshot map[string]any) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	lineBytes, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	file, err := openOwnerOnlyAppend(path, false)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -187,16 +188,16 @@ func memoryTopologyPolicyPayload(s *server, memoryPolicy memoryStorePolicy) map[
 			},
 			"graph_edges": map[string]any{
 				"strategy":           "bounded local edge log with neighbor expansion",
-				"edge_path":          memoryPolicy.edgePath,
+				"edge_store_ref":     ownerOnlyStoreRef("memory_edges"),
 				"max_edges":          memoryPolicy.maxEdges,
 				"max_edge_neighbors": memoryPolicy.maxEdgeNeighbors,
 				"relations":          []string{"same_topic", "references", "same_session", "same_agent", "inferred_related"},
 			},
 			"content_addressing": map[string]any{
 				"enabled":           memoryPolicy.contentAddressed,
-				"content_blobs":     memoryPolicy.contentBlobsPath,
+				"content_store_ref": ownerOnlyStoreRef("memory_content_blobs"),
 				"content_link_mode": memoryPolicy.contentLinkMode,
-				"history_path":      memoryPolicy.historyPath,
+				"history_store_ref": ownerOnlyStoreRef("memory_history"),
 			},
 		},
 		"clusters": []map[string]any{
@@ -390,16 +391,16 @@ func collectTrackedStorage(paths map[string]string, maxFiles int) map[string]any
 			}
 		}
 		row := map[string]any{
-			"path":       path,
-			"bytes":      sizeBytes,
-			"bytesHuman": humanizeBytes(sizeBytes),
-			"exists":     exists,
+			"artifact_ref": ownerOnlyStoreRef("tracked_" + key),
+			"bytes":        sizeBytes,
+			"bytesHuman":   humanizeBytes(sizeBytes),
+			"exists":       exists,
 		}
 		if truncated {
 			row["truncated"] = true
 		}
 		if err != nil {
-			row["error"] = err.Error()
+			row["error"] = "storage_stat_error"
 		}
 		rows[key] = row
 		if sizeBytes > 0 {
@@ -430,7 +431,6 @@ func diskUsageSnapshot(root string) (map[string]any, error) {
 		usedRatio = float64(used) / float64(total)
 	}
 	return map[string]any{
-		"root":          cleanRoot,
 		"totalBytes":    total,
 		"freeBytes":     free,
 		"usedBytes":     used,
@@ -563,7 +563,7 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 	disk, diskErr := diskUsageSnapshot(policy.diskRoot)
 	diskStatus := "ok"
 	if diskErr != nil {
-		disk = map[string]any{"root": policy.diskRoot, "error": diskErr.Error()}
+		disk = map[string]any{"error": "storage_stat_error"}
 		diskStatus = "error"
 	}
 	pressure := "unknown"
@@ -580,7 +580,8 @@ func (s *server) storageTelemetry(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		summary, err := s.telemetrySink.summary(ctx)
 		if err != nil {
-			telemetrySummary = map[string]any{"enabled": s.telemetrySink.enabled, "error": err.Error()}
+			log.Printf("storage telemetry sink summary failed: %v", err)
+			telemetrySummary = map[string]any{"enabled": s.telemetrySink.enabled, "error": "telemetry_summary_error"}
 		} else {
 			telemetrySummary = summary
 		}
@@ -677,12 +678,13 @@ func (s *server) storageTelemetryLedger(w http.ResponseWriter, r *http.Request) 
 			exists = false
 			rows = []map[string]any{}
 		} else {
+			log.Printf("storage ledger read failed: %v", err)
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok":         false,
 				"capturedAt": time.Now().UTC().Format(time.RFC3339),
-				"path":       ledgerPath,
+				"store_ref":  ownerOnlyStoreRef("storage_ledger"),
 				"exists":     true,
-				"error":      err.Error(),
+				"error":      "storage_read_error",
 				"count":      0,
 				"rows":       []map[string]any{},
 			})
@@ -693,7 +695,7 @@ func (s *server) storageTelemetryLedger(w http.ResponseWriter, r *http.Request) 
 	payload := map[string]any{
 		"ok":         true,
 		"capturedAt": time.Now().UTC().Format(time.RFC3339),
-		"path":       ledgerPath,
+		"store_ref":  ownerOnlyStoreRef("storage_ledger"),
 		"exists":     exists,
 		"count":      len(rows),
 		"limit":      limit,

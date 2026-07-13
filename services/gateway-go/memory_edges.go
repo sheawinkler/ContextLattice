@@ -354,7 +354,7 @@ func (m *memoryStore) appendEdge(edge memoryEdgeEntry) error {
 		return fmt.Errorf("encode memory graph edge: %w", err)
 	}
 	line := append(payload, '\n')
-	file, err := os.OpenFile(m.policy.edgePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := openOwnerOnlyAppend(m.policy.edgePath, true)
 	if err != nil {
 		return fmt.Errorf("open memory graph edge append: %w", err)
 	}
@@ -382,7 +382,7 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return map[string]any{"ok": true, "dry_run": dryRun, "path": path, "scanned": 0, "kept": 0, "skipped_volatile": 0, "skipped_invalid": 0, "skipped_duplicate": 0, "bytes_before": 0, "bytes_after": 0}, nil
+			return map[string]any{"ok": true, "dry_run": dryRun, "edge_store_ref": ownerOnlyStoreRef("memory_edges"), "scanned": 0, "kept": 0, "skipped_volatile": 0, "skipped_invalid": 0, "skipped_duplicate": 0, "bytes_before": 0, "bytes_after": 0}, nil
 		}
 		return nil, err
 	}
@@ -435,11 +435,11 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 
 	afterBytes := beforeBytes
 	if !dryRun {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := ensureOwnerOnlyDirectory(filepath.Dir(path), true); err != nil {
 			return nil, err
 		}
 		tmpPath := path + ".tmp-" + strings.ReplaceAll(nowUTCISO(), ":", "")
-		out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, ownerOnlyFileMode)
 		if err != nil {
 			return nil, err
 		}
@@ -466,6 +466,9 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 			_ = os.Remove(tmpPath)
 			return nil, err
 		}
+		if err := ensureOwnerOnlyFile(path); err != nil {
+			return nil, err
+		}
 		if stat, err := os.Stat(path); err == nil {
 			afterBytes = stat.Size()
 		}
@@ -484,7 +487,7 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 	return map[string]any{
 		"ok":                true,
 		"dry_run":           dryRun,
-		"path":              path,
+		"edge_store_ref":    ownerOnlyStoreRef("memory_edges"),
 		"scanned":           scanned,
 		"kept":              len(kept),
 		"skipped_volatile":  skippedVolatile,

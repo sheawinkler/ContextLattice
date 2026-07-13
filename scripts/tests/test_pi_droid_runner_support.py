@@ -10,8 +10,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
@@ -74,6 +76,19 @@ def adapter_env(payload: str = "{}") -> dict[str, str]:
 
 
 class PiDroidRunnerSupportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._runner_quality_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._runner_quality_dir.cleanup)
+        self._runner_quality_env = EnvPatch(
+            {
+                "CONTEXTLATTICE_RUNNER_QUALITY_LEDGER_PATH": str(
+                    Path(self._runner_quality_dir.name) / "runner_quality.ndjson"
+                )
+            }
+        )
+        self._runner_quality_env.__enter__()
+        self.addCleanup(self._runner_quality_env.__exit__)
+
     def test_profiles_and_contracts_present(self) -> None:
         profiles = json.loads((REPO_ROOT / "config" / "agents" / "agent_profiles.json").read_text())
         self.assertEqual(profiles["profiles"]["pi"]["agent_id"], "pi_agent")
@@ -265,39 +280,30 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
         with EnvPatch({"TASK_AGENT_CMD": "echo legacy"}):
             self.assertEqual(worker._runner_cmd_for_agent("pi"), "echo legacy")
 
-    def test_approval_required_blocks_before_adapter_execution(self) -> None:
+    def test_unapproved_task_blocks_before_any_work(self) -> None:
         worker = load_task_worker()
         posts: list[tuple[str, dict[str, Any]]] = []
-        ran = {"adapter": False}
-
-        class FakeRuntime:
-            def __init__(self, *_: Any, **__: Any) -> None:
-                pass
-
-            def prepare(self, task: dict[str, Any]) -> dict[str, Any]:
-                return {"lifecycle": {}, "tool_slices": {}, "expansion": {}}
-
-            def render_for_prompt(self, bundle: dict[str, Any]) -> str:
-                return "context"
-
-            def write_checkpoint(self, **_: Any) -> None:
-                pass
 
         def fake_post(_url: str, path: str, payload: dict[str, Any], *args: Any, **kwargs: Any) -> dict[str, Any]:
-            if path == "/v1/inference/route":
-                return {"route": {"provider": "test", "base_url": "", "reason": "test"}}
             posts.append((path, payload))
             return {"ok": True}
 
-        def fake_run_adapter(*_: Any, **__: Any) -> dict[str, Any]:
-            ran["adapter"] = True
-            return {}
-
-        original_runtime, original_post, original_run = worker.ContextExpansionRuntime, worker._post, worker._run_adapter
-        try:
-            worker.ContextExpansionRuntime = FakeRuntime
-            worker._post = fake_post
-            worker._run_adapter = fake_run_adapter
+        blocked_surfaces = (
+            "_runner_adapter_for_agent",
+            "ContextExpansionRuntime",
+            "_run_llm_task_via_gateway",
+            "_run_adapter",
+            "_run_command",
+            "_write_memory",
+            "_post_context_pack_outcome",
+            "_post_feedback",
+        )
+        with ExitStack() as stack:
+            surface_mocks = {
+                name: stack.enter_context(mock.patch.object(worker, name))
+                for name in blocked_surfaces
+            }
+            stack.enter_context(mock.patch.object(worker, "_post", side_effect=fake_post))
             worker._handle_task(
                 "http://127.0.0.1:8075",
                 {"id": "task1", "title": "Needs approval", "project": "contextlattice", "agent": "pi", "payload": {}, "approval_required": True},
@@ -307,10 +313,18 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
                 None,
                 None,
             )
-        finally:
-            worker.ContextExpansionRuntime, worker._post, worker._run_adapter = original_runtime, original_post, original_run
-        self.assertFalse(ran["adapter"])
-        self.assertEqual(posts[-1][1]["status"], "blocked")
+        for name, surface_mock in surface_mocks.items():
+            with self.subTest(surface=name):
+                surface_mock.assert_not_called()
+        self.assertEqual(
+            posts,
+            [
+                (
+                    "/agents/tasks/task1/status",
+                    {"status": "blocked", "message": "Awaiting approval"},
+                )
+            ],
+        )
 
     def test_context_expansion_fail_open_still_runs_adapter(self) -> None:
         worker = load_task_worker()

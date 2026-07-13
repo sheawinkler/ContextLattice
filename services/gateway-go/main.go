@@ -2951,7 +2951,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		}
 		storagePolicy := loadStorageGovernancePolicy()
 		storagePressure := "unknown"
-		storageDisk := map[string]any{"root": storagePolicy.diskRoot}
+		storageDisk := map[string]any{}
 		if disk, err := diskUsageSnapshot(storagePolicy.diskRoot); err == nil {
 			storageDisk = disk
 			storagePressure = pressureBand(
@@ -3014,7 +3014,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"timeoutContract": s.timeoutContractSnapshot(),
 			"drift":           s.driftSnapshot(),
 			"storageGovernance": map[string]any{
-				"diskRoot":      storagePolicy.diskRoot,
+				"store_ref":     ownerOnlyStoreRef("storage_governance"),
 				"warnUsedRatio": storagePolicy.warnUsedRatio,
 				"highUsedRatio": storagePolicy.highUsedRatio,
 				"minFreeBytes":  storagePolicy.minFreeBytes,
@@ -6963,7 +6963,25 @@ func (s *server) retrievalHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func buildMux(s *server) *http.ServeMux {
+func strictRuntimeRequiredNativeRoutePaths() []string {
+	routes := strictRuntimeOwnedRoutes()
+	paths := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if route.Required {
+			paths = append(paths, route.Path)
+		}
+	}
+	return paths
+}
+
+func strictRuntimeRequiredNativeMuxPattern(path string) string {
+	if path == "/memory/search/continuations/{token}" {
+		return "/memory/search/continuations/"
+	}
+	return path
+}
+
+func buildNativeMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/health", s.health)
@@ -7100,6 +7118,10 @@ func buildMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/v1/memory/batch-put", s.memoryBatchPut)
 	mux.HandleFunc("/migration/runtime", s.migrationRuntime)
 	return mux
+}
+
+func buildMux(s *server) *http.ServeMux {
+	return buildNativeMux(s)
 }
 
 func main() {

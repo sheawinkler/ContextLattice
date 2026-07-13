@@ -62,6 +62,9 @@ func newSkillFoundryStoreFromEnv() (*skillFoundryStore, error) {
 		store.enabled = false
 		return store, nil
 	}
+	if err := prepareOwnerOnlyFile(store.path, strings.TrimSpace(os.Getenv("CONTEXTLATTICE_SKILL_FOUNDRY_PATH")) == ""); err != nil {
+		return store, err
+	}
 	if err := store.load(); err != nil {
 		return store, err
 	}
@@ -234,11 +237,7 @@ func (s *skillFoundryStore) record(rows ...map[string]any) error {
 func (s *skillFoundryStore) appendRows(rows ...map[string]any) error {
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		s.setError(err)
-		return err
-	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
 		s.setError(err)
 		return err

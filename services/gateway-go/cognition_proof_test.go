@@ -85,6 +85,26 @@ func TestTemporalClaimGraphRejectsInvalidStatusWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestTemporalClaimGraphHidesRetractedClaimsUnlessExplicitlyRequested(t *testing.T) {
+	store := &temporalClaimStore{enabled: true, maxClaims: 10, claims: map[string]temporalClaim{}}
+	for _, claim := range []temporalClaim{
+		{ClaimID: "claim_active", Project: "contextlattice", Subject: "release", Predicate: "state", Object: "ready", Status: "active", Confidence: 0.9},
+		{ClaimID: "claim_retracted", Project: "contextlattice", Subject: "release", Predicate: "state", Object: "withdrawn", Status: "retracted", Confidence: 0.9},
+	} {
+		claim.searchText = temporalClaimSearchText(claim)
+		store.claims[claim.ClaimID] = claim
+	}
+
+	rows := store.query(temporalClaimQuery{Project: "contextlattice", Limit: 10})
+	if len(rows) != 1 || rows[0].ClaimID != "claim_active" {
+		t.Fatalf("default query must exclude retracted claims, got %#v", rows)
+	}
+	retracted := store.query(temporalClaimQuery{Project: "contextlattice", Status: "retracted", Limit: 10})
+	if len(retracted) != 1 || retracted[0].ClaimID != "claim_retracted" {
+		t.Fatalf("explicit retracted query must return retracted claims, got %#v", retracted)
+	}
+}
+
 func TestTemporalClaimRoutesReturnValidContracts(t *testing.T) {
 	t.Setenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED", "true")
 	t.Setenv("CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH", filepath.Join(t.TempDir(), "claims.ndjson"))

@@ -29,7 +29,7 @@ Operating rules:
 17) Agent lifecycle and retrieval lifecycle are separate: agent state is idle/working/awaiting_user/blocked/done, while retrieval lifecycle is source-fetch progress.
 18) If a transport call times out with zero bytes, immediately retry once, then check continuation events. Use readback only when recovering prior objective state.
 19) Use POST /v1/memory/neighbors for relationship recall when graph-neighbor context is useful.
-20) For queued task orchestration, use /v1/tasks/submit, /v1/tasks/claim, /v1/tasks/status, /v1/tasks/metrics.
+20) For queued task orchestration, use the canonical surface: POST or GET /agents/tasks, POST /agents/tasks/next, GET /agents/tasks/{task_id}, POST /agents/tasks/{task_id}/status, POST /agents/tasks/{task_id}/approve, POST /agents/tasks/{task_id}/replay, POST /agents/tasks/recover-leases, GET /agents/tasks/deadletter, and GET /agents/tasks/runtime.
 21) Treat retrieved numbers as verbatim facts; do not rewrite numeric values.
 22) If memory is degraded, continue execution, explicitly report degraded-memory mode, and provide continuation token/status when available.
 ```

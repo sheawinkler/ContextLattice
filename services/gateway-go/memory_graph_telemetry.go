@@ -568,7 +568,7 @@ func graphTelemetryRecommendations(status string, docs int, edges int, inferred 
 
 func (m *memoryStore) memoryGraphEdgeStoreInfo() map[string]any {
 	info := map[string]any{
-		"path":                   m.policy.edgePath,
+		"edge_store_ref":         ownerOnlyStoreRef("memory_edges"),
 		"max_edges":              m.policy.maxEdges,
 		"startup_max_lines":      m.policy.edgeStartupMaxLines,
 		"max_edge_neighbors":     m.policy.maxEdgeNeighbors,

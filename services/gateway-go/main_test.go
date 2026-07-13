@@ -967,6 +967,73 @@ func TestMemorySearchFallbackBlockedWhenPythonHotPathModeStrict(t *testing.T) {
 	}
 }
 
+func TestStrictRuntimeOwnedRoutesMatchRegisteredRequiredNativeRouteSet(t *testing.T) {
+	ownershipSet := map[string]struct{}{}
+	ownershipPaths := []string{}
+	for _, route := range strictRuntimeOwnedRoutes() {
+		if !route.Required {
+			continue
+		}
+		if _, duplicate := ownershipSet[route.Path]; duplicate {
+			t.Fatalf("duplicate strict-runtime ownership path: %s", route.Path)
+		}
+		ownershipSet[route.Path] = struct{}{}
+		ownershipPaths = append(ownershipPaths, route.Path)
+	}
+
+	registeredSet := map[string]struct{}{}
+	registeredPaths := strictRuntimeRequiredNativeRoutePaths()
+	for _, path := range registeredPaths {
+		if _, duplicate := registeredSet[path]; duplicate {
+			t.Fatalf("duplicate required native registration path: %s", path)
+		}
+		registeredSet[path] = struct{}{}
+	}
+
+	missingFromOwnership := []string{}
+	for path := range registeredSet {
+		if _, ok := ownershipSet[path]; !ok {
+			missingFromOwnership = append(missingFromOwnership, path)
+		}
+	}
+	notRegisteredRequired := []string{}
+	for path := range ownershipSet {
+		if _, ok := registeredSet[path]; !ok {
+			notRegisteredRequired = append(notRegisteredRequired, path)
+		}
+	}
+	sort.Strings(missingFromOwnership)
+	sort.Strings(notRegisteredRequired)
+	if len(missingFromOwnership) > 0 || len(notRegisteredRequired) > 0 {
+		t.Fatalf(
+			"strict-runtime route sets differ: missingFromOwnership=%v notRegisteredRequired=%v",
+			missingFromOwnership,
+			notRegisteredRequired,
+		)
+	}
+
+	sort.Strings(ownershipPaths)
+	sort.Strings(registeredPaths)
+	if strings.Join(ownershipPaths, "\n") != strings.Join(registeredPaths, "\n") {
+		t.Fatalf("strict-runtime ownership and required registration inventories differ after sorting")
+	}
+
+	mux := buildNativeMux(&server{})
+	for _, canonicalPath := range registeredPaths {
+		probePath := strings.ReplaceAll(canonicalPath, "{token}", "probe")
+		_, pattern := mux.Handler(httptest.NewRequest(http.MethodGet, probePath, nil))
+		expectedPattern := strictRuntimeRequiredNativeMuxPattern(canonicalPath)
+		if pattern != expectedPattern {
+			t.Errorf(
+				"required native route %s resolved pattern %q, want %q",
+				canonicalPath,
+				pattern,
+				expectedPattern,
+			)
+		}
+	}
+}
+
 func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 	sourceBytes, err := os.ReadFile("main.go")
 	if err != nil {

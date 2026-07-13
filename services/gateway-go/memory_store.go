@@ -238,20 +238,20 @@ func newMemoryStoreFromEnv() (*memoryStore, error) {
 	if !policy.enabled {
 		return store, nil
 	}
-	if err := os.MkdirAll(policy.rootPath, 0o755); err != nil {
-		return nil, fmt.Errorf("create memory store root: %w", err)
+	if err := migrateOwnerOnlyStore(policy.rootPath); err != nil {
+		return nil, fmt.Errorf("migrate memory store to owner-only access: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(policy.historyPath), 0o755); err != nil {
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(policy.historyPath), true); err != nil {
 		return nil, fmt.Errorf("create memory store history directory: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(policy.edgePath), 0o755); err != nil {
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(policy.edgePath), true); err != nil {
 		return nil, fmt.Errorf("create memory graph edge directory: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(policy.agentEdgePath), 0o755); err != nil {
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(policy.agentEdgePath), true); err != nil {
 		return nil, fmt.Errorf("create memory agent edge directory: %w", err)
 	}
 	if policy.contentAddressed {
-		if err := os.MkdirAll(policy.contentBlobsPath, 0o755); err != nil {
+		if err := ensureOwnerOnlyDirectory(policy.contentBlobsPath, true); err != nil {
 			return nil, fmt.Errorf("create memory store content blobs directory: %w", err)
 		}
 	}
@@ -634,7 +634,7 @@ func (m *memoryStore) appendHistory(entry memoryStoreEntry) error {
 		return fmt.Errorf("encode memory history entry: %w", err)
 	}
 	line := append(payload, '\n')
-	file, err := os.OpenFile(m.policy.historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := openOwnerOnlyAppend(m.policy.historyPath, true)
 	if err != nil {
 		return fmt.Errorf("open memory history append: %w", err)
 	}
@@ -675,11 +675,15 @@ func writeAtomicFile(path string, content []byte, mode fs.FileMode) error {
 	if err := os.WriteFile(tmpPath, content, mode); err != nil {
 		return err
 	}
+	if err := os.Chmod(tmpPath, mode.Perm()); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	return nil
+	return os.Chmod(path, mode.Perm())
 }
 
 func copyFileAtomic(src string, dst string, mode fs.FileMode) error {
@@ -707,7 +711,7 @@ func copyFileAtomic(src string, dst string, mode fs.FileMode) error {
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	return nil
+	return os.Chmod(dst, mode.Perm())
 }
 
 func (m *memoryStore) ensureBlob(contentHash string, content string) (string, error) {
@@ -718,10 +722,10 @@ func (m *memoryStore) ensureBlob(contentHash string, content string) (string, er
 	if _, err := os.Stat(blobPath); err == nil {
 		return blobPath, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(blobPath), 0o755); err != nil {
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(blobPath), true); err != nil {
 		return "", fmt.Errorf("create blob directory: %w", err)
 	}
-	if err := writeAtomicFile(blobPath, []byte(content), 0o644); err != nil {
+	if err := writeOwnerOnlyAtomicFile(blobPath, []byte(content), true); err != nil {
 		if statErr := func() error {
 			_, e := os.Stat(blobPath)
 			return e
@@ -734,7 +738,7 @@ func (m *memoryStore) ensureBlob(contentHash string, content string) (string, er
 }
 
 func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(filePath), true); err != nil {
 		return fmt.Errorf("create memory file directory: %w", err)
 	}
 	tmpPath := filePath + ".tmp-" + bson.NewObjectID().Hex()
@@ -748,7 +752,7 @@ func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
 	case "symlink":
 		linkErr = os.Symlink(blobPath, tmpPath)
 	case "copy":
-		linkErr = copyFileAtomic(blobPath, filePath, 0o644)
+		linkErr = copyFileAtomic(blobPath, filePath, ownerOnlyFileMode)
 	default:
 		linkErr = os.Link(blobPath, tmpPath)
 	}
@@ -757,7 +761,7 @@ func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
 	if linkErr != nil && mode != "copy" {
 		// Hardlink/symlink can fail on some filesystems or policies; fall back to copy.
 		usedTmpPath = false
-		linkErr = copyFileAtomic(blobPath, filePath, 0o644)
+		linkErr = copyFileAtomic(blobPath, filePath, ownerOnlyFileMode)
 	}
 	if linkErr != nil {
 		_ = os.Remove(tmpPath)
@@ -834,10 +838,10 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 			return memoryStoreEntry{}, false, err
 		}
 	} else {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		if err := ensureOwnerOnlyDirectory(filepath.Dir(filePath), true); err != nil {
 			return memoryStoreEntry{}, false, fmt.Errorf("create memory file directory: %w", err)
 		}
-		if err := writeAtomicFile(filePath, []byte(content), 0o644); err != nil {
+		if err := writeOwnerOnlyAtomicFile(filePath, []byte(content), true); err != nil {
 			return memoryStoreEntry{}, false, fmt.Errorf("commit memory file: %w", err)
 		}
 	}

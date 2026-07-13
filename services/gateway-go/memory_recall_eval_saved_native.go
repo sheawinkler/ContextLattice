@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,7 +64,8 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 
 	cfg, cfgErr := loadSavedRecallEvalConfig()
 	if cfgErr != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to load saved recall eval cases", "detail": cfgErr.Error()})
+		log.Printf("saved recall eval case load failed: %v", cfgErr)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "failed to load saved recall eval cases", "code": "storage_access_error"})
 		return
 	}
 	if len(cfg.Cases) == 0 {
@@ -460,10 +462,10 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		},
 		"cases": caseReports,
 		"savedCaseSet": map[string]any{
-			"path":      cfg.Path,
-			"version":   cfg.Version,
-			"updatedAt": cfg.UpdatedAt,
-			"count":     len(cfg.Cases),
+			"case_set_id": ownerOnlyStoreRef("recall_eval_cases"),
+			"version":     cfg.Version,
+			"updatedAt":   cfg.UpdatedAt,
+			"count":       len(cfg.Cases),
 		},
 	})
 }
@@ -546,16 +548,20 @@ func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recall
 		},
 		"cases": []any{},
 		"savedCaseSet": map[string]any{
-			"path":      cfg.Path,
-			"version":   cfg.Version,
-			"updatedAt": cfg.UpdatedAt,
-			"count":     len(cfg.Cases),
+			"case_set_id": ownerOnlyStoreRef("recall_eval_cases"),
+			"version":     cfg.Version,
+			"updatedAt":   cfg.UpdatedAt,
+			"count":       len(cfg.Cases),
 		},
 	})
 }
 
 func loadSavedRecallEvalConfig() (recallEvalSavedConfig, error) {
 	path := resolveRecallEvalCasesPath()
+	envPath := strings.TrimSpace(os.Getenv("ORCH_RECALL_EVAL_CASES_PATH"))
+	if err := prepareOwnerOnlyFile(path, envPath == ""); err != nil {
+		return defaultSavedRecallEvalConfig(path), err
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return defaultSavedRecallEvalConfig(path), nil
@@ -748,14 +754,11 @@ func (s *server) appendRecallMonitorSample(sample map[string]any) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	raw, err := json.Marshal(sample)
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := openOwnerOnlyAppend(path, false)
 	if err != nil {
 		return err
 	}

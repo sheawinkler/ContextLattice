@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,6 +61,9 @@ func newFeedbackStoreFromEnv() (*feedbackStore, error) {
 			"persistFailed":  0,
 			"idempotentHits": 0,
 		},
+	}
+	if err := prepareOwnerOnlyFile(store.path, strings.TrimSpace(os.Getenv("FEEDBACK_HISTORY_PATH")) == ""); err != nil {
+		return store, fmt.Errorf("prepare owner-only feedback store: %w", err)
 	}
 	if err := store.load(); err != nil {
 		return store, err
@@ -117,10 +121,7 @@ func (s *feedbackStore) append(record map[string]any) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := openOwnerOnlyAppend(s.path, false)
 	if err != nil {
 		return err
 	}

@@ -40,7 +40,9 @@ func newMemoryProfileStore(policy retrievalPolicy) *memoryProfileStore {
 		defaultProfile: defaultProfile,
 		allowedSources: allowed,
 	}
-	store.load()
+	if err := prepareOwnerOnlyFile(path, strings.TrimSpace(os.Getenv("AGENT_MEMORY_PROFILE_PATH")) == ""); err == nil {
+		store.load()
+	}
 	return store
 }
 
@@ -326,24 +328,17 @@ func (s *memoryProfileStore) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
-	tmpPath := s.path + ".tmp"
-	if err := os.WriteFile(tmpPath, encoded, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return writeOwnerOnlyAtomicFile(s.path, encoded, false)
 }
 
-func (s *memoryProfileStore) list() (string, map[string]map[string]any) {
+func (s *memoryProfileStore) list() map[string]map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := map[string]map[string]any{}
 	for key, value := range s.profiles {
 		out[key] = copyAnyMap(value)
 	}
-	return s.path, out
+	return out
 }
 
 func (s *memoryProfileStore) resolve(agentID string) (map[string]any, bool) {
@@ -426,11 +421,11 @@ func (s *server) memoryProfiles(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	path, profiles := s.memoryProfilesStore.list()
+	profiles := s.memoryProfilesStore.list()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":     path,
-		"profiles": profiles,
-		"count":    len(profiles),
+		"store_ref": ownerOnlyStoreRef("memory_profiles"),
+		"profiles":  profiles,
+		"count":     len(profiles),
 	})
 }
 
