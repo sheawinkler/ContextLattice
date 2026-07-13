@@ -80,7 +80,7 @@
         </p>
         <ul>
           <li><strong>Self-contained delivery:</strong> macOS, Windows, and Linux packages embed the tagged payload and hard-fail if it is absent; no public clone fallback exists.</li>
-          <li><strong>Signed local access:</strong> Ed25519 runtime licenses derive plan, role, and feature permission from signed claims while private development stays keyless only under an explicit non-production bypass.</li>
+          <li><strong>Signed local access:</strong> Ed25519 runtime licenses derive plan, role, and feature permission from signed claims while production enforcement fails closed.</li>
           <li><strong>Private origins stay private:</strong> entitled downloads stream through a bounded proxy that verifies SHA-256 before returning bytes and permits only configured redirect origins.</li>
           <li><strong>Drift becomes a failing test:</strong> commercial truth, paid/private parity, lane hygiene, release metadata, installer behavior, and secret exclusion are executable gates.</li>
         </ul>
