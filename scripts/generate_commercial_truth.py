@@ -45,6 +45,13 @@ def contract_sha256(contract: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json_bytes(contract)).hexdigest()
 
 
+def entitlement_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    """Return runtime billing/entitlement truth without release-proof posture."""
+    payload = copy.deepcopy(contract)
+    payload.pop("release_availability", None)
+    return payload
+
+
 def load_contract(root: Path) -> dict[str, Any]:
     path = root / CONTRACT_PATH
     try:
@@ -113,6 +120,32 @@ def validate_contract(contract: dict[str, Any]) -> None:
         feature_ids.add(feature_id)
         require_string(feature, "buyer_label", where)
         require_string(feature, "description", where)
+
+    release_availability = contract.get("release_availability")
+    if not isinstance(release_availability, dict):
+        raise ContractError("release_availability must be an object")
+    frontier_feature_ids = {feature_id for feature_id in feature_ids if feature_id.startswith("frontier_")}
+    if set(release_availability) != frontier_feature_ids:
+        raise ContractError(
+            "release_availability must exactly cover Frontier features: "
+            f"{sorted(frontier_feature_ids)}"
+        )
+    allowed_release_postures = {
+        ("controlled_activation_preview", "IN_PROGRESS", "UNPROVEN", False),
+        ("generally_available", "PASS", "PROVEN", True),
+    }
+    for feature_id, posture in release_availability.items():
+        where = f"release_availability.{feature_id}"
+        if not isinstance(posture, dict):
+            raise ContractError(f"{where} must be an object")
+        observed = (
+            require_string(posture, "availability", where),
+            require_string(posture, "release_gate", where),
+            require_string(posture, "release_decision", where),
+            posture.get("production_proven"),
+        )
+        if observed not in allowed_release_postures:
+            raise ContractError(f"{where} contains an unsupported or contradictory release posture: {observed!r}")
 
     plans = contract.get("plans")
     if not isinstance(plans, list) or not plans:
@@ -218,10 +251,43 @@ def validate_contract(contract: dict[str, Any]) -> None:
         if not isinstance(route, str) or not route.startswith("/") or " " in route:
             raise ContractError(f"invalid protected route: {route!r}")
 
+    feature_route_contracts = contract.get("paid_feature_route_contracts")
+    if not isinstance(feature_route_contracts, list) or not feature_route_contracts:
+        raise ContractError("paid_feature_route_contracts must be a non-empty array")
+    feature_route_seen: set[str] = set()
+    generic_routes = set(routes)
+    generic_roles = set(route_contract["allowed_roles"])
+    for index, row in enumerate(feature_route_contracts):
+        where = f"paid_feature_route_contracts[{index}]"
+        if not isinstance(row, dict):
+            raise ContractError(f"{where} must be an object")
+        feature_id = require_string(row, "feature_id", where)
+        if feature_id not in feature_ids or feature_id == route_contract.get("feature_id"):
+            raise ContractError(f"{where}.feature_id must reference a distinct declared feature")
+        row_eligible = row.get("eligible_plan_ids")
+        expected_eligible = {plan["id"] for plan in plans if feature_id in plan["feature_ids"]}
+        if not isinstance(row_eligible, list) or set(row_eligible) != expected_eligible or set(row_eligible) - paid_plan_ids:
+            raise ContractError(f"{where}.eligible_plan_ids must exactly match paid plans carrying {feature_id}")
+        row_roles = row.get("allowed_roles")
+        if not isinstance(row_roles, list) or not row_roles or any(not isinstance(role, str) or not role for role in row_roles):
+            raise ContractError(f"{where}.allowed_roles must be non-empty strings")
+        if not set(row_roles).issubset(generic_roles):
+            raise ContractError(f"{where}.allowed_roles must be a subset of paid_route_contract.allowed_roles")
+        row_routes = row.get("routes")
+        if not isinstance(row_routes, list) or not row_routes or len(row_routes) != len(set(row_routes)):
+            raise ContractError(f"{where}.routes must be a unique, non-empty array")
+        for route in row_routes:
+            if route not in generic_routes:
+                raise ContractError(f"{where} route is absent from paid_route_contract.routes: {route!r}")
+            if route in feature_route_seen:
+                raise ContractError(f"feature-specific paid route is assigned more than once: {route!r}")
+            feature_route_seen.add(route)
+
 
 def public_payload(contract: dict[str, Any]) -> dict[str, Any]:
     payload = copy.deepcopy(contract)
-    payload["contract_sha256"] = contract_sha256(contract)
+    payload["contract_sha256"] = contract_sha256(entitlement_contract(contract))
+    payload["commercial_truth_sha256"] = contract_sha256(contract)
     serialized = json.dumps(payload, ensure_ascii=True)
     forbidden = ("/Users/", "/Volumes/", "file://", "~/.", "BEGIN PRIVATE KEY", "password=")
     for token in forbidden:
@@ -230,8 +296,14 @@ def public_payload(contract: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def entitlement_payload(contract: dict[str, Any]) -> dict[str, Any]:
+    payload = entitlement_contract(contract)
+    payload["contract_sha256"] = contract_sha256(payload)
+    return payload
+
+
 def render_typescript(contract: dict[str, Any]) -> str:
-    payload = public_payload(contract)
+    payload = entitlement_payload(contract)
     plan_ids = " | ".join(json.dumps(plan["id"]) for plan in contract["plans"])
     serialized = json.dumps(payload, ensure_ascii=True, indent=2)
     return f'''// Code generated by scripts/generate_commercial_truth.py; DO NOT EDIT.
@@ -277,7 +349,7 @@ def go_string_slice(values: list[str]) -> str:
 
 
 def render_go(contract: dict[str, Any]) -> str:
-    payload = public_payload(contract)
+    payload = entitlement_payload(contract)
     plan_rows: list[str] = []
     plan_key_width = max(len(go_string(plan["id"]) + ":") for plan in contract["plans"])
     for plan in contract["plans"]:
@@ -310,6 +382,24 @@ def render_go(contract: dict[str, Any]) -> str:
         for row in contract["aliases"]["patterns"]
     ]
     route_rows = [f"\t{go_string(route)}," for route in contract["paid_route_contract"]["routes"]]
+    feature_routes = [
+        (route, row)
+        for row in contract["paid_feature_route_contracts"]
+        for route in row["routes"]
+    ]
+    feature_route_key_width = max(len(go_string(route) + ":") for route, _ in feature_routes)
+    feature_route_rows = [
+        "\t"
+        + (go_string(route) + ":").ljust(feature_route_key_width + 1)
+        + "{FeatureID: "
+        + go_string(row["feature_id"])
+        + ", EligiblePlanIDs: "
+        + go_string_slice(row["eligible_plan_ids"])
+        + ", AllowedRoles: "
+        + go_string_slice(row["allowed_roles"])
+        + "},"
+        for route, row in feature_routes
+    ]
     return f'''// Code generated by scripts/generate_commercial_truth.py; DO NOT EDIT.
 
 package main
@@ -350,6 +440,12 @@ type commercialTruthAliasPattern struct {{
 \tTarget  string
 }}
 
+type commercialTruthFeatureRouteRequirement struct {{
+	FeatureID       string
+	EligiblePlanIDs []string
+	AllowedRoles    []string
+}}
+
 func commercialTruthInt(value int) *int {{ return &value }}
 
 var commercialTruthPlans = map[string]commercialTruthPlan{{
@@ -370,6 +466,14 @@ var commercialTruthProtectedPaidRoutes = []string{{
 
 var commercialTruthPaidRouteEligiblePlans = {go_string_slice(contract["paid_route_contract"]["eligible_plan_ids"])}
 var commercialTruthPaidRouteAllowedRoles = {go_string_slice(contract["paid_route_contract"]["allowed_roles"])}
+
+var commercialTruthPaidFeatureRouteRequirements = map[string]commercialTruthFeatureRouteRequirement{{
+{chr(10).join(feature_route_rows)}
+}}
+
+func commercialTruthPaidRouteRequiredFeature(path string) string {{
+	return commercialTruthPaidFeatureRouteRequirements[strings.TrimSpace(path)].FeatureID
+}}
 
 func normalizeCommercialTruthPlanID(raw string) string {{
 \tplan := strings.ToLower(strings.TrimSpace(raw))
@@ -437,7 +541,15 @@ def replace_once(text: str, pattern: str, replacement: str, description: str, fl
 
 
 def feature_labels(contract: dict[str, Any]) -> dict[str, str]:
-    return {feature["id"]: feature["buyer_label"] for feature in contract["features"]}
+    labels: dict[str, str] = {}
+    availability = contract["release_availability"]
+    for feature in contract["features"]:
+        label = feature["buyer_label"]
+        posture = availability.get(feature["id"], {})
+        if posture.get("availability") == "controlled_activation_preview":
+            label += " (controlled preview)"
+        labels[feature["id"]] = label
+    return labels
 
 
 def plan_price_label(plan: dict[str, Any]) -> str:
@@ -477,7 +589,11 @@ def render_capability_rows(contract: dict[str, Any]) -> str:
         feature_id = feature["id"]
         eligible = [plan["buyer_label"] for plan in plans if plan["paid"] and feature_id in plan["feature_ids"]]
         public_label = "Included" if feature_id in free_features else "Not included"
-        premium_label = "Included" if len(eligible) == len([plan for plan in plans if plan["paid"]]) else ", ".join(eligible)
+        posture = contract["release_availability"].get(feature_id, {})
+        if posture.get("availability") == "controlled_activation_preview":
+            premium_label = "Controlled activation preview: " + ", ".join(eligible)
+        else:
+            premium_label = "Included" if len(eligible) == len([plan for plan in plans if plan["paid"]]) else ", ".join(eligible)
         rows.extend(
             [
                 "<tr>",

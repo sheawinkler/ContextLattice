@@ -1149,6 +1149,9 @@ func (s *server) memoryObjectiveTransition(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
 		return
 	}
+	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "objective") {
+		return
+	}
 	payload, err := readOptionalJSONBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
@@ -1188,6 +1191,9 @@ func (s *server) memoryObjectiveGraph(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
 		return
 	}
+	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "objective") {
+		return
+	}
 	asOf, err := parseContinuityAsOf(r.URL.Query().Get("as_of"))
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_objective_graph_query", "detail": err.Error()})
@@ -1215,6 +1221,9 @@ func (s *server) memoryDecisionChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.continuity == nil || !s.continuity.enabled {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
+		return
+	}
+	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "decision") {
 		return
 	}
 	switch r.Method {

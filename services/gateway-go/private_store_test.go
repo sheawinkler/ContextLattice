@@ -48,6 +48,9 @@ func TestOwnerOnlyMigrationIsBoundedResumableAndIdempotent(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(outside, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}

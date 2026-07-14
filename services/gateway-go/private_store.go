@@ -32,6 +32,31 @@ const (
 var errOwnerOnlyMigrationYield = errors.New("owner-only migration yielded to startup")
 var errOwnerOnlyMigrationLocked = errors.New("owner-only migration worker already active")
 
+type ownerOnlyAtomicWriteError struct {
+	Operation string
+	Committed bool
+	Err       error
+}
+
+func (e *ownerOnlyAtomicWriteError) Error() string {
+	if e == nil {
+		return "owner-only atomic write failed"
+	}
+	return fmt.Sprintf("%s: %v", e.Operation, e.Err)
+}
+
+func (e *ownerOnlyAtomicWriteError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func ownerOnlyAtomicWriteCommitted(err error) bool {
+	var writeErr *ownerOnlyAtomicWriteError
+	return errors.As(err, &writeErr) && writeErr.Committed
+}
+
 type ownerOnlyMigrationState struct {
 	SchemaID         string `json:"schema_id"`
 	Complete         bool   `json:"complete"`
@@ -175,7 +200,10 @@ func writeOwnerOnlyAtomicFile(path string, content []byte, dedicatedParent bool)
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	return ensureOwnerOnlyFile(path)
+	if err := ensureOwnerOnlyFile(path); err != nil {
+		return &ownerOnlyAtomicWriteError{Operation: "verify owner-only atomic replacement", Committed: true, Err: err}
+	}
+	return nil
 }
 
 func writeOwnerOnlyDurableAtomicFile(path string, content []byte, dedicatedParent bool) error {
@@ -212,9 +240,12 @@ func writeOwnerOnlyDurableAtomicFile(path string, content []byte, dedicatedParen
 		return err
 	}
 	if err := syncOwnerOnlyDirectory(filepath.Dir(path)); err != nil {
-		return err
+		return &ownerOnlyAtomicWriteError{Operation: "sync owner-only atomic replacement directory", Committed: true, Err: err}
 	}
-	return ensureOwnerOnlyFile(path)
+	if err := ensureOwnerOnlyFile(path); err != nil {
+		return &ownerOnlyAtomicWriteError{Operation: "verify owner-only durable replacement", Committed: true, Err: err}
+	}
+	return nil
 }
 
 func ownerOnlyPathWithinRoot(root string, path string) bool {

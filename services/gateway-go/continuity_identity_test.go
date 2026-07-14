@@ -308,7 +308,7 @@ func TestContinuityIdempotencySurvivesAmbiguousPostPersistFailure(t *testing.T) 
 		"project": "contextlattice", "objective_id": "obj_ambiguous_retry", "objective": "Retry durable transition",
 		"transition_type": "started", "actor": "codex", "idempotency_key": "ambiguous-objective-retry",
 	}
-	if _, err := store.recordObjectiveTransition(payload); err == nil || !strings.Contains(err.Error(), "disabled until restart and verification") {
+	if _, err := store.recordObjectiveTransition(payload); err == nil || !continuityCommitUnknown(err) || !strings.Contains(err.Error(), "disabled until restart and verification") {
 		t.Fatalf("expected ambiguous post-persist failure, got %v", err)
 	}
 	store.close()
@@ -331,7 +331,7 @@ func TestContinuityIdempotencySurvivesAmbiguousPostPersistFailure(t *testing.T) 
 		"confidence_before": 0.3, "confidence_after": 0.9, "trigger_evidence": []any{"eval:ambiguous-retry"},
 		"actor": "codex", "rationale": "Durable append must be safe to retry.", "reason_code": "ambiguous_retry",
 	}
-	if _, _, err := restarted.recordDecisionChange(decisionPayload); err == nil || !strings.Contains(err.Error(), "disabled until restart and verification") {
+	if _, _, err := restarted.recordDecisionChange(decisionPayload); err == nil || !continuityCommitUnknown(err) || !strings.Contains(err.Error(), "disabled until restart and verification") {
 		t.Fatalf("expected ambiguous decision post-persist failure, got %v", err)
 	}
 	restarted.close()
@@ -371,7 +371,7 @@ func TestTaskIdentitySplitRetrySurvivesAmbiguousResponse(t *testing.T) {
 		"idempotency_key": "split-ambiguous-retry",
 	}
 	store.afterPersistHook = func() error { return errors.New("simulated response ambiguity") }
-	if _, err := store.splitTaskIdentity(payload); err == nil || !strings.Contains(err.Error(), "disabled until restart and verification") {
+	if _, err := store.splitTaskIdentity(payload); err == nil || !continuityCommitUnknown(err) || !strings.Contains(err.Error(), "disabled until restart and verification") {
 		t.Fatalf("expected ambiguous split response, got %v", err)
 	}
 	store.close()

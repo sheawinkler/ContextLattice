@@ -31,8 +31,21 @@ func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
 			commercialTruthReleaseTrain,
 		)
 	}
-	if len(commercialTruthProtectedPaidRoutes) != 13 {
-		t.Fatalf("protected route count=%d, want 13", len(commercialTruthProtectedPaidRoutes))
+	if len(commercialTruthProtectedPaidRoutes) != 16 {
+		t.Fatalf("protected route count=%d, want 16", len(commercialTruthProtectedPaidRoutes))
+	}
+	wantFeatures := map[string]string{
+		"/memory/continuity/automation":   "frontier_semantic_continuity_automation",
+		"/memory/objectives/shared":       "frontier_shared_objective_graph",
+		"/memory/decision-changes/shared": "frontier_shared_decision_provenance",
+	}
+	for path, featureID := range wantFeatures {
+		if got := commercialTruthPaidRouteRequiredFeature(path); got != featureID {
+			t.Fatalf("paid route feature path=%s got=%s want=%s", path, got, featureID)
+		}
+	}
+	if *commercialTruthPlans["team"].Limits.IncludedSeats != 5 || *commercialTruthPlans["starter"].Limits.IncludedSeats != 1 {
+		t.Fatalf("generated included-seat semantics drifted")
 	}
 	enterprise := commercialTruthPlans["enterprise"]
 	if !enterprise.CustomPricing || enterprise.SelfServePurchasable || enterprise.MonthlyUSD != nil || enterprise.AnnualUSD != nil {

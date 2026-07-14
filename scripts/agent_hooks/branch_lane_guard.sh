@@ -69,8 +69,10 @@ if [[ "$LANE" == "public-paid" ]]; then
       docs/private/*|private_docs/*|private/*|*.private.md|\
       .github/workflows/capability-parity.yml|\
       config/env/premium_dev.env|\
+      scripts/agent/audit-frontier-30-program|\
       scripts/agent/audit-private-paid-superset|\
       scripts/launch_private_dev.sh|\
+      scripts/lib/private_dev_posture.sh|\
       scripts/setup_paid_local_env.sh|\
       scripts/tests/test_private_dev_posture.py)
         printf '[branch_lane_guard] BLOCK private-only path in %s lane: %s\n' "$LANE" "$path" >&2
@@ -88,11 +90,20 @@ if [[ "$LANE" == "public-paid" ]]; then
 fi
 
 if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
-  internal_dev_pattern='private[- ]development|private-dev|keyless (superset|bypass)|unlocked superset'
+  internal_dev_pattern='private[- ]development.*(keyless|superset|bypass|internal-only|private-only)|(^|[^[:alnum:]_])private-dev([^[:alnum:]_]|$)|keyless (superset|bypass)|unlocked superset'
   if git grep -n -I -i -E "$internal_dev_pattern" "$REF" -- \
       README.md docs/public_overview docs/releases launch_service packaging \
       >/tmp/contextlattice_internal_dev_doc_hits.txt 2>/dev/null; then
     cat /tmp/contextlattice_internal_dev_doc_hits.txt >&2
+    blocked=1
+  fi
+
+  # The helper itself is blocklisted, but a leaked source/call from a shared
+  # launcher would still break a distribution tree where that helper is absent.
+  if git grep -n -I -E 'private_dev_posture' "$REF" -- \
+      launch.sh scripts/compose_v4_balanced.sh \
+      >/tmp/contextlattice_private_dev_launcher_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_private_dev_launcher_hits.txt >&2
     blocked=1
   fi
 fi
@@ -132,8 +143,14 @@ if [[ "$LANE" == "public" ]]; then
     blocked=1
   fi
 
-  paid_ui_pattern='(/api/billing/(download|downloads|download-token|entitlement|summary|stripe|paypal|solana-pay|kraken)|/api/support/diagnostics|/api/telemetry/pro-analytics|exportSupportDiagnostics|HostedArtifacts)'
-  if git grep -n -I -E "$paid_ui_pattern" "$REF" -- contextlattice-dashboard/app contextlattice-dashboard/components >/tmp/contextlattice_paid_ui_hits.txt 2>/dev/null; then
+  paid_ui_pattern='(/api/billing/(download|downloads|download-token|entitlement|summary|stripe|paypal|solana-pay|kraken)|/api/support/diagnostics|/api/telemetry/pro-analytics|/api/workspace/(members|invitations)|exportSupportDiagnostics|HostedArtifacts|WorkspaceInvitation|workspaceInvitations|activeWorkspaceId|Workspace people)'
+  if git grep -n -I -E "$paid_ui_pattern" "$REF" -- \
+      contextlattice-dashboard/app \
+      contextlattice-dashboard/components \
+      contextlattice-dashboard/lib \
+      contextlattice-dashboard/prisma \
+      contextlattice-dashboard/tests \
+      >/tmp/contextlattice_paid_ui_hits.txt 2>/dev/null; then
     cat /tmp/contextlattice_paid_ui_hits.txt >&2
     blocked=1
   fi

@@ -40,6 +40,13 @@ contextlattice-dashboard/app/api/scim/*
 contextlattice-dashboard/app/api/workspace/scim-tokens/*
 contextlattice-dashboard/lib/auth/scim.ts
 
+# Paid workspace collaboration and independent-reviewer onboarding.
+contextlattice-dashboard/app/api/workspace/invitations/*
+contextlattice-dashboard/app/api/workspace/members/*
+contextlattice-dashboard/app/auth/invite/*
+contextlattice-dashboard/lib/workspaceInvitations.ts
+contextlattice-dashboard/tests/workspace-invitations.test.ts
+
 # Paid-only gateway lanes.
 services/gateway-go/entitlement_policy.go
 services/gateway-go/entitlement_policy_test.go
@@ -51,7 +58,20 @@ services/gateway-go/runtime_license_proof.go
 services/gateway-go/runtime_license_proof_test.go
 services/gateway-go/cmd/contextlattice-agent-tools/runtime_license_identity.go
 services/gateway-go/cognition_activation_entitled.go
+services/gateway-go/cognition_activation_entitled_test.go
 services/gateway-go/context_mesh_orchestration_entitled.go
+services/gateway-go/context_mesh_orchestration_entitled_test.go
+services/gateway-go/frontier_t1_governance_entitled.go
+services/gateway-go/frontier_t1_governance_entitled_test.go
+services/gateway-go/frontier_t1_eval_test.go
+
+# Paid-only operator documentation and reproducible eval ledgers.
+docs/entitled-cognition-activation.md
+docs/evals/v3.13-entitled-cognition-activation.json
+docs/entitled-context-mesh-orchestration.md
+docs/evals/v3.14-entitled-context-mesh-orchestration.json
+docs/entitled-frontier-t1.md
+docs/evals/v3.18-frontier-t1-paid-activation.json
 
 # Paid release, signing, and operator control surfaces.
 .github/workflows/release-installers.yml

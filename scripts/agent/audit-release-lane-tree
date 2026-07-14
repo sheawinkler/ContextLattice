@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+AUDIT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+REPO_ROOT="${CONTEXTLATTICE_RELEASE_TREE_ROOT:-${SCRIPT_ROOT}}"
+REPO_ROOT="$(cd "${REPO_ROOT}" && pwd)"
+LANE=""
+REF="HEAD"
+EXPECTED_COMMIT=""
+RELEASE_REF=""
+PROOF_OUT=""
+
+usage() {
+  cat <<'USAGE'
+Usage: audit-release-lane-tree --lane public|public-paid [options]
+
+Materialize and test the exact committed release-lane tree without relying on
+the caller's working tree.
+
+Options:
+  --ref REF                  Exact candidate ref (default: HEAD)
+  --expected-commit SHA      Require REF to resolve to this full commit
+  --release-ref REF          Optional release/tag ref recorded in proof
+  --proof-out PATH           Write deterministic JSON proof after every gate passes
+  -h, --help                 Show this help
+USAGE
+}
+
+fail() {
+  echo "[release-lane-tree] ERROR: $*" >&2
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --lane) LANE="${2:-}"; shift 2 ;;
+    --ref) REF="${2:-}"; shift 2 ;;
+    --expected-commit) EXPECTED_COMMIT="${2:-}"; shift 2 ;;
+    --release-ref) RELEASE_REF="${2:-}"; shift 2 ;;
+    --proof-out) PROOF_OUT="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
+
+case "${LANE}" in
+  public) guard_lane="public" ;;
+  paid|public-paid) LANE="public-paid"; guard_lane="public-paid" ;;
+  *) fail "--lane must be public or public-paid" ;;
+esac
+
+for command_name in git go python3; do
+  command -v "${command_name}" >/dev/null 2>&1 || fail "required command is missing: ${command_name}"
+done
+git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
+  fail "repository root is not a Git worktree: ${REPO_ROOT}"
+
+commit="$(git -C "${REPO_ROOT}" rev-parse --verify "${REF}^{commit}" 2>/dev/null)" || \
+  fail "candidate ref does not resolve to a commit: ${REF}"
+[[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || fail "candidate commit is not a full SHA-1: ${commit}"
+if [[ -n "${EXPECTED_COMMIT}" ]]; then
+  [[ "${EXPECTED_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || \
+    fail "--expected-commit must be a full lowercase SHA-1"
+  [[ "${commit}" == "${EXPECTED_COMMIT}" ]] || \
+    fail "candidate commit mismatch: ref=${commit} expected=${EXPECTED_COMMIT}"
+fi
+tree="$(git -C "${REPO_ROOT}" rev-parse --verify "${commit}^{tree}")"
+
+guard="${REPO_ROOT}/scripts/agent_hooks/branch_lane_guard.sh"
+[[ -f "${guard}" ]] || fail "lane guard is absent from candidate repository"
+for active_path in \
+  "scripts/agent/audit-release-lane-tree:${AUDIT_PATH}" \
+  "scripts/agent_hooks/branch_lane_guard.sh:${guard}" \
+  "scripts/agent_hooks/common.sh:${REPO_ROOT}/scripts/agent_hooks/common.sh"; do
+  relative="${active_path%%:*}"
+  local_path="${active_path#*:}"
+  candidate_blob="$(git -C "${REPO_ROOT}" rev-parse --verify "${commit}:${relative}" 2>/dev/null)" || \
+    fail "active gate is absent from candidate commit: ${relative}"
+  active_blob="$(git -C "${REPO_ROOT}" hash-object "${local_path}")"
+  [[ "${active_blob}" == "${candidate_blob}" ]] || \
+    fail "active gate differs from candidate commit: ${relative}"
+done
+bash "${guard}" --lane "${guard_lane}" --ref "${commit}"
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-release-tree.XXXXXX")"
+cleanup() {
+  rm -rf "${tmp_dir}"
+}
+trap cleanup EXIT
+stage="${tmp_dir}/tree"
+index="${tmp_dir}/index"
+mkdir -p "${stage}"
+
+# A temporary index materializes every tracked path exactly as committed. Unlike
+# git archive, this intentionally ignores export-ignore attributes so tests are
+# compiled from the same source tree reviewers approved.
+GIT_INDEX_FILE="${index}" git -C "${REPO_ROOT}" read-tree "${commit}"
+GIT_INDEX_FILE="${index}" git -C "${REPO_ROOT}" checkout-index --all --prefix="${stage}/"
+
+required=(
+  "config/commercial_truth.v1.json"
+  "config/public_sync_blocklist.txt"
+  "scripts/agent/audit-release-lane-tree"
+  "scripts/generate_commercial_truth.py"
+  "scripts/agent_hooks/branch_lane_guard.sh"
+  "scripts/agent_hooks/common.sh"
+  "services/gateway-go/go.mod"
+  "services/gateway-go/continuity_identity.go"
+  "services/gateway-go/objective_continuity.go"
+  "services/orchestrator-go/go.mod"
+)
+if [[ "${LANE}" == "public-paid" ]]; then
+  required+=(
+    ".github/workflows/release-installers.yml"
+    "docs/evals/v3.18-frontier-t1-paid-activation.json"
+    "packaging/linux/ContextLattice-Install.sh"
+    "packaging/windows/Install-ContextLattice.ps1"
+    "scripts/agent/audit-paid-artifact-integrity"
+    "services/gateway-go/frontier_t1_eval_test.go"
+    "services/gateway-go/frontier_t1_governance_entitled.go"
+    "services/gateway-go/frontier_t1_governance_entitled_test.go"
+  )
+fi
+
+blob_rows="${tmp_dir}/required-blobs.tsv"
+: >"${blob_rows}"
+for relative in "${required[@]}"; do
+  [[ -f "${stage}/${relative}" ]] || fail "required ${LANE} candidate path is absent: ${relative}"
+  blob="$(git -C "${REPO_ROOT}" rev-parse --verify "${commit}:${relative}" 2>/dev/null)" || \
+    fail "required path is not a committed blob: ${relative}"
+  [[ "$(git -C "${REPO_ROOT}" cat-file -t "${blob}")" == "blob" ]] || \
+    fail "required path is not a blob: ${relative}"
+  size="$(git -C "${REPO_ROOT}" cat-file -s "${blob}")"
+  [[ "${size}" =~ ^[0-9]+$ && "${size}" -gt 0 ]] || fail "required blob is empty: ${relative}"
+  printf '%s\t%s\t%s\n' "${relative}" "${blob}" "${size}" >>"${blob_rows}"
+done
+
+gate_rows="${tmp_dir}/gates.tsv"
+printf '%s\t%s\n' "branch_lane_guard" "pass" >"${gate_rows}"
+
+for module in services/gateway-go services/orchestrator-go; do
+  gate_name="$(printf '%s' "${module}" | tr '/-' '__')_test"
+  if [[ -f "${stage}/${module}/go.mod" ]]; then
+    go -C "${stage}/${module}" test ./...
+    printf '%s\t%s\n' "${gate_name}" "pass" >>"${gate_rows}"
+  else
+    printf '%s\t%s\n' "${gate_name}" "not_present" >>"${gate_rows}"
+  fi
+done
+
+if [[ -f "${stage}/scripts/generate_commercial_truth.py" ]]; then
+  (cd "${stage}" && python3 scripts/generate_commercial_truth.py --check)
+  printf '%s\t%s\n' "commercial_truth_generation" "pass" >>"${gate_rows}"
+else
+  printf '%s\t%s\n' "commercial_truth_generation" "not_present" >>"${gate_rows}"
+fi
+
+proof_json="${tmp_dir}/proof.json"
+python3 - "${LANE}" "${commit}" "${tree}" "${REF}" "${RELEASE_REF}" \
+  "${blob_rows}" "${gate_rows}" "${proof_json}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+lane, commit, tree, source_ref, release_ref, blob_path, gate_path, output_path = sys.argv[1:]
+required_blobs = []
+for row in Path(blob_path).read_text(encoding="utf-8").splitlines():
+    path, oid, size = row.split("\t")
+    required_blobs.append({"path": path, "oid": oid, "size": int(size)})
+gates = {}
+for row in Path(gate_path).read_text(encoding="utf-8").splitlines():
+    name, status = row.split("\t")
+    gates[name] = status
+payload = {
+    "schema_id": "contextlattice_release_tree_proof.v1",
+    "lane": lane,
+    "source_commit": commit,
+    "source_tree": tree,
+    "source_ref": source_ref,
+    "release_ref": release_ref or None,
+    "materialization": "temporary_git_index_checkout",
+    "gates": gates,
+    "required_blobs": required_blobs,
+}
+Path(output_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+if [[ -n "${PROOF_OUT}" ]]; then
+  mkdir -p "$(dirname "${PROOF_OUT}")"
+  cp "${proof_json}" "${PROOF_OUT}"
+fi
+cat "${proof_json}"

@@ -2,7 +2,7 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "91ab3180fa8800f17762bc826eab4f0e38f5176a1868caf5c8e473030c8dfe60";
+export const COMMERCIAL_CONTRACT_SHA256 = "1f0a7d76a1c70de350e5d25c96ae093a93339c3d47404445466dc7a15a180dcf";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
@@ -76,6 +76,21 @@ export const COMMERCIAL_TRUTH = {
       "id": "scim_token_management",
       "buyer_label": "SCIM token management",
       "description": "Issue and manage the existing enterprise SCIM token surface."
+    },
+    {
+      "id": "frontier_semantic_continuity_automation",
+      "buyer_label": "Continuity that recognizes the work",
+      "description": "Reconnect a new task alias to proven prior work automatically when an exact-first, holdout-locked identity gate is unambiguous."
+    },
+    {
+      "id": "frontier_shared_objective_graph",
+      "buyer_label": "The living arc of the mission",
+      "description": "See workspace-scoped objectives, branches, dependencies, dead ends, decisions, and outcomes as one durable graph without rewriting its evidence."
+    },
+    {
+      "id": "frontier_shared_decision_provenance",
+      "buyer_label": "Decisions with a memory and a witness",
+      "description": "Review, approve, and export decision changes against exact immutable evidence with bounded, hash-verifiable pages."
     }
   ],
   "plans": [
@@ -94,7 +109,7 @@ export const COMMERCIAL_TRUTH = {
         "max_api_keys": null,
         "max_projects": null,
         "max_write_bytes": null,
-        "included_seats": null
+        "included_seats": 1
       },
       "feature_ids": [
         "cli_workflows",
@@ -120,7 +135,7 @@ export const COMMERCIAL_TRUTH = {
         "max_api_keys": 3,
         "max_projects": 5,
         "max_write_bytes": 50000,
-        "included_seats": null
+        "included_seats": 1
       },
       "feature_ids": [
         "cli_workflows",
@@ -149,7 +164,7 @@ export const COMMERCIAL_TRUTH = {
         "max_api_keys": 10,
         "max_projects": 25,
         "max_write_bytes": 200000,
-        "included_seats": null
+        "included_seats": 5
       },
       "feature_ids": [
         "cli_workflows",
@@ -162,7 +177,10 @@ export const COMMERCIAL_TRUTH = {
         "premium_runtime_keys",
         "shared_workspace_controls",
         "pro_analytics",
-        "protected_runtime_operations"
+        "protected_runtime_operations",
+        "frontier_semantic_continuity_automation",
+        "frontier_shared_objective_graph",
+        "frontier_shared_decision_provenance"
       ]
     },
     {
@@ -180,7 +198,7 @@ export const COMMERCIAL_TRUTH = {
         "max_api_keys": null,
         "max_projects": null,
         "max_write_bytes": null,
-        "included_seats": null
+        "included_seats": 1
       },
       "feature_ids": [
         "cli_workflows",
@@ -192,13 +210,15 @@ export const COMMERCIAL_TRUTH = {
         "premium_artifact_downloads",
         "premium_runtime_keys",
         "pro_analytics",
-        "protected_runtime_operations"
+        "protected_runtime_operations",
+        "frontier_semantic_continuity_automation",
+        "frontier_shared_objective_graph"
       ]
     },
     {
       "id": "enterprise",
       "buyer_label": "Enterprise",
-      "description": "Custom-priced enterprise access with existing workspace and provisioning controls.",
+      "description": "Custom-priced enterprise access with workspace controls and SCIM token management.",
       "paid": true,
       "self_serve_purchasable": false,
       "pricing": {
@@ -224,6 +244,9 @@ export const COMMERCIAL_TRUTH = {
         "shared_workspace_controls",
         "pro_analytics",
         "protected_runtime_operations",
+        "frontier_semantic_continuity_automation",
+        "frontier_shared_objective_graph",
+        "frontier_shared_decision_provenance",
         "scim_token_management"
       ]
     }
@@ -265,10 +288,59 @@ export const COMMERCIAL_TRUTH = {
       "/memory/context-policy/deactivate",
       "/memory/skills/foundry/activate",
       "/memory/skills/foundry/deactivate",
-      "/memory/context-mesh/orchestrate"
+      "/memory/context-mesh/orchestrate",
+      "/memory/continuity/automation",
+      "/memory/objectives/shared",
+      "/memory/decision-changes/shared"
     ]
   },
-  "contract_sha256": "91ab3180fa8800f17762bc826eab4f0e38f5176a1868caf5c8e473030c8dfe60"
+  "paid_feature_route_contracts": [
+    {
+      "feature_id": "frontier_semantic_continuity_automation",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/continuity/automation"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_objective_graph",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/objectives/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_decision_provenance",
+      "eligible_plan_ids": [
+        "team",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/decision-changes/shared"
+      ]
+    }
+  ],
+  "contract_sha256": "1f0a7d76a1c70de350e5d25c96ae093a93339c3d47404445466dc7a15a180dcf"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 
