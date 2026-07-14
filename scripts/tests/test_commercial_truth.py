@@ -15,6 +15,7 @@ AUDIT = ROOT / "scripts/agent/audit-commercial-truth"
 
 OWNED_PROJECTIONS = (
     Path("config/commercial_truth.v1.json"),
+    Path("config/env/strict_runtime.env"),
     Path("scripts/generate_commercial_truth.py"),
     Path("scripts/agent/audit-commercial-truth"),
     Path("contextlattice-dashboard/lib/billing/commercial.generated.ts"),
@@ -201,6 +202,25 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("GO_V4_ENTITLEMENT", gateway_source)
         self.assertNotIn("GO_V4_MACHINE_BINDING", gateway_source)
         self.assertNotIn("runtimeLicenseVerifier", gateway_source)
+
+    def test_audit_rejects_strict_runtime_protected_route_drift(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-strict-routes-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            strict = fixture / "config/env/strict_runtime.env"
+            lines = strict.read_text(encoding="utf-8").splitlines()
+            prefix = "GO_V4_ENTITLEMENT_PROTECTED_PATHS="
+            for index, line in enumerate(lines):
+                if line.startswith(prefix):
+                    lines[index] = prefix + "/v1/inference/route"
+                    break
+            else:
+                lines.append(prefix + "/v1/inference/route")
+            strict.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            self.assertIn("protected_route_env_drift", {row["code"] for row in payload["findings"]})
 
     def test_audit_rejects_stale_release_publish_input(self) -> None:
         with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-") as tmp:
