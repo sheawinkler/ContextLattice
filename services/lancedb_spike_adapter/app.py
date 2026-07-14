@@ -342,12 +342,12 @@ def search(req: SearchRequest) -> SearchResponse:
     query = req.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="query is required")
+    _trigger_refresh(force=False, wait=False)
+    rows = _lancedb_search(query, req.limit)
     try:
         exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
     except ExactStateRegistryError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    _trigger_refresh(force=False, wait=False)
-    rows = _lancedb_search(query, req.limit)
     project_filter = (req.project or "").strip().lower()
     topic_filter = _normalize_topic(req.topic_path or "")
     out: list[SearchResult] = []
