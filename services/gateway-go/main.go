@@ -367,6 +367,7 @@ type server struct {
 	lettaAgentBySession             map[string]string
 	lettaAgentVerifiedAt            map[string]time.Time
 	agentSessions                   *agentSessionStore
+	continuity                      *continuityStore
 }
 
 func normalizeHotPath(path string) string {
@@ -1247,6 +1248,10 @@ func newServer() *server {
 	if feedbackStoreErr != nil {
 		log.Printf("gateway-go feedback store degraded: %v", feedbackStoreErr)
 	}
+	continuityStoreInstance, continuityStoreErr := newContinuityStoreFromEnv()
+	if continuityStoreErr != nil {
+		log.Printf("gateway-go continuity runtime disabled: %v", continuityStoreErr)
+	}
 	memoryStoreInstance, memoryStoreErr := newMemoryStoreFromEnv()
 	if memoryStoreErr != nil {
 		log.Printf("gateway-go memory store blocked: code=owner_only_migration_or_initialization_failed")
@@ -1311,6 +1316,7 @@ func newServer() *server {
 		tokenImpact:                     newTokenImpactTelemetry(100),
 		contextPackQuality:              newContextPackQualityTelemetry(100),
 		agentSessions:                   agentSessionStoreInstance,
+		continuity:                      continuityStoreInstance,
 		telemetryMetricsState:           defaultTelemetryMetricsState(),
 		tradingState:                    defaultTradingState(),
 		tradingHistory:                  make([]map[string]any, 0, tradingHistoryLimit),
@@ -7050,6 +7056,10 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/browser-context", s.memoryBrowserContext)
 	mux.HandleFunc("/preferences", s.preferencesRoute)
 	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
+	mux.HandleFunc("/memory/continuity/reconcile", s.memoryContinuityReconcile)
+	mux.HandleFunc("/memory/objectives/transition", s.memoryObjectiveTransition)
+	mux.HandleFunc("/memory/objectives/graph", s.memoryObjectiveGraph)
+	mux.HandleFunc("/memory/decision-changes", s.memoryDecisionChanges)
 	mux.HandleFunc("/memory/synthesis-pack", s.memorySynthesisPack)
 	mux.HandleFunc("/memory/synthesis-pack/v2", s.memorySynthesisPackV2)
 	mux.HandleFunc("/memory/claims", s.memoryClaimsWrite)

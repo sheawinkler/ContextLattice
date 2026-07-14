@@ -67,9 +67,25 @@ elif [[ "$MODE" == "all" ]]; then
   append_files < <(git ls-files)
 else
   if git rev-parse --verify "$BASE" >/dev/null 2>&1; then
-    append_files < <(git diff --name-only "$BASE"...HEAD; git diff --name-only; git diff --name-only --cached; git ls-files --others --exclude-standard)
+    git merge-base "$BASE" HEAD >/dev/null 2>&1 || fail "no merge base for changed-worktree scan: ${BASE}...HEAD"
+    if ! changed_files="$(
+      git diff --name-only "$BASE"...HEAD &&
+        git diff --name-only &&
+        git diff --name-only --cached &&
+        git ls-files --others --exclude-standard
+    )"; then
+      fail "changed-worktree file discovery failed"
+    fi
+    append_files <<<"$changed_files"
   else
-    append_files < <(git diff --name-only; git diff --name-only --cached; git ls-files --others --exclude-standard)
+    if ! changed_files="$(
+      git diff --name-only &&
+        git diff --name-only --cached &&
+        git ls-files --others --exclude-standard
+    )"; then
+      fail "changed-worktree file discovery failed"
+    fi
+    append_files <<<"$changed_files"
   fi
   unique_files=()
   while IFS= read -r file; do

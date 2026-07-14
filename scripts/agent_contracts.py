@@ -580,6 +580,11 @@ def validate_agent_contract_payload(
         if value is not True:
             findings.append({"reason": "required_true_path_not_true", "path": str(dotted_path), "contract_id": contract_id})
 
+    for dotted_path in contract.get("required_false_paths") or []:
+        value = _path_get(payload, str(dotted_path))
+        if value is not False:
+            findings.append({"reason": "required_false_path_not_false", "path": str(dotted_path), "contract_id": contract_id})
+
     contains = contract.get("required_string_contains")
     if isinstance(contains, dict):
         for dotted_path, needle in contains.items():
@@ -662,6 +667,33 @@ def validate_agent_contract_payload(
                 findings.append({"reason": "forbidden_field_present", "path": key})
         else:
             findings.extend(_walk_forbidden_keys(payload, forbidden))
+    if contract_id == "task_identity_reconciliation.v1":
+        match_mode = str(payload.get("match_mode") or "").strip()
+        abstention_modes = {"semantic_candidate", "ambiguous_semantic", "ambiguous_exact", "none"}
+        confirmation_modes = {"semantic_candidate", "ambiguous_semantic", "ambiguous_exact"}
+        if match_mode in abstention_modes:
+            if payload.get("abstained") is not True:
+                findings.append(
+                    {"reason": "identity_abstention_required", "path": "abstained", "match_mode": match_mode, "contract_id": contract_id}
+                )
+            if str(payload.get("task_identity_id") or "").strip():
+                findings.append(
+                    {
+                        "reason": "abstention_cannot_bind_identity",
+                        "path": "task_identity_id",
+                        "match_mode": match_mode,
+                        "contract_id": contract_id,
+                    }
+                )
+        if match_mode in confirmation_modes and payload.get("requires_confirmation") is not True:
+            findings.append(
+                {
+                    "reason": "identity_confirmation_required",
+                    "path": "requires_confirmation",
+                    "match_mode": match_mode,
+                    "contract_id": contract_id,
+                }
+            )
     return findings
 
 
