@@ -352,6 +352,7 @@ struct HealthResponse {
     meili_task_timeout_secs: u64,
     external_timeout_secs: u64,
     external_timeout_secs_icm: u64,
+    exact_state_paths: usize,
     external_backends: HashMap<String, bool>,
 }
 
@@ -376,6 +377,8 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::from_env();
+    load_exact_state_paths(&cfg.data_root)
+        .context("validate exact-state registry before serving")?;
     let mongo_client = if cfg.source_mode.use_mongo() {
         match MongoClient::with_uri_str(cfg.mongo_uri.clone()).await {
             Ok(client) => Some(client),
@@ -434,6 +437,19 @@ async fn main() -> Result<()> {
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let exact_state_paths = match load_exact_state_paths(&state.cfg.data_root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            warn!(error = %err, "exact-state registry is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: format!("exact-state registry unavailable: {err}"),
+                }),
+            )
+                .into_response();
+        }
+    };
     let snapshot = state.docs.read().await.clone();
     let mut external_backends: HashMap<String, bool> = HashMap::new();
     external_backends.insert(
@@ -488,9 +504,10 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         meili_task_timeout_secs: state.cfg.meili_task_timeout_secs,
         external_timeout_secs: state.cfg.external_timeout_secs,
         external_timeout_secs_icm: state.cfg.external_timeout_secs_icm,
+        exact_state_paths: exact_state_paths.len(),
         external_backends,
     };
-    (StatusCode::OK, Json(payload))
+    (StatusCode::OK, Json(payload)).into_response()
 }
 
 async fn search(
@@ -520,7 +537,6 @@ async fn search(
         .map(str::trim)
         .map(normalize_topic)
         .filter(|s| !s.is_empty());
-
     let snapshot = match ensure_snapshot(&state).await {
         Ok(snapshot) => snapshot,
         Err(err) => {
@@ -583,7 +599,23 @@ async fn search(
     };
 
     match search_result {
-        Ok(results) => {
+        Ok(mut results) => {
+            let exact_state_paths = match load_exact_state_paths(&state.cfg.data_root) {
+                Ok(paths) => paths,
+                Err(err) => {
+                    warn!(error = %err, "exact-state registry is unavailable");
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(ErrorResponse {
+                            error: format!("exact-state registry unavailable: {err}"),
+                        }),
+                    )
+                        .into_response();
+                }
+            };
+            results.retain(|row| {
+                !should_suppress_exact_state_path(&exact_state_paths, &row.project, &row.file)
+            });
             let response = SearchResponse {
                 backend,
                 results,
@@ -1837,6 +1869,9 @@ fn parse_exact_state_paths(raw: &[u8]) -> Result<HashSet<String>> {
     let mut paths = HashSet::with_capacity(index.paths.len());
     for value in index.paths {
         let normalized = value.trim().to_lowercase();
+        if normalized.matches("::").count() != 1 {
+            bail!("exact-state registry contains an invalid path key");
+        }
         let Some((project, file_name)) = normalized.split_once("::") else {
             bail!("exact-state registry contains an invalid path key");
         };
@@ -1897,6 +1932,39 @@ fn derive_topic_path(file_path: &str) -> String {
     } else {
         topic
     }
+}
+
+fn should_suppress_exact_state_path(
+    paths: &HashSet<String>,
+    project: &str,
+    file_name: &str,
+) -> bool {
+    let normalized_project = project.trim().to_lowercase();
+    if normalized_project.is_empty()
+        || normalized_project.starts_with('_')
+        || normalized_project.contains('/')
+        || normalized_project.contains('\\')
+        || matches!(normalized_project.as_str(), "." | "..")
+    {
+        return true;
+    }
+
+    let normalized_file = file_name.trim().replace('\\', "/").to_lowercase();
+    if normalized_file.is_empty() || normalized_file.starts_with('/') {
+        return true;
+    }
+    let mut segments = Vec::new();
+    for segment in normalized_file.split('/') {
+        match segment {
+            "" | "." => continue,
+            ".." => return true,
+            _ => segments.push(segment),
+        }
+    }
+    if segments.is_empty() {
+        return true;
+    }
+    paths.contains(&format!("{normalized_project}::{}", segments.join("/")))
 }
 
 fn matches_project_topic(
@@ -1965,6 +2033,12 @@ mod tests {
         )
         .expect_err("invalid path key must fail closed");
         assert!(err.to_string().contains("invalid path key"));
+
+        let err = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["project::runtime::state.json"]}"#,
+        )
+        .expect_err("extra separators must fail closed");
+        assert!(err.to_string().contains("invalid path key"));
     }
 
     #[test]
@@ -2007,5 +2081,30 @@ mod tests {
         assert!(docs.iter().any(|row| row.file == "learning.md"));
         assert!(!docs.iter().any(|row| row.file == "runtime/state.json"));
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn external_rows_exclude_registered_and_unsafe_state_paths() {
+        let paths = HashSet::from(["project::runtime/state.json".to_string()]);
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "PROJECT",
+            "runtime\\state.json"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "runtime//./state.json"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "runtime/../state.json"
+        ));
+        assert!(!should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "learning.md"
+        ));
     }
 }

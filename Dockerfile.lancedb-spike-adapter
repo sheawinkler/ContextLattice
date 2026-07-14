@@ -10,6 +10,7 @@ COPY services/lancedb_spike_adapter/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/lancedb_spike_adapter/app.py app.py
+COPY services/lancedb_spike_adapter/exact_state.py exact_state.py
 
 ENV PORT=8097
 EXPOSE 8097

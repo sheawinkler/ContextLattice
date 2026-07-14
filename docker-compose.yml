@@ -232,13 +232,14 @@ services:
       PORT: ${LANCEDB_SPIKE_PORT_INTERNAL:-8097}
       LANCEDB_SPIKE_DATA_ROOT: /data/memory-bank
       SPIKE_EXACT_STATE_INDEX_PATH: ${SPIKE_EXACT_STATE_INDEX_PATH:-/data/memory-bank/_contextlattice/exact_state_paths.json}
-      LANCEDB_SPIKE_DB_URI: ${LANCEDB_SPIKE_DB_URI:-/data/lancedb_spike}
+      LANCEDB_SPIKE_DB_URI: ${LANCEDB_SPIKE_DB_URI:-/var/lib/contextlattice/lancedb}
       LANCEDB_SPIKE_TABLE: ${LANCEDB_SPIKE_TABLE:-memory_bank}
       LANCEDB_SPIKE_REFRESH_SECS: ${LANCEDB_SPIKE_REFRESH_SECS:-120}
       LANCEDB_SPIKE_MAX_DOCS: ${LANCEDB_SPIKE_MAX_DOCS:-50000}
       LANCEDB_SPIKE_MAX_CONTENT_CHARS: ${LANCEDB_SPIKE_MAX_CONTENT_CHARS:-4096}
     volumes:
-      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data:ro
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data/memory-bank:ro
+      - ${LANCEDB_SPIKE_DATA:-lancedb_spike_data}:/var/lib/contextlattice/lancedb
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:${LANCEDB_SPIKE_PORT:-8097}:${LANCEDB_SPIKE_PORT_INTERNAL:-8097}"
     expose: ["${LANCEDB_SPIKE_PORT_INTERNAL:-8097}"]
@@ -1479,6 +1480,7 @@ volumes:
   mongo_config_data: {}
   mindsdb_data: {}
   memory_bank_data: {}
+  lancedb_spike_data: {}
   orchestrator_data: {}
   fastembed_model_cache: {}
   meili_data: {}

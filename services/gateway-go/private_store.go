@@ -353,8 +353,8 @@ func migrateOwnerOnlyStoreWithOptions(root string, options ownerOnlyMigrationOpt
 		return finish(err)
 	}
 	if state.Complete && !options.force && state.RootIdentity == rootIdentity && state.WriterPolicy == ownerOnlyWriterPolicyVersion {
-		// The root and state directory were re-enforced above. Supported writers
-		// create owner-only descendants, so a valid receipt can skip a full rescan.
+		// The owner-only root blocks non-owner traversal, and supported writers
+		// enforce descendants. Same-owner out-of-band writers must use --force.
 		err := ensureOwnerOnlyFile(statePath)
 		report.ProcessedEntries = state.ProcessedEntries
 		report.EnforcedEntries = state.EnforcedEntries

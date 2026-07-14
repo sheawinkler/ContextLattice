@@ -13,10 +13,18 @@ import lancedb
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from exact_state import ExactStateRegistryError, is_exact_state_path, load_exact_state_paths
+
 
 PORT = int(os.getenv("PORT", "8097"))
 DATA_ROOT = Path(os.getenv("LANCEDB_SPIKE_DATA_ROOT", "/data/memory-bank"))
 DB_URI = os.getenv("LANCEDB_SPIKE_DB_URI", "/data/lancedb_spike")
+EXACT_STATE_INDEX_PATH = Path(
+    os.getenv(
+        "SPIKE_EXACT_STATE_INDEX_PATH",
+        str(DATA_ROOT / "_contextlattice" / "exact_state_paths.json"),
+    )
+)
 TABLE_NAME = os.getenv("LANCEDB_SPIKE_TABLE", "memory_bank")
 REFRESH_SECS = max(5, int(os.getenv("LANCEDB_SPIKE_REFRESH_SECS", "120")))
 MAX_DOCS = max(100, int(os.getenv("LANCEDB_SPIKE_MAX_DOCS", "50000")))
@@ -79,13 +87,18 @@ def _normalize_text(raw: str) -> str:
 
 def _scan_docs() -> tuple[list[dict[str, Any]], str]:
     if not DATA_ROOT.exists():
-        return [], "missing-root"
+        raise RuntimeError("memory data root is missing")
 
+    exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
     docs: list[dict[str, Any]] = []
     digest = hashlib.sha256()
+    for key in sorted(exact_state_paths):
+        digest.update(key.encode("utf-8", errors="ignore"))
     scanned = 0
     for path in DATA_ROOT.rglob("*"):
         if not path.is_file():
+            continue
+        if path.resolve(strict=False) == EXACT_STATE_INDEX_PATH.resolve(strict=False):
             continue
         scanned += 1
         if len(docs) >= MAX_DOCS:
@@ -100,6 +113,8 @@ def _scan_docs() -> tuple[list[dict[str, Any]], str]:
         project = (parts[0] or "").strip()
         file_name = Path(*parts[1:]).as_posix().strip()
         if not project or not file_name:
+            continue
+        if is_exact_state_path(exact_state_paths, project, file_name):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -295,7 +310,17 @@ def _lancedb_search(query: str, limit: int) -> list[dict[str, Any]]:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    try:
+        exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     _trigger_refresh(force=False, wait=False)
+    last_error = _state.get("last_error")
+    ready_snapshot = bool(_state.get("fingerprint")) and int(
+        _state.get("last_refresh_unix_secs") or 0
+    ) > 0
+    if last_error and not ready_snapshot:
+        raise HTTPException(status_code=503, detail=f"lancedb refresh unavailable: {last_error}")
     return {
         "ok": True,
         "docs_loaded": int(_state.get("docs_loaded") or 0),
@@ -306,7 +331,9 @@ def health() -> dict[str, Any]:
         "data_root": str(DATA_ROOT),
         "db_uri": str(DB_URI),
         "table_name": TABLE_NAME,
-        "last_error": _state.get("last_error"),
+        "exact_state_paths": len(exact_state_paths),
+        "degraded": bool(last_error),
+        "last_error": last_error,
     }
 
 
@@ -315,6 +342,10 @@ def search(req: SearchRequest) -> SearchResponse:
     query = req.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="query is required")
+    try:
+        exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     _trigger_refresh(force=False, wait=False)
     rows = _lancedb_search(query, req.limit)
     project_filter = (req.project or "").strip().lower()
@@ -330,6 +361,8 @@ def search(req: SearchRequest) -> SearchResponse:
         if topic_filter and not topic_path.startswith(topic_filter):
             continue
         if not project or not file_name or not summary:
+            continue
+        if is_exact_state_path(exact_state_paths, project, file_name):
             continue
         out.append(
             SearchResult(
@@ -356,7 +389,11 @@ def search(req: SearchRequest) -> SearchResponse:
 
 @app.on_event("startup")
 def startup() -> None:
+    load_exact_state_paths(EXACT_STATE_INDEX_PATH)
     _trigger_refresh(force=True, wait=True)
+    last_error = _state.get("last_error")
+    if last_error:
+        raise RuntimeError(f"lancedb startup refresh failed: {last_error}")
 
 
 if __name__ == "__main__":
