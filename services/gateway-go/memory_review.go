@@ -86,7 +86,7 @@ func queryPayload(r *http.Request) map[string]any {
 
 func (s *server) buildReviewModeResponse(ctx context.Context, payload map[string]any, endpoint string) (map[string]any, int) {
 	opts := normalizeReviewModeOptions(payload)
-	if s == nil || s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s == nil || s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		response := reviewModeUnavailableResponse(opts, "Go memory store is disabled; Review Mode needs memory write history.")
 		return attachReviewModeFormatContract(response, endpoint), http.StatusOK
 	}
@@ -210,7 +210,7 @@ func osEnvString(key string) string {
 }
 
 func (m *memoryStore) reviewEntries(opts reviewModeOptions) []memoryStoreEntry {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return []memoryStoreEntry{}
 	}
 	cutoff := time.Now().UTC().Add(-time.Duration(opts.WindowHours) * time.Hour)

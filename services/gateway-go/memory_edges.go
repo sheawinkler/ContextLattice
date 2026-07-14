@@ -241,7 +241,7 @@ func (edge memoryEdgeEntry) toMap() map[string]any {
 }
 
 func (m *memoryStore) loadEdges() error {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isConfigured() {
 		return nil
 	}
 	file, err := os.Open(m.policy.edgePath)
@@ -346,7 +346,7 @@ func (m *memoryStore) recordEdgeLocked(edge memoryEdgeEntry) {
 }
 
 func (m *memoryStore) appendEdge(edge memoryEdgeEntry) error {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return nil
 	}
 	payload, err := json.Marshal(edge)
@@ -366,7 +366,7 @@ func (m *memoryStore) appendEdge(edge memoryEdgeEntry) error {
 }
 
 func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun bool) (map[string]any, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return nil, errors.New("go memory store is disabled")
 	}
 	if ctx == nil {
@@ -499,7 +499,7 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 }
 
 func (m *memoryStore) upsertMemoryEdge(ctx context.Context, edge memoryEdgeEntry) (memoryEdgeEntry, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return memoryEdgeEntry{}, errors.New("go memory store is disabled")
 	}
 	select {
@@ -524,7 +524,7 @@ func (m *memoryStore) upsertMemoryEdge(ctx context.Context, edge memoryEdgeEntry
 }
 
 func (m *memoryStore) listMemoryEdges(ctx context.Context, query memoryEdgeQuery) ([]memoryEdgeEntry, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return []memoryEdgeEntry{}, nil
 	}
 	if query.Limit < 1 {
@@ -671,7 +671,7 @@ func (m *memoryStore) memoryGraphNeighbors(ctx context.Context, query memoryGrap
 }
 
 func (s *server) memoryGraphBackend() memoryGraphEdgeBackend {
-	if s == nil || s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s == nil || s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		return nil
 	}
 	return s.memoryStore

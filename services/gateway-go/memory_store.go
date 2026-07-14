@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -30,6 +31,8 @@ type memoryStorePolicy struct {
 	contentAddressed           bool
 	contentBlobsPath           string
 	contentLinkMode            string
+	exactStateIndexPath        string
+	exactStateMaxPaths         int
 	rollupUseHistoryIndex      bool
 	historyStartupMaxLines     int
 	historyStartupTailMaxBytes int64
@@ -63,6 +66,7 @@ type memoryStoreEntry struct {
 	Summary     string   `json:"summary,omitempty"`
 	ContentHash string   `json:"content_hash,omitempty"`
 	ContentRef  string   `json:"content_ref,omitempty"`
+	DataClass   string   `json:"data_class,omitempty"`
 	Lifecycle   string   `json:"lifecycle,omitempty"`
 	DiffState   string   `json:"diff_state,omitempty"`
 	CreatedAt   string   `json:"created_at"`
@@ -109,6 +113,11 @@ type topicRollupSignal struct {
 
 type memoryStore struct {
 	policy          memoryStorePolicy
+	ready           atomic.Bool
+	migration       *ownerOnlyMigrationRuntime
+	migrationOnce   sync.Once
+	initializeOnce  sync.Once
+	initializeErr   error
 	mu              sync.RWMutex
 	recent          []memoryStoreEntry
 	latestTopic     map[string]string
@@ -121,6 +130,7 @@ type memoryStore struct {
 	edgeAdjacency   map[string]map[string]struct{}
 	agentEdges      map[string]AgentEventEdge
 	agentEdgeOrder  []string
+	exactStatePaths map[string]struct{}
 }
 
 type topicRollupCacheEntry struct {
@@ -163,6 +173,10 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	default:
 		contentLinkMode = "hardlink"
 	}
+	exactStateIndexPath := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_EXACT_STATE_INDEX_PATH"))
+	if exactStateIndexPath == "" {
+		exactStateIndexPath = filepath.Join(root, "_contextlattice", "exact_state_paths.json")
+	}
 	historyStartupMaxLines := envInt("GO_MEMORY_STORE_HISTORY_STARTUP_MAX_LINES", 20000)
 	if historyStartupMaxLines < 0 {
 		historyStartupMaxLines = 0
@@ -189,6 +203,8 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		contentAddressed:           envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
 		contentBlobsPath:           filepath.Clean(contentBlobsPath),
 		contentLinkMode:            contentLinkMode,
+		exactStateIndexPath:        filepath.Clean(exactStateIndexPath),
+		exactStateMaxPaths:         clampInt(envInt("GO_MEMORY_STORE_EXACT_STATE_MAX_PATHS", 10000), 1, 100000),
 		rollupUseHistoryIndex:      envBool("GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX", true),
 		historyStartupMaxLines:     historyStartupMaxLines,
 		historyStartupTailMaxBytes: historyStartupTailMaxBytes,
@@ -223,54 +239,64 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 func newMemoryStoreFromEnv() (*memoryStore, error) {
 	policy := loadMemoryStorePolicy()
 	store := &memoryStore{
-		policy:         policy,
-		recent:         make([]memoryStoreEntry, 0, policy.maxRecent),
-		latestTopic:    map[string]string{},
-		latestHash:     map[string]string{},
-		rollupCache:    map[string]topicRollupCacheEntry{},
-		edges:          map[string]memoryEdgeEntry{},
-		edgeOrder:      []string{},
-		edgeOrdinal:    map[string]int64{},
-		edgeAdjacency:  map[string]map[string]struct{}{},
-		agentEdges:     map[string]AgentEventEdge{},
-		agentEdgeOrder: []string{},
+		policy:          policy,
+		recent:          make([]memoryStoreEntry, 0, policy.maxRecent),
+		latestTopic:     map[string]string{},
+		latestHash:      map[string]string{},
+		rollupCache:     map[string]topicRollupCacheEntry{},
+		edges:           map[string]memoryEdgeEntry{},
+		edgeOrder:       []string{},
+		edgeOrdinal:     map[string]int64{},
+		edgeAdjacency:   map[string]map[string]struct{}{},
+		agentEdges:      map[string]AgentEventEdge{},
+		agentEdgeOrder:  []string{},
+		exactStatePaths: map[string]struct{}{},
 	}
+	store.migration = newOwnerOnlyMigrationRuntime(policy.rootPath, policy.enabled)
 	if !policy.enabled {
 		return store, nil
 	}
-	if err := migrateOwnerOnlyStore(policy.rootPath); err != nil {
-		return nil, fmt.Errorf("migrate memory store to owner-only access: %w", err)
+	if err := store.loadExactStateIndex(); err != nil {
+		store.migration.markBlocked(ownerOnlyMigrationReport{}, err)
+		return store, fmt.Errorf("load exact state registry: %w", err)
 	}
-	if err := ensureOwnerOnlyDirectory(filepath.Dir(policy.historyPath), true); err != nil {
-		return nil, fmt.Errorf("create memory store history directory: %w", err)
-	}
-	if err := ensureOwnerOnlyDirectory(filepath.Dir(policy.edgePath), true); err != nil {
-		return nil, fmt.Errorf("create memory graph edge directory: %w", err)
-	}
-	if err := ensureOwnerOnlyDirectory(filepath.Dir(policy.agentEdgePath), true); err != nil {
-		return nil, fmt.Errorf("create memory agent edge directory: %w", err)
-	}
-	if policy.contentAddressed {
-		if err := ensureOwnerOnlyDirectory(policy.contentBlobsPath, true); err != nil {
-			return nil, fmt.Errorf("create memory store content blobs directory: %w", err)
+	store.migration.markStarted(false)
+	report, err := migrateOwnerOnlyStoreWithOptions(policy.rootPath, ownerOnlyMigrationOptions{
+		maxDuration: ownerOnlyMigrationStartupBudget(),
+	})
+	if err == nil {
+		if err := store.finishOwnerOnlyMigration(report); err != nil {
+			return store, fmt.Errorf("initialize memory store after owner-only migration: %w", err)
 		}
+		return store, nil
 	}
-	if err := store.loadHistory(); err != nil {
-		return nil, err
+	if errors.Is(err, errOwnerOnlyMigrationYield) || errors.Is(err, errOwnerOnlyMigrationLocked) {
+		store.migration.markWaiting(report, err)
+		if envBool("CONTEXTLATTICE_OWNER_ONLY_MIGRATION_BACKGROUND_ENABLED", true) {
+			store.startOwnerOnlyMigrationBackground()
+			return store, nil
+		}
+		store.migration.markBlocked(report, err)
+		return store, fmt.Errorf("owner-only migration requires background continuation: %w", err)
 	}
-	if err := store.loadEdges(); err != nil {
-		return nil, err
-	}
-	if err := store.loadAgentEventEdges(); err != nil {
-		return nil, err
-	}
-	return store, nil
+	store.migration.markBlocked(report, err)
+	return store, fmt.Errorf("migrate memory store to owner-only access: %w", err)
+}
+
+func (m *memoryStore) isConfigured() bool {
+	return m != nil && m.policy.enabled
+}
+
+func (m *memoryStore) isEnabled() bool {
+	return m != nil && m.policy.enabled && m.ready.Load()
 }
 
 func (m *memoryStore) loadHistory() error {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isConfigured() {
 		return nil
 	}
+	exactStatePaths := m.exactStatePathsSnapshot()
+	writePolicy := loadWriteIngressPolicy()
 	file, err := os.Open(m.policy.historyPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -290,6 +316,11 @@ func (m *memoryStore) loadHistory() error {
 		for _, line := range ordered {
 			var entry memoryStoreEntry
 			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				continue
+			}
+			if entry.DataClass == dataClassRuntimeStateMirror ||
+				exactStatePathSetContains(exactStatePaths, entry.Project, entry.FileName) ||
+				writePolicy.isDurableMemoryFile(normalizedWrite{project: entry.Project, fileName: entry.FileName}) {
 				continue
 			}
 			m.recordEntry(entry)
@@ -315,6 +346,11 @@ func (m *memoryStore) loadHistory() error {
 		}
 		var entry memoryStoreEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.DataClass == dataClassRuntimeStateMirror ||
+			exactStatePathSetContains(exactStatePaths, entry.Project, entry.FileName) ||
+			writePolicy.isDurableMemoryFile(normalizedWrite{project: entry.Project, fileName: entry.FileName}) {
 			continue
 		}
 		m.recordEntry(entry)
@@ -626,7 +662,7 @@ func (m *memoryStore) putTopicRollupCache(project string, minCount int, rows []m
 }
 
 func (m *memoryStore) appendHistory(entry memoryStoreEntry) error {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return nil
 	}
 	payload, err := json.Marshal(entry)
@@ -679,7 +715,7 @@ func writeAtomicFile(path string, content []byte, mode fs.FileMode) error {
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := replaceOwnerOnlyFile(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
@@ -707,7 +743,7 @@ func copyFileAtomic(src string, dst string, mode fs.FileMode) error {
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	if err := os.Rename(tmpPath, dst); err != nil {
+	if err := replaceOwnerOnlyFile(tmpPath, dst); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
@@ -768,7 +804,7 @@ func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
 		return fmt.Errorf("materialize memory content from blob: %w", linkErr)
 	}
 	if usedTmpPath {
-		if err := os.Rename(tmpPath, filePath); err != nil {
+		if err := replaceOwnerOnlyFile(tmpPath, filePath); err != nil {
 			_ = os.Remove(tmpPath)
 			return fmt.Errorf("commit linked memory file: %w", err)
 		}
@@ -776,9 +812,75 @@ func (m *memoryStore) linkOrCopyBlob(blobPath string, filePath string) error {
 	return nil
 }
 
+func (m *memoryStore) putExactStateMirror(item normalizedWrite) (memoryStoreEntry, bool, error) {
+	project, err := sanitizeMemoryProject(item.project)
+	if err != nil {
+		return memoryStoreEntry{}, false, err
+	}
+	fileName, err := sanitizeMemoryFile(item.fileName)
+	if err != nil {
+		return memoryStoreEntry{}, false, err
+	}
+	if err := m.registerExactStatePath(project, fileName); err != nil {
+		return memoryStoreEntry{}, false, err
+	}
+	content := item.content
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))
+	if err := ensureOwnerOnlyDirectory(filepath.Dir(filePath), true); err != nil {
+		return memoryStoreEntry{}, false, fmt.Errorf("create exact state mirror directory: %w", err)
+	}
+	previous := ""
+	if raw, readErr := os.ReadFile(filePath); readErr == nil {
+		previous = string(raw)
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return memoryStoreEntry{}, false, fmt.Errorf("read exact state mirror: %w", readErr)
+	}
+	deduped := previous == content
+	if !deduped {
+		if err := writeOwnerOnlyDurableAtomicFile(filePath, []byte(content), true); err != nil {
+			return memoryStoreEntry{}, false, fmt.Errorf("commit exact state mirror: %w", err)
+		}
+	}
+	diffState := "new"
+	if previous != "" {
+		if deduped {
+			diffState = "unchanged"
+		} else {
+			diffState = "updated"
+		}
+	}
+	topicPath := sanitizeTopicPath(item.topicPath, fileName)
+	contentHash := sha256Hex(content)
+	return memoryStoreEntry{
+		EventID:     bson.NewObjectID().Hex(),
+		Project:     project,
+		FileName:    fileName,
+		TopicPath:   topicPath,
+		AgentID:     item.agentID,
+		SessionID:   item.sessionID,
+		Tags:        append([]string{}, item.tags...),
+		Summary:     clipSummary(content, m.policy.maxSummaryChars),
+		ContentHash: contentHash,
+		ContentRef:  "sha256:" + contentHash,
+		DataClass:   dataClassRuntimeStateMirror,
+		Lifecycle:   normalizeMemoryLifecycle(item.lifecycle),
+		DiffState:   diffState,
+		CreatedAt:   nowUTCISO(),
+		RawBytes:    len(content),
+		Source:      "go_exact_state_mirror",
+	}, deduped, nil
+}
+
 func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return memoryStoreEntry{}, false, errors.New("go memory store is disabled")
+	}
+	if item.dataClass == dataClassRuntimeStateMirror || m.isExactStatePath(item.project, item.fileName) {
+		item.dataClass = dataClassRuntimeStateMirror
+		return m.putExactStateMirror(item)
 	}
 	project, err := sanitizeMemoryProject(item.project)
 	if err != nil {
@@ -815,6 +917,7 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 			Summary:     clipSummary(content, m.policy.maxSummaryChars),
 			ContentHash: contentHash,
 			ContentRef:  "sha256:" + contentHash,
+			DataClass:   dataClassLearningMemory,
 			Lifecycle:   normalizeMemoryLifecycle(item.lifecycle),
 			CreatedAt:   nowUTCISO(),
 			RawBytes:    len(content),
@@ -883,7 +986,7 @@ func (m *memoryStore) parseProjectFileFromPath(path string) (string, string, err
 }
 
 func (m *memoryStore) readFile(project string, fileName string) (string, os.FileInfo, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return "", nil, errors.New("go memory store is disabled")
 	}
 	cleanProject, err := sanitizeMemoryProject(project)
@@ -933,7 +1036,7 @@ func (m *memoryStore) fetchByMemoryID(memoryID string) (map[string]any, error) {
 }
 
 func (m *memoryStore) recentItems(project string, topicPath string, limit int, offset int) []map[string]any {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return []map[string]any{}
 	}
 	cleanProject := strings.TrimSpace(project)
@@ -988,7 +1091,7 @@ func (m *memoryStore) recentItems(project string, topicPath string, limit int, o
 }
 
 func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]memoryStoreDoc, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return []memoryStoreDoc{}, nil
 	}
 	if ctx == nil {
@@ -1001,7 +1104,7 @@ func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]
 }
 
 func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter string, includeCold bool, includeEphemeral bool) ([]memoryStoreDoc, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return []memoryStoreDoc{}, nil
 	}
 	if ctx == nil {
@@ -1027,9 +1130,14 @@ func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter str
 	for key, value := range m.latestTopic {
 		latestTopic[key] = value
 	}
+	exactStatePaths := make(map[string]struct{}, len(m.exactStatePaths))
+	for key := range m.exactStatePaths {
+		exactStatePaths[key] = struct{}{}
+	}
 	m.mu.RUnlock()
 
 	docs := make([]memoryStoreDoc, 0, 1024)
+	writePolicy := loadWriteIngressPolicy()
 	scanned := 0
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		select {
@@ -1072,6 +1180,9 @@ func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter str
 		}
 		fileName := strings.Join(parts[1:], "/")
 		if strings.TrimSpace(fileName) == "" {
+			return nil
+		}
+		if exactStatePathSetContains(exactStatePaths, project, fileName) || writePolicy.isDurableMemoryFile(normalizedWrite{project: project, fileName: fileName}) {
 			return nil
 		}
 		info, infoErr := entry.Info()
@@ -1140,6 +1251,10 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 		latestTopic[key] = value
 	}
 	recent := append([]memoryStoreEntry(nil), m.recent...)
+	exactStatePaths := make(map[string]struct{}, len(m.exactStatePaths))
+	for key := range m.exactStatePaths {
+		exactStatePaths[key] = struct{}{}
+	}
 	m.mu.RUnlock()
 	if len(latestTopic) == 0 {
 		return nil, false
@@ -1174,6 +1289,7 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 		}
 	}
 	docs := make([]memoryStoreDoc, 0, len(latestTopic))
+	writePolicy := loadWriteIngressPolicy()
 	for key, topicPath := range latestTopic {
 		select {
 		case <-ctx.Done():
@@ -1185,6 +1301,9 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 			continue
 		}
 		if normalizedProject != "" && !strings.EqualFold(project, normalizedProject) {
+			continue
+		}
+		if exactStatePathSetContains(exactStatePaths, project, fileName) || writePolicy.isDurableMemoryFile(normalizedWrite{project: project, fileName: fileName}) {
 			continue
 		}
 		topic := strings.TrimSpace(topicPath)
@@ -1233,7 +1352,7 @@ func (m *memoryStore) topicRollups(project string, minCount int, limit int, offs
 
 func (m *memoryStore) topicRollupSignals(project string) map[string]topicRollupSignal {
 	signals := map[string]topicRollupSignal{}
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return signals
 	}
 	normalizedProject := strings.TrimSpace(project)

@@ -167,7 +167,7 @@ func (s *server) memoryRecent(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		s.forwardJSONGET(w, r, "/memory/recent")
 		return
 	}
@@ -187,7 +187,7 @@ func (s *server) memoryTopicTree(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		s.forwardJSONGET(w, r, "/memory/topics")
 		return
 	}
@@ -203,7 +203,7 @@ func (s *server) memoryTopicList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		s.forwardJSONGET(w, r, "/memory/topics/list")
 		return
 	}
@@ -222,7 +222,7 @@ func (s *server) memoryTopicRollups(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		s.forwardJSONGET(w, r, "/memory/topic-rollups")
 		return
 	}
@@ -749,7 +749,7 @@ func (s *server) memoryFilesByProject(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		s.forwardJSONGET(w, r, r.URL.Path)
 		return
 	}

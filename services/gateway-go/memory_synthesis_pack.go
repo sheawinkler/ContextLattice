@@ -356,7 +356,7 @@ func synthesisPackWhyItMatters(item map[string]any) string {
 func (s *server) synthesisPackTopicGravity(ctx context.Context, project string, topicPath string, query string, rankedEvidence []any, requestPayload map[string]any) []any {
 	evidenceTopics := synthesisPackEvidenceTopicSet(rankedEvidence)
 	rows := []map[string]any{}
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+	if s.memoryStore != nil && s.memoryStore.isEnabled() {
 		includeCold := anyToBool(requestPayload["include_cold"])
 		includeEphemeral := requestIncludesEphemeralMemory(requestPayload)
 		rollups := s.memoryStore.topicRollupsWithOptions(ctx, project, 1, 128, 0, includeCold, includeEphemeral)

@@ -11,7 +11,7 @@ RUN apk add --no-cache bash \
 WORKDIR /app
 # IMPORTANT: run the gateway and spawn the memory-bank MCP via stdio; expose as streamable HTTP on /mcp
 # PORT is provided via env MEMORYMCP_HTTP_PORT (default 59081)
-CMD ["sh", "-lc", "exec supergateway \
+CMD ["sh", "-lc", "umask 077; exec supergateway \
   --stdio 'mcp-server-memory-bank' \
   --outputTransport streamableHttp \
   --stateful \

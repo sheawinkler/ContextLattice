@@ -49,7 +49,7 @@ func (s *server) memoryV1Get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "memory_id is required"})
 		return
 	}
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+	if s.memoryStore != nil && s.memoryStore.isEnabled() {
 		payload, err := s.memoryStore.fetchByMemoryID(memoryID)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -142,13 +142,14 @@ func (s *server) memoryV1Update(w http.ResponseWriter, r *http.Request) {
 		putStatus   int
 		putErr      error
 	)
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
-		entry, _, storeErr := s.memoryStore.put(normalizedWrite{
+	if s.memoryStore != nil && s.memoryStore.isEnabled() {
+		normalized := s.classifyWrite(normalizedWrite{
 			project:   project,
 			fileName:  fileName,
 			content:   anyToString(item["content"]),
 			topicPath: anyToString(item["topic_path"]),
 		})
+		entry, _, storeErr := s.memoryStore.put(normalized)
 		if storeErr != nil {
 			putErr = storeErr
 		} else {
@@ -378,7 +379,7 @@ func (s *server) fetchV1MemoryPayload(
 	incomingHeaders http.Header,
 	memoryID string,
 ) (map[string]any, error) {
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+	if s.memoryStore != nil && s.memoryStore.isEnabled() {
 		payload, err := s.memoryStore.fetchByMemoryID(memoryID)
 		if err != nil {
 			return nil, err

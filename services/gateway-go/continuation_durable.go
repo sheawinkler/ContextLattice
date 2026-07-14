@@ -93,7 +93,7 @@ func newContinuationDurableQueue(policy retrievalPolicy) *continuationDurableQue
 		queue.lastError = "durable continuation dir is empty"
 		return queue
 	}
-	if err := migrateOwnerOnlyStore(queue.dir); err != nil {
+	if err := ensureOwnerOnlyDirectory(queue.dir, true); err != nil {
 		queue.enabled = false
 		queue.lastError = err.Error()
 		log.Printf("gateway-go continuation durable queue disabled: %v", err)
@@ -127,6 +127,12 @@ func (q *continuationDurableQueue) loadFromDisk() error {
 			continue
 		}
 		path := filepath.Join(q.dir, name)
+		if permissionErr := ensureOwnerOnlyFile(path); permissionErr != nil {
+			if firstErr == nil {
+				firstErr = permissionErr
+			}
+			continue
+		}
 		raw, readErr := os.ReadFile(path)
 		if readErr != nil {
 			if firstErr == nil {

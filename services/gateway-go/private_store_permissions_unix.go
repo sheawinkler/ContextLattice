@@ -20,3 +20,14 @@ func enforceOwnerOnlyPermissions(path string, mode os.FileMode) error {
 	}
 	return nil
 }
+
+func ownerOnlyPermissionsCompliant(path string, mode os.FileMode) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, errors.New("owner-only POSIX permission target is a symlink")
+	}
+	return info.Mode().Perm() == mode.Perm(), nil
+}

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -47,21 +51,27 @@ func TestOwnerOnlyMigrationIsBoundedResumableAndIdempotent(t *testing.T) {
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CONTEXTLATTICE_OWNER_ONLY_MIGRATION_MAX_ENTRIES", "1")
-
-	incompleteCount := 0
-	for attempts := 0; attempts < 16; attempts++ {
-		err := migrateOwnerOnlyStore(root)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, errOwnerOnlyMigrationIncomplete) {
-			t.Fatalf("migration failed: %v", err)
-		}
-		incompleteCount++
+	batchSizes := []int{}
+	report, err := migrateOwnerOnlyStoreWithOptions(root, ownerOnlyMigrationOptions{
+		batchLimit: 1,
+		readChunk:  2,
+		afterBatch: func(entries int) {
+			batchSizes = append(batchSizes, entries)
+		},
+	})
+	if err != nil {
+		t.Fatalf("migration failed: %v", err)
 	}
-	if incompleteCount == 0 {
-		t.Fatal("expected bounded migration to require at least one resume")
+	if !report.OK || !report.Complete || report.ProcessedEntries < 1 {
+		t.Fatalf("unexpected migration report: %+v", report)
+	}
+	if len(batchSizes) < 2 {
+		t.Fatalf("expected multiple bounded batches, got %v", batchSizes)
+	}
+	for _, entries := range batchSizes {
+		if entries > 1 {
+			t.Fatalf("batch processed %d entries, want at most 1", entries)
+		}
 	}
 	if err := migrateOwnerOnlyStore(root); err != nil {
 		t.Fatalf("idempotent completed migration failed: %v", err)
@@ -79,39 +89,174 @@ func TestOwnerOnlyMigrationIsBoundedResumableAndIdempotent(t *testing.T) {
 	assertMode(t, outside, 0o644)
 }
 
-func TestOwnerOnlyMigrationResumeDecisionMatchesWalkDirOrder(t *testing.T) {
-	tests := []struct {
-		name      string
-		rel       string
-		cursor    string
-		isDir     bool
-		skipEntry bool
-		skipDir   bool
-	}{
-		{name: "cursor ancestor remains traversable", rel: "foo", cursor: "foo/inside.md", isDir: true, skipEntry: true},
-		{name: "completed sibling subtree is pruned", rel: "alpha", cursor: "foo/inside.md", isDir: true, skipEntry: true, skipDir: true},
-		{name: "hyphenated later sibling is processed", rel: "foo-bar", cursor: "foo/inside.md", isDir: true},
-		{name: "cursor entry is skipped", rel: "foo/inside.md", cursor: "foo/inside.md", skipEntry: true},
-		{name: "later nested entry is processed", rel: "foo/later.md", cursor: "foo/inside.md"},
+func TestOwnerOnlyMigrationStreamsLargeFlatDirectoryInBoundedBatches(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	flat := filepath.Join(root, "flat")
+	if err := os.MkdirAll(flat, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const files = 4097
+	for index := 0; index < files; index++ {
+		path := filepath.Join(flat, formatOwnerOnlyTestFileName(index))
+		if err := os.WriteFile(path, []byte("private"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batchSizes := []int{}
+	report, err := migrateOwnerOnlyStoreWithOptions(root, ownerOnlyMigrationOptions{
+		batchLimit: ownerOnlyMigrationBatchMax,
+		readChunk:  7,
+		afterBatch: func(entries int) {
+			batchSizes = append(batchSizes, entries)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Complete || report.ProcessedEntries < files {
+		t.Fatalf("flat migration incomplete: %+v", report)
+	}
+	if len(batchSizes) < 5 {
+		t.Fatalf("expected at least five batches, got %v", batchSizes)
+	}
+	for _, entries := range batchSizes {
+		if entries < 1 || entries > ownerOnlyMigrationBatchMax {
+			t.Fatalf("invalid batch size %d", entries)
+		}
+	}
+	assertMode(t, filepath.Join(flat, formatOwnerOnlyTestFileName(files-1)), 0o600)
+}
+
+func formatOwnerOnlyTestFileName(index int) string {
+	return fmt.Sprintf("entry-%08d.txt", index)
+}
+
+func TestOwnerOnlyMigrationResumesAfterInterruptionByRecheckingModes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 12; index++ {
+		if err := os.WriteFile(filepath.Join(root, formatOwnerOnlyTestFileName(index)), []byte("private"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := 0
+	interrupted := errors.New("injected interruption")
+	first, err := migrateOwnerOnlyStoreWithOptions(root, ownerOnlyMigrationOptions{
+		batchLimit: 3,
+		readChunk:  2,
+		beforeEntry: func(_ string) error {
+			seen++
+			if seen == 6 {
+				return interrupted
+			}
+			return nil
+		},
+	})
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("expected injected interruption, got report=%+v err=%v", first, err)
+	}
+	if first.Complete || first.ProcessedEntries == 0 {
+		t.Fatalf("expected durable partial progress: %+v", first)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			skipEntry, skipDir := ownerOnlyMigrationResumeDecision(test.rel, test.cursor, test.isDir)
-			if skipEntry != test.skipEntry || skipDir != test.skipDir {
-				t.Fatalf(
-					"ownerOnlyMigrationResumeDecision(%q, %q, %t) = (%t, %t), want (%t, %t)",
-					test.rel,
-					test.cursor,
-					test.isDir,
-					skipEntry,
-					skipDir,
-					test.skipEntry,
-					test.skipDir,
-				)
-			}
-		})
+	second, err := migrateOwnerOnlyStoreWithOptions(root, ownerOnlyMigrationOptions{batchLimit: 3, readChunk: 2})
+	if err != nil {
+		t.Fatalf("resume failed: %v", err)
 	}
+	if !second.Complete || !second.Resumed {
+		t.Fatalf("expected completed resumed report: %+v", second)
+	}
+	for index := 0; index < 12; index++ {
+		assertMode(t, filepath.Join(root, formatOwnerOnlyTestFileName(index)), 0o600)
+	}
+}
+
+func TestOwnerOnlyMigrationLimitCannotExceedProgramBudget(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_OWNER_ONLY_MIGRATION_MAX_ENTRIES", "999999")
+	if got := ownerOnlyMigrationLimit(); got != ownerOnlyMigrationBatchMax {
+		t.Fatalf("migration limit = %d, want %d", got, ownerOnlyMigrationBatchMax)
+	}
+}
+
+func TestOwnerOnlyMigrationInvalidatesLegacyCompleteReceipt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	statePath := ownerOnlyStatePath(root)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"schema_id":"contextlattice_owner_only_store.v1","complete":true,"cursor":"foo/inside.md","updated_at":"2026-07-13T00:00:00Z"}`)
+	if err := os.WriteFile(statePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	filePath := filepath.Join(root, "foo-bar", "memory.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("private"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := migrateOwnerOnlyStoreWithOptions(root, ownerOnlyMigrationOptions{batchLimit: 2, readChunk: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Complete || !report.Resumed {
+		t.Fatalf("legacy receipt was not reverified: %+v", report)
+	}
+	assertMode(t, filePath, 0o600)
+	state, err := loadOwnerOnlyMigrationState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SchemaID != ownerOnlySchemaID || !state.Complete {
+		t.Fatalf("legacy receipt was not upgraded: %+v", state)
+	}
+}
+
+func TestOwnerOnlyMigrationCommandEmitsOpaqueStructuredReport(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private-store")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "memory.md"), []byte("private"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	handled, code := runOwnerOnlyMigrationCommand(
+		[]string{"gateway-go", "owner-only-migrate", "--root", root},
+		stdout,
+		stderr,
+	)
+	if !handled || code != 0 {
+		t.Fatalf("command failed: handled=%t code=%d stderr=%q", handled, code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), root) {
+		t.Fatalf("structured report leaked local root: %s", stdout.String())
+	}
+	var report ownerOnlyMigrationReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v", err)
+	}
+	if report.SchemaID != ownerOnlyMigrationReportSchemaID || !report.OK || !report.Complete || report.StoreRef == "" {
+		t.Fatalf("unexpected command report: %+v", report)
+	}
+	if err := os.Chmod(filepath.Join(root, "memory.md"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	handled, code = runOwnerOnlyMigrationCommand(
+		[]string{"gateway-go", "owner-only-migrate", "--root", root, "--force"},
+		stdout,
+		stderr,
+	)
+	if !handled || code != 0 {
+		t.Fatalf("forced command failed: handled=%t code=%d stderr=%q", handled, code, stderr.String())
+	}
+	assertMode(t, filepath.Join(root, "memory.md"), 0o600)
 }
 
 func TestOwnerOnlyMigrationRejectsEscapingSymlink(t *testing.T) {
@@ -164,6 +309,30 @@ func TestOwnerOnlyAtomicAndAppendWrites(t *testing.T) {
 	if err := writeOwnerOnlyAtomicFile(atomicPath, []byte("{}"), true); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeOwnerOnlyAtomicFile(atomicPath, []byte("{\"version\":2}"), true); err != nil {
+		t.Fatalf("replace atomic file: %v", err)
+	}
+	atomicRaw, err := os.ReadFile(atomicPath)
+	if err != nil {
+		t.Fatalf("read replaced atomic file: %v", err)
+	}
+	if string(atomicRaw) != "{\"version\":2}" {
+		t.Fatalf("replaced atomic file = %q", atomicRaw)
+	}
+	durablePath := filepath.Join(root, "durable.json")
+	if err := writeOwnerOnlyDurableAtomicFile(durablePath, []byte("{\"version\":1}"), true); err != nil {
+		t.Fatalf("write durable file: %v", err)
+	}
+	if err := writeOwnerOnlyDurableAtomicFile(durablePath, []byte("{\"version\":2}"), true); err != nil {
+		t.Fatalf("replace durable file: %v", err)
+	}
+	durableRaw, err := os.ReadFile(durablePath)
+	if err != nil {
+		t.Fatalf("read replaced durable file: %v", err)
+	}
+	if string(durableRaw) != "{\"version\":2}" {
+		t.Fatalf("replaced durable file = %q", durableRaw)
+	}
 	file, err := openOwnerOnlyAppend(appendPath, true)
 	if err != nil {
 		t.Fatal(err)
@@ -176,6 +345,7 @@ func TestOwnerOnlyAtomicAndAppendWrites(t *testing.T) {
 	}
 	assertMode(t, root, 0o700)
 	assertMode(t, atomicPath, 0o600)
+	assertMode(t, durablePath, 0o600)
 	assertMode(t, appendPath, 0o600)
 }
 

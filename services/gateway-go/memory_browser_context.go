@@ -162,7 +162,7 @@ func (s *server) memoryBrowserContext(w http.ResponseWriter, r *http.Request) {
 		response map[string]any
 		status   int
 	)
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+	if s.memoryStore != nil && s.memoryStore.isEnabled() {
 		entry, deduped, storeErr := s.memoryStore.put(normalizedWrite{
 			project:   projectName,
 			fileName:  fileName,

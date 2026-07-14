@@ -203,8 +203,9 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	contextPassportStatus := s.contextPassports.snapshot()
 	contextMeshStatus := s.contextMesh.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"timestamp": nowUTCISO(),
+		"ok":          true,
+		"timestamp":   nowUTCISO(),
+		"memoryStore": s.memoryStore.migrationSnapshot(),
 		"telemetry": map[string]any{
 			"queueDepth":              queueDepth,
 			"batchSize":               batchSize,
