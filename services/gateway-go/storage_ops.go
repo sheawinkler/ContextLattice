@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -419,12 +418,10 @@ func diskUsageSnapshot(root string) (map[string]any, error) {
 	if cleanRoot == "" {
 		cleanRoot = "."
 	}
-	var fs syscall.Statfs_t
-	if err := syscall.Statfs(cleanRoot, &fs); err != nil {
+	total, free, storageDriver, err := diskUsageBytes(cleanRoot)
+	if err != nil {
 		return nil, err
 	}
-	total := fs.Blocks * uint64(fs.Bsize)
-	free := fs.Bavail * uint64(fs.Bsize)
 	used := total - free
 	usedRatio := 0.0
 	if total > 0 {
@@ -440,7 +437,7 @@ func diskUsageSnapshot(root string) (map[string]any, error) {
 		"usedHuman":     humanizeBytes(int64(used)),
 		"capturedAt":    time.Now().UTC().Format(time.RFC3339),
 		"platform":      runtimePlatform(),
-		"storageDriver": "statfs",
+		"storageDriver": storageDriver,
 	}, nil
 }
 
