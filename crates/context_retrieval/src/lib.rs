@@ -461,11 +461,13 @@ pub mod usearch_ann {
             if dimensions == 0 {
                 return Err(anyhow!("dimensions must be > 0"));
             }
-            let mut options = IndexOptions::default();
-            options.dimensions = dimensions;
-            options.metric = MetricKind::Cos;
-            options.quantization = ScalarKind::F32;
-            options.multi = false;
+            let options = IndexOptions {
+                dimensions,
+                metric: MetricKind::Cos,
+                quantization: ScalarKind::F32,
+                multi: false,
+                ..Default::default()
+            };
             let index = Index::new(&options).context("create usearch index")?;
             Ok(Self {
                 index,
