@@ -25,6 +25,7 @@ ENV_PATHS = (
     Path(".env.example"),
     Path("config/env/premium_dev.env"),
     Path("config/env/premium_prod.env"),
+    Path("config/env/strict_runtime.env"),
     Path("contextlattice-dashboard/.env.example"),
 )
 
