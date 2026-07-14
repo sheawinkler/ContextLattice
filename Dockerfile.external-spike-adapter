@@ -10,6 +10,7 @@ COPY services/external_spike_adapter/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/external_spike_adapter/app.py app.py
+COPY services/external_spike_adapter/exact_state.py exact_state.py
 
 ENV PORT=8098
 EXPOSE 8098

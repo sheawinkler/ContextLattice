@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -264,9 +264,21 @@ struct MemoryDoc {
     summary: String,
 }
 
+const EXACT_STATE_INDEX_SCHEMA_ID: &str = "contextlattice_exact_state_index.v1";
+const EXACT_STATE_INDEX_MAX_PATHS: usize = 100_000;
+const EXACT_STATE_SOURCE_OVERFETCH_RESERVE: usize = 8;
+
+#[derive(Deserialize)]
+struct ExactStateIndex {
+    schema_id: String,
+    #[serde(default)]
+    paths: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 struct DocSnapshot {
     docs: Arc<Vec<MemoryDoc>>,
+    exact_state_paths: Arc<HashSet<String>>,
     fingerprint: u64,
     refreshed_at: Instant,
     refreshed_at_unix_secs: u64,
@@ -276,6 +288,7 @@ impl Default for DocSnapshot {
     fn default() -> Self {
         Self {
             docs: Arc::new(Vec::new()),
+            exact_state_paths: Arc::new(HashSet::new()),
             fingerprint: 0,
             refreshed_at: Instant::now() - Duration::from_secs(3600),
             refreshed_at_unix_secs: 0,
@@ -340,6 +353,7 @@ struct HealthResponse {
     meili_task_timeout_secs: u64,
     external_timeout_secs: u64,
     external_timeout_secs_icm: u64,
+    exact_state_paths: usize,
     external_backends: HashMap<String, bool>,
 }
 
@@ -364,6 +378,8 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::from_env();
+    load_exact_state_paths(&cfg.data_root)
+        .context("validate exact-state registry before serving")?;
     let mongo_client = if cfg.source_mode.use_mongo() {
         match MongoClient::with_uri_str(cfg.mongo_uri.clone()).await {
             Ok(client) => Some(client),
@@ -422,6 +438,19 @@ async fn main() -> Result<()> {
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let exact_state_paths = match load_exact_state_paths(&state.cfg.data_root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            warn!(error = %err, "exact-state registry is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: format!("exact-state registry unavailable: {err}"),
+                }),
+            )
+                .into_response();
+        }
+    };
     let snapshot = state.docs.read().await.clone();
     let mut external_backends: HashMap<String, bool> = HashMap::new();
     external_backends.insert(
@@ -476,9 +505,10 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         meili_task_timeout_secs: state.cfg.meili_task_timeout_secs,
         external_timeout_secs: state.cfg.external_timeout_secs,
         external_timeout_secs_icm: state.cfg.external_timeout_secs_icm,
+        exact_state_paths: exact_state_paths.len(),
         external_backends,
     };
-    (StatusCode::OK, Json(payload))
+    (StatusCode::OK, Json(payload)).into_response()
 }
 
 async fn search(
@@ -497,6 +527,20 @@ async fn search(
     }
     let backend = normalize_backend(req.backend.as_deref().unwrap_or("tantivy_spike"));
     let limit = req.limit.clamp(1, 100);
+    let selection_exact_state_paths = match load_exact_state_paths(&state.cfg.data_root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            warn!(error = %err, "exact-state registry is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: format!("exact-state registry unavailable: {err}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+    let source_limit = exact_state_candidate_limit(limit, selection_exact_state_paths.len());
     let project_filter = req
         .project
         .as_deref()
@@ -508,7 +552,6 @@ async fn search(
         .map(str::trim)
         .map(normalize_topic)
         .filter(|s| !s.is_empty());
-
     let snapshot = match ensure_snapshot(&state).await {
         Ok(snapshot) => snapshot,
         Err(err) => {
@@ -529,7 +572,7 @@ async fn search(
                 &state,
                 &snapshot,
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -540,7 +583,7 @@ async fn search(
                 &state,
                 &snapshot,
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -551,7 +594,7 @@ async fn search(
                 &state,
                 backend.as_str(),
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -562,7 +605,7 @@ async fn search(
                 &state,
                 &snapshot,
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -571,7 +614,24 @@ async fn search(
     };
 
     match search_result {
-        Ok(results) => {
+        Ok(mut results) => {
+            let exact_state_paths = match load_exact_state_paths(&state.cfg.data_root) {
+                Ok(paths) => paths,
+                Err(err) => {
+                    warn!(error = %err, "exact-state registry is unavailable");
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(ErrorResponse {
+                            error: format!("exact-state registry unavailable: {err}"),
+                        }),
+                    )
+                        .into_response();
+                }
+            };
+            results.retain(|row| {
+                !should_suppress_exact_state_path(&exact_state_paths, &row.project, &row.file)
+            });
+            results.truncate(limit);
             let response = SearchResponse {
                 backend,
                 results,
@@ -623,6 +683,7 @@ async fn ensure_snapshot(state: &AppState) -> Result<DocSnapshot> {
 
 async fn build_docs_snapshot(state: &AppState) -> Result<DocSnapshot> {
     let cfg = state.cfg.clone();
+    let exact_state_paths = Arc::new(load_exact_state_paths(&cfg.data_root)?);
     let mut docs: Vec<MemoryDoc> = Vec::new();
     let mut seen_ids: HashSet<String> = HashSet::new();
     let mut latest_mtime: u64 = 0;
@@ -632,7 +693,7 @@ async fn build_docs_snapshot(state: &AppState) -> Result<DocSnapshot> {
     let mut mongo_doc_count = 0usize;
 
     if cfg.source_mode.use_mongo() {
-        match load_docs_snapshot_mongo(state).await {
+        match load_docs_snapshot_mongo(state, exact_state_paths.as_ref()).await {
             Ok((mongo_docs, mongo_scanned, mongo_bytes, mongo_latest)) => {
                 mongo_loaded = true;
                 mongo_doc_count = mongo_docs.len();
@@ -656,22 +717,21 @@ async fn build_docs_snapshot(state: &AppState) -> Result<DocSnapshot> {
         }
     }
 
-    let should_load_files = if cfg.source_mode == SnapshotSourceMode::File {
-        true
-    } else if cfg.source_mode == SnapshotSourceMode::Hybrid {
-        true
-    } else if cfg.source_mode.is_mongo_first() {
-        !mongo_loaded || mongo_doc_count == 0
-    } else {
-        false
-    };
+    let should_load_files = matches!(
+        cfg.source_mode,
+        SnapshotSourceMode::File | SnapshotSourceMode::Hybrid
+    ) || (cfg.source_mode.is_mongo_first()
+        && (!mongo_loaded || mongo_doc_count == 0));
 
     if should_load_files {
         let cfg_for_files = cfg.clone();
+        let exact_state_paths_for_files = Arc::clone(&exact_state_paths);
         let (file_docs, file_scanned, file_total_bytes, file_latest_mtime) =
-            tokio::task::spawn_blocking(move || load_docs_snapshot_files(&cfg_for_files))
-                .await
-                .context("join file document loader")??;
+            tokio::task::spawn_blocking(move || {
+                load_docs_snapshot_files(&cfg_for_files, exact_state_paths_for_files.as_ref())
+            })
+            .await
+            .context("join file document loader")??;
         for row in file_docs {
             if seen_ids.insert(row.id.clone()) {
                 docs.push(row);
@@ -693,6 +753,14 @@ async fn build_docs_snapshot(state: &AppState) -> Result<DocSnapshot> {
     fingerprint = fingerprint.wrapping_mul(1099511628211);
     fingerprint ^= total_bytes;
     fingerprint = fingerprint.wrapping_mul(1099511628211);
+    let mut exact_state_keys: Vec<&String> = exact_state_paths.iter().collect();
+    exact_state_keys.sort_unstable();
+    for key in exact_state_keys {
+        for byte in key.as_bytes() {
+            fingerprint ^= u64::from(*byte);
+            fingerprint = fingerprint.wrapping_mul(1099511628211);
+        }
+    }
 
     let refreshed_at_unix_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -711,13 +779,17 @@ async fn build_docs_snapshot(state: &AppState) -> Result<DocSnapshot> {
 
     Ok(DocSnapshot {
         docs: Arc::new(docs),
+        exact_state_paths,
         fingerprint,
         refreshed_at: Instant::now(),
         refreshed_at_unix_secs,
     })
 }
 
-fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64, u64)> {
+fn load_docs_snapshot_files(
+    cfg: &Config,
+    exact_state_paths: &HashSet<String>,
+) -> Result<(Vec<MemoryDoc>, usize, u64, u64)> {
     let root = cfg.data_root.clone();
     if !root.exists() {
         return Ok((Vec::new(), 0, 0, 0));
@@ -731,6 +803,13 @@ fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64,
     for entry in WalkDir::new(&root)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 || !entry.file_type().is_dir() {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            !name.starts_with('.') && !name.eq_ignore_ascii_case("_contextlattice")
+        })
         .filter_map(|row| row.ok())
     {
         if !entry.file_type().is_file() {
@@ -750,7 +829,7 @@ fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64,
             Some(c) => c.as_os_str().to_string_lossy().to_string(),
             None => continue,
         };
-        if project.is_empty() {
+        if project.is_empty() || project.starts_with('_') {
             continue;
         }
         let file = rel
@@ -760,6 +839,10 @@ fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64,
             .collect::<Vec<_>>()
             .join("/");
         if file.is_empty() {
+            continue;
+        }
+        let id = format!("{project}::{file}");
+        if exact_state_paths.contains(&id.to_lowercase()) {
             continue;
         }
         let bytes = match fs::read(&path) {
@@ -776,7 +859,6 @@ fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64,
             continue;
         }
         let topic_path = derive_topic_path(&file);
-        let id = format!("{project}::{file}");
         if let Ok(meta) = fs::metadata(&path) {
             if let Ok(modified) = meta.modified() {
                 if let Ok(secs) = modified.duration_since(UNIX_EPOCH) {
@@ -796,7 +878,10 @@ fn load_docs_snapshot_files(cfg: &Config) -> Result<(Vec<MemoryDoc>, usize, u64,
     Ok((docs, scanned, total_bytes, latest_mtime))
 }
 
-async fn load_docs_snapshot_mongo(state: &AppState) -> Result<(Vec<MemoryDoc>, usize, u64, u64)> {
+async fn load_docs_snapshot_mongo(
+    state: &AppState,
+    exact_state_paths: &HashSet<String>,
+) -> Result<(Vec<MemoryDoc>, usize, u64, u64)> {
     let cfg = &state.cfg;
     let client = state
         .mongo_client
@@ -842,12 +927,16 @@ async fn load_docs_snapshot_mongo(state: &AppState) -> Result<(Vec<MemoryDoc>, u
             }
 
             let project = first_doc_string(&doc, &["project"]);
-            if project.is_empty() {
+            if project.is_empty() || project.starts_with('_') {
                 continue;
             }
 
             let file = first_doc_string(&doc, &["file", "file_name"]);
             if file.is_empty() {
+                continue;
+            }
+            let id = format!("{project}::{file}");
+            if exact_state_paths.contains(&id.to_lowercase()) {
                 continue;
             }
 
@@ -868,7 +957,6 @@ async fn load_docs_snapshot_mongo(state: &AppState) -> Result<(Vec<MemoryDoc>, u
             if topic_path.is_empty() {
                 topic_path = derive_topic_path(&file);
             }
-            let id = format!("{project}::{file}");
             if !seen_ids.insert(id.clone()) {
                 continue;
             }
@@ -954,36 +1042,34 @@ async fn tantivy_search(
 ) -> Result<Vec<SearchResult>> {
     {
         let cache = state.tantivy.read().await;
-        if cache.fingerprint == snapshot.fingerprint
-            && cache.index.is_some()
-            && cache.schema.is_some()
-        {
-            return run_tantivy_query(
-                cache.index.as_ref().expect("checked index"),
-                cache.schema.as_ref().expect("checked schema"),
-                query,
-                limit,
-                project_filter,
-                topic_filter,
-            );
+        if cache.fingerprint == snapshot.fingerprint {
+            if let (Some(index), Some(schema)) = (cache.index.as_ref(), cache.schema.as_ref()) {
+                return run_tantivy_query(
+                    index,
+                    schema,
+                    query,
+                    limit,
+                    project_filter,
+                    topic_filter,
+                );
+            }
         }
     }
 
     let _guard = state.tantivy_build_lock.lock().await;
     {
         let cache = state.tantivy.read().await;
-        if cache.fingerprint == snapshot.fingerprint
-            && cache.index.is_some()
-            && cache.schema.is_some()
-        {
-            return run_tantivy_query(
-                cache.index.as_ref().expect("checked index"),
-                cache.schema.as_ref().expect("checked schema"),
-                query,
-                limit,
-                project_filter,
-                topic_filter,
-            );
+        if cache.fingerprint == snapshot.fingerprint {
+            if let (Some(index), Some(schema)) = (cache.index.as_ref(), cache.schema.as_ref()) {
+                return run_tantivy_query(
+                    index,
+                    schema,
+                    query,
+                    limit,
+                    project_filter,
+                    topic_filter,
+                );
+            }
         }
     }
 
@@ -1537,6 +1623,36 @@ async fn ensure_meili_synced(state: &AppState, snapshot: &DocSnapshot) -> Result
         wait_for_meili_task(state, task_uid, "set filterable attributes").await?;
     }
 
+    let mut exact_state_document_ids: Vec<String> = snapshot
+        .exact_state_paths
+        .iter()
+        .map(|path| meili_document_id(path))
+        .collect();
+    exact_state_document_ids.sort_unstable();
+    for document_ids in exact_state_document_ids.chunks(1000) {
+        let delete_url = format!(
+            "{}/indexes/{}/documents/delete-batch",
+            state.cfg.meili_url.trim_end_matches('/'),
+            state.cfg.meili_index_uid
+        );
+        let mut delete_req = state.client.post(delete_url).json(document_ids);
+        if !state.cfg.meili_api_key.is_empty() {
+            delete_req = delete_req.header(
+                "Authorization",
+                format!("Bearer {}", state.cfg.meili_api_key),
+            );
+        }
+        let delete_resp = delete_req
+            .send()
+            .await
+            .context("delete exact-state docs from meili request")?;
+        let delete_task_uid =
+            parse_meili_task_uid(delete_resp, "delete exact-state documents").await?;
+        if let Some(task_uid) = delete_task_uid {
+            wait_for_meili_task(state, task_uid, "delete exact-state documents").await?;
+        }
+    }
+
     let docs_url = format!(
         "{}/indexes/{}/documents",
         state.cfg.meili_url.trim_end_matches('/'),
@@ -1740,6 +1856,74 @@ fn normalize_text(input: &str) -> String {
     out.trim().to_string()
 }
 
+fn load_exact_state_paths(data_root: &Path) -> Result<HashSet<String>> {
+    let configured = env_string("MB_SPIKE_EXACT_STATE_INDEX_PATH", "");
+    let path = if configured.trim().is_empty() {
+        data_root
+            .join("_contextlattice")
+            .join("exact_state_paths.json")
+    } else {
+        PathBuf::from(configured.trim())
+    };
+    read_exact_state_paths(&path)
+}
+
+fn read_exact_state_paths(path: &Path) -> Result<HashSet<String>> {
+    let raw = fs::read(path).context("read exact-state registry")?;
+    parse_exact_state_paths(&raw)
+}
+
+fn canonical_exact_state_file_name(file_name: &str) -> Option<String> {
+    let normalized = file_name.trim().replace('\\', "/").to_lowercase();
+    if normalized.is_empty() || normalized.starts_with('/') || normalized.contains("::") {
+        return None;
+    }
+    let mut segments = Vec::new();
+    for segment in normalized.split('/') {
+        let token = segment.trim();
+        match token {
+            "" | "." => continue,
+            ".." => return None,
+            _ => segments.push(token),
+        }
+    }
+    (!segments.is_empty()).then(|| segments.join("/"))
+}
+
+fn parse_exact_state_paths(raw: &[u8]) -> Result<HashSet<String>> {
+    let index: ExactStateIndex =
+        serde_json::from_slice(raw).context("parse exact-state registry")?;
+    if index.schema_id != EXACT_STATE_INDEX_SCHEMA_ID {
+        bail!("exact-state registry schema mismatch");
+    }
+    if index.paths.len() > EXACT_STATE_INDEX_MAX_PATHS {
+        bail!("exact-state registry exceeds bounded path limit");
+    }
+    let mut paths = HashSet::with_capacity(index.paths.len());
+    for value in index.paths {
+        let normalized = value.trim().to_lowercase();
+        if normalized.matches("::").count() != 1 {
+            bail!("exact-state registry contains an invalid path key");
+        }
+        let Some((project, file_name)) = normalized.split_once("::") else {
+            bail!("exact-state registry contains an invalid path key");
+        };
+        let Some(canonical_file) = canonical_exact_state_file_name(file_name) else {
+            bail!("exact-state registry contains an invalid path key");
+        };
+        if project.is_empty()
+            || project.starts_with('_')
+            || project.contains('/')
+            || project.contains('\\')
+            || matches!(project, "." | "..")
+        {
+            bail!("exact-state registry contains an invalid path key");
+        }
+        paths.insert(format!("{project}::{canonical_file}"));
+    }
+    Ok(paths)
+}
+
 fn tokenize(input: &str) -> Vec<String> {
     let mut cleaned = String::with_capacity(input.len());
     for ch in normalize_text(input).chars() {
@@ -1778,6 +1962,35 @@ fn derive_topic_path(file_path: &str) -> String {
     } else {
         topic
     }
+}
+
+fn should_suppress_exact_state_path(
+    paths: &HashSet<String>,
+    project: &str,
+    file_name: &str,
+) -> bool {
+    let normalized_project = project.trim().to_lowercase();
+    if normalized_project.is_empty()
+        || normalized_project.starts_with('_')
+        || normalized_project.contains('/')
+        || normalized_project.contains('\\')
+        || normalized_project.contains("::")
+        || matches!(normalized_project.as_str(), "." | "..")
+    {
+        return true;
+    }
+
+    let Some(normalized_file) = canonical_exact_state_file_name(file_name) else {
+        return true;
+    };
+    paths.contains(&format!("{normalized_project}::{normalized_file}"))
+}
+
+fn exact_state_candidate_limit(requested: usize, exact_state_count: usize) -> usize {
+    requested
+        .saturating_add(exact_state_count)
+        .saturating_add(EXACT_STATE_SOURCE_OVERFETCH_RESERVE)
+        .clamp(requested, 100)
 }
 
 fn matches_project_topic(
@@ -1823,4 +2036,127 @@ fn env_usize(key: &str, default: usize) -> usize {
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_state_registry_is_bounded_and_case_normalized() {
+        let paths = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["Project::Runtime/State.JSON"]}"#,
+        )
+        .expect("valid registry");
+        assert!(paths.contains("project::runtime/state.json"));
+        let spaced = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["Project:: Runtime / State.JSON "]}"#,
+        )
+        .expect("canonical spaced registry");
+        assert!(spaced.contains("project::runtime/state.json"));
+
+        let err = parse_exact_state_paths(br#"{"schema_id":"other.v1","paths":[]}"#)
+            .expect_err("schema mismatch must fail closed");
+        assert!(err.to_string().contains("schema mismatch"));
+
+        let err = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["missing-separator"]}"#,
+        )
+        .expect_err("invalid path key must fail closed");
+        assert!(err.to_string().contains("invalid path key"));
+
+        let err = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["project::runtime::state.json"]}"#,
+        )
+        .expect_err("extra separators must fail closed");
+        assert!(err.to_string().contains("invalid path key"));
+    }
+
+    #[test]
+    fn missing_exact_state_registry_fails_closed() {
+        let missing = env::temp_dir().join(format!(
+            "contextlattice-missing-memory-spike-registry-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        let err = read_exact_state_paths(&missing).expect_err("missing registry must fail closed");
+        assert!(err.to_string().contains("read exact-state registry"));
+    }
+
+    #[test]
+    fn file_snapshot_excludes_registered_exact_state() {
+        let root = env::temp_dir().join(format!(
+            "contextlattice-memory-spike-exact-state-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("project/runtime")).expect("project directory");
+        fs::write(root.join("project/runtime/state.json"), "current state").expect("state write");
+        fs::write(root.join("project/learning.md"), "durable learning").expect("learning write");
+        let exact_state_paths = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["project::runtime/state.json"]}"#,
+        )
+        .expect("valid registry");
+
+        let mut cfg = Config::from_env();
+        cfg.data_root = root.clone();
+        let (docs, _, _, _) =
+            load_docs_snapshot_files(&cfg, &exact_state_paths).expect("file snapshot");
+        assert_eq!(docs.len(), 1);
+        assert!(docs.iter().any(|row| row.file == "learning.md"));
+        assert!(!docs.iter().any(|row| row.file == "runtime/state.json"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn external_rows_exclude_registered_and_unsafe_state_paths() {
+        let paths = HashSet::from(["project::runtime/state.json".to_string()]);
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "PROJECT",
+            "runtime\\state.json"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "runtime//./state.json"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            " runtime / state.json "
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "runtime/../state.json"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project::alias",
+            "learning.md"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "runtime::state.json"
+        ));
+        assert!(!should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "learning.md"
+        ));
+    }
+
+    #[test]
+    fn exact_state_candidate_limit_is_bounded_and_preserves_requested_limit() {
+        assert_eq!(exact_state_candidate_limit(10, 2), 20);
+        assert_eq!(exact_state_candidate_limit(100, 50_000), 100);
+    }
 }

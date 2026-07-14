@@ -571,7 +571,7 @@ func (s *server) captureObjectiveContextDatapoint(
 		result["reason"] = "missing_objective_context"
 		return result, nil
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		result["reason"] = "memory_store_unavailable"
 		return result, nil
 	}

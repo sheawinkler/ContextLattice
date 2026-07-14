@@ -13,13 +13,31 @@ import lancedb
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from exact_state import ExactStateRegistryError, is_exact_state_path, load_exact_state_paths
+
 
 PORT = int(os.getenv("PORT", "8097"))
 DATA_ROOT = Path(os.getenv("LANCEDB_SPIKE_DATA_ROOT", "/data/memory-bank"))
 DB_URI = os.getenv("LANCEDB_SPIKE_DB_URI", "/data/lancedb_spike")
+EXACT_STATE_INDEX_PATH = Path(
+    os.getenv(
+        "SPIKE_EXACT_STATE_INDEX_PATH",
+        str(DATA_ROOT / "_contextlattice" / "exact_state_paths.json"),
+    )
+)
+CONTENT_BLOBS_PATH = Path(
+    os.getenv(
+        "LANCEDB_SPIKE_CONTENT_BLOBS_PATH",
+        os.getenv(
+            "GO_MEMORY_STORE_CONTENT_BLOBS_PATH",
+            str(DATA_ROOT / "_contextlattice" / "content_blobs"),
+        ),
+    )
+)
 TABLE_NAME = os.getenv("LANCEDB_SPIKE_TABLE", "memory_bank")
 REFRESH_SECS = max(5, int(os.getenv("LANCEDB_SPIKE_REFRESH_SECS", "120")))
 MAX_DOCS = max(100, int(os.getenv("LANCEDB_SPIKE_MAX_DOCS", "50000")))
+EXACT_STATE_CANDIDATE_MAX = min(MAX_DOCS, 512)
 MAX_CONTENT_CHARS = max(512, int(os.getenv("LANCEDB_SPIKE_MAX_CONTENT_CHARS", "4096")))
 
 
@@ -77,12 +95,75 @@ def _normalize_text(raw: str) -> str:
     return collapsed.strip()
 
 
-def _scan_docs() -> tuple[list[dict[str, Any]], str]:
-    if not DATA_ROOT.exists():
-        return [], "missing-root"
+def _resolved_scan_target(
+    path: Path,
+    root_resolved: Path,
+    registry_resolved: Path,
+    content_blobs_resolved: Path | None,
+    exact_state_paths: set[str],
+) -> Path | None:
+    try:
+        target = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if target == registry_resolved:
+        return None
+    if target != path.absolute():
+        if content_blobs_resolved is None:
+            return None
+        try:
+            target.relative_to(content_blobs_resolved)
+        except ValueError:
+            return None
+        return target
+    try:
+        target_rel = target.relative_to(root_resolved)
+    except ValueError:
+        if content_blobs_resolved is None:
+            return None
+        try:
+            target.relative_to(content_blobs_resolved)
+        except ValueError:
+            return None
+        return target
 
+    parts = target_rel.parts
+    if len(parts) < 2:
+        return None
+    if parts[0].lower() == "_contextlattice":
+        if content_blobs_resolved is None:
+            return None
+        try:
+            target.relative_to(content_blobs_resolved)
+        except ValueError:
+            return None
+        return target
+    project = (parts[0] or "").strip()
+    file_name = Path(*parts[1:]).as_posix().strip()
+    if is_exact_state_path(exact_state_paths, project, file_name):
+        return None
+    return target
+
+
+def _scan_docs() -> tuple[list[dict[str, Any]], str]:
+    if DATA_ROOT.is_symlink():
+        raise RuntimeError("memory data root must not be a symlink")
+    if not DATA_ROOT.exists():
+        raise RuntimeError("memory data root is missing")
+
+    exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    try:
+        root_resolved = DATA_ROOT.resolve(strict=True)
+        registry_resolved = EXACT_STATE_INDEX_PATH.resolve(strict=True)
+        content_blobs_resolved = (
+            CONTENT_BLOBS_PATH.resolve(strict=True) if CONTENT_BLOBS_PATH.exists() else None
+        )
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"resolve memory scan boundary: {exc}") from exc
     docs: list[dict[str, Any]] = []
     digest = hashlib.sha256()
+    for key in sorted(exact_state_paths):
+        digest.update(key.encode("utf-8", errors="ignore"))
     scanned = 0
     for path in DATA_ROOT.rglob("*"):
         if not path.is_file():
@@ -101,8 +182,19 @@ def _scan_docs() -> tuple[list[dict[str, Any]], str]:
         file_name = Path(*parts[1:]).as_posix().strip()
         if not project or not file_name:
             continue
+        if is_exact_state_path(exact_state_paths, project, file_name):
+            continue
+        target = _resolved_scan_target(
+            path,
+            root_resolved,
+            registry_resolved,
+            content_blobs_resolved,
+            exact_state_paths,
+        )
+        if target is None:
+            continue
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = target.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
         summary = _normalize_text(text)
@@ -120,7 +212,7 @@ def _scan_docs() -> tuple[list[dict[str, Any]], str]:
             "text": f"{file_name} {topic_path} {summary}",
         }
         digest.update(record["id"].encode("utf-8", errors="ignore"))
-        digest.update(str(path.stat().st_mtime_ns).encode("utf-8", errors="ignore"))
+        digest.update(str(target.stat().st_mtime_ns).encode("utf-8", errors="ignore"))
         docs.append(record)
     digest.update(str(scanned).encode("utf-8", errors="ignore"))
     return docs, digest.hexdigest()
@@ -277,7 +369,7 @@ def _lancedb_search(query: str, limit: int) -> list[dict[str, Any]]:
     table = _state.get("table")
     if table is None:
         return []
-    fetch = max(limit * 5, 50)
+    fetch = min(MAX_DOCS, max(limit * 5, 50))
     try:
         try:
             search_builder = table.search(query, query_type="fts")
@@ -295,7 +387,17 @@ def _lancedb_search(query: str, limit: int) -> list[dict[str, Any]]:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    try:
+        exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     _trigger_refresh(force=False, wait=False)
+    last_error = _state.get("last_error")
+    ready_snapshot = bool(_state.get("fingerprint")) and int(
+        _state.get("last_refresh_unix_secs") or 0
+    ) > 0
+    if last_error and not ready_snapshot:
+        raise HTTPException(status_code=503, detail=f"lancedb refresh unavailable: {last_error}")
     return {
         "ok": True,
         "docs_loaded": int(_state.get("docs_loaded") or 0),
@@ -306,7 +408,9 @@ def health() -> dict[str, Any]:
         "data_root": str(DATA_ROOT),
         "db_uri": str(DB_URI),
         "table_name": TABLE_NAME,
-        "last_error": _state.get("last_error"),
+        "exact_state_paths": len(exact_state_paths),
+        "degraded": bool(last_error),
+        "last_error": last_error,
     }
 
 
@@ -316,32 +420,57 @@ def search(req: SearchRequest) -> SearchResponse:
     if not query:
         raise HTTPException(status_code=422, detail="query is required")
     _trigger_refresh(force=False, wait=False)
-    rows = _lancedb_search(query, req.limit)
+    try:
+        selection_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    candidate_limit = min(EXACT_STATE_CANDIDATE_MAX, req.limit + len(selection_paths))
+    rows = _lancedb_search(query, candidate_limit)
+    try:
+        exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     project_filter = (req.project or "").strip().lower()
     topic_filter = _normalize_topic(req.topic_path or "")
-    out: list[SearchResult] = []
-    for row in rows:
-        project = str(row.get("project") or "").strip()
-        file_name = str(row.get("file") or row.get("path") or "").strip()
-        summary = _normalize_text(str(row.get("summary") or row.get("text") or row.get("content") or ""))
-        topic_path = _normalize_topic(str(row.get("topic_path") or row.get("topic") or _derive_topic_path(file_name)))
-        if project_filter and project.lower() != project_filter:
-            continue
-        if topic_filter and not topic_path.startswith(topic_filter):
-            continue
-        if not project or not file_name or not summary:
-            continue
-        out.append(
-            SearchResult(
-                project=project,
-                file=file_name,
-                summary=summary,
-                score=_coerce_score(row),
-                topic_path=topic_path or "general",
+    def select(candidate_rows: list[dict[str, Any]], exact_paths: set[str]) -> list[SearchResult]:
+        selected: list[SearchResult] = []
+        for row in candidate_rows:
+            project = str(row.get("project") or "").strip()
+            file_name = str(row.get("file") or row.get("path") or "").strip()
+            summary = _normalize_text(str(row.get("summary") or row.get("text") or row.get("content") or ""))
+            topic_path = _normalize_topic(
+                str(row.get("topic_path") or row.get("topic") or _derive_topic_path(file_name))
             )
-        )
-        if len(out) >= req.limit:
-            break
+            if project_filter and project.lower() != project_filter:
+                continue
+            if topic_filter and not topic_path.startswith(topic_filter):
+                continue
+            if not project or not file_name or not summary:
+                continue
+            if is_exact_state_path(exact_paths, project, file_name):
+                continue
+            selected.append(
+                SearchResult(
+                    project=project,
+                    file=file_name,
+                    summary=summary,
+                    score=_coerce_score(row),
+                    topic_path=topic_path or "general",
+                )
+            )
+            if len(selected) >= req.limit:
+                break
+        return selected
+
+    out = select(rows, exact_state_paths)
+    if len(out) < req.limit and exact_state_paths != selection_paths:
+        candidate_limit = min(EXACT_STATE_CANDIDATE_MAX, req.limit + len(exact_state_paths))
+        rows = _lancedb_search(query, candidate_limit)
+        try:
+            exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+        except ExactStateRegistryError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        out = select(rows, exact_state_paths)
     return SearchResponse(
         backend="lancedb_spike",
         results=out,
@@ -350,13 +479,18 @@ def search(req: SearchRequest) -> SearchResponse:
             "fingerprint": _state.get("fingerprint") or "",
             "fts_enabled": bool(_state.get("fts_enabled")),
             "last_refresh_unix_secs": int(_state.get("last_refresh_unix_secs") or 0),
+            "exact_state_paths": len(exact_state_paths),
         },
     )
 
 
 @app.on_event("startup")
 def startup() -> None:
+    load_exact_state_paths(EXACT_STATE_INDEX_PATH)
     _trigger_refresh(force=True, wait=True)
+    last_error = _state.get("last_error")
+    if last_error:
+        raise RuntimeError(f"lancedb startup refresh failed: {last_error}")
 
 
 if __name__ == "__main__":

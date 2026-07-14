@@ -1249,8 +1249,13 @@ func newServer() *server {
 	}
 	memoryStoreInstance, memoryStoreErr := newMemoryStoreFromEnv()
 	if memoryStoreErr != nil {
-		log.Printf("gateway-go memory store disabled: %v", memoryStoreErr)
-		memoryStoreInstance = &memoryStore{policy: memoryStorePolicy{enabled: false}}
+		log.Printf("gateway-go memory store blocked: code=owner_only_migration_or_initialization_failed")
+		if memoryStoreInstance == nil {
+			memoryStoreInstance = &memoryStore{
+				policy:    memoryStorePolicy{enabled: false},
+				migration: newOwnerOnlyMigrationRuntime("", false),
+			}
+		}
 	}
 	temporalClaimsInstance, temporalClaimsErr := newTemporalClaimStoreFromEnv()
 	if temporalClaimsErr != nil {
@@ -1843,7 +1848,7 @@ func (s *server) toolsMemoryWriteBatch(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareToolHeaders(w, r, "/tools/memory_write_batch"); !ok {
 		return
 	}
-	if s.strictNoPythonRuntime || (s.memoryStore != nil && s.memoryStore.policy.enabled) {
+	if s.strictNoPythonRuntime || (s.memoryStore != nil && s.memoryStore.isEnabled()) {
 		s.handleWriteBatchIngress(w, r, "/tools/memory_write_batch", "/memory/write")
 		return
 	}
@@ -2723,6 +2728,7 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 		"backendUrl":            s.backendURL,
 		"backendHealth":         s.backendHealthy(ctx),
 		"strictNoPythonRuntime": s.strictNoPythonRuntime,
+		"memoryStore":           s.memoryStore.migrationSnapshot(),
 	})
 }
 
@@ -2804,7 +2810,7 @@ func (s *server) strictRuntimeLaneStatus(source string) (string, string, string)
 		}
 		return "healthy", sourceOwnerGoNative, "native adapter enabled"
 	case sourceTopicRollup:
-		if s.memoryStore != nil && s.memoryStore.policy.enabled {
+		if s.memoryStore != nil && s.memoryStore.isEnabled() {
 			return "healthy", sourceOwnerGoNative, "served from go memory store"
 		}
 		return "degraded", sourceOwnerGoNative, "memory store policy is disabled"
@@ -2857,14 +2863,21 @@ func (s *server) strictRuntimeLaneStatus(source string) (string, string, string)
 }
 
 func (s *server) strictRuntimeServices() []map[string]any {
+	memoryStorePhase := "disabled"
+	if s.memoryStore != nil {
+		memoryStorePhase = anyToString(s.memoryStore.migrationSnapshot()["phase"])
+	}
 	rows := []map[string]any{
 		serviceRow("gateway-go", "healthy", sourceOwnerGoNative, "HTTP orchestrator gateway"),
 		serviceRow("memory-store", func() string {
-			if s.memoryStore != nil && s.memoryStore.policy.enabled {
+			if s.memoryStore != nil && s.memoryStore.isEnabled() {
 				return "healthy"
 			}
-			return "degraded"
-		}(), sourceOwnerGoNative, "topic rollups + local graph store"),
+			if memoryStorePhase == "migrating" || memoryStorePhase == "blocked" {
+				return memoryStorePhase
+			}
+			return "disabled"
+		}(), sourceOwnerGoNative, "topic rollups + local graph store; owner-only="+memoryStorePhase),
 		serviceRow("temporal-claim-graph", func() string {
 			if s.temporalClaims != nil && s.temporalClaims.enabled {
 				return "healthy"
@@ -2977,6 +2990,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 			"strictNoPythonRuntime":         true,
 			"sourceOwnershipMode":           s.retrieval.sourceOwnershipMode,
 			"services":                      services,
+			"memoryStore":                   s.memoryStore.migrationSnapshot(),
 			"serviceHealth": map[string]any{
 				"healthy": healthyServiceCount,
 				"total":   len(services),
@@ -3090,14 +3104,16 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 		"strictNoPythonRuntime": s.strictNoPythonRuntime,
 		"memoryStore": map[string]any{
 			"enabled": func() bool {
-				return s.memoryStore != nil && s.memoryStore.policy.enabled
+				return s.memoryStore != nil && s.memoryStore.isEnabled()
 			}(),
-			"rootPath": func() string {
+			"configured": func() bool {
 				if s.memoryStore == nil {
-					return ""
+					return false
 				}
-				return s.memoryStore.policy.rootPath
+				return s.memoryStore.isConfigured()
 			}(),
+			"storeRef":  ownerOnlyStoreRef("memory_store"),
+			"migration": s.memoryStore.migrationSnapshot(),
 		},
 		"retrieval": map[string]any{
 			"stagedEnabled":              s.retrieval.enabled,
@@ -4688,7 +4704,7 @@ func (s *server) queryTopicRollupsSource(
 	projectFilter := strings.TrimSpace(anyToString(baseRequest["project"]))
 	topicFilter := strings.TrimSpace(anyToString(baseRequest["topic_path"]))
 	topics := make([]any, 0)
-	memoryStoreEnabled := s.memoryStore != nil && s.memoryStore.policy.enabled
+	memoryStoreEnabled := s.memoryStore != nil && s.memoryStore.isEnabled()
 	if memoryStoreEnabled {
 		topN := s.retrieval.topicRollupSearchTopN
 		if topN < limit {
@@ -5330,6 +5346,7 @@ func (s *server) runSourceBatch(
 		output.effectiveTimeoutsSecs[normalized] = roundFloat(sourceTimeout.Seconds(), 3)
 		output.adaptiveBudgets[normalized] = adaptiveBudget
 		go func(sourceName string, timeout time.Duration) {
+			sourceRequest := s.exactStateSourceRequest(baseRequest, sourceName)
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
@@ -5371,7 +5388,7 @@ func (s *server) runSourceBatch(
 				rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(
 					sourceCtx,
 					incomingHeaders,
-					baseRequest,
+					cloneAnyMap(sourceRequest),
 					sourceName,
 					explicitSourceOverride,
 				)
@@ -5467,6 +5484,13 @@ func (s *server) runSourceBatch(
 		}
 		if len(result.rows) > 0 {
 			result.rows = s.normalizeSourceRows(result.source, result.rows)
+		}
+		if len(result.rows) > 0 {
+			filteredRows, suppressed := s.filterExactStateRows(result.rows)
+			if suppressed > 0 {
+				result.warnings = append(result.warnings, fmt.Sprintf("suppressed %d exact-state rows from semantic retrieval; use direct memory-file read for current state", suppressed))
+			}
+			result.rows = filteredRows
 		}
 		for _, row := range result.rows {
 			if strings.TrimSpace(anyToString(row["source_owner"])) == "" {
@@ -7120,11 +7144,20 @@ func buildNativeMux(s *server) *http.ServeMux {
 	return mux
 }
 
-func buildMux(s *server) *http.ServeMux {
-	return buildNativeMux(s)
+func buildMux(s *server) http.Handler {
+	mux := buildNativeMux(s)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s != nil && !s.enforceMemoryStoreReadiness(w, r) {
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func main() {
+	if handled, exitCode := runOwnerOnlyMigrationCommand(os.Args, os.Stdout, os.Stderr); handled {
+		os.Exit(exitCode)
+	}
 	port := strings.TrimSpace(os.Getenv("PORT"))
 	if port == "" {
 		port = "8091"

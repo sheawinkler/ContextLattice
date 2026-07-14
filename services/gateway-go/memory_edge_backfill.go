@@ -214,7 +214,7 @@ func (m *memoryStore) memoryEdgeExists(edgeID string) bool {
 }
 
 func (m *memoryStore) memoryBackfillHistoryEntries(maxLines int) []memoryStoreEntry {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return []memoryStoreEntry{}
 	}
 	if maxLines < 1 {
@@ -354,7 +354,7 @@ func memoryEdgeBackfillCandidateEdge(
 }
 
 func (m *memoryStore) deterministicMemoryEdgeBackfill(ctx context.Context, req memoryEdgeBackfillRequest) (map[string]any, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return nil, errors.New("go memory store is disabled")
 	}
 	var storeDocs []memoryStoreDoc
@@ -1115,7 +1115,7 @@ func (s *server) memoryV1EdgesBackfill(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "go memory store is disabled"})
 		return
 	}
@@ -1154,7 +1154,7 @@ func (s *server) maintenanceMemoryGraphPruneVolatile(w http.ResponseWriter, r *h
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "Invalid API key"})
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "go memory store is disabled"})
 		return
 	}

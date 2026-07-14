@@ -82,6 +82,93 @@ func TestWritePolicyDurableTopicDoesNotShieldRawTelemetryArtifact(t *testing.T) 
 	}
 }
 
+func TestWritePolicyDurableRuntimeStateFileOverridesTelemetryPattern(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled: true,
+		telemetryFilePatterns:     []string{"*__state__*.json"},
+		telemetryMarkers:          []string{"__state__"},
+		durableMemoryFilePatterns: []string{"runtime__state__*.json"},
+		durableMemoryFileProjects: []string{"project-*"},
+	}
+	item := normalizedWrite{
+		project:  "project-alpha",
+		fileName: "runtime__state__latest.json",
+		content:  `{"generation":21,"positions":[]}`,
+	}
+	if policy.isTelemetryLike(item) {
+		t.Fatal("expected configured runtime state snapshot to remain durable memory")
+	}
+}
+
+func TestWritePolicyUnlistedRuntimeStateRemainsTelemetry(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled: true,
+		telemetryFilePatterns:     []string{"*__state__*.json"},
+		telemetryMarkers:          []string{"__state__"},
+		durableMemoryFilePatterns: []string{"runtime__state__*.json"},
+		durableMemoryFileProjects: []string{"project-*"},
+	}
+	item := normalizedWrite{
+		project:  "project-alpha",
+		fileName: "discovery__state__latest.json",
+		content:  `{"round":1}`,
+	}
+	if !policy.isTelemetryLike(item) {
+		t.Fatal("expected unlisted runtime state to remain telemetry")
+	}
+}
+
+func TestWritePolicyDurableRuntimeStateRequiresProjectAndFileMatch(t *testing.T) {
+	policy := writeIngressPolicy{
+		telemetryIsolationEnabled: true,
+		telemetryFilePatterns:     []string{"*__state__*.json"},
+		telemetryMarkers:          []string{"__state__"},
+		durableMemoryFilePatterns: []string{"runtime__state__*.json"},
+		durableMemoryFileProjects: []string{"project-*"},
+	}
+	item := normalizedWrite{
+		project:  "unrelated-project",
+		fileName: "runtime__state__latest.json",
+		content:  `{"generation":21}`,
+	}
+	if !policy.isTelemetryLike(item) {
+		t.Fatal("expected a matching filename outside the configured project scope to remain telemetry")
+	}
+	classified := policy.classifyWrite(item)
+	if classified.dataClass != dataClassLearningMemory {
+		t.Fatalf("unexpected data class outside project scope: %q", classified.dataClass)
+	}
+}
+
+func TestWritePolicyRuntimeStateFallbackExcludesHistoricalAndVectorSinks(t *testing.T) {
+	policy := writeIngressPolicy{
+		fanoutExcludeTargets:      []string{"mindsdb"},
+		durableMemoryFilePatterns: []string{"runtime__state__*.json"},
+		durableMemoryFileProjects: []string{"project-*"},
+	}
+	item := policy.classifyWrite(normalizedWrite{
+		project:  "project-alpha",
+		fileName: "runtime__state__latest.json",
+		content:  `{"generation":2}`,
+	})
+	if item.dataClass != dataClassRuntimeStateMirror {
+		t.Fatalf("unexpected data class: %q", item.dataClass)
+	}
+	targets := policy.fanoutExcludeTargetsFor(item)
+	for _, target := range []string{"mongo_raw", "qdrant", "postgres_pgvector", "mindsdb", "letta"} {
+		found := false
+		for _, actual := range targets {
+			if actual == target {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("runtime state fallback did not exclude %q: %#v", target, targets)
+		}
+	}
+}
+
 func TestWritePolicyRequiredValidation(t *testing.T) {
 	policy := writeIngressPolicy{strictRequiredFields: true}
 	if err := policy.validateWrite(normalizedWrite{project: " ", fileName: "x", content: "x"}); err == nil {

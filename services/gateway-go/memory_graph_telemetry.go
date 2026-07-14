@@ -100,7 +100,7 @@ type graphTelemetryNodeStats struct {
 }
 
 func (m *memoryStore) memoryGraphTelemetrySnapshot(ctx context.Context, projectFilter string, includeEphemeral bool, topLimit int, staleInferredAfter time.Time) (graphTelemetrySnapshot, error) {
-	if m == nil || !m.policy.enabled {
+	if m == nil || !m.isEnabled() {
 		return graphTelemetrySnapshot{}, errors.New("go memory store is disabled")
 	}
 	if ctx == nil {
@@ -592,7 +592,7 @@ func (s *server) telemetryMemoryGraphRoute(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.prepareAuthorizedHeaders(w, r); !ok {
 		return
 	}
-	if s.memoryStore == nil || !s.memoryStore.policy.enabled {
+	if s.memoryStore == nil || !s.memoryStore.isEnabled() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "go memory store is disabled"})
 		return
 	}

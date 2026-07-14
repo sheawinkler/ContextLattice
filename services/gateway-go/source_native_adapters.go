@@ -467,6 +467,9 @@ func (s *server) upsertQdrantFromWrite(
 	item normalizedWrite,
 	eventID string,
 ) (string, error) {
+	if status := s.exactStateFanoutSkipStatus(item); status != "" {
+		return status, nil
+	}
 	if !nativeSourceAdapterEnabled(sourceQdrant, true) {
 		return "skipped_adapter_disabled", nil
 	}
@@ -491,6 +494,12 @@ func (s *server) upsertQdrantFromWrite(
 	if err := nativeQdrantEnsureCollection(ctx, s.client, baseURL, collection, len(vector)); err != nil {
 		return "failed_schema", err
 	}
+	guardedItem, releasePath, skipStatus := s.acquireExactStateFanoutPath(item)
+	if skipStatus != "" {
+		return skipStatus, nil
+	}
+	defer releasePath()
+	item = guardedItem
 	summary := strings.TrimSpace(item.content)
 	if summary == "" {
 		summary = item.fileName
@@ -1117,6 +1126,9 @@ func (s *server) upsertPgvectorFromWrite(
 	item normalizedWrite,
 	eventID string,
 ) (string, error) {
+	if status := s.exactStateFanoutSkipStatus(item); status != "" {
+		return status, nil
+	}
 	if !nativeSourceAdapterEnabled(sourcePgvector, true) {
 		return "skipped_adapter_disabled", nil
 	}
@@ -1147,6 +1159,12 @@ func (s *server) upsertPgvectorFromWrite(
 	if err != nil {
 		return "failed_schema_introspect", err
 	}
+	guardedItem, releasePath, skipStatus := s.acquireExactStateFanoutPath(item)
+	if skipStatus != "" {
+		return skipStatus, nil
+	}
+	defer releasePath()
+	item = guardedItem
 	summary := strings.TrimSpace(item.content)
 	if summary == "" {
 		summary = item.fileName

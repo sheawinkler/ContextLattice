@@ -550,7 +550,11 @@ func (s *server) normalizeSourceRows(source string, rows []map[string]any) []map
 			cloned["source_owner"] = sourceOwnerForSource(normalizedSource)
 		}
 		cloned["schema_version"] = sourceRowSchemaVersion
-		cloned["data_class"] = "learning_memory"
+		dataClass := strings.TrimSpace(strings.ToLower(anyToString(cloned["data_class"])))
+		if dataClass != dataClassRuntimeStateMirror {
+			dataClass = dataClassLearningMemory
+		}
+		cloned["data_class"] = dataClass
 		out = append(out, cloned)
 	}
 	return out

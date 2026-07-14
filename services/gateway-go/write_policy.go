@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	dataClassLearningMemory     = "learning_memory"
+	dataClassRuntimeStateMirror = "runtime_state_mirror"
+)
+
 type writeIngressPolicy struct {
 	enabled                    bool
 	strictRequiredFields       bool
@@ -16,6 +21,8 @@ type writeIngressPolicy struct {
 	telemetryFilePatterns      []string
 	telemetryMarkers           []string
 	durableMemoryTopicPrefixes []string
+	durableMemoryFilePatterns  []string
+	durableMemoryFileProjects  []string
 	fanoutExcludeTargets       []string
 	batchConcurrency           int
 }
@@ -30,6 +37,7 @@ type normalizedWrite struct {
 	tags           []string
 	createdAt      string
 	lifecycle      string
+	dataClass      string
 	itemID         string
 	idempotencyKey string
 	raw            map[string]any
@@ -55,6 +63,14 @@ func loadWriteIngressPolicy() writeIngressPolicy {
 		durableMemoryTopicPrefixes: csvLowerListEnv(
 			"GO_WRITE_DURABLE_MEMORY_TOPIC_PREFIXES",
 			"decisions,decision,discoveries,discovery,learnings,learning,ideas,notes,runbooks,architecture,projects,knowledge,handoffs,checkpoints,analysis,findings,plans,objectives,missions,skills",
+		),
+		durableMemoryFilePatterns: csvLowerListEnv(
+			"GO_WRITE_DURABLE_MEMORY_FILE_PATTERNS",
+			"",
+		),
+		durableMemoryFileProjects: csvLowerListEnv(
+			"GO_WRITE_DURABLE_MEMORY_FILE_PROJECT_PATTERNS",
+			"",
 		),
 		fanoutExcludeTargets: normalizeFanoutTargets(
 			csvLowerListEnv("GO_WRITE_FANOUT_EXCLUDE_TARGETS", "mindsdb"),
@@ -247,6 +263,12 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 	if !p.telemetryIsolationEnabled {
 		return false
 	}
+	if item.dataClass == dataClassRuntimeStateMirror {
+		return false
+	}
+	if p.isDurableMemoryFile(item) {
+		return false
+	}
 	normalizedTopic := normalizeTopic(item.topicPath)
 	hardTelemetryFile := p.isHardTelemetryFile(item.fileName)
 	if normalizedTopic != "" && p.isDurableMemoryTopic(normalizedTopic) && !hardTelemetryFile {
@@ -277,6 +299,54 @@ func (p writeIngressPolicy) isTelemetryLike(item normalizedWrite) bool {
 		}
 	}
 	return false
+}
+
+func (p writeIngressPolicy) isDurableMemoryFile(item normalizedWrite) bool {
+	lowerFile := strings.ToLower(strings.TrimSpace(item.fileName))
+	if lowerFile == "" {
+		return false
+	}
+	project := strings.ToLower(strings.TrimSpace(item.project))
+	projectMatched := false
+	for _, pattern := range p.durableMemoryFileProjects {
+		if pattern != "" && (project == pattern || globMatches(pattern, project)) {
+			projectMatched = true
+			break
+		}
+	}
+	if !projectMatched {
+		return false
+	}
+	for _, pattern := range p.durableMemoryFilePatterns {
+		if globMatches(pattern, lowerFile) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p writeIngressPolicy) classifyWrite(item normalizedWrite) normalizedWrite {
+	item.dataClass = dataClassLearningMemory
+	if p.isDurableMemoryFile(item) {
+		item.dataClass = dataClassRuntimeStateMirror
+	}
+	return item
+}
+
+func (s *server) classifyWrite(item normalizedWrite) normalizedWrite {
+	item = s.writePolicy.classifyWrite(item)
+	if s.memoryStore != nil && s.memoryStore.isExactStatePath(item.project, item.fileName) {
+		item.dataClass = dataClassRuntimeStateMirror
+	}
+	return item
+}
+
+func (p writeIngressPolicy) fanoutExcludeTargetsFor(item normalizedWrite) []string {
+	rows := append([]string{}, p.fanoutExcludeTargets...)
+	if item.dataClass == dataClassRuntimeStateMirror {
+		rows = append(rows, "mongo_raw", "qdrant", "postgres_pgvector", "mindsdb", "letta")
+	}
+	return normalizeFanoutTargets(rows)
 }
 
 func (p writeIngressPolicy) isDurableMemoryTopic(normalizedTopic string) bool {

@@ -61,6 +61,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, http.StatusUnprocessableEntity, maybeAttachWritebackContract(path, map[string]any{"ok": false, "error": err.Error()}, item, http.StatusUnprocessableEntity))
 		return
 	}
+	item = s.classifyWrite(item)
 
 	if s.writePolicy.isTelemetryLike(item) {
 		response, status, ingestErr := s.routeTelemetryWrite(r.Context(), item, path)
@@ -78,7 +79,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		writeJSON(w, status, maybeAttachWritebackContract(path, response, item, status))
 		return
 	}
-	if s.memoryStore != nil && s.memoryStore.policy.enabled {
+	if s.memoryStore != nil && s.memoryStore.isEnabled() {
 		entry, deduped, storeErr := s.memoryStore.put(item)
 		if storeErr != nil {
 			writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
@@ -101,10 +102,12 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 			"ok":                    true,
 			"event_id":              entry.EventID,
 			"source":                "go_memory_store",
+			"data_class":            entry.DataClass,
+			"lifecycle":             entry.Lifecycle,
 			"content_hash":          entry.ContentHash,
 			"content_ref":           entry.ContentRef,
 			"warnings":              warnings,
-			"rollup_buffered":       true,
+			"rollup_buffered":       entry.DataClass != dataClassRuntimeStateMirror,
 			"deduped":               deduped,
 			"latest_hash_unchanged": deduped,
 			"fanout":                fanout,
@@ -117,7 +120,7 @@ func (s *server) handleWriteIngress(w http.ResponseWriter, r *http.Request, path
 		}
 	}
 
-	forwardPayload := mergeForwardPayload(path, payload, item, s.writePolicy.fanoutExcludeTargets)
+	forwardPayload := mergeForwardPayload(path, payload, item, s.writePolicy.fanoutExcludeTargetsFor(item))
 	response, status, backendErr := s.callBackendJSON(r.Context(), incomingHeaders, http.MethodPost, path, forwardPayload)
 	if backendErr != nil {
 		writeJSON(w, http.StatusBadGateway, maybeAttachWritebackContract(path, map[string]any{
@@ -208,7 +211,7 @@ func (s *server) handleWriteBatchIngress(
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				item := items[idx]
+				item := s.classifyWrite(items[idx])
 				var row map[string]any
 				ok := false
 				if s.writePolicy.isTelemetryLike(item) {
@@ -242,7 +245,7 @@ func (s *server) handleWriteBatchIngress(
 						ok = true
 					}
 				} else {
-					if s.memoryStore != nil && s.memoryStore.policy.enabled {
+					if s.memoryStore != nil && s.memoryStore.isEnabled() {
 						entry, deduped, storeErr := s.memoryStore.put(item)
 						if storeErr != nil {
 							row = map[string]any{
@@ -259,9 +262,11 @@ func (s *server) handleWriteBatchIngress(
 								"event_id":              entry.EventID,
 								"content_hash":          entry.ContentHash,
 								"content_ref":           entry.ContentRef,
+								"data_class":            entry.DataClass,
+								"lifecycle":             entry.Lifecycle,
 								"warnings":              []string{},
 								"fanout":                map[string]any{"go_memory_store": "succeeded", "python_backend": "disabled"},
-								"rollup_buffered":       true,
+								"rollup_buffered":       entry.DataClass != dataClassRuntimeStateMirror,
 								"deduped":               deduped,
 								"latest_hash_unchanged": deduped,
 								"source":                "go_memory_store",
@@ -291,7 +296,7 @@ func (s *server) handleWriteBatchIngress(
 							resultsMu.Unlock()
 							continue
 						}
-						forwardPayload := buildForwardPayload(singlePath, item, s.writePolicy.fanoutExcludeTargets)
+						forwardPayload := buildForwardPayload(singlePath, item, s.writePolicy.fanoutExcludeTargetsFor(item))
 						response, status, backendErr := s.callBackendJSON(
 							r.Context(),
 							incomingHeaders,
@@ -527,6 +532,12 @@ func cloneNormalizedWriteForAsync(item normalizedWrite) normalizedWrite {
 }
 
 func (s *server) handleNativeVectorWriteFanout(item normalizedWrite, eventID string) (map[string]any, []string) {
+	if item.dataClass == dataClassRuntimeStateMirror || (s.memoryStore != nil && s.memoryStore.isExactStatePath(item.project, item.fileName)) {
+		return map[string]any{
+			sourceQdrant:   "skipped_exact_state_mirror",
+			sourcePgvector: "skipped_exact_state_mirror",
+		}, []string{}
+	}
 	fanout := map[string]any{}
 	warnings := []string{}
 	if status, sourceWarnings := s.handleQdrantWriteFanout(item, eventID); strings.TrimSpace(status) != "" {

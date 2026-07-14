@@ -355,7 +355,7 @@ mod tests {
         let reference = store.put(b"still live").expect("put");
         assert!(store.release(&reference.hash));
         let now = now_ms() + 250;
-        let removed = store.compact_orphans(&[reference.hash.clone()], now);
+        let removed = store.compact_orphans(std::slice::from_ref(&reference.hash), now);
         assert!(removed.is_empty());
         assert_eq!(store.metrics().blobs, 1);
     }

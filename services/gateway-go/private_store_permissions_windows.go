@@ -75,6 +75,12 @@ func enforceOwnerOnlyPermissions(path string, _ os.FileMode) error {
 	return nil
 }
 
+func ownerOnlyPermissionsCompliant(_ string, _ os.FileMode) (bool, error) {
+	// Existing Windows entries must be re-applied and verified because mode bits
+	// do not describe the protected DACL.
+	return false, nil
+}
+
 func ownerOnlyWindowsAccess(sid *windows.SID, trusteeType windows.TRUSTEE_TYPE, inheritance uint32) windows.EXPLICIT_ACCESS {
 	return windows.EXPLICIT_ACCESS{
 		AccessPermissions: windows.ACCESS_MASK(windows.GENERIC_ALL),

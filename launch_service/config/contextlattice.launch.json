@@ -16,7 +16,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.17.4 + release notes + checksums + images",
+      "submission_path": "Tag v3.17.5 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.17.4",
-      "body": "ContextLattice v3.17.4 turns trust into runtime behavior.\n\nHighlights:\n- sensitive local stores migrate to owner-only access with bounded, resumable repair\n- task approval happens before routing, context expansion, inference, adapters, or writeback\n- runner advice requires enough evidence while sparse candidates remain visible\n- default temporal recall excludes retracted claims without erasing history\n- canonical task routes and registered native ownership are enforced by tests\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.17.5",
+      "body": "ContextLattice v3.17.5 makes current state exact.\n\nHighlights:\n- operator-configured runtime mirrors overwrite one current truth instead of accumulating stale semantic memories\n- final retrieval filtering suppresses stale registered state regardless of which backend returns it\n- owner-only migration keeps startup bounded and finishes through one guarded worker\n- semantic readers fail closed when state classification is missing or invalid\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.17.4 is live.\n\nBefore memory gets more magical, its floor gets harder: owner-only stores, approval before work, advice that earns confidence, time-aware recall, and native routes that prove they exist. Same CLI-first engine. Less ambient trust.\n\nStart local-first: {docs_url}"
+      "body": "ContextLattice v3.17.5 makes exact state actually exact.\n\nMemory should compound. State should not. Configured runtime mirrors now keep one exact truth, stale registered copies cannot ghost their way back through retrieval, and owner-only repair no longer taxes startup.\n\nCurrent means current.\n\nStart local-first: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "Today we are launching ContextLattice v3.17.4.\n\nContextLattice is the durable intelligence layer for serious agent systems. Durable intelligence only matters when its foundations are honest.\n\nWhat changed:\n- sensitive local stores enforce owner-only access with bounded migration\n- unapproved tasks stop before any expensive or mutating work\n- runner recommendations require sufficient evidence\n- retracted claims disappear from current-state recall by default\n- task routes and native ownership are checked against executable reality\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.17.5 makes mutable state tell the truth now.\n\nAgent memory gets dangerous when mutable state is stored like history. A position, policy snapshot, or runtime mode has one job: tell the truth now.\n\nWhat changed:\n- operator-configured state mirrors overwrite one canonical truth\n- semantic history and vector lanes exclude registered mutable state\n- the gateway suppresses stale registered copies from every retrieval source\n- bounded owner-only migration protects local stores without blocking startup\n- readers fail closed when state classification is unavailable\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

@@ -4,8 +4,8 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.17.4",
-    "stable_tag": "v3.17.4",
+    "version": "3.17.5",
+    "stable_tag": "v3.17.5",
     "release_train": "3.17",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
@@ -263,5 +263,5 @@
       "/memory/context-mesh/orchestrate"
     ]
   },
-  "contract_sha256": "7daec7ac7739618b4f7ca4eacbf9f04fc7bbf6cd14543e1bb27077ab2f143e64"
+  "contract_sha256": "91ab3180fa8800f17762bc826eab4f0e38f5176a1868caf5c8e473030c8dfe60"
 }
