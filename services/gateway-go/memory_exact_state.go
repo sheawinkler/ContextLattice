@@ -30,6 +30,7 @@ func (m *memoryStore) loadExactStateIndex() error {
 		if err := m.persistExactStateIndexLocked(map[string]struct{}{}); err != nil {
 			return fmt.Errorf("initialize exact state index: %w", err)
 		}
+		m.exactStateCount.Store(0)
 		return nil
 	}
 	if err != nil {
@@ -63,6 +64,7 @@ func (m *memoryStore) loadExactStateIndex() error {
 		}
 		m.exactStatePaths[memoryStoreKey(cleanProject, cleanFile)] = struct{}{}
 	}
+	m.exactStateCount.Store(int64(len(m.exactStatePaths)))
 	return ensureOwnerOnlyFile(m.policy.exactStateIndexPath)
 }
 
@@ -87,6 +89,23 @@ func (m *memoryStore) registerExactStatePath(project string, fileName string) er
 	if m == nil || !m.isConfigured() {
 		return errors.New("go memory store is disabled")
 	}
+	cleanProject, err := sanitizeMemoryProject(project)
+	if err != nil {
+		return err
+	}
+	cleanFile, err := sanitizeMemoryFile(fileName)
+	if err != nil {
+		return err
+	}
+	key := memoryStoreKey(cleanProject, cleanFile)
+	unlockPath := m.lockMemoryPath(key)
+	defer unlockPath()
+	return m.registerExactStatePathLocked(cleanProject, cleanFile)
+}
+
+// registerExactStatePathLocked requires the canonical path lock. Exact writes
+// already hold it, while direct registry callers use registerExactStatePath.
+func (m *memoryStore) registerExactStatePathLocked(project string, fileName string) error {
 	key := memoryStoreKey(project, fileName)
 	if key == "::" {
 		return errors.New("exact state path is invalid")
@@ -108,8 +127,10 @@ func (m *memoryStore) registerExactStatePath(project string, fileName string) er
 		return fmt.Errorf("persist exact state path index: %w", err)
 	}
 	m.exactStatePaths = next
+	m.exactStateCount.Store(int64(len(next)))
 	delete(m.latestTopic, key)
 	delete(m.latestHash, key)
+	m.removeMemoryEdgesForKeyLocked(key)
 	filtered := m.recent[:0]
 	for _, entry := range m.recent {
 		if memoryStoreKey(entry.Project, entry.FileName) != key {
@@ -125,6 +146,15 @@ func (m *memoryStore) isExactStatePath(project string, fileName string) bool {
 	if m == nil {
 		return false
 	}
+	cleanProject, err := sanitizeMemoryProject(project)
+	if err != nil {
+		return false
+	}
+	cleanFile, err := sanitizeMemoryFile(fileName)
+	if err != nil {
+		return false
+	}
+	project, fileName = cleanProject, cleanFile
 	key := memoryStoreKey(project, fileName)
 	m.mu.RLock()
 	_, ok := m.exactStatePaths[key]
@@ -145,8 +175,74 @@ func (m *memoryStore) exactStatePathsSnapshot() map[string]struct{} {
 	return out
 }
 
+func (s *server) exactStateSourceRequest(baseRequest map[string]any, source string) map[string]any {
+	request := cloneAnyMap(baseRequest)
+	switch strings.TrimSpace(strings.ToLower(source)) {
+	case sourceQdrant, sourceWeaviate, sourcePgvector, sourceMongoRaw, sourceTopicRollup, sourceMemoryBank:
+	default:
+		return request
+	}
+	requested := clampInt(anyToInt(baseRequest["limit"], 10), 1, 100)
+	reserve := clampInt(envInt("GO_EXACT_STATE_SOURCE_OVERFETCH_RESERVE", 8), 0, 32)
+	exactStateCount := 0
+	if s != nil && s.memoryStore != nil {
+		exactStateCount = int(s.memoryStore.exactStateCount.Load())
+	}
+	request["limit"] = clampInt(requested+reserve+exactStateCount, requested, 100)
+	return request
+}
+
+func (s *server) exactStateFanoutSkipStatus(item normalizedWrite) string {
+	if item.dataClass == dataClassRuntimeStateMirror {
+		return "skipped_exact_state_mirror"
+	}
+	project, projectErr := sanitizeMemoryProject(item.project)
+	fileName, fileErr := sanitizeMemoryFile(item.fileName)
+	if projectErr != nil || fileErr != nil {
+		return "skipped_invalid_memory_path"
+	}
+	if s != nil && s.memoryStore != nil && s.memoryStore.isExactStatePath(project, fileName) {
+		return "skipped_exact_state_mirror"
+	}
+	return ""
+}
+
+func (s *server) acquireExactStateFanoutPath(item normalizedWrite) (normalizedWrite, func(), string) {
+	noOp := func() {}
+	if status := s.exactStateFanoutSkipStatus(item); status != "" {
+		return item, noOp, status
+	}
+	if s == nil || s.memoryStore == nil {
+		return item, noOp, ""
+	}
+	project, err := sanitizeMemoryProject(item.project)
+	if err != nil {
+		return item, noOp, "skipped_invalid_memory_path"
+	}
+	fileName, err := sanitizeMemoryFile(item.fileName)
+	if err != nil {
+		return item, noOp, "skipped_invalid_memory_path"
+	}
+	item.project = project
+	item.fileName = fileName
+	unlock := s.memoryStore.lockMemoryPath(memoryStoreKey(project, fileName))
+	if s.memoryStore.isExactStatePath(project, fileName) {
+		unlock()
+		return item, noOp, "skipped_exact_state_mirror"
+	}
+	return item, unlock, ""
+}
+
 func exactStatePathSetContains(paths map[string]struct{}, project string, fileName string) bool {
-	_, ok := paths[memoryStoreKey(strings.TrimSpace(project), strings.TrimSpace(fileName))]
+	cleanProject, err := sanitizeMemoryProject(strings.TrimSpace(project))
+	if err != nil {
+		return false
+	}
+	cleanFile, err := sanitizeMemoryFile(strings.TrimSpace(fileName))
+	if err != nil {
+		return false
+	}
+	_, ok := paths[memoryStoreKey(cleanProject, cleanFile)]
 	return ok
 }
 
@@ -169,7 +265,10 @@ func (s *server) filterExactStateRows(rows []map[string]any) ([]map[string]any, 
 		if fileName == "" {
 			fileName = strings.TrimSpace(anyToString(row["path"]))
 		}
-		isExactState := strings.EqualFold(anyToString(row["data_class"]), dataClassRuntimeStateMirror) ||
+		_, projectErr := sanitizeMemoryProject(project)
+		_, fileErr := sanitizeMemoryFile(fileName)
+		isExactState := projectErr != nil || fileErr != nil ||
+			strings.EqualFold(anyToString(row["data_class"]), dataClassRuntimeStateMirror) ||
 			policy.isDurableMemoryFile(normalizedWrite{project: project, fileName: fileName}) ||
 			(s != nil && s.memoryStore != nil && s.memoryStore.isExactStatePath(project, fileName))
 		if isExactState {

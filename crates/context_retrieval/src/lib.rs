@@ -361,7 +361,7 @@ impl HybridRetrievalIndex {
                     RoaringBitmap::from_iter(0..self.lexical.len() as u32)
                 };
                 let iter: Box<dyn Iterator<Item = u32>> = if candidate_bitmap.is_empty() {
-                    Box::new((0..self.lexical.len() as u32).into_iter())
+                    Box::new(0..self.lexical.len() as u32)
                 } else {
                     Box::new(candidate_bitmap.iter())
                 };

@@ -266,6 +266,7 @@ struct MemoryDoc {
 
 const EXACT_STATE_INDEX_SCHEMA_ID: &str = "contextlattice_exact_state_index.v1";
 const EXACT_STATE_INDEX_MAX_PATHS: usize = 100_000;
+const EXACT_STATE_SOURCE_OVERFETCH_RESERVE: usize = 8;
 
 #[derive(Deserialize)]
 struct ExactStateIndex {
@@ -526,6 +527,20 @@ async fn search(
     }
     let backend = normalize_backend(req.backend.as_deref().unwrap_or("tantivy_spike"));
     let limit = req.limit.clamp(1, 100);
+    let selection_exact_state_paths = match load_exact_state_paths(&state.cfg.data_root) {
+        Ok(paths) => paths,
+        Err(err) => {
+            warn!(error = %err, "exact-state registry is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: format!("exact-state registry unavailable: {err}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+    let source_limit = exact_state_candidate_limit(limit, selection_exact_state_paths.len());
     let project_filter = req
         .project
         .as_deref()
@@ -557,7 +572,7 @@ async fn search(
                 &state,
                 &snapshot,
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -568,7 +583,7 @@ async fn search(
                 &state,
                 &snapshot,
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -579,7 +594,7 @@ async fn search(
                 &state,
                 backend.as_str(),
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -590,7 +605,7 @@ async fn search(
                 &state,
                 &snapshot,
                 query,
-                limit,
+                source_limit,
                 project_filter,
                 topic_filter.as_deref(),
             )
@@ -616,6 +631,7 @@ async fn search(
             results.retain(|row| {
                 !should_suppress_exact_state_path(&exact_state_paths, &row.project, &row.file)
             });
+            results.truncate(limit);
             let response = SearchResponse {
                 backend,
                 results,
@@ -1857,6 +1873,23 @@ fn read_exact_state_paths(path: &Path) -> Result<HashSet<String>> {
     parse_exact_state_paths(&raw)
 }
 
+fn canonical_exact_state_file_name(file_name: &str) -> Option<String> {
+    let normalized = file_name.trim().replace('\\', "/").to_lowercase();
+    if normalized.is_empty() || normalized.starts_with('/') || normalized.contains("::") {
+        return None;
+    }
+    let mut segments = Vec::new();
+    for segment in normalized.split('/') {
+        let token = segment.trim();
+        match token {
+            "" | "." => continue,
+            ".." => return None,
+            _ => segments.push(token),
+        }
+    }
+    (!segments.is_empty()).then(|| segments.join("/"))
+}
+
 fn parse_exact_state_paths(raw: &[u8]) -> Result<HashSet<String>> {
     let index: ExactStateIndex =
         serde_json::from_slice(raw).context("parse exact-state registry")?;
@@ -1875,21 +1908,18 @@ fn parse_exact_state_paths(raw: &[u8]) -> Result<HashSet<String>> {
         let Some((project, file_name)) = normalized.split_once("::") else {
             bail!("exact-state registry contains an invalid path key");
         };
+        let Some(canonical_file) = canonical_exact_state_file_name(file_name) else {
+            bail!("exact-state registry contains an invalid path key");
+        };
         if project.is_empty()
             || project.starts_with('_')
             || project.contains('/')
             || project.contains('\\')
             || matches!(project, "." | "..")
-            || file_name.is_empty()
-            || file_name.starts_with('/')
-            || file_name.contains('\\')
-            || file_name
-                .split('/')
-                .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
         {
             bail!("exact-state registry contains an invalid path key");
         }
-        paths.insert(normalized);
+        paths.insert(format!("{project}::{canonical_file}"));
     }
     Ok(paths)
 }
@@ -1944,27 +1974,23 @@ fn should_suppress_exact_state_path(
         || normalized_project.starts_with('_')
         || normalized_project.contains('/')
         || normalized_project.contains('\\')
+        || normalized_project.contains("::")
         || matches!(normalized_project.as_str(), "." | "..")
     {
         return true;
     }
 
-    let normalized_file = file_name.trim().replace('\\', "/").to_lowercase();
-    if normalized_file.is_empty() || normalized_file.starts_with('/') {
+    let Some(normalized_file) = canonical_exact_state_file_name(file_name) else {
         return true;
-    }
-    let mut segments = Vec::new();
-    for segment in normalized_file.split('/') {
-        match segment {
-            "" | "." => continue,
-            ".." => return true,
-            _ => segments.push(segment),
-        }
-    }
-    if segments.is_empty() {
-        return true;
-    }
-    paths.contains(&format!("{normalized_project}::{}", segments.join("/")))
+    };
+    paths.contains(&format!("{normalized_project}::{normalized_file}"))
+}
+
+fn exact_state_candidate_limit(requested: usize, exact_state_count: usize) -> usize {
+    requested
+        .saturating_add(exact_state_count)
+        .saturating_add(EXACT_STATE_SOURCE_OVERFETCH_RESERVE)
+        .clamp(requested, 100)
 }
 
 fn matches_project_topic(
@@ -2023,6 +2049,11 @@ mod tests {
         )
         .expect("valid registry");
         assert!(paths.contains("project::runtime/state.json"));
+        let spaced = parse_exact_state_paths(
+            br#"{"schema_id":"contextlattice_exact_state_index.v1","paths":["Project:: Runtime / State.JSON "]}"#,
+        )
+        .expect("canonical spaced registry");
+        assert!(spaced.contains("project::runtime/state.json"));
 
         let err = parse_exact_state_paths(br#"{"schema_id":"other.v1","paths":[]}"#)
             .expect_err("schema mismatch must fail closed");
@@ -2099,12 +2130,33 @@ mod tests {
         assert!(should_suppress_exact_state_path(
             &paths,
             "project",
+            " runtime / state.json "
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
             "runtime/../state.json"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project::alias",
+            "learning.md"
+        ));
+        assert!(should_suppress_exact_state_path(
+            &paths,
+            "project",
+            "runtime::state.json"
         ));
         assert!(!should_suppress_exact_state_path(
             &paths,
             "project",
             "learning.md"
         ));
+    }
+
+    #[test]
+    fn exact_state_candidate_limit_is_bounded_and_preserves_requested_limit() {
+        assert_eq!(exact_state_candidate_limit(10, 2), 20);
+        assert_eq!(exact_state_candidate_limit(100, 50_000), 100);
     }
 }

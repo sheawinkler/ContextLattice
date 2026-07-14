@@ -415,12 +415,13 @@ fn default_memory_root() -> String {
         std::env::var("GO_MEMORY_STORE_ROOT").ok(),
         std::env::var("MEMORY_BANK_ROOT").ok(),
         std::env::var("CONTEXTLATTICE_MEMORY_ROOT").ok(),
-    ] {
-        if let Some(value) = candidate {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let trimmed = candidate.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
     }
     if let Ok(memory_bank_data) = std::env::var("MEMORY_BANK_DATA") {
@@ -626,8 +627,8 @@ fn parse_iso_utc(raw: &str) -> Option<DateTime<Utc>> {
     if let Ok(ts) = DateTime::parse_from_rfc3339(trimmed) {
         return Some(ts.with_timezone(&Utc));
     }
-    if trimmed.ends_with('Z') {
-        let replaced = format!("{}+00:00", &trimmed[..trimmed.len() - 1]);
+    if let Some(without_z) = trimmed.strip_suffix('Z') {
+        let replaced = format!("{without_z}+00:00");
         if let Ok(ts) = DateTime::parse_from_rfc3339(&replaced) {
             return Some(ts.with_timezone(&Utc));
         }
@@ -700,12 +701,12 @@ fn prune_ndjson(path: &Path, keep_days: i64, max_bytes: usize) -> Result<Value> 
     }
 
     if max_bytes > 0 {
-        let mut size: usize = kept.iter().map(|s| s.as_bytes().len() + 1).sum();
+        let mut size: usize = kept.iter().map(|s| s.len() + 1).sum();
         if size > max_bytes {
             let mut trimmed: Vec<String> = Vec::new();
             let mut running = 0usize;
             for item in kept.iter().rev() {
-                let row_size = item.as_bytes().len() + 1;
+                let row_size = item.len() + 1;
                 if running + row_size > max_bytes {
                     break;
                 }
@@ -1461,7 +1462,7 @@ fn compute_delta(curr: &BTreeMap<String, i64>, prev: &BTreeMap<String, i64>) -> 
             changes.push((key.clone(), p, c));
         }
     }
-    changes.sort_by(|a, b| (b.2 - b.1).abs().cmp(&(a.2 - a.1).abs()));
+    changes.sort_by_key(|item| std::cmp::Reverse((item.2 - item.1).abs()));
 
     json!({
         "topic_delta": curr.len() as i64 - prev.len() as i64,
@@ -1830,7 +1831,7 @@ fn parquet_column(
 fn parquet_definition_levels(len: usize) -> parquet2::error::Result<Vec<u8>> {
     let mut levels = Cursor::new(vec![0; 4]);
     levels.set_position(4);
-    encode_bool(&mut levels, std::iter::repeat(true).take(len))?;
+    encode_bool(&mut levels, std::iter::repeat_n(true, len))?;
 
     let mut levels = levels.into_inner();
     let byte_len = (levels.len() - 4) as u32;
@@ -2290,7 +2291,7 @@ fn list_cold_entries(root: &Path) -> Vec<SnapshotEntry> {
             bucket,
         });
     }
-    out.sort_by(|a, b| b.ts.cmp(&a.ts));
+    out.sort_by_key(|item| std::cmp::Reverse(item.ts));
     out
 }
 
@@ -3026,13 +3027,11 @@ fn run_fanout_gc(args: FanoutGcArgs) -> Result<()> {
 
     let stale_targets = csv_list(&args.stale_targets);
     if !stale_targets.is_empty() {
-        let placeholders = std::iter::repeat("?")
-            .take(stale_targets.len())
+        let placeholders = std::iter::repeat_n("?", stale_targets.len())
             .collect::<Vec<_>>()
             .join(",");
         let stale_statuses = vec!["pending", "retrying", "running"];
-        let status_placeholders = std::iter::repeat("?")
-            .take(stale_statuses.len())
+        let status_placeholders = std::iter::repeat_n("?", stale_statuses.len())
             .collect::<Vec<_>>()
             .join(",");
         let sql_tail = format!(

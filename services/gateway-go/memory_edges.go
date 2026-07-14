@@ -282,6 +282,10 @@ func (m *memoryStore) loadEdges() error {
 			continue
 		}
 		if normalized, err := edge.normalized(); err == nil {
+			if edgeReferencesExactStatePaths(m.exactStatePaths, normalized) {
+				skippedPolicy += 1
+				continue
+			}
 			if excluded, _ := m.memoryGraphEdgeExcluded(normalized); excluded {
 				skippedPolicy += 1
 				continue
@@ -301,6 +305,62 @@ func logMemoryEdgeLoad(loaded int, scanned int, skippedPolicy int, cap int) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "gateway-go memory graph edge startup load: scanned=%d loaded=%d skipped_policy=%d cap=%d\n", scanned, loaded, skippedPolicy, cap)
+}
+
+func edgeReferencesExactStatePaths(paths map[string]struct{}, edge memoryEdgeEntry) bool {
+	for _, memoryID := range []string{edge.SourceID, edge.TargetID} {
+		project, fileName, _, _, err := canonicalMemoryID(memoryID)
+		if err != nil {
+			continue
+		}
+		if exactStatePathSetContains(paths, project, fileName) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *memoryStore) removeMemoryEdgeLocked(edgeID string) {
+	edge, exists := m.edges[edgeID]
+	if !exists {
+		return
+	}
+	delete(m.edges, edgeID)
+	delete(m.edgeOrdinal, edgeID)
+	for _, memoryID := range []string{edge.SourceID, edge.TargetID} {
+		_, _, _, key, err := canonicalMemoryID(memoryID)
+		if err != nil {
+			continue
+		}
+		delete(m.edgeAdjacency[key], edgeID)
+		if len(m.edgeAdjacency[key]) == 0 {
+			delete(m.edgeAdjacency, key)
+		}
+	}
+}
+
+func (m *memoryStore) removeMemoryEdgesForKeyLocked(key string) {
+	if m == nil {
+		return
+	}
+	adjacent := m.edgeAdjacency[key]
+	if len(adjacent) == 0 {
+		return
+	}
+	edgeIDs := make([]string, 0, len(adjacent))
+	for edgeID := range adjacent {
+		edgeIDs = append(edgeIDs, edgeID)
+	}
+	for _, edgeID := range edgeIDs {
+		m.removeMemoryEdgeLocked(edgeID)
+	}
+	filtered := m.edgeOrder[:0]
+	for _, edgeID := range m.edgeOrder {
+		if _, exists := m.edges[edgeID]; exists {
+			filtered = append(filtered, edgeID)
+		}
+	}
+	m.edgeOrder = filtered
 }
 
 func (m *memoryStore) recordEdgeLocked(edge memoryEdgeEntry) {
@@ -382,7 +442,7 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return map[string]any{"ok": true, "dry_run": dryRun, "edge_store_ref": ownerOnlyStoreRef("memory_edges"), "scanned": 0, "kept": 0, "skipped_volatile": 0, "skipped_invalid": 0, "skipped_duplicate": 0, "bytes_before": 0, "bytes_after": 0}, nil
+			return map[string]any{"ok": true, "dry_run": dryRun, "edge_store_ref": ownerOnlyStoreRef("memory_edges"), "scanned": 0, "kept": 0, "skipped_exact_state": 0, "skipped_volatile": 0, "skipped_invalid": 0, "skipped_duplicate": 0, "bytes_before": 0, "bytes_after": 0}, nil
 		}
 		return nil, err
 	}
@@ -394,8 +454,10 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 	seen := map[string]int{}
 	scanned := 0
 	skippedVolatile := 0
+	skippedExactState := 0
 	skippedInvalid := 0
 	skippedDuplicate := 0
+	exactStatePaths := m.exactStatePathsSnapshot()
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -417,6 +479,10 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 			skippedInvalid += 1
 			continue
 		}
+		if edgeReferencesExactStatePaths(exactStatePaths, normalized) {
+			skippedExactState += 1
+			continue
+		}
 		if excluded, _ := m.memoryGraphEdgeExcluded(normalized); excluded {
 			skippedVolatile += 1
 			continue
@@ -432,6 +498,18 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	// Recheck after the scan so registrations completed during maintenance are
+	// also removed from the rewritten edge log.
+	latestExactStatePaths := m.exactStatePathsSnapshot()
+	filtered := kept[:0]
+	for _, edge := range kept {
+		if edgeReferencesExactStatePaths(latestExactStatePaths, edge) {
+			skippedExactState += 1
+			continue
+		}
+		filtered = append(filtered, edge)
+	}
+	kept = filtered
 
 	afterBytes := beforeBytes
 	if !dryRun {
@@ -479,22 +557,26 @@ func (m *memoryStore) pruneVolatileMemoryGraphEdges(ctx context.Context, dryRun 
 		m.nextEdgeOrdinal = 0
 		m.edgeAdjacency = map[string]map[string]struct{}{}
 		for _, edge := range kept {
+			if edgeReferencesExactStatePaths(m.exactStatePaths, edge) {
+				continue
+			}
 			m.recordEdgeLocked(edge)
 		}
 		m.mu.Unlock()
 	}
 
 	return map[string]any{
-		"ok":                true,
-		"dry_run":           dryRun,
-		"edge_store_ref":    ownerOnlyStoreRef("memory_edges"),
-		"scanned":           scanned,
-		"kept":              len(kept),
-		"skipped_volatile":  skippedVolatile,
-		"skipped_invalid":   skippedInvalid,
-		"skipped_duplicate": skippedDuplicate,
-		"bytes_before":      beforeBytes,
-		"bytes_after":       afterBytes,
+		"ok":                  true,
+		"dry_run":             dryRun,
+		"edge_store_ref":      ownerOnlyStoreRef("memory_edges"),
+		"scanned":             scanned,
+		"kept":                len(kept),
+		"skipped_exact_state": skippedExactState,
+		"skipped_volatile":    skippedVolatile,
+		"skipped_invalid":     skippedInvalid,
+		"skipped_duplicate":   skippedDuplicate,
+		"bytes_before":        beforeBytes,
+		"bytes_after":         afterBytes,
 	}, nil
 }
 
@@ -511,12 +593,29 @@ func (m *memoryStore) upsertMemoryEdge(ctx context.Context, edge memoryEdgeEntry
 	if err != nil {
 		return memoryEdgeEntry{}, err
 	}
+	_, _, _, sourceKey, err := canonicalMemoryID(normalized.SourceID)
+	if err != nil {
+		return memoryEdgeEntry{}, err
+	}
+	_, _, _, targetKey, err := canonicalMemoryID(normalized.TargetID)
+	if err != nil {
+		return memoryEdgeEntry{}, err
+	}
+	unlockPaths := m.lockMemoryPaths(sourceKey, targetKey)
+	defer unlockPaths()
 	if excluded, reason := m.memoryGraphEdgeExcluded(normalized); excluded {
 		return memoryEdgeEntry{}, fmt.Errorf("memory edge rejected by graph artifact policy: %s", reason)
 	}
 	m.mu.Lock()
+	if edgeReferencesExactStatePaths(m.exactStatePaths, normalized) {
+		m.mu.Unlock()
+		return memoryEdgeEntry{}, errors.New("memory edge rejected because exact state is not graph-addressable")
+	}
 	m.recordEdgeLocked(normalized)
 	m.mu.Unlock()
+	if m.beforeEdgeCommit != nil {
+		m.beforeEdgeCommit()
+	}
 	if err := m.appendEdge(normalized); err != nil {
 		return memoryEdgeEntry{}, err
 	}

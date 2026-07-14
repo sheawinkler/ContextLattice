@@ -11,10 +11,27 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from exact_state import ExactStateRegistryError, is_exact_state_path, load_exact_state_paths
+
 
 PORT = int(os.getenv("PORT", "8098"))
 ADAPTER_NAME = os.getenv("SPIKE_ADAPTER_NAME", "external_spike").strip() or "external_spike"
 DATA_ROOT = Path(os.getenv("SPIKE_DATA_ROOT", "/data/memory-bank"))
+EXACT_STATE_INDEX_PATH = Path(
+    os.getenv(
+        "SPIKE_EXACT_STATE_INDEX_PATH",
+        str(DATA_ROOT / "_contextlattice" / "exact_state_paths.json"),
+    )
+)
+CONTENT_BLOBS_PATH = Path(
+    os.getenv(
+        "SPIKE_CONTENT_BLOBS_PATH",
+        os.getenv(
+            "GO_MEMORY_STORE_CONTENT_BLOBS_PATH",
+            str(DATA_ROOT / "_contextlattice" / "content_blobs"),
+        ),
+    )
+)
 REFRESH_SECS = max(5, int(os.getenv("SPIKE_REFRESH_SECS", "120")))
 MAX_DOCS = max(100, int(os.getenv("SPIKE_MAX_DOCS", "50000")))
 MAX_CONTENT_CHARS = max(512, int(os.getenv("SPIKE_MAX_CONTENT_CHARS", "4096")))
@@ -70,12 +87,75 @@ def _normalize_text(raw: str) -> str:
     return collapsed.strip()
 
 
-def _scan_docs() -> tuple[list[dict[str, Any]], str]:
-    if not DATA_ROOT.exists():
-        return [], "missing-root"
+def _resolved_scan_target(
+    path: Path,
+    root_resolved: Path,
+    registry_resolved: Path,
+    content_blobs_resolved: Path | None,
+    exact_state_paths: set[str],
+) -> Path | None:
+    try:
+        target = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if target == registry_resolved:
+        return None
+    if target != path.absolute():
+        if content_blobs_resolved is None:
+            return None
+        try:
+            target.relative_to(content_blobs_resolved)
+        except ValueError:
+            return None
+        return target
+    try:
+        target_rel = target.relative_to(root_resolved)
+    except ValueError:
+        if content_blobs_resolved is None:
+            return None
+        try:
+            target.relative_to(content_blobs_resolved)
+        except ValueError:
+            return None
+        return target
 
+    parts = target_rel.parts
+    if len(parts) < 2:
+        return None
+    if parts[0].lower() == "_contextlattice":
+        if content_blobs_resolved is None:
+            return None
+        try:
+            target.relative_to(content_blobs_resolved)
+        except ValueError:
+            return None
+        return target
+    project = (parts[0] or "").strip()
+    file_name = Path(*parts[1:]).as_posix().strip()
+    if is_exact_state_path(exact_state_paths, project, file_name):
+        return None
+    return target
+
+
+def _scan_docs() -> tuple[list[dict[str, Any]], str]:
+    if DATA_ROOT.is_symlink():
+        raise RuntimeError("memory data root must not be a symlink")
+    if not DATA_ROOT.exists():
+        raise RuntimeError("memory data root is missing")
+
+    exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    try:
+        root_resolved = DATA_ROOT.resolve(strict=True)
+        registry_resolved = EXACT_STATE_INDEX_PATH.resolve(strict=True)
+        content_blobs_resolved = (
+            CONTENT_BLOBS_PATH.resolve(strict=True) if CONTENT_BLOBS_PATH.exists() else None
+        )
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"resolve memory scan boundary: {exc}") from exc
     docs: list[dict[str, Any]] = []
     digest = hashlib.sha256()
+    for key in sorted(exact_state_paths):
+        digest.update(key.encode("utf-8", errors="ignore"))
     scanned = 0
     for path in DATA_ROOT.rglob("*"):
         if not path.is_file():
@@ -94,8 +174,19 @@ def _scan_docs() -> tuple[list[dict[str, Any]], str]:
         file_name = Path(*parts[1:]).as_posix().strip()
         if not project or not file_name:
             continue
+        if is_exact_state_path(exact_state_paths, project, file_name):
+            continue
+        target = _resolved_scan_target(
+            path,
+            root_resolved,
+            registry_resolved,
+            content_blobs_resolved,
+            exact_state_paths,
+        )
+        if target is None:
+            continue
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = target.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
         summary = _normalize_text(text)
@@ -113,7 +204,7 @@ def _scan_docs() -> tuple[list[dict[str, Any]], str]:
             "text": f"{file_name} {topic_path} {summary}".lower(),
         }
         digest.update(record["id"].encode("utf-8", errors="ignore"))
-        digest.update(str(path.stat().st_mtime_ns).encode("utf-8", errors="ignore"))
+        digest.update(str(target.stat().st_mtime_ns).encode("utf-8", errors="ignore"))
         docs.append(record)
     digest.update(str(scanned).encode("utf-8", errors="ignore"))
     return docs, digest.hexdigest()
@@ -174,7 +265,13 @@ def _coerce_score(value: float) -> float:
     return float(value)
 
 
-def _search_docs(query: str, limit: int, project_filter: str, topic_filter: str) -> list[SearchResult]:
+def _search_docs(
+    query: str,
+    limit: int,
+    project_filter: str,
+    topic_filter: str,
+    exact_state_paths: set[str],
+) -> list[SearchResult]:
     terms = _tokenize(query)
     if not terms:
         return []
@@ -190,6 +287,8 @@ def _search_docs(query: str, limit: int, project_filter: str, topic_filter: str)
         if project_filter and project.lower() != project_filter:
             continue
         if topic_filter and not topic_path.startswith(topic_filter):
+            continue
+        if is_exact_state_path(exact_state_paths, project, file_name):
             continue
         text = str(item.get("text") or "")
         score = 0.0
@@ -212,7 +311,17 @@ def _search_docs(query: str, limit: int, project_filter: str, topic_filter: str)
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    try:
+        exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     _trigger_refresh(force=False, wait=False)
+    last_error = _state.get("last_error")
+    ready_snapshot = bool(_state.get("fingerprint")) and int(
+        _state.get("last_refresh_unix_secs") or 0
+    ) > 0
+    if last_error and not ready_snapshot:
+        raise HTTPException(status_code=503, detail=f"{ADAPTER_NAME} refresh unavailable: {last_error}")
     return {
         "ok": True,
         "adapter": ADAPTER_NAME,
@@ -221,7 +330,9 @@ def health() -> dict[str, Any]:
         "last_refresh_unix_secs": int(_state.get("last_refresh_unix_secs") or 0),
         "refresh_in_progress": bool(_state.get("refresh_in_progress")),
         "data_root": str(DATA_ROOT),
-        "last_error": _state.get("last_error"),
+        "exact_state_paths": len(exact_state_paths),
+        "degraded": bool(last_error),
+        "last_error": last_error,
     }
 
 
@@ -233,12 +344,30 @@ def search(req: SearchRequest) -> SearchResponse:
     _trigger_refresh(force=False, wait=False)
     project_filter = (req.project or "").strip().lower()
     topic_filter = _normalize_topic(req.topic_path or "")
-    rows = _search_docs(query, req.limit, project_filter, topic_filter)
+    try:
+        selection_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    rows = _search_docs(query, req.limit, project_filter, topic_filter, selection_paths)
+    try:
+        exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+    except ExactStateRegistryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    rows = [row for row in rows if not is_exact_state_path(exact_state_paths, row.project, row.file)]
+    if len(rows) < req.limit and exact_state_paths != selection_paths:
+        rows = _search_docs(query, req.limit, project_filter, topic_filter, exact_state_paths)
+        try:
+            exact_state_paths = load_exact_state_paths(EXACT_STATE_INDEX_PATH)
+        except ExactStateRegistryError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        rows = [row for row in rows if not is_exact_state_path(exact_state_paths, row.project, row.file)]
+    rows = rows[: req.limit]
     return SearchResponse(
         backend=ADAPTER_NAME,
         results=rows,
         meta={
             "adapter": ADAPTER_NAME,
+            "exact_state_paths": len(exact_state_paths),
             "docs_loaded": int(_state.get("docs_loaded") or 0),
             "fingerprint": _state.get("fingerprint") or "",
             "last_refresh_unix_secs": int(_state.get("last_refresh_unix_secs") or 0),
@@ -248,7 +377,11 @@ def search(req: SearchRequest) -> SearchResponse:
 
 @app.on_event("startup")
 def startup() -> None:
+    load_exact_state_paths(EXACT_STATE_INDEX_PATH)
     _trigger_refresh(force=True, wait=True)
+    last_error = _state.get("last_error")
+    if last_error:
+        raise RuntimeError(f"{ADAPTER_NAME} startup refresh failed: {last_error}")
 
 
 if __name__ == "__main__":

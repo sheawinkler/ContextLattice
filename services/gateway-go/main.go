@@ -5346,6 +5346,7 @@ func (s *server) runSourceBatch(
 		output.effectiveTimeoutsSecs[normalized] = roundFloat(sourceTimeout.Seconds(), 3)
 		output.adaptiveBudgets[normalized] = adaptiveBudget
 		go func(sourceName string, timeout time.Duration) {
+			sourceRequest := s.exactStateSourceRequest(baseRequest, sourceName)
 			start := time.Now()
 			sourceCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
@@ -5387,7 +5388,7 @@ func (s *server) runSourceBatch(
 				rows, warnings, sourceTrace, owner, err := s.callBackendSourceQuery(
 					sourceCtx,
 					incomingHeaders,
-					baseRequest,
+					cloneAnyMap(sourceRequest),
 					sourceName,
 					explicitSourceOverride,
 				)
