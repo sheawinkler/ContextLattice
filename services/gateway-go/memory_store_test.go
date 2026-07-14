@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -292,12 +291,8 @@ func TestMemoryStoreContentAddressedBlobHardlinkMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat fileB failed: %v", err)
 		}
-		statA, okA := infoA.Sys().(*syscall.Stat_t)
-		statB, okB := infoB.Sys().(*syscall.Stat_t)
-		if okA && okB {
-			if statA.Ino != statB.Ino {
-				t.Fatalf("expected hardlinked logical files to share inode, got %d vs %d", statA.Ino, statB.Ino)
-			}
+		if !os.SameFile(infoA, infoB) {
+			t.Fatalf("expected hardlinked logical files to reference the same file")
 		}
 	}
 }
