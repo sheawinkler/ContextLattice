@@ -109,7 +109,7 @@ services:
       LANCEDB_SPIKE_MAX_DOCS: ${LANCEDB_SPIKE_MAX_DOCS:-50000}
       LANCEDB_SPIKE_MAX_CONTENT_CHARS: ${LANCEDB_SPIKE_MAX_CONTENT_CHARS:-4096}
     volumes:
-      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data/memory-bank:ro
+      - ${MEMORY_BANK_DATA:-memory_bank_data}:/data:ro
       - ${LANCEDB_SPIKE_DATA:-lancedb_spike_data}:/var/lib/contextlattice/lancedb
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:${LANCEDB_SPIKE_PORT:-8097}:${LANCEDB_SPIKE_PORT_INTERNAL:-8097}"
