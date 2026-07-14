@@ -106,6 +106,8 @@ jobs:
           echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
 
       - name: Audit exact public release tree
+        env:
+          EXPECTED_RELEASE_COMMIT: ${{ steps.provenance.outputs.commit }}
         run: |
           set -euo pipefail
           audit_tag="$RELEASE_TAG"
@@ -121,6 +123,19 @@ jobs:
             --public
           python3 scripts/generate_commercial_truth.py --check
           scripts/agent/audit-commercial-truth --release-tag "$audit_tag"
+          scripts/agent/audit-release-lane-tree \
+            --lane public \
+            --ref "refs/tags/${RELEASE_TAG}" \
+            --expected-commit "$EXPECTED_RELEASE_COMMIT" \
+            --release-ref "refs/tags/${RELEASE_TAG}" \
+            --proof-out dist/ContextLattice-release-tree-proof.json
+
+      - name: Upload exact public release-tree proof
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-release-tree-proof
+          path: dist/ContextLattice-release-tree-proof.json
+          if-no-files-found: error
 
   build-macos-dmg:
     name: Build macOS DMG

@@ -5,12 +5,23 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "services/gateway-go/**"
+      - "services/orchestrator-go/**"
       - "AGENTS.md"
       - "config/agent_contracts/**"
+      - "config/commercial_truth.v1.json"
+      - "config/public_sync_blocklist.txt"
       - "crates/context_codec/**"
+      - "contextlattice-dashboard/**"
+      - "docs/public_overview/**"
+      - "docs/releases/**"
+      - "packaging/**"
       - "scripts/agent_contracts.py"
       - "scripts/agent/**"
       - "scripts/agent_hooks/**"
+      - "scripts/generate_commercial_truth.py"
+      - "scripts/public_sync_guard.sh"
+      - "scripts/tests/test_release_lane_tree.py"
       - "scripts/install_global_agent_tools.sh"
       - "scripts/install_global_agent_tools.ps1"
       - ".github/workflows/agent-context-gate.yml"
@@ -19,6 +30,41 @@ permissions:
   contents: read
 
 jobs:
+  exact-release-lane-tree:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/gateway-go/go.mod
+          cache-dependency-path: |
+            services/gateway-go/go.sum
+            services/orchestrator-go/go.sum
+
+      - name: Compile and test exact public tree
+        env:
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          scripts/agent/audit-release-lane-tree \
+            --lane public \
+            --ref "$CANDIDATE_COMMIT" \
+            --expected-commit "$CANDIDATE_COMMIT" \
+            --proof-out dist/ContextLattice-release-tree-proof.json
+
+      - name: Upload exact-tree proof
+        uses: actions/upload-artifact@v7
+        with:
+          name: exact-release-lane-tree-proof
+          path: dist/ContextLattice-release-tree-proof.json
+          if-no-files-found: error
+
   agent-context-gate:
     runs-on: ubuntu-latest
     steps:

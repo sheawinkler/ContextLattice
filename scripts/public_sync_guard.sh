@@ -127,6 +127,34 @@ for p in "${changed[@]}"; do
   done
 done
 
+if [[ "$TARGET_REMOTE" == "public" ]]; then
+  paid_ui_pattern='(/api/workspace/(members|invitations)|WorkspaceInvitation|workspaceInvitations|activeWorkspaceId|Workspace people)'
+  for p in "${changed[@]}"; do
+    case "$p" in
+      contextlattice-dashboard/app/*|\
+      contextlattice-dashboard/components/*|\
+      contextlattice-dashboard/lib/*|\
+      contextlattice-dashboard/prisma/*|\
+      contextlattice-dashboard/tests/*)
+        [[ -f "$p" ]] || continue
+        if rg -nH -I -e "$paid_ui_pattern" -- "$p" >&2; then
+          blocked=1
+        fi
+        ;;
+    esac
+  done
+fi
+
+if [[ "$TARGET_REMOTE" == "public" || "$TARGET_REMOTE" == "public-paid" ]]; then
+  # Block dangling private-helper references even when only a shared launcher
+  # was selected for propagation and the helper path itself was excluded.
+  if rg -n 'private_dev_posture' launch.sh scripts/compose_v4_balanced.sh \
+      >/tmp/contextlattice_private_dev_launcher_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_private_dev_launcher_hits.txt >&2
+    blocked=1
+  fi
+fi
+
 if [ "$blocked" -ne 0 ]; then
   echo "[guard] stop: remove private files from public sync PR." >&2
   exit 1

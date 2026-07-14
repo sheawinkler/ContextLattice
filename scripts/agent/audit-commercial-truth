@@ -313,6 +313,58 @@ def audit_release_publish_inputs(
         findings.append(finding("release_publish_cli_not_primary", str(relative), "primary CTA must name the CLI"))
 
 
+def audit_frontier_release_availability(
+    root: Path,
+    contract: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> None:
+    availability = contract.get("release_availability", {})
+    frontier = {feature["id"] for feature in contract["features"] if feature["id"].startswith("frontier_")}
+    for feature_id in sorted(frontier):
+        posture = availability.get(feature_id, {})
+        if posture != {
+            "availability": "controlled_activation_preview",
+            "release_gate": "IN_PROGRESS",
+            "release_decision": "UNPROVEN",
+            "production_proven": False,
+        }:
+            findings.append(
+                finding(
+                    "frontier_release_truth_mismatch",
+                    "config/commercial_truth.v1.json",
+                    f"{feature_id} must remain a controlled, unproven preview until its release ledger passes",
+                )
+            )
+
+    premium = read_text(root, Path("docs/public_overview/premium.html"))
+    if frontier and premium.lower().count("controlled activation preview") < len(frontier):
+        findings.append(
+            finding(
+                "frontier_preview_copy_missing",
+                "docs/public_overview/premium.html",
+                "every unproven Frontier capability must be visibly labeled as a controlled activation preview",
+            )
+        )
+
+    eval_path = Path("docs/evals/v3.18-frontier-t1-paid-activation.json")
+    eval_text = read_text(root, eval_path)
+    if not eval_text:
+        return
+    try:
+        ledger = json.loads(eval_text)
+    except json.JSONDecodeError as exc:
+        findings.append(finding("frontier_eval_invalid", str(eval_path), str(exc)))
+        return
+    if ledger.get("status") != "IN_PROGRESS" or ledger.get("release_decision") != "UNPROVEN":
+        findings.append(
+            finding(
+                "frontier_eval_truth_drift",
+                str(eval_path),
+                "commercial preview posture must be updated only with the release ledger decision",
+            )
+        )
+
+
 def run_audit(root: Path, release_tag: str = "") -> dict[str, Any]:
     findings: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -329,6 +381,7 @@ def run_audit(root: Path, release_tag: str = "") -> dict[str, Any]:
         audit_protected_routes(root, contract, findings)
         audit_active_catalogs(root, findings, warnings)
         audit_release_publish_inputs(root, contract, findings)
+        audit_frontier_release_availability(root, contract, findings)
         if release_tag and release_tag != contract["product"]["stable_tag"]:
             findings.append(
                 finding(

@@ -45,6 +45,31 @@ var errContinuityIdentityScope = errors.New("task_identity_id cannot cross proje
 var errContinuityIdentityMissing = errors.New("task_identity_id does not exist")
 var errContinuityUnavailable = errors.New("continuity identity validation is unavailable")
 var errContinuityLedgerLocked = errors.New("continuity ledger already has an active writer")
+var errContinuitySelectionStale = errors.New("continuity selection anchor is stale")
+
+type continuityCommitUnknownError struct {
+	Operation string
+	Err       error
+}
+
+func (e *continuityCommitUnknownError) Error() string {
+	if e == nil {
+		return "continuity ledger commit outcome is unknown"
+	}
+	return fmt.Sprintf("%s: %v; continuity ledger commit outcome is unknown and writes are disabled until restart and verification", e.Operation, e.Err)
+}
+
+func (e *continuityCommitUnknownError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func continuityCommitUnknown(err error) bool {
+	var commitErr *continuityCommitUnknownError
+	return errors.As(err, &commitErr)
+}
 
 type continuityLedgerEntry struct {
 	SchemaID     string         `json:"schema_id"`
@@ -85,6 +110,11 @@ type taskIdentityReceipt struct {
 	Actor                 string   `json:"actor"`
 	Reason                string   `json:"reason"`
 	MatchMode             string   `json:"match_mode"`
+	WorkspaceID           string   `json:"workspace_id,omitempty"`
+	FeatureID             string   `json:"feature_id,omitempty"`
+	PolicyID              string   `json:"policy_id,omitempty"`
+	TopScore              float64  `json:"top_score,omitempty"`
+	ScoreMargin           float64  `json:"score_margin,omitempty"`
 	IdempotencyKey        string   `json:"idempotency_key"`
 	CreatedAt             string   `json:"created_at"`
 }
@@ -176,6 +206,7 @@ type continuityStore struct {
 	tailRecoveryBytes        int64
 	lastError                string
 	afterPersistHook         func() error
+	beforeGovernedMutation   func(string)
 }
 
 func continuityLedgerPath() string {
@@ -450,6 +481,37 @@ func continuityPayloadMap(value any) (map[string]any, error) {
 	return payload, nil
 }
 
+func continuityLedgerEntryProject(entry continuityLedgerEntry) string {
+	if project := strings.TrimSpace(anyToString(entry.Payload["project"])); project != "" {
+		return project
+	}
+	for _, field := range []string{"decision_change", "objective_transition"} {
+		if project := strings.TrimSpace(anyToString(anyMap(entry.Payload[field])["project"])); project != "" {
+			return project
+		}
+	}
+	return ""
+}
+
+func (s *continuityStore) projectCoreAnchorLocked(project string) (uint64, string) {
+	for index := len(s.entries) - 1; index >= 0; index-- {
+		entry := s.entries[index]
+		if strings.EqualFold(continuityLedgerEntryProject(entry), project) {
+			return entry.Sequence, entry.EntryHash
+		}
+	}
+	return 0, ""
+}
+
+func (s *continuityStore) projectCoreAnchor(project string) (uint64, string) {
+	if s == nil {
+		return 0, ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.projectCoreAnchorLocked(project)
+}
+
 func objectiveTransitionEquivalent(left objectiveTransition, right objectiveTransition) bool {
 	if !right.occurredAtExplicit {
 		right.OccurredAt = left.OccurredAt
@@ -529,46 +591,52 @@ func (s *continuityStore) appendLocked(rows []continuityLedgerAppend) ([]continu
 	if err != nil {
 		return nil, s.disableAfterPersistenceFailure("open continuity ledger for append", err)
 	}
+	wroteAny := false
 	for buffer.Len() > 0 {
 		written, writeErr := file.Write(buffer.Bytes())
 		if written > 0 {
+			wroteAny = true
 			buffer.Next(written)
 			s.fileBytes += int64(written)
 		}
 		if writeErr != nil {
 			_ = file.Close()
+			if wroteAny {
+				return nil, s.disableAfterCommitUnknown("append continuity ledger", writeErr)
+			}
 			return nil, s.disableAfterPersistenceFailure("append continuity ledger", writeErr)
 		}
 		if written == 0 {
 			_ = file.Close()
+			if wroteAny {
+				return nil, s.disableAfterCommitUnknown("append continuity ledger", io.ErrShortWrite)
+			}
 			return nil, s.disableAfterPersistenceFailure("append continuity ledger", io.ErrShortWrite)
 		}
 	}
 	if s.fsync {
 		if err := file.Sync(); err != nil {
 			_ = file.Close()
-			return nil, s.disableAfterPersistenceFailure("sync continuity ledger", err)
+			return nil, s.disableAfterCommitUnknown("sync continuity ledger", err)
 		}
 		if ledgerCreated {
 			if err := syncOwnerOnlyDirectory(filepath.Dir(s.path)); err != nil {
 				_ = file.Close()
-				return nil, s.disableAfterPersistenceFailure("sync continuity ledger directory", err)
+				return nil, s.disableAfterCommitUnknown("sync continuity ledger directory", err)
 			}
 		}
 	}
 	if err := file.Close(); err != nil {
-		return nil, s.disableAfterPersistenceFailure("close continuity ledger", err)
+		return nil, s.disableAfterCommitUnknown("close continuity ledger", err)
 	}
 	if s.afterPersistHook != nil {
 		if err := s.afterPersistHook(); err != nil {
-			return nil, s.disableAfterPersistenceFailure("confirm continuity ledger append", err)
+			return nil, s.disableAfterCommitUnknown("confirm continuity ledger append", err)
 		}
 	}
 	for _, entry := range entries {
 		if err := s.applyEntryLocked(entry); err != nil {
-			s.enabled = false
-			s.lastError = "persisted continuity entry could not be applied: " + err.Error()
-			return nil, errors.New(s.lastError)
+			return nil, s.disableAfterCommitUnknown("apply persisted continuity ledger entry", err)
 		}
 		s.entries = append(s.entries, entry)
 		s.lastHash = entry.EntryHash
@@ -629,6 +697,13 @@ func (s *continuityStore) disableAfterPersistenceFailure(operation string, cause
 	s.enabled = false
 	s.lastError = message
 	return errors.New(message)
+}
+
+func (s *continuityStore) disableAfterCommitUnknown(operation string, cause error) error {
+	err := &continuityCommitUnknownError{Operation: operation, Err: cause}
+	s.enabled = false
+	s.lastError = err.Error()
+	return err
 }
 
 func (s *continuityStore) validateObjectiveTransitionLocked(transition objectiveTransition) error {
@@ -839,6 +914,24 @@ func (s *continuityStore) applyTaskIdentityReceiptLocked(receipt taskIdentityRec
 				s.taskAliases[continuityAliasKey(source.Project, source.Repo, alias)] = target.TaskIdentityID
 			}
 			target.ExternalTaskIDs = mergeContinuityStrings(target.ExternalTaskIDs, source.ExternalTaskIDs, 64)
+		}
+		target.ExternalTaskIDs = mergeContinuityStrings(target.ExternalTaskIDs, receipt.ExternalTaskIDs, 64)
+		target.UpdatedAt = receipt.CreatedAt
+		s.taskIdentities[target.TaskIdentityID] = target
+	case "link":
+		target, exists := s.taskIdentities[receipt.TaskIdentityID]
+		if !exists || target.Status != "active" {
+			return errors.New("link target task identity is missing or inactive")
+		}
+		if !strings.EqualFold(target.Project, receipt.Project) || !strings.EqualFold(target.Repo, receipt.Repo) {
+			return errors.New("task identity link cannot cross project or repo scope")
+		}
+		for _, alias := range receipt.ExternalTaskIDs {
+			aliasKey := continuityAliasKey(target.Project, target.Repo, alias)
+			if existingID := s.taskAliases[aliasKey]; existingID != "" && existingID != target.TaskIdentityID {
+				return fmt.Errorf("task identity alias %q already belongs to another identity", alias)
+			}
+			s.taskAliases[aliasKey] = target.TaskIdentityID
 		}
 		target.ExternalTaskIDs = mergeContinuityStrings(target.ExternalTaskIDs, receipt.ExternalTaskIDs, 64)
 		target.UpdatedAt = receipt.CreatedAt
@@ -1137,6 +1230,8 @@ func (s *continuityStore) reconcile(payload map[string]any, createIfMissing bool
 		"exact_first": true, "semantic_auto_merge": false, "requires_confirmation": false,
 		"abstained": false, "candidates": []any{}, "receipt": map[string]any{},
 	}
+	selectionSequence, selectionHash := s.projectCoreAnchorLocked(project)
+	result["selection_anchor"] = map[string]any{"project": project, "sequence": selectionSequence, "entry_hash": selectionHash}
 	if explicitID != "" {
 		if record, ok := s.taskIdentities[explicitID]; ok {
 			record = s.resolveMergedIdentityLocked(record)
@@ -1558,6 +1653,9 @@ func (s *server) memoryContinuityReconcile(w http.ResponseWriter, r *http.Reques
 	}
 	if s.continuity == nil || !s.continuity.enabled {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
+		return
+	}
+	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "continuity") {
 		return
 	}
 	payload, err := readOptionalJSONBody(r)

@@ -71,6 +71,39 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertIsNone(plans["enterprise"]["pricing"]["monthly_usd"])
         self.assertIsNone(plans["enterprise"]["pricing"]["annual_usd"])
         self.assertFalse(plans["enterprise"]["self_serve_purchasable"])
+        self.assertEqual(plans["free"]["limits"]["included_seats"], 1)
+        self.assertEqual(plans["starter"]["limits"]["included_seats"], 1)
+        self.assertEqual(plans["team"]["limits"]["included_seats"], 5)
+        self.assertEqual(plans["operator"]["limits"]["included_seats"], 1)
+        self.assertEqual(plans["enterprise"]["limits"]["included_seats"], 100)
+
+        frontier = {
+            "frontier_semantic_continuity_automation",
+            "frontier_shared_objective_graph",
+            "frontier_shared_decision_provenance",
+        }
+        self.assertTrue(frontier.isdisjoint(plans["free"]["feature_ids"]))
+        self.assertTrue(frontier.isdisjoint(plans["starter"]["feature_ids"]))
+        self.assertTrue(frontier.issubset(plans["team"]["feature_ids"]))
+        self.assertTrue(frontier.issubset(plans["enterprise"]["feature_ids"]))
+        self.assertEqual(
+            frontier - {"frontier_shared_decision_provenance"},
+            frontier.intersection(plans["operator"]["feature_ids"]),
+        )
+        self.assertEqual(
+            {row["feature_id"] for row in contract["paid_feature_route_contracts"]},
+            frontier,
+        )
+        for feature_id in frontier:
+            self.assertEqual(
+                contract["release_availability"][feature_id],
+                {
+                    "availability": "controlled_activation_preview",
+                    "release_gate": "IN_PROGRESS",
+                    "release_decision": "UNPROVEN",
+                    "production_proven": False,
+                },
+            )
 
         self.assertEqual(contract["aliases"]["exact"]["pro"], "operator")
         self.assertEqual(contract["aliases"]["exact"]["business"], "team")
@@ -95,7 +128,24 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("/Volumes/", payload)
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
-        self.assertEqual(json.loads(payload)["product"]["version"], "3.17.5")
+        public_truth = json.loads(payload)
+        self.assertEqual(public_truth["product"]["version"], "3.17.5")
+        self.assertEqual(
+            public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
+            "controlled_activation_preview",
+        )
+        self.assertEqual(
+            public_truth["release_availability"]["frontier_semantic_continuity_automation"]["release_decision"],
+            "UNPROVEN",
+        )
+
+    def test_preview_posture_is_public_without_mutating_runtime_entitlement_contract(self) -> None:
+        premium = (ROOT / "docs/public_overview/premium.html").read_text(encoding="utf-8")
+        self.assertGreaterEqual(premium.count("Controlled activation preview"), 3)
+        typescript = (ROOT / "contextlattice-dashboard/lib/billing/commercial.generated.ts").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('"release_availability"', typescript)
 
     def test_pages_sync_publishes_commercial_truth(self) -> None:
         sync_script = (ROOT / "scripts/sync_public_overview.sh").read_text(encoding="utf-8")
