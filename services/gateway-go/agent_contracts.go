@@ -656,6 +656,12 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 			findings = append(findings, map[string]any{"reason": "required_true_path_not_true", "path": path, "contract_id": contractID})
 		}
 	}
+	for _, path := range agentContractStringList(contract["required_false_paths"]) {
+		value, exists := dottedPathGet(object, path)
+		if !exists || value != false {
+			findings = append(findings, map[string]any{"reason": "required_false_path_not_false", "path": path, "contract_id": contractID})
+		}
+	}
 	if contains, ok := contract["required_string_contains"].(map[string]any); ok {
 		keys := sortedMapKeys(contains)
 		for _, path := range keys {
@@ -728,6 +734,31 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 			}
 		} else {
 			findings = append(findings, walkForbiddenKeys(object, forbiddenSet, "", contractID)...)
+		}
+	}
+	if contractID == taskIdentityReconciliationContractID {
+		matchMode := strings.TrimSpace(anyToString(object["match_mode"]))
+		abstentionModes := map[string]bool{
+			"semantic_candidate": true,
+			"ambiguous_semantic": true,
+			"ambiguous_exact":    true,
+			"none":               true,
+		}
+		confirmationModes := map[string]bool{
+			"semantic_candidate": true,
+			"ambiguous_semantic": true,
+			"ambiguous_exact":    true,
+		}
+		if abstentionModes[matchMode] {
+			if object["abstained"] != true {
+				findings = append(findings, map[string]any{"reason": "identity_abstention_required", "path": "abstained", "match_mode": matchMode, "contract_id": contractID})
+			}
+			if strings.TrimSpace(anyToString(object["task_identity_id"])) != "" {
+				findings = append(findings, map[string]any{"reason": "abstention_cannot_bind_identity", "path": "task_identity_id", "match_mode": matchMode, "contract_id": contractID})
+			}
+		}
+		if confirmationModes[matchMode] && object["requires_confirmation"] != true {
+			findings = append(findings, map[string]any{"reason": "identity_confirmation_required", "path": "requires_confirmation", "match_mode": matchMode, "contract_id": contractID})
 		}
 	}
 	return findings

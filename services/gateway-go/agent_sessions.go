@@ -48,6 +48,8 @@ func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
 }
 
 var errAgentSessionTerminal = errors.New("agent session is terminal")
+var errAgentSessionReuseConflict = errors.New("agent session id or ownership conflicts with the existing session")
+var errAgentSessionOwnershipConflict = errors.New("agent session event conflicts with established ownership")
 
 type agentSessionStore struct {
 	mu        sync.Mutex
@@ -311,7 +313,7 @@ func normalizeAgentLifecyclePayload(value any, fallbackStatus string) map[string
 		"authority": normalizeAgentStateAuthority(anyToString(raw["authority"])),
 		"source":    clipText(firstNonEmptyStrings(anyToString(raw["source"]), "session_status"), 96),
 	}
-	for _, key := range []string{"ttl_seconds", "expires_at", "updated_at", "task_id", "repo", "branch", "worktree", "cwd", "native_session_id", "needs_user", "blocked_by"} {
+	for _, key := range []string{"ttl_seconds", "expires_at", "updated_at", "task_id", "task_identity_id", "execution_lane_id", "repo", "branch", "worktree", "cwd", "native_session_id", "needs_user", "blocked_by"} {
 		if rawValue, ok := raw[key]; ok {
 			out[key] = compactAgentSessionValue(rawValue, 2)
 		}
@@ -362,7 +364,7 @@ func (s *agentSessionStore) effectiveSessionLocked(row map[string]any, now time.
 func agentSessionOwnership(session map[string]any) map[string]any {
 	state := anyMap(session["agent_state"])
 	out := map[string]any{}
-	for _, key := range []string{"task_id", "repo", "worktree", "branch", "cwd", "native_session_id"} {
+	for _, key := range []string{"task_id", "task_identity_id", "execution_lane_id", "repo", "worktree", "branch", "cwd", "native_session_id"} {
 		value := firstNonEmptyStrings(anyToString(session[key]), anyToString(state[key]))
 		if value != "" {
 			out[key] = clipText(value, 360)
@@ -373,6 +375,8 @@ func agentSessionOwnership(session map[string]any) map[string]any {
 			anyToString(out["repo"]),
 			anyToString(out["worktree"]),
 			anyToString(out["branch"]),
+			anyToString(out["task_identity_id"]),
+			anyToString(out["execution_lane_id"]),
 			anyToString(out["task_id"]),
 			anyToString(session["id"]),
 		}, "|"), 720)
@@ -1408,6 +1412,8 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 		"worktree":            clipText(strings.TrimSpace(anyToString(payload["worktree"])), 320),
 		"cwd":                 clipText(strings.TrimSpace(anyToString(payload["cwd"])), 320),
 		"task_id":             clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_id"]), anyToString(payload["taskId"]))), 160),
+		"task_identity_id":    clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_identity_id"]), anyToString(payload["taskIdentityId"]))), 160),
+		"execution_lane_id":   clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["execution_lane_id"]), anyToString(payload["executionLaneId"]))), 160),
 		"native_session_id":   clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["native_session_id"]), anyToString(payload["nativeSessionId"]))), 180),
 		"reuse_key":           clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["reuse_key"]), anyToString(payload["reuseKey"]))), 240),
 		"agent_state":         normalizeAgentLifecyclePayload(payload["agent_state"], status),
@@ -1461,16 +1467,85 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 	}
 }
 
+func agentSessionEventOwnership(payload map[string]any) (map[string]string, error) {
+	metadata := anyMap(payload["metadata"])
+	sources := []map[string]any{
+		payload,
+		anyMap(payload["agent_state"]),
+		anyMap(payload["ownership"]),
+		anyMap(metadata["agent_state"]),
+		anyMap(metadata["ownership"]),
+	}
+	aliases := map[string][]string{
+		"project":           {"project", "project_name"},
+		"repo":              {"repo"},
+		"task_id":           {"task_id", "taskId"},
+		"task_identity_id":  {"task_identity_id", "taskIdentityId"},
+		"execution_lane_id": {"execution_lane_id", "executionLaneId"},
+		"branch":            {"branch"},
+		"worktree":          {"worktree"},
+		"cwd":               {"cwd"},
+		"native_session_id": {"native_session_id", "nativeSessionId"},
+	}
+	out := map[string]string{}
+	for canonical, keys := range aliases {
+		for _, source := range sources {
+			values := make([]string, 0, len(keys))
+			for _, key := range keys {
+				values = append(values, anyToString(source[key]))
+			}
+			value := strings.TrimSpace(firstNonEmptyStrings(values...))
+			if value == "" {
+				continue
+			}
+			if existing := out[canonical]; existing != "" && !agentSessionOwnershipValueEqual(canonical, existing, value) {
+				return nil, fmt.Errorf("%w: conflicting %s values", errAgentSessionOwnershipConflict, canonical)
+			}
+			out[canonical] = value
+		}
+	}
+	return out, nil
+}
+
+func agentSessionOwnershipValueEqual(key string, left string, right string) bool {
+	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
+	if key == "project" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
+func validateAgentSessionEventOwnership(session map[string]any, requested map[string]string, existed bool) error {
+	for key, value := range requested {
+		existing := strings.TrimSpace(anyToString(session[key]))
+		if existing != "" && !agentSessionOwnershipValueEqual(key, existing, value) {
+			return fmt.Errorf("%w: %s cannot be rebound", errAgentSessionOwnershipConflict, key)
+		}
+		if !existed && (key == "task_identity_id" || key == "execution_lane_id") {
+			return fmt.Errorf("%w: start the session before supplying %s", errAgentSessionOwnershipConflict, key)
+		}
+		if existed && existing == "" && (key == "task_identity_id" || key == "execution_lane_id") {
+			return fmt.Errorf("%w: %s must be established by session start", errAgentSessionOwnershipConflict, key)
+		}
+	}
+	return nil
+}
+
 func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.Time) map[string]any {
 	reuseKey := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["reuse_key"]), anyToString(payload["reuseKey"])))
 	project := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["project"]), anyToString(payload["project_name"])))
 	agentID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_id"]), anyToString(payload["agentId"])))
 	agent := strings.TrimSpace(anyToString(payload["agent"]))
 	taskID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_id"]), anyToString(payload["taskId"])))
+	taskIdentityID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["task_identity_id"]), anyToString(payload["taskIdentityId"])))
+	executionLaneID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["execution_lane_id"]), anyToString(payload["executionLaneId"])))
 	nativeID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["native_session_id"]), anyToString(payload["nativeSessionId"])))
 	for i := len(s.order) - 1; i >= 0; i-- {
 		row := s.sessions[s.order[i]]
 		if len(row) == 0 || agentSessionTerminal(agentSessionEffectiveStatus(row, now, s.idleTTL)) {
+			continue
+		}
+		if !agentSessionReuseCompatible(row, payload) {
 			continue
 		}
 		if project != "" && !strings.EqualFold(anyToString(row["project"]), project) {
@@ -1482,8 +1557,17 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 		if agentID == "" && agent != "" && !strings.EqualFold(anyToString(row["agent"]), agent) {
 			continue
 		}
+		if executionLaneID != "" && strings.TrimSpace(anyToString(row["execution_lane_id"])) != executionLaneID {
+			continue
+		}
 		if reuseKey != "" {
 			if strings.EqualFold(anyToString(row["reuse_key"]), reuseKey) {
+				return row
+			}
+			continue
+		}
+		if taskIdentityID != "" {
+			if strings.TrimSpace(anyToString(row["task_identity_id"])) == taskIdentityID {
 				return row
 			}
 			continue
@@ -1501,6 +1585,49 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 	return nil
 }
 
+func agentSessionReuseCompatible(existing map[string]any, requested map[string]any) bool {
+	for _, fields := range []struct {
+		existing      string
+		requested     []string
+		caseSensitive bool
+	}{
+		{existing: "agent", requested: []string{"agent"}},
+		{existing: "agent_id", requested: []string{"agent_id", "agentId"}, caseSensitive: true},
+		{existing: "agent_kind", requested: []string{"agent_kind", "agentKind", "runner"}},
+		{existing: "project", requested: []string{"project", "project_name"}},
+		{existing: "repo", requested: []string{"repo"}},
+		{existing: "branch", requested: []string{"branch"}, caseSensitive: true},
+		{existing: "worktree", requested: []string{"worktree"}, caseSensitive: true},
+		{existing: "cwd", requested: []string{"cwd"}, caseSensitive: true},
+		{existing: "task_identity_id", requested: []string{"task_identity_id", "taskIdentityId"}, caseSensitive: true},
+		{existing: "execution_lane_id", requested: []string{"execution_lane_id", "executionLaneId"}, caseSensitive: true},
+		{existing: "native_session_id", requested: []string{"native_session_id", "nativeSessionId"}, caseSensitive: true},
+		{existing: "reuse_key", requested: []string{"reuse_key", "reuseKey"}, caseSensitive: true},
+	} {
+		values := make([]string, 0, len(fields.requested))
+		for _, key := range fields.requested {
+			values = append(values, anyToString(requested[key]))
+		}
+		want := strings.TrimSpace(firstNonEmptyStrings(values...))
+		if want != "" {
+			got := strings.TrimSpace(anyToString(existing[fields.existing]))
+			if fields.caseSensitive && got != want {
+				return false
+			}
+			if !fields.caseSensitive && !strings.EqualFold(got, want) {
+				return false
+			}
+		}
+	}
+	if strings.TrimSpace(firstNonEmptyStrings(anyToString(requested["task_identity_id"]), anyToString(requested["taskIdentityId"]))) == "" {
+		wantTaskID := strings.TrimSpace(firstNonEmptyStrings(anyToString(requested["task_id"]), anyToString(requested["taskId"])))
+		if wantTaskID != "" && !strings.EqualFold(strings.TrimSpace(anyToString(existing["task_id"])), wantTaskID) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any, bool, error) {
 	if s == nil {
 		return nil, false, errors.New("agent session store unavailable")
@@ -1515,9 +1642,13 @@ func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any
 			if agentSessionTerminal(agentSessionEffectiveStatus(existing, now, s.idleTTL)) {
 				return nil, false, errAgentSessionTerminal
 			}
+			if !agentSessionReuseCompatible(existing, payload) {
+				return nil, false, errAgentSessionReuseConflict
+			}
 			if ensure {
 				return s.effectiveSessionLocked(existing, now), true, nil
 			}
+			return nil, false, errAgentSessionReuseConflict
 		}
 	}
 	if ensure {
@@ -1527,22 +1658,11 @@ func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any
 	}
 	record := normalizeAgentSessionStart(payload, "")
 	id := anyToString(record["id"])
-	if existing, ok := s.sessions[id]; ok {
-		for key, value := range record {
-			if key == "started_at" || key == "event_count" {
-				continue
-			}
-			if value == "" || value == nil {
-				continue
-			}
-			existing[key] = value
-		}
-		existing["updated_at"] = nowUTCISO()
-		record = existing
-	} else {
-		s.sessions[id] = record
-		s.order = append(s.order, id)
+	if _, exists := s.sessions[id]; exists {
+		return nil, false, errAgentSessionReuseConflict
 	}
+	s.sessions[id] = record
+	s.order = append(s.order, id)
 	s.enforceBoundsLocked()
 	if err := s.persistLocked(); err != nil {
 		return nil, false, err
@@ -1579,11 +1699,20 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	if sessionID == "" {
 		sessionID = "sess_" + bson.NewObjectID().Hex()
 	}
-	session, ok := s.sessions[sessionID]
-	if !ok {
+	requestedOwnership, err := agentSessionEventOwnership(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	session, existed := s.sessions[sessionID]
+	if !existed {
 		session = normalizeAgentSessionStart(payload, sessionID)
 		session["last_event_type"] = ""
 		session["event_count"] = 0
+	}
+	if err := validateAgentSessionEventOwnership(session, requestedOwnership, existed); err != nil {
+		return nil, nil, err
+	}
+	if !existed {
 		s.sessions[sessionID] = session
 		s.order = append(s.order, sessionID)
 	}
@@ -1653,15 +1782,15 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	if statePayload := anyMap(metadata["agent_state"]); !terminalBefore && len(statePayload) > 0 {
 		state := normalizeAgentLifecyclePayload(statePayload, anyToString(event["status"]))
 		session["agent_state"] = state
-		for _, key := range []string{"task_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
-			if value := strings.TrimSpace(anyToString(state[key])); value != "" {
+		for _, key := range []string{"task_id", "task_identity_id", "execution_lane_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
+			if value := strings.TrimSpace(anyToString(state[key])); value != "" && strings.TrimSpace(anyToString(session[key])) == "" {
 				session[key] = clipText(value, 360)
 			}
 		}
 	}
 	if ownership := anyMap(metadata["ownership"]); len(ownership) > 0 {
-		for _, key := range []string{"task_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
-			if value := strings.TrimSpace(anyToString(ownership[key])); value != "" {
+		for _, key := range []string{"task_id", "task_identity_id", "execution_lane_id", "repo", "branch", "worktree", "cwd", "native_session_id"} {
+			if value := strings.TrimSpace(anyToString(ownership[key])); value != "" && strings.TrimSpace(anyToString(session[key])) == "" {
 				session[key] = clipText(value, 360)
 			}
 		}
@@ -1712,7 +1841,7 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 func compactAgentSessionRow(row map[string]any) map[string]any {
 	out := map[string]any{}
 	for _, key := range []string{
-		"id", "agent", "agent_id", "project", "status", "objective", "task_id", "native_session_id",
+		"id", "agent", "agent_id", "project", "status", "objective", "task_id", "task_identity_id", "execution_lane_id", "native_session_id",
 		"reuse_key", "started_at", "updated_at", "last_event_at", "last_event_type", "event_count",
 		"stale", "expired_at", "idle_ttl_seconds",
 	} {
@@ -1935,10 +2064,25 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 		return
 	}
+	continuity, continuityErr := s.enrichAgentSessionContinuity(payload)
+	if continuityErr != nil {
+		status := http.StatusUnprocessableEntity
+		code := "invalid_agent_session_continuity"
+		if errors.Is(continuityErr, errContinuityUnavailable) {
+			status = http.StatusServiceUnavailable
+			code = "agent_session_continuity_unavailable"
+		}
+		writeJSON(w, status, map[string]any{"ok": false, "error": code, "detail": continuityErr.Error()})
+		return
+	}
 	session, reused, err := s.agentSessions.startOrReuse(payload)
 	if err != nil {
 		if errors.Is(err, errAgentSessionTerminal) {
 			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_terminal", "detail": "terminal or expired sessions cannot be reopened; start a new session id"})
+			return
+		}
+		if errors.Is(err, errAgentSessionReuseConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_reuse_conflict", "detail": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "agent session start failed", "detail": err.Error()})
@@ -1959,6 +2103,8 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 				"worktree":          session["worktree"],
 				"cwd":               session["cwd"],
 				"task_id":           session["task_id"],
+				"task_identity_id":  session["task_identity_id"],
+				"execution_lane_id": session["execution_lane_id"],
 				"native_session_id": session["native_session_id"],
 				"agent_state":       session["agent_state"],
 				"ownership":         agentSessionOwnership(session),
@@ -1970,6 +2116,9 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 		session, _, _ = s.agentSessions.get(anyToString(session["id"]))
 	}
 	response := map[string]any{"ok": true, "session": session, "created": !reused, "reused": reused}
+	if len(continuity) > 0 {
+		response["continuity"] = continuity
+	}
 	if startedEvent != nil {
 		response["event"] = startedEvent
 	}
@@ -2063,6 +2212,10 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 		if err != nil {
 			if errors.Is(err, errAgentSessionTerminal) {
 				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_terminal", "detail": "terminal or expired session state is absorbing"})
+				return
+			}
+			if errors.Is(err, errAgentSessionOwnershipConflict) {
+				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_ownership_conflict", "detail": err.Error()})
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "agent session event failed", "detail": err.Error()})

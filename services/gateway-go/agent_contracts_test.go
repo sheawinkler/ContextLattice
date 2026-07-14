@@ -53,6 +53,42 @@ func TestGeneratedAgentContractsMatchRegistry(t *testing.T) {
 	}
 }
 
+func TestTaskIdentityReconciliationContractRequiresSemanticAbstention(t *testing.T) {
+	base := map[string]any{
+		"ok": true, "schema_id": taskIdentityReconciliationContractID, "match_mode": "semantic_candidate",
+		"exact_first": true, "semantic_auto_merge": false, "requires_confirmation": true, "abstained": true,
+		"task_identity_id": "", "task_identity": map[string]any{}, "candidates": []any{map[string]any{"task_identity_id": "candidate-a", "score": 0.91}},
+		"receipt": map[string]any{}, "ledger_status": map[string]any{"enabled": true},
+	}
+	valid := attachPayloadFormatContract(taskIdentityReconciliationContractID, cloneContractMap(base), "codex-test", "test", "/test")
+	if findings := validateAgentContractPayload(taskIdentityReconciliationContractID, valid); len(findings) != 0 {
+		t.Fatalf("valid semantic abstention should pass: %#v", findings)
+	}
+
+	for name, mutate := range map[string]func(map[string]any){
+		"missing abstention":    func(payload map[string]any) { payload["abstained"] = false },
+		"missing confirmation":  func(payload map[string]any) { payload["requires_confirmation"] = false },
+		"authoritative binding": func(payload map[string]any) { payload["task_identity_id"] = "candidate-a" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := cloneContractMap(valid)
+			mutate(payload)
+			if findings := validateAgentContractPayload(taskIdentityReconciliationContractID, payload); len(findings) == 0 {
+				t.Fatalf("unsafe semantic candidate passed validation: %#v", payload)
+			}
+		})
+	}
+
+	exact := cloneContractMap(valid)
+	exact["match_mode"] = "exact_id"
+	exact["requires_confirmation"] = false
+	exact["abstained"] = false
+	exact["task_identity_id"] = "identity-a"
+	if findings := validateAgentContractPayload(taskIdentityReconciliationContractID, exact); len(findings) != 0 {
+		t.Fatalf("exact identity should not require abstention: %#v", findings)
+	}
+}
+
 func testContextCompilerFixture(strategy string, evidenceCount int) map[string]any {
 	return map[string]any{
 		"schema_id":             "contextlattice_context_compiler.v1",
@@ -732,9 +768,10 @@ func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {
 			routes = append(routes, anyMap(raw))
 		}
 	}
-	byPath := map[string]map[string]any{}
+	byPath := map[string][]map[string]any{}
 	for _, route := range routes {
-		byPath[anyToString(route["path"])] = route
+		path := anyToString(route["path"])
+		byPath[path] = append(byPath[path], route)
 		if anyToBool(route["required"]) && !anyToBool(route["bounded"]) {
 			t.Fatalf("expected required boundary route bounded, got %#v", route)
 		}
@@ -742,20 +779,51 @@ func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {
 	for _, path := range []string{
 		"/memory/context-pack",
 		"/tools/context_pack",
+		"/memory/continuity/reconcile",
+		"/memory/objectives/transition",
+		"/memory/objectives/graph",
+		"/memory/decision-changes",
 		"/v1/agents/preflight",
 		"/v1/codex/preflight",
 		"policy_context_package",
 		"scripts/agent/contextlattice-pack",
+		"contextlattice_continuity_reconcile",
+		"contextlattice_objective_transition",
+		"contextlattice_objective_graph",
+		"contextlattice_decision_change",
+		"contextlattice_decision_change list",
 		"scripts/agent/compaction-handoff-payload",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh",
 		"scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	} {
-		route := byPath[path]
-		if route == nil {
+		rows := byPath[path]
+		if len(rows) == 0 {
 			t.Fatalf("expected context boundary path %s in payload %#v", path, payload["routes"])
 		}
-		if anyToInt(route["max_total_json_bytes"], 0) <= 0 || anyToInt(route["max_string_bytes"], 0) <= 0 || anyToInt(route["max_list_items"], 0) <= 0 {
-			t.Fatalf("expected boundary limits for %s, got %#v", path, route)
+		for _, route := range rows {
+			if anyToInt(route["max_total_json_bytes"], 0) <= 0 || anyToInt(route["max_string_bytes"], 0) <= 0 || anyToInt(route["max_list_items"], 0) <= 0 {
+				t.Fatalf("expected boundary limits for %s, got %#v", path, route)
+			}
+		}
+	}
+	for _, required := range []struct {
+		path       string
+		contractID string
+	}{
+		{"/memory/decision-changes", decisionChangeContractID},
+		{"/memory/decision-changes", decisionChangeQueryContractID},
+		{"contextlattice_decision_change", decisionChangeContractID},
+		{"contextlattice_decision_change list", decisionChangeQueryContractID},
+	} {
+		found := false
+		for _, route := range byPath[required.path] {
+			if anyToString(route["contract_id"]) == required.contractID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected %s to expose contract %s: %#v", required.path, required.contractID, byPath[required.path])
 		}
 	}
 }

@@ -33,6 +33,8 @@ ContextLattice provides a single memory contract for agentic systems:
 - Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
 - Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
 - Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
+- Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
+- Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
 - Local-first deployment with optional hosted surfaces.
@@ -87,6 +89,24 @@ contextlattice_claim_query "current public release" --project contextlattice --i
 # Return claim-level support, opposition, temporal state, uncertainty, and missing proof.
 contextlattice_synthesis_pack_v2 "prove release readiness" --project contextlattice --pretty
 
+# Resolve one durable task identity before opening another execution lane.
+contextlattice_continuity_reconcile "ship continuity identity" \
+  --project contextlattice --repo contextlattice --task-id frontier-t1 \
+  --branch main --agent-id codex_gpt5 --pretty
+
+# Append lifecycle evidence, inspect the objective as it existed then, and record why a decision changed.
+contextlattice_objective_transition "ship continuity identity" --type progressed \
+  --project contextlattice --actor codex_gpt5 \
+  --idempotency-key frontier-t1-contract-proof \
+  --summary "HTTP and CLI contracts verified" --pretty
+contextlattice_objective_graph --project contextlattice --pretty
+contextlattice_decision_change --project contextlattice --objective-id <objective-id> \
+  --idempotency-key frontier-t1-semantic-abstention \
+  --before "reuse every semantic match" --after "require confirmation after exact miss" \
+  --confidence-before 0.45 --confidence-after 0.92 --evidence <evidence-ref> \
+  --actor codex_gpt5 --rationale "Ambiguous matches must abstain." \
+  --reason-code evidence_changed --pretty
+
 # Derive a candidate only from calibration-eligible outcomes, then inspect it.
 contextlattice_policy_candidate --project contextlattice --pretty
 contextlattice_policy_status --pretty
@@ -103,7 +123,7 @@ contextlattice_passport_verify --file passport.json --pretty
 contextlattice_mesh_identity --pretty
 ```
 
-The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. Passport replay never executes imported text, and Mesh never owns transport. See [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md), [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md), and [`docs/context-passport-mesh.md`](docs/context-passport-mesh.md) for contracts, safety boundaries, and HTTP fallbacks.
+The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. Passport replay never executes imported text, and Mesh never owns transport. See [`docs/continuity-identity.md`](docs/continuity-identity.md), [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md), [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md), and [`docs/context-passport-mesh.md`](docs/context-passport-mesh.md) for contracts, safety boundaries, and HTTP fallbacks.
 
 ## Quickstart
 

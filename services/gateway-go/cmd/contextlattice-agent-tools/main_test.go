@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -760,6 +761,113 @@ func TestCognitionProofCommandsUseNativeEndpoints(t *testing.T) {
 	}
 	if captured["/memory/claims"]["subject"] != "release" || captured["/memory/claims"]["object"] != "3.12.0" {
 		t.Fatalf("expected structured claim payload: %#v", captured["/memory/claims"])
+	}
+}
+
+func TestContinuityCommandsUseNativeEndpoints(t *testing.T) {
+	captured := map[string]map[string]any{}
+	queries := map[string]url.Values{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		key := r.Method + " " + r.URL.Path
+		payload := map[string]any{}
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode %s: %v", key, err)
+			}
+		}
+		captured[key] = payload
+		queries[key] = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "test.v1"})
+	}))
+	defer gateway.Close()
+
+	cases := []struct {
+		name string
+		args []string
+		key  string
+	}{
+		{
+			name: "continuity-reconcile",
+			args: []string{"contextlattice_continuity_reconcile", "Ship continuity identity", "--project", "alpha", "--repo", "repo", "--task-id", "T1", "--branch", "main", "--idempotency-key", "identity-t1", "--raw"},
+			key:  "POST /memory/continuity/reconcile",
+		},
+		{
+			name: "objective-transition",
+			args: []string{"contextlattice_objective_transition", "Ship T1", "--project", "alpha", "--objective-id", "obj_t1", "--transition-id", "ot_t1", "--idempotency-key", "objective-t1", "--type", "started", "--actor", "codex", "--outcome-id", "out_t1", "--checkpoint-id", "checkpoint_t1", "--raw"},
+			key:  "POST /memory/objectives/transition",
+		},
+		{
+			name: "objective-graph",
+			args: []string{"contextlattice_objective_graph", "--project", "alpha", "--objective-id", "obj_t1", "--as-of", "2026-07-13T12:00:00Z", "--no-transitions", "--raw"},
+			key:  "GET /memory/objectives/graph",
+		},
+		{
+			name: "decision-change",
+			args: []string{"contextlattice_decision_change", "--project", "alpha", "--objective-id", "obj_t1", "--decision-change-id", "dc_t1", "--idempotency-key", "decision-t1", "--before", "old", "--after", "new", "--confidence-before", "0.4", "--confidence-after", "0.8", "--evidence", "eval:case", "--actor", "codex", "--rationale", "holdout changed", "--reason-code", "new_evidence", "--raw"},
+			key:  "POST /memory/decision-changes",
+		},
+		{
+			name: "decision-change-list",
+			args: []string{"contextlattice_decision_change", "list", "--project", "alpha", "--objective-id", "obj_t1", "--cursor", "cursor-test", "--raw"},
+			key:  "GET /memory/decision-changes",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			c := newCLI(&stdout, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.run(tc.args); err != nil {
+				t.Fatalf("run %s: %v", tc.name, err)
+			}
+			if _, ok := captured[tc.key]; !ok {
+				t.Fatalf("missing %s call: captured=%#v", tc.key, captured)
+			}
+		})
+	}
+	if payload := captured["POST /memory/continuity/reconcile"]; payload["objective"] != "Ship continuity identity" || payload["task_id"] != "T1" || payload["idempotency_key"] != "identity-t1" {
+		t.Fatalf("continuity payload mismatch: %#v", payload)
+	}
+	if payload := captured["POST /memory/objectives/transition"]; payload["transition_type"] != "started" || payload["actor"] != "codex" ||
+		payload["transition_id"] != "ot_t1" || payload["idempotency_key"] != "objective-t1" ||
+		payload["outcome_id"] != "out_t1" || payload["checkpoint_id"] != "checkpoint_t1" {
+		t.Fatalf("objective transition payload mismatch: %#v", payload)
+	}
+	if query := queries["GET /memory/objectives/graph"]; query.Get("objective_id") != "obj_t1" || query.Get("include_transitions") != "false" {
+		t.Fatalf("objective graph query mismatch: %#v", query)
+	}
+	if payload := captured["POST /memory/decision-changes"]; payload["reason_code"] != "new_evidence" || len(asList(payload["trigger_evidence"])) != 1 ||
+		payload["decision_change_id"] != "dc_t1" || payload["idempotency_key"] != "decision-t1" {
+		t.Fatalf("decision change payload mismatch: %#v", payload)
+	}
+	if query := queries["GET /memory/decision-changes"]; query.Get("cursor") != "cursor-test" {
+		t.Fatalf("decision change cursor missing: %#v", query)
+	}
+	var generatedStdout bytes.Buffer
+	generatedCLI := newCLI(&generatedStdout, ioDiscard{})
+	generatedCLI.baseURL = gateway.URL
+	if err := generatedCLI.run([]string{
+		"contextlattice_objective_transition", "Auto-keyed transition", "--project", "alpha",
+		"--objective-id", "obj_auto_key", "--type", "started", "--actor", "codex", "--raw",
+	}); err != nil {
+		t.Fatalf("run auto-keyed objective transition: %v", err)
+	}
+	if key := strings.TrimSpace(fmt.Sprint(captured["POST /memory/objectives/transition"]["idempotency_key"])); key == "" {
+		t.Fatalf("CLI did not create an idempotency key: %#v", captured["POST /memory/objectives/transition"])
+	}
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice_continuity_reconcile", "--operation", "compact", "--actor", "codex",
+		"--reason", "canonical ledger rewrite", "--project", "alpha", "--raw",
+	}); err != nil {
+		t.Fatalf("run continuity compaction: %v", err)
+	}
+	if payload := captured["POST /memory/continuity/reconcile"]; payload["operation"] != "compact" ||
+		payload["actor"] != "codex" || payload["reason"] != "canonical ledger rewrite" {
+		t.Fatalf("continuity compaction payload mismatch: %#v", payload)
 	}
 }
 
@@ -1531,5 +1639,67 @@ func TestAdoptIntegrateCheckFailsMissingBlocks(t *testing.T) {
 	}
 	if findings := output["findings"].([]any); len(findings) == 0 {
 		t.Fatalf("expected findings: %#v", output)
+	}
+}
+
+func TestContextBoundaryAuditCannotHideUnboundedDuplicatePathContract(t *testing.T) {
+	required := []string{
+		"/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight",
+		"/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan",
+		"/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query",
+		"/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph",
+		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
+		"contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query",
+		"contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph",
+		"contextlattice_decision_change", "contextlattice_decision_change list", "contextlattice_async_inbox_drain",
+		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
+	}
+	contracts := map[string]string{
+		"/memory/continuity/reconcile":        "task_identity_reconciliation.v1",
+		"/memory/objectives/transition":       "objective_transition.v1",
+		"/memory/objectives/graph":            "objective_graph.v1",
+		"contextlattice_continuity_reconcile": "task_identity_reconciliation.v1",
+		"contextlattice_objective_transition": "objective_transition.v1",
+		"contextlattice_objective_graph":      "objective_graph.v1",
+		"contextlattice_decision_change":      "decision_change.v1",
+		"contextlattice_decision_change list": "decision_change_query.v1",
+	}
+	metadataFields := []any{"contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items"}
+	row := func(path string, contractID string, bounded bool) map[string]any {
+		return map[string]any{
+			"path": path, "name": path, "contract_id": contractID, "bounded": bounded,
+			"max_total_json_bytes": 1000, "max_string_bytes": 100, "max_list_items": 10,
+			"metadata_fields": metadataFields,
+		}
+	}
+	routes := []any{}
+	for _, path := range required {
+		routes = append(routes, row(path, firstNonEmpty(contracts[path], "test.v1"), true))
+	}
+	routes = append(routes,
+		row("/memory/decision-changes", "decision_change.v1", true),
+		row("/memory/decision-changes", "decision_change_query.v1", false),
+	)
+	audit := auditContextBoundary(map[string]any{
+		"schema_id": "contextlattice_context_boundary.v1", "ok": true, "status": "healthy",
+		"violationCount": 0, "routes": routes,
+	})
+	if asBool(audit["ok"]) {
+		t.Fatalf("duplicate-path query contract hid an unbounded surface: %#v", audit)
+	}
+	found := false
+	findings, ok := audit["findings"].([]map[string]any)
+	if !ok {
+		t.Fatalf("unexpected findings type: %#v", audit["findings"])
+	}
+	for _, finding := range findings {
+		if firstString(finding["reason"]) == "required_boundary_not_bounded" &&
+			firstString(finding["path"]) == "/memory/decision-changes" &&
+			firstString(finding["contract_id"]) == "decision_change_query.v1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("audit did not identify the unbounded query contract: %#v", audit)
 	}
 }

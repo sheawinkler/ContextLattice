@@ -74,6 +74,10 @@ Installed commands:
 | `contextlattice_retrieval_plan` | Advisor-only evidence obligations, source/query plan, token allocation, graph expansion advice, and marginal-value stop conditions. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
+| `contextlattice_continuity_reconcile` | Resolve one stable task identity exact-first, keep its execution lane separate, and abstain on semantic ambiguity; merge and split require explicit operator attribution and reason. |
+| `contextlattice_objective_transition` | Append a typed, actor-attributed objective transition without overwriting prior state. |
+| `contextlattice_objective_graph` | Replay objective lineage and typed links as of now or an explicit timestamp. |
+| `contextlattice_decision_change` | Record or query evidence-triggered decision changes with confidence deltas and bounded rationale, never hidden reasoning. |
 | `contextlattice_synthesis_pack_v2` | Proof-carrying synthesis with claim-level support, opposition, temporal state, confidence decomposition, and missing-proof disclosure. |
 | `contextlattice_policy_candidate` | Derive a bounded advisory context-policy candidate from calibration-eligible outcomes. |
 | `contextlattice_policy_evaluate` | Record one shadow/canary lifecycle evaluation without mutating public runtime policy. |
@@ -263,7 +267,11 @@ The checker resolves `~/.codex/sessions`, checks read/write/traverse access,
 warns when the real path crosses `/Volumes/*` or a cloud/TCC-managed folder,
 samples transcript readability, and prints the exact failing path with a
 suggested fix. Warnings do not fail the aggregate agent context audit; hard
-access failures do.
+access failures do. Symlink, external-volume, and TCC topology warnings are not
+permission failures. The doctor sets `permission_evidence.status=confirmed`
+only for literal `EACCES`, `EPERM`, `Permission denied`, or `Operation not
+permitted` evidence; when it reports `not_observed`, no permission or TCC repair
+is warranted.
 
 ## Context compaction
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import stat
 import tempfile
@@ -23,6 +24,7 @@ CLOUD_MARKERS = (
     "/Google Drive/",
     "/OneDrive/",
 )
+PERMISSION_DENIAL_ERRNOS = {errno.EACCES, errno.EPERM}
 
 
 def absolute_path(path: Path) -> Path:
@@ -52,17 +54,53 @@ def add_finding(
     path: Path | str,
     detail: str = "",
     suggested_fix: str = "",
+    permission_denial: bool = False,
 ) -> None:
     finding: dict[str, Any] = {
         "severity": severity,
         "reason": reason,
         "path": str(path),
+        "permission_denial": permission_denial,
     }
     if detail:
         finding["detail"] = detail
     if suggested_fix:
         finding["suggested_fix"] = suggested_fix
     findings.append(finding)
+
+
+def is_literal_permission_denial(exc: OSError) -> bool:
+    if exc.errno in PERMISSION_DENIAL_ERRNOS:
+        return True
+    if exc.errno is not None:
+        return False
+    reason = str(exc.strerror or exc).strip()
+    reason_lower = reason.lower()
+    return (
+        reason.upper() in {"EACCES", "EPERM"}
+        or "permission denied" in reason_lower
+        or "operation not permitted" in reason_lower
+    )
+
+
+def exact_error_suggestion(exc: OSError, non_permission_fix: str) -> str:
+    if is_literal_permission_denial(exc):
+        return (
+            "The OS denied this exact operation. Inspect the launcher identity and this exact "
+            "path before considering a scoped permission or TCC change; never run broad repair."
+        )
+    return non_permission_fix + " This error is not permission evidence; do not run permission repair."
+
+
+def permission_evidence(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    confirmed = [finding for finding in findings if finding.get("permission_denial") is True]
+    return {
+        "status": "confirmed" if confirmed else "not_observed",
+        "literal_denial_count": len(confirmed),
+        "repair_recommended": bool(confirmed),
+        "accepted_evidence": ["EACCES", "EPERM", "Permission denied", "Operation not permitted"],
+        "invariant": "Topology warnings and ordinary command/path errors are not permission failures.",
+    }
 
 
 def tcc_reason(path: Path) -> str:
@@ -136,13 +174,18 @@ def component_failures(path: Path, findings: list[dict[str, Any]]) -> None:
         try:
             st = current.stat()
         except OSError as exc:
+            denied = is_literal_permission_denial(exc)
             add_finding(
                 findings,
                 severity="error",
                 reason="path_component_inaccessible",
                 path=current,
                 detail=stat_error_detail(exc),
-                suggested_fix="Move Codex sessions to a local ~/.codex/sessions directory or grant the launching app access to this exact path.",
+                suggested_fix=exact_error_suggestion(
+                    exc,
+                    "Restore or relocate the unavailable path component, then rerun this exact probe.",
+                ),
+                permission_denial=denied,
             )
             return
         if stat.S_ISDIR(st.st_mode) and not os.access(current, os.X_OK):
@@ -151,7 +194,7 @@ def component_failures(path: Path, findings: list[dict[str, Any]]) -> None:
                 severity="error",
                 reason="path_component_not_traversable",
                 path=current,
-                suggested_fix="Fix directory execute/traverse permission or choose a local session directory.",
+                suggested_fix="Reproduce traversal against this exact component; do not infer a permission failure from os.access alone.",
             )
             return
 
@@ -162,13 +205,15 @@ def probe_directory_io(path: Path, findings: list[dict[str, Any]], write_probe: 
         path.stat()
         access["stat"] = True
     except OSError as exc:
+        denied = is_literal_permission_denial(exc)
         add_finding(
             findings,
             severity="error",
             reason="sessions_dir_stat_failed",
             path=path,
             detail=stat_error_detail(exc),
-            suggested_fix="Fix access to the resolved Codex sessions directory before using codex resume.",
+            suggested_fix=exact_error_suggestion(exc, "Restore the missing or unreadable sessions directory, then rerun the doctor."),
+            permission_denial=denied,
         )
         return access
     try:
@@ -176,13 +221,15 @@ def probe_directory_io(path: Path, findings: list[dict[str, Any]], write_probe: 
             next(iterator, None)
         access["list"] = True
     except OSError as exc:
+        denied = is_literal_permission_denial(exc)
         add_finding(
             findings,
             severity="error",
             reason="sessions_dir_read_failed",
             path=path,
             detail=stat_error_detail(exc),
-            suggested_fix="Grant read/traverse access or move sessions back to ~/.codex/sessions.",
+            suggested_fix=exact_error_suggestion(exc, "Repair the exact read/traverse failure or move the store to a healthy local directory."),
+            permission_denial=denied,
         )
     if not write_probe:
         access["write"] = True
@@ -200,13 +247,15 @@ def probe_directory_io(path: Path, findings: list[dict[str, Any]], write_probe: 
             handle.write("ok\n")
         access["write"] = True
     except OSError as exc:
+        denied = is_literal_permission_denial(exc)
         add_finding(
             findings,
             severity="error",
             reason="sessions_dir_write_failed",
             path=path,
             detail=stat_error_detail(exc),
-            suggested_fix="Grant write access or move sessions back to a local writable ~/.codex/sessions directory.",
+            suggested_fix=exact_error_suggestion(exc, "Repair the exact write failure or use a healthy writable session directory."),
+            permission_denial=denied,
         )
     finally:
         if temp_path:
@@ -248,6 +297,7 @@ def transcript_samples(
                         handle.read(1)
                     item["readable"] = True
                 except OSError as exc:
+                    denied = is_literal_permission_denial(exc)
                     item["readable"] = False
                     add_finding(
                         findings,
@@ -255,19 +305,22 @@ def transcript_samples(
                         reason="transcript_sample_read_failed",
                         path=path,
                         detail=stat_error_detail(exc),
-                        suggested_fix="If this is a transcript you need to resume, restore read access or move it under local ~/.codex/sessions.",
+                        suggested_fix=exact_error_suggestion(exc, "Restore this transcript or move it into the healthy session store."),
+                        permission_denial=denied,
                     )
                 samples.append(item)
                 if len(samples) >= limit:
                     return samples, symlinked
     except OSError as exc:
+        denied = is_literal_permission_denial(exc)
         add_finding(
             findings,
             severity="error",
             reason="transcript_walk_failed",
             path=root,
             detail=stat_error_detail(exc),
-            suggested_fix="Fix directory traversal for the Codex session store.",
+            suggested_fix=exact_error_suggestion(exc, "Repair the exact walk failure, then rerun the doctor."),
+            permission_denial=denied,
         )
     return samples, symlinked
 
@@ -278,7 +331,29 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
     sessions_path = absolute_path(Path(args.sessions_path) if args.sessions_path else codex_home / "sessions")
     findings: list[dict[str, Any]] = []
 
-    codex_home_exists = codex_home.exists()
+    try:
+        codex_home.stat()
+        codex_home_exists = True
+    except FileNotFoundError:
+        codex_home_exists = False
+    except OSError as exc:
+        denied = is_literal_permission_denial(exc)
+        add_finding(
+            findings,
+            severity="error",
+            reason="codex_home_stat_failed",
+            path=codex_home,
+            detail=stat_error_detail(exc),
+            suggested_fix=exact_error_suggestion(exc, "Restore the unavailable Codex home path, then rerun this exact probe."),
+            permission_denial=denied,
+        )
+        return {
+            "ok": False,
+            "codex_home": str(codex_home),
+            "sessions_path": str(sessions_path),
+            "permission_evidence": permission_evidence(findings),
+            "findings": findings,
+        }
     if not codex_home_exists and not explicit_sessions_path:
         add_finding(
             findings,
@@ -293,6 +368,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             "reason": "codex_home_missing",
             "codex_home": str(codex_home),
             "sessions_path": str(sessions_path),
+            "permission_evidence": permission_evidence(findings),
             "findings": findings,
         }
 
@@ -309,7 +385,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             reason="sessions_path_symlink",
             path=sessions_path,
             detail=f"target={link_target}",
-            suggested_fix="Default local ~/.codex/sessions is safest. If this symlink is intentional, treat it as advanced mode and run this doctor after OS/privacy or volume changes.",
+            suggested_fix="Topology warning only. If intentional, keep the target available and rerun this doctor after volume changes; do not change permissions without literal denial evidence.",
         )
     if classification["external_volume"]:
         add_finding(
@@ -318,7 +394,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             reason="sessions_realpath_external_volume",
             path=sessions_path,
             detail=f"realpath={realpath}",
-            suggested_fix="Keep Codex sessions on local disk, or grant the launching app Full Disk Access and Removable Volumes access and keep the volume mounted.",
+            suggested_fix="Topology warning only. Keep the volume mounted; do not change TCC or permissions unless an exact probe records a literal OS denial.",
         )
     if classification["tcc_managed"]:
         add_finding(
@@ -327,19 +403,24 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             reason="sessions_path_tcc_or_sync_managed",
             path=sessions_path,
             detail=f"{classification['tcc_reason']} realpath={realpath}",
-            suggested_fix="Move Codex sessions out of Desktop/Documents/Downloads/iCloud/cloud-sync paths, or grant the launching app explicit access.",
+            suggested_fix="Topology warning only. Prefer a non-managed path, but do not change TCC or permissions unless an exact probe records a literal OS denial.",
         )
 
     try:
-        exists = sessions_path.exists()
+        sessions_path.stat()
+        exists = True
+    except FileNotFoundError:
+        exists = False
     except OSError as exc:
+        denied = is_literal_permission_denial(exc)
         add_finding(
             findings,
             severity="error",
             reason="sessions_path_exists_check_failed",
             path=sessions_path,
             detail=stat_error_detail(exc),
-            suggested_fix="Fix access to this path before using codex resume.",
+            suggested_fix=exact_error_suggestion(exc, "Restore the missing or unhealthy path, then rerun this exact check."),
+            permission_denial=denied,
         )
         exists = False
 
@@ -377,6 +458,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             "external_volume": bool(classification["external_volume"]),
             "tcc_managed": bool(classification["tcc_managed"]),
             "advanced_mode": bool(is_symlink or classification["external_volume"] or classification["tcc_managed"]),
+            "permission_evidence": permission_evidence(findings),
             "error_count": error_count,
             "warning_count": warning_count,
             "findings": findings,
@@ -403,7 +485,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             reason="transcript_samples_include_symlinks",
             path=sessions_path,
             detail=f"sampled_symlinked={len(symlinked)} first={symlinked[0].get('path')}",
-            suggested_fix="Prefer regular transcript files. If symlinked transcripts are intentional, keep targets mounted and grant the launcher access.",
+            suggested_fix="Topology warning only. If intentional, keep targets available; no permission action is warranted while exact read probes pass.",
         )
     if external_symlinked:
         add_finding(
@@ -412,7 +494,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
             reason="transcript_samples_target_external_volume",
             path=sessions_path,
             detail=f"sampled_external_targets={len(external_symlinked)} first_realpath={external_symlinked[0].get('realpath')}",
-            suggested_fix="External transcript targets are advanced mode; default local ~/.codex/sessions avoids this failure class.",
+            suggested_fix="External transcript targets are advanced mode. No permission action is warranted while exact read probes pass.",
         )
 
     error_count = sum(1 for finding in findings if finding["severity"] == "error")
@@ -435,6 +517,7 @@ def audit(args: argparse.Namespace) -> dict[str, Any]:
         "advanced_mode": advanced_mode,
         "default_path": default_path,
         "default_local_safe": default_local_safe,
+        "permission_evidence": permission_evidence(findings),
         "access": access,
         "sampled_transcript_count": len(samples),
         "symlinked_transcript_count": len(symlinked),

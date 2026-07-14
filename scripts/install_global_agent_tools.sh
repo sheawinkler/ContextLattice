@@ -27,6 +27,10 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_retrieval_plan
   contextlattice_claim_write
   contextlattice_claim_query
+  contextlattice_continuity_reconcile
+  contextlattice_objective_transition
+  contextlattice_objective_graph
+  contextlattice_decision_change
   contextlattice_policy_candidate
   contextlattice_policy_evaluate
   contextlattice_policy_status
@@ -664,6 +668,10 @@ GO_NATIVE_COMMANDS=(
   contextlattice_retrieval_plan
   contextlattice_claim_write
   contextlattice_claim_query
+  contextlattice_continuity_reconcile
+  contextlattice_objective_transition
+  contextlattice_objective_graph
+  contextlattice_decision_change
   contextlattice_policy_candidate
   contextlattice_policy_evaluate
   contextlattice_policy_status

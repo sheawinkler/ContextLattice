@@ -39,11 +39,20 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	if os.Getenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED") == "" {
 		t.Setenv("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", "false")
 	}
+	if os.Getenv("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH") == "" {
+		t.Setenv("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH", filepath.Join(t.TempDir(), "continuity.ndjson"))
+	}
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 	}
-	return newServer()
+	s := newServer()
+	t.Cleanup(func() {
+		if s != nil && s.continuity != nil {
+			s.continuity.close()
+		}
+	})
+	return s
 }
 
 func TestProxyForwardsRetrievalRequest(t *testing.T) {
@@ -1059,6 +1068,10 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/retrieval/plan", s.memoryRetrievalPlan)`,
 		`mux.HandleFunc("/memory/claims", s.memoryClaimsWrite)`,
 		`mux.HandleFunc("/memory/claims/query", s.memoryClaimsQuery)`,
+		`mux.HandleFunc("/memory/continuity/reconcile", s.memoryContinuityReconcile)`,
+		`mux.HandleFunc("/memory/objectives/transition", s.memoryObjectiveTransition)`,
+		`mux.HandleFunc("/memory/objectives/graph", s.memoryObjectiveGraph)`,
+		`mux.HandleFunc("/memory/decision-changes", s.memoryDecisionChanges)`,
 		`mux.HandleFunc("/memory/review", s.memoryReview)`,
 		`mux.HandleFunc("/preferences", s.preferencesRoute)`,
 		`mux.HandleFunc("/feedback", s.feedbackRoute)`,
@@ -1146,6 +1159,10 @@ func TestHotPathRoutesRemainGoOwned(t *testing.T) {
 		`mux.HandleFunc("/memory/retrieval/plan", s.proxy)`,
 		`mux.HandleFunc("/memory/claims", s.proxy)`,
 		`mux.HandleFunc("/memory/claims/query", s.proxy)`,
+		`mux.HandleFunc("/memory/continuity/reconcile", s.proxy)`,
+		`mux.HandleFunc("/memory/objectives/transition", s.proxy)`,
+		`mux.HandleFunc("/memory/objectives/graph", s.proxy)`,
+		`mux.HandleFunc("/memory/decision-changes", s.proxy)`,
 		`mux.HandleFunc("/memory/review", s.proxy)`,
 		`mux.HandleFunc("/preferences", s.proxy)`,
 		`mux.HandleFunc("/feedback", s.proxy)`,
@@ -4425,6 +4442,20 @@ func TestToolsCapabilityMapGETIsServedNatively(t *testing.T) {
 	tools, _ := payload["tools"].(map[string]any)
 	if !anyToBool(tools["browser_context_ingest"]) {
 		t.Fatalf("expected browser_context_ingest=true by default, got %#v", tools["browser_context_ingest"])
+	}
+	cognition := anyMap(payload["cognition"])
+	continuity := anyMap(cognition["continuityIdentity"])
+	taskIdentity := anyMap(continuity["taskIdentity"])
+	if anyToString(taskIdentity["schema_id"]) != taskIdentityReconciliationContractID || anyToBool(taskIdentity["semantic_auto_merge"]) {
+		t.Fatalf("unexpected task continuity capability: %#v", taskIdentity)
+	}
+	objectiveGraph := anyMap(continuity["objectiveGraph"])
+	if anyToString(objectiveGraph["graph_schema_id"]) != objectiveGraphContractID {
+		t.Fatalf("unexpected objective graph capability: %#v", objectiveGraph)
+	}
+	decisionProvenance := anyMap(continuity["decisionProvenance"])
+	if anyToString(decisionProvenance["schema_id"]) != decisionChangeContractID {
+		t.Fatalf("unexpected decision provenance capability: %#v", decisionProvenance)
 	}
 }
 

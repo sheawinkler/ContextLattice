@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -37,6 +38,10 @@ var nativeToolNames = map[string]string{
 	"contextlattice_retrieval_plan":                  "retrieval-plan",
 	"contextlattice_claim_write":                     "claim-write",
 	"contextlattice_claim_query":                     "claim-query",
+	"contextlattice_continuity_reconcile":            "continuity-reconcile",
+	"contextlattice_objective_transition":            "objective-transition",
+	"contextlattice_objective_graph":                 "objective-graph",
+	"contextlattice_decision_change":                 "decision-change",
 	"contextlattice_policy_candidate":                "policy-candidate",
 	"contextlattice_policy_evaluate":                 "policy-evaluate",
 	"contextlattice_policy_status":                   "policy-status",
@@ -152,6 +157,14 @@ func (c *cli) run(argv []string) error {
 		return c.cmdClaimWrite(args)
 	case "claim-query":
 		return c.cmdClaimQuery(args)
+	case "continuity-reconcile":
+		return c.cmdContinuityReconcile(args)
+	case "objective-transition":
+		return c.cmdObjectiveTransition(args)
+	case "objective-graph":
+		return c.cmdObjectiveGraph(args)
+	case "decision-change":
+		return c.cmdDecisionChange(args)
 	case "policy-candidate":
 		return c.cmdPolicyCandidate(args)
 	case "policy-evaluate":
@@ -253,6 +266,10 @@ Advanced/compatibility commands:
   retrieval-plan                 deterministic advisor-only evidence and source plan
   claim-write                    write or revise a structured temporal claim
   claim-query                    query structured temporal claims as of a point in time
+  continuity-reconcile          exact-first task identity reconcile, merge, split, or lossless compaction
+  objective-transition          append one typed objective lifecycle transition
+  objective-graph               query a longitudinal objective graph as of a point in time
+  decision-change               record or list evidence-linked decision changes
   policy-candidate               derive an advisory policy candidate from eligible outcomes
   policy-evaluate                evaluate one bounded shadow/canary lifecycle transition
   policy-status                  inspect advisory context-policy ledger status
@@ -294,6 +311,8 @@ Advanced/compatibility commands:
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
 contextlattice_pack, contextlattice_synthesis_pack, contextlattice_synthesis_pack_v2,
 contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query,
+contextlattice_continuity_reconcile, contextlattice_objective_transition,
+contextlattice_objective_graph, contextlattice_decision_change,
 contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft,
 contextlattice_passport_export, contextlattice_mesh_export, contextlattice_write,
 contextlattice_agent_session, and other contextlattice_* commands.`)
@@ -595,6 +614,10 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice_retrieval_plan",
 		"contextlattice_claim_write",
 		"contextlattice_claim_query",
+		"contextlattice_continuity_reconcile",
+		"contextlattice_objective_transition",
+		"contextlattice_objective_graph",
+		"contextlattice_decision_change",
 		"contextlattice_write",
 		"contextlattice_adopt",
 		"contextlattice_doctor",
@@ -1428,6 +1451,227 @@ func (c *cli) cmdClaimQuery(args []string) error {
 		return err
 	}
 	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdContinuityReconcile(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"operation": "operation", "task-identity-id": "task_identity_id", "target-task-identity-id": "target_task_identity_id",
+		"source-task-identity-ids": "source_task_identity_ids", "source-task-identity-id": "source_task_identity_id",
+		"task-id": "task_id", "objective": "objective", "repo": "repo", "branch": "branch", "worktree": "worktree", "cwd": "cwd",
+		"execution-lane-id": "execution_lane_id", "session-id": "session_id", "agent-id": "agent_id", "actor": "actor",
+		"reason": "reason", "idempotency-key": "idempotency_key", "payload-file": "payload_file",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"no-create": "no_create"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_continuity_reconcile '<objective>' [--task-id id] [--repo repo] [--operation reconcile|merge|split|compact] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	for flag, key := range map[string]string{
+		"operation": "operation", "task_identity_id": "task_identity_id", "target_task_identity_id": "target_task_identity_id",
+		"source_task_identity_id": "source_task_identity_id", "task_id": "task_id", "objective": "objective", "repo": "repo",
+		"branch": "branch", "worktree": "worktree", "cwd": "cwd", "execution_lane_id": "execution_lane_id",
+		"session_id": "session_id", "agent_id": "agent_id", "actor": "actor", "reason": "reason", "idempotency_key": "idempotency_key",
+	} {
+		if value := parsed.string(flag, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	if value := parsed.string("source_task_identity_ids", ""); value != "" {
+		payload["source_task_identity_ids"] = splitCSV(value)
+	}
+	if firstString(payload["objective"]) == "" && len(parsed.pos) > 0 {
+		payload["objective"] = strings.TrimSpace(strings.Join(parsed.pos, " "))
+	}
+	payload["project"] = firstNonEmpty(firstString(payload["project"]), parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")))
+	payload["operation"] = firstNonEmpty(firstString(payload["operation"]), "reconcile")
+	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), envString("CONTEXTLATTICE_AGENT_ID", ""))
+	payload["session_id"] = firstNonEmpty(firstString(payload["session_id"]), envString("CONTEXTLATTICE_SESSION_ID", ""))
+	if parsed.bool("no_create") {
+		payload["create_if_missing"] = false
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/continuity/reconcile", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdObjectiveTransition(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"objective-id": "objective_id", "objective": "objective", "transition-id": "transition_id", "idempotency-key": "idempotency_key",
+		"type": "transition_type", "transition-type": "transition_type",
+		"from-status": "from_status", "to-status": "to_status", "parent-objective-id": "parent_objective_id",
+		"depends-on": "depends_on", "supersedes": "supersedes", "task-identity-id": "task_identity_id",
+		"execution-lane-id": "execution_lane_id", "session-id": "session_id", "decision-change-id": "decision_change_id",
+		"outcome-id": "outcome_id", "checkpoint-id": "checkpoint_id",
+		"actor": "actor", "agent-id": "agent_id", "summary": "summary", "occurred-at": "occurred_at", "payload-file": "payload_file",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_objective_transition '<objective>' --type created|started|progressed|blocked|completed --actor <id> [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	for flag, key := range map[string]string{
+		"objective_id": "objective_id", "objective": "objective", "transition_id": "transition_id", "idempotency_key": "idempotency_key", "transition_type": "transition_type",
+		"from_status": "from_status", "to_status": "to_status", "parent_objective_id": "parent_objective_id",
+		"task_identity_id": "task_identity_id", "execution_lane_id": "execution_lane_id", "session_id": "session_id",
+		"decision_change_id": "decision_change_id", "outcome_id": "outcome_id", "checkpoint_id": "checkpoint_id",
+		"actor": "actor", "agent_id": "agent_id", "summary": "summary", "occurred_at": "occurred_at",
+	} {
+		if value := parsed.string(flag, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	for flag, key := range map[string]string{"depends_on": "depends_on", "supersedes": "supersedes"} {
+		if value := parsed.string(flag, ""); value != "" {
+			payload[key] = splitCSV(value)
+		}
+	}
+	if firstString(payload["objective"]) == "" && len(parsed.pos) > 0 {
+		payload["objective"] = strings.TrimSpace(strings.Join(parsed.pos, " "))
+	}
+	payload["project"] = firstNonEmpty(firstString(payload["project"]), parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")))
+	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), envString("CONTEXTLATTICE_AGENT_ID", ""))
+	payload["session_id"] = firstNonEmpty(firstString(payload["session_id"]), envString("CONTEXTLATTICE_SESSION_ID", ""))
+	payload["actor"] = firstNonEmpty(firstString(payload["actor"]), firstString(payload["agent_id"]))
+	if firstString(payload["idempotency_key"]) == "" && firstString(payload["transition_id"]) == "" {
+		payload["idempotency_key"] = cliContinuityIdempotencyKey("objective")
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/objectives/transition", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdObjectiveGraph(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"objective-id": "objective_id", "as-of": "as_of", "limit": "limit",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{"no-transitions": "no_transitions"}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_objective_graph [--project p] [--objective-id id] [--as-of RFC3339] [--no-transitions] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	query := url.Values{}
+	query.Set("project", parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")))
+	if value := parsed.string("objective_id", ""); value != "" {
+		query.Set("objective_id", value)
+	}
+	if value := parsed.string("as_of", ""); value != "" {
+		query.Set("as_of", value)
+	}
+	if parsed.has("limit") {
+		query.Set("limit", strconv.Itoa(parsed.int("limit", 500)))
+	}
+	if parsed.bool("no_transitions") {
+		query.Set("include_transitions", "false")
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/memory/objectives/graph?"+query.Encode(), nil, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdDecisionChange(args []string) error {
+	listMode := len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0]), "list")
+	if listMode {
+		args = args[1:]
+	}
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"objective-id": "objective_id", "objective": "objective", "decision-change-id": "decision_change_id", "idempotency-key": "idempotency_key",
+		"before": "before", "after": "after",
+		"confidence-before": "confidence_before", "confidence-after": "confidence_after", "evidence": "evidence",
+		"alternatives": "alternatives", "actor": "actor", "agent-id": "agent_id", "rationale": "rationale",
+		"reason-code": "reason_code", "verification-status": "verification_status", "verification-method": "verification_method",
+		"verification-checker": "verification_checker", "task-identity-id": "task_identity_id", "session-id": "session_id",
+		"execution-lane-id": "execution_lane_id", "occurred-at": "occurred_at", "as-of": "as_of", "limit": "limit", "cursor": "cursor",
+		"payload-file": "payload_file",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice_decision_change --objective-id id --before old --after new --confidence-before .5 --confidence-after .8 --evidence ref --actor id --rationale why --reason-code evidence_changed OR contextlattice_decision_change list [--objective-id id]")
+	}
+	c.applyBaseURL(parsed)
+	if listMode {
+		query := url.Values{}
+		query.Set("project", parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")))
+		for flag, key := range map[string]string{"objective_id": "objective_id", "as_of": "as_of", "limit": "limit", "cursor": "cursor"} {
+			if value := parsed.string(flag, ""); value != "" {
+				query.Set(key, value)
+			}
+		}
+		result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/memory/decision-changes?"+query.Encode(), nil, parsed.float("timeout", 30))
+		if err != nil {
+			return err
+		}
+		return c.emit(result, !parsed.bool("raw"))
+	}
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	for flag, key := range map[string]string{
+		"objective_id": "objective_id", "objective": "objective", "decision_change_id": "decision_change_id", "idempotency_key": "idempotency_key",
+		"before": "before_decision", "after": "after_decision",
+		"actor": "actor", "agent_id": "agent_id", "rationale": "rationale", "reason_code": "reason_code",
+		"task_identity_id": "task_identity_id", "session_id": "session_id", "execution_lane_id": "execution_lane_id", "occurred_at": "occurred_at",
+	} {
+		if value := parsed.string(flag, ""); value != "" {
+			payload[key] = value
+		}
+	}
+	if parsed.has("confidence_before") {
+		payload["confidence_before"] = parsed.float("confidence_before", -1)
+	}
+	if parsed.has("confidence_after") {
+		payload["confidence_after"] = parsed.float("confidence_after", -1)
+	}
+	if value := parsed.string("evidence", ""); value != "" {
+		rows := []any{}
+		for _, ref := range splitCSV(value) {
+			rows = append(rows, map[string]any{"ref_id": ref, "kind": "evidence"})
+		}
+		payload["trigger_evidence"] = rows
+	}
+	if value := parsed.string("alternatives", ""); value != "" {
+		payload["alternatives"] = splitCSV(value)
+	}
+	verification := asMap(payload["verification"])
+	for flag, key := range map[string]string{"verification_status": "status", "verification_method": "method", "verification_checker": "checker"} {
+		if value := parsed.string(flag, ""); value != "" {
+			verification[key] = value
+		}
+	}
+	if len(verification) > 0 {
+		payload["verification"] = verification
+	}
+	payload["project"] = firstNonEmpty(firstString(payload["project"]), parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice")))
+	payload["agent_id"] = firstNonEmpty(firstString(payload["agent_id"]), envString("CONTEXTLATTICE_AGENT_ID", ""))
+	payload["session_id"] = firstNonEmpty(firstString(payload["session_id"]), envString("CONTEXTLATTICE_SESSION_ID", ""))
+	payload["actor"] = firstNonEmpty(firstString(payload["actor"]), firstString(payload["agent_id"]))
+	if firstString(payload["idempotency_key"]) == "" && firstString(payload["decision_change_id"]) == "" {
+		payload["idempotency_key"] = cliContinuityIdempotencyKey("decision")
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/decision-changes", payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func cliContinuityIdempotencyKey(prefix string) string {
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err == nil {
+		return prefix + "_" + hex.EncodeToString(randomBytes)
+	}
+	fallback := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", prefix, os.Getpid(), time.Now().UnixNano())))
+	return prefix + "_" + hex.EncodeToString(fallback[:16])
 }
 
 func payloadFromOptionalFile(path string) (map[string]any, error) {
@@ -3010,12 +3254,29 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		"/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight",
 		"/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan",
 		"/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query",
+		"/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes",
 		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
 		"contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query",
+		"contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_decision_change list",
 		"contextlattice_async_inbox_drain",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	}
 	requiredFields := []string{"contract_valid", "truncated", "omitted_counts", "actual_json_bytes", "max_total_json_bytes", "max_string_bytes", "max_list_items"}
+	requiredContracts := []struct {
+		path       string
+		contractID string
+	}{
+		{"/memory/continuity/reconcile", "task_identity_reconciliation.v1"},
+		{"/memory/objectives/transition", "objective_transition.v1"},
+		{"/memory/objectives/graph", "objective_graph.v1"},
+		{"/memory/decision-changes", "decision_change.v1"},
+		{"/memory/decision-changes", "decision_change_query.v1"},
+		{"contextlattice_continuity_reconcile", "task_identity_reconciliation.v1"},
+		{"contextlattice_objective_transition", "objective_transition.v1"},
+		{"contextlattice_objective_graph", "objective_graph.v1"},
+		{"contextlattice_decision_change", "decision_change.v1"},
+		{"contextlattice_decision_change list", "decision_change_query.v1"},
+	}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "contextlattice_context_boundary.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
@@ -3026,47 +3287,72 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 	if asInt(payload["violationCount"]) != 0 {
 		findings = append(findings, map[string]any{"reason": "boundary_violations_present", "count": payload["violationCount"]})
 	}
-	routes := map[string]map[string]any{}
+	routes := map[string][]map[string]any{}
 	for _, item := range asList(payload["routes"]) {
 		row := asMap(item)
 		if path := firstString(row["path"]); path != "" {
-			routes[path] = row
+			routes[path] = append(routes[path], row)
 		}
 	}
 	for _, path := range required {
-		row, ok := routes[path]
-		if !ok {
+		rows := routes[path]
+		if len(rows) == 0 {
 			findings = append(findings, map[string]any{"reason": "required_boundaries_missing", "path": path})
 			continue
 		}
-		if !asBool(row["bounded"]) {
-			findings = append(findings, map[string]any{"reason": "required_boundary_not_bounded", "path": path})
-		}
-		fields := stringSet(row["metadata_fields"])
-		for _, field := range requiredFields {
-			if !fields[field] {
-				findings = append(findings, map[string]any{"reason": "metadata_field_missing", "path": path, "field": field})
+		for _, row := range rows {
+			identity := map[string]any{"path": path, "contract_id": row["contract_id"], "name": row["name"]}
+			if !asBool(row["bounded"]) {
+				findings = append(findings, map[string]any{"reason": "required_boundary_not_bounded", "path": path, "contract_id": row["contract_id"], "name": row["name"]})
+			}
+			for _, field := range []string{"max_total_json_bytes", "max_string_bytes", "max_list_items"} {
+				if asInt(row[field]) <= 0 {
+					findings = append(findings, map[string]any{"reason": "boundary_limit_missing", "path": path, "contract_id": identity["contract_id"], "field": field})
+				}
+			}
+			fields := stringSet(row["metadata_fields"])
+			for _, field := range requiredFields {
+				if !fields[field] {
+					findings = append(findings, map[string]any{"reason": "metadata_field_missing", "path": path, "contract_id": identity["contract_id"], "field": field})
+				}
 			}
 		}
 	}
+	checkedContracts := make([]any, 0, len(requiredContracts))
+	for _, requiredContract := range requiredContracts {
+		checkedContracts = append(checkedContracts, map[string]any{"path": requiredContract.path, "contract_id": requiredContract.contractID})
+		found := false
+		for _, row := range routes[requiredContract.path] {
+			if firstString(row["contract_id"]) == requiredContract.contractID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			findings = append(findings, map[string]any{
+				"reason": "required_contract_boundary_missing", "path": requiredContract.path, "contract_id": requiredContract.contractID,
+			})
+		}
+	}
 	return map[string]any{
-		"ok":                   len(findings) == 0,
-		"schema_id":            "contextlattice_context_boundary_audit.v1",
-		"source_schema_id":     payload["schema_id"],
-		"status":               payload["status"],
-		"registry_id":          payload["registry_id"],
-		"registry_version":     payload["registry_version"],
-		"requiredSurfaceCount": payload["requiredSurfaceCount"],
-		"boundedSurfaceCount":  payload["boundedSurfaceCount"],
-		"violationCount":       payload["violationCount"],
-		"checkedRequiredPaths": required,
-		"findings":             findings,
-		"raw":                  payload,
+		"ok":                       len(findings) == 0,
+		"schema_id":                "contextlattice_context_boundary_audit.v1",
+		"source_schema_id":         payload["schema_id"],
+		"status":                   payload["status"],
+		"registry_id":              payload["registry_id"],
+		"registry_version":         payload["registry_version"],
+		"requiredSurfaceCount":     payload["requiredSurfaceCount"],
+		"boundedSurfaceCount":      payload["boundedSurfaceCount"],
+		"violationCount":           payload["violationCount"],
+		"checkedRequiredPaths":     required,
+		"checkedRequiredContracts": checkedContracts,
+		"findings":                 findings,
+		"raw":                      payload,
 	}
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
@@ -3122,7 +3408,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)

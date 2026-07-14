@@ -14,15 +14,16 @@ type agentBoundaryLimits struct {
 }
 
 type agentBoundaryStats struct {
-	StringsClipped          int
-	ListsClipped            int
-	OptionalFieldsCompacted int
-	TotalPasses             int
-	JSONBytesBefore         int
-	JSONBytesAfter          int
-	MaxTotalJSONBytes       int
-	MaxStringBytes          int
-	MaxListItems            int
+	StringsClipped                int
+	ListsClipped                  int
+	OptionalFieldsCompacted       int
+	TotalPasses                   int
+	JSONBytesBefore               int
+	JSONBytesAfter                int
+	MaxTotalJSONBytes             int
+	MaxStringBytes                int
+	MaxListItems                  int
+	ObjectiveGraphNodeLinksBefore int
 }
 
 func agentBoundaryLimitsFromContract(contract map[string]any) agentBoundaryLimits {
@@ -51,6 +52,9 @@ func enforceAgentBoundaryContract(contractID string, payload map[string]any) age
 		MaxTotalJSONBytes: limits.MaxTotalJSONBytes,
 		MaxStringBytes:    limits.MaxStringBytes,
 		MaxListItems:      limits.MaxListItems,
+	}
+	if contractID == objectiveGraphContractID {
+		stats.ObjectiveGraphNodeLinksBefore = objectiveGraphNodeLinkCount(payload)
 	}
 	if limits.MaxTotalJSONBytes <= 0 && limits.MaxStringBytes <= 0 && limits.MaxListItems <= 0 {
 		stats.JSONBytesAfter = stats.JSONBytesBefore
@@ -81,6 +85,9 @@ func mergeAgentBoundaryStats(left agentBoundaryStats, right agentBoundaryStats) 
 	}
 	if left.MaxListItems == 0 {
 		left.MaxListItems = right.MaxListItems
+	}
+	if left.ObjectiveGraphNodeLinksBefore == 0 {
+		left.ObjectiveGraphNodeLinksBefore = right.ObjectiveGraphNodeLinksBefore
 	}
 	left.StringsClipped += right.StringsClipped
 	left.ListsClipped += right.ListsClipped
@@ -850,7 +857,101 @@ func reconcileAgentBoundaryPayload(contractID string, payload map[string]any, st
 		reconcileContextPackBoundaryMetadata(payload, true, stats)
 	case synthesisPackContractID:
 		reconcileContextPackBoundaryMetadata(payload, false, stats)
+	case objectiveGraphContractID:
+		reconcileObjectiveGraphBoundaryMetadata(payload, stats)
+	case decisionChangeQueryContractID:
+		reconcileDecisionChangeQueryBoundaryMetadata(payload, stats)
 	}
+}
+
+func reconcileDecisionChangeQueryBoundaryMetadata(payload map[string]any, stats *agentBoundaryStats) {
+	changes := contextPackAnyList(payload["changes"])
+	previousCount := maxInt(anyToInt(payload["change_count"], len(changes)), len(changes))
+	totalCount := maxInt(anyToInt(payload["total_change_count"], previousCount), previousCount)
+	previousOmitted := maxInt(anyToInt(payload["omitted_count"], totalCount-previousCount), 0)
+	changesClipped := previousCount > len(changes)
+	boundaryCompacted := anyToBool(payload["boundary_compacted"]) || changesClipped
+	if stats != nil && (stats.StringsClipped > 0 || stats.ListsClipped > 0 || stats.OptionalFieldsCompacted > 0) {
+		boundaryCompacted = true
+	}
+
+	payload["change_count"] = len(changes)
+	payload["omitted_count"] = maxInt(previousOmitted, totalCount-len(changes))
+	if len(changes) > 0 {
+		if cursor := strings.TrimSpace(anyToString(anyMap(changes[len(changes)-1])["page_cursor"])); cursor != "" && totalCount > len(changes) {
+			payload["next_cursor"] = cursor
+		}
+	}
+	if boundaryCompacted {
+		wasCompacted := anyToBool(payload["boundary_compacted"])
+		payload["boundary_compacted"] = true
+		payload["query_truncated"] = true
+		payload["complete"] = false
+		if stats != nil && !wasCompacted {
+			stats.OptionalFieldsCompacted++
+		}
+	}
+}
+
+func reconcileObjectiveGraphBoundaryMetadata(payload map[string]any, stats *agentBoundaryStats) {
+	nodes := contextPackAnyList(payload["nodes"])
+	edges := contextPackAnyList(payload["edges"])
+	transitions := contextPackAnyList(payload["transitions"])
+	previousNodeCount := anyToInt(payload["node_count"], len(nodes))
+	previousEdgeCount := anyToInt(payload["edge_count"], len(edges))
+	transitionCount := maxInt(anyToInt(payload["transition_count"], len(transitions)), len(transitions))
+	previousTransitionOmitted := maxInt(anyToInt(payload["transition_omitted_count"], 0), 0)
+	transitionsIncluded := anyToBool(payload["transitions_included"])
+
+	nodesClipped := previousNodeCount > len(nodes)
+	edgesClipped := previousEdgeCount > len(edges)
+	transitionsClipped := transitionsIncluded && transitionCount-previousTransitionOmitted > len(transitions)
+	boundaryCompacted := anyToBool(payload["boundary_compacted"]) || nodesClipped || edgesClipped || transitionsClipped
+	if stats != nil && (stats.StringsClipped > 0 || stats.ListsClipped > 0 || stats.OptionalFieldsCompacted > 0) {
+		boundaryCompacted = true
+	}
+
+	payload["node_count"] = len(nodes)
+	payload["edge_count"] = len(edges)
+	if transitionsIncluded {
+		payload["transition_omitted_count"] = maxInt(previousTransitionOmitted, transitionCount-len(transitions))
+	} else {
+		payload["transition_omitted_count"] = transitionCount
+	}
+	if nodesClipped {
+		payload["traversal_truncated"] = true
+	}
+	if edgesClipped {
+		payload["edge_truncated"] = true
+	}
+	if transitionsClipped {
+		payload["transition_truncated"] = true
+	}
+	if stats != nil && stats.ObjectiveGraphNodeLinksBefore > objectiveGraphNodeLinkCount(payload) {
+		payload["node_link_truncated"] = true
+	}
+	if boundaryCompacted {
+		wasCompacted := anyToBool(payload["boundary_compacted"])
+		payload["boundary_compacted"] = true
+		payload["graph_truncated"] = true
+		payload["complete"] = false
+		if stats != nil && !wasCompacted {
+			stats.OptionalFieldsCompacted++
+		}
+	}
+}
+
+func objectiveGraphNodeLinkCount(payload map[string]any) int {
+	total := 0
+	for _, rawNode := range contextPackAnyList(payload["nodes"]) {
+		node := anyMap(rawNode)
+		for _, key := range []string{
+			"task_identity_ids", "execution_lane_ids", "session_ids", "decision_change_ids", "outcome_ids", "checkpoint_ids",
+		} {
+			total += len(contextPackAnyList(node[key]))
+		}
+	}
+	return total
 }
 
 func reconcileContextPackBoundaryMetadata(payload map[string]any, rebuildReferencePrompt bool, stats *agentBoundaryStats) {

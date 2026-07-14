@@ -48,6 +48,12 @@ REQUIRED_CONTRACTS = (
     "synthesis_pack.v2",
     "temporal_claim.v1",
     "temporal_claim_query.v1",
+    "task_identity_reconciliation.v1",
+    "task_identity_receipt.v1",
+    "objective_transition.v1",
+    "objective_graph.v1",
+    "decision_change.v1",
+    "decision_change_query.v1",
     "retrieval_plan.v1",
     "context_policy_candidate.v1",
     "context_policy_evaluation.v1",
@@ -123,6 +129,189 @@ def sample_run_advisor() -> dict[str, Any]:
                     "reason": "The packet is bounded.",
                 }
             ],
+        },
+    )
+
+
+def sample_task_identity_receipt() -> dict[str, Any]:
+    return attach_format_contract(
+        "task_identity_receipt.v1",
+        {
+            "schema_id": "task_identity_receipt.v1",
+            "receipt_id": "tir_audit_fixture",
+            "operation": "create",
+            "task_identity_id": "task_audit_fixture",
+            "source_task_identity_ids": [],
+            "project": "contextlattice",
+            "objective": "Audit continuity identity contracts.",
+            "normalized_objective": "audit continuity identity contracts",
+            "external_task_ids": ["audit-t1"],
+            "actor": "contract_audit",
+            "reason": "No exact identity existed.",
+            "match_mode": "created",
+            "idempotency_key": "create_audit_fixture",
+            "created_at": "2026-07-14T12:00:00Z",
+        },
+    )
+
+
+def sample_task_identity_reconciliation() -> dict[str, Any]:
+    return attach_format_contract(
+        "task_identity_reconciliation.v1",
+        {
+            "ok": True,
+            "schema_id": "task_identity_reconciliation.v1",
+            "match_mode": "created",
+            "exact_first": True,
+            "semantic_auto_merge": False,
+            "requires_confirmation": False,
+            "abstained": False,
+            "task_identity_id": "task_audit_fixture",
+            "task_identity": {
+                "task_identity_id": "task_audit_fixture",
+                "project": "contextlattice",
+                "objective": "Audit continuity identity contracts.",
+                "status": "active",
+            },
+            "candidates": [],
+            "receipt": sample_task_identity_receipt(),
+            "ledger_status": {"enabled": True, "ready": True, "entry_count": 1},
+        },
+    )
+
+
+def sample_objective_transition() -> dict[str, Any]:
+    transition = {
+        "schema_id": "objective_transition.v1",
+        "transition_id": "ot_audit_fixture",
+        "idempotency_key": "audit-objective-transition",
+        "objective_id": "objective_audit_fixture",
+        "project": "contextlattice",
+        "objective": "Audit continuity identity contracts.",
+        "transition_type": "progressed",
+        "to_status": "active",
+        "actor": "contract_audit",
+        "summary": "Contract fixture verified.",
+        "evidence": [{"ref_id": "audit:test", "kind": "test"}],
+        "metadata": {},
+        "occurred_at": "2026-07-14T12:01:00Z",
+        "recorded_at": "2026-07-14T12:01:01Z",
+    }
+    return attach_format_contract(
+        "objective_transition.v1",
+        {
+            "ok": True,
+            "schema_id": "objective_transition.v1",
+            "transition": transition,
+            "recorded": True,
+            "idempotent_replay": False,
+            "ledger_status": {"enabled": True, "ready": True, "entry_count": 2},
+        },
+    )
+
+
+def sample_objective_graph() -> dict[str, Any]:
+    transition = sample_objective_transition()["transition"]
+    return attach_format_contract(
+        "objective_graph.v1",
+        {
+            "ok": True,
+            "schema_id": "objective_graph.v1",
+            "project": "contextlattice",
+            "objective_id": "objective_audit_fixture",
+            "as_of": "2026-07-14T12:02:00Z",
+            "complete": True,
+            "limit": 500,
+            "graph_truncated": False,
+            "boundary_compacted": False,
+            "traversal_truncated": False,
+            "node_link_truncated": False,
+            "edge_truncated": False,
+            "transition_truncated": False,
+            "replay_truncated": False,
+            "transitions_included": True,
+            "relation_inspection_count": 0,
+            "relation_inspection_limit": 64000,
+            "selection_inspection_count": 1,
+            "selection_inspection_limit": 64000,
+            "replay_inspection_count": 1,
+            "replay_inspection_limit": 100000,
+            "nodes": [{"objective_id": "objective_audit_fixture", "status": "active"}],
+            "edges": [],
+            "node_count": 1,
+            "edge_count": 0,
+            "transition_count": 1,
+            "transition_count_exact": True,
+            "transition_omitted_count": 0,
+            "transitions": [transition],
+            "ledger_status": {"enabled": True, "ready": True, "entry_count": 2},
+        },
+    )
+
+
+def sample_decision_change() -> dict[str, Any]:
+    change = {
+        "schema_id": "decision_change.v1",
+        "decision_change_id": "dc_audit_fixture",
+        "idempotency_key": "audit-decision-change",
+        "project": "contextlattice",
+        "objective_id": "objective_audit_fixture",
+        "before": {"summary": "Automatically reuse semantic candidates."},
+        "after": {"summary": "Require confirmation after exact lookup misses."},
+        "trigger_evidence": [{"ref_id": "audit:test", "kind": "test"}],
+        "confidence_before": 0.45,
+        "confidence_after": 0.92,
+        "confidence_delta": 0.47,
+        "alternatives": ["exact-only"],
+        "actor": "contract_audit",
+        "rationale": "Ambiguous semantic matches must abstain.",
+        "reason_code": "evidence_changed",
+        "verification": {"status": "verified", "method": "deterministic_test"},
+        "occurred_at": "2026-07-14T12:02:00Z",
+        "recorded_at": "2026-07-14T12:02:01Z",
+    }
+    transition = sample_objective_transition()["transition"]
+    transition["transition_id"] = "ot_audit_decision_fixture"
+    transition["idempotency_key"] = "audit-decision-transition"
+    transition["transition_type"] = "decision_changed"
+    transition["to_status"] = "unchanged"
+    transition["decision_change_id"] = change["decision_change_id"]
+    return attach_format_contract(
+        "decision_change.v1",
+        {
+            "ok": True,
+            "schema_id": "decision_change.v1",
+            "decision_change": change,
+            "objective_transition": transition,
+            "recorded": True,
+            "idempotent_replay": False,
+            "ledger_status": {"enabled": True, "ready": True, "entry_count": 3},
+        },
+    )
+
+
+def sample_decision_change_query() -> dict[str, Any]:
+    return attach_format_contract(
+        "decision_change_query.v1",
+        {
+            "ok": True,
+            "schema_id": "decision_change_query.v1",
+            "project": "contextlattice",
+            "objective_id": "objective_audit_fixture",
+            "as_of": "2026-07-14T12:03:00Z",
+            "limit": 50,
+            "changes": [sample_decision_change()["decision_change"]],
+            "change_count": 1,
+            "total_change_count": 1,
+            "total_count_exact": True,
+            "omitted_count": 0,
+            "complete": True,
+            "query_truncated": False,
+            "boundary_compacted": False,
+            "next_cursor": "",
+            "inspection_count": 1,
+            "inspection_limit": 100000,
+            "ledger_status": {"enabled": True, "ready": True, "entry_count": 4},
         },
     )
 
@@ -1714,6 +1903,12 @@ def run_audit() -> list[dict[str, Any]]:
         ("runner_quality_sample.v1", sample_runner_quality_sample()),
         ("temporal_claim.v1", sample_temporal_claim()),
         ("temporal_claim_query.v1", sample_temporal_claim_query()),
+        ("task_identity_reconciliation.v1", sample_task_identity_reconciliation()),
+        ("task_identity_receipt.v1", sample_task_identity_receipt()),
+        ("objective_transition.v1", sample_objective_transition()),
+        ("objective_graph.v1", sample_objective_graph()),
+        ("decision_change.v1", sample_decision_change()),
+        ("decision_change_query.v1", sample_decision_change_query()),
         ("retrieval_plan.v1", sample_retrieval_plan()),
         ("synthesis_pack.v2", sample_synthesis_pack_v2()),
         ("context_policy_candidate.v1", sample_context_policy_candidate()),
@@ -1793,6 +1988,48 @@ def run_audit() -> list[dict[str, Any]]:
     if failure:
         findings.append(failure)
     failure = validate_expected_failure("codex_compact_hook_stdout.v1", bad_compact, "forbidden_field_present")
+    if failure:
+        findings.append(failure)
+
+    bad_decision = sample_decision_change()
+    bad_decision["decision_change"]["chain_of_thought"] = "must never persist"
+    failure = validate_expected_failure("decision_change.v1", bad_decision, "forbidden_field_present")
+    if failure:
+        findings.append(failure)
+
+    unsafe_identity = sample_task_identity_reconciliation()
+    unsafe_identity["exact_first"] = False
+    failure = validate_expected_failure("task_identity_reconciliation.v1", unsafe_identity, "required_true_path_not_true")
+    if failure:
+        findings.append(failure)
+    unsafe_identity["exact_first"] = True
+    unsafe_identity["semantic_auto_merge"] = True
+    failure = validate_expected_failure("task_identity_reconciliation.v1", unsafe_identity, "required_false_path_not_false")
+    if failure:
+        findings.append(failure)
+
+    semantic_identity = sample_task_identity_reconciliation()
+    semantic_identity["match_mode"] = "semantic_candidate"
+    semantic_identity["abstained"] = True
+    semantic_identity["requires_confirmation"] = True
+    semantic_identity["task_identity_id"] = ""
+    semantic_identity["task_identity"] = {}
+    semantic_identity["receipt"] = {}
+    semantic_identity["candidates"] = [{"task_identity_id": "task_candidate", "score": 0.91}]
+    for item in validate_agent_contract_payload("task_identity_reconciliation.v1", semantic_identity):
+        findings.append({"severity": "error", "reason": "valid_semantic_abstention_failed", "detail": item})
+
+    unsafe_semantic = sample_task_identity_reconciliation()
+    unsafe_semantic["match_mode"] = "semantic_candidate"
+    unsafe_semantic["abstained"] = False
+    unsafe_semantic["requires_confirmation"] = False
+    failure = validate_expected_failure("task_identity_reconciliation.v1", unsafe_semantic, "identity_abstention_required")
+    if failure:
+        findings.append(failure)
+    failure = validate_expected_failure("task_identity_reconciliation.v1", unsafe_semantic, "identity_confirmation_required")
+    if failure:
+        findings.append(failure)
+    failure = validate_expected_failure("task_identity_reconciliation.v1", unsafe_semantic, "abstention_cannot_bind_identity")
     if failure:
         findings.append(failure)
 

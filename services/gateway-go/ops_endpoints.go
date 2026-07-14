@@ -131,6 +131,22 @@ func (s *server) capabilityMapPayload() map[string]any {
 		},
 		"cognition": map[string]any{
 			"temporalClaimGraph": s.temporalClaims.snapshot(),
+			"continuityIdentity": map[string]any{
+				"ledger": s.continuity.snapshot(),
+				"taskIdentity": map[string]any{
+					"schema_id": taskIdentityReconciliationContractID, "endpoint": "/memory/continuity/reconcile",
+					"cli": "contextlattice_continuity_reconcile", "exact_first": true, "semantic_auto_merge": false,
+				},
+				"objectiveGraph": map[string]any{
+					"transition_schema_id": objectiveTransitionContractID, "graph_schema_id": objectiveGraphContractID,
+					"transition_endpoint": "/memory/objectives/transition", "graph_endpoint": "/memory/objectives/graph",
+					"transition_cli": "contextlattice_objective_transition", "graph_cli": "contextlattice_objective_graph",
+				},
+				"decisionProvenance": map[string]any{
+					"schema_id": decisionChangeContractID, "query_schema_id": decisionChangeQueryContractID,
+					"endpoint": "/memory/decision-changes", "cli": "contextlattice_decision_change",
+				},
+			},
 			"adaptiveRetrievalPlanner": map[string]any{
 				"schema_id":        retrievalPlanContractID,
 				"mode":             "advisor",
