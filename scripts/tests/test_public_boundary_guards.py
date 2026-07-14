@@ -150,6 +150,53 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             result = run(["bash", "scripts/public_sync_guard.sh", "public-paid", "main"], repo)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_public_paid_sync_uses_exact_remote_tracking_ref(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-paid-exact-ref-") as tmp:
+            repo = Path(tmp)
+            init_repo(repo)
+            (repo / "scripts").mkdir()
+            shutil.copy2(ROOT / "scripts/public_sync_guard.sh", repo / "scripts/public_sync_guard.sh")
+            (repo / "config").mkdir()
+            shutil.copy2(ROOT / "config/public_sync_blocklist.txt", repo / "config/public_sync_blocklist.txt")
+            (repo / "README.md").write_text("base\n", encoding="utf-8")
+            commit_all(repo, "base")
+            base = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+            run(["git", "update-ref", "refs/remotes/public-paid/main", base], repo)
+            private = repo / "docs/private/internal.md"
+            private.parent.mkdir(parents=True)
+            private.write_text("must not ship\n", encoding="utf-8")
+            commit_all(repo, "blocked candidate")
+            candidate = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+            run(["git", "update-ref", "refs/heads/public-paid/main", candidate], repo)
+            result = run(["bash", "scripts/public_sync_guard.sh", "public-paid", "main"], repo)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("docs/private", result.stderr)
+            self.assertNotIn("ambiguous", result.stderr.lower())
+
+    def test_public_paid_sync_rejects_private_program_paths(self) -> None:
+        for blocked_path in (
+            "scripts/agent/audit-frontier-30-program",
+            "scripts/lib/private_dev_posture.sh",
+        ):
+            with self.subTest(path=blocked_path), tempfile.TemporaryDirectory(prefix="public-paid-program-") as tmp:
+                repo = Path(tmp)
+                init_repo(repo)
+                (repo / "scripts").mkdir()
+                shutil.copy2(ROOT / "scripts/public_sync_guard.sh", repo / "scripts/public_sync_guard.sh")
+                (repo / "config").mkdir()
+                shutil.copy2(ROOT / "config/public_sync_blocklist.txt", repo / "config/public_sync_blocklist.txt")
+                (repo / "README.md").write_text("base\n", encoding="utf-8")
+                commit_all(repo, "base")
+                base = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+                run(["git", "update-ref", "refs/remotes/public-paid/main", base], repo)
+                blocked = repo / blocked_path
+                blocked.parent.mkdir(parents=True, exist_ok=True)
+                blocked.write_text("must not ship\n", encoding="utf-8")
+                commit_all(repo, "blocked private program")
+                result = run(["bash", "scripts/public_sync_guard.sh", "public-paid", "main"], repo)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(blocked_path, result.stderr)
+
     def test_public_paid_sync_rejects_dangling_private_posture_calls(self) -> None:
         with tempfile.TemporaryDirectory(prefix="public-paid-launcher-sync-") as tmp:
             repo = Path(tmp)
