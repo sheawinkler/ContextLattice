@@ -254,6 +254,91 @@ class CommercialTruthTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertIn("release_publish_version_drift", {row["code"] for row in payload["findings"]})
 
+    def test_audit_rejects_distribution_specific_release_publish_input(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-lane-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["release_lane"] = "public-paid"
+            payload["channels"][0]["submission_path"] = "Tag v3.18.0-public-paid"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            codes = {row["code"] for row in json.loads(result.stdout)["findings"]}
+            self.assertIn("release_publish_lane_drift", codes)
+            self.assertIn("release_publish_version_drift", codes)
+
+    def test_audit_rejects_schedule_fields_when_launch_is_unscheduled(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-schedule-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["channels"][0]["schedule_mt"] = "2026-02-23 00:00"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_publish_schedule_drift",
+                {row["code"] for row in json.loads(result.stdout)["findings"]},
+            )
+
+    def test_audit_rejects_partial_legacy_schedule_when_marked_scheduled(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-partial-schedule-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["schedule_state"] = "scheduled"
+            payload["channels"][0]["schedule_mt"] = "2026-07-20 09:00"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_publish_schedule_drift",
+                {row["code"] for row in json.loads(result.stdout)["findings"]},
+            )
+
+    def test_audit_accepts_canonical_scheduled_channel(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-canonical-schedule-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["schedule_state"] = "scheduled"
+            payload["channels"][0]["schedule"] = "2026-07-20T15:00:00Z"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_audit_rejects_noncanonical_stable_tag_suffixes(self) -> None:
+        variants = (
+            "v3.18.0+public-paid",
+            "v3.18.0_origin",
+            "v3.18.0/public",
+            "v3.18.0.public",
+        )
+        for variant in variants:
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory(prefix="commercial-truth-tag-suffix-") as tmp:
+                fixture = Path(tmp)
+                copy_fixture(fixture)
+                launch = fixture / "launch_service/config/contextlattice.launch.json"
+                payload = json.loads(launch.read_text(encoding="utf-8"))
+                payload["channels"][0]["submission_path"] = f"Publish tag {variant}"
+                launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+                result = run(
+                    str(fixture / "scripts/agent/audit-commercial-truth"),
+                    "--root",
+                    str(fixture),
+                    root=fixture,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(
+                    "release_publish_version_drift",
+                    {row["code"] for row in json.loads(result.stdout)["findings"]},
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

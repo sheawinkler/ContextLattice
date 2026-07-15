@@ -1,14 +1,16 @@
 {
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
+  "release_lane": "distribution-neutral",
   "launch_window": "ContextLattice v3.18 release wave: July 2026",
+  "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
   "metadata": {
     "primary_url": "https://contextlattice.io/",
     "docs_url": "https://contextlattice.io/installation.html",
     "troubleshooting_url": "https://contextlattice.io/troubleshooting.html",
-    "repo_url": "https://github.com/sheawinkler/contextlattice",
+    "repo_url": "https://github.com/sheawinkler/ContextLattice",
     "public_overview_url": "https://contextlattice.io/"
   },
   "channels": [
@@ -16,12 +18,10 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.18.0 + release notes + checksums + images",
+      "submission_path": "Publish the lane-approved v3.18.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-23 00:00",
-      "schedule_pt": "2026-02-22 23:00",
       "status": "Live",
       "copy_key": "github_release"
     },
@@ -33,8 +33,6 @@
       "lead_time": "1-2 days",
       "cost_signal": "Domain/DNS",
       "owner": "Shea",
-      "schedule_mt": "2026-02-23 00:00",
-      "schedule_pt": "2026-02-22 23:00",
       "status": "Live",
       "copy_key": "custom_domain"
     },
@@ -46,8 +44,6 @@
       "lead_time": "1-3 days",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 15:30",
-      "schedule_pt": "2026-02-20 14:30",
       "status": "Deferred (local-first track; requires public HTTPS /mcp)",
       "copy_key": "mcp_registry"
     },
@@ -59,8 +55,6 @@
       "lead_time": "0-2 days",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 16:00",
-      "schedule_pt": "2026-02-20 15:00",
       "status": "Submitted (awaiting review)",
       "copy_key": "glama"
     },
@@ -72,8 +66,6 @@
       "lead_time": "1-7 days",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 16:20",
-      "schedule_pt": "2026-02-20 15:20",
       "status": "Deferred (blocked on official MCP Registry publication)",
       "copy_key": "pulsemcp"
     },
@@ -85,8 +77,6 @@
       "lead_time": "0-3 days",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 16:40",
-      "schedule_pt": "2026-02-20 15:40",
       "status": "Submitted (awaiting review)",
       "copy_key": "mcp_so"
     },
@@ -98,8 +88,6 @@
       "lead_time": "1-3 days prep",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:05",
-      "schedule_pt": "2026-02-21 07:05",
       "status": "Ready (manual submit)",
       "copy_key": "product_hunt"
     },
@@ -111,8 +99,6 @@
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:10",
-      "schedule_pt": "2026-02-21 07:10",
       "status": "Ready (manual submit)",
       "copy_key": "show_hn"
     },
@@ -124,8 +110,6 @@
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:20",
-      "schedule_pt": "2026-02-21 07:20",
       "status": "Ready (manual submit)",
       "copy_key": "x_thread"
     },
@@ -137,8 +121,6 @@
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:25",
-      "schedule_pt": "2026-02-21 07:25",
       "status": "Ready (manual submit)",
       "copy_key": "linkedin"
     },
@@ -150,8 +132,6 @@
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:35",
-      "schedule_pt": "2026-02-21 07:35",
       "status": "Ready (manual submit)",
       "copy_key": "reddit"
     },
@@ -163,8 +143,6 @@
       "lead_time": "1-2 days",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 08:45",
-      "schedule_pt": "2026-02-21 07:45",
       "status": "Ready (manual submit)",
       "copy_key": "huggingface"
     },
@@ -176,8 +154,6 @@
       "lead_time": "1-7 days",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 17:00",
-      "schedule_pt": "2026-02-20 16:00",
       "status": "Ready (manual submit)",
       "copy_key": "futuretools"
     },
@@ -189,8 +165,6 @@
       "lead_time": "1-7 days",
       "cost_signal": "Paid optional",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 17:20",
-      "schedule_pt": "2026-02-20 16:20",
       "status": "Ready (manual submit)",
       "copy_key": "futurepedia"
     },
@@ -202,8 +176,6 @@
       "lead_time": "1-3 days",
       "cost_signal": "Paid optional",
       "owner": "Shea",
-      "schedule_mt": "2026-02-20 17:40",
-      "schedule_pt": "2026-02-20 16:40",
       "status": "Ready (manual submit)",
       "copy_key": "toolify"
     },
@@ -215,8 +187,6 @@
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
-      "schedule_mt": "2026-02-21 09:30",
-      "schedule_pt": "2026-02-21 08:30",
       "status": "Live",
       "copy_key": "devto"
     }
@@ -225,7 +195,7 @@
     {
       "time_mt": "08:30",
       "time_pt": "07:30",
-      "action": "Launch day preflight on Saturday, February 21, 2026: stack (`gmake mem-up-full`), check `/health` and `/status`, verify release links."
+      "action": "Launch-day preflight: start the stack (`gmake mem-up-full`), check `/health` and `/status`, and verify release links."
     },
     {
       "time_mt": "08:50",
@@ -309,7 +279,7 @@
     {
       "risk": "Listing review lag",
       "impact": "Asynchronous launch windows",
-      "mitigation": "Submit MCP directories by 2026-02-20 and track confirmations"
+      "mitigation": "Submit MCP directories before launch and track confirmations"
     },
     {
       "risk": "Terminology drift",

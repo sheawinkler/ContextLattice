@@ -421,6 +421,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Integrations: `https://contextlattice.io/integration.html`
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
+- Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Release notes, newest first; older entries are historical:
   - `docs/releases/v3.18.0.md` (durable continuity identity, holdout-locked semantic reconciliation, shared objective graphs, and witnessed decision provenance)
   - `docs/releases/v3.17.5.md` (latest-only configured state, bounded owner-only migration, and fail-closed semantic readers)

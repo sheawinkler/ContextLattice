@@ -319,9 +319,57 @@ def audit_release_publish_inputs(
     except json.JSONDecodeError as exc:
         findings.append(finding("release_publish_input_invalid", str(relative), str(exc)))
         return
+    expected_lane = "distribution-neutral"
+    release_lane = str(payload.get("release_lane", "")).strip()
+    serialized = json.dumps(payload, ensure_ascii=True)
+    private_repo_slug = "/".join(("sheawinkler", "http-context-and-memory-orchestrator"))
+    if release_lane != expected_lane or private_repo_slug.lower() in serialized.lower():
+        findings.append(
+            finding(
+                "release_publish_lane_drift",
+                str(relative),
+                f"release_lane={release_lane or '<missing>'}; expected={expected_lane}; private_repo_reference={private_repo_slug.lower() in serialized.lower()}",
+            )
+        )
+
+    schedule_state = str(payload.get("schedule_state", "")).strip()
+    channels = payload.get("channels", [])
+    scheduled_channels: list[str] = []
+    invalid_schedule_channels: list[str] = []
+    if isinstance(channels, list):
+        for channel in channels:
+            if not isinstance(channel, dict):
+                continue
+            name = str(channel.get("name", "unknown"))
+            canonical = str(channel.get("schedule", "")).strip()
+            mountain = str(channel.get("schedule_mt", "")).strip()
+            pacific = str(channel.get("schedule_pt", "")).strip()
+            legacy_complete = bool(mountain and pacific)
+            legacy_partial = bool(mountain) != bool(pacific)
+            mixed_shapes = bool(canonical) and bool(mountain or pacific)
+            if canonical or legacy_complete:
+                scheduled_channels.append(name)
+            if legacy_partial or mixed_shapes:
+                invalid_schedule_channels.append(name)
+    if schedule_state not in {"scheduled", "unscheduled"} or invalid_schedule_channels or (
+        schedule_state == "unscheduled" and scheduled_channels
+    ) or (schedule_state == "scheduled" and not scheduled_channels):
+        findings.append(
+            finding(
+                "release_publish_schedule_drift",
+                str(relative),
+                f"schedule_state={schedule_state or '<missing>'}; scheduled_channels={sorted(scheduled_channels)}; invalid_schedule_channels={sorted(invalid_schedule_channels)}",
+            )
+        )
+
     expected = contract["product"]["stable_tag"]
     allowed = {expected}
-    observed = set(re.findall(r"v\d+\.\d+\.\d+(?:-origin)?", json.dumps(payload, ensure_ascii=True)))
+    observed = set(
+        re.findall(
+            r"(?<![0-9A-Za-z])v\d+\.\d+\.\d+(?:[-+_/.][0-9A-Za-z][0-9A-Za-z._+/-]*)?(?![0-9A-Za-z])",
+            serialized,
+        )
+    )
     stale = sorted(observed - allowed)
     if stale or expected not in observed:
         findings.append(

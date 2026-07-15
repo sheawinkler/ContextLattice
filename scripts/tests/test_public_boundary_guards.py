@@ -458,6 +458,285 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Private development", result.stderr)
 
+    def test_distribution_docs_reject_private_doc_references(self) -> None:
+        for lane in ("public", "public-paid"):
+            with self.subTest(lane=lane), tempfile.TemporaryDirectory(prefix=f"{lane}-private-ref-") as tmp:
+                repo = Path(tmp)
+                init_repo(repo)
+                hooks = repo / "scripts/agent_hooks"
+                hooks.mkdir(parents=True)
+                shutil.copy2(ROOT / "scripts/agent_hooks/common.sh", hooks / "common.sh")
+                shutil.copy2(ROOT / "scripts/agent_hooks/branch_lane_guard.sh", hooks / "branch_lane_guard.sh")
+                (repo / "README.md").write_text("See docs/private/operator.md\n", encoding="utf-8")
+                commit_all(repo, "private doc reference")
+                result = run(
+                    ["bash", "scripts/agent_hooks/branch_lane_guard.sh", "--lane", lane, "--ref", "HEAD"],
+                    repo,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("docs/private", result.stderr)
+
+    def test_distribution_text_scan_normalizes_private_and_operator_paths(self) -> None:
+        cases = (
+            ("README.md", "/Users/contributor/Documents/Projects/operator-only/README.md\n", "/Users/contributor"),
+            ("docs/public_overview/integration.md", "See ../private/operator.md\n", "../private"),
+            ("CONTRIBUTING.md", "See ./private/operator.md\n", "./private"),
+            ("docs/installation.md", "See docs/private/operator.md\n", "docs/private"),
+            ("docs/windows.md", "See C:\\Users\\contributor\\Documents\\Projects\\operator-only\n", "C:\\Users"),
+            ("SECURITY.md", "See /home/contributor/operator-only\n", "/home/contributor"),
+        )
+        for lane in ("public", "public-paid"):
+            for relative, content, marker in cases:
+                with self.subTest(lane=lane, relative=relative), tempfile.TemporaryDirectory(
+                    prefix=f"{lane}-normalized-private-ref-"
+                ) as tmp:
+                    repo = Path(tmp)
+                    init_repo(repo)
+                    hooks = repo / "scripts/agent_hooks"
+                    hooks.mkdir(parents=True)
+                    shutil.copy2(ROOT / "scripts/agent_hooks/common.sh", hooks / "common.sh")
+                    shutil.copy2(ROOT / "scripts/agent_hooks/branch_lane_guard.sh", hooks / "branch_lane_guard.sh")
+                    candidate = repo / relative
+                    candidate.parent.mkdir(parents=True, exist_ok=True)
+                    candidate.write_text(content, encoding="utf-8")
+                    commit_all(repo, "normalized private reference")
+                    result = run(
+                        ["bash", "scripts/agent_hooks/branch_lane_guard.sh", "--lane", lane, "--ref", "HEAD"],
+                        repo,
+                    )
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(marker, result.stderr)
+
+    def test_distribution_lanes_reject_operator_checkout_defaults(self) -> None:
+        for lane in ("public", "public-paid"):
+            with self.subTest(lane=lane), tempfile.TemporaryDirectory(prefix=f"{lane}-operator-path-") as tmp:
+                repo = Path(tmp)
+                init_repo(repo)
+                hooks = repo / "scripts/agent_hooks"
+                hooks.mkdir(parents=True)
+                shutil.copy2(ROOT / "scripts/agent_hooks/common.sh", hooks / "common.sh")
+                shutil.copy2(ROOT / "scripts/agent_hooks/branch_lane_guard.sh", hooks / "branch_lane_guard.sh")
+                (repo / "justfile").write_text(
+                    "sidecar-up:\n    cd ~/Documents/Projects/operator-only && true\n",
+                    encoding="utf-8",
+                )
+                commit_all(repo, "operator checkout default")
+                result = run(
+                    ["bash", "scripts/agent_hooks/branch_lane_guard.sh", "--lane", lane, "--ref", "HEAD"],
+                    repo,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Documents/Projects", result.stderr)
+
+    def test_distribution_smoke_defaults_are_repo_local_and_opt_in(self) -> None:
+        smoke = (ROOT / "scripts/devnet_smoke.sh").read_text(encoding="utf-8")
+        recipes = (ROOT / "justfile").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        combined = "\n".join((smoke, recipes))
+        for marker in (
+            "Documents/Projects",
+            "context-lattice-private",
+            "crypto_trader_post_training_needs_godmode_and_finalization",
+        ):
+            self.assertNotIn(marker, combined)
+        self.assertIn('BOOTSTRAP_SIDECAR="${BOOTSTRAP_SIDECAR:-0}"', smoke)
+        self.assertIn('SKIP_SIDECAR_CHECK="${SKIP_SIDECAR_CHECK:-1}"', smoke)
+        self.assertIn('SIDECAR_START_CMD="${SIDECAR_START_CMD:-}"', smoke)
+        self.assertIn("docker compose up -d gateway-go", smoke)
+        self.assertIn('SMOKE_PROJECT_NAME="${SMOKE_PROJECT_NAME:-contextlattice-smoke}"', smoke)
+        self.assertNotIn('local project="${1:-_global}"', smoke)
+        self.assertIn('CHECK_LOCAL_TELEMETRY="${CHECK_LOCAL_TELEMETRY:-0}"', smoke)
+        self.assertIn('MINDSDB_SMOKE="${MINDSDB_SMOKE:-0}"', smoke)
+        self.assertIn("GATEWAY_HOST_PORT=8091", smoke)
+        self.assertNotIn('ORCH_URL="${CONTEXTLATTICE_ORCHESTRATOR_URL:-http://127.0.0.1:8075}"', smoke)
+        self.assertIn('devnet-smoke RUN_CARGO="0" CONFIG="config.toml"', recipes)
+        self.assertIn("GATEWAY_IDENTITY_REQUIRED=1", recipes)
+        self.assertIn("EXPECTED_GATEWAY_SOURCE_COMMIT", recipes)
+        self.assertIn("EXPECTED_GATEWAY_SOURCE_TREE", recipes)
+        self.assertIn("ORCH_BUILD=1", recipes)
+        self.assertIn('cd "{{repo_root}}"', recipes)
+        self.assertIn("devnet-up: sidecar-config-check orch-up sidecar-up", recipes)
+        self.assertIn("BOOTSTRAP_SIDECAR=0", env_example)
+        self.assertIn("SKIP_SIDECAR_CHECK=1", env_example)
+
+    def test_requested_cargo_smoke_fails_when_manifest_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextlattice-cargo-smoke-") as tmp:
+            result = run(
+                [
+                    "env",
+                    "RUN_CARGO_SMOKE=1",
+                    f"CARGO_PROJECT_DIR={tmp}",
+                    "BOOTSTRAP_ORCH=0",
+                    "SKIP_ORCH_CHECK=1",
+                    "SKIP_SIDECAR_CHECK=1",
+                    "SMOKE_WRITE=0",
+                    "MINDSDB_SMOKE=0",
+                    "bash",
+                    str(ROOT / "scripts/devnet_smoke.sh"),
+                ],
+                ROOT,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("RUN_CARGO_SMOKE=1 requires", result.stderr)
+            self.assertNotIn("skipping cargo smoke", result.stderr.lower())
+
+    def test_gateway_identity_mismatch_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextlattice-identity-smoke-") as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                """#!/usr/bin/env bash
+url=""
+for arg in "$@"; do
+  case "$arg" in http://*|https://*) url="$arg" ;; esac
+done
+case "$url" in
+  */health) printf '%s\\n' '{"ok":true,"service":"gateway-go","build":{"version":"development","source_bound":true,"source_commit":"wrong","source_tree":"wrong"}}' ;;
+  */status) printf '%s\\n' '{"ok":true}' ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+            result = run(
+                [
+                    "env",
+                    f"PATH={fake_bin}:/usr/bin:/bin",
+                    "CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8091",
+                    "GATEWAY_IDENTITY_REQUIRED=1",
+                    "EXPECTED_GATEWAY_VERSION=development",
+                    "EXPECTED_GATEWAY_SOURCE_COMMIT=expected-commit",
+                    "EXPECTED_GATEWAY_SOURCE_TREE=expected-tree",
+                    "BOOTSTRAP_ORCH=0",
+                    "SKIP_SIDECAR_CHECK=1",
+                    "SMOKE_WRITE=0",
+                    "MINDSDB_SMOKE=0",
+                    "RUN_CARGO_SMOKE=0",
+                    f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
+                    f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
+                    "bash",
+                    str(ROOT / "scripts/devnet_smoke.sh"),
+                ],
+                ROOT,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("gateway commit does not match", result.stderr)
+
+    def test_memory_smoke_rejects_stale_readback(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextlattice-readback-smoke-") as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                """#!/usr/bin/env bash
+url=""
+for arg in "$@"; do
+  case "$arg" in http://*|https://*) url="$arg" ;; esac
+done
+case "$url" in
+  */memory/files/*) printf '%s\\n' '{"content":"stale payload"}' ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+            result = run(
+                [
+                    "env",
+                    f"PATH={fake_bin}:/usr/bin:/bin",
+                    "SKIP_ORCH_CHECK=1",
+                    "SKIP_SIDECAR_CHECK=1",
+                    "SMOKE_WRITE=1",
+                    "MINDSDB_SMOKE=0",
+                    "RUN_CARGO_SMOKE=0",
+                    f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
+                    f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
+                    "bash",
+                    str(ROOT / "scripts/devnet_smoke.sh"),
+                ],
+                ROOT,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("memory readback did not exactly match", result.stderr)
+
+    def test_memory_smoke_rejects_readback_that_only_contains_payload(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextlattice-readback-superset-") as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                """#!/usr/bin/env bash
+state="${FAKE_CURL_STATE:?}"
+url=""
+payload=""
+while (($#)); do
+  case "$1" in
+    -d|--data|--data-binary) payload="${2:-}"; shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  */memory/write)
+    printf '%s' "$payload" | sed -E 's/.*"content":"([^"]*)".*/\\1/' > "$state"
+    printf '%s\n' '{}'
+    ;;
+  */memory/files/*) printf 'prefix %s suffix\n' "$(cat "$state")" ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+            result = run(
+                [
+                    "env",
+                    f"PATH={fake_bin}:/usr/bin:/bin",
+                    f"FAKE_CURL_STATE={tmp}/written-content",
+                    "SKIP_ORCH_CHECK=1",
+                    "SKIP_SIDECAR_CHECK=1",
+                    "SMOKE_WRITE=1",
+                    "MINDSDB_SMOKE=0",
+                    "RUN_CARGO_SMOKE=0",
+                    f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
+                    f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
+                    "bash",
+                    str(ROOT / "scripts/devnet_smoke.sh"),
+                ],
+                ROOT,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("memory readback did not exactly match", result.stderr)
+
+    def test_shared_readme_does_not_link_paid_only_docs(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("docs/entitled-frontier-t1.md", readme)
+        self.assertNotIn("docs/runtime-license.md", readme)
+        self.assertIn("docs/public_overview/premium.html", readme)
+
+    def test_sidecar_bootstrap_requires_an_explicit_command(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextlattice-sidecar-smoke-") as tmp:
+            result = run(
+                [
+                    "env",
+                    "BOOTSTRAP_SIDECAR=1",
+                    "SIDECAR_START_CMD=",
+                    "SIDECAR_HEALTH_URL=http://127.0.0.1:9/health",
+                    "SKIP_ORCH_CHECK=1",
+                    "SKIP_SIDECAR_CHECK=1",
+                    "SMOKE_WRITE=0",
+                    "MINDSDB_SMOKE=0",
+                    "RUN_CARGO_SMOKE=0",
+                    f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
+                    f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
+                    "bash",
+                    str(ROOT / "scripts/devnet_smoke.sh"),
+                ],
+                ROOT,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("requires an explicit SIDECAR_START_CMD", result.stderr)
+
     def test_public_paid_lane_allows_private_development_workspace_identifier(self) -> None:
         with tempfile.TemporaryDirectory(prefix="public-paid-workspace-id-") as tmp:
             repo = Path(tmp)

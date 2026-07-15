@@ -54,9 +54,12 @@ TEXT_EXTENSIONS = {
     ".json",
     ".md",
     ".mjs",
+    ".ps1",
     ".py",
     ".rs",
     ".sh",
+    ".ts",
+    ".tsx",
     ".toml",
     ".txt",
     ".yaml",
@@ -105,8 +108,9 @@ def _scan_file(path: str) -> list[Finding]:
     except UnicodeDecodeError:
         return []
     findings: list[Finding] = []
+    folded_text = text.casefold()
     for marker in BLOCKED_TEXT:
-        if marker in text:
+        if marker.casefold() in folded_text:
             findings.append(Finding("text", path, marker))
     return findings
 

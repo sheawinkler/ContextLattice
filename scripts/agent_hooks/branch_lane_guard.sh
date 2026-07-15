@@ -92,11 +92,47 @@ if [[ "$LANE" == "public-paid" ]]; then
 fi
 
 if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
+  distribution_text_paths=(
+    AGENTS.md
+    CODE_OF_CONDUCT.md
+    CONTRIBUTING.md
+    README.md
+    SECURITY.md
+    docs
+    launch_service
+    packaging
+    justfile
+    .env.example
+    scripts/devnet_smoke.sh
+  )
+  distribution_text_excludes=(
+    ':(exclude)docs/private/**'
+    ':(exclude)private_docs/**'
+  )
+
   internal_dev_pattern='private[- ]development.*(keyless|superset|bypass|internal-only|private-only)|(^|[^[:alnum:]_])private-dev([^[:alnum:]_]|$)|keyless (superset|bypass)|unlocked superset'
   if git grep -n -I -i -E "$internal_dev_pattern" "$REF" -- \
-      README.md docs/public_overview docs/releases launch_service packaging \
+      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}" \
       >/tmp/contextlattice_internal_dev_doc_hits.txt 2>/dev/null; then
     cat /tmp/contextlattice_internal_dev_doc_hits.txt >&2
+    blocked=1
+  fi
+
+  private_reference_pattern='docs[/\\]+private[/\\]+|private_docs[/\\]+|(^|[^[:alnum:]_.-])(\.\.?[/\\]+)+private[/\\]+'
+  if git grep -n -I -i -E "$private_reference_pattern" "$REF" -- \
+      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}" \
+      >/tmp/contextlattice_private_reference_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_private_reference_hits.txt >&2
+    blocked=1
+  fi
+
+  # shellcheck disable=SC2016 # The regex intentionally matches literal shell-home prefixes.
+  private_repo_pattern='sheawinkler/'"http-context-and-memory-orchestrator"
+  operator_checkout_pattern='/(Users|home)/[[:alnum:]_.-]+/|[[:alpha:]]:[/\\]+Users[/\\]+[[:alnum:]_.-]+[/\\]+|(\$HOME|~)[/\\]+Documents[/\\]+Projects[/\\]+|context-lattice-private|crypto_trader_post_training_needs_godmode_and_finalization|'"${private_repo_pattern}"
+  if git grep -n -I -i -E "$operator_checkout_pattern" "$REF" -- \
+      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}" \
+      >/tmp/contextlattice_operator_checkout_hits.txt 2>/dev/null; then
+    cat /tmp/contextlattice_operator_checkout_hits.txt >&2
     blocked=1
   fi
 
