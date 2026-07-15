@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 27,
-  "updated_at": "2026-07-15T18:21:37Z",
+  "registry_version": 28,
+  "updated_at": "2026-07-15T20:16:01Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -4354,13 +4354,18 @@
       "required_fields_by_path": {
         "result_identity": [
           "schema_id",
+          "ack_version",
           "lineage_id",
           "packet_id",
           "revision",
+          "base_packet_id",
+          "base_digest",
           "model_visible_digest",
           "transport_digest",
           "scope_digest",
           "accounting_digest",
+          "issued_at",
+          "expires_at",
           "ack_cursor"
         ],
         "result_accounting": [
@@ -4434,6 +4439,28 @@
         "result_identity.schema_id": "agent_packet_identity.v1",
         "reconstruction.contract_id": "agent_packet_reconstruction.v1",
         "format_contract.schema_id": "agent_packet_delta.v1"
+      },
+      "operation_semantics": {
+        "allowed_ops": [
+          "add",
+          "replace",
+          "remove"
+        ],
+        "add_replace_exact_keys": [
+          "sequence",
+          "op",
+          "path",
+          "value"
+        ],
+        "remove_exact_keys": [
+          "sequence",
+          "op",
+          "path",
+          "tombstone"
+        ],
+        "sequence": "contiguous_positive_json_integer_in_canonical_path_order",
+        "paths": "unique_non_overlapping_bounded_json_pointers",
+        "remove_tombstone": true
       },
       "forbidden_fields": [
         "hookSpecificOutput",

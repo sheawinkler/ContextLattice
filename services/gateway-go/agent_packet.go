@@ -429,7 +429,7 @@ func attachAgentPacketFormatContract(packet map[string]any) map[string]any {
 		packet,
 		anyToString(packet["agent_id"]),
 		"agent_packet",
-		"/memory/context-pack",
+		agentPacketEndpointForSurface(anyToString(packet["surface"])),
 	)
 }
 

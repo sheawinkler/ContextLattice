@@ -763,6 +763,9 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 			findings = append(findings, map[string]any{"reason": "identity_confirmation_required", "path": "requires_confirmation", "match_mode": matchMode, "contract_id": contractID})
 		}
 	}
+	if contractID == agentPacketDeltaOutputContractID {
+		findings = append(findings, agentPacketDeltaOperationFindings(object)...)
+	}
 	return findings
 }
 

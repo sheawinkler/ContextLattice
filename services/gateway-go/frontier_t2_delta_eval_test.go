@@ -312,6 +312,13 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 			case agentPacketDeltaContractID:
 				assertBoundaryContractPassed(t, agentPacketDeltaContractID, response)
 				budget := anyMap(response["token_budget"])
+				impact := anyMap(response["token_impact"])
+				for label, accounting := range map[string]map[string]any{"token_budget": budget, "token_impact": impact} {
+					if !anyToBool(accounting["tokenizer_exact"]) || anyToString(accounting["estimate_method"]) != "tiktoken" ||
+						anyToString(accounting["calibration_grade"]) != "tokenizer_exact" || anyToString(accounting["tokenizer_encoding"]) != defaultContextPackTokenizerEncoding {
+						t.Fatalf("%s emitted non-exact values under exact field names: %#v", label, accounting)
+					}
+				}
 				fullTokens := anyToInt(budget["full_packet_tokens_exact"], 0)
 				deltaTokens := anyToInt(budget["delta_wire_tokens_exact"], 0)
 				tokensSaved := anyToInt(budget["tokens_saved_exact"], 0)

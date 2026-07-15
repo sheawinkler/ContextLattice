@@ -26,6 +26,7 @@ const (
 	agentPacketPacketIDPrefix            = "packet_"
 	agentPacketLineageIDPrefix           = "packet_lineage_"
 	agentPacketAcknowledgementIDPrefix   = "ack_"
+	agentPacketIdentityAckVersion        = 1
 	agentPacketPlaceholderDigestHexChars = 64
 	maxAgentPacketDeltaOperations        = 64
 	maxAgentPacketDeltaDepth             = 6
@@ -76,6 +77,25 @@ func agentPacketDeltaRequested(request map[string]any) bool {
 
 func agentPacketDeltaEnabled() bool {
 	return envBool(agentPacketDeltaFeatureEnv, true)
+}
+
+func agentPacketEndpointForSurface(surface string) string {
+	switch strings.TrimSpace(surface) {
+	case "context_pack":
+		return "/memory/context-pack"
+	case "synthesis_pack":
+		return "/memory/synthesis-pack"
+	case "synthesis_pack_v2":
+		return "/memory/synthesis-pack/v2"
+	case "tools_context_pack":
+		return "/tools/context_pack"
+	case "tools_synthesis_pack":
+		return "/tools/synthesis_pack"
+	case "tools_synthesis_pack_v2":
+		return "/tools/synthesis_pack_v2"
+	default:
+		return "/memory/context-pack"
+	}
 }
 
 func agentPacketTTL(request map[string]any) time.Duration {
@@ -218,13 +238,20 @@ func agentPacketAckCursor(identity map[string]any) string {
 	// This cursor detects accidental drift in a caller-retained packet. It is a
 	// self-verifying content digest, not an authentication signature.
 	payload := map[string]any{
-		"schema_id":         agentPacketIdentitySchemaID,
-		"lineage_id":        anyToString(identity["lineage_id"]),
-		"packet_id":         anyToString(identity["packet_id"]),
-		"revision":          anyToInt(identity["revision"], 0),
-		"transport_digest":  anyToString(identity["transport_digest"]),
-		"accounting_digest": anyToString(identity["accounting_digest"]),
-		"expires_at":        anyToString(identity["expires_at"]),
+		"schema_id":            agentPacketIdentitySchemaID,
+		"version":              anyToInt(identity["version"], 0),
+		"ack_version":          anyToInt(identity["ack_version"], 0),
+		"lineage_id":           anyToString(identity["lineage_id"]),
+		"packet_id":            anyToString(identity["packet_id"]),
+		"revision":             anyToInt(identity["revision"], 0),
+		"base_packet_id":       anyToString(identity["base_packet_id"]),
+		"base_digest":          anyToString(identity["base_digest"]),
+		"model_visible_digest": anyToString(identity["model_visible_digest"]),
+		"transport_digest":     anyToString(identity["transport_digest"]),
+		"scope_digest":         anyToString(identity["scope_digest"]),
+		"accounting_digest":    anyToString(identity["accounting_digest"]),
+		"issued_at":            anyToString(identity["issued_at"]),
+		"expires_at":           anyToString(identity["expires_at"]),
 	}
 	digest, err := canonicalAgentPacketDigest(payload)
 	if err != nil {
@@ -261,6 +288,7 @@ func agentPacketIdentitySeed(packet map[string]any, baseIdentity map[string]any,
 	return map[string]any{
 		"schema_id":            agentPacketIdentitySchemaID,
 		"version":              1,
+		"ack_version":          agentPacketIdentityAckVersion,
 		"lineage_id":           lineageID,
 		"packet_id":            agentPacketPacketIDPrefix + strings.Repeat("0", 24),
 		"revision":             revision,
@@ -288,6 +316,7 @@ func sealAgentPacketIdentity(packet map[string]any, seed map[string]any) error {
 	identity := map[string]any{
 		"schema_id":            agentPacketIdentitySchemaID,
 		"version":              1,
+		"ack_version":          agentPacketIdentityAckVersion,
 		"lineage_id":           agentPacketLineageIDPrefix + agentPacketDigestSuffix(scopeDigest, 24),
 		"packet_id":            agentPacketPacketIDPrefix + agentPacketDigestSuffix(transportDigest, 24),
 		"revision":             maxInt(1, anyToInt(seed["revision"], 1)),
@@ -324,6 +353,36 @@ func finalizeAgentPacketWithIdentity(packet map[string]any, baseIdentity map[str
 	return attachAgentPacketFormatContract(packet)
 }
 
+func validateAgentPacketTransportAccounting(packet map[string]any) string {
+	count := contextPackCountAnyTokens(packet)
+	if !count.TokenizerExact {
+		return "base_tokenizer_inexact"
+	}
+	budget := anyMap(packet["token_budget"])
+	impact := anyMap(packet["token_impact"])
+	actual := anyToInt(budget["actual_tokens"], 0)
+	hardLimit := anyToInt(budget["hard_limit_tokens"], 0)
+	baseline := anyToInt(impact["baseline_tokens_estimate"], 0)
+	expectedNet := baseline - count.Tokens
+	expectedSaved := maxInt(0, expectedNet)
+	expectedRatio := roundFloat(float64(baseline)/float64(maxInt(count.Tokens, 1)), 3)
+	budgetExact := anyToBool(budget["tokenizer_exact"]) || anyToString(budget["calibration_grade"]) == "tokenizer_exact"
+	if actual != count.Tokens || hardLimit < 1 || anyToBool(budget["within_hard_limit"]) != (count.Tokens <= hardLimit) ||
+		anyToString(budget["estimate_method"]) != count.Method || anyToString(budget["calibration_grade"]) != count.CalibrationGrade ||
+		!budgetExact || anyToString(budget["tokenizer_encoding"]) != count.Encoding ||
+		anyToInt(impact["packed_tokens_estimate"], 0) != count.Tokens || anyToInt(impact["transport_tokens_exact"], 0) != count.Tokens ||
+		anyToInt(impact["saved_tokens_estimate"], -1) != expectedSaved || anyToInt(impact["net_token_delta"], 0) != expectedNet ||
+		anyToFloat(impact["compression_ratio"]) != expectedRatio || !anyToBool(impact["transport_inclusive"]) ||
+		anyToString(impact["estimate_method"]) != count.Method || anyToString(impact["calibration_grade"]) != count.CalibrationGrade ||
+		!anyToBool(impact["tokenizer_exact"]) || anyToString(impact["tokenizer_encoding"]) != count.Encoding {
+		return "base_accounting_mismatch"
+	}
+	if targetMet, exists := budget["target_met"]; exists && anyToBool(targetMet) != (count.Tokens <= anyToInt(budget["target_tokens"], 0)) {
+		return "base_accounting_mismatch"
+	}
+	return ""
+}
+
 func validateAgentPacketSelf(packet map[string]any, now time.Time, checkExpiry bool) (map[string]any, string) {
 	if len(packet) == 0 {
 		return nil, "base_packet_missing"
@@ -336,14 +395,15 @@ func validateAgentPacketSelf(packet map[string]any, now time.Time, checkExpiry b
 	}
 	identity := anyMap(packet["packet_identity"])
 	for _, field := range []string{
-		"schema_id", "version", "lineage_id", "packet_id", "revision", "base_packet_id", "base_digest",
+		"schema_id", "version", "ack_version", "lineage_id", "packet_id", "revision", "base_packet_id", "base_digest",
 		"model_visible_digest", "transport_digest", "scope_digest", "accounting_digest", "issued_at", "expires_at", "ack_cursor",
 	} {
 		if _, exists := identity[field]; !exists {
 			return nil, "base_identity_missing"
 		}
 	}
-	if anyToString(identity["schema_id"]) != agentPacketIdentitySchemaID || anyToInt(identity["version"], 0) != 1 || anyToInt(identity["revision"], 0) < 1 {
+	if anyToString(identity["schema_id"]) != agentPacketIdentitySchemaID || anyToInt(identity["version"], 0) != 1 ||
+		anyToInt(identity["ack_version"], 0) != agentPacketIdentityAckVersion || anyToInt(identity["revision"], 0) < 1 {
 		return nil, "base_identity_missing"
 	}
 	modelVisibleDigest, transportDigest, scopeDigest, err := agentPacketDigestParts(packet)
@@ -371,11 +431,16 @@ func validateAgentPacketSelf(packet map[string]any, now time.Time, checkExpiry b
 	}
 	issuedAt, issuedErr := time.Parse(time.RFC3339Nano, anyToString(identity["issued_at"]))
 	expiresAt, expiresErr := time.Parse(time.RFC3339Nano, anyToString(identity["expires_at"]))
-	if issuedErr != nil || expiresErr != nil || !expiresAt.After(issuedAt) {
+	now = now.UTC()
+	if issuedErr != nil || expiresErr != nil || issuedAt.After(now) || !expiresAt.After(issuedAt) ||
+		expiresAt.Sub(issuedAt) > time.Duration(maximumAgentPacketTTLSeconds)*time.Second {
 		return nil, "base_validity_window_invalid"
 	}
-	if checkExpiry && !now.UTC().Before(expiresAt) {
+	if checkExpiry && !now.Before(expiresAt) {
 		return nil, "base_expired"
+	}
+	if reason := validateAgentPacketTransportAccounting(packet); reason != "" {
+		return nil, reason
 	}
 	return identity, ""
 }
@@ -451,6 +516,121 @@ func parseAgentPacketJSONPointer(value string) ([]string, error) {
 		parts = append(parts, strings.ReplaceAll(strings.ReplaceAll(raw, "~1", "/"), "~0", "~"))
 	}
 	return parts, nil
+}
+
+func exactAgentPacketOperationSequence(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, typed > 0
+	case int64:
+		return int(typed), typed > 0 && typed <= int64(maxAgentPacketDeltaOperations)
+	case float64:
+		if typed < 1 || typed > maxAgentPacketDeltaOperations || typed != float64(int(typed)) {
+			return 0, false
+		}
+		return int(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil || parsed < 1 || parsed > int64(maxAgentPacketDeltaOperations) {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func agentPacketPathIsAncestor(left, right []string) bool {
+	if len(left) >= len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func agentPacketDeltaOperationFindings(delta map[string]any) []map[string]any {
+	finding := func(reason, code, path string) []map[string]any {
+		return []map[string]any{{
+			"reason": reason, "code": code, "path": path, "contract_id": agentPacketDeltaContractID,
+		}}
+	}
+	operations, ok := delta["operations"].([]any)
+	if !ok {
+		return finding("operation_list_type_invalid", "operation_kind_invalid", "operations")
+	}
+	if len(operations) > maxAgentPacketDeltaOperations {
+		return finding("operation_limit_exceeded", "operation_limit_exceeded", "operations")
+	}
+	previousPath := ""
+	parsedPaths := make([][]string, 0, len(operations))
+	expectedTombstones := make([]string, 0, len(operations))
+	for index, raw := range operations {
+		operation, ok := raw.(map[string]any)
+		if !ok {
+			return finding("operation_object_required", "operation_kind_invalid", fmt.Sprintf("operations.%d", index))
+		}
+		sequence, sequenceOK := exactAgentPacketOperationSequence(operation["sequence"])
+		kind, kindOK := operation["op"].(string)
+		path, pathOK := operation["path"].(string)
+		if !sequenceOK || sequence != index+1 {
+			return finding("operation_sequence_invalid", "operation_sequence_invalid", fmt.Sprintf("operations.%d.sequence", index))
+		}
+		if !kindOK || (kind != "add" && kind != "replace" && kind != "remove") {
+			return finding("operation_kind_invalid", "operation_kind_invalid", fmt.Sprintf("operations.%d.op", index))
+		}
+		if !pathOK || path == "" || (previousPath != "" && path <= previousPath) {
+			return finding("operation_sequence_invalid", "operation_sequence_invalid", fmt.Sprintf("operations.%d.path", index))
+		}
+		segments, pathErr := parseAgentPacketJSONPointer(path)
+		if pathErr != nil || len(segments) == 0 || containsString([]string{"format_contract", "packet_identity", "delta_fallback", "token_budget", "token_impact"}, segments[0]) {
+			return finding("operation_path_invalid", "operation_path_invalid", path)
+		}
+		for _, prior := range parsedPaths {
+			if agentPacketPathIsAncestor(prior, segments) || agentPacketPathIsAncestor(segments, prior) {
+				return finding("operation_paths_overlap", "operation_path_overlap", path)
+			}
+		}
+		parsedPaths = append(parsedPaths, segments)
+		previousPath = path
+
+		allowedKeys := map[string]bool{"sequence": true, "op": true, "path": true}
+		if kind == "remove" {
+			allowedKeys["tombstone"] = true
+			tombstone, tombstoneOK := operation["tombstone"].(bool)
+			if !tombstoneOK || !tombstone {
+				return finding("operation_tombstone_invalid", "operation_kind_invalid", path)
+			}
+			expectedTombstones = append(expectedTombstones, path)
+		} else {
+			allowedKeys["value"] = true
+			if _, exists := operation["value"]; !exists {
+				return finding("operation_value_missing", "operation_kind_invalid", path)
+			}
+		}
+		if len(operation) != len(allowedKeys) {
+			return finding("operation_keys_noncanonical", "operation_kind_invalid", path)
+		}
+		for key := range operation {
+			if !allowedKeys[key] {
+				return finding("operation_keys_noncanonical", "operation_kind_invalid", path+"."+key)
+			}
+		}
+	}
+	rawTombstones, ok := delta["tombstones"].([]any)
+	if !ok || len(rawTombstones) != len(expectedTombstones) {
+		return finding("tombstone_manifest_mismatch", "tombstone_manifest_mismatch", "tombstones")
+	}
+	for index, raw := range rawTombstones {
+		value, ok := raw.(string)
+		if !ok || value != expectedTombstones[index] {
+			return finding("tombstone_manifest_mismatch", "tombstone_manifest_mismatch", fmt.Sprintf("tombstones.%d", index))
+		}
+	}
+	return nil
 }
 
 func agentPacketDeltaOperation(kind, path string, value any) map[string]any {
@@ -583,7 +763,13 @@ func buildAgentPacketOperations(base, target map[string]any) ([]any, []any, erro
 }
 
 func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVisibleCount, incrementalModelVisibleCount, deltaCount tokenCountResult) {
-	saved := maxInt(0, fullCount.Tokens-deltaCount.Tokens)
+	allExact := fullCount.TokenizerExact && modelVisibleCount.TokenizerExact && incrementalModelVisibleCount.TokenizerExact && deltaCount.TokenizerExact
+	net := fullCount.Tokens - deltaCount.Tokens
+	saved := maxInt(0, net)
+	if !allExact {
+		net = 0
+		saved = 0
+	}
 	ratio := 1.0
 	if deltaCount.Tokens > 0 {
 		ratio = roundFloat(float64(fullCount.Tokens)/float64(deltaCount.Tokens), 3)
@@ -595,11 +781,11 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 		"reconstructed_model_visible_tokens_exact": modelVisibleCount.Tokens,
 		"tokens_saved_exact":                       saved,
 		"reduction_fraction":                       roundFloat(float64(saved)/float64(maxInt(fullCount.Tokens, 1)), 6),
-		"delta_smaller_than_full":                  deltaCount.Tokens < fullCount.Tokens,
+		"delta_smaller_than_full":                  allExact && deltaCount.Tokens < fullCount.Tokens,
 		"equal_reconstructed_context":              true,
 		"estimate_method":                          deltaCount.Method,
 		"calibration_grade":                        deltaCount.CalibrationGrade,
-		"tokenizer_exact":                          deltaCount.TokenizerExact,
+		"tokenizer_exact":                          allExact,
 		"tokenizer_encoding":                       deltaCount.Encoding,
 	}
 	delta["token_impact"] = map[string]any{
@@ -611,14 +797,17 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 		"packed_tokens_estimate":   deltaCount.Tokens,
 		"transport_tokens_exact":   deltaCount.Tokens,
 		"saved_tokens_estimate":    saved,
-		"net_token_delta":          fullCount.Tokens - deltaCount.Tokens,
+		"net_token_delta":          net,
 		"compression_ratio":        ratio,
 		"transport_inclusive":      true,
 		"estimate_method":          deltaCount.Method,
 		"calibration_grade":        deltaCount.CalibrationGrade,
-		"tokenizer_exact":          deltaCount.TokenizerExact,
+		"tokenizer_exact":          allExact,
 		"tokenizer_encoding":       deltaCount.Encoding,
 		"measurement_limit":        "Delta wire tokens and reconstructed model-visible tokens are reported separately; no provider token or inference-avoidance claim is made.",
+	}
+	if !allExact {
+		anyMap(delta["token_impact"])["measurement_limit"] = "Exact tokenizer accounting is unavailable; return the verified full Agent Packet."
 	}
 }
 
@@ -662,7 +851,13 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 	provisionalCount := fullCount
 	provisionalCount.Tokens = maxInt(1, fullCount.Tokens/2)
 	applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, provisionalCount)
-	delta = attachPayloadFormatContract(agentPacketDeltaContractID, delta, anyToString(delta["agent_id"]), "agent_packet_delta", "/memory/context-pack")
+	delta = attachPayloadFormatContract(
+		agentPacketDeltaContractID,
+		delta,
+		anyToString(delta["agent_id"]),
+		"agent_packet_delta",
+		agentPacketEndpointForSurface(anyToString(delta["surface"])),
+	)
 
 	for pass := 0; pass < 6; pass++ {
 		stabilizeAgentPacketDeltaJSONBytes(delta)
@@ -781,26 +976,16 @@ func finalizeAgentPacketForRequestAt(packet map[string]any, request map[string]a
 	if baseValidation.Reason != "" {
 		return agentPacketFullFallback(packet, baseValidation.Reason, baseValidation.Identity, request, now)
 	}
-	targetModelDigest, err := canonicalAgentPacketDigest(agentPacketModelVisibleProjection(packet))
-	if err != nil {
-		return agentPacketFullFallback(packet, "target_digest_unavailable", baseValidation.Identity, request, now)
-	}
-	if targetModelDigest == anyToString(baseValidation.Identity["model_visible_digest"]) {
-		delta, deltaErr := buildAgentPacketDelta(baseValidation.Packet, baseValidation.Packet, now)
-		if deltaErr != nil {
-			return agentPacketFullFallback(packet, "reconstruction_failed", baseValidation.Identity, request, now)
-		}
-		if !anyToBool(anyMap(delta["token_budget"])["delta_smaller_than_full"]) {
-			return agentPacketFullFallback(packet, "delta_not_smaller", baseValidation.Identity, request, now)
-		}
-		return delta
-	}
 	target := finalizeAgentPacketWithIdentity(packet, baseValidation.Identity, request, now)
 	delta, err := buildAgentPacketDelta(baseValidation.Packet, target, now)
 	if err != nil {
 		return agentPacketFullFallback(target, "reconstruction_failed", baseValidation.Identity, request, now)
 	}
-	if !anyToBool(anyMap(delta["token_budget"])["delta_smaller_than_full"]) {
+	budget := anyMap(delta["token_budget"])
+	if !anyToBool(budget["tokenizer_exact"]) {
+		return agentPacketFullFallback(target, "delta_tokenizer_inexact", baseValidation.Identity, request, now)
+	}
+	if !anyToBool(budget["delta_smaller_than_full"]) {
 		return agentPacketFullFallback(target, "delta_not_smaller", baseValidation.Identity, request, now)
 	}
 	return delta
@@ -935,6 +1120,10 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID {
 		return nil, reconstructionFailure("delta_schema_mismatch", "expected %s", agentPacketDeltaContractID)
 	}
+	if findings := agentPacketDeltaOperationFindings(delta); len(findings) > 0 {
+		code := firstNonEmptyStrings(anyToString(findings[0]["code"]), "operation_contract_invalid")
+		return nil, reconstructionFailure(code, "delta operation contract failed: %s", anyToString(findings[0]["reason"]))
+	}
 	if validateDeltaContract {
 		if findings := validateAgentContractPayload(agentPacketDeltaContractID, delta); len(findings) > 0 {
 			return nil, reconstructionFailure("delta_contract_invalid", "delta contract validation failed")
@@ -989,6 +1178,17 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 		return nil, reconstructionFailure("tombstone_manifest_mismatch", "delta tombstone manifest does not match remove operations")
 	}
 	resultIdentity := anyMap(delta["result_identity"])
+	if anyToString(resultIdentity["lineage_id"]) != anyToString(baseIdentity["lineage_id"]) ||
+		anyToString(resultIdentity["base_packet_id"]) != anyToString(baseIdentity["packet_id"]) ||
+		anyToString(resultIdentity["base_digest"]) != anyToString(baseIdentity["transport_digest"]) ||
+		anyToInt(resultIdentity["revision"], 0) != anyToInt(baseIdentity["revision"], 0)+1 {
+		return nil, reconstructionFailure("result_identity_mismatch", "result identity does not bind to the supplied base")
+	}
+	baseIssuedAt, baseIssuedErr := time.Parse(time.RFC3339Nano, anyToString(baseIdentity["issued_at"]))
+	resultIssuedAt, resultIssuedErr := time.Parse(time.RFC3339Nano, anyToString(resultIdentity["issued_at"]))
+	if baseIssuedErr != nil || resultIssuedErr != nil || resultIssuedAt.Before(baseIssuedAt) || resultIssuedAt.After(now.UTC()) {
+		return nil, reconstructionFailure("result_identity_mismatch", "result identity has an invalid issuance relationship")
+	}
 	resultAccounting := anyMap(delta["result_accounting"])
 	resultBudget := anyMap(resultAccounting["token_budget"])
 	resultImpact := anyMap(resultAccounting["token_impact"])
@@ -1028,7 +1228,7 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 	if findings := validateAgentContractPayload(agentPacketContractID, projection); len(findings) > 0 {
 		return nil, reconstructionFailure("result_contract_invalid", "reconstructed agent packet contract validation failed: %v", findings)
 	}
-	if _, reason := validateAgentPacketSelf(projection, now, false); reason != "" {
+	if _, reason := validateAgentPacketSelf(projection, now, true); reason != "" {
 		return nil, reconstructionFailure("result_self_verification_failed", "reconstructed agent packet failed self-verification: %s", reason)
 	}
 	return projection, nil
@@ -1044,7 +1244,7 @@ func agentPacketReconstructionResponse(base map[string]any, delta map[string]any
 		"base_packet_id":     anyToString(anyMap(base["packet_identity"])["packet_id"]),
 		"packet_id":          anyToString(delta["packet_id"]),
 		"result_digest":      anyToString(delta["result_digest"]),
-		"operations_applied": len(contextPackAnyList(delta["operations"])),
+		"operations_applied": 0,
 		"packet":             map[string]any{},
 		"warnings":           []any{},
 		"error":              "",
@@ -1060,6 +1260,7 @@ func agentPacketReconstructionResponse(base map[string]any, delta map[string]any
 		response["warnings"] = []any{clipText(err.Error(), 500)}
 	} else {
 		response["packet"] = packet
+		response["operations_applied"] = len(contextPackAnyList(delta["operations"]))
 	}
 	response = attachPayloadFormatContract(agentPacketReconstructionContractID, response, anyToString(delta["agent_id"]), "agent_packet_reconstruction", agentPacketReconstructionRoute)
 	return response, status

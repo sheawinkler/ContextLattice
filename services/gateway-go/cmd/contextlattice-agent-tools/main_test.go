@@ -764,6 +764,57 @@ func TestContextCommandNegotiatesDeltaFromTrustedBaseFile(t *testing.T) {
 	}
 }
 
+func TestContextCommandLegacyBaseNegotiatesSafeFullFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	base := map[string]any{
+		"schema_id": agentPacketContractID,
+		"prompt":    "legacy packet retained before packet identity was introduced",
+	}
+	basePath := filepath.Join(t.TempDir(), "legacy-base.json")
+	baseRaw, _ := json.Marshal(base)
+	if err := os.WriteFile(basePath, baseRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var captured map[string]any
+	full := map[string]any{
+		"ok": true, "schema_id": agentPacketContractID, "version": 1,
+		"delta_fallback": map[string]any{"requested": true, "used": true, "reason": "base_identity_missing"},
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memory/synthesis-pack/v2" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode legacy delta request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(full)
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice", "context", "continue legacy packet", "--project", "alpha", "--base-packet-file", basePath, "--no-auto-session", "--raw"}); err != nil {
+		t.Fatalf("legacy packet should negotiate a gateway full fallback: %v", err)
+	}
+	if firstString(captured["packet_mode"]) != "delta" || firstString(asMap(captured["base_packet"])["schema_id"]) != agentPacketContractID {
+		t.Fatalf("legacy base packet was not sent for safe gateway fallback: %#v", captured)
+	}
+	for _, field := range []string{"base_packet_id", "base_digest", "base_revision", "base_ack_cursor"} {
+		if _, exists := captured[field]; exists {
+			t.Fatalf("legacy packet invented trusted identity field %q: %#v", field, captured)
+		}
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode legacy fallback output: %v", err)
+	}
+	if firstString(output["schema_id"]) != agentPacketContractID || firstString(asMap(output["delta_fallback"])["reason"]) != "base_identity_missing" {
+		t.Fatalf("legacy packet did not preserve the gateway full fallback: %#v", output)
+	}
+}
+
 func TestPacketReconstructCommandEmitsVerifiedPacket(t *testing.T) {
 	tempDir := t.TempDir()
 	base := map[string]any{"schema_id": agentPacketContractID, "packet_identity": map[string]any{"packet_id": "packet_base"}}

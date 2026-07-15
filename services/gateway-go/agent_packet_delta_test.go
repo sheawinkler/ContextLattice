@@ -311,8 +311,15 @@ func TestAgentPacketUnchangedDeltaCarriesNoOperations(t *testing.T) {
 	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID || len(contextPackAnyList(delta["operations"])) != 0 {
 		t.Fatalf("unchanged packet did not return a zero-op delta: %#v", delta)
 	}
-	if anyToString(delta["packet_id"]) != anyToString(anyMap(base["packet_identity"])["packet_id"]) {
-		t.Fatalf("unchanged delta invented a new packet identity: %#v", delta)
+	baseIdentity := anyMap(base["packet_identity"])
+	resultIdentity := anyMap(delta["result_identity"])
+	if anyToInt(resultIdentity["revision"], 0) != anyToInt(baseIdentity["revision"], 0)+1 ||
+		anyToString(resultIdentity["base_packet_id"]) != anyToString(baseIdentity["packet_id"]) ||
+		anyToString(resultIdentity["base_digest"]) != anyToString(baseIdentity["transport_digest"]) {
+		t.Fatalf("unchanged delta did not advance a parent-bound identity: base=%#v result=%#v", baseIdentity, resultIdentity)
+	}
+	if _, err := reconstructAgentPacket(base, delta, now.Add(time.Minute), true); err != nil {
+		t.Fatalf("unchanged delta did not reconstruct: %v", err)
 	}
 }
 
@@ -335,6 +342,28 @@ func TestAgentPacketDeltaInvalidBasesFallBackSafely(t *testing.T) {
 		}},
 		{name: "ack cursor", reason: "base_ack_cursor_mismatch", mutate: func(request map[string]any) {
 			anyMap(anyMap(request["base_packet"])["packet_identity"])["ack_cursor"] = "ack_00000000000000000000000000000000"
+		}},
+		{name: "ack parent binding", reason: "base_ack_cursor_mismatch", mutate: func(request map[string]any) {
+			anyMap(anyMap(request["base_packet"])["packet_identity"])["base_packet_id"] = "packet_unacknowledged_parent"
+		}},
+		{name: "ack issuance binding", reason: "base_ack_cursor_mismatch", mutate: func(request map[string]any) {
+			anyMap(anyMap(request["base_packet"])["packet_identity"])["issued_at"] = now.Add(-time.Minute).Format(time.RFC3339Nano)
+		}},
+		{name: "transport accounting", reason: "base_accounting_mismatch", mutate: func(request map[string]any) {
+			packet := anyMap(request["base_packet"])
+			budget := anyMap(packet["token_budget"])
+			budget["actual_tokens"] = anyToInt(budget["actual_tokens"], 0) + 1
+		}},
+		{name: "token impact accounting", reason: "base_accounting_mismatch", mutate: func(request map[string]any) {
+			packet := anyMap(request["base_packet"])
+			impact := anyMap(packet["token_impact"])
+			impact["transport_tokens_exact"] = anyToInt(impact["transport_tokens_exact"], 0) + 1
+		}},
+		{name: "ttl exceeds maximum", reason: "base_validity_window_invalid", mutate: func(request map[string]any) {
+			identity := anyMap(anyMap(request["base_packet"])["packet_identity"])
+			identity["expires_at"] = now.Add(8 * 24 * time.Hour).Format(time.RFC3339Nano)
+			identity["ack_cursor"] = agentPacketAckCursor(identity)
+			request["base_ack_cursor"] = identity["ack_cursor"]
 		}},
 		{name: "requested digest", reason: "base_request_digest_mismatch", mutate: func(request map[string]any) { request["base_digest"] = agentPacketPlaceholderDigest() }},
 		{name: "requested revision", reason: "base_revision_mismatch", mutate: func(request map[string]any) { request["base_revision"] = 99 }},
@@ -425,6 +454,9 @@ func TestAgentPacketReconstructionRejectsTamperReorderAndWrongBase(t *testing.T)
 	if _, err := reconstructAgentPacket(base, tampered, now.Add(time.Minute), false); reconstructionErrorCode(err) != "result_digest_mismatch" {
 		t.Fatalf("tampered operation error=%v code=%s", err, reconstructionErrorCode(err))
 	}
+	if response, status := agentPacketReconstructionResponse(base, tampered, now.Add(time.Minute)); status != http.StatusUnprocessableEntity || anyToInt(response["operations_applied"], -1) != 0 {
+		t.Fatalf("failed reconstruction reported applied operations: status=%d response=%#v", status, response)
+	}
 
 	tamperedAccounting := frontierT2CloneMap(t, delta)
 	accounting := anyMap(tamperedAccounting["result_accounting"])
@@ -459,8 +491,108 @@ func TestAgentPacketReconstructionRejectsTamperReorderAndWrongBase(t *testing.T)
 	}
 }
 
+func TestAgentPacketReconstructionRejectsFalseParentAndExpiredResult(t *testing.T) {
+	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
+	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
+	request := frontierT2DeltaRequest(t, base)
+	delta := finalizeAgentPacketForRequestAt(buildAgentPacket(frontierT2ChangedResponse(t), request, "synthesis_pack_v2"), request, now.Add(time.Minute))
+	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID {
+		t.Fatalf("test requires delta response: %#v", delta["delta_fallback"])
+	}
+
+	falseParent := frontierT2CloneMap(t, delta)
+	falseParentIdentity := anyMap(falseParent["result_identity"])
+	falseParentIdentity["base_packet_id"] = "packet_false_parent"
+	falseParentIdentity["ack_cursor"] = agentPacketAckCursor(falseParentIdentity)
+	falseParent["result_identity"] = falseParentIdentity
+	if _, err := reconstructAgentPacket(base, falseParent, now.Add(time.Minute), false); reconstructionErrorCode(err) != "result_identity_mismatch" {
+		t.Fatalf("false result parent error=%v code=%s", err, reconstructionErrorCode(err))
+	}
+
+	expiringRequest := frontierT2DeltaRequest(t, base)
+	expiringRequest["packet_ttl_seconds"] = 60
+	expiringDelta := finalizeAgentPacketForRequestAt(buildAgentPacket(frontierT2ChangedResponse(t), expiringRequest, "synthesis_pack_v2"), expiringRequest, now.Add(time.Minute))
+	if anyToString(expiringDelta["schema_id"]) != agentPacketDeltaContractID {
+		t.Fatalf("test requires expiring delta response: %#v", expiringDelta["delta_fallback"])
+	}
+	if _, err := reconstructAgentPacket(base, expiringDelta, now.Add(3*time.Minute), true); reconstructionErrorCode(err) != "result_self_verification_failed" {
+		t.Fatalf("expired result error=%v code=%s", err, reconstructionErrorCode(err))
+	}
+}
+
+func TestAgentPacketDeltaRequiresExactTokenizer(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_TOKENIZER_ENCODING", "frontier_t2_missing_tokenizer_encoding")
+	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
+	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
+	request := frontierT2DeltaRequest(t, base)
+	response := finalizeAgentPacketForRequestAt(buildAgentPacket(frontierT2ChangedResponse(t), request, "synthesis_pack_v2"), request, now.Add(time.Minute))
+	if anyToString(response["schema_id"]) != agentPacketContractID || anyToString(anyMap(response["delta_fallback"])["reason"]) != "base_tokenizer_inexact" {
+		t.Fatalf("inexact tokenizer emitted an exact delta claim: %#v", response)
+	}
+}
+
+func TestAgentPacketDeltaOperationsMustBeCanonical(t *testing.T) {
+	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
+	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
+	delta := frontierT2HoldoutMultiOperationDelta(t, base, now)
+	tests := []struct {
+		name   string
+		code   string
+		mutate func(map[string]any)
+	}{
+		{name: "string sequence", code: "operation_sequence_invalid", mutate: func(candidate map[string]any) {
+			anyMap(contextPackAnyList(candidate["operations"])[0])["sequence"] = "1"
+		}},
+		{name: "extra member", code: "operation_kind_invalid", mutate: func(candidate map[string]any) {
+			anyMap(contextPackAnyList(candidate["operations"])[0])["unexpected"] = true
+		}},
+		{name: "overlapping paths", code: "operation_path_overlap", mutate: func(candidate map[string]any) {
+			candidate["operations"] = []any{
+				map[string]any{"sequence": 1, "op": "replace", "path": "/evidence", "value": []any{}},
+				map[string]any{"sequence": 2, "op": "replace", "path": "/evidence/0", "value": map[string]any{}},
+			}
+			candidate["tombstones"] = []any{}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := frontierT2CloneMap(t, delta)
+			test.mutate(candidate)
+			if _, err := reconstructAgentPacket(base, candidate, now.Add(time.Minute), false); reconstructionErrorCode(err) != test.code {
+				t.Fatalf("canonical operation error=%v code=%s want=%s", err, reconstructionErrorCode(err), test.code)
+			}
+			found := false
+			for _, finding := range validateAgentContractPayload(agentPacketDeltaContractID, candidate) {
+				if anyToString(finding["code"]) == test.code {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("boundary validator omitted %s: %#v", test.code, validateAgentContractPayload(agentPacketDeltaContractID, candidate))
+			}
+		})
+	}
+}
+
+func TestAgentPacketEndpointForSurface(t *testing.T) {
+	tests := map[string]string{
+		"context_pack":            "/memory/context-pack",
+		"synthesis_pack":          "/memory/synthesis-pack",
+		"synthesis_pack_v2":       "/memory/synthesis-pack/v2",
+		"tools_context_pack":      "/tools/context_pack",
+		"tools_synthesis_pack":    "/tools/synthesis_pack",
+		"tools_synthesis_pack_v2": "/tools/synthesis_pack_v2",
+	}
+	for surface, endpoint := range tests {
+		if actual := agentPacketEndpointForSurface(surface); actual != endpoint {
+			t.Fatalf("surface=%s endpoint=%s want=%s", surface, actual, endpoint)
+		}
+	}
+}
+
 func TestAgentPacketReconstructionHTTPRouteReturnsVerifiedContract(t *testing.T) {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Add(-time.Minute)
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
 	request := frontierT2DeltaRequest(t, base)
 	delta := finalizeAgentPacketForRequestAt(buildAgentPacket(frontierT2ChangedResponse(t), request, "synthesis_pack_v2"), request, now.Add(time.Second))

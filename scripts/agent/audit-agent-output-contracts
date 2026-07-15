@@ -417,6 +417,7 @@ def sample_agent_packet() -> dict[str, Any]:
             "packet_identity": {
                 "schema_id": "agent_packet_identity.v1",
                 "version": 1,
+                "ack_version": 1,
                 "lineage_id": "packet_lineage_audit",
                 "packet_id": "packet_audit",
                 "revision": 1,

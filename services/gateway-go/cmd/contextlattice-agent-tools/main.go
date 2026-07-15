@@ -2424,15 +2424,14 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 			return err
 		}
 		identity := asMap(basePacket["packet_identity"])
-		if firstString(identity["packet_id"]) == "" || firstString(identity["transport_digest"]) == "" || asInt(identity["revision"]) < 1 || firstString(identity["ack_cursor"]) == "" {
-			return errors.New("base Agent Packet is missing packet identity fields")
-		}
 		payload["packet_mode"] = "delta"
 		payload["base_packet"] = basePacket
-		payload["base_packet_id"] = identity["packet_id"]
-		payload["base_digest"] = identity["transport_digest"]
-		payload["base_revision"] = identity["revision"]
-		payload["base_ack_cursor"] = identity["ack_cursor"]
+		if firstString(identity["packet_id"]) != "" && firstString(identity["transport_digest"]) != "" && asInt(identity["revision"]) > 0 && firstString(identity["ack_cursor"]) != "" {
+			payload["base_packet_id"] = identity["packet_id"]
+			payload["base_digest"] = identity["transport_digest"]
+			payload["base_revision"] = identity["revision"]
+			payload["base_ack_cursor"] = identity["ack_cursor"]
+		}
 	}
 	if value := parsed.string("task_phase", ""); value != "" {
 		payload["task_phase"] = value
