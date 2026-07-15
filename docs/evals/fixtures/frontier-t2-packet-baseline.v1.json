@@ -1,0 +1,21 @@
+{
+  "schema_id": "frontier_t2_packet_baseline.v1",
+  "baseline_id": "frontier_t2_v318_full_packet_baseline",
+  "frozen_at": "2026-07-15T18:21:37Z",
+  "base_commit": "6ef742930608d46b9a60225d74be1aa387b76b11",
+  "baseline_release": "v3.18.0",
+  "frontier_item": 2,
+  "behavior": "Every compact request returns a complete agent_packet.v1. Packets have no content-addressed packet identity, revision, acknowledgement cursor, ordered delta operations, tombstones, or reconstruction proof.",
+  "measurements": {
+    "full_packet_only": true,
+    "packet_identity_present": false,
+    "delta_contract_present": false,
+    "reconstruction_contract_present": false,
+    "exact_wire_token_reduction_fraction": 0,
+    "reconstruction_digest_fidelity": null,
+    "stale_or_tampered_base_rejection": null,
+    "full_fallback_reason_present": false
+  },
+  "buyer_baseline": "A caller must transport the entire bounded packet on every retrieval, even when most model-visible context is unchanged.",
+  "frozen_before_tuning": true
+}
