@@ -102,6 +102,10 @@ scan_to_file() {
   esac
 }
 
+tree_paths="${scan_tmp_dir}/tree-paths"
+scan_to_file "$tree_paths" "repository tree enumeration" \
+  git ls-tree -r --name-only "$REF"
+
 # Distribution namespaces are portable ASCII and case-insensitive by contract.
 shopt -s nocasematch
 if [[ "$LANE" == "public" ]]; then
@@ -112,7 +116,7 @@ if [[ "$LANE" == "public" ]]; then
         blocked=1
         ;;
     esac
-  done < <(git ls-tree -r --name-only "$REF")
+  done <"$tree_paths"
 fi
 
 if [[ "$LANE" == "public-paid" ]]; then
@@ -138,7 +142,7 @@ if [[ "$LANE" == "public-paid" ]]; then
         blocked=1
         ;;
     esac
-  done < <(git ls-tree -r --name-only "$REF")
+  done <"$tree_paths"
 fi
 
 if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
@@ -227,7 +231,7 @@ if [[ "$LANE" == "public" ]]; then
             blocked=1
             ;;
         esac
-      done < <(git ls-tree -r --name-only "$REF")
+      done <"$tree_paths"
     done <"$blocklist"
   fi
 

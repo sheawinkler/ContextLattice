@@ -547,6 +547,10 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             fake_git = fake_bin / "git"
             fake_git.write_text(
                 "#!/bin/sh\n"
+                "if [ \"$1\" = \"ls-tree\" ] && [ \"${FAKE_GIT_MODE:-}\" = \"ls-tree-error\" ]; then\n"
+                "  printf 'simulated git ls-tree failure\\n' >&2\n"
+                "  exit 128\n"
+                "fi\n"
                 "case \"$*\" in\n"
                 "  *crypto_trader_post_training_needs_godmode_and_finalization*)\n"
                 "    case \"${FAKE_GIT_MODE:-}\" in\n"
@@ -563,6 +567,7 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             for mode, marker in (
                 ("contradictory", "contradictory no-match output"),
                 ("error", "operator checkout reference scan failed with status 128"),
+                ("ls-tree-error", "repository tree enumeration failed with status 128"),
             ):
                 with self.subTest(mode=mode):
                     result = run(
