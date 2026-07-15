@@ -106,6 +106,8 @@ if [ "$TARGET_REMOTE" = "public-paid" ]; then
 fi
 
 blocked=0
+# Distribution namespaces are portable ASCII and case-insensitive by contract.
+shopt -s nocasematch
 for p in "${changed[@]}"; do
   # A blocked path removed by the candidate is the desired cleanup. Check the
   # candidate worktree/index/HEAD rather than rejecting a path solely because

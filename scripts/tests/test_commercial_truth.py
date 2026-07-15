@@ -53,9 +53,9 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "3.17.5")
-        self.assertEqual(contract["product"]["stable_tag"], "v3.17.5")
-        self.assertEqual(contract["product"]["release_train"], "3.17")
+        self.assertEqual(contract["product"]["version"], "3.18.0")
+        self.assertEqual(contract["product"]["stable_tag"], "v3.18.0")
+        self.assertEqual(contract["product"]["release_train"], "3.18")
         self.assertEqual(contract["product"]["primary_interface"], "cli")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
 
@@ -99,10 +99,10 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertEqual(
                 contract["release_availability"][feature_id],
                 {
-                    "availability": "controlled_activation_preview",
-                    "release_gate": "IN_PROGRESS",
-                    "release_decision": "UNPROVEN",
-                    "production_proven": False,
+                    "availability": "generally_available",
+                    "release_gate": "PASS",
+                    "release_decision": "PROVEN",
+                    "production_proven": True,
                 },
             )
 
@@ -130,19 +130,19 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "3.17.5")
+        self.assertEqual(public_truth["product"]["version"], "3.18.0")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
-            "controlled_activation_preview",
+            "generally_available",
         )
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["release_decision"],
-            "UNPROVEN",
+            "PROVEN",
         )
 
-    def test_preview_posture_is_public_without_mutating_runtime_entitlement_contract(self) -> None:
+    def test_ga_posture_is_public_without_mutating_runtime_entitlement_contract(self) -> None:
         premium = (ROOT / "docs/public_overview/premium.html").read_text(encoding="utf-8")
-        self.assertGreaterEqual(premium.count("Controlled activation preview"), 3)
+        self.assertNotIn("Controlled activation preview", premium)
         typescript = (ROOT / "contextlattice-dashboard/lib/billing/commercial.generated.ts").read_text(
             encoding="utf-8"
         )
@@ -181,6 +181,24 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             payload = json.loads(result.stderr)
             self.assertIn("docs/public_overview/commercial-truth.json", payload["drift"])
+
+    def test_audit_rejects_mixed_frontier_release_posture(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-mixed-frontier-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            contract_path = fixture / "config/commercial_truth.v1.json"
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            contract["release_availability"]["frontier_shared_objective_graph"] = {
+                "availability": "controlled_activation_preview",
+                "release_gate": "IN_PROGRESS",
+                "release_decision": "UNPROVEN",
+                "production_proven": False,
+            }
+            contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            self.assertIn("frontier_release_truth_mismatch", {row["code"] for row in payload["findings"]})
 
     def test_audit_rejects_competing_active_catalog(self) -> None:
         with tempfile.TemporaryDirectory(prefix="commercial-truth-catalog-") as tmp:
@@ -228,13 +246,98 @@ class CommercialTruthTests(unittest.TestCase):
             copy_fixture(fixture)
             launch = fixture / "launch_service/config/contextlattice.launch.json"
             launch.write_text(
-                launch.read_text(encoding="utf-8").replace("v3.17.5", "v9.9.9", 1),
+                launch.read_text(encoding="utf-8").replace("v3.18.0", "v9.9.9", 1),
                 encoding="utf-8",
             )
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
             self.assertNotEqual(result.returncode, 0)
             payload = json.loads(result.stdout)
             self.assertIn("release_publish_version_drift", {row["code"] for row in payload["findings"]})
+
+    def test_audit_rejects_distribution_specific_release_publish_input(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-lane-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["release_lane"] = "public-paid"
+            payload["channels"][0]["submission_path"] = "Tag v3.18.0-public-paid"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            codes = {row["code"] for row in json.loads(result.stdout)["findings"]}
+            self.assertIn("release_publish_lane_drift", codes)
+            self.assertIn("release_publish_version_drift", codes)
+
+    def test_audit_rejects_schedule_fields_when_launch_is_unscheduled(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-schedule-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["channels"][0]["schedule_mt"] = "2026-02-23 00:00"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_publish_schedule_drift",
+                {row["code"] for row in json.loads(result.stdout)["findings"]},
+            )
+
+    def test_audit_rejects_partial_legacy_schedule_when_marked_scheduled(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-partial-schedule-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["schedule_state"] = "scheduled"
+            payload["channels"][0]["schedule_mt"] = "2026-07-20 09:00"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_publish_schedule_drift",
+                {row["code"] for row in json.loads(result.stdout)["findings"]},
+            )
+
+    def test_audit_accepts_canonical_scheduled_channel(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="commercial-truth-launch-canonical-schedule-") as tmp:
+            fixture = Path(tmp)
+            copy_fixture(fixture)
+            launch = fixture / "launch_service/config/contextlattice.launch.json"
+            payload = json.loads(launch.read_text(encoding="utf-8"))
+            payload["schedule_state"] = "scheduled"
+            payload["channels"][0]["schedule"] = "2026-07-20T15:00:00Z"
+            launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_audit_rejects_noncanonical_stable_tag_suffixes(self) -> None:
+        variants = (
+            "v3.18.0+public-paid",
+            "v3.18.0_origin",
+            "v3.18.0/public",
+            "v3.18.0.public",
+        )
+        for variant in variants:
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory(prefix="commercial-truth-tag-suffix-") as tmp:
+                fixture = Path(tmp)
+                copy_fixture(fixture)
+                launch = fixture / "launch_service/config/contextlattice.launch.json"
+                payload = json.loads(launch.read_text(encoding="utf-8"))
+                payload["channels"][0]["submission_path"] = f"Publish tag {variant}"
+                launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+                result = run(
+                    str(fixture / "scripts/agent/audit-commercial-truth"),
+                    "--root",
+                    str(fixture),
+                    root=fixture,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(
+                    "release_publish_version_drift",
+                    {row["code"] for row in json.loads(result.stdout)["findings"]},
+                )
 
 
 if __name__ == "__main__":

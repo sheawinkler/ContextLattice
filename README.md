@@ -41,9 +41,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.17.5` is the current public baseline. Operator-configured runtime mirrors now overwrite one exact truth, stay out of semantic history, and are suppressed from every retrieval lane even when an old accelerator still holds a stale copy. Owner-only migration keeps startup bounded, continues in one guarded background worker, and fails closed when its trust registry is missing. Tiny context packs preserve agent and session identity under severe budgets, while the compact Agent Packet, outcome learning, transport-inclusive token economics, graph repair and efficacy, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain behind the same CLI-first contract.
+`v3.18.0` is the current public baseline. Continuity now has a durable identity: exact task evidence wins first, semantic reconciliation activates only against a locked, holdout-proven profile, ambiguity abstains, and shared objectives plus decision changes retain their history and witnesses. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces. Agent Packets, synthesis, token economics, graph repair, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain part of the same local-first contract.
 
-## Public Runtime Stack (v3.17)
+## Public Runtime Stack (v3.18)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -79,8 +79,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.17.5 \
-  --statement "The current public release is 3.17.5." \
+  --object 3.18.0 \
+  --statement "The current public release is 3.18.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -421,7 +421,9 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Integrations: `https://contextlattice.io/integration.html`
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
+- Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.18.0.md` (durable continuity identity, holdout-locked semantic reconciliation, shared objective graphs, and witnessed decision provenance)
   - `docs/releases/v3.17.5.md` (latest-only configured state, bounded owner-only migration, and fail-closed semantic readers)
   - `docs/releases/v3.17.4.md` (regression-locked public artifact boundary and complete installer publication)
   - `docs/releases/v3.17.3.md` (owner-only local stores, approval-before-work, evidence-qualified advice, and exact runtime truth)

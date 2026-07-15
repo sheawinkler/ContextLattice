@@ -48,6 +48,7 @@ class ReleaseLaneTreeTests(unittest.TestCase):
             fixture_audit = agent_scripts / "audit-release-lane-tree"
             shutil.copy2(AUDIT, fixture_audit)
             fixture_audit.chmod(0o755)
+            shutil.copy2(ROOT / "scripts/public_leak_guard.py", repo / "scripts/public_leak_guard.py")
             generator = repo / "scripts/generate_commercial_truth.py"
             generator.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
             config = repo / "config"
@@ -101,7 +102,44 @@ class ReleaseLaneTreeTests(unittest.TestCase):
                 subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repo, text=True).strip(),
             )
             self.assertEqual(payload["gates"]["services_gateway_go_test"], "pass")
+            self.assertEqual(payload["gates"]["public_leak_guard"], "pass")
             self.assertTrue(payload["required_blobs"])
+
+            tsx_leak = repo / "contextlattice-dashboard/app/private-note.tsx"
+            tsx_leak.parent.mkdir(parents=True)
+            tsx_marker = "PrIvAtE " + "OpErAtOr RuNbOoKs"
+            tsx_leak.write_text(f'const note = "{tsx_marker}";\n', encoding="utf-8")
+            ps1_leak = repo / "scripts/private-note.ps1"
+            ps1_leak.write_text(
+                '$Repo = "SHEAWINKLER/' + 'HTTP-CONTEXT-AND-MEMORY-ORCHESTRATOR"\n',
+                encoding="utf-8",
+            )
+            case_leaked = commit_all(repo, "case-variant TypeScript and PowerShell leaks")
+            case_failed = run(
+                [str(fixture_audit), "--lane", "public", "--ref", case_leaked, "--expected-commit", case_leaked],
+                repo,
+            )
+            self.assertNotEqual(case_failed.returncode, 0, case_failed.stdout + case_failed.stderr)
+            self.assertIn("contextlattice-dashboard/app/private-note.tsx", case_failed.stdout + case_failed.stderr)
+            self.assertIn("scripts/private-note.ps1", case_failed.stdout + case_failed.stderr)
+            tsx_leak.unlink()
+            ps1_leak.unlink()
+            commit_all(repo, "remove public leak fixtures")
+
+            launch = repo / "launch_service/config"
+            launch.mkdir(parents=True)
+            (launch / "contextlattice.launch.json").write_text(
+                '{"listing_url":"https://github.com/sheawinkler/'
+                + 'http-context-and-memory-orchestrator/releases/new"}\n',
+                encoding="utf-8",
+            )
+            leaked = commit_all(repo, "leaked private repository reference")
+            leak_failed = run(
+                [str(fixture_audit), "--lane", "public", "--ref", leaked, "--expected-commit", leaked],
+                repo,
+            )
+            self.assertNotEqual(leak_failed.returncode, 0, leak_failed.stdout + leak_failed.stderr)
+            self.assertIn("lane hygiene failed for public", leak_failed.stdout + leak_failed.stderr)
 
             mismatch = run(
                 [str(fixture_audit), "--lane", "public", "--ref", candidate, "--expected-commit", "0" * 40],

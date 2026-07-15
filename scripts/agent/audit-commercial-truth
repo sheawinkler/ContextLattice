@@ -28,6 +28,28 @@ ENV_PATHS = (
     Path("config/env/strict_runtime.env"),
     Path("contextlattice-dashboard/.env.example"),
 )
+FRONTIER_EVAL_PATH = Path("docs/evals/v3.18-frontier-t1-paid-activation.json")
+FRONTIER_PREVIEW_POSTURE = {
+    "availability": "controlled_activation_preview",
+    "release_gate": "IN_PROGRESS",
+    "release_decision": "UNPROVEN",
+    "production_proven": False,
+}
+FRONTIER_GA_POSTURE = {
+    "availability": "generally_available",
+    "release_gate": "PASS",
+    "release_decision": "PROVEN",
+    "production_proven": True,
+}
+FRONTIER_REQUIRED_RELEASE_GATES = (
+    "semantic_profile",
+    "paid_entitlement",
+    "workspace_isolation",
+    "persistence_and_restart",
+    "rollback",
+    "full_test_matrix",
+    "live_runtime",
+)
 
 
 def load_generator(root: Path) -> ModuleType:
@@ -297,9 +319,57 @@ def audit_release_publish_inputs(
     except json.JSONDecodeError as exc:
         findings.append(finding("release_publish_input_invalid", str(relative), str(exc)))
         return
+    expected_lane = "distribution-neutral"
+    release_lane = str(payload.get("release_lane", "")).strip()
+    serialized = json.dumps(payload, ensure_ascii=True)
+    private_repo_slug = "/".join(("sheawinkler", "http-context-and-memory-orchestrator"))
+    if release_lane != expected_lane or private_repo_slug.lower() in serialized.lower():
+        findings.append(
+            finding(
+                "release_publish_lane_drift",
+                str(relative),
+                f"release_lane={release_lane or '<missing>'}; expected={expected_lane}; private_repo_reference={private_repo_slug.lower() in serialized.lower()}",
+            )
+        )
+
+    schedule_state = str(payload.get("schedule_state", "")).strip()
+    channels = payload.get("channels", [])
+    scheduled_channels: list[str] = []
+    invalid_schedule_channels: list[str] = []
+    if isinstance(channels, list):
+        for channel in channels:
+            if not isinstance(channel, dict):
+                continue
+            name = str(channel.get("name", "unknown"))
+            canonical = str(channel.get("schedule", "")).strip()
+            mountain = str(channel.get("schedule_mt", "")).strip()
+            pacific = str(channel.get("schedule_pt", "")).strip()
+            legacy_complete = bool(mountain and pacific)
+            legacy_partial = bool(mountain) != bool(pacific)
+            mixed_shapes = bool(canonical) and bool(mountain or pacific)
+            if canonical or legacy_complete:
+                scheduled_channels.append(name)
+            if legacy_partial or mixed_shapes:
+                invalid_schedule_channels.append(name)
+    if schedule_state not in {"scheduled", "unscheduled"} or invalid_schedule_channels or (
+        schedule_state == "unscheduled" and scheduled_channels
+    ) or (schedule_state == "scheduled" and not scheduled_channels):
+        findings.append(
+            finding(
+                "release_publish_schedule_drift",
+                str(relative),
+                f"schedule_state={schedule_state or '<missing>'}; scheduled_channels={sorted(scheduled_channels)}; invalid_schedule_channels={sorted(invalid_schedule_channels)}",
+            )
+        )
+
     expected = contract["product"]["stable_tag"]
     allowed = {expected}
-    observed = set(re.findall(r"v\d+\.\d+\.\d+(?:-origin)?", json.dumps(payload, ensure_ascii=True)))
+    observed = set(
+        re.findall(
+            r"(?<![0-9A-Za-z])v\d+\.\d+\.\d+(?:[-+_/.][0-9A-Za-z][0-9A-Za-z._+/-]*)?(?![0-9A-Za-z])",
+            serialized,
+        )
+    )
     stale = sorted(observed - allowed)
     if stale or expected not in observed:
         findings.append(
@@ -321,24 +391,79 @@ def audit_frontier_release_availability(
 ) -> None:
     availability = contract.get("release_availability", {})
     frontier = {feature["id"] for feature in contract["features"] if feature["id"].startswith("frontier_")}
-    for feature_id in sorted(frontier):
-        posture = availability.get(feature_id, {})
-        if posture != {
-            "availability": "controlled_activation_preview",
-            "release_gate": "IN_PROGRESS",
-            "release_decision": "UNPROVEN",
-            "production_proven": False,
-        }:
+    expected_posture: dict[str, Any] | None = None
+    eval_text = read_text(root, FRONTIER_EVAL_PATH)
+    if eval_text:
+        try:
+            ledger = json.loads(eval_text)
+        except json.JSONDecodeError as exc:
+            findings.append(finding("frontier_eval_invalid", str(FRONTIER_EVAL_PATH), str(exc)))
+            return
+        evidence_posture = (ledger.get("status"), ledger.get("release_decision"))
+        if evidence_posture == ("IN_PROGRESS", "UNPROVEN"):
+            expected_posture = FRONTIER_PREVIEW_POSTURE
+        elif evidence_posture == ("PASS", "PASS"):
+            release_gates = ledger.get("release_gate") if isinstance(ledger.get("release_gate"), dict) else {}
+            rollback = ledger.get("rollback") if isinstance(ledger.get("rollback"), dict) else {}
+            incomplete = [
+                gate
+                for gate in FRONTIER_REQUIRED_RELEASE_GATES
+                if release_gates.get(gate) != "PASS"
+            ]
+            if (
+                incomplete
+                or ledger.get("semantic_profile_status") != "PASS"
+                or ledger.get("failures") != []
+                or rollback.get("live_rollback_proof") != "PASS"
+            ):
+                findings.append(
+                    finding(
+                        "frontier_eval_gate_incomplete",
+                        str(FRONTIER_EVAL_PATH),
+                        f"GA evidence has incomplete gates={incomplete!r}, semantic_profile_status={ledger.get('semantic_profile_status')!r}, failures={ledger.get('failures')!r}, live_rollback_proof={rollback.get('live_rollback_proof')!r}",
+                    )
+                )
+                return
+            expected_posture = FRONTIER_GA_POSTURE
+        else:
+            findings.append(
+                finding(
+                    "frontier_eval_truth_drift",
+                    str(FRONTIER_EVAL_PATH),
+                    f"unsupported or contradictory evidence posture: {evidence_posture!r}",
+                )
+            )
+            return
+    else:
+        observed = [availability.get(feature_id, {}) for feature_id in sorted(frontier)]
+        if observed and all(posture == FRONTIER_PREVIEW_POSTURE for posture in observed):
+            expected_posture = FRONTIER_PREVIEW_POSTURE
+        elif observed and all(posture == FRONTIER_GA_POSTURE for posture in observed):
+            expected_posture = FRONTIER_GA_POSTURE
+        else:
             findings.append(
                 finding(
                     "frontier_release_truth_mismatch",
                     "config/commercial_truth.v1.json",
-                    f"{feature_id} must remain a controlled, unproven preview until its release ledger passes",
+                    "Frontier capabilities must share one exact preview or generally-available posture",
+                )
+            )
+            return
+
+    for feature_id in sorted(frontier):
+        posture = availability.get(feature_id, {})
+        if posture != expected_posture:
+            findings.append(
+                finding(
+                    "frontier_release_truth_mismatch",
+                    "config/commercial_truth.v1.json",
+                    f"{feature_id} posture does not match the Frontier evidence decision",
                 )
             )
 
     premium = read_text(root, Path("docs/public_overview/premium.html"))
-    if frontier and premium.lower().count("controlled activation preview") < len(frontier):
+    preview_count = premium.lower().count("controlled activation preview")
+    if expected_posture == FRONTIER_PREVIEW_POSTURE and frontier and preview_count < len(frontier):
         findings.append(
             finding(
                 "frontier_preview_copy_missing",
@@ -346,22 +471,12 @@ def audit_frontier_release_availability(
                 "every unproven Frontier capability must be visibly labeled as a controlled activation preview",
             )
         )
-
-    eval_path = Path("docs/evals/v3.18-frontier-t1-paid-activation.json")
-    eval_text = read_text(root, eval_path)
-    if not eval_text:
-        return
-    try:
-        ledger = json.loads(eval_text)
-    except json.JSONDecodeError as exc:
-        findings.append(finding("frontier_eval_invalid", str(eval_path), str(exc)))
-        return
-    if ledger.get("status") != "IN_PROGRESS" or ledger.get("release_decision") != "UNPROVEN":
+    if expected_posture == FRONTIER_GA_POSTURE and preview_count:
         findings.append(
             finding(
-                "frontier_eval_truth_drift",
-                str(eval_path),
-                "commercial preview posture must be updated only with the release ledger decision",
+                "frontier_ga_copy_stale",
+                "docs/public_overview/premium.html",
+                "proven Frontier capabilities must not retain controlled-preview copy",
             )
         )
 
