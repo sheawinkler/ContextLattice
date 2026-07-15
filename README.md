@@ -70,6 +70,15 @@ contextlattice resume --project contextlattice --pretty
 contextlattice correct "retrieval was stale" --category stale --project contextlattice --pretty
 contextlattice finish "verified result" --success --project contextlattice --pretty
 
+# Optional delta transport for clients that retain the last trusted packet.
+# A full packet is the safe fallback and becomes the next base directly.
+contextlattice context "continue the release proof" --project contextlattice \
+  --base-packet-file agent-packet.json --raw > packet-update.json
+contextlattice packet-reconstruct --base-packet-file agent-packet.json \
+  --delta-file packet-update.json --raw > next-agent-packet.json
+# Pre-upgrade packets without identity metadata safely receive a new full packet.
+# Packet digests detect drift but do not authenticate origin; retain the base in trusted storage.
+
 # Advanced cognition and operator surfaces follow.
 # Ask what evidence should be retrieved, from where, and when to stop.
 contextlattice_retrieval_plan "debug the current release regression" --project contextlattice --pretty

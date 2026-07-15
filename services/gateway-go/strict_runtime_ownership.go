@@ -30,6 +30,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/memory/recall/eval-cases/refresh", Surface: "retrieval", Owner: sourceOwnerGoNative, Status: "native", Detail: "saved recall case refresh", Required: true},
 		{Path: "/memory/recall/evaluate/saved", Surface: "retrieval", Owner: sourceOwnerGoNative, Status: "native", Detail: "saved recall evaluation execution", Required: true},
 		{Path: "/memory/context-pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "bounded prompt-ready context packages", Required: true},
+		{Path: agentPacketReconstructionRoute, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "digest-verified Agent Packet delta reconstruction", Required: true},
 		{Path: "/tools/context_pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool context package wrapper", Required: true},
 		{Path: "/memory/continuity/reconcile", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "exact-first task identity reconciliation with semantic abstention", Required: true},
 		{Path: "/memory/objectives/transition", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "append-only typed objective transition", Required: true},

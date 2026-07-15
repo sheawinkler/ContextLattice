@@ -26,13 +26,17 @@ import (
 const (
 	defaultBaseURL                 = "http://127.0.0.1:8075"
 	agentPacketContractID          = "agent_packet.v1"
+	agentPacketDeltaContractID     = "agent_packet_delta.v1"
+	agentPacketReconstructionID    = "agent_packet_reconstruction.v1"
 	defaultAgentPacketTargetTokens = 2000
 	defaultAgentPacketHardTokens   = 4000
+	maxAgentPacketCLIFileBytes     = 64 << 10
 )
 
 var nativeToolNames = map[string]string{
 	"contextlattice_search":                          "search",
 	"contextlattice_pack":                            "pack",
+	"contextlattice_packet_reconstruct":              "packet-reconstruct",
 	"contextlattice_synthesis_pack":                  "synthesis-pack",
 	"contextlattice_synthesis_pack_v2":               "synthesis-pack-v2",
 	"contextlattice_retrieval_plan":                  "retrieval-plan",
@@ -147,6 +151,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdWrite(args)
 	case "pack":
 		return c.cmdPack(args)
+	case "packet-reconstruct":
+		return c.cmdPacketReconstruct(args)
 	case "synthesis-pack":
 		return c.cmdSynthesisPack(args)
 	case "synthesis-pack-v2":
@@ -261,6 +267,7 @@ Primary workflow:
 Advanced/compatibility commands:
   search                         lifecycle-aware memory search
   pack                           bounded context package
+  packet-reconstruct             verify and rebuild a delta against its trusted base packet
   synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
   synthesis-pack-v2              proof-carrying synthesis with temporal claims and retrieval plan
   retrieval-plan                 deterministic advisor-only evidence and source plan
@@ -309,7 +316,8 @@ Advanced/compatibility commands:
   async-inbox-drain              bounded async continuation inbox drain for any agent
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
-contextlattice_pack, contextlattice_synthesis_pack, contextlattice_synthesis_pack_v2,
+contextlattice_pack, contextlattice_packet_reconstruct, contextlattice_synthesis_pack,
+contextlattice_synthesis_pack_v2,
 contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_query,
 contextlattice_continuity_reconcile, contextlattice_objective_transition,
 contextlattice_objective_graph, contextlattice_decision_change,
@@ -1172,6 +1180,76 @@ func resolveContent(parsed parsedArgs) (string, error) {
 
 func (c *cli) cmdPack(args []string) error {
 	return c.cmdPackWithRoute(args, "contextlattice_pack", "/memory/context-pack", "context-pack")
+}
+
+func readBoundedJSONObject(path, expectedSchema string) (map[string]any, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("JSON file path is required")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, maxAgentPacketCLIFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxAgentPacketCLIFileBytes {
+		return nil, fmt.Errorf("%s exceeds the %d-byte Agent Packet CLI limit", path, maxAgentPacketCLIFileBytes)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	if schemaID := firstString(payload["schema_id"]); schemaID != expectedSchema {
+		return nil, fmt.Errorf("%s schema_id=%q; expected %q", path, schemaID, expectedSchema)
+	}
+	return payload, nil
+}
+
+func (c *cli) cmdPacketReconstruct(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"base-packet-file": "base_packet_file",
+		"base":             "base_packet_file",
+		"delta-file":       "delta_file",
+		"delta":            "delta_file",
+	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
+		"proof":         "proof",
+		"full-response": "proof",
+	}))
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice packet-reconstruct --base-packet-file <agent_packet.json> --delta-file <agent_packet_delta.json> [--proof] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	base, err := readBoundedJSONObject(parsed.string("base_packet_file", ""), agentPacketContractID)
+	if err != nil {
+		return err
+	}
+	delta, err := readBoundedJSONObject(parsed.string("delta_file", ""), agentPacketDeltaContractID)
+	if err != nil {
+		return err
+	}
+	response, _, err := c.requestJSON(context.Background(), http.MethodPost, "/memory/agent-packet/reconstruct", map[string]any{
+		"base_packet": base,
+		"delta":       delta,
+	}, parsed.float("timeout", 10))
+	if err != nil {
+		return err
+	}
+	if firstString(response["schema_id"]) != agentPacketReconstructionID || !asBool(response["verified"]) {
+		return errors.New("gateway returned an unverified Agent Packet reconstruction")
+	}
+	output := any(response)
+	if !parsed.bool("proof") {
+		packet := asMap(response["packet"])
+		if firstString(packet["schema_id"]) != agentPacketContractID {
+			return errors.New("verified reconstruction response is missing agent_packet.v1")
+		}
+		output = packet
+	}
+	return c.emit(output, parsed.bool("pretty") || !parsed.bool("raw"))
 }
 
 func (c *cli) cmdContext(args []string) error {
@@ -2280,6 +2358,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"task-phase":           "task_phase",
 		"retrieval-intent":     "retrieval_intent",
 		"evidence-obligations": "evidence_obligations",
+		"base-packet-file":     "base_packet_file",
 	}), mergeBoolFlags(commonBoolFlags(), map[string]string{
 		"blocking":        "blocking",
 		"nonblocking":     "nonblocking",
@@ -2292,7 +2371,7 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		"no-auto-session": "no_auto_session",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage(commandName + " '<task>' [--project p] [--task-id id] [--topic-path t] [--mode balanced] [--full|--debug] [--pretty]")
+		return c.emitUsage(commandName + " '<task>' [--project p] [--task-id id] [--topic-path t] [--mode balanced] [--base-packet-file trusted.json] [--full|--debug] [--pretty]")
 	}
 	c.applyBaseURL(parsed)
 	query := strings.TrimSpace(strings.Join(parsed.pos, " "))
@@ -2336,6 +2415,25 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 		}
 		payload["hard_limit_tokens"] = minInt(maxInt(parsed.int("hard_limit_tokens", defaultAgentPacketHardTokens), defaultAgentPacketTargetTokens), defaultAgentPacketHardTokens)
 	}
+	if basePacketPath := parsed.string("base_packet_file", ""); basePacketPath != "" {
+		if !packetSurface || fullOutput {
+			return errors.New("--base-packet-file requires a compact Agent Packet surface without --full or --debug")
+		}
+		basePacket, err := readBoundedJSONObject(basePacketPath, agentPacketContractID)
+		if err != nil {
+			return err
+		}
+		identity := asMap(basePacket["packet_identity"])
+		if firstString(identity["packet_id"]) == "" || firstString(identity["transport_digest"]) == "" || asInt(identity["revision"]) < 1 || firstString(identity["ack_cursor"]) == "" {
+			return errors.New("base Agent Packet is missing packet identity fields")
+		}
+		payload["packet_mode"] = "delta"
+		payload["base_packet"] = basePacket
+		payload["base_packet_id"] = identity["packet_id"]
+		payload["base_digest"] = identity["transport_digest"]
+		payload["base_revision"] = identity["revision"]
+		payload["base_ack_cursor"] = identity["ack_cursor"]
+	}
 	if value := parsed.string("task_phase", ""); value != "" {
 		payload["task_phase"] = value
 	}
@@ -2359,11 +2457,11 @@ func (c *cli) cmdPackWithRoute(args []string, commandName string, route string, 
 	}
 	qualitySampleID := firstString(qualitySample["sample_id"])
 	recordContextPackQualityPending(project, sessionID, query, agentID, qualitySample)
-	if commandName != "contextlattice_pack" && firstString(out["schema_id"]) != agentPacketContractID {
+	if commandName != "contextlattice_pack" && !isAgentPacketWireSchema(firstString(out["schema_id"])) {
 		out["tool"] = commandName
 		out["pack_surface"] = sessionTag
 	}
-	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 && firstString(out["schema_id"]) != agentPacketContractID {
+	if report := contextPackOutcomeReport(sessionID, qualitySampleID); len(report) > 0 && !isAgentPacketWireSchema(firstString(out["schema_id"])) {
 		out["outcome_report"] = report
 	}
 	if err := c.emit(out, parsed.bool("pretty") || !parsed.bool("raw")); err != nil {
@@ -2489,7 +2587,7 @@ func (c *cli) ensureSessionForAgent(project, objective, agent, agentID string, o
 }
 
 func normalizePackOutput(raw map[string]any, query string, budget int) map[string]any {
-	if firstString(raw["schema_id"]) == agentPacketContractID {
+	if isAgentPacketWireSchema(firstString(raw["schema_id"])) {
 		return raw
 	}
 	if _, ok := raw["task_summary"]; ok {
@@ -2513,6 +2611,10 @@ func normalizePackOutput(raw map[string]any, query string, budget int) map[strin
 	raw["context_budget_chars"] = budget
 	raw["writeback_required"] = true
 	return raw
+}
+
+func isAgentPacketWireSchema(schemaID string) bool {
+	return schemaID == agentPacketContractID || schemaID == agentPacketDeltaContractID
 }
 
 func addContextPackTokenBudgetArgs(payload map[string]any, parsed parsedArgs) {

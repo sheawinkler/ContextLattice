@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 26,
-  "updated_at": "2026-07-14T15:54:40Z",
+  "registry_version": 27,
+  "updated_at": "2026-07-15T18:21:37Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -822,7 +822,8 @@
         "token_budget": "object",
         "token_impact": "object",
         "writeback_required": "bool",
-        "format_contract": "object"
+        "format_contract": "object",
+        "packet_identity": "object"
       },
       "required_fields_by_path": {
         "provenance": [
@@ -4282,6 +4283,244 @@
       "required_string_contains": {
         "schema_id": "decision_change_query.v1",
         "format_contract.schema_id": "decision_change_query.v1"
+      }
+    },
+    "agent_packet_delta.v1": {
+      "contract_version": 1,
+      "payload_kind": "deterministic_agent_packet_delta",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "discard_unverified_operations_and_request_or_return_a_digest_verified_full_agent_packet",
+      "max_total_json_bytes": 16000,
+      "max_string_bytes": 4000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "surface",
+        "project",
+        "session_id",
+        "agent_id",
+        "task_id",
+        "lineage_id",
+        "packet_id",
+        "revision",
+        "base_packet_id",
+        "base_revision",
+        "base_digest",
+        "result_digest",
+        "model_visible_digest",
+        "scope_digest",
+        "operations",
+        "tombstones",
+        "ack_cursor",
+        "result_identity",
+        "result_accounting",
+        "reconstruction",
+        "fallback",
+        "token_budget",
+        "token_impact",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "surface": "string",
+        "project": "string",
+        "session_id": "string",
+        "agent_id": "string",
+        "task_id": "string",
+        "lineage_id": "string",
+        "packet_id": "string",
+        "revision": "int",
+        "base_packet_id": "string",
+        "base_revision": "int",
+        "base_digest": "string",
+        "result_digest": "string",
+        "model_visible_digest": "string",
+        "scope_digest": "string",
+        "operations": "list[object]",
+        "tombstones": "list[string]",
+        "ack_cursor": "string",
+        "result_identity": "object",
+        "result_accounting": "object",
+        "reconstruction": "object",
+        "fallback": "object",
+        "token_budget": "object",
+        "token_impact": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "result_identity": [
+          "schema_id",
+          "lineage_id",
+          "packet_id",
+          "revision",
+          "model_visible_digest",
+          "transport_digest",
+          "scope_digest",
+          "accounting_digest",
+          "ack_cursor"
+        ],
+        "result_accounting": [
+          "token_budget",
+          "token_impact",
+          "digest"
+        ],
+        "result_accounting.token_budget": [
+          "target_tokens",
+          "hard_limit_tokens",
+          "actual_tokens",
+          "within_hard_limit"
+        ],
+        "result_accounting.token_impact": [
+          "baseline_tokens_estimate",
+          "compiled_prompt_tokens_estimate",
+          "transport_tokens_exact",
+          "saved_tokens_estimate",
+          "net_token_delta",
+          "transport_inclusive"
+        ],
+        "reconstruction": [
+          "verified",
+          "digest_match",
+          "operation_count",
+          "contract_id"
+        ],
+        "fallback": [
+          "used",
+          "reason"
+        ],
+        "token_budget": [
+          "full_packet_tokens_exact",
+          "delta_wire_tokens_exact",
+          "incremental_model_visible_tokens_exact",
+          "reconstructed_model_visible_tokens_exact",
+          "tokens_saved_exact",
+          "delta_smaller_than_full",
+          "equal_reconstructed_context"
+        ],
+        "token_impact": [
+          "baseline_tokens_estimate",
+          "transport_tokens_exact",
+          "saved_tokens_estimate",
+          "net_token_delta",
+          "transport_inclusive"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "ok",
+        "reconstruction.verified",
+        "reconstruction.digest_match",
+        "token_budget.delta_smaller_than_full",
+        "token_budget.equal_reconstructed_context",
+        "token_impact.transport_inclusive"
+      ],
+      "required_false_paths": [
+        "fallback.used"
+      ],
+      "required_string_contains": {
+        "schema_id": "agent_packet_delta.v1",
+        "result_identity.schema_id": "agent_packet_identity.v1",
+        "reconstruction.contract_id": "agent_packet_reconstruction.v1",
+        "format_contract.schema_id": "agent_packet_delta.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "raw_contextlattice_json",
+        "raw_retrieval_payload",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "secret",
+        "secrets",
+        "authorization"
+      ],
+      "forbidden_scope": "recursive",
+      "max_bytes_by_path": {
+        "base_digest": 96,
+        "result_digest": 96,
+        "model_visible_digest": 96,
+        "scope_digest": 96,
+        "ack_cursor": 96
+      }
+    },
+    "agent_packet_reconstruction.v1": {
+      "contract_version": 1,
+      "payload_kind": "verified_agent_packet_reconstruction",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_no_reconstructed_packet_and_an_explicit_bounded_error",
+      "max_total_json_bytes": 24000,
+      "max_string_bytes": 4000,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "verified",
+        "base_packet_id",
+        "packet_id",
+        "result_digest",
+        "operations_applied",
+        "packet",
+        "warnings",
+        "error",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "verified": "bool",
+        "base_packet_id": "string",
+        "packet_id": "string",
+        "result_digest": "string",
+        "operations_applied": "int",
+        "packet": "object",
+        "warnings": "list[string]",
+        "error": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "agent_packet_reconstruction.v1",
+        "format_contract.schema_id": "agent_packet_reconstruction.v1"
+      },
+      "forbidden_fields": [
+        "hookSpecificOutput",
+        "raw_contextlattice_json",
+        "raw_retrieval_payload",
+        "messages",
+        "tool_calls",
+        "function_call",
+        "secret",
+        "secrets",
+        "authorization"
+      ],
+      "forbidden_scope": "recursive",
+      "max_bytes_by_path": {
+        "result_digest": 96,
+        "error": 160
       }
     }
   }

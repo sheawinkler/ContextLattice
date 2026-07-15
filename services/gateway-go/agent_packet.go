@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	agentPacketContractID          = "agent_packet.v1"
@@ -16,6 +19,19 @@ func agentPacketRequested(payload map[string]any) bool {
 		anyToString(payload["response_mode"]),
 	)))
 	return mode == "agent_packet" || mode == "compact" || mode == agentPacketContractID
+}
+
+func agentPacketSurfaceForRoute(fallback string, route string) string {
+	switch strings.TrimSpace(route) {
+	case "/tools/context_pack":
+		return "tools_context_pack"
+	case "/tools/synthesis_pack":
+		return "tools_synthesis_pack"
+	case "/tools/synthesis_pack_v2":
+		return "tools_synthesis_pack_v2"
+	default:
+		return fallback
+	}
 }
 
 func agentPacketTokenLimits(payload map[string]any) (int, int) {
@@ -109,15 +125,30 @@ func buildAgentPacket(response map[string]any, request map[string]any, surface s
 		tokenBudget["adjustment_reason"] = "requested hard limit is smaller than the mandatory agent_packet.v1 contract envelope"
 	}
 	packet := map[string]any{
-		"ok":            anyToBoolOrDefault(response["ok"], true),
-		"schema_id":     agentPacketContractID,
-		"version":       1,
-		"surface":       strings.TrimSpace(surface),
-		"query":         clipText(query, 1600),
-		"project":       clipText(project, 120),
-		"topic_path":    clipText(topicPath, 240),
-		"session_id":    clipText(sessionID, 128),
-		"agent_id":      clipText(anyToString(response["agent_id"]), 120),
+		"ok":         anyToBoolOrDefault(response["ok"], true),
+		"schema_id":  agentPacketContractID,
+		"version":    1,
+		"surface":    strings.TrimSpace(surface),
+		"query":      clipText(query, 1600),
+		"project":    clipText(project, 120),
+		"topic_path": clipText(topicPath, 240),
+		"session_id": clipText(sessionID, 128),
+		"agent_id":   clipText(anyToString(response["agent_id"]), 120),
+		"task_id": clipText(firstNonEmptyStrings(
+			anyToString(response["task_id"]),
+			anyToString(request["task_id"]),
+			anyToString(request["taskId"]),
+		), 160),
+		"task_identity_id": clipText(firstNonEmptyStrings(
+			anyToString(response["task_identity_id"]),
+			anyToString(request["task_identity_id"]),
+			anyToString(request["taskIdentityId"]),
+		), 160),
+		"execution_lane_id": clipText(firstNonEmptyStrings(
+			anyToString(response["execution_lane_id"]),
+			anyToString(request["execution_lane_id"]),
+			anyToString(request["executionLaneId"]),
+		), 160),
 		"prompt":        agentPacketPrompt(query, surface, anyToString(uncertainty["status"]), anyToString(decisionGate["decision"])),
 		"evidence":      evidence,
 		"provenance":    provenance,
@@ -403,6 +434,10 @@ func attachAgentPacketFormatContract(packet map[string]any) map[string]any {
 }
 
 func finalizeAgentPacket(packet map[string]any) map[string]any {
+	return finalizeAgentPacketWithIdentity(packet, nil, map[string]any{}, time.Now().UTC())
+}
+
+func finalizeAgentPacketCore(packet map[string]any) map[string]any {
 	tokenBudget := anyMap(packet["token_budget"])
 	target := clampInt(anyToInt(tokenBudget["target_tokens"], defaultAgentPacketTargetTokens), 512, defaultAgentPacketHardTokens)
 	hard := clampInt(anyToInt(tokenBudget["hard_limit_tokens"], defaultAgentPacketHardTokens), target, defaultAgentPacketHardTokens)

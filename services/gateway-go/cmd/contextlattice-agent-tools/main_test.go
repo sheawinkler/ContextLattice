@@ -710,6 +710,130 @@ func TestSynthesisPackCommandUsesNativeEndpoint(t *testing.T) {
 	}
 }
 
+func TestContextCommandNegotiatesDeltaFromTrustedBaseFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	base := map[string]any{
+		"schema_id": agentPacketContractID,
+		"packet_identity": map[string]any{
+			"packet_id":        "packet_base",
+			"transport_digest": "sha256:base",
+			"revision":         7,
+			"ack_cursor":       "ack_base",
+		},
+	}
+	basePath := filepath.Join(t.TempDir(), "base.json")
+	baseRaw, _ := json.Marshal(base)
+	if err := os.WriteFile(basePath, baseRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var captured map[string]any
+	delta := map[string]any{
+		"ok": true, "schema_id": agentPacketDeltaContractID, "version": 1,
+		"base_packet_id": "packet_base", "operations": []any{},
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memory/synthesis-pack/v2" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode delta request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(delta)
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice", "context", "continue packet task", "--project", "alpha", "--base-packet-file", basePath, "--no-auto-session", "--raw"}); err != nil {
+		t.Fatalf("run context delta: %v", err)
+	}
+	if firstString(captured["packet_mode"]) != "delta" || firstString(captured["base_packet_id"]) != "packet_base" || firstString(captured["base_digest"]) != "sha256:base" || asInt(captured["base_revision"]) != 7 || firstString(captured["base_ack_cursor"]) != "ack_base" {
+		t.Fatalf("delta negotiation fields missing: %#v", captured)
+	}
+	if firstString(asMap(captured["base_packet"])["schema_id"]) != agentPacketContractID {
+		t.Fatalf("trusted base packet missing from request: %#v", captured)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode delta output: %v", err)
+	}
+	if firstString(output["schema_id"]) != agentPacketDeltaContractID || output["tool"] != nil || output["task_summary"] != nil {
+		t.Fatalf("CLI mutated delta wire envelope: %#v", output)
+	}
+}
+
+func TestPacketReconstructCommandEmitsVerifiedPacket(t *testing.T) {
+	tempDir := t.TempDir()
+	base := map[string]any{"schema_id": agentPacketContractID, "packet_identity": map[string]any{"packet_id": "packet_base"}}
+	delta := map[string]any{"schema_id": agentPacketDeltaContractID, "packet_id": "packet_result"}
+	basePath := filepath.Join(tempDir, "base.json")
+	deltaPath := filepath.Join(tempDir, "delta.json")
+	for path, payload := range map[string]map[string]any{basePath: base, deltaPath: delta} {
+		raw, _ := json.Marshal(payload)
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var captured map[string]any
+	packet := map[string]any{"ok": true, "schema_id": agentPacketContractID, "packet_identity": map[string]any{"packet_id": "packet_result"}}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/memory/agent-packet/reconstruct" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode reconstruction request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "schema_id": agentPacketReconstructionID, "verified": true, "packet": packet,
+		})
+	}))
+	defer gateway.Close()
+
+	commands := map[string][]string{
+		"primary": {"contextlattice", "packet-reconstruct", "--base-packet-file", basePath, "--delta-file", deltaPath, "--raw"},
+		"alias":   {"contextlattice_packet_reconstruct", "--base-packet-file", basePath, "--delta-file", deltaPath, "--raw"},
+	}
+	for name, argv := range commands {
+		t.Run(name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			c := newCLI(&stdout, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.run(argv); err != nil {
+				t.Fatalf("run packet reconstruction: %v", err)
+			}
+			if firstString(asMap(captured["base_packet"])["schema_id"]) != agentPacketContractID || firstString(asMap(captured["delta"])["schema_id"]) != agentPacketDeltaContractID {
+				t.Fatalf("reconstruction payload lost packet inputs: %#v", captured)
+			}
+			var output map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+				t.Fatalf("decode reconstructed packet: %v", err)
+			}
+			if firstString(output["schema_id"]) != agentPacketContractID || firstString(asMap(output["packet_identity"])["packet_id"]) != "packet_result" {
+				t.Fatalf("default reconstruction output is not the verified packet: %#v", output)
+			}
+		})
+	}
+}
+
+func TestAgentPacketCLIFileBoundaryRejectsOversizeAndWrongSchema(t *testing.T) {
+	oversized := filepath.Join(t.TempDir(), "oversized.json")
+	if err := os.WriteFile(oversized, bytes.Repeat([]byte("x"), maxAgentPacketCLIFileBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readBoundedJSONObject(oversized, agentPacketContractID); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized packet was not rejected: %v", err)
+	}
+	wrong := filepath.Join(t.TempDir(), "wrong.json")
+	if err := os.WriteFile(wrong, []byte(`{"schema_id":"other.v1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readBoundedJSONObject(wrong, agentPacketContractID); err == nil || !strings.Contains(err.Error(), "expected") {
+		t.Fatalf("wrong-schema packet was not rejected: %v", err)
+	}
+}
+
 func TestCognitionProofCommandsUseNativeEndpoints(t *testing.T) {
 	captured := map[string]map[string]any{}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

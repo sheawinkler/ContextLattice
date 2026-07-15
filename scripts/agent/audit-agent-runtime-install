@@ -150,6 +150,7 @@ def main() -> int:
         "contextlattice-agent-tools": go_tool,
         "contextlattice_search": bin_dir / "contextlattice_search",
         "contextlattice_pack": bin_dir / "contextlattice_pack",
+        "contextlattice_packet_reconstruct": bin_dir / "contextlattice_packet_reconstruct",
         "contextlattice_synthesis_pack": bin_dir / "contextlattice_synthesis_pack",
         "contextlattice_write": bin_dir / "contextlattice_write",
         "contextlattice_adopt": bin_dir / "contextlattice_adopt",

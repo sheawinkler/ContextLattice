@@ -519,6 +519,7 @@ $goNativeCommands = @(
     "contextlattice",
     "contextlattice_search",
     "contextlattice_pack",
+    "contextlattice_packet_reconstruct",
     "contextlattice_synthesis_pack",
     "contextlattice_synthesis_pack_v2",
     "contextlattice_retrieval_plan",

@@ -160,6 +160,7 @@ def main() -> int:
         "contextlattice_post_compaction_read",
         "contextlattice_adopt",
         "contextlattice_agent_adapter",
+        "contextlattice_packet_reconstruct",
         "contextlattice_synthesis_pack",
         "contextlattice_synthesis_pack_v2",
         "contextlattice_retrieval_plan",
