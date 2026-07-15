@@ -4,31 +4,31 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.17.5",
-    "stable_tag": "v3.17.5",
-    "release_train": "3.17",
+    "version": "3.18.0",
+    "stable_tag": "v3.18.0",
+    "release_train": "3.18",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
   "currency": "USD",
   "release_availability": {
     "frontier_semantic_continuity_automation": {
-      "availability": "controlled_activation_preview",
-      "release_gate": "IN_PROGRESS",
-      "release_decision": "UNPROVEN",
-      "production_proven": false
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
     },
     "frontier_shared_objective_graph": {
-      "availability": "controlled_activation_preview",
-      "release_gate": "IN_PROGRESS",
-      "release_decision": "UNPROVEN",
-      "production_proven": false
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
     },
     "frontier_shared_decision_provenance": {
-      "availability": "controlled_activation_preview",
-      "release_gate": "IN_PROGRESS",
-      "release_decision": "UNPROVEN",
-      "production_proven": false
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
     }
   },
   "features": [
@@ -355,6 +355,6 @@
       ]
     }
   ],
-  "contract_sha256": "1f0a7d76a1c70de350e5d25c96ae093a93339c3d47404445466dc7a15a180dcf",
-  "commercial_truth_sha256": "b18b522d5e2e60bc99a6407ebb6acb3c5885bb12678a424aa1a525a1042a7d15"
+  "contract_sha256": "7e1c5a1bb6427046aece6e9888e3fdc13555a5b03e5ca06893bf537df1f8d74b",
+  "commercial_truth_sha256": "3b3206d446bfa17435ebeb708c1456b7a59bd9a6c6205abc50378a77ec6a61a0"
 }

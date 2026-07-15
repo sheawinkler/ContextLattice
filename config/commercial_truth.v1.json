@@ -4,31 +4,31 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.17.5",
-    "stable_tag": "v3.17.5",
-    "release_train": "3.17",
+    "version": "3.18.0",
+    "stable_tag": "v3.18.0",
+    "release_train": "3.18",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
   "currency": "USD",
   "release_availability": {
     "frontier_semantic_continuity_automation": {
-      "availability": "controlled_activation_preview",
-      "release_gate": "IN_PROGRESS",
-      "release_decision": "UNPROVEN",
-      "production_proven": false
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
     },
     "frontier_shared_objective_graph": {
-      "availability": "controlled_activation_preview",
-      "release_gate": "IN_PROGRESS",
-      "release_decision": "UNPROVEN",
-      "production_proven": false
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
     },
     "frontier_shared_decision_provenance": {
-      "availability": "controlled_activation_preview",
-      "release_gate": "IN_PROGRESS",
-      "release_decision": "UNPROVEN",
-      "production_proven": false
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
     }
   },
   "features": [

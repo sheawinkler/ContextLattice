@@ -4,7 +4,7 @@ This guide deploys the single-container lite lane on Hugging Face Spaces using t
 
 ## Resource profile (hf-lite lane)
 
-- Target lane: Public `v3.17.x` lite profile.
+- Target lane: Public `v3.18.x` lite profile.
 - Baseline sizing: `2-4` vCPU, `4-8 GB` RAM, `20-50 GB` SSD.
 - Recommended disk headroom: keep at least `10 GB` free in `/data` to avoid compaction/rewrite pressure.
 - Retrieval default in this lane: `topic_rollups` (single-container-safe).

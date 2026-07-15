@@ -52,6 +52,8 @@ if [[ "$LANE" == "auto" ]]; then
 fi
 
 blocked=0
+# Distribution namespaces are portable ASCII and case-insensitive by contract.
+shopt -s nocasematch
 if [[ "$LANE" == "public" ]]; then
   while IFS= read -r path; do
     case "$path" in

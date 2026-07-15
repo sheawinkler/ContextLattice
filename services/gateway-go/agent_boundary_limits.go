@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -766,7 +767,13 @@ func compactPreflightResponseBoundary(payload map[string]any, keep int, stats *a
 }
 
 func dropPreflightOptionalBoundary(payload map[string]any, stats *agentBoundaryStats) {
-	for _, key := range []string{"status", "health", "agent_profile"} {
+	if status, ok := payload["status"]; ok {
+		payload["status"] = compactPreflightStatusBoundary(status)
+		if stats != nil {
+			stats.OptionalFieldsCompacted++
+		}
+	}
+	for _, key := range []string{"health", "agent_profile"} {
 		if _, ok := payload[key]; ok {
 			payload[key] = map[string]any{"omitted_by_boundary": true}
 			if stats != nil {
@@ -774,6 +781,73 @@ func dropPreflightOptionalBoundary(payload map[string]any, stats *agentBoundaryS
 			}
 		}
 	}
+}
+
+func compactPreflightStatusBoundary(value any) map[string]any {
+	out := map[string]any{"omitted_by_boundary": true}
+	frontier := anyMap(anyMap(value)["frontierT1Governance"])
+	if len(frontier) == 0 {
+		return out
+	}
+	capsule := map[string]any{}
+	for _, key := range []string{"schema_id", "authorization_mode", "entitlement_mode", "release_gate"} {
+		if item, ok := frontier[key].(string); ok {
+			capsule[key] = clipUTF8Bytes(sanitizeProviderOverflowText(strings.TrimSpace(item)), 128)
+		}
+	}
+	for _, key := range []string{
+		"configured", "enabled", "force_disabled", "ready", "store_ready", "authorization_ready",
+		"release_gate_satisfied",
+	} {
+		if item, ok := frontier[key].(bool); ok {
+			capsule[key] = item
+		}
+	}
+	for _, key := range []string{
+		"required_route_count", "protected_route_count", "eligible_route_count", "event_count",
+		"last_sequence", "bytes",
+	} {
+		if item, ok := nonnegativePreflightStatusInteger(frontier[key]); ok {
+			capsule[key] = item
+		}
+	}
+	out["frontierT1Governance"] = capsule
+	return out
+}
+
+func nonnegativePreflightStatusInteger(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), typed >= 0
+	case int8:
+		return int64(typed), typed >= 0
+	case int16:
+		return int64(typed), typed >= 0
+	case int32:
+		return int64(typed), typed >= 0
+	case int64:
+		return typed, typed >= 0
+	case uint:
+		if uint64(typed) <= uint64(^uint64(0)>>1) {
+			return int64(typed), true
+		}
+	case uint8:
+		return int64(typed), true
+	case uint16:
+		return int64(typed), true
+	case uint32:
+		return int64(typed), true
+	case uint64:
+		if typed <= uint64(^uint64(0)>>1) {
+			return int64(typed), true
+		}
+	case float64:
+		const maxExactJSONInteger = float64(1<<53 - 1)
+		if !math.IsNaN(typed) && !math.IsInf(typed, 0) && typed >= 0 && typed <= maxExactJSONInteger && typed == math.Trunc(typed) {
+			return int64(typed), true
+		}
+	}
+	return 0, false
 }
 
 func compactPolicyContextPackageBoundary(policy map[string]any, keep int, stats *agentBoundaryStats) {

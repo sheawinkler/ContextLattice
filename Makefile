@@ -40,7 +40,7 @@ help:
 > echo "  mem-mode-show|mem-mode-core|mem-mode-balanced|mem-mode-full: toggle persistent COMPOSE_PROFILES in .env"
 > echo "  mem-up-lite: local lite core (topic_rollups + qdrant, no adapter lab)"
 > echo "  mem-up-lite-advanced: local lite plus memory-bank spike/adapters"
-> echo "  mem-up-balanced: bounded v4 launcher (single active spike lane, observability off by default)"
+> echo "  mem-up-balanced: bounded balanced launcher (single active spike lane, observability off by default)"
 > echo "  observability-up|observability-down: on-demand Langfuse stack controls"
 > echo "  models-pull: pull local Ollama models (optional)"
 > echo "  mcp-proxy-up: configure & start mcp-proxy on :9090"

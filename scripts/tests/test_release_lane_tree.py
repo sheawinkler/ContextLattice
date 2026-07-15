@@ -48,6 +48,7 @@ class ReleaseLaneTreeTests(unittest.TestCase):
             fixture_audit = agent_scripts / "audit-release-lane-tree"
             shutil.copy2(AUDIT, fixture_audit)
             fixture_audit.chmod(0o755)
+            shutil.copy2(ROOT / "scripts/public_leak_guard.py", repo / "scripts/public_leak_guard.py")
             generator = repo / "scripts/generate_commercial_truth.py"
             generator.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
             config = repo / "config"
@@ -101,7 +102,23 @@ class ReleaseLaneTreeTests(unittest.TestCase):
                 subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repo, text=True).strip(),
             )
             self.assertEqual(payload["gates"]["services_gateway_go_test"], "pass")
+            self.assertEqual(payload["gates"]["public_leak_guard"], "pass")
             self.assertTrue(payload["required_blobs"])
+
+            launch = repo / "launch_service/config"
+            launch.mkdir(parents=True)
+            (launch / "contextlattice.launch.json").write_text(
+                '{"listing_url":"https://github.com/sheawinkler/'
+                + 'http-context-and-memory-orchestrator/releases/new"}\n',
+                encoding="utf-8",
+            )
+            leaked = commit_all(repo, "leaked private repository reference")
+            leak_failed = run(
+                [str(fixture_audit), "--lane", "public", "--ref", leaked, "--expected-commit", leaked],
+                repo,
+            )
+            self.assertNotEqual(leak_failed.returncode, 0, leak_failed.stdout + leak_failed.stderr)
+            self.assertIn("Public boundary guard failed", leak_failed.stdout + leak_failed.stderr)
 
             mismatch = run(
                 [str(fixture_audit), "--lane", "public", "--ref", candidate, "--expected-commit", "0" * 40],

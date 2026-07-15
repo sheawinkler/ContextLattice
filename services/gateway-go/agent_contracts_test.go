@@ -694,6 +694,21 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 	})
 	objectiveRuntime := buildObjectiveRuntimeState("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", oversized, "balanced", "sess-test", objectiveContext{}, "agent.preflight.completed")
 	policy := buildPolicyContextPackage("codex", "codex_gpt5_test", "contextlattice", "runbooks/codex-integration", oversized, "balanced", pack, pack, nil, objectiveRuntime, objectiveContext{})
+	statusPayload := map[string]any{
+		"raw":   oversized,
+		"items": items,
+		"frontierT1Governance": map[string]any{
+			"schema_id": "frontier_t1_governance_state.v1", "configured": true,
+			"enabled": true, "force_disabled": false, "ready": true, "store_ready": true,
+			"authorization_ready": true, "authorization_mode": "explicit_private_development",
+			"entitlement_mode": "enforce", "release_gate": "pass", "release_gate_satisfied": true,
+			"required_route_count": 3, "protected_route_count": 3, "eligible_route_count": 3,
+			"event_count": 31, "last_sequence": 31, "bytes": 26726,
+		},
+	}
+	for idx := 0; idx < 300; idx++ {
+		statusPayload[fmt.Sprintf("debug_%03d", idx)] = strings.Repeat("bounded preflight status pressure ", 300)
+	}
 	response := attachAgentPreflightFormatContracts(map[string]any{
 		"ok":                     true,
 		"service":                "gateway-go",
@@ -703,7 +718,7 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 		"query":                  oversized,
 		"topic_path":             "runbooks/codex-integration",
 		"retrieval_mode":         "balanced",
-		"status":                 map[string]any{"raw": oversized, "items": items},
+		"status":                 statusPayload,
 		"scoped_search":          map[string]any{"results": items, "degraded": false},
 		"broadened_search":       map[string]any{"results": items, "degraded": false},
 		"context_pack":           pack,
@@ -716,6 +731,15 @@ func TestAgentBoundaryContractClipsOversizedPreflightPayload(t *testing.T) {
 	assertBoundaryJSONHeadroom(t, agentPreflightResponseContractID, response, 1024)
 	assertNoRawProviderOverflowShape(t, response)
 	assertBoundaryMetadata(t, response, "format_contracts", true)
+	status := anyMap(response["status"])
+	if !anyToBool(status["omitted_by_boundary"]) {
+		t.Fatalf("expected oversized preflight status to be compacted, got %#v", status)
+	}
+	frontier := anyMap(status["frontierT1Governance"])
+	if !anyToBool(frontier["ready"]) || anyToString(frontier["authorization_mode"]) != "explicit_private_development" ||
+		anyToString(frontier["release_gate"]) != "pass" || anyToInt(frontier["protected_route_count"], 0) != 3 {
+		t.Fatalf("expected compacted preflight to retain bounded Frontier truth, got %#v", frontier)
+	}
 }
 
 func TestAgentPreflightBoundarySanitizesProviderOverflowSearchTextUnderBudget(t *testing.T) {
@@ -751,6 +775,41 @@ func TestAgentPreflightBoundarySanitizesProviderOverflowSearchTextUnderBudget(t 
 	assertBoundaryContractPassed(t, agentPreflightResponseContractID, response)
 	assertNoRawProviderOverflowShape(t, response)
 	assertBoundaryMetadata(t, response, "format_contracts", false)
+}
+
+func TestCompactPreflightStatusBoundaryRejectsCompositeValues(t *testing.T) {
+	hugeMap := map[string]any{}
+	for idx := 0; idx < 1000; idx++ {
+		hugeMap[fmt.Sprintf("key_%04d", idx)] = strings.Repeat("unbounded composite value ", 100)
+	}
+	status := compactPreflightStatusBoundary(map[string]any{
+		"frontierT1Governance": map[string]any{
+			"schema_id":             strings.Repeat("schema", 100),
+			"ready":                 hugeMap,
+			"bytes":                 hugeMap,
+			"authorization_mode":    []any{strings.Repeat("mode", 1000)},
+			"protected_route_count": 3,
+		},
+	})
+	frontier := anyMap(status["frontierT1Governance"])
+	if _, ok := frontier["ready"]; ok {
+		t.Fatalf("composite boolean escaped preflight status boundary: %#v", frontier["ready"])
+	}
+	if _, ok := frontier["bytes"]; ok {
+		t.Fatalf("composite integer escaped preflight status boundary: %#v", frontier["bytes"])
+	}
+	if _, ok := frontier["authorization_mode"]; ok {
+		t.Fatalf("composite string escaped preflight status boundary: %#v", frontier["authorization_mode"])
+	}
+	if got := anyToInt(frontier["protected_route_count"], 0); got != 3 {
+		t.Fatalf("valid scalar route count was not preserved: %#v", frontier)
+	}
+	if got := len(anyToString(frontier["schema_id"])); got > 128 {
+		t.Fatalf("schema_id escaped string boundary: %d bytes", got)
+	}
+	if size := jsonByteLen(status); size > 1024 {
+		t.Fatalf("compacted preflight status exceeded fixed capsule budget: %d bytes", size)
+	}
 }
 
 func TestContextBoundaryPayloadCoversAgentSurfaces(t *testing.T) {

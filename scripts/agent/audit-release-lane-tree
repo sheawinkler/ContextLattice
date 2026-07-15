@@ -70,10 +70,15 @@ tree="$(git -C "${REPO_ROOT}" rev-parse --verify "${commit}^{tree}")"
 
 guard="${REPO_ROOT}/scripts/agent_hooks/branch_lane_guard.sh"
 [[ -f "${guard}" ]] || fail "lane guard is absent from candidate repository"
-for active_path in \
-  "scripts/agent/audit-release-lane-tree:${AUDIT_PATH}" \
-  "scripts/agent_hooks/branch_lane_guard.sh:${guard}" \
-  "scripts/agent_hooks/common.sh:${REPO_ROOT}/scripts/agent_hooks/common.sh"; do
+active_paths=(
+  "scripts/agent/audit-release-lane-tree:${AUDIT_PATH}"
+  "scripts/agent_hooks/branch_lane_guard.sh:${guard}"
+  "scripts/agent_hooks/common.sh:${REPO_ROOT}/scripts/agent_hooks/common.sh"
+)
+if [[ "${LANE}" == "public" ]]; then
+  active_paths+=("scripts/public_leak_guard.py:${REPO_ROOT}/scripts/public_leak_guard.py")
+fi
+for active_path in "${active_paths[@]}"; do
   relative="${active_path%%:*}"
   local_path="${active_path#*:}"
   candidate_blob="$(git -C "${REPO_ROOT}" rev-parse --verify "${commit}:${relative}" 2>/dev/null)" || \
@@ -82,13 +87,17 @@ for active_path in \
   [[ "${active_blob}" == "${candidate_blob}" ]] || \
     fail "active gate differs from candidate commit: ${relative}"
 done
-bash "${guard}" --lane "${guard_lane}" --ref "${commit}"
-
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-release-tree.XXXXXX")"
 cleanup() {
   rm -rf "${tmp_dir}"
 }
 trap cleanup EXIT
+candidate_blocklist="${tmp_dir}/public_sync_blocklist.txt"
+git -C "${REPO_ROOT}" show "${commit}:config/public_sync_blocklist.txt" >"${candidate_blocklist}" || \
+  fail "candidate public sync blocklist cannot be materialized"
+CONTEXTLATTICE_PUBLIC_SYNC_BLOCKLIST="${candidate_blocklist}" \
+  bash "${guard}" --lane "${guard_lane}" --ref "${commit}"
+
 stage="${tmp_dir}/tree"
 index="${tmp_dir}/index"
 mkdir -p "${stage}"
@@ -111,7 +120,9 @@ required=(
   "services/gateway-go/objective_continuity.go"
   "services/orchestrator-go/go.mod"
 )
-if [[ "${LANE}" == "public-paid" ]]; then
+if [[ "${LANE}" == "public" ]]; then
+  required+=("scripts/public_leak_guard.py")
+elif [[ "${LANE}" == "public-paid" ]]; then
   required+=(
     ".github/workflows/release-installers.yml"
     "docs/evals/v3.18-frontier-t1-paid-activation.json"
@@ -139,6 +150,11 @@ done
 
 gate_rows="${tmp_dir}/gates.tsv"
 printf '%s\t%s\n' "branch_lane_guard" "pass" >"${gate_rows}"
+
+if [[ "${LANE}" == "public" ]]; then
+  (cd "${stage}" && python3 scripts/public_leak_guard.py --summary)
+  printf '%s\t%s\n' "public_leak_guard" "pass" >>"${gate_rows}"
+fi
 
 for module in services/gateway-go services/orchestrator-go; do
   gate_name="$(printf '%s' "${module}" | tr '/-' '__')_test"

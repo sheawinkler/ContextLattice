@@ -312,6 +312,16 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             "services/gateway-go/frontier_t1_eval_test.go",
             "docs/entitled-frontier-t1.md",
             "docs/evals/v3.18-frontier-t1-paid-activation.json",
+            "config/frontier_t1_release_provenance.v1.json",
+            "scripts/agent/audit-frontier-30-program",
+            "scripts/agent/generate-frontier-t1-source-manifest",
+            "scripts/frontier_t1_source_contract.py",
+            "scripts/tests/Test-ReleaseInstallerIdentity.ps1",
+            "scripts/tests/test_frontier_t1_source_archive.py",
+            "scripts/tests/test_frontier_t1_source_manifest.py",
+            "scripts/tests/test_release_payload_provenance.py",
+            "scripts/validate_frontier_t1_release_provenance.py",
+            "scripts/validate_frontier_t1_source_archive.py",
         )
         for blocked_path in blocked_paths:
             with self.subTest(path=blocked_path), tempfile.TemporaryDirectory(prefix="public-frontier-t1-") as tmp:
@@ -355,6 +365,42 @@ class PublicBoundaryGuardTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("private_dev_posture", result.stderr)
+
+    def test_distribution_lanes_reject_case_variant_private_roots(self) -> None:
+        cases = (
+            ("public", "Private/frontier-program.json"),
+            ("public", "Docs/Private/internal.md"),
+            ("public-paid", "PRIVATE/frontier-program.json"),
+            ("public-paid", "docs/PRIVATE/internal.md"),
+            ("public-paid", "Private_Docs/internal.md"),
+        )
+        for lane, blocked_path in cases:
+            with self.subTest(lane=lane, blocked_path=blocked_path), tempfile.TemporaryDirectory(
+                prefix=f"{lane}-case-private-"
+            ) as tmp:
+                repo = Path(tmp)
+                init_repo(repo)
+                hooks = repo / "scripts/agent_hooks"
+                hooks.mkdir(parents=True)
+                shutil.copy2(ROOT / "scripts/agent_hooks/common.sh", hooks / "common.sh")
+                shutil.copy2(ROOT / "scripts/agent_hooks/branch_lane_guard.sh", hooks / "branch_lane_guard.sh")
+                candidate = repo / blocked_path
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text("must not ship\n", encoding="utf-8")
+                commit_all(repo, "case-variant private root")
+                result = run(
+                    [
+                        "bash",
+                        "scripts/agent_hooks/branch_lane_guard.sh",
+                        "--lane",
+                        lane,
+                        "--ref",
+                        "HEAD",
+                    ],
+                    repo,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(blocked_path, result.stderr)
 
     def test_public_paid_lane_rejects_private_and_scratch_tree_paths(self) -> None:
         blocked_paths = [

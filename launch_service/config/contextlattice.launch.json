@@ -1,7 +1,7 @@
 {
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
-  "launch_window": "ContextLattice v3.17 release wave: July 2026",
+  "launch_window": "ContextLattice v3.18 release wave: July 2026",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
   "metadata": {
@@ -16,7 +16,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Tag v3.17.5 + release notes + checksums + images",
+      "submission_path": "Tag v3.18.0 + release notes + checksums + images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -375,8 +375,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.17.5",
-      "body": "ContextLattice v3.17.5 makes current state exact.\n\nHighlights:\n- operator-configured runtime mirrors overwrite one current truth instead of accumulating stale semantic memories\n- final retrieval filtering suppresses stale registered state regardless of which backend returns it\n- owner-only migration keeps startup bounded and finishes through one guarded worker\n- semantic readers fail closed when state classification is missing or invalid\n\nStart here:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.18.0",
+      "body": "ContextLattice v3.18.0 gives work a durable identity.\n\nHighlights:\n- exact task evidence wins before semantic matching\n- holdout-proven continuity reconnects unambiguous work and abstains on doubt\n- shared objective graphs preserve the living arc of a mission\n- witnessed decision provenance records what changed, why, and against which evidence\n- every governed automation path is entitlement-bound, bounded, and reversible\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -409,11 +409,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.17.5 makes exact state actually exact.\n\nMemory should compound. State should not. Configured runtime mirrors now keep one exact truth, stale registered copies cannot ghost their way back through retrieval, and owner-only repair no longer taxes startup.\n\nCurrent means current.\n\nStart local-first: {docs_url}"
+      "body": "ContextLattice v3.18.0 gives work an identity that survives the agent, account, model, session, branch, and worktree.\n\nExact evidence wins. Semantic continuity reconnects only when the answer is unambiguous. Objectives keep their history. Decisions keep their witnesses.\n\nAgents stop starting over. Intelligence starts compounding.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.17.5 makes mutable state tell the truth now.\n\nAgent memory gets dangerous when mutable state is stored like history. A position, policy snapshot, or runtime mode has one job: tell the truth now.\n\nWhat changed:\n- operator-configured state mirrors overwrite one canonical truth\n- semantic history and vector lanes exclude registered mutable state\n- the gateway suppresses stale registered copies from every retrieval source\n- bounded owner-only migration protects local stores without blocking startup\n- readers fail closed when state classification is unavailable\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.18.0 turns continuity from a prompt trick into infrastructure.\n\nA task can now keep one durable identity across agents, accounts, models, sessions, branches, and worktrees. Exact evidence always wins first. A locked deterministic profile reconnects only unambiguous work. Shared objective graphs preserve mission history, while witnessed decision provenance records what changed, why, and against which evidence.\n\nThe result is not a larger prompt. It is an agent stack that stops starting over.\n\nThe CLI remains the primary interface; every governed automation path is entitlement-bound, bounded, and reversible.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",
