@@ -297,6 +297,8 @@ fi
 
 if [[ "$SKIP_ORCH_CHECK" != "1" ]]; then
   wait_for_endpoint "$ORCH_URL/status" "orchestrator"
+fi
+if [[ "$SKIP_ORCH_CHECK" != "1" || "$GATEWAY_IDENTITY_REQUIRED" == "1" ]]; then
   verify_gateway_identity
 fi
 if [[ "$SKIP_SIDECAR_CHECK" != "1" ]]; then

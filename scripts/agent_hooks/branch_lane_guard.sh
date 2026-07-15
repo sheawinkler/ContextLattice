@@ -52,6 +52,56 @@ if [[ "$LANE" == "auto" ]]; then
 fi
 
 blocked=0
+scan_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-branch-lane.XXXXXX")" || \
+  fail "could not create lane scan workspace"
+cleanup_lane_scan() {
+  rm -rf "$scan_tmp_dir"
+}
+trap cleanup_lane_scan EXIT
+
+scan_to_file() {
+  local output="$1"
+  local label="$2"
+  local errors="${output}.stderr"
+  local status
+  shift 2
+
+  if ! exec 3>"$output"; then
+    fail "${label} could not open scan output"
+  fi
+  if ! exec 4>"$errors"; then
+    exec 3>&-
+    fail "${label} could not open scan diagnostics"
+  fi
+  if "$@" >&3 2>&4; then
+    status=0
+  else
+    status=$?
+  fi
+  exec 3>&- || fail "${label} could not close scan output"
+  exec 4>&- || fail "${label} could not close scan diagnostics"
+  case "$status" in
+    0)
+      if [[ -s "$errors" ]]; then
+        cat "$errors" >&2
+        fail "${label} produced unexpected stderr"
+      fi
+      return 0
+      ;;
+    1)
+      if [[ -s "$output" || -s "$errors" ]]; then
+        cat "$errors" >&2
+        fail "${label} returned contradictory no-match output"
+      fi
+      return 1
+      ;;
+    *)
+      cat "$errors" >&2
+      fail "${label} failed with status ${status}"
+      ;;
+  esac
+}
+
 # Distribution namespaces are portable ASCII and case-insensitive by contract.
 shopt -s nocasematch
 if [[ "$LANE" == "public" ]]; then
@@ -111,47 +161,53 @@ if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
   )
 
   internal_dev_pattern='private[- ]development.*(keyless|superset|bypass|internal-only|private-only)|(^|[^[:alnum:]_])private-dev([^[:alnum:]_]|$)|keyless (superset|bypass)|unlocked superset'
-  if git grep -n -I -i -E "$internal_dev_pattern" "$REF" -- \
-      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}" \
-      >/tmp/contextlattice_internal_dev_doc_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_internal_dev_doc_hits.txt >&2
+  internal_dev_hits="${scan_tmp_dir}/internal-dev-doc-hits"
+  if scan_to_file "$internal_dev_hits" "internal development reference scan" \
+      git grep -n -I -i -E "$internal_dev_pattern" "$REF" -- \
+      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}"; then
+    cat "$internal_dev_hits" >&2
     blocked=1
   fi
 
   private_reference_pattern='docs[/\\]+private[/\\]+|private_docs[/\\]+|(^|[^[:alnum:]_.-])(\.\.?[/\\]+)+private[/\\]+'
-  if git grep -n -I -i -E "$private_reference_pattern" "$REF" -- \
-      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}" \
-      >/tmp/contextlattice_private_reference_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_private_reference_hits.txt >&2
+  private_reference_hits="${scan_tmp_dir}/private-reference-hits"
+  if scan_to_file "$private_reference_hits" "private documentation reference scan" \
+      git grep -n -I -i -E "$private_reference_pattern" "$REF" -- \
+      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}"; then
+    cat "$private_reference_hits" >&2
     blocked=1
   fi
 
   # shellcheck disable=SC2016 # The regex intentionally matches literal shell-home prefixes.
   private_repo_pattern='sheawinkler/'"http-context-and-memory-orchestrator"
+  # shellcheck disable=SC2016 # The regex intentionally matches literal shell-home prefixes.
   operator_checkout_pattern='/(Users|home)/[[:alnum:]_.-]+/|[[:alpha:]]:[/\\]+Users[/\\]+[[:alnum:]_.-]+[/\\]+|(\$HOME|~)[/\\]+Documents[/\\]+Projects[/\\]+|context-lattice-private|crypto_trader_post_training_needs_godmode_and_finalization|'"${private_repo_pattern}"
-  if git grep -n -I -i -E "$operator_checkout_pattern" "$REF" -- \
-      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}" \
-      >/tmp/contextlattice_operator_checkout_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_operator_checkout_hits.txt >&2
+  operator_checkout_hits="${scan_tmp_dir}/operator-checkout-hits"
+  if scan_to_file "$operator_checkout_hits" "operator checkout reference scan" \
+      git grep -n -I -i -E "$operator_checkout_pattern" "$REF" -- \
+      "${distribution_text_paths[@]}" "${distribution_text_excludes[@]}"; then
+    cat "$operator_checkout_hits" >&2
     blocked=1
   fi
 
   # The helper itself is blocklisted, but a leaked source/call from a shared
   # launcher would still break a distribution tree where that helper is absent.
-  if git grep -n -I -E 'private_dev_posture' "$REF" -- \
-      launch.sh scripts/compose_v4_balanced.sh \
-      >/tmp/contextlattice_private_dev_launcher_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_private_dev_launcher_hits.txt >&2
+  private_dev_launcher_hits="${scan_tmp_dir}/private-dev-launcher-hits"
+  if scan_to_file "$private_dev_launcher_hits" "private development launcher scan" \
+      git grep -n -I -E 'private_dev_posture' "$REF" -- \
+      launch.sh scripts/compose_v4_balanced.sh; then
+    cat "$private_dev_launcher_hits" >&2
     blocked=1
   fi
 fi
 
 if [[ "$LANE" == "public" ]]; then
   internal_doc_reference='docs/private/|private_docs/'
-  if git grep -n -I -E "$internal_doc_reference" "$REF" -- \
-      README.md docs/public_overview docs/releases launch_service packaging \
-      >/tmp/contextlattice_internal_doc_reference_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_internal_doc_reference_hits.txt >&2
+  internal_doc_reference_hits="${scan_tmp_dir}/internal-doc-reference-hits"
+  if scan_to_file "$internal_doc_reference_hits" "restricted documentation link scan" \
+      git grep -n -I -E "$internal_doc_reference" "$REF" -- \
+      README.md docs/public_overview docs/releases launch_service packaging; then
+    cat "$internal_doc_reference_hits" >&2
     blocked=1
   fi
 fi
@@ -176,29 +232,33 @@ if [[ "$LANE" == "public" ]]; then
   fi
 
   paid_gateway_pattern='GO_(PAID|V4)_ENTITLEMENT|enforce(Paid|V4)Entitlement|runtimeLicenseVerifier|runtimeLicenseSchemaID'
-  if git grep -n -I -E "$paid_gateway_pattern" "$REF" -- services/gateway-go >/tmp/contextlattice_paid_gateway_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_paid_gateway_hits.txt >&2
+  paid_gateway_hits="${scan_tmp_dir}/paid-gateway-hits"
+  if scan_to_file "$paid_gateway_hits" "paid gateway surface scan" \
+      git grep -n -I -E "$paid_gateway_pattern" "$REF" -- services/gateway-go; then
+    cat "$paid_gateway_hits" >&2
     blocked=1
   fi
 
   paid_ui_pattern='(/api/billing/(download|downloads|download-token|entitlement|summary|stripe|paypal|solana-pay|kraken)|/api/support/diagnostics|/api/telemetry/pro-analytics|/api/workspace/(members|invitations)|exportSupportDiagnostics|HostedArtifacts|WorkspaceInvitation|workspaceInvitations|activeWorkspaceId|Workspace people)'
-  if git grep -n -I -E "$paid_ui_pattern" "$REF" -- \
+  paid_ui_hits="${scan_tmp_dir}/paid-ui-hits"
+  if scan_to_file "$paid_ui_hits" "paid dashboard surface scan" \
+      git grep -n -I -E "$paid_ui_pattern" "$REF" -- \
       contextlattice-dashboard/app \
       contextlattice-dashboard/components \
       contextlattice-dashboard/lib \
       contextlattice-dashboard/prisma \
-      contextlattice-dashboard/tests \
-      >/tmp/contextlattice_paid_ui_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_paid_ui_hits.txt >&2
+      contextlattice-dashboard/tests; then
+    cat "$paid_ui_hits" >&2
     blocked=1
   fi
 
   paid_distribution_pattern='Set-PaidRuntimePosture|apply_paid_runtime_posture|set_env_value.*GO_V4_|Set-EnvValue.*GO_V4_|EXPECTED_SOURCE_REF.*public-paid/main|SOURCE_TRACKING_REF.*public-paid/main'
-  if git grep -n -I -E "$paid_distribution_pattern" "$REF" -- \
+  paid_distribution_hits="${scan_tmp_dir}/paid-distribution-hits"
+  if scan_to_file "$paid_distribution_hits" "paid distribution surface scan" \
+      git grep -n -I -E "$paid_distribution_pattern" "$REF" -- \
       packaging scripts/build_release_payload.sh scripts/build_linux_bundle.sh \
-      scripts/build_macos_dmg.sh scripts/build_windows_msi.sh \
-      >/tmp/contextlattice_paid_distribution_hits.txt 2>/dev/null; then
-    cat /tmp/contextlattice_paid_distribution_hits.txt >&2
+      scripts/build_macos_dmg.sh scripts/build_windows_msi.sh; then
+    cat "$paid_distribution_hits" >&2
     blocked=1
   fi
 fi
@@ -206,14 +266,17 @@ fi
 if [[ "$LANE" == "public" || "$LANE" == "public-paid" ]]; then
   machine_pattern="${CONTEXTLATTICE_PUBLIC_FORBIDDEN_PATH_RE:-}"
   if [[ -n "$machine_pattern" ]]; then
+    machine_hits="${scan_tmp_dir}/machine-path-hits"
     if [[ "$REF" == "HEAD" ]]; then
-      if rg -n --hidden --glob '!.git/**' --glob '!node_modules/**' --glob '!tmp/**' --glob '!archive/**' --glob '!private_docs/**' --glob '!docs/private/**' "$machine_pattern" . >/tmp/contextlattice_lane_hits.txt 2>/dev/null; then
-        cat /tmp/contextlattice_lane_hits.txt >&2
+      if scan_to_file "$machine_hits" "working-tree forbidden path scan" \
+          rg -n --hidden --glob '!.git/**' --glob '!node_modules/**' --glob '!tmp/**' --glob '!archive/**' --glob '!private_docs/**' --glob '!docs/private/**' "$machine_pattern" .; then
+        cat "$machine_hits" >&2
         blocked=1
       fi
     else
-      if git grep -n -I -E "$machine_pattern" "$REF" -- . ':(exclude)docs/private/**' ':(exclude)private_docs/**' ':(exclude)node_modules/**' ':(exclude)tmp/**' >/tmp/contextlattice_lane_hits.txt 2>/dev/null; then
-        cat /tmp/contextlattice_lane_hits.txt >&2
+      if scan_to_file "$machine_hits" "committed forbidden path scan" \
+          git grep -n -I -E "$machine_pattern" "$REF" -- . ':(exclude)docs/private/**' ':(exclude)private_docs/**' ':(exclude)node_modules/**' ':(exclude)tmp/**'; then
+        cat "$machine_hits" >&2
         blocked=1
       fi
     fi

@@ -528,6 +528,87 @@ class PublicBoundaryGuardTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("Documents/Projects", result.stderr)
 
+    def test_distribution_scan_failures_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-scan-failure-") as tmp:
+            repo = Path(tmp)
+            init_repo(repo)
+            hooks = repo / "scripts/agent_hooks"
+            hooks.mkdir(parents=True)
+            shutil.copy2(ROOT / "scripts/agent_hooks/common.sh", hooks / "common.sh")
+            shutil.copy2(ROOT / "scripts/agent_hooks/branch_lane_guard.sh", hooks / "branch_lane_guard.sh")
+            forbidden_marker = "crypto_trader_post_training_needs_godmode_and_finalization"
+            (repo / "README.md").write_text(f"Forbidden path: {forbidden_marker}\n", encoding="utf-8")
+            commit_all(repo, "forbidden operator path")
+
+            fake_bin = repo / "fake-bin"
+            fake_bin.mkdir()
+            real_git = shutil.which("git")
+            self.assertIsNotNone(real_git)
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "  *crypto_trader_post_training_needs_godmode_and_finalization*)\n"
+                "    case \"${FAKE_GIT_MODE:-}\" in\n"
+                "      contradictory) printf 'HEAD:README.md:1:forbidden\\n'; exit 1 ;;\n"
+                "      error) printf 'simulated git grep failure\\n' >&2; exit 128 ;;\n"
+                "    esac\n"
+                "    ;;\n"
+                "esac\n"
+                f'exec "{real_git}" "$@"\n',
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+
+            for mode, marker in (
+                ("contradictory", "contradictory no-match output"),
+                ("error", "operator checkout reference scan failed with status 128"),
+            ):
+                with self.subTest(mode=mode):
+                    result = run(
+                        [
+                            "env",
+                            f"PATH={fake_bin}:/usr/bin:/bin",
+                            f"FAKE_GIT_MODE={mode}",
+                            "bash",
+                            "scripts/agent_hooks/branch_lane_guard.sh",
+                            "--lane",
+                            "public",
+                            "--ref",
+                            "HEAD",
+                        ],
+                        repo,
+                    )
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(marker, result.stderr)
+
+            read_only_scan = repo / "read-only-scan"
+            read_only_scan.mkdir()
+            read_only_scan.chmod(0o555)
+            fake_mktemp = fake_bin / "mktemp"
+            fake_mktemp.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"${FAKE_MKTEMP_DIR:?}\"\n",
+                encoding="utf-8",
+            )
+            fake_mktemp.chmod(0o755)
+            unwritable = run(
+                [
+                    "env",
+                    f"PATH={fake_bin}:/usr/bin:/bin",
+                    f"FAKE_MKTEMP_DIR={read_only_scan}",
+                    "bash",
+                    "scripts/agent_hooks/branch_lane_guard.sh",
+                    "--lane",
+                    "public",
+                    "--ref",
+                    "HEAD",
+                ],
+                repo,
+            )
+            self.assertNotEqual(unwritable.returncode, 0, unwritable.stdout + unwritable.stderr)
+            self.assertIn("could not open scan output", unwritable.stderr)
+
     def test_distribution_smoke_defaults_are_repo_local_and_opt_in(self) -> None:
         smoke = (ROOT / "scripts/devnet_smoke.sh").read_text(encoding="utf-8")
         recipes = (ROOT / "justfile").read_text(encoding="utf-8")
@@ -599,29 +680,32 @@ esac
                 encoding="utf-8",
             )
             fake_curl.chmod(0o755)
-            result = run(
-                [
-                    "env",
-                    f"PATH={fake_bin}:/usr/bin:/bin",
-                    "CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8091",
-                    "GATEWAY_IDENTITY_REQUIRED=1",
-                    "EXPECTED_GATEWAY_VERSION=development",
-                    "EXPECTED_GATEWAY_SOURCE_COMMIT=expected-commit",
-                    "EXPECTED_GATEWAY_SOURCE_TREE=expected-tree",
-                    "BOOTSTRAP_ORCH=0",
-                    "SKIP_SIDECAR_CHECK=1",
-                    "SMOKE_WRITE=0",
-                    "MINDSDB_SMOKE=0",
-                    "RUN_CARGO_SMOKE=0",
-                    f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
-                    f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
-                    "bash",
-                    str(ROOT / "scripts/devnet_smoke.sh"),
-                ],
-                ROOT,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("gateway commit does not match", result.stderr)
+            for skip_orch_check in ("0", "1"):
+                with self.subTest(skip_orch_check=skip_orch_check):
+                    result = run(
+                        [
+                            "env",
+                            f"PATH={fake_bin}:/usr/bin:/bin",
+                            "CONTEXTLATTICE_ORCHESTRATOR_URL=http://127.0.0.1:8091",
+                            "GATEWAY_IDENTITY_REQUIRED=1",
+                            "EXPECTED_GATEWAY_VERSION=development",
+                            "EXPECTED_GATEWAY_SOURCE_COMMIT=expected-commit",
+                            "EXPECTED_GATEWAY_SOURCE_TREE=expected-tree",
+                            "BOOTSTRAP_ORCH=0",
+                            f"SKIP_ORCH_CHECK={skip_orch_check}",
+                            "SKIP_SIDECAR_CHECK=1",
+                            "SMOKE_WRITE=0",
+                            "MINDSDB_SMOKE=0",
+                            "RUN_CARGO_SMOKE=0",
+                            f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
+                            f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
+                            "bash",
+                            str(ROOT / "scripts/devnet_smoke.sh"),
+                        ],
+                        ROOT,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("gateway commit does not match", result.stderr)
 
     def test_memory_smoke_rejects_stale_readback(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextlattice-readback-smoke-") as tmp:
