@@ -280,12 +280,23 @@ jobs:
       - build-macos-dmg
       - build-linux-and-msi
     steps:
-      - name: Download installer artifacts
+      - name: Download macOS installer artifact
         uses: actions/download-artifact@v8
         with:
-          pattern: public-release-*
+          name: public-release-dmg
           path: dist
-          merge-multiple: true
+
+      - name: Download Linux installer artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: public-release-linux
+          path: dist
+
+      - name: Download Windows installer artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: public-release-msi
+          path: dist
 
       - name: Verify exact asset set
         run: |
