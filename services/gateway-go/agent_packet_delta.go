@@ -582,6 +582,60 @@ func buildAgentPacketOperations(base, target map[string]any) ([]any, []any, erro
 	return operations, tombstones, nil
 }
 
+func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVisibleCount, incrementalModelVisibleCount, deltaCount tokenCountResult) {
+	saved := maxInt(0, fullCount.Tokens-deltaCount.Tokens)
+	ratio := 1.0
+	if deltaCount.Tokens > 0 {
+		ratio = roundFloat(float64(fullCount.Tokens)/float64(deltaCount.Tokens), 3)
+	}
+	delta["token_budget"] = map[string]any{
+		"full_packet_tokens_exact":                 fullCount.Tokens,
+		"delta_wire_tokens_exact":                  deltaCount.Tokens,
+		"incremental_model_visible_tokens_exact":   incrementalModelVisibleCount.Tokens,
+		"reconstructed_model_visible_tokens_exact": modelVisibleCount.Tokens,
+		"tokens_saved_exact":                       saved,
+		"reduction_fraction":                       roundFloat(float64(saved)/float64(maxInt(fullCount.Tokens, 1)), 6),
+		"delta_smaller_than_full":                  deltaCount.Tokens < fullCount.Tokens,
+		"equal_reconstructed_context":              true,
+		"estimate_method":                          deltaCount.Method,
+		"calibration_grade":                        deltaCount.CalibrationGrade,
+		"tokenizer_exact":                          deltaCount.TokenizerExact,
+		"tokenizer_encoding":                       deltaCount.Encoding,
+	}
+	delta["token_impact"] = map[string]any{
+		"schema_id":                "contextlattice_token_impact.v1",
+		"version":                  1,
+		"scope":                    "agent_packet_delta_transport",
+		"packed_kind":              "serialized_agent_packet_delta_json",
+		"baseline_tokens_estimate": fullCount.Tokens,
+		"packed_tokens_estimate":   deltaCount.Tokens,
+		"transport_tokens_exact":   deltaCount.Tokens,
+		"saved_tokens_estimate":    saved,
+		"net_token_delta":          fullCount.Tokens - deltaCount.Tokens,
+		"compression_ratio":        ratio,
+		"transport_inclusive":      true,
+		"estimate_method":          deltaCount.Method,
+		"calibration_grade":        deltaCount.CalibrationGrade,
+		"tokenizer_exact":          deltaCount.TokenizerExact,
+		"tokenizer_encoding":       deltaCount.Encoding,
+		"measurement_limit":        "Delta wire tokens and reconstructed model-visible tokens are reported separately; no provider token or inference-avoidance claim is made.",
+	}
+}
+
+func stabilizeAgentPacketDeltaJSONBytes(delta map[string]any) {
+	metadata := anyMap(delta["format_contract"])
+	if len(metadata) == 0 {
+		return
+	}
+	for pass := 0; pass < 4; pass++ {
+		size := jsonByteLen(delta)
+		if size > 0 && anyToInt(metadata["actual_json_bytes"], 0) == size {
+			return
+		}
+		metadata["actual_json_bytes"] = size
+	}
+}
+
 func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]any) map[string]any {
 	fullBudget := anyMap(fullPacket["token_budget"])
 	fullCount := tokenCountResult{
@@ -599,51 +653,38 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 		"operations": delta["operations"],
 		"tombstones": delta["tombstones"],
 	})
+
+	// Attach and enforce the boundary once with a complete metadata shape. The
+	// convergence loop changes only internally generated numeric accounting
+	// fields, so repeating full boundary validation would add latency without
+	// changing the contract decision. buildAgentPacketDelta validates the final
+	// payload and reconstructs it before any delta can be emitted.
+	provisionalCount := fullCount
+	provisionalCount.Tokens = maxInt(1, fullCount.Tokens/2)
+	applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, provisionalCount)
+	delta = attachPayloadFormatContract(agentPacketDeltaContractID, delta, anyToString(delta["agent_id"]), "agent_packet_delta", "/memory/context-pack")
+
 	for pass := 0; pass < 6; pass++ {
-		delta = attachPayloadFormatContract(agentPacketDeltaContractID, delta, anyToString(delta["agent_id"]), "agent_packet_delta", "/memory/context-pack")
+		stabilizeAgentPacketDeltaJSONBytes(delta)
 		deltaCount := contextPackCountAnyTokens(delta)
 		if reported := anyToInt(anyMap(delta["token_budget"])["delta_wire_tokens_exact"], 0); reported > 0 && reported == deltaCount.Tokens {
 			return delta
 		}
-		saved := maxInt(0, fullCount.Tokens-deltaCount.Tokens)
-		ratio := 1.0
-		if deltaCount.Tokens > 0 {
-			ratio = roundFloat(float64(fullCount.Tokens)/float64(deltaCount.Tokens), 3)
-		}
-		delta["token_budget"] = map[string]any{
-			"full_packet_tokens_exact":                 fullCount.Tokens,
-			"delta_wire_tokens_exact":                  deltaCount.Tokens,
-			"incremental_model_visible_tokens_exact":   incrementalModelVisibleCount.Tokens,
-			"reconstructed_model_visible_tokens_exact": modelVisibleCount.Tokens,
-			"tokens_saved_exact":                       saved,
-			"reduction_fraction":                       roundFloat(float64(saved)/float64(maxInt(fullCount.Tokens, 1)), 6),
-			"delta_smaller_than_full":                  deltaCount.Tokens < fullCount.Tokens,
-			"equal_reconstructed_context":              true,
-			"estimate_method":                          deltaCount.Method,
-			"calibration_grade":                        deltaCount.CalibrationGrade,
-			"tokenizer_exact":                          deltaCount.TokenizerExact,
-			"tokenizer_encoding":                       deltaCount.Encoding,
-		}
-		delta["token_impact"] = map[string]any{
-			"schema_id":                "contextlattice_token_impact.v1",
-			"version":                  1,
-			"scope":                    "agent_packet_delta_transport",
-			"packed_kind":              "serialized_agent_packet_delta_json",
-			"baseline_tokens_estimate": fullCount.Tokens,
-			"packed_tokens_estimate":   deltaCount.Tokens,
-			"transport_tokens_exact":   deltaCount.Tokens,
-			"saved_tokens_estimate":    saved,
-			"net_token_delta":          fullCount.Tokens - deltaCount.Tokens,
-			"compression_ratio":        ratio,
-			"transport_inclusive":      true,
-			"estimate_method":          deltaCount.Method,
-			"calibration_grade":        deltaCount.CalibrationGrade,
-			"tokenizer_exact":          deltaCount.TokenizerExact,
-			"tokenizer_encoding":       deltaCount.Encoding,
-			"measurement_limit":        "Delta wire tokens and reconstructed model-visible tokens are reported separately; no provider token or inference-avoidance claim is made.",
-		}
+		applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, deltaCount)
 	}
-	return attachPayloadFormatContract(agentPacketDeltaContractID, delta, anyToString(delta["agent_id"]), "agent_packet_delta", "/memory/context-pack")
+
+	// A non-converging self-count is never eligible for delta delivery. The
+	// caller falls back to the verified full packet rather than claiming an
+	// inexact transport saving.
+	budget := anyMap(delta["token_budget"])
+	budget["delta_smaller_than_full"] = false
+	budget["tokens_saved_exact"] = 0
+	impact := anyMap(delta["token_impact"])
+	impact["saved_tokens_estimate"] = 0
+	impact["net_token_delta"] = 0
+	impact["measurement_limit"] = "Delta transport accounting did not converge; return the verified full Agent Packet."
+	stabilizeAgentPacketDeltaJSONBytes(delta)
+	return delta
 }
 
 func buildAgentPacketDelta(base, target map[string]any, now time.Time) (map[string]any, error) {

@@ -197,6 +197,13 @@ func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	if anyToInt(budget["delta_wire_tokens_exact"], 0) != contextPackCountAnyTokens(delta).Tokens {
 		t.Fatalf("delta wire-token count is not transport exact: %#v", budget)
 	}
+	rawDelta, err := json.Marshal(delta)
+	if err != nil {
+		t.Fatalf("marshal delta for byte accounting: %v", err)
+	}
+	if reported := anyToInt(anyMap(delta["format_contract"])["actual_json_bytes"], 0); reported != len(rawDelta) {
+		t.Fatalf("delta JSON-byte accounting drifted: reported=%d actual=%d", reported, len(rawDelta))
+	}
 	incrementalTokens := contextPackCountAnyTokens(map[string]any{
 		"operations": delta["operations"],
 		"tombstones": delta["tombstones"],
