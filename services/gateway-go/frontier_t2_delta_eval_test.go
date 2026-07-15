@@ -394,13 +394,17 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 		buildAgentPacket(frontierT2ChangedResponse(t), deltaRequest, "synthesis_pack_v2"),
 		anyMap(base["packet_identity"]), deltaRequest, now.Add(time.Minute),
 	)
-	if _, err := buildAgentPacketDelta(base, target, now.Add(time.Minute)); err != nil {
+	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
+	if reason != "" {
+		t.Fatalf("validate T2 holdout latency base: %s", reason)
+	}
+	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm T2 holdout projection: %v", err)
 	}
 	latencySamples := make([]time.Duration, 0, 30)
 	for index := 0; index < cap(latencySamples); index++ {
 		started := time.Now()
-		if _, err := buildAgentPacketDelta(base, target, now.Add(time.Minute)); err != nil {
+		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 			t.Fatalf("T2 holdout projection sample %d: %v", index, err)
 		}
 		latencySamples = append(latencySamples, time.Since(started))

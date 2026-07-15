@@ -168,6 +168,39 @@ func TestAgentPacketIdentityIsDeterministicAndTokenExact(t *testing.T) {
 	}
 }
 
+func TestAgentPacketIdentityAccountingConvergesAfterWireRoundTrip(t *testing.T) {
+	baseTime := time.Date(2026, 7, 15, 20, 36, 50, 0, time.UTC)
+	tests := []struct {
+		surface     string
+		nanoseconds int
+	}{
+		{surface: "context_pack", nanoseconds: 0},
+		{surface: "synthesis_pack", nanoseconds: 1},
+		{surface: "synthesis_pack_v2", nanoseconds: 10},
+		{surface: "tools_context_pack", nanoseconds: 123},
+		{surface: "tools_synthesis_pack", nanoseconds: 119852215},
+		{surface: "tools_synthesis_pack_v2", nanoseconds: 999999999},
+	}
+	for _, test := range tests {
+		t.Run(test.surface, func(t *testing.T) {
+			now := baseTime.Add(time.Duration(test.nanoseconds))
+			request := frontierT2PacketRequest()
+			packet := finalizeAgentPacketWithIdentity(buildAgentPacket(frontierT2PacketResponse(), request, test.surface), nil, request, now)
+			raw, err := json.Marshal(packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var retained map[string]any
+			if err := json.Unmarshal(raw, &retained); err != nil {
+				t.Fatal(err)
+			}
+			if _, reason := validateAgentPacketSelf(retained, now.Add(time.Minute), true); reason != "" {
+				t.Fatalf("wire-retained packet did not self-verify: reason=%s budget=%#v impact=%#v", reason, retained["token_budget"], retained["token_impact"])
+			}
+		})
+	}
+}
+
 func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
@@ -515,7 +548,7 @@ func TestAgentPacketReconstructionRejectsFalseParentAndExpiredResult(t *testing.
 	if anyToString(expiringDelta["schema_id"]) != agentPacketDeltaContractID {
 		t.Fatalf("test requires expiring delta response: %#v", expiringDelta["delta_fallback"])
 	}
-	if _, err := reconstructAgentPacket(base, expiringDelta, now.Add(3*time.Minute), true); reconstructionErrorCode(err) != "result_self_verification_failed" {
+	if _, err := reconstructAgentPacket(base, expiringDelta, now.Add(3*time.Minute), true); reconstructionErrorCode(err) != "result_identity_mismatch" {
 		t.Fatalf("expired result error=%v code=%s", err, reconstructionErrorCode(err))
 	}
 }
@@ -683,6 +716,9 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 				t.Fatalf("tool full packet wire envelope drifted: %#v", base)
 			}
 			assertBoundaryContractPassed(t, agentPacketContractID, base)
+			if _, reason := validateAgentPacketSelf(base, time.Now().UTC(), true); reason != "" {
+				t.Fatalf("tool full packet is not a valid retained delta base: reason=%s budget=%#v impact=%#v", reason, base["token_budget"], base["token_impact"])
+			}
 			identity := anyMap(base["packet_identity"])
 			request["packet_mode"] = "delta"
 			request["base_packet"] = base
@@ -717,13 +753,17 @@ func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
 		deltaRequest,
 		now.Add(time.Minute),
 	)
-	if _, err := buildAgentPacketDelta(base, target, now.Add(time.Minute)); err != nil {
+	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
+	if reason != "" {
+		t.Fatalf("validate latency-gate base: %s", reason)
+	}
+	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm delta projection: %v", err)
 	}
 	durations := make([]time.Duration, 0, 30)
 	for index := 0; index < 30; index++ {
 		started := time.Now()
-		if _, err := buildAgentPacketDelta(base, target, now.Add(time.Minute)); err != nil {
+		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 			t.Fatalf("delta projection sample %d: %v", index, err)
 		}
 		durations = append(durations, time.Since(started))
@@ -755,12 +795,16 @@ func BenchmarkAgentPacketDeltaProjection(b *testing.B) {
 		deltaRequest,
 		now.Add(time.Minute),
 	)
-	if _, err := buildAgentPacketDelta(base, target, now.Add(time.Minute)); err != nil {
+	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
+	if reason != "" {
+		b.Fatalf("validate benchmark base: %s", reason)
+	}
+	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if _, err := buildAgentPacketDelta(base, target, now.Add(time.Minute)); err != nil {
+		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 			b.Fatal(err)
 		}
 	}

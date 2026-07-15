@@ -340,14 +340,19 @@ func sealAgentPacketIdentity(packet map[string]any, seed map[string]any) error {
 func finalizeAgentPacketWithIdentity(packet map[string]any, baseIdentity map[string]any, request map[string]any, now time.Time) map[string]any {
 	seed := agentPacketIdentitySeed(packet, baseIdentity, request, now)
 	packet["packet_identity"] = seed
-	// The first pass bounds content before sealing; the second recounts the
-	// final fixed-width identity. Identity digests exclude accounting and format
-	// metadata, so further passes cannot change the sealed transport content.
-	for pass := 0; pass < 2; pass++ {
+	// Sealing changes fixed-width identity content, so accounting must converge
+	// against the final sealed wire packet rather than the pre-seal placeholder.
+	// Most packets settle in two passes; the bounded retries handle numeric
+	// tokenization and format-byte fixed points exposed by different platforms.
+	for pass := 0; pass < 6; pass++ {
 		packet = finalizeAgentPacketCore(packet)
 		if err := sealAgentPacketIdentity(packet, seed); err != nil {
 			packet["warnings"] = append(contextPackAnyList(packet["warnings"]), "Packet identity could not be sealed; do not use this packet as a delta base.")
 			break
+		}
+		packet = attachAgentPacketFormatContract(packet)
+		if validateAgentPacketTransportAccounting(packet) == "" {
+			return packet
 		}
 	}
 	return attachAgentPacketFormatContract(packet)
@@ -883,7 +888,17 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 }
 
 func buildAgentPacketDelta(base, target map[string]any, now time.Time) (map[string]any, error) {
-	baseIdentity := anyMap(base["packet_identity"])
+	baseIdentity, reason := validateAgentPacketSelf(base, now, true)
+	if reason != "" {
+		return nil, reconstructionFailure("delta_base_invalid", "base packet rejected: %s", reason)
+	}
+	return buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now)
+}
+
+// buildAgentPacketDeltaFromValidatedBase is internal to a request whose base
+// has already crossed validateAgentPacketSelf. It preserves the same verified
+// reconstruction proof without repeating the expensive trust-boundary pass.
+func buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target map[string]any, now time.Time) (map[string]any, error) {
 	targetIdentity := anyMap(target["packet_identity"])
 	operations, tombstones, err := buildAgentPacketOperations(base, target)
 	if err != nil {
@@ -936,7 +951,7 @@ func buildAgentPacketDelta(base, target map[string]any, now time.Time) (map[stri
 	if findings := validateAgentContractPayload(agentPacketDeltaContractID, delta); len(findings) > 0 {
 		return nil, reconstructionFailure("delta_contract_invalid", "formatted delta contract validation failed: %v", findings)
 	}
-	result, reconstructionErr := reconstructAgentPacket(base, delta, now, true)
+	result, reconstructionErr := reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta, now, true)
 	if reconstructionErr != nil {
 		return nil, reconstructionErr
 	}
@@ -977,7 +992,7 @@ func finalizeAgentPacketForRequestAt(packet map[string]any, request map[string]a
 		return agentPacketFullFallback(packet, baseValidation.Reason, baseValidation.Identity, request, now)
 	}
 	target := finalizeAgentPacketWithIdentity(packet, baseValidation.Identity, request, now)
-	delta, err := buildAgentPacketDelta(baseValidation.Packet, target, now)
+	delta, err := buildAgentPacketDeltaFromValidatedBase(baseValidation.Packet, baseValidation.Identity, target, now)
 	if err != nil {
 		return agentPacketFullFallback(target, "reconstruction_failed", baseValidation.Identity, request, now)
 	}
@@ -1117,6 +1132,10 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 	if baseReason != "" {
 		return nil, reconstructionFailure("delta_base_invalid", "base packet rejected: %s", baseReason)
 	}
+	return reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta, now, validateDeltaContract)
+}
+
+func reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta map[string]any, now time.Time, validateDeltaContract bool) (map[string]any, error) {
 	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID {
 		return nil, reconstructionFailure("delta_schema_mismatch", "expected %s", agentPacketDeltaContractID)
 	}
@@ -1178,7 +1197,10 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 		return nil, reconstructionFailure("tombstone_manifest_mismatch", "delta tombstone manifest does not match remove operations")
 	}
 	resultIdentity := anyMap(delta["result_identity"])
-	if anyToString(resultIdentity["lineage_id"]) != anyToString(baseIdentity["lineage_id"]) ||
+	if anyToString(resultIdentity["schema_id"]) != agentPacketIdentitySchemaID ||
+		anyToInt(resultIdentity["version"], 0) != 1 ||
+		anyToInt(resultIdentity["ack_version"], 0) != agentPacketIdentityAckVersion ||
+		anyToString(resultIdentity["lineage_id"]) != anyToString(baseIdentity["lineage_id"]) ||
 		anyToString(resultIdentity["base_packet_id"]) != anyToString(baseIdentity["packet_id"]) ||
 		anyToString(resultIdentity["base_digest"]) != anyToString(baseIdentity["transport_digest"]) ||
 		anyToInt(resultIdentity["revision"], 0) != anyToInt(baseIdentity["revision"], 0)+1 {
@@ -1186,7 +1208,11 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 	}
 	baseIssuedAt, baseIssuedErr := time.Parse(time.RFC3339Nano, anyToString(baseIdentity["issued_at"]))
 	resultIssuedAt, resultIssuedErr := time.Parse(time.RFC3339Nano, anyToString(resultIdentity["issued_at"]))
-	if baseIssuedErr != nil || resultIssuedErr != nil || resultIssuedAt.Before(baseIssuedAt) || resultIssuedAt.After(now.UTC()) {
+	resultExpiresAt, resultExpiresErr := time.Parse(time.RFC3339Nano, anyToString(resultIdentity["expires_at"]))
+	now = now.UTC()
+	if baseIssuedErr != nil || resultIssuedErr != nil || resultExpiresErr != nil ||
+		resultIssuedAt.Before(baseIssuedAt) || resultIssuedAt.After(now) || !resultExpiresAt.After(resultIssuedAt) ||
+		resultExpiresAt.Sub(resultIssuedAt) > time.Duration(maximumAgentPacketTTLSeconds)*time.Second || !now.Before(resultExpiresAt) {
 		return nil, reconstructionFailure("result_identity_mismatch", "result identity has an invalid issuance relationship")
 	}
 	resultAccounting := anyMap(delta["result_accounting"])
@@ -1219,6 +1245,7 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 	}
 	if scopeDigest != anyToString(delta["scope_digest"]) || scopeDigest != anyToString(resultIdentity["scope_digest"]) ||
 		anyToString(resultIdentity["packet_id"]) != anyToString(delta["packet_id"]) ||
+		anyToString(resultIdentity["packet_id"]) != agentPacketPacketIDPrefix+agentPacketDigestSuffix(transportDigest, 24) ||
 		anyToInt(resultIdentity["revision"], 0) != anyToInt(delta["revision"], 0) ||
 		anyToString(resultIdentity["ack_cursor"]) != anyToString(delta["ack_cursor"]) ||
 		anyToString(resultIdentity["ack_cursor"]) != agentPacketAckCursor(resultIdentity) {
@@ -1228,7 +1255,10 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 	if findings := validateAgentContractPayload(agentPacketContractID, projection); len(findings) > 0 {
 		return nil, reconstructionFailure("result_contract_invalid", "reconstructed agent packet contract validation failed: %v", findings)
 	}
-	if _, reason := validateAgentPacketSelf(projection, now, true); reason != "" {
+	// Contract, identity, lineage, digests, validity, accounting receipt, and ACK
+	// are all verified above. Recount only the final serialized transport here;
+	// repeating the full trust-boundary pass would duplicate those checks.
+	if reason := validateAgentPacketTransportAccounting(projection); reason != "" {
 		return nil, reconstructionFailure("result_self_verification_failed", "reconstructed agent packet failed self-verification: %s", reason)
 	}
 	return projection, nil
