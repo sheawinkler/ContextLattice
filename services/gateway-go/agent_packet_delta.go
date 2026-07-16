@@ -46,6 +46,12 @@ type agentPacketBaseValidation struct {
 	Reason   string
 }
 
+type agentPacketFinalization struct {
+	packet                 map[string]any
+	verifiedWireDigest     string
+	verifiedFormatContract map[string]any
+}
+
 type agentPacketReconstructionError struct {
 	Code string
 	Err  error
@@ -338,6 +344,14 @@ func sealAgentPacketIdentity(packet map[string]any, seed map[string]any) error {
 }
 
 func finalizeAgentPacketWithIdentity(packet map[string]any, baseIdentity map[string]any, request map[string]any, now time.Time) map[string]any {
+	return finalizeAgentPacketWithIdentityResult(packet, baseIdentity, request, now, false).packet
+}
+
+func finalizeAgentPacketWithIdentityProof(packet map[string]any, baseIdentity map[string]any, request map[string]any, now time.Time) agentPacketFinalization {
+	return finalizeAgentPacketWithIdentityResult(packet, baseIdentity, request, now, true)
+}
+
+func finalizeAgentPacketWithIdentityResult(packet map[string]any, baseIdentity map[string]any, request map[string]any, now time.Time, captureProof bool) agentPacketFinalization {
 	seed := agentPacketIdentitySeed(packet, baseIdentity, request, now)
 	packet["packet_identity"] = seed
 	// Sealing changes fixed-width identity content, so accounting must converge
@@ -351,11 +365,23 @@ func finalizeAgentPacketWithIdentity(packet map[string]any, baseIdentity map[str
 			break
 		}
 		packet = attachAgentPacketFormatContract(packet)
+		if captureProof {
+			stabilizePayloadFormatContractJSONBytes(packet)
+		}
 		if validateAgentPacketTransportAccounting(packet) == "" {
-			return packet
+			result := agentPacketFinalization{packet: packet}
+			if captureProof {
+				wireDigest, digestErr := canonicalAgentPacketDigest(packet)
+				formatContract, formatErr := deepCloneAgentPacketMap(anyMap(packet["format_contract"]))
+				if digestErr == nil && formatErr == nil && len(formatContract) > 0 {
+					result.verifiedWireDigest = wireDigest
+					result.verifiedFormatContract = formatContract
+				}
+			}
+			return result
 		}
 	}
-	return attachAgentPacketFormatContract(packet)
+	return agentPacketFinalization{packet: attachAgentPacketFormatContract(packet)}
 }
 
 func validateAgentPacketTransportAccounting(packet map[string]any) string {
@@ -816,13 +842,13 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 	}
 }
 
-func stabilizeAgentPacketDeltaJSONBytes(delta map[string]any) {
-	metadata := anyMap(delta["format_contract"])
+func stabilizePayloadFormatContractJSONBytes(payload map[string]any) {
+	metadata := anyMap(payload["format_contract"])
 	if len(metadata) == 0 {
 		return
 	}
 	for pass := 0; pass < 4; pass++ {
-		size := jsonByteLen(delta)
+		size := jsonByteLen(payload)
 		if size > 0 && anyToInt(metadata["actual_json_bytes"], 0) == size {
 			return
 		}
@@ -865,7 +891,7 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 	)
 
 	for pass := 0; pass < 6; pass++ {
-		stabilizeAgentPacketDeltaJSONBytes(delta)
+		stabilizePayloadFormatContractJSONBytes(delta)
 		deltaCount := contextPackCountAnyTokens(delta)
 		if reported := anyToInt(anyMap(delta["token_budget"])["delta_wire_tokens_exact"], 0); reported > 0 && reported == deltaCount.Tokens {
 			return delta
@@ -883,7 +909,7 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 	impact["saved_tokens_estimate"] = 0
 	impact["net_token_delta"] = 0
 	impact["measurement_limit"] = "Delta transport accounting did not converge; return the verified full Agent Packet."
-	stabilizeAgentPacketDeltaJSONBytes(delta)
+	stabilizePayloadFormatContractJSONBytes(delta)
 	return delta
 }
 
@@ -899,6 +925,14 @@ func buildAgentPacketDelta(base, target map[string]any, now time.Time) (map[stri
 // has already crossed validateAgentPacketSelf. It preserves the same verified
 // reconstruction proof without repeating the expensive trust-boundary pass.
 func buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target map[string]any, now time.Time) (map[string]any, error) {
+	return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target, "", nil, now)
+}
+
+func buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity map[string]any, target agentPacketFinalization, now time.Time) (map[string]any, error) {
+	return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target.packet, target.verifiedWireDigest, target.verifiedFormatContract, now)
+}
+
+func buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target map[string]any, verifiedTargetWireDigest string, verifiedTargetFormatContract map[string]any, now time.Time) (map[string]any, error) {
 	targetIdentity := anyMap(target["packet_identity"])
 	operations, tombstones, err := buildAgentPacketOperations(base, target)
 	if err != nil {
@@ -951,11 +985,24 @@ func buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target map[strin
 	if findings := validateAgentContractPayload(agentPacketDeltaContractID, delta); len(findings) > 0 {
 		return nil, reconstructionFailure("delta_contract_invalid", "formatted delta contract validation failed: %v", findings)
 	}
-	// The completed delta crossed the contract boundary above; reconstruction
-	// still verifies every operation, binding, digest, receipt, and result packet.
-	result, reconstructionErr := reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta, now, false)
+	// The completed delta crossed the contract boundary above. A target whose
+	// finalizer proved the exact wire JSON can avoid one duplicate tokenizer pass;
+	// all unproved targets and all client reconstruction retain the full recount.
+	var result map[string]any
+	var reconstructionErr error
+	if verifiedTargetWireDigest != "" {
+		result, reconstructionErr = reconstructAgentPacketFromValidatedBaseForFinalizedTarget(base, baseIdentity, delta, verifiedTargetFormatContract, now)
+	} else {
+		result, reconstructionErr = reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta, now, false)
+	}
 	if reconstructionErr != nil {
 		return nil, reconstructionErr
+	}
+	if verifiedTargetWireDigest != "" {
+		resultWireDigest, digestErr := canonicalAgentPacketDigest(result)
+		if digestErr != nil || resultWireDigest != verifiedTargetWireDigest {
+			return nil, errors.New("formatted delta did not reproduce the verified target wire packet")
+		}
 	}
 	resultIdentity := anyMap(result["packet_identity"])
 	if anyToString(resultIdentity["transport_digest"]) != anyToString(targetIdentity["transport_digest"]) ||
@@ -993,8 +1040,9 @@ func finalizeAgentPacketForRequestAt(packet map[string]any, request map[string]a
 	if baseValidation.Reason != "" {
 		return agentPacketFullFallback(packet, baseValidation.Reason, baseValidation.Identity, request, now)
 	}
-	target := finalizeAgentPacketWithIdentity(packet, baseValidation.Identity, request, now)
-	delta, err := buildAgentPacketDeltaFromValidatedBase(baseValidation.Packet, baseValidation.Identity, target, now)
+	targetFinalization := finalizeAgentPacketWithIdentityProof(packet, baseValidation.Identity, request, now)
+	target := targetFinalization.packet
+	delta, err := buildAgentPacketDeltaFromFinalizedTarget(baseValidation.Packet, baseValidation.Identity, targetFinalization, now)
 	if err != nil {
 		return agentPacketFullFallback(target, "reconstruction_failed", baseValidation.Identity, request, now)
 	}
@@ -1138,6 +1186,43 @@ func reconstructAgentPacket(base map[string]any, delta map[string]any, now time.
 }
 
 func reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta map[string]any, now time.Time, validateDeltaContract bool) (map[string]any, error) {
+	return reconstructAgentPacketFromValidatedBaseWithPolicy(base, baseIdentity, delta, now, validateDeltaContract, true)
+}
+
+func reconstructAgentPacketFromValidatedBaseForFinalizedTarget(base, baseIdentity, delta, verifiedTargetFormatContract map[string]any, now time.Time) (map[string]any, error) {
+	projection, err := reconstructAgentPacketFromValidatedBaseWithPolicy(base, baseIdentity, delta, now, false, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(verifiedTargetFormatContract) == 0 {
+		return nil, reconstructionFailure("result_format_contract_mismatch", "verified target format contract is missing")
+	}
+	stabilizePayloadFormatContractJSONBytes(projection)
+	reconstructedFormat := cloneAnyMap(anyMap(projection["format_contract"]))
+	targetFormat := cloneAnyMap(verifiedTargetFormatContract)
+	if anyToInt(targetFormat["json_bytes_before_boundary"], 0) < 1 || anyToInt(targetFormat["actual_json_bytes"], 0) < 1 ||
+		anyToInt(reconstructedFormat["json_bytes_before_boundary"], 0) < 1 || anyToInt(reconstructedFormat["actual_json_bytes"], 0) < 1 {
+		return nil, reconstructionFailure("result_format_contract_mismatch", "format contract is missing boundary input accounting")
+	}
+	// These byte counts record construction history, so applying a delta cannot
+	// reproduce them. Every other format receipt field must match before restoring
+	// the target's already-verified receipt for exact whole-packet wire proof.
+	delete(reconstructedFormat, "json_bytes_before_boundary")
+	delete(reconstructedFormat, "actual_json_bytes")
+	delete(targetFormat, "json_bytes_before_boundary")
+	delete(targetFormat, "actual_json_bytes")
+	if !agentPacketJSONEqual(reconstructedFormat, targetFormat) {
+		return nil, reconstructionFailure("result_format_contract_mismatch", "reconstructed format contract diverged from the verified target")
+	}
+	restoredFormat, cloneErr := deepCloneAgentPacketMap(verifiedTargetFormatContract)
+	if cloneErr != nil {
+		return nil, reconstructionFailure("result_format_contract_mismatch", "clone verified target format contract: %v", cloneErr)
+	}
+	projection["format_contract"] = restoredFormat
+	return projection, nil
+}
+
+func reconstructAgentPacketFromValidatedBaseWithPolicy(base, baseIdentity, delta map[string]any, now time.Time, validateDeltaContract, recountTransport bool) (map[string]any, error) {
 	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID {
 		return nil, reconstructionFailure("delta_schema_mismatch", "expected %s", agentPacketDeltaContractID)
 	}
@@ -1257,11 +1342,13 @@ func reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta map[strin
 	if findings := validateAgentContractPayload(agentPacketContractID, projection); len(findings) > 0 {
 		return nil, reconstructionFailure("result_contract_invalid", "reconstructed agent packet contract validation failed: %v", findings)
 	}
-	// Contract, identity, lineage, digests, validity, accounting receipt, and ACK
-	// are all verified above. Recount only the final serialized transport here;
-	// repeating the full trust-boundary pass would duplicate those checks.
-	if reason := validateAgentPacketTransportAccounting(projection); reason != "" {
-		return nil, reconstructionFailure("result_self_verification_failed", "reconstructed agent packet failed self-verification: %s", reason)
+	if recountTransport {
+		// Contract, identity, lineage, digests, validity, accounting receipt, and ACK
+		// are all verified above. Recount the final serialized transport for every
+		// client-supplied or otherwise unproved reconstruction.
+		if reason := validateAgentPacketTransportAccounting(projection); reason != "" {
+			return nil, reconstructionFailure("result_self_verification_failed", "reconstructed agent packet failed self-verification: %s", reason)
+		}
 	}
 	return projection, nil
 }

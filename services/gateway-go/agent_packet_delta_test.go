@@ -205,15 +205,44 @@ func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
 	request := frontierT2DeltaRequest(t, base)
-	target := finalizeAgentPacketWithIdentity(
+	targetFinalization := finalizeAgentPacketWithIdentityProof(
 		buildAgentPacket(frontierT2ChangedResponse(t), request, "synthesis_pack_v2"),
 		anyMap(base["packet_identity"]),
 		request,
 		now.Add(time.Minute),
 	)
+	if targetFinalization.verifiedWireDigest == "" {
+		t.Fatal("target finalization did not produce a verified wire proof")
+	}
+	target := targetFinalization.packet
+	targetWire, err := json.Marshal(target)
+	if err != nil {
+		t.Fatalf("marshal proved target: %v", err)
+	}
+	if reported := anyToInt(anyMap(target["format_contract"])["actual_json_bytes"], 0); reported != len(targetWire) {
+		t.Fatalf("proved target byte receipt drifted: reported=%d actual=%d", reported, len(targetWire))
+	}
 	directDelta, err := buildAgentPacketDelta(base, target, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("build delta: code=%s err=%v", reconstructionErrorCode(err), err)
+	}
+	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
+	if reason != "" {
+		t.Fatalf("validate fast-path base: %s", reason)
+	}
+	provedDelta, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute))
+	if err != nil || !agentPacketJSONEqual(provedDelta, directDelta) {
+		t.Fatalf("proved delta diverged from full verification: err=%v", err)
+	}
+	mutatedFinalization := targetFinalization
+	mutatedFinalization.packet = frontierT2CloneMap(t, target)
+	mutatedFinalization.packet["prompt"] = "mutated after verified finalization"
+	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, mutatedFinalization, now.Add(time.Minute)); err == nil {
+		t.Fatal("proved delta accepted a target mutated after verified finalization")
+	}
+	anyMap(anyMap(targetFinalization.packet["format_contract"])["validation"])["status"] = "mutated_after_verified_finalization"
+	if status := anyToString(anyMap(targetFinalization.verifiedFormatContract["validation"])["status"]); status != "passed" {
+		t.Fatalf("verified format receipt aliased the mutable target packet: status=%q", status)
 	}
 	if budget := anyMap(directDelta["token_budget"]); !anyToBool(budget["delta_smaller_than_full"]) {
 		t.Fatalf("direct delta is not economical: %#v", budget)
@@ -749,23 +778,26 @@ func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
 	request := frontierT2PacketRequest()
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), request, now)
 	deltaRequest := frontierT2DeltaRequest(t, base)
-	target := finalizeAgentPacketWithIdentity(
+	targetFinalization := finalizeAgentPacketWithIdentityProof(
 		buildAgentPacket(frontierT2ChangedResponse(t), deltaRequest, "synthesis_pack_v2"),
 		anyMap(base["packet_identity"]),
 		deltaRequest,
 		now.Add(time.Minute),
 	)
+	if targetFinalization.verifiedWireDigest == "" {
+		t.Fatal("latency-gate target finalization did not produce a verified wire proof")
+	}
 	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
 	if reason != "" {
 		t.Fatalf("validate latency-gate base: %s", reason)
 	}
-	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
+	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm delta projection: %v", err)
 	}
 	durations := make([]time.Duration, 0, sampleCount)
 	for index := 0; index < sampleCount; index++ {
 		started := time.Now()
-		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
+		if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 			t.Fatalf("delta projection sample %d: %v", index, err)
 		}
 		durations = append(durations, time.Since(started))
@@ -791,22 +823,25 @@ func BenchmarkAgentPacketDeltaProjection(b *testing.B) {
 	request := frontierT2PacketRequest()
 	base := finalizeAgentPacketWithIdentity(buildAgentPacket(frontierT2PacketResponse(), request, "synthesis_pack_v2"), nil, request, now)
 	deltaRequest := frontierT2DeltaRequest(b, base)
-	target := finalizeAgentPacketWithIdentity(
+	targetFinalization := finalizeAgentPacketWithIdentityProof(
 		buildAgentPacket(frontierT2ChangedResponse(b), deltaRequest, "synthesis_pack_v2"),
 		anyMap(base["packet_identity"]),
 		deltaRequest,
 		now.Add(time.Minute),
 	)
+	if targetFinalization.verifiedWireDigest == "" {
+		b.Fatal("benchmark target finalization did not produce a verified wire proof")
+	}
 	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
 	if reason != "" {
 		b.Fatalf("validate benchmark base: %s", reason)
 	}
-	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
+	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
+		if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 			b.Fatal(err)
 		}
 	}

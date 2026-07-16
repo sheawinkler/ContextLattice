@@ -392,21 +392,24 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
 	deltaRequest := frontierT2DeltaRequest(t, base)
-	target := finalizeAgentPacketWithIdentity(
+	targetFinalization := finalizeAgentPacketWithIdentityProof(
 		buildAgentPacket(frontierT2ChangedResponse(t), deltaRequest, "synthesis_pack_v2"),
 		anyMap(base["packet_identity"]), deltaRequest, now.Add(time.Minute),
 	)
+	if targetFinalization.verifiedWireDigest == "" {
+		t.Fatal("T2 holdout target finalization did not produce a verified wire proof")
+	}
 	baseIdentity, reason := validateAgentPacketSelf(base, now.Add(time.Minute), true)
 	if reason != "" {
 		t.Fatalf("validate T2 holdout latency base: %s", reason)
 	}
-	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
+	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm T2 holdout projection: %v", err)
 	}
 	latencySamples := make([]time.Duration, 0, latencySampleCount)
 	for index := 0; index < cap(latencySamples); index++ {
 		started := time.Now()
-		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
+		if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 			t.Fatalf("T2 holdout projection sample %d: %v", index, err)
 		}
 		latencySamples = append(latencySamples, time.Since(started))
