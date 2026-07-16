@@ -389,6 +389,10 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 		t.Fatalf("T2 reconstruction fidelity failed: verified=%d useful_deltas=%d", verifiedReconstructionCount, usefulDeltaCount)
 	}
 	reconstructionDigestFidelity := float64(verifiedReconstructionCount) / float64(usefulDeltaCount)
+	if !frontierT2PerformanceGateEnabled() {
+		t.Logf("T2 correctness holdout passed %d/%d; latency and evidence emission run in the isolated exact release-tree process", correctCount, len(cases))
+		return
+	}
 
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
 	deltaRequest := frontierT2DeltaRequest(t, base)

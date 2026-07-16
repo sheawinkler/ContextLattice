@@ -445,20 +445,24 @@ func finalizeAgentPacketCore(packet map[string]any) map[string]any {
 		packet = shrinkAgentPacketToHardLimit(packet, hard)
 		packet = attachAgentPacketFormatContract(packet)
 		count := contextPackCountAnyTokens(packet)
-		applyTransportTokenImpact(packet, count, "agent_packet_transport", "serialized_agent_packet_json")
-		tokenBudget = anyMap(packet["token_budget"])
-		tokenBudget["actual_tokens"] = count.Tokens
-		tokenBudget["target_met"] = count.Tokens <= target
-		tokenBudget["within_hard_limit"] = count.Tokens <= hard
-		tokenBudget["estimate_method"] = count.Method
-		tokenBudget["calibration_grade"] = count.CalibrationGrade
-		if count.Encoding != "" {
-			tokenBudget["tokenizer_encoding"] = count.Encoding
-		}
-		packet["token_budget"] = tokenBudget
+		applyAgentPacketTransportAccounting(packet, count, target, hard)
 	}
 	packet = shrinkAgentPacketToHardLimit(packet, hard)
 	return attachAgentPacketFormatContract(packet)
+}
+
+func applyAgentPacketTransportAccounting(packet map[string]any, count tokenCountResult, target int, hard int) {
+	applyTransportTokenImpact(packet, count, "agent_packet_transport", "serialized_agent_packet_json")
+	tokenBudget := anyMap(packet["token_budget"])
+	tokenBudget["actual_tokens"] = count.Tokens
+	tokenBudget["target_met"] = count.Tokens <= target
+	tokenBudget["within_hard_limit"] = count.Tokens <= hard
+	tokenBudget["estimate_method"] = count.Method
+	tokenBudget["calibration_grade"] = count.CalibrationGrade
+	if count.Encoding != "" {
+		tokenBudget["tokenizer_encoding"] = count.Encoding
+	}
+	packet["token_budget"] = tokenBudget
 }
 
 func shrinkAgentPacketToHardLimit(packet map[string]any, hard int) map[string]any {

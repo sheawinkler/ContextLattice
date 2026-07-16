@@ -31,6 +31,7 @@ const (
 	maxAgentPacketDeltaOperations        = 64
 	maxAgentPacketDeltaDepth             = 6
 	maxAgentPacketReconstructionBody     = 128 << 10
+	maxAgentPacketAccountingSearchPasses = 64
 )
 
 var agentPacketModelVisibleFields = []string{
@@ -50,6 +51,7 @@ type agentPacketFinalization struct {
 	packet                 map[string]any
 	verifiedWireDigest     string
 	verifiedFormatContract map[string]any
+	verifiedModelVisible   tokenCountResult
 }
 
 type agentPacketReconstructionError struct {
@@ -365,17 +367,18 @@ func finalizeAgentPacketWithIdentityResult(packet map[string]any, baseIdentity m
 			break
 		}
 		packet = attachAgentPacketFormatContract(packet)
-		if captureProof {
-			stabilizePayloadFormatContractJSONBytes(packet)
-		}
-		if validateAgentPacketTransportAccounting(packet) == "" {
+		var accountingStable bool
+		packet, accountingStable = stabilizeAgentPacketTransportAccounting(packet)
+		if accountingStable {
 			result := agentPacketFinalization{packet: packet}
 			if captureProof {
 				wireDigest, digestErr := canonicalAgentPacketDigest(packet)
 				formatContract, formatErr := deepCloneAgentPacketMap(anyMap(packet["format_contract"]))
-				if digestErr == nil && formatErr == nil && len(formatContract) > 0 {
+				modelVisibleCount := contextPackCountAnyTokens(agentPacketModelVisibleProjection(packet))
+				if digestErr == nil && formatErr == nil && len(formatContract) > 0 && modelVisibleCount.TokenizerExact {
 					result.verifiedWireDigest = wireDigest
 					result.verifiedFormatContract = formatContract
+					result.verifiedModelVisible = modelVisibleCount
 				}
 			}
 			return result
@@ -856,7 +859,48 @@ func stabilizePayloadFormatContractJSONBytes(payload map[string]any) {
 	}
 }
 
-func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]any) map[string]any {
+func stabilizeAgentPacketTransportAccounting(packet map[string]any) (map[string]any, bool) {
+	stabilizePayloadFormatContractJSONBytes(packet)
+	if validateAgentPacketTransportAccounting(packet) == "" {
+		return packet, true
+	}
+
+	tokenBudget := anyMap(packet["token_budget"])
+	target := clampInt(anyToInt(tokenBudget["target_tokens"], defaultAgentPacketTargetTokens), 512, defaultAgentPacketHardTokens)
+	hard := clampInt(anyToInt(tokenBudget["hard_limit_tokens"], defaultAgentPacketHardTokens), target, defaultAgentPacketHardTokens)
+	candidate := contextPackCountAnyTokens(packet)
+	if !candidate.TokenizerExact {
+		return packet, false
+	}
+	seen := map[int]struct{}{}
+	highestCandidate := candidate.Tokens
+
+	for pass := 0; pass < maxAgentPacketAccountingSearchPasses; pass++ {
+		if _, repeated := seen[candidate.Tokens]; repeated {
+			highestCandidate++
+			candidate.Tokens = highestCandidate
+		}
+		seen[candidate.Tokens] = struct{}{}
+		if candidate.Tokens > highestCandidate {
+			highestCandidate = candidate.Tokens
+		}
+
+		applyAgentPacketTransportAccounting(packet, candidate, target, hard)
+		packet = attachAgentPacketFormatContract(packet)
+		stabilizePayloadFormatContractJSONBytes(packet)
+		observed := contextPackCountAnyTokens(packet)
+		if !observed.TokenizerExact {
+			return packet, false
+		}
+		if observed.Tokens == candidate.Tokens && validateAgentPacketTransportAccounting(packet) == "" {
+			return packet, true
+		}
+		candidate = observed
+	}
+	return packet, false
+}
+
+func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]any, verifiedModelVisible tokenCountResult) map[string]any {
 	fullBudget := anyMap(fullPacket["token_budget"])
 	fullCount := tokenCountResult{
 		Tokens:           anyToInt(fullBudget["actual_tokens"], 0),
@@ -868,7 +912,11 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 	if fullCount.Tokens < 1 {
 		fullCount = contextPackCountAnyTokens(fullPacket)
 	}
-	modelVisibleCount := contextPackCountAnyTokens(agentPacketModelVisibleProjection(fullPacket))
+	modelVisibleCount := verifiedModelVisible
+	if !modelVisibleCount.TokenizerExact || modelVisibleCount.Method != fullCount.Method ||
+		modelVisibleCount.CalibrationGrade != fullCount.CalibrationGrade || modelVisibleCount.Encoding != fullCount.Encoding {
+		modelVisibleCount = contextPackCountAnyTokens(agentPacketModelVisibleProjection(fullPacket))
+	}
 	incrementalModelVisibleCount := contextPackCountAnyTokens(map[string]any{
 		"operations": delta["operations"],
 		"tombstones": delta["tombstones"],
@@ -925,14 +973,17 @@ func buildAgentPacketDelta(base, target map[string]any, now time.Time) (map[stri
 // has already crossed validateAgentPacketSelf. It preserves the same verified
 // reconstruction proof without repeating the expensive trust-boundary pass.
 func buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target map[string]any, now time.Time) (map[string]any, error) {
-	return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target, "", nil, now)
+	return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target, "", nil, tokenCountResult{}, now)
 }
 
 func buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity map[string]any, target agentPacketFinalization, now time.Time) (map[string]any, error) {
-	return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target.packet, target.verifiedWireDigest, target.verifiedFormatContract, now)
+	if target.verifiedModelVisible.Encoding != contextPackTokenizerEncoding() {
+		return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target.packet, "", nil, tokenCountResult{}, now)
+	}
+	return buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target.packet, target.verifiedWireDigest, target.verifiedFormatContract, target.verifiedModelVisible, now)
 }
 
-func buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target map[string]any, verifiedTargetWireDigest string, verifiedTargetFormatContract map[string]any, now time.Time) (map[string]any, error) {
+func buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target map[string]any, verifiedTargetWireDigest string, verifiedTargetFormatContract map[string]any, verifiedModelVisible tokenCountResult, now time.Time) (map[string]any, error) {
 	targetIdentity := anyMap(target["packet_identity"])
 	operations, tombstones, err := buildAgentPacketOperations(base, target)
 	if err != nil {
@@ -978,7 +1029,7 @@ func buildAgentPacketDeltaFromValidatedBaseWithProof(base, baseIdentity, target 
 		"token_budget": map[string]any{},
 		"token_impact": map[string]any{},
 	}
-	delta = agentPacketDeltaTokenMetadata(delta, target)
+	delta = agentPacketDeltaTokenMetadata(delta, target, verifiedModelVisible)
 	if !anyToBool(anyMap(delta["token_budget"])["delta_smaller_than_full"]) {
 		return delta, nil
 	}

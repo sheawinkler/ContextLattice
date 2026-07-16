@@ -17,9 +17,15 @@ import (
 )
 
 const (
-	frontierT2PacketBaselineSHA256 = "fd9b445567674a5253a8b6a29a8689383be9574c1cd6f38b216e903fe78198a8"
-	frontierT2PacketHoldoutSHA256  = "34ee2e3d47e703b79d735b5b4c8bd1ba36c7165b09275a723c5a94c2d4997cc2"
+	frontierT2PacketBaselineSHA256  = "fd9b445567674a5253a8b6a29a8689383be9574c1cd6f38b216e903fe78198a8"
+	frontierT2PacketHoldoutSHA256   = "34ee2e3d47e703b79d735b5b4c8bd1ba36c7165b09275a723c5a94c2d4997cc2"
+	frontierT2AccountingCycleSHA256 = "13c8821c0540b19e80028d9b06dd413e45580d8342a3dfb733f762035fad0aa9"
+	frontierT2PerformanceGateEnv    = "CONTEXTLATTICE_AGENT_PACKET_DELTA_PERFORMANCE_GATE"
 )
+
+func frontierT2PerformanceGateEnabled() bool {
+	return strings.TrimSpace(os.Getenv(frontierT2PerformanceGateEnv)) == "1"
+}
 
 func frontierT2PacketRequest() map[string]any {
 	return map[string]any{
@@ -201,6 +207,50 @@ func TestAgentPacketIdentityAccountingConvergesAfterWireRoundTrip(t *testing.T) 
 	}
 }
 
+func TestAgentPacketTransportAccountingCycleConverges(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "frontier_t2_agent_packet_accounting_cycle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(raw)
+	if got := hex.EncodeToString(digest[:]); got != frontierT2AccountingCycleSHA256 {
+		t.Fatalf("accounting-cycle fixture drifted: got=%s want=%s", got, frontierT2AccountingCycleSHA256)
+	}
+	var packet map[string]any
+	if err := json.Unmarshal(raw, &packet); err != nil {
+		t.Fatal(err)
+	}
+	reported := anyToInt(anyMap(packet["token_budget"])["actual_tokens"], 0)
+	observed := contextPackCountAnyTokens(packet)
+	if reported != 2450 || observed.Tokens != 2452 || validateAgentPacketTransportAccounting(packet) != "base_accounting_mismatch" {
+		t.Fatalf("fixture no longer reproduces the frozen accounting cycle: reported=%d observed=%#v", reported, observed)
+	}
+
+	packet, stable := stabilizeAgentPacketTransportAccounting(packet)
+	if !stable {
+		t.Fatal("cycle-aware transport accounting did not find an exact fixed point")
+	}
+	finalCount := contextPackCountAnyTokens(packet)
+	if actual := anyToInt(anyMap(packet["token_budget"])["actual_tokens"], 0); actual != finalCount.Tokens {
+		t.Fatalf("stabilized packet accounting drifted: reported=%d observed=%#v", actual, finalCount)
+	}
+	issuedAt, err := time.Parse(time.RFC3339Nano, anyToString(anyMap(packet["packet_identity"])["issued_at"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, reason := validateAgentPacketSelf(packet, issuedAt.Add(time.Second), false); reason != "" {
+		t.Fatalf("stabilized cycle fixture is not a valid packet: %s", reason)
+	}
+	finalWire, err := json.Marshal(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reportedBytes := anyToInt(anyMap(packet["format_contract"])["actual_json_bytes"], 0); reportedBytes != len(finalWire) {
+		t.Fatalf("stabilized format bytes drifted: reported=%d observed=%d", reportedBytes, len(finalWire))
+	}
+	t.Logf("accounting_cycle_reported=%d observed=%d stabilized=%d", reported, observed.Tokens, finalCount.Tokens)
+}
+
 func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
@@ -240,6 +290,12 @@ func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, mutatedFinalization, now.Add(time.Minute)); err == nil {
 		t.Fatal("proved delta accepted a target mutated after verified finalization")
 	}
+	t.Run("proof rejects tokenizer drift", func(t *testing.T) {
+		t.Setenv("CONTEXTLATTICE_TOKENIZER_ENCODING", "cl100k_base")
+		if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err == nil {
+			t.Fatal("proved delta reused accounting across tokenizer encoding drift")
+		}
+	})
 	anyMap(anyMap(targetFinalization.packet["format_contract"])["validation"])["status"] = "mutated_after_verified_finalization"
 	if status := anyToString(anyMap(targetFinalization.verifiedFormatContract["validation"])["status"]); status != "passed" {
 		t.Fatalf("verified format receipt aliased the mutable target packet: status=%q", status)
@@ -746,7 +802,8 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 			}
 			assertBoundaryContractPassed(t, agentPacketContractID, base)
 			if _, reason := validateAgentPacketSelf(base, time.Now().UTC(), true); reason != "" {
-				t.Fatalf("tool full packet is not a valid retained delta base: reason=%s budget=%#v impact=%#v", reason, base["token_budget"], base["token_impact"])
+				observed := contextPackCountAnyTokens(base)
+				t.Fatalf("tool full packet is not a valid retained delta base: reason=%s observed=%#v budget=%#v impact=%#v", reason, observed, base["token_budget"], base["token_impact"])
 			}
 			identity := anyMap(base["packet_identity"])
 			request["packet_mode"] = "delta"
@@ -772,6 +829,9 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 }
 
 func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
+	if !frontierT2PerformanceGateEnabled() {
+		t.Skip("Frontier T2 wall-clock gate runs in the isolated exact release-tree process")
+	}
 	const sampleCount = 100
 
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
