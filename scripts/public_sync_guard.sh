@@ -147,6 +147,25 @@ if [[ "$TARGET_REMOTE" == "public" ]]; then
         ;;
     esac
   done
+
+  # Paid source files are blocklisted, but shared Go/launcher files can still
+  # carry dangling references that break or silently advertise the OSS lane.
+  paid_runtime_pattern='frontier_delta_packet_automation|CONTEXTLATTICE_FRONTIER_T2_|frontierT2Packet(Retention|Automation)|frontierDeltaPacketAutomationID|contextlattice_packet_sync|cmdPacketSync|--shared-packet|packet-sync'
+  for p in "${changed[@]}"; do
+    case "$p" in
+      services/gateway-go/*|\
+      Dockerfile.gateway-go|\
+      docker-compose.yml|\
+      docker-compose.lite.yml|\
+      scripts/install_global_agent_tools.sh|\
+      scripts/install_global_agent_tools.ps1)
+        [[ -f "$p" ]] || continue
+        if rg -nH -I -e "$paid_runtime_pattern" -- "$p" >&2; then
+          blocked=1
+        fi
+        ;;
+    esac
+  done
 fi
 
 if [[ "$TARGET_REMOTE" == "public" || "$TARGET_REMOTE" == "public-paid" ]]; then

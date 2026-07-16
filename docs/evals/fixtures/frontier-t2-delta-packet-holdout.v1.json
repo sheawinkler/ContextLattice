@@ -1,0 +1,167 @@
+{
+  "schema_id": "frontier_t2_delta_packet_holdout.v1",
+  "holdout_id": "frontier_t2_delta_packet_adversarial_v1",
+  "frozen_at": "2026-07-15T18:21:37Z",
+  "base_commit": "6ef742930608d46b9a60225d74be1aa387b76b11",
+  "frontier_item": 2,
+  "independent_from_training": true,
+  "packet_fixture": {
+    "variant": "large_grounded_packet",
+    "project": "contextlattice",
+    "topic_path": "runbooks/frontier-30",
+    "session_id": "sess_frontier_t2_holdout",
+    "agent_id": "codex_gpt5",
+    "task_id": "task_frontier_t2_holdout",
+    "surface": "synthesis_pack_v2",
+    "evidence_rows": 8,
+    "evidence_text_bytes_each": 320
+  },
+  "cases": [
+    {
+      "case_id": "delta_single_evidence_replacement",
+      "dimension": "useful_change",
+      "mutation": {"kind": "replace_evidence_text", "index": 3, "value": "The packet reconstruction digest was independently verified after one evidence correction."},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet_delta.v1", "fallback_reason": "", "minimum_tokens_saved": 1, "reconstruction_verified": true}
+    },
+    {
+      "case_id": "delta_add_next_action",
+      "dimension": "ordered_add",
+      "mutation": {"kind": "add_next_action", "label": "inspect_release_proof", "reason": "Verify the immutable release artifact before mutation."},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet_delta.v1", "fallback_reason": "", "minimum_tokens_saved": 1, "reconstruction_verified": true}
+    },
+    {
+      "case_id": "delta_warning_tombstone",
+      "dimension": "tombstone",
+      "mutation": {"kind": "remove_field", "path": "/warnings"},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet_delta.v1", "fallback_reason": "", "minimum_tokens_saved": 1, "required_tombstone": "/warnings", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "delta_unchanged_ack",
+      "dimension": "unchanged",
+      "mutation": {"kind": "none"},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet_delta.v1", "fallback_reason": "", "minimum_tokens_saved": 1, "operation_count": 0, "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_missing_base",
+      "dimension": "missing_base",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "omit_base",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_packet_missing", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_tampered_base_content",
+      "dimension": "tampered_base",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "tamper_base_content_after_digest",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_digest_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_explicit_digest_mismatch",
+      "dimension": "tampered_request",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "mismatch_requested_base_digest",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_request_digest_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_stale_base_revision",
+      "dimension": "stale_base",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "mismatch_requested_base_revision",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_revision_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_expired_base",
+      "dimension": "expired_base",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "expire_base_identity",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_expired", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_task_scope_divergence",
+      "dimension": "semantic_scope",
+      "mutation": {"kind": "set_scope_field", "field": "task_id", "value": "task_other_objective"},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_scope_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_project_scope_divergence",
+      "dimension": "project_scope",
+      "mutation": {"kind": "set_scope_field", "field": "project", "value": "different-project"},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_scope_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_packet_id_mismatch",
+      "dimension": "identity_tamper",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "tamper_base_packet_id",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_packet_id_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_ack_cursor_mismatch",
+      "dimension": "acknowledgement_tamper",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "tamper_ack_cursor",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "base_ack_cursor_mismatch", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_delta_not_smaller",
+      "dimension": "economic_guardrail",
+      "mutation": {"kind": "replace_all_model_visible_fields"},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "delta_not_smaller", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "delta_multi_field_ordering",
+      "dimension": "deterministic_order",
+      "mutation": {"kind": "replace_fields", "paths": ["/prompt", "/decision_gate", "/next_actions"]},
+      "fault": "none",
+      "expected": {"response_schema": "agent_packet_delta.v1", "fallback_reason": "", "minimum_tokens_saved": 1, "operation_paths_sorted": true, "reconstruction_verified": true}
+    },
+    {
+      "case_id": "fallback_feature_disabled",
+      "dimension": "rollback",
+      "mutation": {"kind": "replace_prompt", "value": "Continue from the verified packet delta."},
+      "fault": "disable_delta_feature",
+      "expected": {"response_schema": "agent_packet.v1", "fallback_reason": "delta_disabled", "reconstruction_verified": true}
+    },
+    {
+      "case_id": "reject_tampered_delta_operation",
+      "dimension": "reconstruction_tamper",
+      "phase": "reconstruct",
+      "mutation": {"kind": "tamper_operation_value_after_result_digest"},
+      "fault": "tamper_delta_operation",
+      "expected": {"response_schema": "agent_packet_reconstruction.v1", "ok": false, "error": "result_digest_mismatch", "reconstruction_verified": false}
+    },
+    {
+      "case_id": "reject_reordered_delta_operations",
+      "dimension": "reconstruction_order",
+      "phase": "reconstruct",
+      "mutation": {"kind": "reverse_operation_order"},
+      "fault": "reorder_delta_operations",
+      "expected": {"response_schema": "agent_packet_reconstruction.v1", "ok": false, "error": "operation_sequence_invalid", "reconstruction_verified": false}
+    },
+    {
+      "case_id": "reject_delta_for_different_base",
+      "dimension": "reconstruction_lineage",
+      "phase": "reconstruct",
+      "mutation": {"kind": "apply_delta_to_other_trusted_base"},
+      "fault": "swap_reconstruction_base",
+      "expected": {"response_schema": "agent_packet_reconstruction.v1", "ok": false, "error": "delta_base_mismatch", "reconstruction_verified": false}
+    }
+  ],
+  "release_gates": {
+    "reconstruction_digest_fidelity": 1,
+    "corrupt_reconstruction_count": 0,
+    "unsafe_delta_on_invalid_base_count": 0,
+    "delta_only_when_smaller": true,
+    "full_fallback_always_contract_valid": true,
+    "synchronous_projection_p95_ms_max": 20,
+    "provider_calls": 0,
+    "external_network_calls": 0
+  }
+}

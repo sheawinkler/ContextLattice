@@ -1,0 +1,21 @@
+{
+  "schema_id": "frontier_t2_proof_timeline_baseline.v1",
+  "baseline_id": "frontier_t2_v318_session_trace_baseline",
+  "frozen_at": "2026-07-15T18:21:37Z",
+  "base_commit": "6ef742930608d46b9a60225d74be1aa387b76b11",
+  "baseline_release": "v3.18.0",
+  "frontier_item": 24,
+  "behavior": "agent_run_trace.v1 renders a bounded tail of session events and a run card. It does not join authoritative continuity, claim, quality-outcome, or token-impact records by exact identity and does not expose integrity-scoped proof stages or explicit source gaps.",
+  "measurements": {
+    "joined_read_model_present": false,
+    "proof_timeline_contract_present": false,
+    "authoritative_source_join_coverage": null,
+    "deterministic_cross_source_ordering": false,
+    "explicit_gap_classification": false,
+    "recursive_redaction_proof": false,
+    "existing_trace_fallback_present": true,
+    "session_timeline_event_limit": 32
+  },
+  "buyer_baseline": "A caller can inspect the session event tail, but cannot obtain one integrity-checked receipt of what context arrived, what changed, what was verified, what outcome was reported, and what the system learned.",
+  "frozen_before_tuning": true
+}

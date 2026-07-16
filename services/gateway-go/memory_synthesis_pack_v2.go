@@ -58,11 +58,9 @@ func (s *server) toolsSynthesisPackV2(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "synthesis_pack_v2_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
 	}
-	response["tool"] = "synthesis_pack_v2"
-	if anyToString(response["schema_id"]) == agentPacketContractID {
-		response["surface"] = "tools_synthesis_pack_v2"
-		response = finalizeAgentPacket(response)
-	} else {
+	schemaID := anyToString(response["schema_id"])
+	if schemaID != agentPacketContractID && schemaID != agentPacketDeltaContractID {
+		response["tool"] = "synthesis_pack_v2"
 		attach := func(value map[string]any) map[string]any {
 			return attachPayloadFormatContract(synthesisPackV2ContractID, value, anyToString(value["agent_id"]), "synthesis_pack_v2", "/tools/synthesis_pack_v2")
 		}
@@ -180,7 +178,7 @@ func (s *server) buildSynthesisPackV2Response(
 		}
 	}
 	if packetRequested {
-		packet := finalizeAgentPacket(buildAgentPacket(response, requestPayload, "synthesis_pack_v2"))
+		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, agentPacketSurfaceForRoute("synthesis_pack_v2", surface)), requestPayload)
 		if !anyToBool(requestPayload["_suppress_final_token_impact_recording"]) {
 			s.recordTokenImpact(anyMap(packet["token_impact"]))
 		}

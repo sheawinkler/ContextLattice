@@ -53,7 +53,7 @@ func contextPackCountTokens(text string) tokenCountResult {
 	tokenizer, errText := contextPackTokenizerForEncoding(encoding)
 	if tokenizer != nil {
 		return tokenCountResult{
-			Tokens:           maxInt(1, len(tokenizer.Encode(trimmed, nil, nil))),
+			Tokens:           maxInt(1, len(tokenizer.EncodeOrdinary(trimmed))),
 			Method:           "tiktoken",
 			CalibrationGrade: "tokenizer_exact",
 			Encoding:         encoding,

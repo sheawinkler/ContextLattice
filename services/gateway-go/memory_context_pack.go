@@ -52,16 +52,14 @@ func (s *server) toolsContextPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload["_suppress_token_impact_recording"] = true
-	response, status, execErr := s.buildContextPackResponse(r.Context(), incomingHeaders, payload)
+	response, status, execErr := s.buildContextPackResponseForSurface(r.Context(), incomingHeaders, payload, "tools_context_pack")
 	if execErr != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "context_pack_unavailable", "detail": sanitizeProviderOverflowText(execErr.Error())})
 		return
 	}
-	response["tool"] = "context_pack"
-	if anyToString(response["schema_id"]) == agentPacketContractID {
-		response["surface"] = "tools_context_pack"
-		response = finalizeAgentPacket(response)
-	} else {
+	schemaID := anyToString(response["schema_id"])
+	if schemaID != agentPacketContractID && schemaID != agentPacketDeltaContractID {
+		response["tool"] = "context_pack"
 		attach := func(value map[string]any) map[string]any {
 			return attachPayloadFormatContract(contextPackResponseContractID, value, anyToString(value["agent_id"]), "context_pack", "/tools/context_pack")
 		}
@@ -75,6 +73,15 @@ func (s *server) buildContextPackResponse(
 	ctx context.Context,
 	incomingHeaders http.Header,
 	payload map[string]any,
+) (map[string]any, int, error) {
+	return s.buildContextPackResponseForSurface(ctx, incomingHeaders, payload, "context_pack")
+}
+
+func (s *server) buildContextPackResponseForSurface(
+	ctx context.Context,
+	incomingHeaders http.Header,
+	payload map[string]any,
+	packetSurface string,
 ) (map[string]any, int, error) {
 	requestPayload := cloneMap(payload)
 	query := strings.TrimSpace(anyToString(requestPayload["query"]))
@@ -308,7 +315,7 @@ func (s *server) buildContextPackResponse(
 		}
 	}
 	if agentPacketRequested(requestPayload) {
-		packet := finalizeAgentPacket(buildAgentPacket(response, requestPayload, "context_pack"))
+		packet := finalizeAgentPacketForRequest(buildAgentPacket(response, requestPayload, packetSurface), requestPayload)
 		if !anyToBool(requestPayload["_suppress_token_impact_recording"]) {
 			s.recordTokenImpact(anyMap(packet["token_impact"]))
 		}

@@ -44,6 +44,8 @@ REQUIRED_CONTRACTS = (
     "a2a_readiness_profile.v1",
     "context_pack_response.v1",
     "agent_packet.v1",
+    "agent_packet_delta.v1",
+    "agent_packet_reconstruction.v1",
     "synthesis_pack.v1",
     "synthesis_pack.v2",
     "temporal_claim.v1",
@@ -368,6 +370,7 @@ def sample_context_pack() -> dict[str, Any]:
 
 
 def sample_agent_packet() -> dict[str, Any]:
+    digest = "sha256:" + ("0" * 64)
     return attach_format_contract(
         "agent_packet.v1",
         {
@@ -405,12 +408,121 @@ def sample_agent_packet() -> dict[str, Any]:
             },
             "token_impact": {
                 "baseline_tokens_estimate": 800,
+                "compiled_prompt_tokens_estimate": 400,
                 "transport_tokens_exact": 500,
                 "saved_tokens_estimate": 300,
                 "net_token_delta": 300,
                 "transport_inclusive": True,
             },
+            "packet_identity": {
+                "schema_id": "agent_packet_identity.v1",
+                "version": 1,
+                "ack_version": 1,
+                "lineage_id": "packet_lineage_audit",
+                "packet_id": "packet_audit",
+                "revision": 1,
+                "base_packet_id": "",
+                "base_digest": "",
+                "model_visible_digest": digest,
+                "transport_digest": digest,
+                "scope_digest": digest,
+                "accounting_digest": digest,
+                "issued_at": "2026-07-15T18:30:00Z",
+                "expires_at": "2026-07-16T18:30:00Z",
+                "ack_cursor": "ack_audit",
+            },
             "writeback_required": True,
+        },
+    )
+
+
+def sample_agent_packet_delta() -> dict[str, Any]:
+    packet = sample_agent_packet()
+    identity = dict(packet["packet_identity"])
+    identity.update(
+        {
+            "packet_id": "packet_audit_delta",
+            "revision": 2,
+            "base_packet_id": "packet_audit",
+            "base_digest": identity["transport_digest"],
+            "ack_cursor": "ack_audit_delta",
+        }
+    )
+    result_budget = dict(packet["token_budget"])
+    result_impact = dict(packet["token_impact"])
+    return attach_format_contract(
+        "agent_packet_delta.v1",
+        {
+            "ok": True,
+            "schema_id": "agent_packet_delta.v1",
+            "version": 1,
+            "surface": "context_pack",
+            "project": "contextlattice",
+            "session_id": "sess_audit",
+            "agent_id": "codex_gpt5",
+            "task_id": "task_audit",
+            "lineage_id": identity["lineage_id"],
+            "packet_id": identity["packet_id"],
+            "revision": identity["revision"],
+            "base_packet_id": "packet_audit",
+            "base_revision": 1,
+            "base_digest": identity["base_digest"],
+            "result_digest": identity["transport_digest"],
+            "model_visible_digest": identity["model_visible_digest"],
+            "scope_digest": identity["scope_digest"],
+            "operations": [],
+            "tombstones": [],
+            "ack_cursor": identity["ack_cursor"],
+            "result_identity": identity,
+            "result_accounting": {
+                "token_budget": result_budget,
+                "token_impact": result_impact,
+                "digest": identity["accounting_digest"],
+            },
+            "reconstruction": {
+                "verified": True,
+                "digest_match": True,
+                "operation_count": 0,
+                "contract_id": "agent_packet_reconstruction.v1",
+            },
+            "fallback": {"used": False, "reason": ""},
+            "token_budget": {
+                "full_packet_tokens_exact": 1000,
+                "delta_wire_tokens_exact": 500,
+                "incremental_model_visible_tokens_exact": 0,
+                "reconstructed_model_visible_tokens_exact": 500,
+                "tokens_saved_exact": 500,
+                "delta_smaller_than_full": True,
+                "equal_reconstructed_context": True,
+            },
+            "token_impact": {
+                "baseline_tokens_estimate": 1000,
+                "transport_tokens_exact": 500,
+                "saved_tokens_estimate": 500,
+                "net_token_delta": 500,
+                "transport_inclusive": True,
+            },
+        },
+    )
+
+
+def sample_agent_packet_reconstruction() -> dict[str, Any]:
+    packet = sample_agent_packet()
+    identity = packet["packet_identity"]
+    return attach_format_contract(
+        "agent_packet_reconstruction.v1",
+        {
+            "ok": True,
+            "schema_id": "agent_packet_reconstruction.v1",
+            "version": 1,
+            "verified": True,
+            "base_packet_id": identity["packet_id"],
+            "packet_id": identity["packet_id"],
+            "result_digest": identity["transport_digest"],
+            "operations_applied": 0,
+            "packet": packet,
+            "warnings": [],
+            "error": "",
         },
     )
 
@@ -1894,6 +2006,8 @@ def run_audit() -> list[dict[str, Any]]:
 
     for contract_id, payload in (
         ("agent_packet.v1", sample_agent_packet()),
+        ("agent_packet_delta.v1", sample_agent_packet_delta()),
+        ("agent_packet_reconstruction.v1", sample_agent_packet_reconstruction()),
         ("writeback_result.v1", sample_writeback_result()),
         ("agent_task_result.v1", sample_task_result()),
         ("runner_capability.v1", sample_runner_capability("pi")),

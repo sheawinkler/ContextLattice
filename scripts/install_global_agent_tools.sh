@@ -22,6 +22,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice-agent-tools
   contextlattice_search
   contextlattice_pack
+  contextlattice_packet_reconstruct
   contextlattice_synthesis_pack
   contextlattice_synthesis_pack_v2
   contextlattice_retrieval_plan
@@ -663,6 +664,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice
   contextlattice_search
   contextlattice_pack
+  contextlattice_packet_reconstruct
   contextlattice_synthesis_pack
   contextlattice_synthesis_pack_v2
   contextlattice_retrieval_plan
@@ -909,6 +911,7 @@ log "Installed global ContextLattice tools:"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice-agent-tools"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_search"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_pack"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_packet_reconstruct"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack_v2"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_retrieval_plan"

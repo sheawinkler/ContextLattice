@@ -57,6 +57,10 @@ services/gateway-go/runtime_license_test.go
 services/gateway-go/runtime_license_proof.go
 services/gateway-go/runtime_license_proof_test.go
 services/gateway-go/cmd/contextlattice-agent-tools/runtime_license_identity.go
+services/gateway-go/cmd/contextlattice-agent-tools/packet_sync.go
+services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_test.go
+services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_unix.go
+services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_windows.go
 services/gateway-go/cognition_activation_entitled.go
 services/gateway-go/cognition_activation_entitled_test.go
 services/gateway-go/context_mesh_orchestration_entitled.go
@@ -64,6 +68,8 @@ services/gateway-go/context_mesh_orchestration_entitled_test.go
 services/gateway-go/frontier_t1_governance_entitled.go
 services/gateway-go/frontier_t1_governance_entitled_test.go
 services/gateway-go/frontier_t1_eval_test.go
+services/gateway-go/frontier_t2_packet_retention_entitled.go
+services/gateway-go/frontier_t2_packet_retention_entitled_test.go
 
 # Paid-only operator documentation and reproducible eval ledgers.
 docs/entitled-cognition-activation.md

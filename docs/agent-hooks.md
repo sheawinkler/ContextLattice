@@ -59,6 +59,7 @@ Installed commands:
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, state, event, and completion. |
 | `contextlattice_agent_discover` | Best-effort local agent discovery for profile authority, process evidence, hook evidence, repo instruction evidence, and lifecycle explanations. |
 | `contextlattice_agent_session` | Session lifecycle, rollup, context-package, trace, runtime, and cleanup CLI. |
+| `contextlattice_packet_reconstruct` | Verify a digest-bound `agent_packet_delta.v1` against its trusted full base and emit the reconstructed `agent_packet.v1`. |
 | `contextlattice_async_inbox_drain` | Bounded async continuation inbox drain; emits unseen terminal steering after normal CLI boundaries. |
 | `contextlattice_async_inbox_hook` | Fail-open hook entrypoint for runtimes with post-tool or post-command hooks. |
 | `contextlattice_agent_trace` | Contract-valid run trace and exportable run card showing which context, skills that may be helpful, sources, graph touches, handoffs, and checkpoints shaped a session. |

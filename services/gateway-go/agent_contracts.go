@@ -29,6 +29,8 @@ const a2aReadinessProfileContractID = "a2a_readiness_profile.v1"
 const agentSessionRollupContractID = "agent_session_rollup.v1"
 const agentPromptContextPackageContractID = "agent_prompt_context_package.v1"
 const agentRunTraceContractID = "agent_run_trace.v1"
+const agentPacketDeltaOutputContractID = "agent_packet_delta.v1"
+const agentPacketReconstructionOutputContractID = "agent_packet_reconstruction.v1"
 const runAdvisorContractID = "run_advisor.v1"
 const retrievalProgressContractID = "retrieval_progress.v1"
 const steeringCommentContractID = "steering_comment.v1"
@@ -760,6 +762,9 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 		if confirmationModes[matchMode] && object["requires_confirmation"] != true {
 			findings = append(findings, map[string]any{"reason": "identity_confirmation_required", "path": "requires_confirmation", "match_mode": matchMode, "contract_id": contractID})
 		}
+	}
+	if contractID == agentPacketDeltaOutputContractID {
+		findings = append(findings, agentPacketDeltaOperationFindings(object)...)
 	}
 	return findings
 }

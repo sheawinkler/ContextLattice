@@ -60,6 +60,44 @@ class ReleaseLaneTreeTests(unittest.TestCase):
             (gateway / "go.mod").write_text("module example.test/releasegate\n\ngo 1.23\n", encoding="utf-8")
             (gateway / "continuity_identity.go").write_text("package releasegate\n", encoding="utf-8")
             (gateway / "objective_continuity.go").write_text("package releasegate\n", encoding="utf-8")
+            (gateway / "agent_packet_delta_test.go").write_text(
+                """package releasegate
+
+import (
+    "os"
+    "testing"
+)
+
+func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
+    if os.Getenv("CONTEXTLATTICE_AGENT_PACKET_DELTA_PERFORMANCE_GATE") != "1" {
+        t.Skip("isolated release gate only")
+    }
+}
+""",
+                encoding="utf-8",
+            )
+            (gateway / "frontier_t2_delta_eval_test.go").write_text(
+                """package releasegate
+
+import (
+    "fmt"
+    "os"
+    "testing"
+)
+
+func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
+    if os.Getenv("CONTEXTLATTICE_AGENT_PACKET_DELTA_PERFORMANCE_GATE") != "1" {
+        return
+    }
+    output := os.Getenv("FRONTIER_T2_ITEM2_EVAL_OUTPUT")
+    payload := fmt.Sprintf(`{"schema_id":"frontier_t2_delta_packet_eval.v1","tested_commit":%q,"sample_count":1,"correct_count":1,"release_gates":{"corrupt_reconstruction_count":0,"unsafe_delta_on_invalid_base_count":0,"synchronous_projection_p95_ms_max":20,"synchronous_projection_p95_ms_observed":1}}`, os.Getenv("FRONTIER_T2_TESTED_COMMIT"))
+    if err := os.WriteFile(output, []byte(payload), 0o600); err != nil {
+        t.Fatal(err)
+    }
+}
+""",
+                encoding="utf-8",
+            )
             orchestrator = repo / "services/orchestrator-go"
             orchestrator.mkdir(parents=True)
             (orchestrator / "go.mod").write_text("module example.test/orchestrator\n\ngo 1.23\n", encoding="utf-8")
@@ -103,6 +141,7 @@ class ReleaseLaneTreeTests(unittest.TestCase):
             )
             self.assertEqual(payload["gates"]["services_gateway_go_test"], "pass")
             self.assertEqual(payload["gates"]["public_leak_guard"], "pass")
+            self.assertEqual(payload["gates"]["frontier_t2_item2_isolated_performance"], "pass")
             self.assertTrue(payload["required_blobs"])
 
             tsx_leak = repo / "contextlattice-dashboard/app/private-note.tsx"

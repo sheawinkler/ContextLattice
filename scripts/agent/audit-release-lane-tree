@@ -166,6 +166,46 @@ for module in services/gateway-go services/orchestrator-go; do
   fi
 done
 
+frontier_t2_projection_test="${stage}/services/gateway-go/agent_packet_delta_test.go"
+frontier_t2_holdout_test="${stage}/services/gateway-go/frontier_t2_delta_eval_test.go"
+frontier_t2_eval="${tmp_dir}/frontier-t2-item2-eval.json"
+if [[ -f "${frontier_t2_projection_test}" && -f "${frontier_t2_holdout_test}" ]]; then
+  env \
+    CONTEXTLATTICE_AGENT_PACKET_DELTA_PERFORMANCE_GATE=1 \
+    FRONTIER_T2_TESTED_COMMIT="${commit}" \
+    FRONTIER_T2_ITEM2_EVAL_OUTPUT="${frontier_t2_eval}" \
+    go -C "${stage}/services/gateway-go" test \
+      -run '^(TestFrontierT2AgentPacketProjectionLatencyGate|TestFrontierT2DeltaPacketHoldout)$' \
+      -count=1 .
+  [[ -f "${frontier_t2_eval}" ]] || fail "isolated Frontier T2 gate did not emit its evidence artifact"
+  python3 - "${frontier_t2_eval}" "${commit}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, commit = sys.argv[1:]
+payload = json.loads(Path(path).read_text(encoding="utf-8"))
+if payload.get("schema_id") != "frontier_t2_delta_packet_eval.v1":
+    raise SystemExit("isolated Frontier T2 evidence schema is invalid")
+if payload.get("tested_commit") != commit:
+    raise SystemExit("isolated Frontier T2 evidence is not bound to the candidate commit")
+if payload.get("correct_count") != payload.get("sample_count"):
+    raise SystemExit("isolated Frontier T2 holdout correctness gate failed")
+gates = payload.get("release_gates") or {}
+if gates.get("corrupt_reconstruction_count") != 0 or gates.get("unsafe_delta_on_invalid_base_count") != 0:
+    raise SystemExit("isolated Frontier T2 safety gate failed")
+maximum = gates.get("synchronous_projection_p95_ms_max")
+observed = gates.get("synchronous_projection_p95_ms_observed")
+if maximum != 20 or not isinstance(observed, (int, float)) or observed > maximum:
+    raise SystemExit("isolated Frontier T2 20ms p95 gate failed")
+PY
+  printf '%s\t%s\n' "frontier_t2_item2_isolated_performance" "pass" >>"${gate_rows}"
+elif [[ -f "${frontier_t2_projection_test}" || -f "${frontier_t2_holdout_test}" ]]; then
+  fail "candidate contains only one of the two Frontier T2 performance-gate test files"
+else
+  printf '%s\t%s\n' "frontier_t2_item2_isolated_performance" "not_present" >>"${gate_rows}"
+fi
+
 if [[ -f "${stage}/scripts/generate_commercial_truth.py" ]]; then
   (cd "${stage}" && python3 scripts/generate_commercial_truth.py --check)
   printf '%s\t%s\n' "commercial_truth_generation" "pass" >>"${gate_rows}"

@@ -1470,6 +1470,7 @@ func isProxyPath(path string) bool {
 		"/memory/write/batch",
 		"/memory/browser-context",
 		"/memory/context-pack",
+		agentPacketReconstructionRoute,
 		"/memory/dream",
 		"/memory/review",
 		"/memory/continuity/snapshot",
@@ -7056,6 +7057,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/browser-context", s.memoryBrowserContext)
 	mux.HandleFunc("/preferences", s.preferencesRoute)
 	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
+	mux.HandleFunc(agentPacketReconstructionRoute, s.memoryAgentPacketReconstruct)
 	mux.HandleFunc("/memory/continuity/reconcile", s.memoryContinuityReconcile)
 	mux.HandleFunc("/memory/objectives/transition", s.memoryObjectiveTransition)
 	mux.HandleFunc("/memory/objectives/graph", s.memoryObjectiveGraph)

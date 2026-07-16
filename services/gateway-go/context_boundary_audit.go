@@ -21,6 +21,7 @@ type contextBoundarySurface struct {
 func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 	return []contextBoundarySurface{
 		{Name: "memory_context_pack", Path: "/memory/context-pack", Surface: "agent_http", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "prompt-ready context package"},
+		{Name: "memory_agent_packet_reconstruct", Path: agentPacketReconstructionRoute, Surface: "agent_http", ContractID: agentPacketReconstructionContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "digest-verified Agent Packet delta reconstruction"},
 		{Name: "tools_context_pack", Path: "/tools/context_pack", Surface: "agent_tool", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "MCP/tool context package wrapper"},
 		{Name: "task_identity_reconciliation", Path: "/memory/continuity/reconcile", Surface: "agent_http", ContractID: taskIdentityReconciliationContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "exact-first task identity reconciliation with semantic abstention"},
 		{Name: "task_identity_receipt", Path: "task_identity_receipt", Surface: "contract", ContractID: taskIdentityReceiptContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "immutable manual merge, split, and creation receipt"},
@@ -62,6 +63,7 @@ func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 		{Name: "codex_preflight", Path: "/v1/codex/preflight", Surface: "agent_http", ContractID: agentPreflightResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "Codex-compatible preflight"},
 		{Name: "policy_context_package", Path: "policy_context_package", Surface: "contract", ContractID: policyContextPackageContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "policy/anti-scheming context package"},
 		{Name: "contextlattice_pack_cli", Path: "scripts/agent/contextlattice-pack", Surface: "agent_cli", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "local CLI context package"},
+		{Name: "contextlattice_packet_reconstruct_cli", Path: "contextlattice_packet_reconstruct", Surface: "agent_cli", ContractID: agentPacketContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI verified Agent Packet reconstruction"},
 		{Name: "contextlattice_synthesis_pack_v2_cli", Path: "contextlattice_synthesis_pack_v2", Surface: "agent_cli", ContractID: synthesisPackV2ContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI proof-carrying synthesis"},
 		{Name: "contextlattice_retrieval_plan_cli", Path: "contextlattice_retrieval_plan", Surface: "agent_cli", ContractID: retrievalPlanContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI advisor-only retrieval plan"},
 		{Name: "contextlattice_claim_write_cli", Path: "contextlattice_claim_write", Surface: "agent_cli", ContractID: temporalClaimContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI temporal claim write"},

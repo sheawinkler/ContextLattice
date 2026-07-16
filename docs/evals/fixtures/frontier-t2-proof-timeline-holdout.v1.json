@@ -1,0 +1,118 @@
+{
+  "schema_id": "frontier_t2_proof_timeline_holdout.v1",
+  "holdout_id": "frontier_t2_proof_timeline_adversarial_v1",
+  "frozen_at": "2026-07-15T18:21:37Z",
+  "base_commit": "6ef742930608d46b9a60225d74be1aa387b76b11",
+  "frontier_item": 24,
+  "independent_from_training": true,
+  "scope": {
+    "project": "contextlattice",
+    "session_id": "sess_frontier_t2_proof_holdout",
+    "task_id": "task_frontier_t2_proof_holdout",
+    "task_identity_id": "task_identity_frontier_t2_proof_holdout"
+  },
+  "cases": [
+    {
+      "case_id": "complete_exact_identity_join",
+      "dimension": "coverage",
+      "fault": "none",
+      "expected": {"complete": true, "integrity_status": "verified", "missing_stage_count": 0, "cross_scope_rejected": 0}
+    },
+    {
+      "case_id": "out_of_order_arrival",
+      "dimension": "ordering",
+      "fault": "events_arrive_out_of_order",
+      "expected": {"complete": true, "ordering_fidelity": 1, "gap_reason": ""}
+    },
+    {
+      "case_id": "idempotent_retry_duplicate",
+      "dimension": "deduplication",
+      "fault": "same_source_record_retried",
+      "expected": {"duplicate_count": 1, "conflict_count": 0, "event_link_fidelity": 1}
+    },
+    {
+      "case_id": "conflicting_duplicate_identity",
+      "dimension": "identity_collision",
+      "fault": "same_source_id_different_digest",
+      "expected": {"complete": false, "integrity_status": "degraded", "gap_reason": "identity_collision"}
+    },
+    {
+      "case_id": "partial_write_missing_verification",
+      "dimension": "partial_write",
+      "fault": "verification_stage_absent",
+      "expected": {"complete": false, "missing_stage": "verification", "gap_reason": "stage_missing"}
+    },
+    {
+      "case_id": "missing_session",
+      "dimension": "missing_source",
+      "fault": "session_not_found",
+      "expected": {"complete": false, "integrity_status": "unavailable", "gap_reason": "session_missing"}
+    },
+    {
+      "case_id": "cross_task_event",
+      "dimension": "scope_isolation",
+      "fault": "foreign_task_event_present",
+      "expected": {"cross_scope_rejected": 1, "foreign_event_emitted": false, "gap_reason": "cross_scope_rejected"}
+    },
+    {
+      "case_id": "invalid_event_clock",
+      "dimension": "clock_integrity",
+      "fault": "invalid_or_future_occurred_at",
+      "expected": {"complete": false, "gap_reason": "invalid_clock", "ordering_uses_recorded_at": true}
+    },
+    {
+      "case_id": "retention_truncated_session_tail",
+      "dimension": "retention",
+      "fault": "session_event_count_exceeds_retained_rows",
+      "expected": {"complete": false, "gap_reason": "retention_truncated", "silent_omission": false}
+    },
+    {
+      "case_id": "corrupt_authoritative_row",
+      "dimension": "source_integrity",
+      "fault": "continuity_hash_chain_invalid",
+      "expected": {"complete": false, "integrity_status": "failed", "gap_reason": "corrupt_rows"}
+    },
+    {
+      "case_id": "telemetry_without_exact_join_key",
+      "dimension": "join_abstention",
+      "fault": "token_or_outcome_row_lacks_session_and_task_identity",
+      "expected": {"row_joined": false, "gap_reason": "missing_join_key", "timestamp_inference_used": false}
+    },
+    {
+      "case_id": "claim_history_compacted",
+      "dimension": "history_compaction",
+      "fault": "older_claim_revision_not_retained",
+      "expected": {"complete": false, "gap_reason": "history_compacted", "latest_claim_emitted": true}
+    },
+    {
+      "case_id": "recursive_sensitive_metadata",
+      "dimension": "redaction",
+      "fault": "nested_secret_prompt_and_personal_path",
+      "expected": {"secrets_emitted": false, "raw_prompt_emitted": false, "personal_path_emitted": false, "redaction_count_min": 3}
+    },
+    {
+      "case_id": "concurrent_snapshot_boundary",
+      "dimension": "snapshot_consistency",
+      "fault": "source_advances_during_projection",
+      "expected": {"complete": false, "gap_reason": "concurrent_snapshot", "source_anchors_present": true}
+    },
+    {
+      "case_id": "rollback_to_existing_trace",
+      "dimension": "rollback",
+      "fault": "disable_proof_timeline_feature",
+      "expected": {"response_schema": "agent_run_trace.v1", "authoritative_ledgers_mutated": false}
+    }
+  ],
+  "release_gates": {
+    "expected_case_classification_accuracy": 1,
+    "eligible_exact_link_coverage": 1,
+    "ordering_fidelity": 1,
+    "cross_scope_rejection_rate": 1,
+    "redaction_failure_count": 0,
+    "silent_gap_count": 0,
+    "synchronous_projection_p95_ms_max": 20,
+    "provider_calls": 0,
+    "external_network_calls": 0,
+    "authoritative_ledger_mutations": 0
+  }
+}
