@@ -951,7 +951,9 @@ func buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target map[strin
 	if findings := validateAgentContractPayload(agentPacketDeltaContractID, delta); len(findings) > 0 {
 		return nil, reconstructionFailure("delta_contract_invalid", "formatted delta contract validation failed: %v", findings)
 	}
-	result, reconstructionErr := reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta, now, true)
+	// The completed delta crossed the contract boundary above; reconstruction
+	// still verifies every operation, binding, digest, receipt, and result packet.
+	result, reconstructionErr := reconstructAgentPacketFromValidatedBase(base, baseIdentity, delta, now, false)
 	if reconstructionErr != nil {
 		return nil, reconstructionErr
 	}
