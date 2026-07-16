@@ -274,6 +274,47 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             result = run(["bash", "scripts/public_sync_guard.sh", "public", "main"], repo)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_public_sync_rejects_dangling_paid_packet_runtime_symbols(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-packet-runtime-sync-") as tmp:
+            repo = Path(tmp)
+            init_repo(repo)
+            (repo / "scripts").mkdir()
+            shutil.copy2(ROOT / "scripts/public_sync_guard.sh", repo / "scripts/public_sync_guard.sh")
+            (repo / "config").mkdir()
+            shutil.copy2(ROOT / "config/public_sync_blocklist.txt", repo / "config/public_sync_blocklist.txt")
+            shared = repo / "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+            shared.parent.mkdir(parents=True)
+            shared.write_text("package main\n", encoding="utf-8")
+            commit_all(repo, "public baseline")
+            base = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+            run(["git", "update-ref", "refs/remotes/public/main", base], repo)
+            shared.write_text("package main\nvar _ = frontierDeltaPacketAutomationID\n", encoding="utf-8")
+            commit_all(repo, "dangling paid packet runtime")
+            result = run(["bash", "scripts/public_sync_guard.sh", "public", "main"], repo)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("frontierDeltaPacketAutomationID", result.stderr)
+
+    def test_public_lane_rejects_paid_packet_runtime_symbols(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-packet-runtime-lane-") as tmp:
+            repo = Path(tmp)
+            init_repo(repo)
+            hooks = repo / "scripts/agent_hooks"
+            hooks.mkdir(parents=True)
+            shutil.copy2(ROOT / "scripts/agent_hooks/common.sh", hooks / "common.sh")
+            shutil.copy2(ROOT / "scripts/agent_hooks/branch_lane_guard.sh", hooks / "branch_lane_guard.sh")
+            (repo / "config").mkdir()
+            shutil.copy2(ROOT / "config/public_sync_blocklist.txt", repo / "config/public_sync_blocklist.txt")
+            shared = repo / "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
+            shared.parent.mkdir(parents=True)
+            shared.write_text("package main\nvar _ = frontierDeltaPacketAutomationID\n", encoding="utf-8")
+            commit_all(repo, "paid packet runtime marker")
+            result = run(
+                ["bash", "scripts/agent_hooks/branch_lane_guard.sh", "--lane", "public", "--ref", "HEAD"],
+                repo,
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("frontierDeltaPacketAutomationID", result.stderr)
+
     def test_public_lane_rejects_workspace_collaboration_markers_in_shared_files(self) -> None:
         cases = (
             ("contextlattice-dashboard/prisma/schema.prisma", "model WorkspaceInvitation {}\n", "WorkspaceInvitation"),
@@ -300,7 +341,7 @@ class PublicBoundaryGuardTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(marker, result.stderr)
 
-    def test_public_lane_rejects_frontier_t1_paid_sources_and_evals(self) -> None:
+    def test_public_lane_rejects_frontier_paid_sources_and_evals(self) -> None:
         blocked_paths = (
             "contextlattice-dashboard/app/api/workspace/invitations/accept/route.ts",
             "contextlattice-dashboard/app/api/workspace/members/route.ts",
@@ -310,6 +351,12 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             "services/gateway-go/frontier_t1_governance_entitled.go",
             "services/gateway-go/frontier_t1_governance_entitled_test.go",
             "services/gateway-go/frontier_t1_eval_test.go",
+            "services/gateway-go/frontier_t2_packet_retention_entitled.go",
+            "services/gateway-go/frontier_t2_packet_retention_entitled_test.go",
+            "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync.go",
+            "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_test.go",
+            "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_unix.go",
+            "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_windows.go",
             "docs/entitled-frontier-t1.md",
             "docs/evals/v3.18-frontier-t1-paid-activation.json",
             "config/frontier_t1_release_provenance.v1.json",

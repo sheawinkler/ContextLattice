@@ -235,7 +235,7 @@ if [[ "$LANE" == "public" ]]; then
     done <"$blocklist"
   fi
 
-  paid_gateway_pattern='GO_(PAID|V4)_ENTITLEMENT|enforce(Paid|V4)Entitlement|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+  paid_gateway_pattern='GO_(PAID|V4)_ENTITLEMENT|enforce(Paid|V4)Entitlement|runtimeLicenseVerifier|runtimeLicenseSchemaID|frontier_delta_packet_automation|CONTEXTLATTICE_FRONTIER_T2_|frontierT2Packet(Retention|Automation)|frontierDeltaPacketAutomationID|contextlattice_packet_sync|cmdPacketSync'
   paid_gateway_hits="${scan_tmp_dir}/paid-gateway-hits"
   if scan_to_file "$paid_gateway_hits" "paid gateway surface scan" \
       git grep -n -I -E "$paid_gateway_pattern" "$REF" -- services/gateway-go; then
