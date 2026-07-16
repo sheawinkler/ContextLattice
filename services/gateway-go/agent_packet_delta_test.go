@@ -755,8 +755,8 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 	t.Setenv("ORCH_RETRIEVAL_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_FAST_SOURCES", "qdrant")
 	t.Setenv("ORCH_RETRIEVAL_SLOW_SOURCES", "")
-	results := make([]any, 0, 8)
-	for index := 0; index < 8; index++ {
+	results := make([]any, 0, 12)
+	for index := 0; index < 12; index++ {
 		marker := string(rune('a' + index))
 		results = append(results, map[string]any{
 			"project": "contextlattice", "file": "notes/packet-" + marker + ".md", "source": "qdrant",
@@ -778,26 +778,28 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 
 	gateway := httptest.NewServer(buildMux(newTestServer(t, backend.URL)))
 	defer gateway.Close()
-	routes := map[string]string{
-		"/tools/context_pack":      "tools_context_pack",
-		"/tools/synthesis_pack":    "tools_synthesis_pack",
-		"/tools/synthesis_pack_v2": "tools_synthesis_pack_v2",
+	routes := []struct {
+		path    string
+		surface string
+	}{
+		{path: "/tools/context_pack", surface: "tools_context_pack"},
+		{path: "/tools/synthesis_pack", surface: "tools_synthesis_pack"},
+		{path: "/tools/synthesis_pack_v2", surface: "tools_synthesis_pack_v2"},
 	}
-	for route, expectedSurface := range routes {
+	for _, route := range routes {
 		route := route
-		expectedSurface := expectedSurface
-		t.Run(route, func(t *testing.T) {
+		t.Run(route.path, func(t *testing.T) {
 			request := map[string]any{
 				"query": "verify Agent Packet tool delta", "project": "contextlattice",
 				"topic_path": "runbooks/frontier-30", "output_mode": agentPacketContractID,
-				"agent_id": "codex_gpt5", "task_id": "task_tool_delta",
+				"agent_id": "codex_gpt5", "task_id": "task_tool_delta_" + route.surface,
 			}
 			raw, err := json.Marshal(request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			base := postJSONForTest(t, gateway.URL+route, string(raw))
-			if anyToString(base["schema_id"]) != agentPacketContractID || anyToString(base["surface"]) != expectedSurface || base["tool"] != nil {
+			base := postJSONForTest(t, gateway.URL+route.path, string(raw))
+			if anyToString(base["schema_id"]) != agentPacketContractID || anyToString(base["surface"]) != route.surface || base["tool"] != nil {
 				t.Fatalf("tool full packet wire envelope drifted: %#v", base)
 			}
 			assertBoundaryContractPassed(t, agentPacketContractID, base)
@@ -816,8 +818,8 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			delta := postJSONForTest(t, gateway.URL+route, string(raw))
-			if anyToString(delta["schema_id"]) != agentPacketDeltaContractID || anyToString(delta["surface"]) != expectedSurface || delta["tool"] != nil {
+			delta := postJSONForTest(t, gateway.URL+route.path, string(raw))
+			if anyToString(delta["schema_id"]) != agentPacketDeltaContractID || anyToString(delta["surface"]) != route.surface || delta["tool"] != nil {
 				t.Fatalf("tool delta wire envelope drifted: %#v", delta)
 			}
 			assertBoundaryContractPassed(t, agentPacketDeltaContractID, delta)
