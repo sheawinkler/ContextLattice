@@ -218,6 +218,8 @@ func frontierT2PercentileMillis(samples []time.Duration, percentile float64) flo
 }
 
 func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
+	const latencySampleCount = 100
+
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	cases := frontierT2DeltaHoldoutCases(t)
 	caseResults := make([]map[string]any, 0, len(cases))
@@ -401,7 +403,7 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm T2 holdout projection: %v", err)
 	}
-	latencySamples := make([]time.Duration, 0, 30)
+	latencySamples := make([]time.Duration, 0, latencySampleCount)
 	for index := 0; index < cap(latencySamples); index++ {
 		started := time.Now()
 		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {

@@ -743,6 +743,8 @@ func TestAgentPacketDeltaToolSurfacesPreserveWireContracts(t *testing.T) {
 }
 
 func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
+	const sampleCount = 100
+
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	request := frontierT2PacketRequest()
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), request, now)
@@ -760,8 +762,8 @@ func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
 	if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm delta projection: %v", err)
 	}
-	durations := make([]time.Duration, 0, 30)
-	for index := 0; index < 30; index++ {
+	durations := make([]time.Duration, 0, sampleCount)
+	for index := 0; index < sampleCount; index++ {
 		started := time.Now()
 		if _, err := buildAgentPacketDeltaFromValidatedBase(base, baseIdentity, target, now.Add(time.Minute)); err != nil {
 			t.Fatalf("delta projection sample %d: %v", index, err)
