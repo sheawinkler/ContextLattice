@@ -46,18 +46,33 @@
     <section class="section">
       <article class="card">
         <div class="kicker">Current launch boundary</div>
-        <h3>v3.19.0 sends the delta, then proves the run.</h3>
+        <h3>v3.19.1 makes terminal state true.</h3>
         <ul class="spec-list">
-          <li><strong>Only what changed:</strong> digest-bound Agent Packet deltas preserve exact reconstruction and fall back safely when a base cannot be trusted.</li>
-          <li><strong>One chain of proof:</strong> context, action, correction, verification, outcome, and learning join through exact identity rather than narrative guesswork.</li>
-          <li><strong>Gaps stay visible:</strong> missing, corrupt, cross-scope, concurrent, and retention-truncated evidence never masquerades as continuity.</li>
+          <li><strong>Complete means complete:</strong> CLI terminal commands now close the session, finish its rollup, and move agent lifecycle state to <code>done</code>.</li>
+          <li><strong>No positional trap:</strong> flag-only <code>--summary</code> completion and failure commands no longer panic.</li>
+          <li><strong>Old clients heal forward:</strong> legacy singular terminal events canonicalize at ingestion instead of stranding finished sessions as active.</li>
           <li><strong>Interface priority:</strong> use CLI commands first; use dashboard for visibility and HTTP/MCP when an app or agent harness needs an integration surface.</li>
-          <li><strong>Reversible by design:</strong> disable deltas, timeline projection, or paid retention without rewriting authoritative evidence.</li>
+          <li><strong>The v3.19 engine stays intact:</strong> packet deltas, proof timelines, entitlement boundaries, retention, and rollback contracts are unchanged.</li>
         </ul>
       </article>
     </section>
 
     <section class="section timeline">
+      <article class="update-card">
+        <span class="update-meta">2026-07-17 · v3.19.1 · Sessions That Actually End.</span>
+        <h2>Complete means complete.</h2>
+        <p>
+          The CLI now turns a terminal command into terminal system truth: no panic, no active-session ghost,
+          and no disagreement between the event, session, rollup, and agent lifecycle.
+        </p>
+        <ul>
+          <li><strong>Panic removed:</strong> <code>complete</code> and <code>fail</code> accept a flag-only summary safely.</li>
+          <li><strong>Canonical lifecycle:</strong> the CLI emits <code>session.completed</code> and <code>session.failed</code>.</li>
+          <li><strong>Backward-compatible repair:</strong> the gateway canonicalizes legacy singular aliases before applying terminal state.</li>
+          <li><strong>No product-boundary drift:</strong> storage, entitlement, packet, proof, and integration contracts remain unchanged.</li>
+        </ul>
+      </article>
+
       <article class="update-card">
         <span class="update-meta">2026-07-16 · v3.19.0 · The Delta and the Proof.</span>
         <h2>Less context baggage. More evidence.</h2>
