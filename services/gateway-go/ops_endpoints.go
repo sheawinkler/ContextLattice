@@ -220,6 +220,7 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	contextMeshStatus := s.contextMesh.snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,
+		"build":       contextLatticeBuildIdentity(),
 		"timestamp":   nowUTCISO(),
 		"memoryStore": s.memoryStore.migrationSnapshot(),
 		"telemetry": map[string]any{

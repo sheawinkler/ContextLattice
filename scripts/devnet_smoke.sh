@@ -119,11 +119,13 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -n "$ORCH_API_KEY" ]]; then
-  ORCH_AUTH_HEADER=(-H "x-api-key: $ORCH_API_KEY")
-else
-  ORCH_AUTH_HEADER=()
-fi
+orchestrator_curl() {
+  if [[ -n "$ORCH_API_KEY" ]]; then
+    curl -H "x-api-key: $ORCH_API_KEY" "$@"
+  else
+    curl "$@"
+  fi
+}
 
 check_endpoint() {
   local url="$1"
@@ -204,12 +206,10 @@ smoke_memory_write() {
   local file_path content readback
   file_path="smoke/devnet_smoke_$(date +%Y%m%d_%H%M%S).txt"
   content="devnet smoke test: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  curl -fsS "$ORCH_URL/memory/write" \
+  orchestrator_curl -fsS "$ORCH_URL/memory/write" \
     -H "content-type: application/json" \
-    "${ORCH_AUTH_HEADER[@]}" \
     -d "{\"projectName\":\"${project}\",\"fileName\":\"${file_path}\",\"content\":\"${content}\"}" >/dev/null
-  readback="$(curl -fsS "$ORCH_URL/memory/files/${project}/${file_path}" \
-    "${ORCH_AUTH_HEADER[@]}")"
+  readback="$(orchestrator_curl -fsS "$ORCH_URL/memory/files/${project}/${file_path}")"
   if [[ "$readback" != "$content" ]]; then
     echo "[devnet-smoke] ERROR: memory readback did not exactly match the written payload" >&2
     exit 5
@@ -266,9 +266,12 @@ fi
 
 # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
 cleanup() {
+  local exit_code="$?"
+  trap - EXIT
   if [[ -n "${SIDECAR_PID:-}" ]]; then
     kill "$SIDECAR_PID" 2>/dev/null || true
   fi
+  exit "$exit_code"
 }
 
 trap cleanup EXIT

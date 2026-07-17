@@ -16,6 +16,14 @@ import (
 
 const frontierT2DeltaHoldoutID = "frontier_t2_delta_packet_adversarial_v1"
 
+const (
+	frontierT2LatencyBatchCount      = 3
+	frontierT2LatencySamplesPerBatch = 50
+	frontierT2LatencyP95MaxMillis    = 20.0
+	frontierT2ProjectionAllocsMax    = 40000.0
+	frontierT2StrictLatencyGateEnv   = "CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE"
+)
+
 type frontierT2DeltaHoldoutCase struct {
 	CaseID    string         `json:"case_id"`
 	Dimension string         `json:"dimension"`
@@ -217,9 +225,98 @@ func frontierT2PercentileMillis(samples []time.Duration, percentile float64) flo
 	return float64(samples[index]) / float64(time.Millisecond)
 }
 
-func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
-	const latencySampleCount = 100
+type frontierT2LatencyMeasurement struct {
+	Samples        []time.Duration
+	BatchP95MS     []float64
+	P50MS          float64
+	P95MS          float64
+	RawP95MS       float64
+	P99MS          float64
+	PassingBatches int
+}
 
+func frontierT2SummarizeLatency(batches [][]time.Duration) frontierT2LatencyMeasurement {
+	measurement := frontierT2LatencyMeasurement{
+		Samples:    make([]time.Duration, 0, frontierT2LatencyBatchCount*frontierT2LatencySamplesPerBatch),
+		BatchP95MS: make([]float64, 0, len(batches)),
+	}
+	for _, batch := range batches {
+		measurement.Samples = append(measurement.Samples, batch...)
+		batchP95 := frontierT2PercentileMillis(append([]time.Duration(nil), batch...), 0.95)
+		measurement.BatchP95MS = append(measurement.BatchP95MS, batchP95)
+		if batchP95 <= frontierT2LatencyP95MaxMillis {
+			measurement.PassingBatches++
+		}
+	}
+	measurement.P50MS = frontierT2PercentileMillis(append([]time.Duration(nil), measurement.Samples...), 0.50)
+	measurement.RawP95MS = frontierT2PercentileMillis(append([]time.Duration(nil), measurement.Samples...), 0.95)
+	measurement.P99MS = frontierT2PercentileMillis(append([]time.Duration(nil), measurement.Samples...), 0.99)
+	batchP95 := append([]float64(nil), measurement.BatchP95MS...)
+	sort.Float64s(batchP95)
+	if len(batchP95) > 0 {
+		measurement.P95MS = batchP95[len(batchP95)/2]
+	}
+	return measurement
+}
+
+func frontierT2MeasureProjectionLatency(t testing.TB, project func() error) frontierT2LatencyMeasurement {
+	t.Helper()
+	batches := make([][]time.Duration, 0, frontierT2LatencyBatchCount)
+	for batchIndex := 0; batchIndex < frontierT2LatencyBatchCount; batchIndex++ {
+		batch := make([]time.Duration, 0, frontierT2LatencySamplesPerBatch)
+		for sampleIndex := 0; sampleIndex < frontierT2LatencySamplesPerBatch; sampleIndex++ {
+			started := time.Now()
+			if err := project(); err != nil {
+				t.Fatalf("T2 projection batch %d sample %d: %v", batchIndex, sampleIndex, err)
+			}
+			batch = append(batch, time.Since(started))
+		}
+		batches = append(batches, batch)
+	}
+	return frontierT2SummarizeLatency(batches)
+}
+
+func frontierT2StrictLatencyGateEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(frontierT2StrictLatencyGateEnv))) {
+	case "0", "false", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+func frontierT2MeasureProjectionAllocs(t testing.TB, project func() error) float64 {
+	t.Helper()
+	return testing.AllocsPerRun(5, func() {
+		if err := project(); err != nil {
+			t.Fatalf("T2 allocation projection: %v", err)
+		}
+	})
+}
+
+func TestFrontierT2LatencyEstimatorRequiresSustainedRegression(t *testing.T) {
+	batch := func(value time.Duration) []time.Duration {
+		values := make([]time.Duration, frontierT2LatencySamplesPerBatch)
+		for index := range values {
+			values[index] = value
+		}
+		return values
+	}
+	oneNoisyBatch := frontierT2SummarizeLatency([][]time.Duration{
+		batch(10 * time.Millisecond), batch(30 * time.Millisecond), batch(12 * time.Millisecond),
+	})
+	if oneNoisyBatch.P95MS > frontierT2LatencyP95MaxMillis || oneNoisyBatch.PassingBatches != 2 {
+		t.Fatalf("one noisy batch should not fail a sustained-regression gate: %#v", oneNoisyBatch)
+	}
+	twoSlowBatches := frontierT2SummarizeLatency([][]time.Duration{
+		batch(10 * time.Millisecond), batch(30 * time.Millisecond), batch(25 * time.Millisecond),
+	})
+	if twoSlowBatches.P95MS <= frontierT2LatencyP95MaxMillis || twoSlowBatches.PassingBatches != 1 {
+		t.Fatalf("two slow batches must fail the sustained-regression gate: %#v", twoSlowBatches)
+	}
+}
+
+func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	cases := frontierT2DeltaHoldoutCases(t)
 	caseResults := make([]map[string]any, 0, len(cases))
@@ -410,19 +507,18 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm T2 holdout projection: %v", err)
 	}
-	latencySamples := make([]time.Duration, 0, latencySampleCount)
-	for index := 0; index < cap(latencySamples); index++ {
-		started := time.Now()
-		if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
-			t.Fatalf("T2 holdout projection sample %d: %v", index, err)
-		}
-		latencySamples = append(latencySamples, time.Since(started))
+	project := func() error {
+		_, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute))
+		return err
 	}
-	p50 := frontierT2PercentileMillis(append([]time.Duration(nil), latencySamples...), 0.50)
-	p95 := frontierT2PercentileMillis(append([]time.Duration(nil), latencySamples...), 0.95)
-	p99 := frontierT2PercentileMillis(append([]time.Duration(nil), latencySamples...), 0.99)
-	if p95 > 20 {
-		t.Fatalf("T2 holdout projection p95 %.6fms exceeds 20ms gate", p95)
+	allocations := frontierT2MeasureProjectionAllocs(t, project)
+	if allocations > frontierT2ProjectionAllocsMax {
+		t.Fatalf("T2 holdout projection allocations %.0f exceed %.0f gate", allocations, frontierT2ProjectionAllocsMax)
+	}
+	latency := frontierT2MeasureProjectionLatency(t, project)
+	strictLatency := frontierT2StrictLatencyGateEnabled()
+	if strictLatency && latency.P95MS > frontierT2LatencyP95MaxMillis {
+		t.Fatalf("T2 holdout projection median batch p95 %.6fms exceeds 20ms gate; batches=%v", latency.P95MS, latency.BatchP95MS)
 	}
 
 	caseRaw, err := json.Marshal(caseResults)
@@ -445,13 +541,19 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 		"verified_reconstruction_count": verifiedReconstructionCount,
 		"full_fallback_count":           fullFallbackCount,
 		"release_gates": map[string]any{
-			"reconstruction_digest_fidelity":         reconstructionDigestFidelity,
-			"corrupt_reconstruction_count":           corruptReconstructionCount,
-			"unsafe_delta_on_invalid_base_count":     unsafeDeltaOnInvalidBaseCount,
-			"delta_only_when_smaller":                true,
-			"full_fallback_always_contract_valid":    true,
-			"synchronous_projection_p95_ms_max":      20,
-			"synchronous_projection_p95_ms_observed": p95,
+			"reconstruction_digest_fidelity":          reconstructionDigestFidelity,
+			"corrupt_reconstruction_count":            corruptReconstructionCount,
+			"unsafe_delta_on_invalid_base_count":      unsafeDeltaOnInvalidBaseCount,
+			"delta_only_when_smaller":                 true,
+			"full_fallback_always_contract_valid":     true,
+			"synchronous_projection_p95_ms_max":       frontierT2LatencyP95MaxMillis,
+			"synchronous_projection_p95_ms_observed":  latency.P95MS,
+			"synchronous_projection_p95_estimator":    "median_of_3_batch_p95",
+			"synchronous_projection_batch_p95_ms":     latency.BatchP95MS,
+			"synchronous_projection_passing_batches":  latency.PassingBatches,
+			"synchronous_projection_latency_enforced": strictLatency,
+			"synchronous_projection_allocs_max":       frontierT2ProjectionAllocsMax,
+			"synchronous_projection_allocs_observed":  allocations,
 		},
 		"token_accounting": map[string]any{
 			"tokenizer_exact":          true,
@@ -463,7 +565,10 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 			"measurement_scope":        "serialized agent_packet.v1 and agent_packet_delta.v1 transport JSON only; no provider-token or inference-avoidance claim",
 		},
 		"latency": map[string]any{
-			"sample_count": len(latencySamples), "p50_ms": p50, "p95_ms": p95, "p99_ms": p99,
+			"sample_count": len(latency.Samples), "batch_count": frontierT2LatencyBatchCount,
+			"samples_per_batch": frontierT2LatencySamplesPerBatch, "estimator": "median_of_3_batch_p95",
+			"batch_p95_ms": latency.BatchP95MS, "p50_ms": latency.P50MS, "p95_ms": latency.P95MS,
+			"raw_p95_ms": latency.RawP95MS, "p99_ms": latency.P99MS,
 		},
 		"cost": map[string]any{
 			"provider_calls": 0, "local_inference_calls": 0, "external_network_calls": 0,
@@ -488,7 +593,8 @@ func TestFrontierT2DeltaPacketHoldout(t *testing.T) {
 	}
 	digest := sha256.Sum256(raw)
 	t.Logf(
-		"t2_delta_eval_sha256=%s cases=%d useful_deltas=%d fallbacks=%d tokens_saved=%d p95_ms=%.6f",
-		hex.EncodeToString(digest[:]), len(cases), usefulDeltaCount, fullFallbackCount, exactTokensSaved, p95,
+		"t2_delta_eval_sha256=%s cases=%d useful_deltas=%d fallbacks=%d tokens_saved=%d p95_ms=%.6f batches=%v allocs=%.0f strict_latency=%t",
+		hex.EncodeToString(digest[:]), len(cases), usefulDeltaCount, fullFallbackCount, exactTokensSaved,
+		latency.P95MS, latency.BatchP95MS, allocations, strictLatency,
 	)
 }

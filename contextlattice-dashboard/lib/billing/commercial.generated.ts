@@ -2,16 +2,16 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "7e1c5a1bb6427046aece6e9888e3fdc13555a5b03e5ca06893bf537df1f8d74b";
+export const COMMERCIAL_CONTRACT_SHA256 = "d151d0a2d880e00c248466b8905d95c69abfb966e1cdcd035a11b7add0cdac1b";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.18.0",
-    "stable_tag": "v3.18.0",
-    "release_train": "3.18",
+    "version": "3.19.0",
+    "stable_tag": "v3.19.0",
+    "release_train": "3.19",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -91,6 +91,16 @@ export const COMMERCIAL_TRUTH = {
       "id": "frontier_shared_decision_provenance",
       "buyer_label": "Decisions with a memory and a witness",
       "description": "Review, approve, and export decision changes against exact immutable evidence with bounded, hash-verifiable pages."
+    },
+    {
+      "id": "frontier_delta_packet_automation",
+      "buyer_label": "Context that travels at the speed of the work",
+      "description": "Carry acknowledged Agent Packet lineage across machines and shared workspaces with exact deltas, signed receipts, bounded retention, and verified full fallback."
+    },
+    {
+      "id": "frontier_shared_proof_timeline",
+      "buyer_label": "Every agent run, with receipts",
+      "description": "Retain, inspect, analyze, and export one integrity-checked timeline of what an agent knew, did, corrected, proved, and taught across an authorized workspace."
     }
   ],
   "plans": [
@@ -146,7 +156,8 @@ export const COMMERCIAL_TRUTH = {
         "dashboard_visibility",
         "premium_artifact_downloads",
         "premium_runtime_keys",
-        "protected_runtime_operations"
+        "protected_runtime_operations",
+        "frontier_delta_packet_automation"
       ]
     },
     {
@@ -178,6 +189,8 @@ export const COMMERCIAL_TRUTH = {
         "shared_workspace_controls",
         "pro_analytics",
         "protected_runtime_operations",
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
         "frontier_shared_decision_provenance"
@@ -211,6 +224,8 @@ export const COMMERCIAL_TRUTH = {
         "premium_runtime_keys",
         "pro_analytics",
         "protected_runtime_operations",
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph"
       ]
@@ -244,6 +259,8 @@ export const COMMERCIAL_TRUTH = {
         "shared_workspace_controls",
         "pro_analytics",
         "protected_runtime_operations",
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
         "frontier_shared_decision_provenance",
@@ -291,7 +308,10 @@ export const COMMERCIAL_TRUTH = {
       "/memory/context-mesh/orchestrate",
       "/memory/continuity/automation",
       "/memory/objectives/shared",
-      "/memory/decision-changes/shared"
+      "/memory/decision-changes/shared",
+      "/memory/agent-packet/shared",
+      "/memory/agent-proof-timeline/shared",
+      "/memory/agent-proof-timeline/shared/lifecycle"
     ]
   },
   "paid_feature_route_contracts": [
@@ -338,9 +358,40 @@ export const COMMERCIAL_TRUTH = {
       "routes": [
         "/memory/decision-changes/shared"
       ]
+    },
+    {
+      "feature_id": "frontier_delta_packet_automation",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-packet/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_proof_timeline",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-proof-timeline/shared"
+      ]
     }
   ],
-  "contract_sha256": "7e1c5a1bb6427046aece6e9888e3fdc13555a5b03e5ca06893bf537df1f8d74b"
+  "contract_sha256": "d151d0a2d880e00c248466b8905d95c69abfb966e1cdcd035a11b7add0cdac1b"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

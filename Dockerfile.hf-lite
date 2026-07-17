@@ -1,9 +1,24 @@
+ARG CONTEXTLATTICE_BUILD_VERSION=development
+ARG CONTEXTLATTICE_BUILD_CHANNEL=hf-lite
+ARG CONTEXTLATTICE_SOURCE_COMMIT=unknown
+ARG CONTEXTLATTICE_SOURCE_TREE=unknown
+
 FROM golang:1.26.4-bookworm AS gateway-builder
 WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./services/gateway-go/
 RUN cd services/gateway-go && go mod download
 COPY services/gateway-go ./services/gateway-go
-RUN cd services/gateway-go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/contextlattice-gateway-go .
+ARG CONTEXTLATTICE_BUILD_VERSION
+ARG CONTEXTLATTICE_BUILD_CHANNEL
+ARG CONTEXTLATTICE_SOURCE_COMMIT
+ARG CONTEXTLATTICE_SOURCE_TREE
+RUN cd services/gateway-go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+    -ldflags "-s -w \
+      -X main.contextLatticeBuildVersion=${CONTEXTLATTICE_BUILD_VERSION} \
+      -X main.contextLatticeBuildChannel=${CONTEXTLATTICE_BUILD_CHANNEL} \
+      -X main.contextLatticeSourceCommit=${CONTEXTLATTICE_SOURCE_COMMIT} \
+      -X main.contextLatticeSourceTree=${CONTEXTLATTICE_SOURCE_TREE}" \
+    -o /out/contextlattice-gateway-go .
 
 FROM debian:bookworm-slim
 ENV PORT=7860
@@ -22,5 +37,14 @@ ENV ORCH_INTERNAL_RUNTIME=gateway-go ORCH_START_INTERNAL=false
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=gateway-builder /out/contextlattice-gateway-go /usr/local/bin/contextlattice-gateway-go
+ARG CONTEXTLATTICE_BUILD_VERSION
+ARG CONTEXTLATTICE_BUILD_CHANNEL
+ARG CONTEXTLATTICE_SOURCE_COMMIT
+ARG CONTEXTLATTICE_SOURCE_TREE
+LABEL org.opencontainers.image.title="ContextLattice gateway-go lite" \
+      org.opencontainers.image.version="${CONTEXTLATTICE_BUILD_VERSION}" \
+      org.opencontainers.image.revision="${CONTEXTLATTICE_SOURCE_COMMIT}" \
+      io.contextlattice.source-tree="${CONTEXTLATTICE_SOURCE_TREE}" \
+      io.contextlattice.channel="${CONTEXTLATTICE_BUILD_CHANNEL}"
 EXPOSE 7860
 CMD ["/usr/local/bin/contextlattice-gateway-go"]

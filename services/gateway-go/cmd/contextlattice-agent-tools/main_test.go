@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseArgsAllowsFlagsAfterPositionalQuery(t *testing.T) {
@@ -1343,6 +1344,10 @@ func TestRunnerQualityCommandUsesNativeTelemetryEndpoint(t *testing.T) {
 }
 
 func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+	t.Setenv("HOME", "")
+	t.Setenv("CONTEXTLATTICE_GLOBAL_HOME", "")
 	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/agents/sessions/sess-bootstrap/rollup" {
@@ -1397,6 +1402,9 @@ func TestAdapterBootstrapCompactsPreflightResult(t *testing.T) {
 	}
 	if _, ok := preflight["agent_profile"]; ok {
 		t.Fatalf("compact preflight leaked raw agent profile: %#v", preflight)
+	}
+	if _, err := os.Stat(filepath.Join(workingDir, ".contextlattice")); !os.IsNotExist(err) {
+		t.Fatalf("headless bootstrap wrote optional session state into cwd: %v", err)
 	}
 }
 
@@ -1770,6 +1778,43 @@ func TestTraceCommandRendersTree(t *testing.T) {
 	}
 }
 
+func TestTraceCommandProofUsesCanonicalProofRouteAndRenderer(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/sessions/sess-proof/proof-timeline" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "schema_id": "agent_proof_timeline.v1",
+			"session":     map[string]any{"id": "sess-proof", "agent": "codex", "status": "completed"},
+			"integrity":   map[string]any{"status": "verified", "complete": true, "source_anchors_stable": true},
+			"metrics":     map[string]any{"joined_row_count": 6, "source_row_count": 6, "eligible_exact_link_coverage": 1, "redaction_count": 0, "display_compacted_count": 2},
+			"stage_order": []any{"context", "action", "correction", "verification", "outcome", "learning"},
+			"stages": map[string]any{
+				"context": map[string]any{"status": "present", "count": 1}, "action": map[string]any{"status": "present", "count": 1},
+				"correction": map[string]any{"status": "present", "count": 1}, "verification": map[string]any{"status": "present", "count": 1},
+				"outcome": map[string]any{"status": "present", "count": 1}, "learning": map[string]any{"status": "present", "count": 1},
+			},
+			"gaps": []any{},
+			"timeline": []any{map[string]any{
+				"ordered_at": "2026-07-16T03:00:00Z", "stage": "verification", "source": "agent_session", "summary": "tests passed",
+			}},
+			"rollback": map[string]any{"env": "CONTEXTLATTICE_AGENT_PROOF_TIMELINE_ENABLED=false", "fallback_schema": "agent_run_trace.v1"},
+		})
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{"contextlattice_agent_trace", "--session-id", "sess-proof", "--proof", "--tree"}); err != nil {
+		t.Fatalf("run proof trace: %v", err)
+	}
+	rendered := stdout.String()
+	if !strings.Contains(rendered, "ContextLattice Proof Timeline") || !strings.Contains(rendered, "receipt: verified") || !strings.Contains(rendered, "compacted 2") || !strings.Contains(rendered, "tests passed") {
+		t.Fatalf("unexpected proof render:\n%s", rendered)
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
@@ -1876,5 +1921,113 @@ func TestContextBoundaryAuditCannotHideUnboundedDuplicatePathContract(t *testing
 	}
 	if !found {
 		t.Fatalf("audit did not identify the unbounded query contract: %#v", audit)
+	}
+}
+
+func TestRuntimeAuditsRejectStaleRegistry(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		audit func(map[string]any) map[string]any
+		body  map[string]any
+	}{
+		{
+			name: "context boundary", audit: auditContextBoundary,
+			body: map[string]any{"schema_id": "contextlattice_context_boundary.v1", "ok": true, "registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion - 1, "routes": []any{}},
+		},
+		{
+			name: "native ownership", audit: auditNativeOwnership,
+			body: map[string]any{"schema_id": "strict_runtime_native_ownership.v1", "ok": true, "registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion - 1, "routes": []any{}, "pythonHotPathOwnership": map[string]any{"fallbacks": 0}},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := testCase.audit(testCase.body)
+			if asBool(result["ok"]) {
+				t.Fatalf("stale registry passed audit: %#v", result)
+			}
+			found := false
+			for _, finding := range result["findings"].([]map[string]any) {
+				if firstString(finding["reason"]) == "registry_version_mismatch" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("stale registry finding missing: %#v", result)
+			}
+		})
+	}
+}
+
+func TestRuntimeAuditsRejectStaleGeneratedAt(t *testing.T) {
+	stale := time.Now().Add(-runtimeAuditMaximumAge - time.Minute).UTC().Format(time.RFC3339Nano)
+	for _, testCase := range []struct {
+		name  string
+		audit func(map[string]any) map[string]any
+		body  map[string]any
+	}{
+		{
+			name: "context boundary", audit: auditContextBoundary,
+			body: map[string]any{"schema_id": "contextlattice_context_boundary.v1", "ok": true, "generatedAt": stale, "registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion, "routes": []any{}},
+		},
+		{
+			name: "native ownership", audit: auditNativeOwnership,
+			body: map[string]any{"schema_id": "strict_runtime_native_ownership.v1", "ok": true, "generatedAt": stale, "registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion, "routes": []any{}, "pythonHotPathOwnership": map[string]any{"fallbacks": 0}},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := testCase.audit(testCase.body)
+			if asBool(result["ok"]) {
+				t.Fatalf("stale runtime response passed audit: %#v", result)
+			}
+			found := false
+			for _, finding := range result["findings"].([]map[string]any) {
+				if firstString(finding["reason"]) == "generated_at_stale" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("stale generatedAt finding missing: %#v", result)
+			}
+		})
+	}
+}
+
+func TestRuntimeAuditCommandsReturnErrorAfterEmittingFailure(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		binaryName string
+		path       string
+		schemaID   string
+	}{
+		{name: "context boundary", binaryName: "contextlattice_context_boundary", path: "/ops/context-boundary", schemaID: "contextlattice_context_boundary.v1"},
+		{name: "native ownership", binaryName: "contextlattice_strict_runtime_native_ownership", path: "/ops/native-ownership", schemaID: "strict_runtime_native_ownership.v1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != testCase.path {
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"schema_id": testCase.schemaID, "ok": true, "generatedAt": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano),
+					"registry_id": generatedAgentContractRegistryID, "registry_version": generatedAgentContractRegistryVersion,
+					"routes": []any{}, "pythonHotPathOwnership": map[string]any{"fallbacks": 0},
+				})
+			}))
+			defer gateway.Close()
+			var stdout bytes.Buffer
+			c := newCLI(&stdout, ioDiscard{})
+			c.baseURL = gateway.URL
+			if err := c.run([]string{testCase.binaryName}); err == nil {
+				t.Fatal("failed runtime audit returned process success")
+			}
+			payload := map[string]any{}
+			if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+				t.Fatalf("decode emitted audit: %v", err)
+			}
+			if asBool(payload["ok"]) {
+				t.Fatalf("failed runtime audit emitted success: %#v", payload)
+			}
+		})
 	}
 }

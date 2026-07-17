@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 28
+const GeneratedAgentContractRegistryVersion = 30
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -19,6 +19,7 @@ const GeneratedAgentContractAgentPacketDeltaV1 = "agent_packet_delta.v1"
 const GeneratedAgentContractAgentPacketReconstructionV1 = "agent_packet_reconstruction.v1"
 const GeneratedAgentContractAgentPreflightResponseV1 = "agent_preflight_response.v1"
 const GeneratedAgentContractAgentPromptContextPackageV1 = "agent_prompt_context_package.v1"
+const GeneratedAgentContractAgentProofTimelineV1 = "agent_proof_timeline.v1"
 const GeneratedAgentContractAgentRunTraceV1 = "agent_run_trace.v1"
 const GeneratedAgentContractAgentSessionRollupV1 = "agent_session_rollup.v1"
 const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
@@ -76,6 +77,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentPacketReconstructionV1,
 	GeneratedAgentContractAgentPreflightResponseV1,
 	GeneratedAgentContractAgentPromptContextPackageV1,
+	GeneratedAgentContractAgentProofTimelineV1,
 	GeneratedAgentContractAgentRunTraceV1,
 	GeneratedAgentContractAgentSessionRollupV1,
 	GeneratedAgentContractAgentSpanV1,
@@ -166,6 +168,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractAgentPromptContextPackageV1,
 		PayloadKind:        "agent_prompt_context_package",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentProofTimelineV1,
+		PayloadKind:        "agent_proof_timeline",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

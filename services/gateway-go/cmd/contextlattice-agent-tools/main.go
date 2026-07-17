@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +30,8 @@ const (
 	defaultAgentPacketTargetTokens = 2000
 	defaultAgentPacketHardTokens   = 4000
 	maxAgentPacketCLIFileBytes     = 64 << 10
+	runtimeAuditMaximumAge         = 2 * time.Minute
+	runtimeAuditMaximumFutureSkew  = 30 * time.Second
 )
 
 var nativeToolNames = map[string]string{
@@ -1995,59 +1996,44 @@ func loadPortableArtifact(path, nestedKey string) (any, error) {
 }
 
 func writePrivateJSONArtifact(path string, value any) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil
-	}
 	raw, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+	return writePrivateArtifact(path, append(raw, '\n'))
+}
+
+func writePrivateArtifact(path string, content []byte) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
 	}
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	publication, err := createPrivateArtifact(path)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	removeTemp := true
-	defer func() {
-		if removeTemp {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
+	defer publication.cleanup()
+	if err := privateArtifactSecure(publication.file, 0o600); err != nil {
 		return err
 	}
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		_ = tmp.Close()
+	if _, err := publication.file.Write(content); err != nil {
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
+	if err := publication.file.Sync(); err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	return privateArtifactReplace(publication)
+}
+
+func (c *cli) writePrivateText(path, body string) error {
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	if strings.TrimSpace(path) == "" {
+		_, err := fmt.Fprint(c.stdout, body)
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		// Windows does not replace an existing destination with os.Rename.
-		targetInfo, statErr := os.Lstat(path)
-		if runtime.GOOS != "windows" || statErr != nil || targetInfo.IsDir() {
-			return err
-		}
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return err
-		}
-		if retryErr := os.Rename(tmpPath, path); retryErr != nil {
-			return retryErr
-		}
-	}
-	removeTemp = false
-	return os.Chmod(path, 0o600)
+	return writePrivateArtifact(path, []byte(body))
 }
 
 func (c *cli) cmdPassportExport(args []string) error {
@@ -3198,9 +3184,10 @@ func (c *cli) cmdTrace(args []string) error {
 		"json":     "json",
 		"tree":     "tree",
 		"markdown": "markdown",
+		"proof":    "proof",
 	}))
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_agent_trace --session-id <id> [--tree|--markdown|--json] [--pretty] [--output path]")
+		return c.emitUsage("contextlattice_agent_trace --session-id <id> [--proof] [--tree|--markdown|--json] [--pretty] [--output path]")
 	}
 	c.applyBaseURL(parsed)
 	sessionID := parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", ""))
@@ -3210,7 +3197,11 @@ func (c *cli) cmdTrace(args []string) error {
 	if sessionID == "" {
 		return errors.New("session id is required")
 	}
-	raw, _, err := c.requestJSON(context.Background(), http.MethodGet, "/v1/agents/sessions/"+url.PathEscape(sessionID)+"/trace", nil, parsed.float("timeout", 10))
+	route := "/v1/agents/sessions/" + url.PathEscape(sessionID) + "/trace"
+	if parsed.bool("proof") {
+		route = "/v1/agents/sessions/" + url.PathEscape(sessionID) + "/proof-timeline"
+	}
+	raw, _, err := c.requestJSON(context.Background(), http.MethodGet, route, nil, parsed.float("timeout", 10))
 	if err != nil {
 		return err
 	}
@@ -3221,6 +3212,12 @@ func (c *cli) cmdTrace(args []string) error {
 			return err
 		}
 		body = out
+	} else if parsed.bool("proof") && firstString(raw["schema_id"]) == "agent_proof_timeline.v1" {
+		if parsed.bool("markdown") {
+			body = renderProofTimelineMarkdown(raw)
+		} else {
+			body = renderProofTimelineTree(raw)
+		}
 	} else if parsed.bool("markdown") {
 		body = renderTraceMarkdown(raw)
 	} else {
@@ -3336,7 +3333,13 @@ func (c *cli) cmdContextBoundary(args []string) error {
 		return err
 	}
 	result := auditContextBoundary(raw)
-	return c.emit(result, parsed.bool("pretty"))
+	if err := c.emit(result, parsed.bool("pretty")); err != nil {
+		return err
+	}
+	if !asBool(result["ok"]) {
+		return errors.New("context boundary audit failed")
+	}
+	return nil
 }
 
 func (c *cli) cmdStrictRuntimeNativeOwnership(args []string) error {
@@ -3347,12 +3350,35 @@ func (c *cli) cmdStrictRuntimeNativeOwnership(args []string) error {
 		return err
 	}
 	result := auditNativeOwnership(raw)
-	return c.emit(result, parsed.bool("pretty"))
+	if err := c.emit(result, parsed.bool("pretty")); err != nil {
+		return err
+	}
+	if !asBool(result["ok"]) {
+		return errors.New("strict runtime native ownership audit failed")
+	}
+	return nil
+}
+
+func runtimeAuditFreshnessFinding(payload map[string]any, now time.Time) map[string]any {
+	generatedAt := firstString(payload["generatedAt"])
+	parsed, err := time.Parse(time.RFC3339Nano, generatedAt)
+	if err != nil {
+		return map[string]any{"reason": "generated_at_invalid", "actual": generatedAt}
+	}
+	age := now.UTC().Sub(parsed.UTC())
+	if age > runtimeAuditMaximumAge {
+		return map[string]any{"reason": "generated_at_stale", "age_seconds": age.Seconds(), "maximum_age_seconds": runtimeAuditMaximumAge.Seconds()}
+	}
+	if age < -runtimeAuditMaximumFutureSkew {
+		return map[string]any{"reason": "generated_at_future", "future_skew_seconds": (-age).Seconds(), "maximum_future_skew_seconds": runtimeAuditMaximumFutureSkew.Seconds()}
+	}
+	return nil
 }
 
 func auditContextBoundary(payload map[string]any) map[string]any {
 	required := []string{
 		"/memory/context-pack", "/tools/context_pack", "/v1/agents/preflight", "/v1/codex/preflight",
+		"/memory/agent-packet/reconstruct", "/v1/agents/sessions/{session_id}/proof-timeline",
 		"/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan",
 		"/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query",
 		"/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes",
@@ -3367,6 +3393,8 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		path       string
 		contractID string
 	}{
+		{"/memory/agent-packet/reconstruct", "agent_packet_reconstruction.v1"},
+		{"/v1/agents/sessions/{session_id}/proof-timeline", "agent_proof_timeline.v1"},
 		{"/memory/continuity/reconcile", "task_identity_reconciliation.v1"},
 		{"/memory/objectives/transition", "objective_transition.v1"},
 		{"/memory/objectives/graph", "objective_graph.v1"},
@@ -3381,6 +3409,15 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "contextlattice_context_boundary.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
+	}
+	if finding := runtimeAuditFreshnessFinding(payload, time.Now()); finding != nil {
+		findings = append(findings, finding)
+	}
+	if firstString(payload["registry_id"]) != generatedAgentContractRegistryID {
+		findings = append(findings, map[string]any{"reason": "registry_id_mismatch", "expected": generatedAgentContractRegistryID, "actual": payload["registry_id"]})
+	}
+	if asInt(payload["registry_version"]) != generatedAgentContractRegistryVersion {
+		findings = append(findings, map[string]any{"reason": "registry_version_mismatch", "expected": generatedAgentContractRegistryVersion, "actual": payload["registry_version"]})
 	}
 	if !asBool(payload["ok"]) {
 		findings = append(findings, map[string]any{"reason": "context_boundary_not_ok", "status": payload["status"]})
@@ -3436,27 +3473,38 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"ok":                       len(findings) == 0,
-		"schema_id":                "contextlattice_context_boundary_audit.v1",
-		"source_schema_id":         payload["schema_id"],
-		"status":                   payload["status"],
-		"registry_id":              payload["registry_id"],
-		"registry_version":         payload["registry_version"],
-		"requiredSurfaceCount":     payload["requiredSurfaceCount"],
-		"boundedSurfaceCount":      payload["boundedSurfaceCount"],
-		"violationCount":           payload["violationCount"],
-		"checkedRequiredPaths":     required,
-		"checkedRequiredContracts": checkedContracts,
-		"findings":                 findings,
-		"raw":                      payload,
+		"ok":                        len(findings) == 0,
+		"schema_id":                 "contextlattice_context_boundary_audit.v1",
+		"source_schema_id":          payload["schema_id"],
+		"status":                    payload["status"],
+		"registry_id":               payload["registry_id"],
+		"registry_version":          payload["registry_version"],
+		"expected_registry_id":      generatedAgentContractRegistryID,
+		"expected_registry_version": generatedAgentContractRegistryVersion,
+		"requiredSurfaceCount":      payload["requiredSurfaceCount"],
+		"boundedSurfaceCount":       payload["boundedSurfaceCount"],
+		"violationCount":            payload["violationCount"],
+		"checkedRequiredPaths":      required,
+		"checkedRequiredContracts":  checkedContracts,
+		"findings":                  findings,
+		"raw":                       payload,
 	}
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/tools/context_pack", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/memory/agent-packet/reconstruct", "/tools/context_pack", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
+	}
+	if finding := runtimeAuditFreshnessFinding(payload, time.Now()); finding != nil {
+		findings = append(findings, finding)
+	}
+	if firstString(payload["registry_id"]) != generatedAgentContractRegistryID {
+		findings = append(findings, map[string]any{"reason": "registry_id_mismatch", "expected": generatedAgentContractRegistryID, "actual": payload["registry_id"]})
+	}
+	if asInt(payload["registry_version"]) != generatedAgentContractRegistryVersion {
+		findings = append(findings, map[string]any{"reason": "registry_version_mismatch", "expected": generatedAgentContractRegistryVersion, "actual": payload["registry_version"]})
 	}
 	if !asBool(payload["ok"]) {
 		findings = append(findings, map[string]any{"reason": "native_ownership_not_ok", "status": payload["status"]})
@@ -3488,19 +3536,23 @@ func auditNativeOwnership(payload map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"ok":                     len(findings) == 0,
-		"schema_id":              "contextlattice_strict_runtime_native_ownership_audit.v1",
-		"source_schema_id":       payload["schema_id"],
-		"status":                 payload["status"],
-		"strictNoPython":         payload["strictNoPython"],
-		"routeOwnerClass":        payload["routeOwnerClass"],
-		"requiredRouteCount":     payload["requiredRouteCount"],
-		"nativeRouteCount":       payload["nativeRouteCount"],
-		"violationCount":         payload["violationCount"],
-		"pythonHotPathOwnership": ownership,
-		"checkedRequiredPaths":   required,
-		"findings":               findings,
-		"raw":                    payload,
+		"ok":                        len(findings) == 0,
+		"schema_id":                 "contextlattice_strict_runtime_native_ownership_audit.v1",
+		"source_schema_id":          payload["schema_id"],
+		"registry_id":               payload["registry_id"],
+		"registry_version":          payload["registry_version"],
+		"expected_registry_id":      generatedAgentContractRegistryID,
+		"expected_registry_version": generatedAgentContractRegistryVersion,
+		"status":                    payload["status"],
+		"strictNoPython":            payload["strictNoPython"],
+		"routeOwnerClass":           payload["routeOwnerClass"],
+		"requiredRouteCount":        payload["requiredRouteCount"],
+		"nativeRouteCount":          payload["nativeRouteCount"],
+		"violationCount":            payload["violationCount"],
+		"pythonHotPathOwnership":    ownership,
+		"checkedRequiredPaths":      required,
+		"findings":                  findings,
+		"raw":                       payload,
 	}
 }
 
@@ -5903,6 +5955,96 @@ func renderTraceTree(trace map[string]any) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+func renderProofTimelineTree(proof map[string]any) string {
+	session := asMap(proof["session"])
+	integrity := asMap(proof["integrity"])
+	metrics := asMap(proof["metrics"])
+	lines := []string{
+		"ContextLattice Proof Timeline",
+		"session " + firstString(session["id"], "unknown") + " | " + firstString(session["agent"], session["agent_id"], "agent") + " | " + firstString(session["status"], "unknown"),
+		"receipt: " + firstString(integrity["status"], "unknown") + " | complete " + strings.ToLower(firstString(integrity["complete"], "false")) + " | anchors stable " + strings.ToLower(firstString(integrity["source_anchors_stable"], "false")),
+		"links: " + firstString(metrics["joined_row_count"], "0") + "/" + firstString(metrics["source_row_count"], "0") + " | coverage " + firstString(metrics["eligible_exact_link_coverage"], "0") + " | redactions " + firstString(metrics["redaction_count"], "0") + " | compacted " + firstString(metrics["display_compacted_count"], "0"),
+		"",
+		"proof stages:",
+	}
+	stages := asMap(proof["stages"])
+	for _, raw := range asList(proof["stage_order"]) {
+		name := firstString(raw)
+		stage := asMap(stages[name])
+		lines = append(lines, "  - "+name+": "+firstString(stage["status"], "missing")+" | "+firstString(stage["count"], "0"))
+	}
+	lines = append(lines, "", "gaps:")
+	gaps := asList(proof["gaps"])
+	if len(gaps) == 0 {
+		lines = append(lines, "  - none")
+	} else {
+		for _, item := range gaps[:minInt(len(gaps), 16)] {
+			gap := asMap(item)
+			lines = append(lines, "  - "+firstString(gap["code"], "unknown")+" | "+firstString(gap["source"], "unknown")+" | "+truncate(firstString(gap["detail"]), 180))
+		}
+	}
+	lines = append(lines, "", "timeline:")
+	timeline := asList(proof["timeline"])
+	if len(timeline) == 0 {
+		lines = append(lines, "  - none captured")
+	} else {
+		start := maxInt(0, len(timeline)-24)
+		for _, item := range timeline[start:] {
+			row := asMap(item)
+			lines = append(lines, "  - "+strings.Join([]string{
+				firstString(row["ordered_at"], "unknown"), firstString(row["stage"], "action"),
+				firstString(row["source"], "unknown"), truncate(firstString(row["summary"]), 160),
+			}, " | "))
+		}
+	}
+	rollback := asMap(proof["rollback"])
+	lines = append(lines, "", "rollback: "+firstString(rollback["env"], "unknown")+" -> "+firstString(rollback["fallback_schema"], "agent_run_trace.v1"))
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func renderProofTimelineMarkdown(proof map[string]any) string {
+	session := asMap(proof["session"])
+	integrity := asMap(proof["integrity"])
+	metrics := asMap(proof["metrics"])
+	lines := []string{
+		"# ContextLattice Proof Timeline",
+		"",
+		"- Session: `" + firstString(session["id"], "unknown") + "`",
+		"- Integrity: **" + firstString(integrity["status"], "unknown") + "**",
+		"- Complete: `" + strings.ToLower(firstString(integrity["complete"], "false")) + "`",
+		"- Exact link coverage: `" + firstString(metrics["eligible_exact_link_coverage"], "0") + "`",
+		"- Redactions: `" + firstString(metrics["redaction_count"], "0") + "`",
+		"- Display compactions: `" + firstString(metrics["display_compacted_count"], "0") + "`",
+		"",
+		"## Stages",
+		"",
+	}
+	stages := asMap(proof["stages"])
+	for _, raw := range asList(proof["stage_order"]) {
+		name := firstString(raw)
+		stage := asMap(stages[name])
+		lines = append(lines, "- "+name+": **"+firstString(stage["status"], "missing")+"** ("+firstString(stage["count"], "0")+")")
+	}
+	lines = append(lines, "", "## Gaps", "")
+	if gaps := asList(proof["gaps"]); len(gaps) == 0 {
+		lines = append(lines, "- None.")
+	} else {
+		for _, item := range gaps[:minInt(len(gaps), 32)] {
+			gap := asMap(item)
+			lines = append(lines, "- `"+firstString(gap["code"], "unknown")+"` ("+firstString(gap["source"], "unknown")+"): "+truncate(firstString(gap["detail"]), 300))
+		}
+	}
+	lines = append(lines, "", "## Timeline", "")
+	for _, item := range asList(proof["timeline"]) {
+		row := asMap(item)
+		lines = append(lines, "- `"+firstString(row["ordered_at"], "unknown")+"` **"+firstString(row["stage"], "action")+"** / "+firstString(row["source"], "unknown")+": "+truncate(firstString(row["summary"]), 320))
+	}
+	if len(asList(proof["timeline"])) == 0 {
+		lines = append(lines, "- No exact-linked evidence was emitted.")
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func renderTraceMarkdown(trace map[string]any) string {
 	if markdown := firstString(asMap(trace["run_card"])["markdown"]); markdown != "" {
 		return strings.TrimRight(markdown, "\n") + "\n"
@@ -6013,7 +6155,15 @@ func errString(err error) string {
 }
 
 func sessionStatePath(project string) string {
-	root := filepath.Join(homeDir(), ".contextlattice", "agent_runtime_sessions")
+	root := strings.TrimSpace(os.Getenv("CONTEXTLATTICE_GLOBAL_HOME"))
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return ""
+		}
+		root = filepath.Join(home, ".contextlattice")
+	}
+	root = filepath.Join(root, "agent_runtime_sessions")
 	keyRaw := project + "|" + currentWorkingDir()
 	hash := sha256.Sum256([]byte(keyRaw))
 	return filepath.Join(root, hex.EncodeToString(hash[:])[:16]+".json")
@@ -6028,6 +6178,9 @@ func writeSessionStateWithExtras(project, sessionID, objective, agentID string, 
 		return
 	}
 	path := sessionStatePath(project)
+	if path == "" {
+		return
+	}
 	_ = os.MkdirAll(filepath.Dir(path), 0700)
 	payload := readSessionState(project)
 	payload["session_id"] = sessionID
@@ -6047,6 +6200,9 @@ func writeSessionStateWithExtras(project, sessionID, objective, agentID string, 
 
 func readSessionState(project string) map[string]any {
 	path := sessionStatePath(project)
+	if path == "" {
+		return map[string]any{}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return map[string]any{}

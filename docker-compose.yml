@@ -1143,6 +1143,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gateway-go
+      args:
+        CONTEXTLATTICE_BUILD_VERSION: ${CONTEXTLATTICE_BUILD_VERSION:-development}
+        CONTEXTLATTICE_BUILD_CHANNEL: ${CONTEXTLATTICE_BUILD_CHANNEL:-local}
+        CONTEXTLATTICE_SOURCE_COMMIT: ${CONTEXTLATTICE_SOURCE_COMMIT:-unknown}
+        CONTEXTLATTICE_SOURCE_TREE: ${CONTEXTLATTICE_SOURCE_TREE:-unknown}
     ports:
       - ${HOST_BIND_ADDRESS:-127.0.0.1}:${GO_GATEWAY_HOST_PORT:-8091}:${GO_GATEWAY_PORT_INTERNAL:-8091}
     environment:

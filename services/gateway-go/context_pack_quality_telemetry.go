@@ -24,6 +24,8 @@ type contextPackQualityTelemetry struct {
 	ledger                        *contextPackQualityLedger
 	samples                       []map[string]any
 	outcomes                      []map[string]any
+	proofSamples                  proofTimelineMapRing
+	proofOutcomes                 proofTimelineMapRing
 	outcomeKeys                   map[string]struct{}
 	sampleCount                   int64
 	outcomeCount                  int64
@@ -274,6 +276,7 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 		"raw_retry_probability_estimate":    roundFloat(anyToFloat(sample["raw_retry_probability_estimate"]), 3),
 		"packed_retry_probability_estimate": roundFloat(anyToFloat(sample["packed_retry_probability_estimate"]), 3),
 	}
+	copyProofTimelineIdentity(entry, sample)
 	if encoding := anyToString(sample["tokenizer_encoding"]); encoding != "" {
 		entry["tokenizer_encoding"] = encoding
 	}
@@ -371,6 +374,7 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 		"context_attribution":      attribution,
 		"calibration_eligible":     calibrationEligible,
 	}
+	copyProofTimelineIdentity(entry, sample)
 	if policyID := clipText(strings.TrimSpace(anyToString(sample["policy_id"])), 160); policyID != "" {
 		entry["policy_id"] = policyID
 	}
@@ -426,7 +430,9 @@ func (t *contextPackQualityTelemetry) applyQualityEntryLocked(entry map[string]a
 	}
 	t.lastSampleAt = firstNonEmptyStrings(anyToString(entry["capturedAt"]), nowUTCISO())
 	entry["capturedAt"] = t.lastSampleAt
-	t.samples = append(t.samples, cloneMap(entry))
+	stored := cloneMap(entry)
+	t.samples = append(t.samples, stored)
+	t.proofSamples.add(stored)
 	if len(t.samples) > t.limit {
 		t.samples = append([]map[string]any{}, t.samples[len(t.samples)-t.limit:]...)
 	}
@@ -473,7 +479,9 @@ func (t *contextPackQualityTelemetry) applyOutcomeEntryLocked(entry map[string]a
 	}
 	t.lastOutcomeAt = firstNonEmptyStrings(anyToString(entry["capturedAt"]), nowUTCISO())
 	entry["capturedAt"] = t.lastOutcomeAt
-	t.outcomes = append(t.outcomes, cloneMap(entry))
+	stored := cloneMap(entry)
+	t.outcomes = append(t.outcomes, stored)
+	t.proofOutcomes.add(stored)
 	if len(t.outcomes) > t.limit {
 		t.outcomes = append([]map[string]any{}, t.outcomes[len(t.outcomes)-t.limit:]...)
 	}
@@ -800,7 +808,7 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 	if qualityScore >= 80 && tokenizerExact && warningCount == 0 {
 		confidence = "medium"
 	}
-	return map[string]any{
+	sample := map[string]any{
 		"schema_id":                         contextPackQualitySchemaID,
 		"version":                           1,
 		"capturedAt":                        nowUTCISO(),
@@ -830,12 +838,25 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		"packed_retry_probability_estimate": retryModel.PackedRetryProbability,
 		"measurement_limit":                 contextPackQualityMeasurementLimit(false),
 	}
+	copyProofTimelineIdentity(sample, map[string]any{
+		"session_id":        input.SessionID,
+		"task_id":           input.TaskID,
+		"task_identity_id":  input.TaskIdentityID,
+		"execution_lane_id": input.ExecutionLaneID,
+		"agent_id":          input.AgentID,
+	})
+	return sample
 }
 
 type contextPackQualitySampleInput struct {
 	Query                string
 	Project              string
 	TopicPath            string
+	SessionID            string
+	TaskID               string
+	TaskIdentityID       string
+	ExecutionLaneID      string
+	AgentID              string
 	TokenImpact          map[string]any
 	Compiled             map[string]any
 	SourceCoverage       map[string]any

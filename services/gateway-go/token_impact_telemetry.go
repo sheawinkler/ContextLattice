@@ -16,6 +16,7 @@ type tokenImpactTelemetry struct {
 	limit                     int
 	ledger                    *tokenImpactLedger
 	samples                   []map[string]any
+	proofSamples              proofTimelineMapRing
 	sampleCount               int64
 	exactSamples              int64
 	totalBaseline             int64
@@ -205,6 +206,7 @@ func tokenImpactEntryFromSample(sample map[string]any) map[string]any {
 		"token_budget_target":      anyToInt(sample["token_budget_target"], 0),
 		"selection_strategy":       anyToString(sample["selection_strategy"]),
 	}
+	copyProofTimelineIdentity(entry, sample)
 	if anyToBool(sample["transport_inclusive"]) {
 		transport := anyToInt(sample["transport_tokens_exact"], 0)
 		if transport > 0 {
@@ -257,7 +259,9 @@ func (t *tokenImpactTelemetry) applyEntryLocked(entry map[string]any) {
 		t.lastSampleAt = nowUTCISO()
 		entry["capturedAt"] = t.lastSampleAt
 	}
-	t.samples = append(t.samples, cloneMap(entry))
+	stored := cloneMap(entry)
+	t.samples = append(t.samples, stored)
+	t.proofSamples.add(stored)
 	if len(t.samples) > t.limit {
 		t.samples = append([]map[string]any{}, t.samples[len(t.samples)-t.limit:]...)
 	}

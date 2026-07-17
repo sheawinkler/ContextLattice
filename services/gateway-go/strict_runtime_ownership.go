@@ -157,7 +157,10 @@ func (s *server) nativeOwnershipPayload() map[string]any {
 	return map[string]any{
 		"ok":                     ok,
 		"schema_id":              "strict_runtime_native_ownership.v1",
+		"registry_id":            GeneratedAgentContractRegistryID,
+		"registry_version":       GeneratedAgentContractRegistryVersion,
 		"generatedAt":            nowUTCISO(),
+		"build":                  contextLatticeBuildIdentity(),
 		"status":                 status,
 		"strictNoPython":         s.strictNoPythonRuntime,
 		"routeOwnerClass":        sourceOwnerGoNative,

@@ -32,7 +32,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports with explicit, non-destructive draft retirement.
 - Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
 - Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
-- Agent sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready packages and exportable run cards.
+- Agent runtime sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready reference packages, exportable run traces, and exact-linked proof timelines.
 - Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
 - Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
 - Go/Rust runtime ownership for the active application path.
@@ -41,9 +41,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.18.0` is the current public baseline. Continuity now has a durable identity: exact task evidence wins first, semantic reconciliation activates only against a locked, holdout-proven profile, ambiguity abstains, and shared objectives plus decision changes retain their history and witnesses. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces. Agent Packets, synthesis, token economics, graph repair, Temporal Claims, Context Passports, Context Mesh, policy learning, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain part of the same local-first contract.
+`v3.19.0` is the current public baseline. Agent Packets now negotiate digest-verified deltas, transmit only what changed when that is provably smaller, and fall back to the exact full packet whenever a base is stale, tampered, mismatched, or uneconomic. The local proof timeline joins context, action, correction, verification, outcome, and learning through exact identity while rendering missing or corrupt evidence as a gap instead of inventing continuity. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces. Governed shared retention and workspace timelines remain paid capabilities, while local delta reconstruction and local proof stay in the public core.
 
-## Public Runtime Stack (v3.18)
+## Public Runtime Stack (v3.19)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -88,8 +88,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.18.0 \
-  --statement "The current public release is 3.18.0." \
+  --object 3.19.0 \
+  --statement "The current public release is 3.19.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -432,6 +432,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Updates: `https://contextlattice.io/updates.html`
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.19.0.md` (digest-verified Agent Packet deltas, exact reconstruction, and one gap-aware proof timeline)
   - `docs/releases/v3.18.0.md` (durable continuity identity, holdout-locked semantic reconciliation, shared objective graphs, and witnessed decision provenance)
   - `docs/releases/v3.17.5.md` (latest-only configured state, bounded owner-only migration, and fail-closed semantic readers)
   - `docs/releases/v3.17.4.md` (regression-locked public artifact boundary and complete installer publication)

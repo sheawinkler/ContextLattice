@@ -1616,8 +1616,10 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
 	}
-	defer r.Body.Close()
-	return io.ReadAll(r.Body)
+	raw, err := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	return raw, err
 }
 
 func (s *server) proxyWithBody(w http.ResponseWriter, r *http.Request, bodyBytes []byte) {
@@ -2223,6 +2225,11 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 	if strings.TrimSpace(reqBody.Project) == "" {
 		reqBody.Project = "contextlattice"
 	}
+	reqBody.Project, err = sanitizeMemoryProject(reqBody.Project)
+	if err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_project", "detail": err.Error()})
+		return
+	}
 	if strings.TrimSpace(reqBody.TopicPath) == "" {
 		reqBody.TopicPath = profile.TopicPath
 	}
@@ -2246,6 +2253,12 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 	}
 	objectiveCtx := objectiveContextFromPreflightRequest(reqBody, rawPayload)
 	sessionID := strings.TrimSpace(reqBody.SessionID)
+	if sessionID != "" {
+		if err := validateAgentSessionID(sessionID); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
+			return
+		}
+	}
 	var preflightSession map[string]any
 	if s.agentSessions != nil {
 		startPayload := map[string]any{
@@ -2282,7 +2295,8 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 			},
 			"tags": []any{"agent-runtime", "preflight"},
 		}
-		if created, _, startErr := s.agentSessions.startOrReuse(startPayload); startErr == nil {
+		created, _, startErr := s.agentSessions.startOrReuse(startPayload)
+		if startErr == nil {
 			preflightSession = created
 			sessionID = anyToString(created["id"])
 			_ = s.recordAgentSessionEvent(sessionID, "agent.preflight.started", map[string]any{
@@ -2298,6 +2312,18 @@ func (s *server) agentPreflight(w http.ResponseWriter, r *http.Request, forcedAg
 					"objective_lineage":   objectiveCtx.lineage(reqBody.Project, reqBody.TopicPath, sessionID, reqBody.Query),
 				},
 			})
+		} else {
+			status, code, detail := http.StatusInternalServerError, "agent_session_start_failed", startErr.Error()
+			switch {
+			case errors.Is(startErr, errAgentSessionIDInvalid):
+				status, code = http.StatusUnprocessableEntity, "agent_session_id_invalid"
+			case errors.Is(startErr, errAgentSessionTerminal):
+				status, code, detail = http.StatusConflict, "agent_session_terminal", "terminal or expired sessions cannot be reopened; start a new session id"
+			case errors.Is(startErr, errAgentSessionReuseConflict):
+				status, code = http.StatusConflict, "agent_session_reuse_conflict"
+			}
+			writeJSON(w, status, map[string]any{"ok": false, "error": code, "detail": detail})
+			return
 		}
 	}
 	reqBody.SessionID = sessionID
@@ -2732,6 +2758,7 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                    true,
 		"service":               "gateway-go",
+		"build":                 contextLatticeBuildIdentity(),
 		"backendUrl":            s.backendURL,
 		"backendHealth":         s.backendHealthy(ctx),
 		"strictNoPythonRuntime": s.strictNoPythonRuntime,
@@ -7166,6 +7193,15 @@ func buildMux(s *server) http.Handler {
 	})
 }
 
+func newGatewayHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
+
 func main() {
 	if handled, exitCode := runOwnerOnlyMigrationCommand(os.Args, os.Stdout, os.Stderr); handled {
 		os.Exit(exitCode)
@@ -7195,7 +7231,8 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("gateway-go listening on %s (%s)", listenAddr, listenNetwork)
-	if err := http.Serve(listener, mux); err != nil {
+	httpServer := newGatewayHTTPServer(mux)
+	if err := httpServer.Serve(listener); err != nil {
 		log.Fatal(err)
 	}
 }

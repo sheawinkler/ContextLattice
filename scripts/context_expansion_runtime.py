@@ -279,7 +279,7 @@ class ContextExpansionRuntime:
         self.api_key = str(api_key or "").strip() or resolve_orchestrator_api_key(role=role)
         default_agent_id = (
             str(os.getenv("CONTEXTLATTICE_AGENT_ID") or "").strip()
-            or str(os.getenv("CONTEXTLATTICE_AGENT_ID") or "").strip()
+            or str(os.getenv("MEMMCP_AGENT_ID") or "").strip()
             or "codex_gpt5"
         )
         self.agent_id = str(agent_id or "").strip() or default_agent_id

@@ -18,6 +18,7 @@ CONTRACT_PATH = Path("config/commercial_truth.v1.json")
 PUBLIC_JSON_PATH = Path("docs/public_overview/commercial-truth.json")
 TYPESCRIPT_PATH = Path("contextlattice-dashboard/lib/billing/commercial.generated.ts")
 GO_PATH = Path("services/gateway-go/commercial_contract_generated.go")
+ENTITLEMENT_POLICY_PATH = Path("services/gateway-go/entitlement_policy.go")
 STATIC_PAGE_PATHS = (
     Path("docs/public_overview/premium.html"),
     Path("docs/public_overview/index.html"),
@@ -302,6 +303,37 @@ def entitlement_payload(contract: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def go_runtime_payload(contract: dict[str, Any], include_entitled_runtime: bool) -> dict[str, Any]:
+    """Keep buyer truth public without compiling absent paid features into the OSS gateway."""
+    payload = entitlement_payload(contract)
+    if include_entitled_runtime:
+        return payload
+
+    omitted_features = {
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
+    }
+    omitted_routes = {
+        "/memory/agent-packet/shared",
+        "/memory/agent-proof-timeline/shared",
+        "/memory/agent-proof-timeline/shared/lifecycle",
+    }
+    payload["features"] = [
+        feature for feature in payload["features"] if feature["id"] not in omitted_features
+    ]
+    for plan in payload["plans"]:
+        plan["feature_ids"] = [
+            feature_id for feature_id in plan["feature_ids"] if feature_id not in omitted_features
+        ]
+    payload["paid_route_contract"]["routes"] = [
+        route for route in payload["paid_route_contract"]["routes"] if route not in omitted_routes
+    ]
+    payload["paid_feature_route_contracts"] = [
+        row for row in payload["paid_feature_route_contracts"] if row["feature_id"] not in omitted_features
+    ]
+    return payload
+
+
 def render_typescript(contract: dict[str, Any]) -> str:
     payload = entitlement_payload(contract)
     plan_ids = " | ".join(json.dumps(plan["id"]) for plan in contract["plans"])
@@ -348,11 +380,11 @@ def go_string_slice(values: list[str]) -> str:
     return "[]string{" + ", ".join(go_string(value) for value in values) + "}"
 
 
-def render_go(contract: dict[str, Any]) -> str:
-    payload = entitlement_payload(contract)
+def render_go(contract: dict[str, Any], include_entitled_runtime: bool) -> str:
+    payload = go_runtime_payload(contract, include_entitled_runtime)
     plan_rows: list[str] = []
-    plan_key_width = max(len(go_string(plan["id"]) + ":") for plan in contract["plans"])
-    for plan in contract["plans"]:
+    plan_key_width = max(len(go_string(plan["id"]) + ":") for plan in payload["plans"])
+    for plan in payload["plans"]:
         pricing = plan["pricing"]
         limits = plan["limits"]
         key = go_string(plan["id"]) + ":"
@@ -372,19 +404,19 @@ def render_go(contract: dict[str, Any]) -> str:
             + f"FeatureIDs: {go_string_slice(plan['feature_ids'])}"
             + "},"
         )
-    alias_width = max(len(go_string(alias) + ":") for alias in contract["aliases"]["exact"])
+    alias_width = max(len(go_string(alias) + ":") for alias in payload["aliases"]["exact"])
     alias_rows = [
         "\t" + (go_string(alias) + ":").ljust(alias_width + 1) + go_string(target) + ","
-        for alias, target in contract["aliases"]["exact"].items()
+        for alias, target in payload["aliases"]["exact"].items()
     ]
     pattern_rows = [
         "\t{Pattern: regexp.MustCompile(" + go_string(row["pattern"]) + "), Target: " + go_string(row["target"]) + "},"
-        for row in contract["aliases"]["patterns"]
+        for row in payload["aliases"]["patterns"]
     ]
-    route_rows = [f"\t{go_string(route)}," for route in contract["paid_route_contract"]["routes"]]
+    route_rows = [f"\t{go_string(route)}," for route in payload["paid_route_contract"]["routes"]]
     feature_routes = [
         (route, row)
-        for row in contract["paid_feature_route_contracts"]
+        for row in payload["paid_feature_route_contracts"]
         for route in row["routes"]
     ]
     feature_route_key_width = max(len(go_string(route) + ":") for route, _ in feature_routes)
@@ -409,10 +441,10 @@ import (
 \t"strings"
 )
 
-const commercialTruthSchemaID = {go_string(contract["schema_id"])}
-const commercialTruthProductVersion = {go_string(contract["product"]["version"])}
-const commercialTruthStableTag = {go_string(contract["product"]["stable_tag"])}
-const commercialTruthReleaseTrain = {go_string(contract["product"]["release_train"])}
+const commercialTruthSchemaID = {go_string(payload["schema_id"])}
+const commercialTruthProductVersion = {go_string(payload["product"]["version"])}
+const commercialTruthStableTag = {go_string(payload["product"]["stable_tag"])}
+const commercialTruthReleaseTrain = {go_string(payload["product"]["release_train"])}
 const commercialTruthContractSHA256 = {go_string(payload["contract_sha256"])}
 
 type commercialTruthLimits struct {{
@@ -880,7 +912,7 @@ def expected_outputs(root: Path, contract: dict[str, Any]) -> dict[Path, str]:
     outputs: dict[Path, str] = {
         root / PUBLIC_JSON_PATH: json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
         root / TYPESCRIPT_PATH: render_typescript(contract),
-        root / GO_PATH: render_go(contract),
+        root / GO_PATH: render_go(contract, include_entitled_runtime=(root / ENTITLEMENT_POLICY_PATH).is_file()),
     }
     for relative_path in STATIC_PAGE_PATHS:
         path = root / relative_path

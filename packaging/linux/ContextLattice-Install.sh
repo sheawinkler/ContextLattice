@@ -3,7 +3,11 @@ set -euo pipefail
 umask 077
 
 EXPECTED_RELEASE_LANE="@RELEASE_LANE@"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/ContextLattice}"
+if [[ -z "${INSTALL_DIR:-}" && -n "${HOME:-}" ]]; then
+  INSTALL_DIR="${HOME}/ContextLattice"
+else
+  INSTALL_DIR="${INSTALL_DIR:-}"
+fi
 PAYLOAD_DIR="${PAYLOAD_DIR:-}"
 FULL_MODE="${FULL_MODE:-0}"
 EXTRACT_ONLY=0
@@ -22,7 +26,7 @@ Usage: ContextLattice-Install.sh [options]
 
 Options:
   --full                 Start full compose (default is lite)
-  --install-dir PATH     Install/update path (default: $HOME/ContextLattice)
+  --install-dir PATH     Install/update path (default: \$HOME/ContextLattice)
   --extract-only         Verify, replace, reconcile required posture, then exit
   --no-launch            Install and reconcile required posture without launching
   --allow-paid-to-public-downgrade
@@ -78,6 +82,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+[[ -n "${INSTALL_DIR}" ]] || fail "HOME is unset; pass --install-dir PATH."
 
 [[ "${EXPECTED_RELEASE_LANE}" == "public" ]] || fail "public installer lane was not baked at build time."
 EXPECTED_SOURCE_REPOSITORY="sheawinkler/ContextLattice"

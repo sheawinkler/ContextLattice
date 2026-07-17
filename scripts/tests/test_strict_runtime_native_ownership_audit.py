@@ -11,11 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_SCRIPTS = ROOT / "scripts" / "agent"
 sys.path.insert(0, str(AGENT_SCRIPTS))
 
-loader = importlib.machinery.SourceFileLoader("audit_context_boundary", str(AGENT_SCRIPTS / "audit-context-boundary"))
+loader = importlib.machinery.SourceFileLoader(
+    "audit_strict_runtime_native_ownership",
+    str(AGENT_SCRIPTS / "audit-strict-runtime-native-ownership"),
+)
 spec = importlib.util.spec_from_loader(loader.name, loader)
 assert spec is not None
-audit_context_boundary = importlib.util.module_from_spec(spec)
-loader.exec_module(audit_context_boundary)
+audit_native_ownership = importlib.util.module_from_spec(spec)
+loader.exec_module(audit_native_ownership)
 
 
 SOURCE_COMMIT = "a" * 40
@@ -31,36 +34,12 @@ def expected_identity() -> dict[str, str]:
     }
 
 
-def valid_route(path: str, contract_id: str) -> dict[str, object]:
-    return {
-        "name": contract_id,
-        "path": path,
-        "contract_id": contract_id,
-        "bounded": True,
-        "max_total_json_bytes": 4096,
-        "max_string_bytes": 1024,
-        "max_list_items": 32,
-        "metadata_fields": list(audit_context_boundary.REQUIRED_METADATA_FIELDS),
-    }
-
-
 def valid_payload() -> dict[str, object]:
-    registry = audit_context_boundary.agent_contract_registry_identity()
-    routes = [valid_route(path, f"fixture:{path}") for path in audit_context_boundary.REQUIRED_PATHS]
-    routes = [route for route in routes if route["path"] != "/memory/decision-changes"]
-    contract_routes = [valid_route(path, contract_id) for path, contract_id in audit_context_boundary.REQUIRED_CONTRACT_SURFACES]
-    contract_paths = {(path, contract_id) for path, contract_id in audit_context_boundary.REQUIRED_CONTRACT_SURFACES}
-    routes = [
-        route
-        for route in routes
-        if (str(route["path"]), str(route["contract_id"])) not in contract_paths
-        and str(route["path"]) not in {path for path, _ in contract_paths}
-    ]
-    routes.extend(contract_routes)
+    registry = audit_native_ownership.agent_contract_registry_identity()
     return {
         "ok": True,
-        "schema_id": audit_context_boundary.SCHEMA_ID,
-        "generatedAt": audit_context_boundary.now_iso(),
+        "schema_id": audit_native_ownership.SCHEMA_ID,
+        "generatedAt": audit_native_ownership.now_iso(),
         "build": {
             "schema_id": "contextlattice_build_identity.v1",
             "version": "3.19.0-rc.1",
@@ -72,16 +51,25 @@ def valid_payload() -> dict[str, object]:
         },
         "registry_id": registry["registry_id"],
         "registry_version": registry["registry_version"],
-        "status": "bounded",
+        "status": "clean",
         "violationCount": 0,
-        "routes": routes,
+        "pythonHotPathOwnership": {"fallbacks": 0, "byPath": {}},
+        "routes": [
+            {
+                "path": path,
+                "owner": "go_native",
+                "status": "native",
+                "strictRuntimeCompatible": True,
+            }
+            for path in audit_native_ownership.REQUIRED_PATHS
+        ],
         "forbidden_error_markers": [],
     }
 
 
-class ContextBoundaryAuditTests(unittest.TestCase):
+class StrictRuntimeNativeOwnershipAuditTests(unittest.TestCase):
     def test_expected_runtime_identity_matches(self) -> None:
-        result = audit_context_boundary.audit_payload(valid_payload(), **expected_identity())
+        result = audit_native_ownership.audit_payload(valid_payload(), **expected_identity())
         self.assertTrue(result["ok"], result["findings"])
         self.assertEqual(
             result["expected_build"],
@@ -98,7 +86,7 @@ class ContextBoundaryAuditTests(unittest.TestCase):
             with self.subTest(field=field):
                 payload = valid_payload()
                 payload["build"][field] = replacement
-                result = audit_context_boundary.audit_payload(payload, **expected_identity())
+                result = audit_native_ownership.audit_payload(payload, **expected_identity())
                 self.assertFalse(result["ok"])
                 self.assertTrue(
                     any(
@@ -111,7 +99,7 @@ class ContextBoundaryAuditTests(unittest.TestCase):
     def test_expected_runtime_identity_missing_object_is_rejected(self) -> None:
         payload = valid_payload()
         payload.pop("build")
-        result = audit_context_boundary.audit_payload(payload, **expected_identity())
+        result = audit_native_ownership.audit_payload(payload, **expected_identity())
         self.assertFalse(result["ok"])
         self.assertTrue(
             any(finding.get("reason") == "build_identity_missing" for finding in result["findings"]),
@@ -121,7 +109,7 @@ class ContextBoundaryAuditTests(unittest.TestCase):
     def test_expected_boot_nonce_missing_is_rejected(self) -> None:
         payload = valid_payload()
         payload["build"].pop("boot_nonce")
-        result = audit_context_boundary.audit_payload(payload, **expected_identity())
+        result = audit_native_ownership.audit_payload(payload, **expected_identity())
         self.assertFalse(result["ok"])
         self.assertTrue(
             any(
@@ -134,64 +122,24 @@ class ContextBoundaryAuditTests(unittest.TestCase):
     def test_stale_generated_at_is_rejected(self) -> None:
         payload = valid_payload()
         payload["generatedAt"] = "2000-01-01T00:00:00Z"
-        result = audit_context_boundary.audit_payload(payload)
+        result = audit_native_ownership.audit_payload(payload)
         self.assertFalse(result["ok"])
         self.assertTrue(
             any(finding.get("reason") == "generated_at_stale" for finding in result["findings"]),
             result["findings"],
         )
 
+    def test_current_registry_and_t2_routes_pass(self) -> None:
+        result = audit_native_ownership.audit_payload(valid_payload())
+        self.assertTrue(result["ok"], result["findings"])
+
     def test_stale_registry_is_rejected(self) -> None:
         payload = valid_payload()
         payload["registry_version"] = int(payload["registry_version"]) - 1
-        result = audit_context_boundary.audit_payload(payload)
+        result = audit_native_ownership.audit_payload(payload)
         self.assertFalse(result["ok"])
         self.assertTrue(
             any(finding.get("reason") == "registry_version_mismatch" for finding in result["findings"]),
-            result["findings"],
-        )
-
-    def test_duplicate_path_contracts_are_both_required(self) -> None:
-        payload = valid_payload()
-        result = audit_context_boundary.audit_payload(payload)
-        self.assertTrue(result["ok"], result["findings"])
-
-        payload["routes"] = [
-            route
-            for route in payload["routes"]
-            if not (
-                route["path"] == "/memory/decision-changes"
-                and route["contract_id"] == "decision_change_query.v1"
-            )
-        ]
-        result = audit_context_boundary.audit_payload(payload)
-        self.assertFalse(result["ok"])
-        self.assertIn(
-            {
-                "reason": "required_contract_boundary_missing",
-                "path": "/memory/decision-changes",
-                "contract_id": "decision_change_query.v1",
-            },
-            result["findings"],
-        )
-
-    def test_duplicate_path_unbounded_contract_cannot_hide(self) -> None:
-        payload = valid_payload()
-        query_route = next(
-            route
-            for route in payload["routes"]
-            if route["path"] == "/memory/decision-changes"
-            and route["contract_id"] == "decision_change_query.v1"
-        )
-        query_route["bounded"] = False
-        result = audit_context_boundary.audit_payload(payload)
-        self.assertFalse(result["ok"])
-        self.assertTrue(
-            any(
-                finding.get("reason") == "required_boundary_not_bounded"
-                and finding.get("contract_id") == "decision_change_query.v1"
-                for finding in result["findings"]
-            ),
             result["findings"],
         )
 

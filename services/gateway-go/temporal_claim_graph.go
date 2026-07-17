@@ -65,17 +65,18 @@ type temporalClaim struct {
 }
 
 type temporalClaimStore struct {
-	mu              sync.RWMutex
-	enabled         bool
-	path            string
-	maxClaims       int
-	compactEvery    int
-	fsync           bool
-	claims          map[string]temporalClaim
-	logEntries      int
-	parseErrors     int
-	lastPersistedAt string
-	lastError       string
+	mu                sync.RWMutex
+	enabled           bool
+	path              string
+	maxClaims         int
+	compactEvery      int
+	fsync             bool
+	claims            map[string]temporalClaim
+	proofSessionIndex map[string][]string
+	logEntries        int
+	parseErrors       int
+	lastPersistedAt   string
+	lastError         string
 }
 
 type temporalClaimQuery struct {
@@ -92,12 +93,13 @@ type temporalClaimQuery struct {
 
 func newTemporalClaimStoreFromEnv() (*temporalClaimStore, error) {
 	store := &temporalClaimStore{
-		enabled:      envBool("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED", true),
-		path:         resolveStoragePath("CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH", filepath.Join(".data", "orchestrator", "temporal_claims.ndjson")),
-		maxClaims:    clampInt(envInt("CONTEXTLATTICE_TEMPORAL_CLAIMS_MAX", 10000), 128, 100000),
-		compactEvery: clampInt(envInt("CONTEXTLATTICE_TEMPORAL_CLAIMS_COMPACT_EVERY", 512), 32, 10000),
-		fsync:        envBool("CONTEXTLATTICE_TEMPORAL_CLAIMS_FSYNC", true),
-		claims:       map[string]temporalClaim{},
+		enabled:           envBool("CONTEXTLATTICE_TEMPORAL_CLAIMS_ENABLED", true),
+		path:              resolveStoragePath("CONTEXTLATTICE_TEMPORAL_CLAIMS_PATH", filepath.Join(".data", "orchestrator", "temporal_claims.ndjson")),
+		maxClaims:         clampInt(envInt("CONTEXTLATTICE_TEMPORAL_CLAIMS_MAX", 10000), 128, 100000),
+		compactEvery:      clampInt(envInt("CONTEXTLATTICE_TEMPORAL_CLAIMS_COMPACT_EVERY", 512), 32, 10000),
+		fsync:             envBool("CONTEXTLATTICE_TEMPORAL_CLAIMS_FSYNC", true),
+		claims:            map[string]temporalClaim{},
+		proofSessionIndex: map[string][]string{},
 	}
 	if !store.enabled || strings.TrimSpace(store.path) == "" {
 		store.enabled = false
@@ -134,7 +136,7 @@ func (s *temporalClaimStore) load() error {
 			continue
 		}
 		claim.searchText = temporalClaimSearchText(claim)
-		s.claims[claim.ClaimID] = claim
+		s.setClaimLocked(claim)
 		s.logEntries++
 	}
 	if err := scanner.Err(); err != nil {
@@ -234,13 +236,65 @@ func normalizeTemporalClaim(payload map[string]any, previous *temporalClaim) (te
 		Branch:       clipText(strings.TrimSpace(anyToString(payload["branch"])), 200),
 		Commit:       clipText(strings.TrimSpace(anyToString(payload["commit"])), 128),
 		AgentID:      clipText(strings.TrimSpace(anyToString(payload["agent_id"])), 128),
-		SessionID:    clipText(strings.TrimSpace(anyToString(payload["session_id"])), 128),
+		SessionID:    clipText(strings.TrimSpace(anyToString(payload["session_id"])), maxAgentSessionIDLength),
 		Revision:     revision,
 		CreatedAt:    createdAt,
 		UpdatedAt:    now,
 	}
 	claim.searchText = temporalClaimSearchText(claim)
 	return claim, nil
+}
+
+func (s *temporalClaimStore) setClaimLocked(claim temporalClaim) {
+	if s.claims == nil {
+		s.claims = map[string]temporalClaim{}
+	}
+	if s.proofSessionIndex == nil {
+		s.proofSessionIndex = map[string][]string{}
+	}
+	if previous, exists := s.claims[claim.ClaimID]; exists {
+		s.removeProofClaimRefLocked(previous)
+	}
+	s.claims[claim.ClaimID] = claim
+	if key := temporalClaimProofIndexKey(claim.Project, claim.SessionID); key != "" {
+		refs := append(s.proofSessionIndex[key], claim.ClaimID)
+		limit := maxAgentProofTimelineSourceScans * 2
+		if len(refs) > limit {
+			refs = append([]string(nil), refs[len(refs)-limit:]...)
+		}
+		s.proofSessionIndex[key] = refs
+	}
+}
+
+func temporalClaimProofIndexKey(project, sessionID string) string {
+	project = strings.ToLower(strings.TrimSpace(project))
+	sessionID = strings.TrimSpace(sessionID)
+	if project == "" || sessionID == "" {
+		return ""
+	}
+	return project + "\x00" + sessionID
+}
+
+func (s *temporalClaimStore) removeProofClaimRefLocked(claim temporalClaim) {
+	if s == nil || s.proofSessionIndex == nil {
+		return
+	}
+	key := temporalClaimProofIndexKey(claim.Project, claim.SessionID)
+	if key == "" {
+		return
+	}
+	refs := s.proofSessionIndex[key]
+	kept := make([]string, 0, len(refs))
+	for _, claimID := range refs {
+		if claimID != claim.ClaimID {
+			kept = append(kept, claimID)
+		}
+	}
+	if len(kept) == 0 {
+		delete(s.proofSessionIndex, key)
+		return
+	}
+	s.proofSessionIndex[key] = kept
 }
 
 func normalizeOptionalClaimTime(raw string, field string) (string, error) {
@@ -383,7 +437,7 @@ func (s *temporalClaimStore) upsert(payload map[string]any) (temporalClaim, erro
 		return temporalClaim{}, err
 	}
 	for _, row := range changed {
-		s.claims[row.ClaimID] = row
+		s.setClaimLocked(row)
 	}
 	s.trimLocked()
 	if s.logEntries >= s.maxClaims*2 && s.logEntries%s.compactEvery < len(changed) {
@@ -442,6 +496,7 @@ func (s *temporalClaimStore) trimLocked() {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].UpdatedAt > rows[j].UpdatedAt })
 	for _, claim := range rows[s.maxClaims:] {
+		s.removeProofClaimRefLocked(claim)
 		delete(s.claims, claim.ClaimID)
 	}
 }

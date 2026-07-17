@@ -1149,12 +1149,12 @@ func (s *server) memoryObjectiveTransition(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
 		return
 	}
-	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "objective") {
-		return
-	}
 	payload, err := readOptionalJSONBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "objective") {
 		return
 	}
 	if strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["idempotency_key"]), anyToString(payload["idempotencyKey"]))) == "" {
@@ -1223,16 +1223,20 @@ func (s *server) memoryDecisionChanges(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
 		return
 	}
+	payload := map[string]any{}
+	if r.Method == http.MethodPost {
+		var err error
+		payload, err = readOptionalJSONBody(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+			return
+		}
+	}
 	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "decision") {
 		return
 	}
 	switch r.Method {
 	case http.MethodPost:
-		payload, err := readOptionalJSONBody(r)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
-			return
-		}
 		if strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["idempotency_key"]), anyToString(payload["idempotencyKey"]))) == "" {
 			if headerKey := strings.TrimSpace(r.Header.Get("Idempotency-Key")); headerKey != "" {
 				payload["idempotency_key"] = headerKey

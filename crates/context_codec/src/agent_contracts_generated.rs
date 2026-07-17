@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 28;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 30;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -18,6 +18,7 @@ pub const AGENT_PACKET_DELTA_V1: &str = "agent_packet_delta.v1";
 pub const AGENT_PACKET_RECONSTRUCTION_V1: &str = "agent_packet_reconstruction.v1";
 pub const AGENT_PREFLIGHT_RESPONSE_V1: &str = "agent_preflight_response.v1";
 pub const AGENT_PROMPT_CONTEXT_PACKAGE_V1: &str = "agent_prompt_context_package.v1";
+pub const AGENT_PROOF_TIMELINE_V1: &str = "agent_proof_timeline.v1";
 pub const AGENT_RUN_TRACE_V1: &str = "agent_run_trace.v1";
 pub const AGENT_SESSION_ROLLUP_V1: &str = "agent_session_rollup.v1";
 pub const AGENT_SPAN_V1: &str = "agent_span.v1";
@@ -75,6 +76,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_PACKET_RECONSTRUCTION_V1,
     AGENT_PREFLIGHT_RESPONSE_V1,
     AGENT_PROMPT_CONTEXT_PACKAGE_V1,
+    AGENT_PROOF_TIMELINE_V1,
     AGENT_RUN_TRACE_V1,
     AGENT_SESSION_ROLLUP_V1,
     AGENT_SPAN_V1,
@@ -165,6 +167,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: AGENT_PROMPT_CONTEXT_PACKAGE_V1,
         payload_kind: "agent_prompt_context_package",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_PROOF_TIMELINE_V1,
+        payload_kind: "agent_proof_timeline",
         contract_version: 1,
         required_output_mode: "json_object",
     },

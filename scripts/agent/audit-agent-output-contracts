@@ -83,6 +83,7 @@ REQUIRED_CONTRACTS = (
     "universal_agent_adapter_response.v1",
     "agent_session_rollup.v1",
     "agent_prompt_context_package.v1",
+    "agent_proof_timeline.v1",
     "retrieval_progress.v1",
     "steering_comment.v1",
 )
@@ -1949,6 +1950,65 @@ def sample_agent_prompt_context_package(registry: dict[str, Any]) -> dict[str, A
     )
 
 
+def sample_agent_proof_timeline(registry: dict[str, Any]) -> dict[str, Any]:
+    stages = {
+        stage: {"status": "present", "count": 1}
+        for stage in ("context", "action", "correction", "verification", "outcome", "learning")
+    }
+    return attach_format_contract(
+        "agent_proof_timeline.v1",
+        {
+            "ok": True,
+            "schema_id": "agent_proof_timeline.v1",
+            "version": 1,
+            "session": {"id": "sess_audit", "event_count": 6, "retained_event_count": 6},
+            "integrity": {
+                "status": "verified",
+                "complete": True,
+                "deterministic_ordering": True,
+                "exact_identity_joins": True,
+                "timestamp_inference_used": False,
+                "explicit_gaps": True,
+                "source_anchors_stable": True,
+                "authoritative_ledger_mutations": 0,
+                "provider_calls": 0,
+                "external_network_calls": 0,
+            },
+            "source_anchors": {"before": {"session": "a"}, "after": {"session": "a"}, "stable": True},
+            "stage_order": list(stages),
+            "stages": stages,
+            "missing_stages": [],
+            "timeline": [],
+            "gaps": [],
+            "metrics": {
+                "source_row_count": 6,
+                "joined_row_count": 6,
+                "emitted_row_count": 6,
+                "eligible_exact_link_coverage": 1,
+                "event_link_fidelity": 1,
+                "ordering_fidelity": 1,
+                "duplicate_count": 0,
+                "conflict_count": 0,
+                "cross_scope_rejected": 0,
+                "missing_join_key_count": 0,
+                "redaction_count": 0,
+                "display_compacted_count": 0,
+                "missing_stage_count": 0,
+                "silent_gap_count": 0,
+                "projection_ms": 1,
+            },
+            "rollback": {
+                "env": "CONTEXTLATTICE_AGENT_PROOF_TIMELINE_ENABLED=false",
+                "fallback_schema": "agent_run_trace.v1",
+                "fallback_route": "/v1/agents/sessions/{session_id}/trace",
+                "authoritative_ledgers_unchanged": True,
+            },
+            "limits": {"timeline_rows": 256, "projection": "bounded_read_only", "raw_prompt_persisted": False},
+        },
+        registry,
+    )
+
+
 def validate_expected_failure(contract_id: str, payload: dict[str, Any], reason: str) -> dict[str, Any] | None:
     findings = validate_agent_contract_payload(contract_id, payload)
     if not findings:
@@ -2049,6 +2109,7 @@ def run_audit() -> list[dict[str, Any]]:
         ("universal_agent_adapter_response.v1", sample_universal_agent_adapter_response(registry)),
         ("agent_session_rollup.v1", sample_agent_session_rollup(registry)),
         ("agent_prompt_context_package.v1", sample_agent_prompt_context_package(registry)),
+        ("agent_proof_timeline.v1", sample_agent_proof_timeline(registry)),
         ("retrieval_progress.v1", sample_retrieval_progress()),
         ("steering_comment.v1", sample_steering_comment()),
     ):

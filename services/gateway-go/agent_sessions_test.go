@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -46,8 +47,61 @@ func getAgentSessionJSON(t *testing.T, url string) (int, map[string]any) {
 	return resp.StatusCode, payload
 }
 
+func TestAgentSessionIDsAreLosslessAtCanonicalLimitAndRejectOverflow(t *testing.T) {
+	store := &agentSessionStore{
+		path: filepath.Join(t.TempDir(), "agent-sessions.json"), maxKeep: 16, maxEvents: 16, idleTTL: time.Hour,
+		sessions: map[string]map[string]any{}, order: []string{}, events: map[string][]map[string]any{},
+	}
+	prefix := strings.Repeat("a", 150)
+	firstID, secondID := prefix+"-first", prefix+"-second"
+	for _, sessionID := range []string{firstID, secondID} {
+		if len(sessionID) > maxAgentSessionIDLength {
+			t.Fatalf("test session id exceeds canonical limit: %d", len(sessionID))
+		}
+		session, err := store.start(map[string]any{"session_id": sessionID, "agent": "codex", "project": "contextlattice"})
+		if err != nil || anyToString(session["id"]) != sessionID {
+			t.Fatalf("canonical session id was not stored losslessly: id=%q session=%#v err=%v", sessionID, session, err)
+		}
+		_, event, err := store.appendEvent(sessionID, map[string]any{"type": "checkpoint.written", "project": "contextlattice"})
+		if err != nil || anyToString(event["session_id"]) != sessionID {
+			t.Fatalf("canonical session event id was not stored losslessly: id=%q event=%#v err=%v", sessionID, event, err)
+		}
+	}
+	if first, _, ok := store.get(firstID); !ok || anyToString(first["id"]) != firstID {
+		t.Fatalf("first long session id aliased: %#v", first)
+	}
+	if second, _, ok := store.get(secondID); !ok || anyToString(second["id"]) != secondID {
+		t.Fatalf("second long session id aliased: %#v", second)
+	}
+	overflow := strings.Repeat("z", maxAgentSessionIDLength+1)
+	if _, err := store.start(map[string]any{"session_id": overflow}); !errors.Is(err, errAgentSessionIDInvalid) {
+		t.Fatalf("overflow session id was not rejected: %v", err)
+	}
+}
+
+func TestAgentSessionProjectlessReuseNeverSelectsProjectBackedHistory(t *testing.T) {
+	store := &agentSessionStore{
+		path: filepath.Join(t.TempDir(), "agent-sessions.json"), maxKeep: 16, maxEvents: 16, idleTTL: time.Hour,
+		sessions: map[string]map[string]any{}, order: []string{}, events: map[string][]map[string]any{},
+	}
+	projectBacked, reused, err := store.startOrReuse(map[string]any{
+		"ensure": true, "session_id": "sess-project-backed", "reuse_key": "shared-selector",
+		"agent": "codex", "project": "alpha", "objective": "project-backed history",
+	})
+	if err != nil || reused {
+		t.Fatalf("seed project-backed session: session=%#v reused=%t err=%v", projectBacked, reused, err)
+	}
+	projectless, reused, err := store.startOrReuse(map[string]any{
+		"ensure": true, "reuse_key": "shared-selector", "agent": "codex", "objective": "projectless compatibility",
+	})
+	if err != nil || reused || anyToString(projectless["id"]) == anyToString(projectBacked["id"]) || agentSessionProject(projectless) != "" {
+		t.Fatalf("projectless reuse selected project-backed history: project_backed=%#v projectless=%#v reused=%t err=%v", projectBacked, projectless, reused, err)
+	}
+}
+
 func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	t.Setenv(agentProofTimelineFeatureEnv, "true")
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -244,6 +298,22 @@ func TestAgentSessionLifecycleAndRuntimeTelemetry(t *testing.T) {
 	validation := anyMap(anyMap(traceResponse["format_contract"])["validation"])
 	if anyToString(validation["status"]) != "passed" {
 		t.Fatalf("expected trace contract validation to pass, got %#v", traceResponse["format_contract"])
+	}
+
+	status, proofResponse := getAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/sess-test/proof-timeline")
+	if status != http.StatusOK || !anyToBool(proofResponse["ok"]) {
+		t.Fatalf("expected proof-timeline route ok, status=%d payload=%#v", status, proofResponse)
+	}
+	if anyToString(proofResponse["schema_id"]) != agentProofTimelineContractID {
+		t.Fatalf("expected proof timeline contract, got %#v", proofResponse)
+	}
+	proofValidation := anyMap(anyMap(proofResponse["format_contract"])["validation"])
+	if anyToString(proofValidation["status"]) != "passed" {
+		t.Fatalf("expected proof timeline contract validation to pass, got %#v", proofResponse["format_contract"])
+	}
+	proofIntegrity := anyMap(proofResponse["integrity"])
+	if anyToInt(proofIntegrity["provider_calls"], -1) != 0 || anyToInt(proofIntegrity["authoritative_ledger_mutations"], -1) != 0 {
+		t.Fatalf("proof timeline must remain a local read-only projection, got %#v", proofIntegrity)
 	}
 
 	status, runtime := getAgentSessionJSON(t, gateway.URL+"/telemetry/agents/runtime?limit=4")

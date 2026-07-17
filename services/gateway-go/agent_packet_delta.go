@@ -809,7 +809,7 @@ func buildAgentPacketOperations(base, target map[string]any) ([]any, []any, erro
 	return operations, tombstones, nil
 }
 
-func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVisibleCount, incrementalModelVisibleCount, deltaCount tokenCountResult) {
+func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVisibleCount, incrementalModelVisibleCount, deltaCount tokenCountResult, proofIdentity map[string]any) {
 	allExact := fullCount.TokenizerExact && modelVisibleCount.TokenizerExact && incrementalModelVisibleCount.TokenizerExact && deltaCount.TokenizerExact
 	net := fullCount.Tokens - deltaCount.Tokens
 	saved := maxInt(0, net)
@@ -817,17 +817,16 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 		net = 0
 		saved = 0
 	}
-	ratio := 1.0
-	if deltaCount.Tokens > 0 {
-		ratio = roundFloat(float64(fullCount.Tokens)/float64(deltaCount.Tokens), 3)
-	}
+	// Ratios are exactly derivable from the integer receipt. Keeping their
+	// decimal expansions in the counted wire envelope can create a token-count
+	// cycle with no fixed point, so the delta protocol emits only its exact
+	// integer basis and lets telemetry derive presentation ratios.
 	delta["token_budget"] = map[string]any{
 		"full_packet_tokens_exact":                 fullCount.Tokens,
 		"delta_wire_tokens_exact":                  deltaCount.Tokens,
 		"incremental_model_visible_tokens_exact":   incrementalModelVisibleCount.Tokens,
 		"reconstructed_model_visible_tokens_exact": modelVisibleCount.Tokens,
 		"tokens_saved_exact":                       saved,
-		"reduction_fraction":                       roundFloat(float64(saved)/float64(maxInt(fullCount.Tokens, 1)), 6),
 		"delta_smaller_than_full":                  allExact && deltaCount.Tokens < fullCount.Tokens,
 		"equal_reconstructed_context":              true,
 		"estimate_method":                          deltaCount.Method,
@@ -835,7 +834,7 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 		"tokenizer_exact":                          allExact,
 		"tokenizer_encoding":                       deltaCount.Encoding,
 	}
-	delta["token_impact"] = map[string]any{
+	impact := map[string]any{
 		"schema_id":                "contextlattice_token_impact.v1",
 		"version":                  1,
 		"scope":                    "agent_packet_delta_transport",
@@ -845,7 +844,6 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 		"transport_tokens_exact":   deltaCount.Tokens,
 		"saved_tokens_estimate":    saved,
 		"net_token_delta":          net,
-		"compression_ratio":        ratio,
 		"transport_inclusive":      true,
 		"estimate_method":          deltaCount.Method,
 		"calibration_grade":        deltaCount.CalibrationGrade,
@@ -853,6 +851,8 @@ func applyAgentPacketDeltaTokenMetadata(delta map[string]any, fullCount, modelVi
 		"tokenizer_encoding":       deltaCount.Encoding,
 		"measurement_limit":        "Delta wire tokens and reconstructed model-visible tokens are reported separately; no provider token or inference-avoidance claim is made.",
 	}
+	copyProofTimelineIdentity(impact, proofIdentity)
+	delta["token_impact"] = impact
 	if !allExact {
 		anyMap(delta["token_impact"])["measurement_limit"] = "Exact tokenizer accounting is unavailable; return the verified full Agent Packet."
 	}
@@ -945,6 +945,7 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 		"operations": delta["operations"],
 		"tombstones": delta["tombstones"],
 	})
+	proofIdentity := proofTimelineIdentityFromMaps(anyMap(fullPacket["token_impact"]), fullPacket)
 
 	// Attach and enforce the boundary once with a complete metadata shape. The
 	// convergence loop changes only internally generated numeric accounting
@@ -953,7 +954,7 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 	// payload and reconstructs it before any delta can be emitted.
 	provisionalCount := fullCount
 	provisionalCount.Tokens = maxInt(1, fullCount.Tokens/2)
-	applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, provisionalCount)
+	applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, provisionalCount, proofIdentity)
 	delta = attachPayloadFormatContract(
 		agentPacketDeltaContractID,
 		delta,
@@ -962,13 +963,27 @@ func agentPacketDeltaTokenMetadata(delta map[string]any, fullPacket map[string]a
 		agentPacketEndpointForSurface(anyToString(delta["surface"])),
 	)
 
-	for pass := 0; pass < 6; pass++ {
+	stabilizePayloadFormatContractJSONBytes(delta)
+	candidate := contextPackCountAnyTokens(delta)
+	seen := map[int]struct{}{}
+	highestCandidate := candidate.Tokens
+	for pass := 0; pass < maxAgentPacketAccountingSearchPasses && candidate.TokenizerExact; pass++ {
+		if _, repeated := seen[candidate.Tokens]; repeated {
+			highestCandidate++
+			candidate.Tokens = highestCandidate
+		}
+		seen[candidate.Tokens] = struct{}{}
+		if candidate.Tokens > highestCandidate {
+			highestCandidate = candidate.Tokens
+		}
+
+		applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, candidate, proofIdentity)
 		stabilizePayloadFormatContractJSONBytes(delta)
-		deltaCount := contextPackCountAnyTokens(delta)
-		if reported := anyToInt(anyMap(delta["token_budget"])["delta_wire_tokens_exact"], 0); reported > 0 && reported == deltaCount.Tokens {
+		observed := contextPackCountAnyTokens(delta)
+		if observed.TokenizerExact && observed.Tokens == candidate.Tokens {
 			return delta
 		}
-		applyAgentPacketDeltaTokenMetadata(delta, fullCount, modelVisibleCount, incrementalModelVisibleCount, deltaCount)
+		candidate = observed
 	}
 
 	// A non-converging self-count is never eligible for delta delivery. The

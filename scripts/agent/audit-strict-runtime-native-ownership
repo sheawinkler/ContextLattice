@@ -8,7 +8,14 @@ import copy
 import json
 from typing import Any
 
-from _common import emit, request_json
+from _common import (
+    agent_contract_registry_identity,
+    emit,
+    now_iso,
+    request_json,
+    runtime_identity_expectation_findings,
+    runtime_payload_freshness,
+)
 
 
 SCHEMA_ID = "strict_runtime_native_ownership.v1"
@@ -19,6 +26,7 @@ REQUIRED_PATHS = (
     "/ops/context-boundary",
     "/ops/native-ownership",
     "/memory/context-pack",
+    "/memory/agent-packet/reconstruct",
     "/tools/context_pack",
     "/memory/continuity/reconcile",
     "/memory/objectives/transition",
@@ -61,10 +69,33 @@ def payload_without_marker_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
-def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def audit_payload(
+    payload: dict[str, Any],
+    *,
+    expected_source_commit: str | None = None,
+    expected_source_tree: str | None = None,
+    expected_boot_nonce: str | None = None,
+) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
+    expected_registry = agent_contract_registry_identity()
+    build, expected_build, identity_findings = runtime_identity_expectation_findings(
+        payload,
+        expected_source_commit=expected_source_commit,
+        expected_source_tree=expected_source_tree,
+        expected_boot_nonce=expected_boot_nonce,
+    )
+    findings.extend(identity_findings)
     if payload.get("schema_id") != SCHEMA_ID:
         findings.append({"reason": "schema_id_mismatch", "expected": SCHEMA_ID, "actual": payload.get("schema_id")})
+    if freshness := runtime_payload_freshness(payload.get("generatedAt")):
+        findings.append(freshness)
+    if expected_registry.get("ok") is not True:
+        findings.append({"reason": "registry_manifest_unavailable", "detail": expected_registry.get("error")})
+    else:
+        if payload.get("registry_id") != expected_registry["registry_id"]:
+            findings.append({"reason": "registry_id_mismatch", "expected": expected_registry["registry_id"], "actual": payload.get("registry_id")})
+        if as_int(payload.get("registry_version")) != expected_registry["registry_version"]:
+            findings.append({"reason": "registry_version_mismatch", "expected": expected_registry["registry_version"], "actual": payload.get("registry_version")})
     if payload.get("ok") is not True:
         findings.append({"reason": "native_ownership_not_ok", "status": payload.get("status")})
     if as_int(payload.get("violationCount")) != 0:
@@ -102,6 +133,12 @@ def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": not findings,
         "schema_id": "contextlattice_strict_runtime_native_ownership_audit.v1",
         "source_schema_id": payload.get("schema_id"),
+        "registry_id": payload.get("registry_id"),
+        "registry_version": payload.get("registry_version"),
+        "expected_registry_id": expected_registry.get("registry_id"),
+        "expected_registry_version": expected_registry.get("registry_version"),
+        "build": build,
+        "expected_build": expected_build,
         "status": payload.get("status"),
         "strictNoPython": payload.get("strictNoPython"),
         "routeOwnerClass": payload.get("routeOwnerClass"),
@@ -118,11 +155,19 @@ def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit strict-runtime native route ownership.")
     parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--expected-source-commit")
+    parser.add_argument("--expected-source-tree")
+    parser.add_argument("--expected-boot-nonce")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
     payload = request_json("GET", "/ops/native-ownership", None, args.timeout)
-    result = audit_payload(payload)
+    result = audit_payload(
+        payload,
+        expected_source_commit=args.expected_source_commit,
+        expected_source_tree=args.expected_source_tree,
+        expected_boot_nonce=args.expected_boot_nonce,
+    )
     emit(result, args.pretty)
     return 0 if result["ok"] else 1
 

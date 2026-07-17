@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -251,12 +250,58 @@ func TestAgentPacketTransportAccountingCycleConverges(t *testing.T) {
 	t.Logf("accounting_cycle_reported=%d observed=%d stabilized=%d", reported, observed.Tokens, finalCount.Tokens)
 }
 
+func TestAgentPacketDeltaAccountingCycleConverges(t *testing.T) {
+	now := time.Date(2026, 7, 17, 4, 1, 0, 0, time.UTC)
+	baseResponse := frontierT2PacketResponse()
+	anyMap(baseResponse["context_pack_quality"])["sample_id"] = "cpq_d94f3abc63d547ac4934e2f3"
+	baseRequest := frontierT2PacketRequest()
+	base := finalizeAgentPacketWithIdentity(buildAgentPacket(baseResponse, baseRequest, "tools_synthesis_pack"), nil, baseRequest, now.Add(5*time.Nanosecond))
+	if findings := validateAgentContractPayload(agentPacketContractID, base); len(findings) > 0 {
+		t.Fatalf("expected valid cycle base, got %#v", findings)
+	}
+
+	targetResponse := frontierT2PacketResponse()
+	anyMap(targetResponse["context_pack_quality"])["sample_id"] = "cpq_14e7401c8ba7c1b283780094"
+	deltaRequest := frontierT2DeltaRequest(t, base)
+	delta := finalizeAgentPacketForRequestAt(
+		buildAgentPacket(targetResponse, deltaRequest, "tools_synthesis_pack"),
+		deltaRequest,
+		now.Add(time.Second+5*time.Nanosecond),
+	)
+	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID {
+		t.Fatalf("cycle-aware delta accounting fell back to the full packet: %#v", delta["delta_fallback"])
+	}
+	budget := anyMap(delta["token_budget"])
+	observed := contextPackCountAnyTokens(delta)
+	if reported := anyToInt(budget["delta_wire_tokens_exact"], 0); !observed.TokenizerExact || reported != observed.Tokens {
+		t.Fatalf("delta accounting did not reach an exact fixed point: reported=%d observed=%#v", reported, observed)
+	}
+	if !anyToBool(budget["delta_smaller_than_full"]) || anyToInt(budget["tokens_saved_exact"], 0) <= 0 {
+		t.Fatalf("converged delta lost its real wire saving: %#v", budget)
+	}
+	if _, exists := budget["reduction_fraction"]; exists {
+		t.Fatal("delta wire accounting reintroduced a self-referential decimal reduction")
+	}
+	if _, exists := anyMap(delta["token_impact"])["compression_ratio"]; exists {
+		t.Fatal("delta wire accounting reintroduced a self-referential decimal ratio")
+	}
+	if _, err := reconstructAgentPacket(base, delta, now.Add(time.Minute), true); err != nil {
+		t.Fatalf("cycle-aware delta did not reconstruct: %v", err)
+	}
+}
+
 func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), frontierT2PacketRequest(), now)
 	request := frontierT2DeltaRequest(t, base)
+	targetResponse := frontierT2ChangedResponse(t)
+	copyProofTimelineIdentity(anyMap(targetResponse["token_impact"]), map[string]any{
+		"sample_id": "cpq_frontier_t2_holdout", "session_id": "sess_frontier_t2_holdout",
+		"task_id": "task_frontier_t2_holdout", "task_identity_id": "task_identity_frontier_t2_holdout",
+		"execution_lane_id": "lane_frontier_t2_holdout", "project": "contextlattice", "agent_id": "codex_gpt5",
+	})
 	targetFinalization := finalizeAgentPacketWithIdentityProof(
-		buildAgentPacket(frontierT2ChangedResponse(t), request, "synthesis_pack_v2"),
+		buildAgentPacket(targetResponse, request, "synthesis_pack_v2"),
 		anyMap(base["packet_identity"]),
 		request,
 		now.Add(time.Minute),
@@ -303,7 +348,7 @@ func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	if budget := anyMap(directDelta["token_budget"]); !anyToBool(budget["delta_smaller_than_full"]) {
 		t.Fatalf("direct delta is not economical: %#v", budget)
 	}
-	delta := finalizeAgentPacketForRequestAt(buildAgentPacket(frontierT2ChangedResponse(t), request, "synthesis_pack_v2"), request, now.Add(time.Minute))
+	delta := finalizeAgentPacketForRequestAt(buildAgentPacket(targetResponse, request, "synthesis_pack_v2"), request, now.Add(time.Minute))
 	if anyToString(delta["schema_id"]) != agentPacketDeltaContractID {
 		t.Fatalf("expected delta response, got %#v", delta)
 	}
@@ -314,6 +359,19 @@ func TestAgentPacketDeltaRoundTripSavesExactWireTokens(t *testing.T) {
 	}
 	if anyToInt(budget["delta_wire_tokens_exact"], 0) != contextPackCountAnyTokens(delta).Tokens {
 		t.Fatalf("delta wire-token count is not transport exact: %#v", budget)
+	}
+	impact := anyMap(delta["token_impact"])
+	for key, expected := range map[string]string{
+		"sample_id": "cpq_frontier_t2_holdout", "session_id": "sess_frontier_t2_holdout",
+		"task_id": "task_frontier_t2_holdout", "task_identity_id": "task_identity_frontier_t2_holdout",
+		"execution_lane_id": "lane_frontier_t2_holdout", "project": "contextlattice", "agent_id": "codex_gpt5",
+	} {
+		if actual := anyToString(impact[key]); actual != expected {
+			t.Fatalf("delta token impact identity %s=%q want=%q", key, actual, expected)
+		}
+	}
+	if reported := anyToInt(impact["transport_tokens_exact"], 0); reported != contextPackCountAnyTokens(delta).Tokens {
+		t.Fatalf("delta token impact transport accounting drifted: reported=%d impact=%#v", reported, impact)
 	}
 	rawDelta, err := json.Marshal(delta)
 	if err != nil {
@@ -834,8 +892,6 @@ func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
 	if !frontierT2PerformanceGateEnabled() {
 		t.Skip("Frontier T2 wall-clock gate runs in the isolated exact release-tree process")
 	}
-	const sampleCount = 100
-
 	now := time.Date(2026, 7, 15, 18, 30, 0, 0, time.UTC)
 	request := frontierT2PacketRequest()
 	base := frontierT2BuildPacket(t, frontierT2PacketResponse(), request, now)
@@ -856,20 +912,20 @@ func TestFrontierT2AgentPacketProjectionLatencyGate(t *testing.T) {
 	if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
 		t.Fatalf("warm delta projection: %v", err)
 	}
-	durations := make([]time.Duration, 0, sampleCount)
-	for index := 0; index < sampleCount; index++ {
-		started := time.Now()
-		if _, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute)); err != nil {
-			t.Fatalf("delta projection sample %d: %v", index, err)
-		}
-		durations = append(durations, time.Since(started))
+	project := func() error {
+		_, err := buildAgentPacketDeltaFromFinalizedTarget(base, baseIdentity, targetFinalization, now.Add(time.Minute))
+		return err
 	}
-	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	p95 := durations[int(float64(len(durations)-1)*0.95)]
-	if p95 > 20*time.Millisecond {
-		t.Fatalf("delta projection p95=%s exceeds 20ms gate", p95)
+	allocations := frontierT2MeasureProjectionAllocs(t, project)
+	if allocations > frontierT2ProjectionAllocsMax {
+		t.Fatalf("delta projection allocations %.0f exceed %.0f gate", allocations, frontierT2ProjectionAllocsMax)
 	}
-	t.Logf("delta_projection_samples=%d p95_ms=%.6f", len(durations), float64(p95)/float64(time.Millisecond))
+	latency := frontierT2MeasureProjectionLatency(t, project)
+	strictLatency := frontierT2StrictLatencyGateEnabled()
+	if strictLatency && latency.P95MS > frontierT2LatencyP95MaxMillis {
+		t.Fatalf("delta projection median batch p95=%.6fms exceeds 20ms gate; batches=%v", latency.P95MS, latency.BatchP95MS)
+	}
+	t.Logf("delta_projection_samples=%d p95_ms=%.6f batches=%v allocs=%.0f strict_latency=%t", len(latency.Samples), latency.P95MS, latency.BatchP95MS, allocations, strictLatency)
 }
 
 func reconstructionErrorCode(err error) string {

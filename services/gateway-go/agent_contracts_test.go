@@ -197,6 +197,33 @@ func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	}
 }
 
+func TestAgentContractForbiddenFieldsRejectCanonicalAliases(t *testing.T) {
+	timeline := make([]any, 512)
+	for index := range timeline {
+		timeline[index] = map[string]any{"safe": index}
+	}
+	timeline[len(timeline)-1] = map[string]any{"privateKey": "unsafe-late-list-value"}
+	payload := map[string]any{
+		"schema_id": agentProofTimelineContractID,
+		"timeline":  timeline,
+		"evidence": map[string]any{
+			"requestBody": "unsafe", "toolCalls": []any{"unsafe"}, "privateKey": "unsafe",
+		},
+	}
+	findings := validateAgentContractPayload(agentProofTimelineContractID, payload)
+	joined := ""
+	for _, finding := range findings {
+		if anyToString(finding["reason"]) == "forbidden_field_present" {
+			joined += anyToString(finding["path"]) + "\n"
+		}
+	}
+	for _, path := range []string{"evidence.requestBody", "evidence.toolCalls", "evidence.privateKey", "timeline.privateKey"} {
+		if !strings.Contains(joined, path) {
+			t.Fatalf("canonical forbidden alias %q was not rejected: %#v", path, findings)
+		}
+	}
+}
+
 func TestObjectiveRuntimeStateContractValidationPassesAndFails(t *testing.T) {
 	runtime := buildObjectiveRuntimeState(
 		"generic-agent",
