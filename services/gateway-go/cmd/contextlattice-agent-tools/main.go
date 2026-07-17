@@ -2737,6 +2737,12 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 	parsed := parseArgs(args, stringsFlags, bools)
 	c.applyBaseURL(parsed)
 	eventType := "session." + kind
+	if kind == "complete" {
+		eventType = "session.completed"
+	}
+	if kind == "fail" {
+		eventType = "session.failed"
+	}
 	if kind == "event" {
 		if len(parsed.pos) == 0 {
 			return errors.New("event type is required")
