@@ -29,6 +29,7 @@ const a2aReadinessProfileContractID = "a2a_readiness_profile.v1"
 const agentSessionRollupContractID = "agent_session_rollup.v1"
 const agentPromptContextPackageContractID = "agent_prompt_context_package.v1"
 const agentRunTraceContractID = "agent_run_trace.v1"
+const agentProofTimelineContractID = "agent_proof_timeline.v1"
 const agentPacketDeltaOutputContractID = "agent_packet_delta.v1"
 const agentPacketReconstructionOutputContractID = "agent_packet_reconstruction.v1"
 const runAdvisorContractID = "run_advisor.v1"
@@ -293,6 +294,7 @@ func preflightContractsSummary(findings []map[string]any, stats agentBoundarySta
 		agentSessionRollupContractID,
 		agentPromptContextPackageContractID,
 		agentRunTraceContractID,
+		agentProofTimelineContractID,
 		runAdvisorContractID,
 		retrievalProgressContractID,
 		steeringCommentContractID,
@@ -726,11 +728,11 @@ func validateAgentContractPayload(contractID string, payload any) []map[string]a
 	if len(forbidden) > 0 {
 		forbiddenSet := map[string]bool{}
 		for _, item := range forbidden {
-			forbiddenSet[item] = true
+			forbiddenSet[canonicalAgentContractFieldKey(item)] = true
 		}
 		if strings.TrimSpace(anyToString(contract["forbidden_scope"])) == "root" {
 			for key := range object {
-				if forbiddenSet[key] {
+				if forbiddenSet[canonicalAgentContractFieldKey(key)] {
 					findings = append(findings, map[string]any{"reason": "forbidden_field_present", "path": key, "contract_id": contractID})
 				}
 			}
@@ -905,6 +907,18 @@ func agentContractStringList(value any) []string {
 	return out
 }
 
+func canonicalAgentContractFieldKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var out strings.Builder
+	out.Grow(len(value))
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			out.WriteRune(ch)
+		}
+	}
+	return out.String()
+}
+
 func walkForbiddenKeys(value any, forbidden map[string]bool, path string, contractID string) []map[string]any {
 	findings := []map[string]any{}
 	switch typed := value.(type) {
@@ -919,16 +933,13 @@ func walkForbiddenKeys(value any, forbidden map[string]bool, path string, contra
 			if path != "" {
 				currentPath = path + "." + key
 			}
-			if forbidden[key] {
+			if forbidden[canonicalAgentContractFieldKey(key)] {
 				findings = append(findings, map[string]any{"reason": "forbidden_field_present", "path": currentPath, "contract_id": contractID})
 			}
 			findings = append(findings, walkForbiddenKeys(typed[key], forbidden, currentPath, contractID)...)
 		}
 	case []any:
-		for idx, item := range typed {
-			if idx >= 128 {
-				break
-			}
+		for _, item := range typed {
 			findings = append(findings, walkForbiddenKeys(item, forbidden, path, contractID)...)
 		}
 	}

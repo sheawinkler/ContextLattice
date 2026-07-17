@@ -183,6 +183,7 @@ type continuityStore struct {
 	fileBytes                int64
 	entries                  []continuityLedgerEntry
 	lastHash                 string
+	proofIdentityIndex       map[string][]int
 	taskIdentities           map[string]taskIdentityRecord
 	taskAliases              map[string]string
 	taskObjectiveIndex       map[string]map[string]struct{}
@@ -240,6 +241,7 @@ func newContinuityStoreFromEnv() (*continuityStore, error) {
 		maxEntries:               clampInt(envInt("CONTEXTLATTICE_CONTINUITY_LEDGER_MAX_ENTRIES", defaultContinuityLedgerMaxEntries), 128, 1000000),
 		fsync:                    envBool("CONTEXTLATTICE_CONTINUITY_LEDGER_FSYNC", true),
 		entries:                  []continuityLedgerEntry{},
+		proofIdentityIndex:       map[string][]int{},
 		taskIdentities:           map[string]taskIdentityRecord{},
 		taskAliases:              map[string]string{},
 		taskObjectiveIndex:       map[string]map[string]struct{}{},
@@ -307,6 +309,9 @@ func (s *continuityStore) writeCanonicalLedgerBytes(content []byte) error {
 }
 
 func (s *continuityStore) ensureIndexesLocked() {
+	if s.proofIdentityIndex == nil {
+		s.proofIdentityIndex = map[string][]int{}
+	}
 	if s.taskIdentities == nil {
 		s.taskIdentities = map[string]taskIdentityRecord{}
 	}
@@ -428,6 +433,7 @@ func (s *continuityStore) load() error {
 			return fmt.Errorf("apply continuity ledger sequence %d: %w", expectedSequence, err)
 		}
 		s.entries = append(s.entries, entry)
+		s.indexProofTimelineEntryLocked(entry, len(s.entries)-1)
 		previousHash = entry.EntryHash
 		expectedSequence++
 		cursor = next
@@ -639,6 +645,7 @@ func (s *continuityStore) appendLocked(rows []continuityLedgerAppend) ([]continu
 			return nil, s.disableAfterCommitUnknown("apply persisted continuity ledger entry", err)
 		}
 		s.entries = append(s.entries, entry)
+		s.indexProofTimelineEntryLocked(entry, len(s.entries)-1)
 		s.lastHash = entry.EntryHash
 	}
 	s.lastPersistedAt = nowUTCISO()
@@ -1655,12 +1662,12 @@ func (s *server) memoryContinuityReconcile(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "continuity_ledger_unavailable", "status": s.continuity.snapshot()})
 		return
 	}
-	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "continuity") {
-		return
-	}
 	payload, err := readOptionalJSONBody(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
+		return
+	}
+	if !s.enforceOptionalFrontierT1ProjectBoundary(w, r, "continuity") {
 		return
 	}
 	operation := strings.TrimSpace(strings.ToLower(firstNonEmptyStrings(anyToString(payload["operation"]), "reconcile")))

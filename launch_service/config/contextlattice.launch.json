@@ -2,7 +2,7 @@
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
   "release_lane": "distribution-neutral",
-  "launch_window": "ContextLattice v3.18 release wave: July 2026",
+  "launch_window": "ContextLattice v3.19 release wave: July 2026",
   "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.18.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v3.19.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.18.0",
-      "body": "ContextLattice v3.18.0 gives work a durable identity.\n\nHighlights:\n- exact task evidence wins before semantic matching\n- holdout-proven continuity reconnects unambiguous work and abstains on doubt\n- shared objective graphs preserve the living arc of a mission\n- witnessed decision provenance records what changed, why, and against which evidence\n- every governed automation path is entitlement-bound, bounded, and reversible\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.19.0",
+      "body": "ContextLattice v3.19.0 makes agent context smaller, faster, and provable.\n\nHighlights:\n- digest-verified Agent Packet deltas send only what changed, with exact full fallback\n- one proof timeline joins what the agent knew, did, corrected, verified, and learned\n- missing, corrupt, cross-scope, and retention-truncated evidence stays explicit\n- shared retention advances only after signed acknowledgement\n- every governed automation path is entitlement-bound, bounded, and reversible\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.18.0 gives work an identity that survives the agent, account, model, session, branch, and worktree.\n\nExact evidence wins. Semantic continuity reconnects only when the answer is unambiguous. Objectives keep their history. Decisions keep their witnesses.\n\nAgents stop starting over. Intelligence starts compounding.\n\nStart with the CLI: {docs_url}"
+      "body": "ContextLattice v3.19.0 sends agents the delta, not the baggage, then proves the whole run.\n\nEvery packet is digest-verified. Every unsafe or uneconomic delta falls back cleanly. Every context, action, correction, verification, outcome, and learned change lands on one integrity-checked timeline.\n\nLess context waste. More continuity. Receipts for the intelligence.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.18.0 turns continuity from a prompt trick into infrastructure.\n\nA task can now keep one durable identity across agents, accounts, models, sessions, branches, and worktrees. Exact evidence always wins first. A locked deterministic profile reconnects only unambiguous work. Shared objective graphs preserve mission history, while witnessed decision provenance records what changed, why, and against which evidence.\n\nThe result is not a larger prompt. It is an agent stack that stops starting over.\n\nThe CLI remains the primary interface; every governed automation path is entitlement-bound, bounded, and reversible.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.19.0 turns context transport and agent history into verifiable infrastructure.\n\nAgent Packets now negotiate exact digest-bound deltas and reconstruct the same model-visible context, while unsafe, stale, tampered, or uneconomic bases fall back to the full packet. A unified proof timeline joins what the agent knew, did, corrected, verified, and learned without inventing continuity across missing evidence.\n\nThe result is not a larger prompt or another dashboard. It is less context waste and one inspectable chain of proof behind the work.\n\nThe CLI remains the primary interface; every governed automation path is entitlement-bound, bounded, and reversible.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

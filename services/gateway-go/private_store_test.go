@@ -305,6 +305,27 @@ func TestOwnerOnlyMigrationRejectsNestedEscapingSymlink(t *testing.T) {
 	}
 }
 
+func TestEnforceOwnerOnlyPermissionsRejectsSymlinkWithoutMutatingTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional Windows privileges")
+	}
+	target := filepath.Join(t.TempDir(), "target.txt")
+	link := filepath.Join(t.TempDir(), "link.txt")
+	if err := os.WriteFile(target, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceOwnerOnlyPermissions(link, 0o600); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection, got %v", err)
+	}
+	assertMode(t, target, 0o644)
+}
+
 func TestOwnerOnlyAtomicAndAppendWrites(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "store")
 	atomicPath := filepath.Join(root, "atomic.json")

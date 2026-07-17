@@ -132,7 +132,7 @@ func buildAgentPacket(response map[string]any, request map[string]any, surface s
 		"query":      clipText(query, 1600),
 		"project":    clipText(project, 120),
 		"topic_path": clipText(topicPath, 240),
-		"session_id": clipText(sessionID, 128),
+		"session_id": clipText(sessionID, maxAgentSessionIDLength),
 		"agent_id":   clipText(anyToString(response["agent_id"]), 120),
 		"task_id": clipText(firstNonEmptyStrings(
 			anyToString(response["task_id"]),

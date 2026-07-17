@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,48 @@ def commit_all(root: Path, message: str) -> None:
 
 
 class PublicBoundaryGuardTests(unittest.TestCase):
+    def test_public_installer_accepts_explicit_target_without_home(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-installer-headless-") as tmp:
+            installer = Path(tmp) / "ContextLattice-Install.sh"
+            installer.write_text(
+                (ROOT / "packaging/linux/ContextLattice-Install.sh")
+                .read_text(encoding="utf-8")
+                .replace("@RELEASE_LANE@", "public"),
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+            result = subprocess.run(
+                ["bash", str(installer), "--extract-only", "--install-dir", str(Path(tmp) / "install")],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("HOME is unset", result.stderr)
+            self.assertIn("embedded release payload is missing or incomplete", result.stderr)
+
+    def test_public_installer_requires_target_when_home_is_unset(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-installer-no-home-") as tmp:
+            installer = Path(tmp) / "ContextLattice-Install.sh"
+            installer.write_text(
+                (ROOT / "packaging/linux/ContextLattice-Install.sh")
+                .read_text(encoding="utf-8")
+                .replace("@RELEASE_LANE@", "public"),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(installer), "--extract-only"],
+                cwd=ROOT,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("HOME is unset; pass --install-dir PATH", result.stderr)
+
     def test_public_sync_guard_help_is_not_treated_as_remote(self) -> None:
         result = subprocess.run(
             [str(ROOT / "scripts/public_sync_guard.sh"), "--help"],
@@ -692,6 +735,43 @@ class PublicBoundaryGuardTests(unittest.TestCase):
         self.assertIn("BOOTSTRAP_SIDECAR=0", env_example)
         self.assertIn("SKIP_SIDECAR_CHECK=1", env_example)
 
+    def test_gateway_image_builds_can_embed_exact_source_identity(self) -> None:
+        identity_args = (
+            "CONTEXTLATTICE_BUILD_VERSION",
+            "CONTEXTLATTICE_BUILD_CHANNEL",
+            "CONTEXTLATTICE_SOURCE_COMMIT",
+            "CONTEXTLATTICE_SOURCE_TREE",
+        )
+        linker_symbols = (
+            "main.contextLatticeBuildVersion",
+            "main.contextLatticeBuildChannel",
+            "main.contextLatticeSourceCommit",
+            "main.contextLatticeSourceTree",
+        )
+        label_markers = (
+            "org.opencontainers.image.version",
+            "org.opencontainers.image.revision",
+            "io.contextlattice.source-tree",
+            "io.contextlattice.channel",
+        )
+
+        for path in ("Dockerfile.gateway-go", "Dockerfile.hf-lite", "Dockerfile.orchestrator"):
+            with self.subTest(path=path):
+                dockerfile = (ROOT / path).read_text(encoding="utf-8")
+                for marker in (*identity_args, *linker_symbols, *label_markers):
+                    self.assertIn(marker, dockerfile)
+                build_stage_arg = dockerfile.index("ARG CONTEXTLATTICE_BUILD_VERSION", dockerfile.index("FROM "))
+                runtime_stage_arg = dockerfile.rindex("ARG CONTEXTLATTICE_BUILD_VERSION")
+                self.assertLess(dockerfile.index("go mod download"), build_stage_arg)
+                self.assertLess(dockerfile.index("COPY --from="), runtime_stage_arg)
+
+        for path in ("docker-compose.yml", "docker-compose.lite.yml"):
+            with self.subTest(path=path):
+                compose = (ROOT / path).read_text(encoding="utf-8")
+                gateway = compose.split("\n  gateway-go:\n", 1)[1]
+                for marker in identity_args:
+                    self.assertIn(marker, gateway)
+
     def test_requested_cargo_smoke_fails_when_manifest_is_absent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextlattice-cargo-smoke-") as tmp:
             result = run(
@@ -795,6 +875,56 @@ esac
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("memory readback did not exactly match", result.stderr)
+
+    def test_memory_smoke_without_api_key_requires_exact_readback(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextlattice-readback-no-auth-") as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text(
+                """#!/usr/bin/env bash
+state="${FAKE_CURL_STATE:?}"
+url=""
+payload=""
+while (($#)); do
+  case "$1" in
+    -d|--data|--data-binary) payload="${2:-}"; shift 2 ;;
+    -H|--header) shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  */memory/write)
+    printf '%s' "$payload" | sed -E 's/.*"content":"([^"]*)".*/\\1/' > "$state"
+    printf '%s\n' '{}'
+    ;;
+  */memory/files/*) cat "$state" ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            fake_curl.chmod(0o755)
+            result = run(
+                [
+                    "env",
+                    f"PATH={fake_bin}:/usr/bin:/bin",
+                    f"FAKE_CURL_STATE={tmp}/written-content",
+                    "CONTEXTLATTICE_ORCHESTRATOR_API_KEY=",
+                    "SKIP_ORCH_CHECK=1",
+                    "SKIP_SIDECAR_CHECK=1",
+                    "SMOKE_WRITE=1",
+                    "MINDSDB_SMOKE=0",
+                    "RUN_CARGO_SMOKE=0",
+                    f"CONTEXTLATTICE_LOCAL_BACKUP_DIR={tmp}/backup",
+                    f"CONTEXTLATTICE_LOCAL_STORE_PATH={tmp}/spool",
+                    "bash",
+                    str(ROOT / "scripts/devnet_smoke.sh"),
+                ],
+                ROOT,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("memory write/read ok", result.stdout)
 
     def test_memory_smoke_rejects_readback_that_only_contains_payload(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextlattice-readback-superset-") as tmp:

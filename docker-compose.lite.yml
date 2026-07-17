@@ -536,6 +536,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gateway-go
+      args:
+        CONTEXTLATTICE_BUILD_VERSION: ${CONTEXTLATTICE_BUILD_VERSION:-development}
+        CONTEXTLATTICE_BUILD_CHANNEL: ${CONTEXTLATTICE_BUILD_CHANNEL:-local-lite}
+        CONTEXTLATTICE_SOURCE_COMMIT: ${CONTEXTLATTICE_SOURCE_COMMIT:-unknown}
+        CONTEXTLATTICE_SOURCE_TREE: ${CONTEXTLATTICE_SOURCE_TREE:-unknown}
     depends_on:
       qdrant:
         condition: service_started

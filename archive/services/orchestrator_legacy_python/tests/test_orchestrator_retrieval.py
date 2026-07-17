@@ -1075,6 +1075,7 @@ async def test_federated_search_fast_mode_uses_fast_sources(monkeypatch: pytest.
     monkeypatch.setattr(orchestrator, "search_topic_rollups", _rollups)
     monkeypatch.setattr(orchestrator, "search_letta_archival", _letta)
     monkeypatch.setattr(orchestrator, "search_memory_bank_lexical", _memory_bank)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", False)
     monkeypatch.setattr(
         orchestrator,
         "DEFAULT_RETRIEVAL_FAST_SOURCES",
@@ -1374,6 +1375,10 @@ async def test_federated_search_deep_mode_does_not_force_degraded_slow_sources(
         [orchestrator.RETRIEVAL_SOURCE_LETTA, orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK],
     )
     async with orchestrator.retrieval_latency_lock:
+        orchestrator.retrieval_source_latency_samples_by_class.clear()
+        orchestrator.retrieval_source_request_counts_by_class.clear()
+        orchestrator.retrieval_source_error_counts_by_class.clear()
+        orchestrator.retrieval_source_timeout_counts_by_class.clear()
         orchestrator.retrieval_source_request_counts.clear()
         orchestrator.retrieval_source_error_counts.clear()
         orchestrator.retrieval_source_timeout_counts.clear()
@@ -2064,6 +2069,10 @@ async def test_retrieval_slow_source_runtime_policy_marks_degraded_sources(monke
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SLOW_SOURCE_COOLDOWN_SECS", 180.0)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_LETTA_DEGRADED_TIMEOUT_SECS", 12.0)
     async with orchestrator.retrieval_latency_lock:
+        orchestrator.retrieval_source_latency_samples_by_class.clear()
+        orchestrator.retrieval_source_request_counts_by_class.clear()
+        orchestrator.retrieval_source_error_counts_by_class.clear()
+        orchestrator.retrieval_source_timeout_counts_by_class.clear()
         orchestrator.retrieval_source_request_counts.clear()
         orchestrator.retrieval_source_error_counts.clear()
         orchestrator.retrieval_source_timeout_counts.clear()
@@ -2360,6 +2369,7 @@ async def test_federated_search_non_deep_sync_slow_requires_explicit(monkeypatch
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_FALLBACK_SOURCES", [orchestrator.RETRIEVAL_SOURCE_MEMORY_BANK])
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_SLOW_REQUIRES_EXPLICIT", True)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_SYNC_ASYNC_WARM_SLOW_SOURCES", False)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", False)
     monkeypatch.setattr(
         orchestrator,
         "DEFAULT_RETRIEVAL_FAST_SOURCES",
@@ -2439,6 +2449,10 @@ async def test_federated_search_circuit_blocks_degraded_slow_sources(monkeypatch
         [orchestrator.RETRIEVAL_SOURCE_LETTA],
     )
     async with orchestrator.retrieval_latency_lock:
+        orchestrator.retrieval_source_latency_samples_by_class.clear()
+        orchestrator.retrieval_source_request_counts_by_class.clear()
+        orchestrator.retrieval_source_error_counts_by_class.clear()
+        orchestrator.retrieval_source_timeout_counts_by_class.clear()
         orchestrator.retrieval_source_request_counts.clear()
         orchestrator.retrieval_source_error_counts.clear()
         orchestrator.retrieval_source_timeout_counts.clear()
@@ -2552,6 +2566,7 @@ async def test_federated_search_backlog_gating_letta_async_warm(monkeypatch: pyt
     monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_LETTA_ASYNC_WARM_ENABLED", True)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_LETTA_OUTSTANDING_MAX", 10)
     monkeypatch.setattr(orchestrator, "RETRIEVAL_BACKLOG_GATING_LETTA_RETRYING_MAX", 4)
+    monkeypatch.setattr(orchestrator, "RETRIEVAL_RUST_QUALITY_FALLBACK_ENABLED", False)
     monkeypatch.setattr(
         orchestrator,
         "DEFAULT_RETRIEVAL_FAST_SOURCES",
@@ -4591,7 +4606,7 @@ async def test_get_retrieval_source_quality_summarizes_deltas(monkeypatch: pytes
         }
 
     monkeypatch.setattr(orchestrator, "_build_retrieval_metrics_payload", _metrics)
-    result = await orchestrator.get_retrieval_source_quality(limit=5)
+    result = await orchestrator.get_retrieval_source_quality(limit=5, traffic_class="all")
     assert result["baselineSource"] == "qdrant"
     assert result["sources"][0]["source"] == "letta"
     assert result["sources"][0]["errorRateDeltaVsQdrant"] > 0
@@ -5931,16 +5946,16 @@ async def test_run_letta_auto_prune_once_prunes_when_threshold_met(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_run_sink_retention_once_collects_partial_errors(monkeypatch: pytest.MonkeyPatch):
-    async def _qdrant():
+    async def _qdrant(**_kwargs):
         return {"enabled": True, "deleted": 2}
 
-    async def _mongo():
+    async def _mongo(**_kwargs):
         raise RuntimeError("mongo unavailable")
 
-    async def _mindsdb():
+    async def _mindsdb(**_kwargs):
         return {"enabled": True, "deleted": 1}
 
-    async def _letta():
+    async def _letta(**_kwargs):
         return {"enabled": True, "deleted": 0}
 
     monkeypatch.setattr(orchestrator, "_run_qdrant_low_value_retention_once", _qdrant)
@@ -6217,6 +6232,7 @@ async def test_write_memory_hot_file_buffers_then_skips_unchanged(monkeypatch: p
 
     monkeypatch.setattr(orchestrator, "HOT_MEMORY_ROLLUP_ENABLED", True)
     monkeypatch.setattr(orchestrator, "HOT_MEMORY_FILE_SUFFIXES", ["__latest.json"])
+    monkeypatch.setattr(orchestrator, "TELEMETRY_STRICT_SINK_ISOLATION", False)
     monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", False)
     monkeypatch.setattr(orchestrator, "MEMORY_WRITE_LATEST_HASH_DEDUP_ENABLED", True)
     monkeypatch.setattr(orchestrator, "MEMORY_WRITE_LATEST_HASH_DEDUP_MAX_KEYS", 100)
@@ -6289,6 +6305,7 @@ async def test_write_memory_skips_memory_bank_for_telemetry_low_value(monkeypatc
     monkeypatch.setattr(orchestrator, "should_skip_unchanged_latest_hash", _should_skip_latest)
     monkeypatch.setattr(orchestrator, "_enqueue_memory_bank_write", _unexpected_enqueue)
     monkeypatch.setattr(orchestrator, "MEMORY_BANK_TELEMETRY_GUARD_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_FANOUT_ENABLED", True)
     monkeypatch.setattr(orchestrator, "LETTA_AUTO_SESSION_ID", "")
 
     request = SimpleNamespace(state=SimpleNamespace(request_id="test-low-value"))
@@ -6319,6 +6336,9 @@ async def test_enqueue_memory_write_fanout_filters_telemetry_targets(monkeypatch
     monkeypatch.setattr(orchestrator, "enqueue_fanout_outbox", _fake_enqueue)
     monkeypatch.setattr(orchestrator, "memory_write_queue", asyncio.Queue(maxsize=8))
     monkeypatch.setattr(orchestrator, "_letta_target_enabled", lambda: True)
+    monkeypatch.setattr(orchestrator, "WEAVIATE_FANOUT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "PGVECTOR_FANOUT_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_FANOUT_ENABLED", True)
     monkeypatch.setattr(orchestrator, "QDRANT_TELEMETRY_GUARD_ENABLED", True)
     monkeypatch.setattr(orchestrator, "MINDSDB_TELEMETRY_GUARD_ENABLED", True)
     monkeypatch.setattr(orchestrator, "LETTA_TELEMETRY_GUARD_ENABLED", True)
@@ -6352,6 +6372,9 @@ async def test_enqueue_memory_write_fanout_keeps_knowledge_targets(monkeypatch: 
     monkeypatch.setattr(orchestrator, "enqueue_fanout_outbox", _fake_enqueue)
     monkeypatch.setattr(orchestrator, "memory_write_queue", asyncio.Queue(maxsize=8))
     monkeypatch.setattr(orchestrator, "_letta_target_enabled", lambda: True)
+    monkeypatch.setattr(orchestrator, "WEAVIATE_FANOUT_ENABLED", False)
+    monkeypatch.setattr(orchestrator, "PGVECTOR_FANOUT_ENABLED", True)
+    monkeypatch.setattr(orchestrator, "MINDSDB_FANOUT_ENABLED", True)
     monkeypatch.setattr(orchestrator, "QDRANT_TELEMETRY_GUARD_ENABLED", True)
     monkeypatch.setattr(orchestrator, "MINDSDB_TELEMETRY_GUARD_ENABLED", True)
     monkeypatch.setattr(orchestrator, "LETTA_TELEMETRY_GUARD_ENABLED", True)
@@ -6496,7 +6519,7 @@ async def test_rebuild_topic_rollups_dedupes_and_extracts_numeric_facts(
     tmp_path: Path,
 ):
     monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_PATH", tmp_path / "topic_rollups.json")
-    monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_HISTORY_SCAN_LIMIT", 50)
+    monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_HISTORY_SCAN_LIMIT", 3)
     monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_MAX_SUMMARY_SNIPPETS", 8)
     monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_MAX_NUMERIC_FACTS", 16)
     monkeypatch.setattr(orchestrator, "TOPIC_ROLLUP_MAX_UNIQUE_FILES", 16)

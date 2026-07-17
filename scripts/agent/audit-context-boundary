@@ -8,13 +8,22 @@ import copy
 import json
 from typing import Any
 
-from _common import emit, request_json
+from _common import (
+    agent_contract_registry_identity,
+    emit,
+    now_iso,
+    request_json,
+    runtime_identity_expectation_findings,
+    runtime_payload_freshness,
+)
 
 
 SCHEMA_ID = "contextlattice_context_boundary.v1"
 REQUIRED_PATHS = (
     "/memory/context-pack",
     "/tools/context_pack",
+    "/memory/agent-packet/reconstruct",
+    "/v1/agents/sessions/{session_id}/proof-timeline",
     "/memory/continuity/reconcile",
     "/memory/objectives/transition",
     "/memory/objectives/graph",
@@ -23,6 +32,8 @@ REQUIRED_PATHS = (
     "/v1/codex/preflight",
     "policy_context_package",
     "scripts/agent/contextlattice-pack",
+    "contextlattice_packet_reconstruct",
+    "contextlattice_agent_trace --proof",
     "contextlattice_continuity_reconcile",
     "contextlattice_objective_transition",
     "contextlattice_objective_graph",
@@ -42,11 +53,15 @@ REQUIRED_METADATA_FIELDS = (
     "max_list_items",
 )
 REQUIRED_CONTRACT_SURFACES = (
+    ("/memory/agent-packet/reconstruct", "agent_packet_reconstruction.v1"),
+    ("/v1/agents/sessions/{session_id}/proof-timeline", "agent_proof_timeline.v1"),
     ("/memory/continuity/reconcile", "task_identity_reconciliation.v1"),
     ("/memory/objectives/transition", "objective_transition.v1"),
     ("/memory/objectives/graph", "objective_graph.v1"),
     ("/memory/decision-changes", "decision_change.v1"),
     ("/memory/decision-changes", "decision_change_query.v1"),
+    ("contextlattice_packet_reconstruct", "agent_packet.v1"),
+    ("contextlattice_agent_trace --proof", "agent_proof_timeline.v1"),
     ("contextlattice_continuity_reconcile", "task_identity_reconciliation.v1"),
     ("contextlattice_objective_transition", "objective_transition.v1"),
     ("contextlattice_objective_graph", "objective_graph.v1"),
@@ -80,10 +95,33 @@ def payload_without_marker_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
-def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def audit_payload(
+    payload: dict[str, Any],
+    *,
+    expected_source_commit: str | None = None,
+    expected_source_tree: str | None = None,
+    expected_boot_nonce: str | None = None,
+) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
+    expected_registry = agent_contract_registry_identity()
+    build, expected_build, identity_findings = runtime_identity_expectation_findings(
+        payload,
+        expected_source_commit=expected_source_commit,
+        expected_source_tree=expected_source_tree,
+        expected_boot_nonce=expected_boot_nonce,
+    )
+    findings.extend(identity_findings)
     if payload.get("schema_id") != SCHEMA_ID:
         findings.append({"reason": "schema_id_mismatch", "expected": SCHEMA_ID, "actual": payload.get("schema_id")})
+    if freshness := runtime_payload_freshness(payload.get("generatedAt")):
+        findings.append(freshness)
+    if expected_registry.get("ok") is not True:
+        findings.append({"reason": "registry_manifest_unavailable", "detail": expected_registry.get("error")})
+    else:
+        if payload.get("registry_id") != expected_registry["registry_id"]:
+            findings.append({"reason": "registry_id_mismatch", "expected": expected_registry["registry_id"], "actual": payload.get("registry_id")})
+        if as_int(payload.get("registry_version")) != expected_registry["registry_version"]:
+            findings.append({"reason": "registry_version_mismatch", "expected": expected_registry["registry_version"], "actual": payload.get("registry_version")})
     if payload.get("ok") is not True:
         findings.append({"reason": "context_boundary_not_ok", "status": payload.get("status")})
     if as_int(payload.get("violationCount")) != 0:
@@ -135,6 +173,10 @@ def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "status": payload.get("status"),
         "registry_id": payload.get("registry_id"),
         "registry_version": payload.get("registry_version"),
+        "expected_registry_id": expected_registry.get("registry_id"),
+        "expected_registry_version": expected_registry.get("registry_version"),
+        "build": build,
+        "expected_build": expected_build,
         "requiredSurfaceCount": payload.get("requiredSurfaceCount"),
         "boundedSurfaceCount": payload.get("boundedSurfaceCount"),
         "violationCount": payload.get("violationCount"),
@@ -150,11 +192,19 @@ def audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit agent-facing ContextLattice output boundary contracts.")
     parser.add_argument("--timeout", type=float, default=10)
+    parser.add_argument("--expected-source-commit")
+    parser.add_argument("--expected-source-tree")
+    parser.add_argument("--expected-boot-nonce")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
 
     payload = request_json("GET", "/ops/context-boundary", None, args.timeout)
-    result = audit_payload(payload)
+    result = audit_payload(
+        payload,
+        expected_source_commit=args.expected_source_commit,
+        expected_source_tree=args.expected_source_tree,
+        expected_boot_nonce=args.expected_boot_nonce,
+    )
     emit(result, args.pretty)
     return 0 if result["ok"] else 1
 

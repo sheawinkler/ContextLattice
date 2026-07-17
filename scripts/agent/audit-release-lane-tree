@@ -11,6 +11,7 @@ REF="HEAD"
 EXPECTED_COMMIT=""
 RELEASE_REF=""
 PROOF_OUT=""
+PERFORMANCE_MODE="${CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE:-strict}"
 
 usage() {
   cat <<'USAGE'
@@ -50,6 +51,11 @@ case "${LANE}" in
   paid|public-paid) LANE="public-paid"; guard_lane="public-paid" ;;
   *) fail "--lane must be public or public-paid" ;;
 esac
+case "${PERFORMANCE_MODE}" in
+  strict) strict_latency_gate=1; performance_gate_status=pass ;;
+  shared_runner) strict_latency_gate=0; performance_gate_status=correctness_pass_latency_observed ;;
+  *) fail "CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE must be strict or shared_runner" ;;
+esac
 
 for command_name in git go python3; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "required command is missing: ${command_name}"
@@ -87,17 +93,25 @@ for active_path in "${active_paths[@]}"; do
   [[ "${active_blob}" == "${candidate_blob}" ]] || \
     fail "active gate differs from candidate commit: ${relative}"
 done
+
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/contextlattice-release-tree.XXXXXX")"
 cleanup() {
   rm -rf "${tmp_dir}"
 }
 trap cleanup EXIT
+if [[ -z "${GOCACHE:-}" && -z "${XDG_CACHE_HOME:-}" && -z "${HOME:-}" ]]; then
+  export GOCACHE="${tmp_dir}/go-cache"
+  mkdir -p "${GOCACHE}"
+fi
+if [[ -z "${GOMODCACHE:-}" && -z "${GOPATH:-}" && -z "${HOME:-}" ]]; then
+  export GOMODCACHE="${tmp_dir}/go-mod"
+  mkdir -p "${GOMODCACHE}"
+fi
 candidate_blocklist="${tmp_dir}/public_sync_blocklist.txt"
 git -C "${REPO_ROOT}" show "${commit}:config/public_sync_blocklist.txt" >"${candidate_blocklist}" || \
   fail "candidate public sync blocklist cannot be materialized"
 CONTEXTLATTICE_PUBLIC_SYNC_BLOCKLIST="${candidate_blocklist}" \
   bash "${guard}" --lane "${guard_lane}" --ref "${commit}"
-
 stage="${tmp_dir}/tree"
 index="${tmp_dir}/index"
 mkdir -p "${stage}"
@@ -118,6 +132,9 @@ required=(
   "services/gateway-go/go.mod"
   "services/gateway-go/continuity_identity.go"
   "services/gateway-go/objective_continuity.go"
+  "services/gateway-go/agent_packet_delta_test.go"
+  "services/gateway-go/frontier_t2_delta_eval_test.go"
+  "services/gateway-go/frontier_t2_proof_timeline_eval_test.go"
   "services/orchestrator-go/go.mod"
 )
 if [[ "${LANE}" == "public" ]]; then
@@ -126,12 +143,19 @@ elif [[ "${LANE}" == "public-paid" ]]; then
   required+=(
     ".github/workflows/release-installers.yml"
     "docs/evals/v3.18-frontier-t1-paid-activation.json"
+    "docs/evals/v3.19-frontier-t2-paid-activation.json"
     "packaging/linux/ContextLattice-Install.sh"
     "packaging/windows/Install-ContextLattice.ps1"
     "scripts/agent/audit-paid-artifact-integrity"
     "services/gateway-go/frontier_t1_eval_test.go"
     "services/gateway-go/frontier_t1_governance_entitled.go"
     "services/gateway-go/frontier_t1_governance_entitled_test.go"
+  )
+fi
+if [[ "${LANE}" != "public" ]]; then
+  required+=(
+    "services/gateway-go/frontier_t2_proof_timeline_entitled.go"
+    "services/gateway-go/frontier_t2_proof_timeline_entitled_test.go"
   )
 fi
 
@@ -172,18 +196,20 @@ frontier_t2_eval="${tmp_dir}/frontier-t2-item2-eval.json"
 if [[ -f "${frontier_t2_projection_test}" && -f "${frontier_t2_holdout_test}" ]]; then
   env \
     CONTEXTLATTICE_AGENT_PACKET_DELTA_PERFORMANCE_GATE=1 \
+    CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE="${strict_latency_gate}" \
     FRONTIER_T2_TESTED_COMMIT="${commit}" \
     FRONTIER_T2_ITEM2_EVAL_OUTPUT="${frontier_t2_eval}" \
     go -C "${stage}/services/gateway-go" test \
       -run '^(TestFrontierT2AgentPacketProjectionLatencyGate|TestFrontierT2DeltaPacketHoldout)$' \
       -count=1 .
   [[ -f "${frontier_t2_eval}" ]] || fail "isolated Frontier T2 gate did not emit its evidence artifact"
-  python3 - "${frontier_t2_eval}" "${commit}" <<'PY'
+  python3 - "${frontier_t2_eval}" "${commit}" "${PERFORMANCE_MODE}" <<'PY'
 import json
+import math
 import sys
 from pathlib import Path
 
-path, commit = sys.argv[1:]
+path, commit, performance_mode = sys.argv[1:]
 payload = json.loads(Path(path).read_text(encoding="utf-8"))
 if payload.get("schema_id") != "frontier_t2_delta_packet_eval.v1":
     raise SystemExit("isolated Frontier T2 evidence schema is invalid")
@@ -196,14 +222,128 @@ if gates.get("corrupt_reconstruction_count") != 0 or gates.get("unsafe_delta_on_
     raise SystemExit("isolated Frontier T2 safety gate failed")
 maximum = gates.get("synchronous_projection_p95_ms_max")
 observed = gates.get("synchronous_projection_p95_ms_observed")
-if maximum != 20 or not isinstance(observed, (int, float)) or observed > maximum:
+if maximum != 20 or not isinstance(observed, (int, float)) or isinstance(observed, bool) or not math.isfinite(observed) or observed < 0:
+    raise SystemExit("isolated Frontier T2 20ms p95 observation is invalid")
+if gates.get("synchronous_projection_p95_estimator") != "median_of_3_batch_p95":
+    raise SystemExit("isolated Frontier T2 p95 estimator is not the required sustained-regression gate")
+batches = gates.get("synchronous_projection_batch_p95_ms")
+if not isinstance(batches, list) or len(batches) != 3 or not all(
+    isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 for value in batches
+):
+    raise SystemExit("isolated Frontier T2 p95 batch evidence is invalid")
+passing_batches = sum(value <= maximum for value in batches)
+if gates.get("synchronous_projection_passing_batches") != passing_batches:
+    raise SystemExit("isolated Frontier T2 p95 passing-batch count is invalid")
+latency_enforced = gates.get("synchronous_projection_latency_enforced")
+if latency_enforced is not (performance_mode == "strict"):
+    raise SystemExit("isolated Frontier T2 latency enforcement mode is invalid")
+if performance_mode == "strict" and (observed > maximum or passing_batches < 2):
     raise SystemExit("isolated Frontier T2 20ms p95 gate failed")
+allocation_max = gates.get("synchronous_projection_allocs_max")
+allocation_observed = gates.get("synchronous_projection_allocs_observed")
+if allocation_max != 40000 or not isinstance(allocation_observed, (int, float)) or isinstance(allocation_observed, bool) or not math.isfinite(allocation_observed) or not 0 <= allocation_observed <= allocation_max:
+    raise SystemExit("isolated Frontier T2 deterministic allocation gate failed")
 PY
-  printf '%s\t%s\n' "frontier_t2_item2_isolated_performance" "pass" >>"${gate_rows}"
-elif [[ -f "${frontier_t2_projection_test}" || -f "${frontier_t2_holdout_test}" ]]; then
-  fail "candidate contains only one of the two Frontier T2 performance-gate test files"
+  printf '%s\t%s\n' "frontier_t2_item2_isolated_performance" "${performance_gate_status}" >>"${gate_rows}"
 else
-  printf '%s\t%s\n' "frontier_t2_item2_isolated_performance" "not_present" >>"${gate_rows}"
+  fail "${LANE} candidate is missing the Frontier T2 item 2 performance-gate tests"
+fi
+
+frontier_t2_proof_test="${stage}/services/gateway-go/frontier_t2_proof_timeline_eval_test.go"
+frontier_t2_proof_eval="${tmp_dir}/frontier-t2-item24-eval.json"
+if [[ -f "${frontier_t2_proof_test}" ]]; then
+  env \
+    CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE="${strict_latency_gate}" \
+    FRONTIER_T2_TESTED_COMMIT="${commit}" \
+    FRONTIER_T2_PROOF_TIMELINE_EVIDENCE_PATH="${frontier_t2_proof_eval}" \
+    go -C "${stage}/services/gateway-go" test \
+      -run '^TestFrontierT2ProofTimelineHoldout$' \
+      -count=1 .
+  [[ -f "${frontier_t2_proof_eval}" ]] || fail "isolated Frontier T2 item 24 gate did not emit its evidence artifact"
+  python3 - "${frontier_t2_proof_eval}" "${commit}" "${PERFORMANCE_MODE}" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+path, commit, performance_mode = sys.argv[1:]
+payload = json.loads(Path(path).read_text(encoding="utf-8"))
+if payload.get("schema_id") != "frontier_t2_proof_timeline_eval.v1":
+    raise SystemExit("isolated Frontier T2 item 24 evidence schema is invalid")
+if payload.get("tested_commit") != commit:
+    raise SystemExit("isolated Frontier T2 item 24 evidence is not bound to the candidate commit")
+if payload.get("correct_count") != payload.get("sample_count") or payload.get("sample_count") != 15:
+    raise SystemExit("isolated Frontier T2 item 24 holdout correctness gate failed")
+gates = payload.get("release_gates") or {}
+for key in ("case_classification_accuracy", "eligible_exact_link_coverage", "ordering_fidelity", "cross_scope_rejection_rate"):
+    if gates.get(key) != 1:
+        raise SystemExit(f"isolated Frontier T2 item 24 gate failed: {key}")
+if gates.get("redaction_failure_count") != 0 or gates.get("silent_gap_count") != 0:
+    raise SystemExit("isolated Frontier T2 item 24 redaction or explicit-gap gate failed")
+if gates.get("provider_calls") != 0 or gates.get("external_network_calls") != 0 or gates.get("authoritative_ledger_mutations") != 0:
+    raise SystemExit("isolated Frontier T2 item 24 read-only boundary gate failed")
+maximum = gates.get("projection_p95_ms_max")
+observed = gates.get("projection_p95_ms")
+if maximum != 20 or not isinstance(observed, (int, float)) or isinstance(observed, bool) or not math.isfinite(observed) or observed < 0:
+    raise SystemExit("isolated Frontier T2 item 24 p95 observation is invalid")
+latency_enforced = gates.get("projection_latency_gate_enforced")
+if latency_enforced is not (performance_mode == "strict"):
+    raise SystemExit("isolated Frontier T2 item 24 latency enforcement mode is invalid")
+if performance_mode == "strict" and observed > maximum:
+    raise SystemExit("isolated Frontier T2 item 24 20ms p95 gate failed")
+PY
+  printf '%s\t%s\n' "frontier_t2_item24_isolated_proof_timeline" "${performance_gate_status}" >>"${gate_rows}"
+else
+  fail "${LANE} candidate is missing the Frontier T2 item 24 proof-timeline gate"
+fi
+
+frontier_t2_shared_proof_test="${stage}/services/gateway-go/frontier_t2_proof_timeline_entitled_test.go"
+frontier_t2_shared_proof_eval="${tmp_dir}/frontier-t2-item24-shared-retention-eval.json"
+if [[ -f "${frontier_t2_shared_proof_test}" ]]; then
+  env \
+    CONTEXTLATTICE_FRONTIER_T2_SHARED_PROOF_PERFORMANCE_GATE=1 \
+    CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE="${strict_latency_gate}" \
+    FRONTIER_T2_TESTED_COMMIT="${commit}" \
+    FRONTIER_T2_SHARED_PROOF_EVIDENCE_PATH="${frontier_t2_shared_proof_eval}" \
+    go -C "${stage}/services/gateway-go" test \
+      -run '^(TestFrontierT2SharedProofConcurrentRetainRead|TestFrontierT2SharedProofRetentionLatencyHoldout)$' \
+      -count=1 .
+  [[ -f "${frontier_t2_shared_proof_eval}" ]] || fail "isolated Frontier T2 shared proof retention gate did not emit its evidence artifact"
+  python3 - "${frontier_t2_shared_proof_eval}" "${commit}" "${PERFORMANCE_MODE}" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+path, commit, performance_mode = sys.argv[1:]
+payload = json.loads(Path(path).read_text(encoding="utf-8"))
+if payload.get("schema_id") != "frontier_t2_shared_proof_retention_eval.v1":
+    raise SystemExit("isolated Frontier T2 shared proof retention evidence schema is invalid")
+if payload.get("tested_commit") != commit:
+    raise SystemExit("isolated Frontier T2 shared proof retention evidence is not bound to the candidate commit")
+if payload.get("sample_count") != 24 or payload.get("success_count") != 24 or payload.get("concurrent_read_count") != 24:
+    raise SystemExit("isolated Frontier T2 shared proof concurrency gate failed")
+durability = payload.get("durability") or {}
+if durability.get("fsync") is not True or durability.get("percentile_method") != "nearest_rank":
+    raise SystemExit("isolated Frontier T2 shared proof durability evidence is invalid")
+gates = payload.get("release_gates") or {}
+maximum = gates.get("retention_p95_ms_max")
+observed = gates.get("retention_p95_ms")
+if maximum != 250 or not isinstance(observed, (int, float)) or isinstance(observed, bool) or not math.isfinite(observed) or observed < 0:
+    raise SystemExit("isolated Frontier T2 shared proof p95 observation is invalid")
+latency_enforced = gates.get("retention_latency_gate_enforced")
+if latency_enforced is not (performance_mode == "strict"):
+    raise SystemExit("isolated Frontier T2 shared proof latency enforcement mode is invalid")
+if performance_mode == "strict" and observed > maximum:
+    raise SystemExit("isolated Frontier T2 shared proof 250ms p95 gate failed")
+if gates.get("provider_calls") != 0 or gates.get("external_network_calls") != 0 or gates.get("authoritative_ledger_mutations") != 0:
+    raise SystemExit("isolated Frontier T2 shared proof side-effect boundary gate failed")
+PY
+  printf '%s\t%s\n' "frontier_t2_item24_shared_retention" "${performance_gate_status}" >>"${gate_rows}"
+elif [[ "${LANE}" == "public" ]]; then
+  printf '%s\t%s\n' "frontier_t2_item24_shared_retention" "not_present" >>"${gate_rows}"
+else
+  fail "${LANE} candidate is missing the Frontier T2 shared proof retention gate"
 fi
 
 if [[ -f "${stage}/scripts/generate_commercial_truth.py" ]]; then
@@ -214,7 +354,7 @@ else
 fi
 
 proof_json="${tmp_dir}/proof.json"
-python3 - "${LANE}" "${commit}" "${tree}" "${REF}" "${RELEASE_REF}" \
+python3 - "${LANE}" "${commit}" "${tree}" "${REF}" "${RELEASE_REF}" "${PERFORMANCE_MODE}" \
   "${blob_rows}" "${gate_rows}" "${proof_json}" <<'PY'
 from __future__ import annotations
 
@@ -222,7 +362,7 @@ import json
 import sys
 from pathlib import Path
 
-lane, commit, tree, source_ref, release_ref, blob_path, gate_path, output_path = sys.argv[1:]
+lane, commit, tree, source_ref, release_ref, performance_mode, blob_path, gate_path, output_path = sys.argv[1:]
 required_blobs = []
 for row in Path(blob_path).read_text(encoding="utf-8").splitlines():
     path, oid, size = row.split("\t")
@@ -238,6 +378,7 @@ payload = {
     "source_tree": tree,
     "source_ref": source_ref,
     "release_ref": release_ref or None,
+    "performance_mode": performance_mode,
     "materialization": "temporary_git_index_checkout",
     "gates": gates,
     "required_blobs": required_blobs,

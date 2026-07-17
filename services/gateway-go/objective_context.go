@@ -426,7 +426,7 @@ func (c objectiveContext) hierarchy(project string, topicPath string, sessionID 
 			"fallback_value": "current_objective",
 		},
 		"session": map[string]any{
-			"session_id": clipText(strings.TrimSpace(sessionID), 128),
+			"session_id": clipText(strings.TrimSpace(sessionID), maxAgentSessionIDLength),
 			"objective":  sessionObjective,
 			"query":      clipText(strings.TrimSpace(query), 720),
 		},

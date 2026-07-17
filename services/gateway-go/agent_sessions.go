@@ -21,6 +21,7 @@ const (
 	defaultAgentSessionMaxEvents      = 256
 	defaultAgentSessionMaxMetadataMap = 48
 	defaultAgentSessionIdleTTLSeconds = 12 * 60 * 60
+	maxAgentSessionIDLength           = 160
 )
 
 func parseISOTime(raw string) (time.Time, bool) {
@@ -50,6 +51,7 @@ func readOptionalJSONBody(r *http.Request) (map[string]any, error) {
 var errAgentSessionTerminal = errors.New("agent session is terminal")
 var errAgentSessionReuseConflict = errors.New("agent session id or ownership conflicts with the existing session")
 var errAgentSessionOwnershipConflict = errors.New("agent session event conflicts with established ownership")
+var errAgentSessionIDInvalid = errors.New("agent session id must be a bounded machine-safe identifier")
 
 type agentSessionStore struct {
 	mu        sync.Mutex
@@ -71,6 +73,14 @@ func agentSessionsPath() string {
 		path = defaultAgentSessionsPathRel
 	}
 	return filepath.Clean(path)
+}
+
+func validateAgentSessionID(sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || len(sessionID) > maxAgentSessionIDLength || !continuityIDPattern.MatchString(sessionID) {
+		return errAgentSessionIDInvalid
+	}
+	return nil
 }
 
 func newAgentSessionStoreFromEnv() (*agentSessionStore, error) {
@@ -761,7 +771,7 @@ func agentSessionSteeringInbox(sessionID string, events []map[string]any) map[st
 		"latest":          latest,
 		"items":           items,
 		"watch_command":   "contextlattice_agent_session watch --session-id <session_id> --pretty",
-		"drain_command":   "contextlattice_async_inbox_drain --session-id " + clipText(sessionID, 128),
+		"drain_command":   "contextlattice_async_inbox_drain --session-id " + clipText(sessionID, maxAgentSessionIDLength),
 		"poll_endpoint":   "/v1/agents/sessions/{session_id}/events",
 		"delivery_policy": "agents should drain this bounded inbox after normal tool boundaries; live app hosts may also watch session events or continuation SSE",
 	}
@@ -1402,7 +1412,7 @@ func normalizeAgentSessionStart(payload map[string]any, fallbackID string) map[s
 	}
 	status := normalizeAgentSessionStatus(anyToString(payload["status"]))
 	record := map[string]any{
-		"id":                  clipText(sessionID, 128),
+		"id":                  clipText(sessionID, maxAgentSessionIDLength),
 		"agent":               clipText(strings.TrimSpace(anyToString(payload["agent"])), 80),
 		"agent_id":            clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_id"]), anyToString(payload["agentId"]))), 120),
 		"agent_kind":          clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_kind"]), anyToString(payload["agentKind"]), anyToString(payload["runner"]))), 80),
@@ -1455,7 +1465,7 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 	}
 	return map[string]any{
 		"id":         clipText(eventID, 128),
-		"session_id": clipText(sessionID, 128),
+		"session_id": clipText(sessionID, maxAgentSessionIDLength),
 		"type":       eventType,
 		"agent":      clipText(strings.TrimSpace(anyToString(payload["agent"])), 80),
 		"agent_id":   clipText(strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["agent_id"]), anyToString(payload["agentId"]))), 120),
@@ -1548,7 +1558,10 @@ func (s *agentSessionStore) findReusableLocked(payload map[string]any, now time.
 		if !agentSessionReuseCompatible(row, payload) {
 			continue
 		}
-		if project != "" && !strings.EqualFold(anyToString(row["project"]), project) {
+		if project == "" && agentSessionProject(row) != "" {
+			continue
+		}
+		if project != "" && !strings.EqualFold(agentSessionProject(row), project) {
 			continue
 		}
 		if agentID != "" && !strings.EqualFold(anyToString(row["agent_id"]), agentID) {
@@ -1638,6 +1651,9 @@ func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any
 	ensure := anyToBool(firstNonEmptyAny(payload["ensure"], payload["reuse_existing"], payload["reuseExisting"]))
 	explicitID := strings.TrimSpace(firstNonEmptyStrings(anyToString(payload["session_id"]), anyToString(payload["sessionId"]), anyToString(payload["id"])))
 	if explicitID != "" {
+		if err := validateAgentSessionID(explicitID); err != nil {
+			return nil, false, err
+		}
 		if existing := s.sessions[explicitID]; len(existing) > 0 {
 			if agentSessionTerminal(agentSessionEffectiveStatus(existing, now, s.idleTTL)) {
 				return nil, false, errAgentSessionTerminal
@@ -1651,7 +1667,7 @@ func (s *agentSessionStore) startOrReuse(payload map[string]any) (map[string]any
 			return nil, false, errAgentSessionReuseConflict
 		}
 	}
-	if ensure {
+	if ensure && explicitID == "" {
 		if existing := s.findReusableLocked(payload, now); len(existing) > 0 {
 			return s.effectiveSessionLocked(existing, now), true, nil
 		}
@@ -1698,6 +1714,9 @@ func (s *agentSessionStore) appendEvent(sessionID string, payload map[string]any
 	))
 	if sessionID == "" {
 		sessionID = "sess_" + bson.NewObjectID().Hex()
+	}
+	if err := validateAgentSessionID(sessionID); err != nil {
+		return nil, nil, err
 	}
 	requestedOwnership, err := agentSessionEventOwnership(payload)
 	if err != nil {
@@ -1856,6 +1875,10 @@ func compactAgentSessionRow(row map[string]any) map[string]any {
 	return out
 }
 
+func agentSessionProject(row map[string]any) string {
+	return strings.TrimSpace(firstNonEmptyStrings(anyToString(row["project"]), anyToString(row["project_name"])))
+}
+
 func (s *agentSessionStore) list(status string, project string, agent string, limit int, compact bool, includeStale bool) []map[string]any {
 	if s == nil {
 		return []map[string]any{}
@@ -2009,6 +2032,10 @@ func (s *server) agentsSessionsRoute(w http.ResponseWriter, r *http.Request) {
 	default:
 		parts := strings.Split(path, "/")
 		sessionID := strings.TrimSpace(parts[0])
+		if validateAgentSessionID(sessionID) != nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
+			return
+		}
 		if len(parts) == 1 {
 			s.agentsSessionItem(w, r, sessionID)
 			return
@@ -2027,6 +2054,10 @@ func (s *server) agentsSessionsRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(parts) == 2 && parts[1] == "trace" {
 			s.agentsSessionTrace(w, r, sessionID)
+			return
+		}
+		if len(parts) == 2 && (parts[1] == "proof-timeline" || parts[1] == "proof") {
+			s.agentsSessionProofTimeline(w, r, sessionID)
 			return
 		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session route not found"})
@@ -2077,6 +2108,10 @@ func (s *server) agentsSessionsStart(w http.ResponseWriter, r *http.Request) {
 	}
 	session, reused, err := s.agentSessions.startOrReuse(payload)
 	if err != nil {
+		if errors.Is(err, errAgentSessionIDInvalid) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
+			return
+		}
 		if errors.Is(err, errAgentSessionTerminal) {
 			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_terminal", "detail": "terminal or expired sessions cannot be reopened; start a new session id"})
 			return
@@ -2208,8 +2243,43 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json", "detail": err.Error()})
 			return
 		}
-		session, event, err := s.agentSessions.appendEvent(sessionID, payload)
+		effectiveSessionID := strings.TrimSpace(firstNonEmptyStrings(
+			sessionID,
+			anyToString(payload["session_id"]),
+			anyToString(payload["sessionId"]),
+		))
+		if effectiveSessionID != "" {
+			if err := validateAgentSessionID(effectiveSessionID); err != nil {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
+				return
+			}
+		}
+		requestedOwnership, err := agentSessionEventOwnership(payload)
 		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_ownership_conflict", "detail": err.Error()})
+			return
+		}
+		requestedProject := strings.TrimSpace(requestedOwnership["project"])
+		if requestedProject != "" {
+			requestedProject, err = sanitizeMemoryProject(requestedProject)
+			if err != nil {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "invalid_project", "detail": err.Error()})
+				return
+			}
+		}
+		if effectiveSessionID != "" {
+			existing, _, exists := s.agentSessions.get(effectiveSessionID)
+			if !exists || (requestedProject != "" && !strings.EqualFold(agentSessionProject(existing), requestedProject)) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "agent session not found"})
+				return
+			}
+		}
+		session, event, err := s.agentSessions.appendEvent(effectiveSessionID, payload)
+		if err != nil {
+			if errors.Is(err, errAgentSessionIDInvalid) {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "agent_session_id_invalid", "detail": err.Error()})
+				return
+			}
 			if errors.Is(err, errAgentSessionTerminal) {
 				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "agent_session_terminal", "detail": "terminal or expired session state is absorbing"})
 				return
@@ -2231,6 +2301,9 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 
 func (s *server) recordAgentSessionEvent(sessionID string, eventType string, payload map[string]any) map[string]any {
 	if s == nil || s.agentSessions == nil {
+		return nil
+	}
+	if _, _, exists := s.agentSessions.get(sessionID); !exists {
 		return nil
 	}
 	payload = cloneAnyMap(payload)

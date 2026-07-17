@@ -49,7 +49,7 @@ class CapabilityParityTests(unittest.TestCase):
     def test_frontier_t1_public_core_is_declared(self) -> None:
         result = self.audit.inspect_ref("WORKTREE", self.audit.DEFAULT_MANIFEST)
         self.assertTrue(result["ok"], result.get("findings"))
-        self.assertEqual(result["release_train"], "v3.18")
+        self.assertEqual(result["release_train"], "v3.19")
         self.assertTrue(
             {
                 "task_identity_reconciliation.v1",

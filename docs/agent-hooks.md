@@ -62,7 +62,7 @@ Installed commands:
 | `contextlattice_packet_reconstruct` | Verify a digest-bound `agent_packet_delta.v1` against its trusted full base and emit the reconstructed `agent_packet.v1`. |
 | `contextlattice_async_inbox_drain` | Bounded async continuation inbox drain; emits unseen terminal steering after normal CLI boundaries. |
 | `contextlattice_async_inbox_hook` | Fail-open hook entrypoint for runtimes with post-tool or post-command hooks. |
-| `contextlattice_agent_trace` | Contract-valid run trace and exportable run card showing which context, skills that may be helpful, sources, graph touches, handoffs, and checkpoints shaped a session. |
+| `contextlattice_agent_trace` | Contract-valid run trace, exportable run card, and optional `--proof` timeline linking context, action, correction, verification, outcome, and learning. |
 | `contextlattice_adopt` | Zero-friction adoption front door for status, install guidance, proof, profiles, and CI-style adoption scenarios. |
 | `contextlattice_doctor` | One-command adoption proof for local readiness, lifecycle proof, and trace-visible run shaping evidence. |
 | `contextlattice_agent_runtime_proof` | One-command live proof that bootstrap, scoped recall, checkpoint, handoff, context-package, completion, status, and runtime telemetry work end to end. |
@@ -152,9 +152,14 @@ succeeded. Each profile declares a preferred `state_authority` such as `hook`,
 found rather than guessing.
 
 This creates or recovers a ContextLattice-owned session, returns bounded exports,
-emits a contract-valid `universal_agent_adapter_response.v1`, and renders the
-bounded run-shaping evidence when a session id is available. For Codex hook
-startup, `contextlattice_agent_start --soft --compact` still runs:
+emits a contract-valid `universal_agent_adapter_response.v1`, then lets the
+agent turn session history into a bounded reference package for the next model
+call. `contextlattice_agent_trace` makes that path visible as a compact terminal
+tree or Markdown run card, including a list of skills that may be helpful for
+the work instead of presenting skill matches as mandatory instructions. Add
+`--proof` for a deterministic, read-only evidence timeline whose missing or
+corrupt links remain explicit rather than inferred. For Codex hook startup,
+`contextlattice_agent_start --soft --compact` still runs:
 1. Codex session-store doctor
 2. resource pressure sampler
 3. git lane guard

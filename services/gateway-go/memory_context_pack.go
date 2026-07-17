@@ -199,13 +199,18 @@ func (s *server) buildContextPackResponseForSurface(
 	contextPack["tokenImpact"] = tokenImpact
 	contextPack["token_impact"] = tokenImpact
 	rankedEvidence := contextPackAnyList(compiled["ranked_evidence"])
+	agentID := strings.TrimSpace(firstNonEmptyStrings(
+		anyToString(searchResponse["agent_id"]),
+		anyToString(requestPayload["agent_id"]),
+		anyToString(requestPayload["agentId"]),
+	))
 	runAdvisor := buildRunAdvisor(runAdvisorInput{
 		Query:           query,
 		Project:         strings.TrimSpace(anyToString(requestPayload["project"])),
 		TopicPath:       strings.TrimSpace(anyToString(requestPayload["topic_path"])),
 		RetrievalMode:   retrievalMode,
 		SessionID:       sessionID,
-		AgentID:         strings.TrimSpace(anyToString(searchResponse["agent_id"])),
+		AgentID:         agentID,
 		SourceCoverage:  sourceCoverage,
 		Retrieval:       searchResponse,
 		Objective:       effectiveObjectiveCtx,
@@ -229,6 +234,17 @@ func (s *server) buildContextPackResponseForSurface(
 		OmittedHighValueRefs: compiled["omitted_high_value_refs"],
 		Warnings:             warnings,
 	})
+	proofIdentity := map[string]any{
+		"sample_id":         contextPackQuality["sample_id"],
+		"session_id":        sessionID,
+		"task_id":           firstNonEmptyStrings(anyToString(requestPayload["task_id"]), anyToString(requestPayload["taskId"])),
+		"task_identity_id":  firstNonEmptyStrings(anyToString(requestPayload["task_identity_id"]), anyToString(requestPayload["taskIdentityId"])),
+		"execution_lane_id": firstNonEmptyStrings(anyToString(requestPayload["execution_lane_id"]), anyToString(requestPayload["executionLaneId"])),
+		"project":           requestPayload["project"],
+		"agent_id":          agentID,
+	}
+	copyProofTimelineIdentity(contextPackQuality, proofIdentity)
+	copyProofTimelineIdentity(tokenImpact, proofIdentity)
 	s.recordContextPackQuality(contextPackQuality)
 	contextPack["contextPackQuality"] = contextPackQuality
 	contextPack["context_pack_quality"] = contextPackQuality

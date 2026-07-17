@@ -1,14 +1,38 @@
+ARG CONTEXTLATTICE_BUILD_VERSION=development
+ARG CONTEXTLATTICE_BUILD_CHANNEL=local
+ARG CONTEXTLATTICE_SOURCE_COMMIT=unknown
+ARG CONTEXTLATTICE_SOURCE_TREE=unknown
+
 FROM golang:1.26.4-alpine AS build
 WORKDIR /src
 COPY services/gateway-go/go.mod services/gateway-go/go.sum ./
 RUN go mod download
 COPY services/gateway-go/*.go ./
-RUN go build -o /out/gateway-go .
+ARG CONTEXTLATTICE_BUILD_VERSION
+ARG CONTEXTLATTICE_BUILD_CHANNEL
+ARG CONTEXTLATTICE_SOURCE_COMMIT
+ARG CONTEXTLATTICE_SOURCE_TREE
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags "-s -w \
+      -X main.contextLatticeBuildVersion=${CONTEXTLATTICE_BUILD_VERSION} \
+      -X main.contextLatticeBuildChannel=${CONTEXTLATTICE_BUILD_CHANNEL} \
+      -X main.contextLatticeSourceCommit=${CONTEXTLATTICE_SOURCE_COMMIT} \
+      -X main.contextLatticeSourceTree=${CONTEXTLATTICE_SOURCE_TREE}" \
+    -o /out/gateway-go .
 
 FROM alpine:3.20
 WORKDIR /app
 RUN apk add --no-cache ca-certificates ruby && update-ca-certificates
 COPY --from=build /out/gateway-go /usr/local/bin/gateway-go
 COPY config/agent_contracts ./config/agent_contracts
+ARG CONTEXTLATTICE_BUILD_VERSION
+ARG CONTEXTLATTICE_BUILD_CHANNEL
+ARG CONTEXTLATTICE_SOURCE_COMMIT
+ARG CONTEXTLATTICE_SOURCE_TREE
+LABEL org.opencontainers.image.title="ContextLattice gateway-go" \
+      org.opencontainers.image.version="${CONTEXTLATTICE_BUILD_VERSION}" \
+      org.opencontainers.image.revision="${CONTEXTLATTICE_SOURCE_COMMIT}" \
+      io.contextlattice.source-tree="${CONTEXTLATTICE_SOURCE_TREE}" \
+      io.contextlattice.channel="${CONTEXTLATTICE_BUILD_CHANNEL}"
 EXPOSE 8091
 CMD ["gateway-go"]

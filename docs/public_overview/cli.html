@@ -38,7 +38,7 @@
       <h1>Install, launch, and validate Context Lattice from terminal in minutes.</h1>
       <p class="sub">Use these commands as the canonical local flow for public and premium lanes, including prompt-ready context compilation before expensive agent reasoning.</p>
       <!-- BEGIN GENERATED COMMERCIAL TRUTH: cli-release-summary -->
-      <p class="muted-note">Current release: <code>v3.18.0</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>
+      <p class="muted-note">Current release: <code>v3.19.0</code>. The CLI is the primary product interface; dashboard, HTTP, and MCP remain companion surfaces.</p>
       <!-- END GENERATED COMMERCIAL TRUTH: cli-release-summary -->
     </section>
 
@@ -114,13 +114,14 @@ contextlattice_agent_session runtime --pretty
 contextlattice_async_inbox_drain --session-id &lt;session-id&gt;
 contextlattice_async_inbox_hook --session-id &lt;session-id&gt;
 contextlattice_agent_trace --session-id &lt;session-id&gt; --tree
+contextlattice_agent_trace --session-id &lt;session-id&gt; --proof --tree
 contextlattice_run_advisor "what should this agent know before solving the task?" --pretty
 contextlattice_agent_runtime_doctor --pretty
 contextlattice_memory_topology --pretty
 contextlattice_pack "what should this agent know before solving the task?" --project contextlattice --pretty
 contextlattice_retrieval_plan "what evidence does this task owe?" --project contextlattice --pretty
 <!-- BEGIN GENERATED COMMERCIAL TRUTH: cli-release-claim -->
-contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.18.0 --pretty
+contextlattice_claim_write --project contextlattice --subject release --predicate current_version --object 3.19.0 --pretty
 <!-- END GENERATED COMMERCIAL TRUTH: cli-release-claim -->
 contextlattice_claim_query "what is current?" --project contextlattice --include-superseded --pretty
 contextlattice_synthesis_pack_v2 "what can the evidence prove?" --project contextlattice --pretty

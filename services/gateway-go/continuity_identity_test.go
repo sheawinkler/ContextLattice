@@ -1534,14 +1534,19 @@ func TestAgentSessionEventsCannotEstablishOrRebindOwnership(t *testing.T) {
 	}
 	gateway := httptest.NewServer(buildNativeMux(&server{agentSessions: sessions}))
 	defer gateway.Close()
-	for name, body := range map[string]string{
-		"top-level rebind":        `{"session_id":"sess-owned","type":"progress","taskIdentityId":"Identity-B"}`,
-		"nested ownership rebind": `{"session_id":"sess-owned","type":"progress","metadata":{"ownership":{"execution_lane_id":"Lane-B"}}}`,
-		"event-first ownership":   `{"session_id":"sess-event-first","type":"progress","metadata":{"agent_state":{"task_identity_id":"Identity-A"}}}`,
+	for _, test := range []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantError  string
+	}{
+		{name: "top-level rebind", body: `{"session_id":"sess-owned","type":"progress","taskIdentityId":"Identity-B"}`, wantStatus: http.StatusConflict, wantError: "agent_session_ownership_conflict"},
+		{name: "nested ownership rebind", body: `{"session_id":"sess-owned","type":"progress","metadata":{"ownership":{"execution_lane_id":"Lane-B"}}}`, wantStatus: http.StatusConflict, wantError: "agent_session_ownership_conflict"},
+		{name: "event-first ownership", body: `{"session_id":"sess-event-first","type":"progress","metadata":{"agent_state":{"task_identity_id":"Identity-A"}}}`, wantStatus: http.StatusNotFound, wantError: "agent session not found"},
 	} {
-		status, payload := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", body)
-		if status != http.StatusConflict || anyToString(payload["error"]) != "agent_session_ownership_conflict" {
-			t.Fatalf("%s was not rejected: status=%d payload=%#v", name, status, payload)
+		status, payload := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", test.body)
+		if status != test.wantStatus || anyToString(payload["error"]) != test.wantError {
+			t.Fatalf("%s was not rejected: status=%d payload=%#v", test.name, status, payload)
 		}
 	}
 	status, matched := postAgentSessionJSON(t, gateway.URL+"/v1/agents/sessions/event", `{

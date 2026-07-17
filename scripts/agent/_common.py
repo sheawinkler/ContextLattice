@@ -47,6 +47,102 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def agent_contract_registry_identity() -> dict[str, Any]:
+    path = REPO_ROOT / "config" / "agent_contracts" / "agent_output_contracts.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        registry_id = str(payload.get("registry_id") or "").strip()
+        registry_version = int(payload.get("registry_version"))
+        if not registry_id or registry_version <= 0:
+            raise ValueError("registry identity is incomplete")
+        return {"ok": True, "registry_id": registry_id, "registry_version": registry_version}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "registry_id": "", "registry_version": 0, "error": str(exc)}
+
+
+def runtime_payload_freshness(
+    generated_at: Any,
+    *,
+    maximum_age_seconds: float = 120.0,
+    maximum_future_skew_seconds: float = 30.0,
+    observed_at: datetime | None = None,
+) -> dict[str, Any] | None:
+    raw = str(generated_at or "").strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timestamp must include a timezone")
+    except ValueError:
+        return {"reason": "generated_at_invalid", "actual": raw}
+    now = observed_at or datetime.now(timezone.utc)
+    age_seconds = (now.astimezone(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+    if age_seconds > maximum_age_seconds:
+        return {
+            "reason": "generated_at_stale",
+            "age_seconds": age_seconds,
+            "maximum_age_seconds": maximum_age_seconds,
+        }
+    if age_seconds < -maximum_future_skew_seconds:
+        return {
+            "reason": "generated_at_future",
+            "future_skew_seconds": -age_seconds,
+            "maximum_future_skew_seconds": maximum_future_skew_seconds,
+        }
+    return None
+
+
+def runtime_identity_expectation_findings(
+    payload: dict[str, Any],
+    *,
+    expected_source_commit: str | None = None,
+    expected_source_tree: str | None = None,
+    expected_boot_nonce: str | None = None,
+) -> tuple[dict[str, Any], dict[str, str], list[dict[str, Any]]]:
+    expected = {
+        field: value
+        for field, value in (
+            ("source_commit", expected_source_commit),
+            ("source_tree", expected_source_tree),
+            ("boot_nonce", expected_boot_nonce),
+        )
+        if value is not None
+    }
+    raw_build = payload.get("build")
+    build = raw_build if isinstance(raw_build, dict) else {}
+    findings: list[dict[str, Any]] = []
+    if not expected:
+        return build, expected, findings
+    if not isinstance(raw_build, dict):
+        findings.append({"reason": "build_identity_missing", "expected_fields": sorted(expected)})
+        return build, expected, findings
+    if build.get("schema_id") != "contextlattice_build_identity.v1":
+        findings.append(
+            {
+                "reason": "build_identity_schema_mismatch",
+                "expected": "contextlattice_build_identity.v1",
+                "actual": build.get("schema_id"),
+            }
+        )
+    required_fields = ("version", "channel", "source_commit", "source_tree", "boot_nonce")
+    missing_fields = [field for field in required_fields if not isinstance(build.get(field), str) or not build[field]]
+    if missing_fields:
+        findings.append({"reason": "build_identity_fields_missing", "fields": missing_fields})
+    for field, expected_value in expected.items():
+        actual = build.get(field)
+        if not isinstance(actual, str) or not actual:
+            findings.append({"reason": "build_identity_field_missing", "field": field, "expected": expected_value})
+        elif actual != expected_value:
+            findings.append(
+                {
+                    "reason": "build_identity_mismatch",
+                    "field": field,
+                    "expected": expected_value,
+                    "actual": actual,
+                }
+            )
+    return build, expected, findings
+
+
 def skill_files(roots: list[Path] | None = None) -> list[Path]:
     out: list[Path] = []
     for root in roots or DEFAULT_SKILL_ROOTS:

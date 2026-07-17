@@ -42,6 +42,9 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	if os.Getenv("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH") == "" {
 		t.Setenv("CONTEXTLATTICE_CONTINUITY_LEDGER_PATH", filepath.Join(t.TempDir(), "continuity.ndjson"))
 	}
+	if os.Getenv("GO_AGENT_SESSIONS_PATH") == "" && os.Getenv("GO_AGENT_SESSION_LEDGER_PATH") == "" {
+		t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(t.TempDir(), "agent_sessions.json"))
+	}
 	if !envBool("GO_GATEWAY_TEST_KEEP_ORCH_KEY", false) {
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 		t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
@@ -2094,6 +2097,7 @@ func TestCodexPreflightCarriesGraphContextPackEvidence(t *testing.T) {
 	t.Setenv("CONTEXTLATTICE_ORCHESTRATOR_API_KEY", "")
 	root := t.TempDir()
 	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_AGENT_SESSIONS_PATH", filepath.Join(root, "_contextlattice", "agent_sessions.json"))
 	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", filepath.Join(root, "_contextlattice", "memory_write_history.ndjson"))
 	t.Setenv("GO_MEMORY_STORE_ACCESS_LOG_PATH", filepath.Join(root, "_contextlattice", "memory_access_log.ndjson"))
 	t.Setenv("GO_MEMORY_STORE_CONTENT_BLOBS_PATH", filepath.Join(root, "_contextlattice", "objects"))

@@ -53,9 +53,9 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "3.18.0")
-        self.assertEqual(contract["product"]["stable_tag"], "v3.18.0")
-        self.assertEqual(contract["product"]["release_train"], "3.18")
+        self.assertEqual(contract["product"]["version"], "3.19.0")
+        self.assertEqual(contract["product"]["stable_tag"], "v3.19.0")
+        self.assertEqual(contract["product"]["release_train"], "3.19")
         self.assertEqual(contract["product"]["primary_interface"], "cli")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
 
@@ -78,13 +78,17 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertEqual(plans["operator"]["limits"]["included_seats"], 1)
         self.assertEqual(plans["enterprise"]["limits"]["included_seats"], 100)
 
-        frontier = {
+        frontier_t1 = {
             "frontier_semantic_continuity_automation",
             "frontier_shared_objective_graph",
             "frontier_shared_decision_provenance",
         }
+        packet_automation = "frontier_delta_packet_automation"
+        shared_proof = "frontier_shared_proof_timeline"
+        frontier = frontier_t1 | {packet_automation, shared_proof}
         self.assertTrue(frontier.isdisjoint(plans["free"]["feature_ids"]))
-        self.assertTrue(frontier.isdisjoint(plans["starter"]["feature_ids"]))
+        self.assertTrue((frontier_t1 | {shared_proof}).isdisjoint(plans["starter"]["feature_ids"]))
+        self.assertIn(packet_automation, plans["starter"]["feature_ids"])
         self.assertTrue(frontier.issubset(plans["team"]["feature_ids"]))
         self.assertTrue(frontier.issubset(plans["enterprise"]["feature_ids"]))
         self.assertEqual(
@@ -130,7 +134,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "3.18.0")
+        self.assertEqual(public_truth["product"]["version"], "3.19.0")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
@@ -139,6 +143,17 @@ class CommercialTruthTests(unittest.TestCase):
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["release_decision"],
             "PROVEN",
         )
+
+    def test_public_go_projection_omits_absent_paid_t2_runtime(self) -> None:
+        generated_go = (ROOT / "services/gateway-go/commercial_contract_generated.go").read_text(encoding="utf-8")
+        self.assertNotIn("frontier_delta_packet_automation", generated_go)
+        self.assertNotIn("frontier_shared_proof_timeline", generated_go)
+        self.assertNotIn("/memory/agent-packet/shared", generated_go)
+        self.assertNotIn("/memory/agent-proof-timeline/shared", generated_go)
+
+        public_truth = json.loads((ROOT / "docs/public_overview/commercial-truth.json").read_text(encoding="utf-8"))
+        self.assertIn("/memory/agent-packet/shared", public_truth["paid_route_contract"]["routes"])
+        self.assertIn("/memory/agent-proof-timeline/shared", public_truth["paid_route_contract"]["routes"])
 
     def test_ga_posture_is_public_without_mutating_runtime_entitlement_contract(self) -> None:
         premium = (ROOT / "docs/public_overview/premium.html").read_text(encoding="utf-8")
@@ -246,7 +261,7 @@ class CommercialTruthTests(unittest.TestCase):
             copy_fixture(fixture)
             launch = fixture / "launch_service/config/contextlattice.launch.json"
             launch.write_text(
-                launch.read_text(encoding="utf-8").replace("v3.18.0", "v9.9.9", 1),
+                launch.read_text(encoding="utf-8").replace("v3.19.0", "v9.9.9", 1),
                 encoding="utf-8",
             )
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
@@ -261,7 +276,7 @@ class CommercialTruthTests(unittest.TestCase):
             launch = fixture / "launch_service/config/contextlattice.launch.json"
             payload = json.loads(launch.read_text(encoding="utf-8"))
             payload["release_lane"] = "public-paid"
-            payload["channels"][0]["submission_path"] = "Tag v3.18.0-public-paid"
+            payload["channels"][0]["submission_path"] = "Tag v3.19.0-public-paid"
             launch.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
             self.assertNotEqual(result.returncode, 0)
@@ -314,10 +329,10 @@ class CommercialTruthTests(unittest.TestCase):
 
     def test_audit_rejects_noncanonical_stable_tag_suffixes(self) -> None:
         variants = (
-            "v3.18.0+public-paid",
-            "v3.18.0_origin",
-            "v3.18.0/public",
-            "v3.18.0.public",
+            "v3.19.0+public-paid",
+            "v3.19.0_origin",
+            "v3.19.0/public",
+            "v3.19.0.public",
         )
         for variant in variants:
             with self.subTest(variant=variant), tempfile.TemporaryDirectory(prefix="commercial-truth-tag-suffix-") as tmp:
