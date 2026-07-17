@@ -4,13 +4,45 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.17.2",
-    "stable_tag": "v3.17.2",
-    "release_train": "3.17",
+    "version": "3.19.1",
+    "stable_tag": "v3.19.1",
+    "release_train": "3.19",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
   "currency": "USD",
+  "release_availability": {
+    "frontier_semantic_continuity_automation": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_shared_objective_graph": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_shared_decision_provenance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_delta_packet_automation": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_shared_proof_timeline": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    }
+  },
   "features": [
     {
       "id": "cli_workflows",
@@ -71,6 +103,31 @@
       "id": "scim_token_management",
       "buyer_label": "SCIM token management",
       "description": "Issue and manage the existing enterprise SCIM token surface."
+    },
+    {
+      "id": "frontier_semantic_continuity_automation",
+      "buyer_label": "Continuity that recognizes the work",
+      "description": "Reconnect a new task alias to proven prior work automatically when an exact-first, holdout-locked identity gate is unambiguous."
+    },
+    {
+      "id": "frontier_shared_objective_graph",
+      "buyer_label": "The living arc of the mission",
+      "description": "See workspace-scoped objectives, branches, dependencies, dead ends, decisions, and outcomes as one durable graph without rewriting its evidence."
+    },
+    {
+      "id": "frontier_shared_decision_provenance",
+      "buyer_label": "Decisions with a memory and a witness",
+      "description": "Review, approve, and export decision changes against exact immutable evidence with bounded, hash-verifiable pages."
+    },
+    {
+      "id": "frontier_delta_packet_automation",
+      "buyer_label": "Context that travels at the speed of the work",
+      "description": "Carry acknowledged Agent Packet lineage across machines and shared workspaces with exact deltas, signed receipts, bounded retention, and verified full fallback."
+    },
+    {
+      "id": "frontier_shared_proof_timeline",
+      "buyer_label": "Every agent run, with receipts",
+      "description": "Retain, inspect, analyze, and export one integrity-checked timeline of what an agent knew, did, corrected, proved, and taught across an authorized workspace."
     }
   ],
   "plans": [
@@ -89,7 +146,7 @@
         "max_api_keys": null,
         "max_projects": null,
         "max_write_bytes": null,
-        "included_seats": null
+        "included_seats": 1
       },
       "feature_ids": [
         "cli_workflows",
@@ -115,7 +172,7 @@
         "max_api_keys": 3,
         "max_projects": 5,
         "max_write_bytes": 50000,
-        "included_seats": null
+        "included_seats": 1
       },
       "feature_ids": [
         "cli_workflows",
@@ -126,7 +183,8 @@
         "dashboard_visibility",
         "premium_artifact_downloads",
         "premium_runtime_keys",
-        "protected_runtime_operations"
+        "protected_runtime_operations",
+        "frontier_delta_packet_automation"
       ]
     },
     {
@@ -144,7 +202,7 @@
         "max_api_keys": 10,
         "max_projects": 25,
         "max_write_bytes": 200000,
-        "included_seats": null
+        "included_seats": 5
       },
       "feature_ids": [
         "cli_workflows",
@@ -157,7 +215,12 @@
         "premium_runtime_keys",
         "shared_workspace_controls",
         "pro_analytics",
-        "protected_runtime_operations"
+        "protected_runtime_operations",
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
+        "frontier_semantic_continuity_automation",
+        "frontier_shared_objective_graph",
+        "frontier_shared_decision_provenance"
       ]
     },
     {
@@ -175,7 +238,7 @@
         "max_api_keys": null,
         "max_projects": null,
         "max_write_bytes": null,
-        "included_seats": null
+        "included_seats": 1
       },
       "feature_ids": [
         "cli_workflows",
@@ -187,13 +250,17 @@
         "premium_artifact_downloads",
         "premium_runtime_keys",
         "pro_analytics",
-        "protected_runtime_operations"
+        "protected_runtime_operations",
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
+        "frontier_semantic_continuity_automation",
+        "frontier_shared_objective_graph"
       ]
     },
     {
       "id": "enterprise",
       "buyer_label": "Enterprise",
-      "description": "Custom-priced enterprise access with existing workspace and provisioning controls.",
+      "description": "Custom-priced enterprise access with workspace controls and SCIM token management.",
       "paid": true,
       "self_serve_purchasable": false,
       "pricing": {
@@ -219,6 +286,11 @@
         "shared_workspace_controls",
         "pro_analytics",
         "protected_runtime_operations",
+        "frontier_delta_packet_automation",
+        "frontier_shared_proof_timeline",
+        "frontier_semantic_continuity_automation",
+        "frontier_shared_objective_graph",
+        "frontier_shared_decision_provenance",
         "scim_token_management"
       ]
     }
@@ -260,8 +332,92 @@
       "/memory/context-policy/deactivate",
       "/memory/skills/foundry/activate",
       "/memory/skills/foundry/deactivate",
-      "/memory/context-mesh/orchestrate"
+      "/memory/context-mesh/orchestrate",
+      "/memory/continuity/automation",
+      "/memory/objectives/shared",
+      "/memory/decision-changes/shared",
+      "/memory/agent-packet/shared",
+      "/memory/agent-proof-timeline/shared",
+      "/memory/agent-proof-timeline/shared/lifecycle"
     ]
   },
-  "contract_sha256": "db691be4a9736aeca22d23e887c7decef8e645a5b4f4f83c4e2fdb62caa30cc5"
+  "paid_feature_route_contracts": [
+    {
+      "feature_id": "frontier_semantic_continuity_automation",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/continuity/automation"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_objective_graph",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/objectives/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_decision_provenance",
+      "eligible_plan_ids": [
+        "team",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/decision-changes/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_delta_packet_automation",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-packet/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_proof_timeline",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-proof-timeline/shared"
+      ]
+    }
+  ],
+  "contract_sha256": "0063c6ab969e760cdbf69650924d2e07b2c9f22888093a95e597dfcb5239fc79",
+  "commercial_truth_sha256": "4bd5be8040a2588f501e980f47c394a3e8a33e2f9db18c1e5dee30821ebf61c1"
 }
