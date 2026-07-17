@@ -321,20 +321,35 @@ if payload.get("schema_id") != "frontier_t2_shared_proof_retention_eval.v1":
     raise SystemExit("isolated Frontier T2 shared proof retention evidence schema is invalid")
 if payload.get("tested_commit") != commit:
     raise SystemExit("isolated Frontier T2 shared proof retention evidence is not bound to the candidate commit")
-if payload.get("sample_count") != 24 or payload.get("success_count") != 24 or payload.get("concurrent_read_count") != 24:
+if payload.get("sample_count") != 72 or payload.get("success_count") != 72 or payload.get("concurrent_read_count") != 72:
     raise SystemExit("isolated Frontier T2 shared proof concurrency gate failed")
+if payload.get("performance_batch_count") != 3 or payload.get("samples_per_batch") != 24:
+    raise SystemExit("isolated Frontier T2 shared proof batch evidence is invalid")
 durability = payload.get("durability") or {}
-if durability.get("fsync") is not True or durability.get("percentile_method") != "nearest_rank":
+if durability.get("fsync") is not True or durability.get("percentile_method") != "nearest_rank_per_batch":
     raise SystemExit("isolated Frontier T2 shared proof durability evidence is invalid")
 gates = payload.get("release_gates") or {}
 maximum = gates.get("retention_p95_ms_max")
 observed = gates.get("retention_p95_ms")
 if maximum != 250 or not isinstance(observed, (int, float)) or isinstance(observed, bool) or not math.isfinite(observed) or observed < 0:
     raise SystemExit("isolated Frontier T2 shared proof p95 observation is invalid")
+if gates.get("retention_p95_estimator") != "median_of_3_batch_p95":
+    raise SystemExit("isolated Frontier T2 shared proof p95 estimator is invalid")
+batches = gates.get("retention_batch_p95_ms")
+if not isinstance(batches, list) or len(batches) != 3 or not all(
+    isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 for value in batches
+):
+    raise SystemExit("isolated Frontier T2 shared proof batch p95 evidence is invalid")
+median_observed = sorted(batches)[1]
+if not math.isclose(observed, median_observed, rel_tol=0, abs_tol=1e-9):
+    raise SystemExit("isolated Frontier T2 shared proof median p95 evidence is invalid")
+passing_batches = sum(value <= maximum for value in batches)
+if gates.get("retention_passing_batches") != passing_batches or gates.get("retention_required_passes") != 2:
+    raise SystemExit("isolated Frontier T2 shared proof passing-batch evidence is invalid")
 latency_enforced = gates.get("retention_latency_gate_enforced")
 if latency_enforced is not (performance_mode == "strict"):
     raise SystemExit("isolated Frontier T2 shared proof latency enforcement mode is invalid")
-if performance_mode == "strict" and observed > maximum:
+if performance_mode == "strict" and (observed > maximum or passing_batches < 2):
     raise SystemExit("isolated Frontier T2 shared proof 250ms p95 gate failed")
 if gates.get("provider_calls") != 0 or gates.get("external_network_calls") != 0 or gates.get("authoritative_ledger_mutations") != 0:
     raise SystemExit("isolated Frontier T2 shared proof side-effect boundary gate failed")
