@@ -20,6 +20,13 @@ def workflow_job(workflow: str, name: str) -> str:
 
 
 class PublicReleaseWorkflowTests(unittest.TestCase):
+    def test_release_workflow_observes_latency_on_shared_runners(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        mode = "CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE: shared_runner"
+
+        self.assertEqual(workflow.count(mode), 1)
+        self.assertIn("scripts/agent/audit-release-lane-tree", workflow)
+
     def test_publisher_downloads_only_the_three_installers(self) -> None:
         publish = workflow_job(WORKFLOW.read_text(encoding="utf-8"), "publish-assets")
         downloads = re.findall(

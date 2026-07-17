@@ -20,6 +20,7 @@ concurrency:
 env:
   RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
   RELEASE_LANE: public
+  CONTEXTLATTICE_RELEASE_PERFORMANCE_MODE: shared_runner
   APPROVED_SOURCE_REPOSITORY: sheawinkler/ContextLattice
   APPROVED_SOURCE_REF: refs/heads/main
   APPROVED_SOURCE_TRACKING_REF: refs/remotes/public/main
