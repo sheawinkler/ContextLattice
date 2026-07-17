@@ -37,6 +37,49 @@ func TestParseArgsAllowsFlagsAfterPositionalQuery(t *testing.T) {
 	}
 }
 
+func TestSessionCompleteAcceptsFlagOnlySummary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	var captured map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/agents/sessions/event":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode session event: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "session": map[string]any{"id": "sess-complete"},
+			})
+		case "/v1/agents/sessions/sess-complete/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	if err := c.run([]string{
+		"contextlattice_agent_session", "complete",
+		"--session-id", "sess-complete",
+		"--project", "alpha",
+		"--summary", "verified complete",
+		"--raw",
+	}); err != nil {
+		t.Fatalf("complete session: %v output=%s", err, stdout.String())
+	}
+	if firstString(captured["type"]) != "session.complete" ||
+		firstString(captured["status"]) != "completed" ||
+		firstString(captured["summary"]) != "verified complete" {
+		t.Fatalf("unexpected session completion payload: %#v", captured)
+	}
+}
+
 func TestSearchCommandUsesGoNativeHTTPPayload(t *testing.T) {
 	var captured map[string]any
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

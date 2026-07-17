@@ -2750,13 +2750,21 @@ func (c *cli) sessionEvent(kind string, args []string) error {
 	if kind == "fail" {
 		status = firstNonEmpty(status, "failed")
 	}
+	positionalSummary := ""
+	if kind == "event" {
+		if len(parsed.pos) > 1 {
+			positionalSummary = strings.Join(parsed.pos[1:], " ")
+		}
+	} else if len(parsed.pos) > 0 {
+		positionalSummary = strings.Join(parsed.pos, " ")
+	}
 	payload := dropEmpty(map[string]any{
 		"session_id": parsed.string("session_id", envString("CONTEXTLATTICE_SESSION_ID", "")),
 		"agent":      parsed.string("agent", envString("CONTEXTLATTICE_AGENT", "")),
 		"agent_id":   parsed.string("agent_id", envString("CONTEXTLATTICE_AGENT_ID", "")),
 		"project":    parsed.string("project", "contextlattice"),
 		"type":       eventType,
-		"summary":    parsed.string("summary", strings.Join(parsed.pos[1:], " ")),
+		"summary":    parsed.string("summary", positionalSummary),
 		"status":     status,
 		"metadata":   parseJSONObject(parsed.string("metadata_json", "")),
 	})
