@@ -133,7 +133,12 @@ func TestFrontierT2ProofTimelineHoldout(t *testing.T) {
             )
             shared_retention = gateway / "frontier_t2_proof_timeline_entitled_test.go"
 
-            def write_shared_retention_fixture(fsync: str) -> None:
+            def write_shared_retention_fixture(
+                fsync: str,
+                strict_batches: str = "[1,2,300]",
+                strict_observed: int = 2,
+                strict_passing: int = 2,
+            ) -> None:
                 shared_retention.write_text(
                     """package releasegate
 
@@ -151,16 +156,24 @@ func TestFrontierT2SharedProofRetentionLatencyHoldout(t *testing.T) {
     }
     output := os.Getenv("FRONTIER_T2_SHARED_PROOF_EVIDENCE_PATH")
     strictLatency := os.Getenv("CONTEXTLATTICE_FRONTIER_STRICT_LATENCY_GATE") != "0"
-    observed := 1
+    observed := __STRICT_OBSERVED__
+    batches := "__STRICT_BATCHES__"
+    passing := __STRICT_PASSING__
     if !strictLatency {
-        observed = 300
+        observed = 301
+        batches = "[300,301,302]"
+        passing = 0
     }
-    payload := fmt.Sprintf(`{"schema_id":"frontier_t2_shared_proof_retention_eval.v1","tested_commit":%q,"sample_count":24,"success_count":24,"concurrent_read_count":24,"durability":{"fsync":__FSYNC__,"percentile_method":"nearest_rank"},"release_gates":{"retention_p95_ms":%d,"retention_p95_ms_max":250,"retention_latency_gate_enforced":%t,"provider_calls":0,"external_network_calls":0,"authoritative_ledger_mutations":0}}`, os.Getenv("FRONTIER_T2_TESTED_COMMIT"), observed, strictLatency)
+    payload := fmt.Sprintf(`{"schema_id":"frontier_t2_shared_proof_retention_eval.v1","tested_commit":%q,"sample_count":72,"success_count":72,"concurrent_read_count":72,"performance_batch_count":3,"samples_per_batch":24,"durability":{"fsync":__FSYNC__,"percentile_method":"nearest_rank_per_batch"},"release_gates":{"retention_p95_ms":%d,"retention_p95_ms_max":250,"retention_p95_estimator":"median_of_3_batch_p95","retention_batch_p95_ms":%s,"retention_passing_batches":%d,"retention_required_passes":2,"retention_latency_gate_enforced":%t,"provider_calls":0,"external_network_calls":0,"authoritative_ledger_mutations":0}}`, os.Getenv("FRONTIER_T2_TESTED_COMMIT"), observed, batches, passing, strictLatency)
     if err := os.WriteFile(output, []byte(payload), 0o600); err != nil {
         t.Fatal(err)
     }
 }
-""".replace("__FSYNC__", fsync),
+"""
+                    .replace("__FSYNC__", fsync)
+                    .replace("__STRICT_BATCHES__", strict_batches)
+                    .replace("__STRICT_OBSERVED__", str(strict_observed))
+                    .replace("__STRICT_PASSING__", str(strict_passing)),
                     encoding="utf-8",
                 )
 
@@ -317,6 +330,30 @@ func TestFrontierT2SharedProofRetentionLatencyHoldout(t *testing.T) {
             self.assertIn(
                 "durability evidence is invalid",
                 durability_failed.stdout + durability_failed.stderr,
+            )
+
+            write_shared_retention_fixture("true", "[1,300,301]", 300, 1)
+            insufficient_batches = commit_all(repo, "paid projection with insufficient passing batches")
+            insufficient_batches_failed = run(
+                [
+                    str(fixture_audit),
+                    "--lane",
+                    "paid",
+                    "--ref",
+                    insufficient_batches,
+                    "--expected-commit",
+                    insufficient_batches,
+                ],
+                repo,
+            )
+            self.assertNotEqual(
+                insufficient_batches_failed.returncode,
+                0,
+                insufficient_batches_failed.stdout + insufficient_batches_failed.stderr,
+            )
+            self.assertIn(
+                "250ms p95 gate failed",
+                insufficient_batches_failed.stdout + insufficient_batches_failed.stderr,
             )
 
             write_shared_retention_fixture("true")
