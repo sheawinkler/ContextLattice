@@ -458,6 +458,16 @@ func normalizeAgentEventType(raw string) string {
 	if normalized == "" {
 		return "agent.event"
 	}
+	switch normalized {
+	case "session.complete":
+		normalized = "session.completed"
+	case "agent.session.complete":
+		normalized = "agent.session.completed"
+	case "session.fail":
+		normalized = "session.failed"
+	case "agent.session.fail":
+		normalized = "agent.session.failed"
+	}
 	return clipText(normalized, 96)
 }
 

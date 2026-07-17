@@ -47,6 +47,42 @@ func getAgentSessionJSON(t *testing.T, url string) (int, map[string]any) {
 	return resp.StatusCode, payload
 }
 
+func TestLegacyTerminalSessionEventAliasesCanonicalizeAndTerminate(t *testing.T) {
+	tests := []struct {
+		name       string
+		eventType  string
+		wantType   string
+		wantStatus string
+	}{
+		{name: "complete", eventType: "session.complete", wantType: "session.completed", wantStatus: "completed"},
+		{name: "agent complete", eventType: "agent.session.complete", wantType: "agent.session.completed", wantStatus: "completed"},
+		{name: "fail", eventType: "session.fail", wantType: "session.failed", wantStatus: "failed"},
+		{name: "agent fail", eventType: "agent.session.fail", wantType: "agent.session.failed", wantStatus: "failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &agentSessionStore{
+				path: filepath.Join(t.TempDir(), "agent-sessions.json"), maxKeep: 16, maxEvents: 16, idleTTL: time.Hour,
+				sessions: map[string]map[string]any{}, order: []string{}, events: map[string][]map[string]any{},
+			}
+			sessionID := "sess-" + strings.ReplaceAll(test.name, " ", "-")
+			if _, err := store.start(map[string]any{"session_id": sessionID, "agent": "codex", "project": "contextlattice"}); err != nil {
+				t.Fatalf("start session: %v", err)
+			}
+			session, event, err := store.appendEvent(sessionID, map[string]any{"type": test.eventType, "status": test.wantStatus})
+			if err != nil {
+				t.Fatalf("append legacy terminal event: %v", err)
+			}
+			if got := anyToString(event["type"]); got != test.wantType {
+				t.Fatalf("event type=%q want=%q", got, test.wantType)
+			}
+			if got := anyToString(session["status"]); got != test.wantStatus {
+				t.Fatalf("session status=%q want=%q", got, test.wantStatus)
+			}
+		})
+	}
+}
+
 func TestAgentSessionIDsAreLosslessAtCanonicalLimitAndRejectOverflow(t *testing.T) {
 	store := &agentSessionStore{
 		path: filepath.Join(t.TempDir(), "agent-sessions.json"), maxKeep: 16, maxEvents: 16, idleTTL: time.Hour,
