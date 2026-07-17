@@ -41,7 +41,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.19.0` is the current public baseline. Agent Packets now negotiate digest-verified deltas, transmit only what changed when that is provably smaller, and fall back to the exact full packet whenever a base is stale, tampered, mismatched, or uneconomic. The local proof timeline joins context, action, correction, verification, outcome, and learning through exact identity while rendering missing or corrupt evidence as a gap instead of inventing continuity. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces. Governed shared retention and workspace timelines remain paid capabilities, while local delta reconstruction and local proof stay in the public core.
+`v3.19.1` is the current public baseline. It hardens the v3.19 Agent Packet and proof release so CLI session completion cannot panic, `complete` and `fail` emit canonical lifecycle events, and legacy singular events are healed at ingestion instead of leaving finished work falsely active. Digest-verified deltas, exact full fallback, and the local proof timeline remain unchanged. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces. Governed shared retention and workspace timelines remain paid capabilities, while local delta reconstruction and local proof stay in the public core.
 
 ## Public Runtime Stack (v3.19)
 
@@ -88,8 +88,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.19.0 \
-  --statement "The current public release is 3.19.0." \
+  --object 3.19.1 \
+  --statement "The current public release is 3.19.1." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -432,6 +432,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Updates: `https://contextlattice.io/updates.html`
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.19.1.md` (panic-free terminal session commands, canonical lifecycle events, and legacy-client healing)
   - `docs/releases/v3.19.0.md` (digest-verified Agent Packet deltas, exact reconstruction, and one gap-aware proof timeline)
   - `docs/releases/v3.18.0.md` (durable continuity identity, holdout-locked semantic reconciliation, shared objective graphs, and witnessed decision provenance)
   - `docs/releases/v3.17.5.md` (latest-only configured state, bounded owner-only migration, and fail-closed semantic readers)
