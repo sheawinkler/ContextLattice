@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 30
+const GeneratedAgentContractRegistryVersion = 31
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -67,6 +67,10 @@ const GeneratedAgentContractTaskIdentityReconciliationV1 = "task_identity_reconc
 const GeneratedAgentContractTemporalClaimV1 = "temporal_claim.v1"
 const GeneratedAgentContractTemporalClaimQueryV1 = "temporal_claim_query.v1"
 const GeneratedAgentContractUniversalAgentAdapterResponseV1 = "universal_agent_adapter_response.v1"
+const GeneratedAgentContractUtilityAnalyticsV1 = "utility_analytics.v1"
+const GeneratedAgentContractUtilityLedgerV1 = "utility_ledger.v1"
+const GeneratedAgentContractUtilityObservationV1 = "utility_observation.v1"
+const GeneratedAgentContractUtilityPolicyEvaluationV1 = "utility_policy_evaluation.v1"
 const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 
 var GeneratedAgentContractIDs = []string{
@@ -125,6 +129,10 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractTemporalClaimV1,
 	GeneratedAgentContractTemporalClaimQueryV1,
 	GeneratedAgentContractUniversalAgentAdapterResponseV1,
+	GeneratedAgentContractUtilityAnalyticsV1,
+	GeneratedAgentContractUtilityLedgerV1,
+	GeneratedAgentContractUtilityObservationV1,
+	GeneratedAgentContractUtilityPolicyEvaluationV1,
 	GeneratedAgentContractWritebackResultV1,
 }
 
@@ -456,6 +464,30 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractUniversalAgentAdapterResponseV1,
 		PayloadKind:        "universal_agent_adapter_response",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractUtilityAnalyticsV1,
+		PayloadKind:        "entitled_continuous_utility_cohort_analytics",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractUtilityLedgerV1,
+		PayloadKind:        "bounded_verified_utility_ledger",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractUtilityObservationV1,
+		PayloadKind:        "verified_utility_observation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractUtilityPolicyEvaluationV1,
+		PayloadKind:        "entitled_advisory_verified_utility_policy_gate",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

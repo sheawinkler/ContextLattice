@@ -323,6 +323,7 @@ type server struct {
 	telemetryRing                   *telemetryRing
 	tokenImpact                     *tokenImpactTelemetry
 	contextPackQuality              *contextPackQualityTelemetry
+	utility                         *utilityTelemetry
 	telemetryMetricsMu              sync.Mutex
 	telemetryMetricsState           map[string]any
 	memoryTelemetryMu               sync.Mutex
@@ -1315,6 +1316,7 @@ func newServer() *server {
 		telemetryRing:                   telemetryRingInstance,
 		tokenImpact:                     newTokenImpactTelemetry(100),
 		contextPackQuality:              newContextPackQualityTelemetry(100),
+		utility:                         newUtilityTelemetry(clampInt(envInt("GO_UTILITY_LEDGER_MEMORY_SAMPLES", 5000), 100, 100000)),
 		agentSessions:                   agentSessionStoreInstance,
 		continuity:                      continuityStoreInstance,
 		telemetryMetricsState:           defaultTelemetryMetricsState(),
@@ -7121,6 +7123,9 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
+	mux.HandleFunc(utilityTelemetryPath, s.telemetryUtilityRoute)
+	mux.HandleFunc(utilityAnalyticsPath, s.telemetryUtilityAnalyticsRoute)
+	mux.HandleFunc(utilityPolicyPath, s.telemetryUtilityPolicyRoute)
 	mux.HandleFunc("/telemetry/claim-graph", s.telemetryClaimGraph)
 	mux.HandleFunc("/telemetry/context-policy", s.telemetryContextPolicy)
 	mux.HandleFunc("/telemetry/skills/foundry", s.telemetrySkillFoundry)

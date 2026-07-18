@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 30,
-  "updated_at": "2026-07-16T05:01:02Z",
+  "registry_version": 31,
+  "updated_at": "2026-07-17T22:42:14Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -542,7 +542,7 @@
       "required_output_mode": "json_object",
       "max_total_json_bytes": 180000,
       "max_string_bytes": 8000,
-      "max_list_items": 64,
+      "max_list_items": 96,
       "required_fields": [
         "ok",
         "service",
@@ -4686,6 +4686,341 @@
       },
       "required_string_contains": {
         "format_contract.schema_id": "writeback_result.v1"
+      }
+    },
+    "utility_observation.v1": {
+      "contract_version": 1,
+      "payload_kind": "verified_utility_observation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "retain_the_observation_with_explicit_exclusion_reasons_without_inferring_verification_tokens_provider_usage_or_causality",
+      "max_total_json_bytes": 80000,
+      "max_string_bytes": 5000,
+      "max_list_items": 128,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "revision",
+        "observation_id",
+        "observation_digest",
+        "source_claim_digest",
+        "outcome_id",
+        "sample_id",
+        "captured_at",
+        "updated_at",
+        "task_class",
+        "quality",
+        "denominator",
+        "utility",
+        "economics",
+        "pairing",
+        "eligibility",
+        "status",
+        "measurement_limit"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "revision": "int",
+        "observation_id": "string",
+        "observation_digest": "string",
+        "source_claim_digest": "string",
+        "outcome_id": "string",
+        "sample_id": "string",
+        "captured_at": "string",
+        "updated_at": "string",
+        "task_class": "string",
+        "quality": "object",
+        "denominator": "object",
+        "utility": "object",
+        "economics": "object",
+        "pairing": "object",
+        "eligibility": "object",
+        "status": "string",
+        "measurement_limit": "string"
+      },
+      "required_fields_by_path": {
+        "denominator": [
+          "wire_tokens",
+          "wire_tokens_exact",
+          "model_visible_context_tokens",
+          "model_visible_context_tokens_exact",
+          "provider_total_tokens_observed",
+          "provider_usage_observed"
+        ],
+        "utility": [
+          "independently_verified",
+          "verification_status"
+        ],
+        "eligibility": [
+          "observed_yield_eligible",
+          "causal_gain_eligible",
+          "exclusion_reasons",
+          "causal_exclusion_reasons"
+        ]
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "internal_reasoning",
+        "hidden_reasoning",
+        "reasoning_trace",
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "utility_observation.v1"
+      }
+    },
+    "utility_ledger.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_verified_utility_ledger",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_observed_and_excluded_rows_separately_without_promoting_modeled_savings_or_unmatched_outcomes_to_causal_gain",
+      "max_total_json_bytes": 500000,
+      "max_string_bytes": 5000,
+      "max_list_items": 500,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "updated_at",
+        "claim_posture",
+        "filters",
+        "summary",
+        "task_classes",
+        "observations",
+        "storage",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "updated_at": "string",
+        "claim_posture": "object",
+        "filters": "object",
+        "summary": "object",
+        "task_classes": "list[object]",
+        "observations": "list[object]",
+        "storage": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "summary": [
+          "observation_count",
+          "independently_verified_count",
+          "observed_yield_eligible_count",
+          "causal_pair_count",
+          "claim_status",
+          "denominators",
+          "economics",
+          "observation_exclusions",
+          "causal_exclusions"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "internal_reasoning",
+        "hidden_reasoning",
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "utility_ledger.v1",
+        "format_contract.schema_id": "utility_ledger.v1"
+      }
+    },
+    "utility_analytics.v1": {
+      "contract_version": 1,
+      "payload_kind": "entitled_continuous_utility_cohort_analytics",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_cohorts_and_task_class_economics_only_from_verified_exact_observations_or_explicitly_abstain",
+      "max_total_json_bytes": 500000,
+      "max_string_bytes": 5000,
+      "max_list_items": 500,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "feature_id",
+        "updated_at",
+        "window",
+        "summary",
+        "daily_cohorts",
+        "task_classes",
+        "policy_readiness",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "feature_id": "string",
+        "updated_at": "string",
+        "window": "object",
+        "summary": "object",
+        "daily_cohorts": "list[object]",
+        "task_classes": "list[object]",
+        "policy_readiness": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "internal_reasoning",
+        "hidden_reasoning",
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "utility_analytics.v1",
+        "feature_id": "frontier_utility_analytics",
+        "format_contract.schema_id": "utility_analytics.v1"
+      }
+    },
+    "utility_policy_evaluation.v1": {
+      "contract_version": 1,
+      "payload_kind": "entitled_advisory_verified_utility_policy_gate",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "abstain_without_changing_policy_when_exact_verified_matched_control_evidence_is_insufficient_or_negative",
+      "max_total_json_bytes": 160000,
+      "max_string_bytes": 5000,
+      "max_list_items": 256,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "feature_id",
+        "updated_at",
+        "decision",
+        "advisory_only",
+        "thresholds",
+        "evidence",
+        "reasons",
+        "network_calls",
+        "ordinary_memory_mutated",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "feature_id": "string",
+        "updated_at": "string",
+        "decision": "string",
+        "advisory_only": "bool",
+        "thresholds": "object",
+        "evidence": "object",
+        "reasons": "list[string]",
+        "network_calls": "int",
+        "ordinary_memory_mutated": "bool",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_false_paths": [
+        "ordinary_memory_mutated"
+      ],
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "internal_reasoning",
+        "hidden_reasoning",
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "utility_policy_evaluation.v1",
+        "feature_id": "frontier_utility_analytics",
+        "format_contract.schema_id": "utility_policy_evaluation.v1"
       }
     }
   }

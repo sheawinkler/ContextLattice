@@ -51,6 +51,9 @@ func newTestServer(t *testing.T, backendURL string) *server {
 	}
 	s := newServer()
 	t.Cleanup(func() {
+		if s != nil && s.utility != nil && s.utility.store != nil {
+			s.utility.store.close()
+		}
 		if s != nil && s.continuity != nil {
 			s.continuity.close()
 		}

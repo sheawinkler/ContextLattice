@@ -1468,7 +1468,7 @@ func normalizeAgentSessionEvent(sessionID string, payload map[string]any) map[st
 		eventID = "evt_" + bson.NewObjectID().Hex()
 	}
 	metadata := compactAgentSessionMetadata(anyMap(payload["metadata"]))
-	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff", "objective_hierarchy", "objective_lineage", "agent_state", "ownership"} {
+	for _, key := range []string{"source_coverage", "retrieval", "graph", "dream", "tests", "pr", "pull_request", "handoff", "objective_hierarchy", "objective_lineage", "agent_state", "ownership", "utility_verification"} {
 		if value, ok := payload[key]; ok {
 			metadata[key] = compactAgentSessionValue(value, 3)
 		}
@@ -1707,6 +1707,7 @@ func agentSessionAllowsPostTerminalEvent(eventType string) bool {
 		strings.Contains(eventType, "feedback") ||
 		strings.Contains(eventType, "correction") ||
 		strings.Contains(eventType, "claim") ||
+		strings.Contains(eventType, "verif") ||
 		strings.Contains(eventType, "retrieval.continuation") ||
 		strings.Contains(eventType, "audit")
 }
@@ -2303,7 +2304,18 @@ func (s *server) agentsSessionsEvent(w http.ResponseWriter, r *http.Request, ses
 		}
 		_, events, _ := s.agentSessions.get(anyToString(session["id"]))
 		rollup := buildAgentSessionRollup(session, events, time.Now().UTC())
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": session, "event": event, "rollup": rollup})
+		response := map[string]any{"ok": true, "session": session, "event": event, "rollup": rollup}
+		if reconciliation := s.recordUtilitySessionEvent(session, event); len(reconciliation) > 0 {
+			response["utility_reconciliation"] = reconciliation
+			if reconciliationOK, present := reconciliation["ok"]; present && !anyToBool(reconciliationOK) {
+				// The event is already durable, so expose partial success without
+				// encouraging a blind replay of the authoritative receipt.
+				response["ok"] = false
+				response["partial"] = true
+				response["event_recorded"] = true
+			}
+		}
+		writeJSON(w, http.StatusOK, response)
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 	}
@@ -2318,9 +2330,10 @@ func (s *server) recordAgentSessionEvent(sessionID string, eventType string, pay
 	}
 	payload = cloneAnyMap(payload)
 	payload["type"] = eventType
-	session, _, err := s.agentSessions.appendEvent(sessionID, payload)
+	session, event, err := s.agentSessions.appendEvent(sessionID, payload)
 	if err != nil {
 		return nil
 	}
+	s.recordUtilitySessionEvent(session, event)
 	return session
 }

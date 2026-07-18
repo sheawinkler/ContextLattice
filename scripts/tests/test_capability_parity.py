@@ -46,15 +46,16 @@ class CapabilityParityTests(unittest.TestCase):
         self.assertTrue(result["ok"], result.get("findings"))
         self.assertGreaterEqual(result["capability_count"], 10)
 
-    def test_frontier_t1_public_core_is_declared(self) -> None:
+    def test_current_frontier_public_core_is_declared(self) -> None:
         result = self.audit.inspect_ref("WORKTREE", self.audit.DEFAULT_MANIFEST)
         self.assertTrue(result["ok"], result.get("findings"))
-        self.assertEqual(result["release_train"], "v3.19")
+        self.assertEqual(result["release_train"], "v3.20")
         self.assertTrue(
             {
                 "task_identity_reconciliation.v1",
                 "objective_graph.v1",
                 "decision_change.v1",
+                "verified_utility_ledger.v1",
             }.issubset(result["capability_ids"]),
             result["capability_ids"],
         )

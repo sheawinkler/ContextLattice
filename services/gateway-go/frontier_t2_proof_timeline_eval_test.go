@@ -30,6 +30,14 @@ type frontierT2ProofHoldoutCase struct {
 	Expected  map[string]any `json:"expected"`
 }
 
+func TestProofTimelineStageForVerificationEvents(t *testing.T) {
+	for _, eventType := range []string{"verify.completed", "verification.completed", "tests.verified"} {
+		if got := proofTimelineStageForEvent(eventType); got != "verification" {
+			t.Fatalf("proofTimelineStageForEvent(%q)=%q want verification", eventType, got)
+		}
+	}
+}
+
 func frontierT2ProofHoldoutCases(t *testing.T) []frontierT2ProofHoldoutCase {
 	t.Helper()
 	path := filepath.Join("..", "..", "docs", "evals", "fixtures", "frontier-t2-proof-timeline-holdout.v1.json")

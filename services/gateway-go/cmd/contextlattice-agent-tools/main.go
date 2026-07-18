@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -232,6 +233,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdDiscover(args)
 	case "runner-quality":
 		return c.cmdRunnerQuality(args)
+	case "utility":
+		return c.cmdUtility(args)
 	case "adopt":
 		return c.cmdAdopt(args)
 	case "memory-topology":
@@ -262,8 +265,9 @@ Primary workflow:
   resume [--session-id id]        compact task/session state for continuation
   remember <checkpoint>           durable checkpoint bound to the current session
   finish <summary>                complete the session and report retrieval outcome
-  correct <note> --category kind  record useful/wrong/stale/superseded feedback
-  doctor                          verify local CLI, gateway, and agent integration health
+	  correct <note> --category kind  record useful/wrong/stale/superseded feedback
+	  utility [status|analytics|gate] inspect verified utility economics and advisory gates
+	  doctor                          verify local CLI, gateway, and agent integration health
 
 Advanced/compatibility commands:
   search                         lifecycle-aware memory search
@@ -3645,6 +3649,195 @@ func (c *cli) cmdRunnerQuality(args []string) error {
 	return c.emit(raw, parsed.bool("pretty"))
 }
 
+func (c *cli) cmdUtility(args []string) error {
+	subcommand := "status"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		subcommand = strings.ToLower(strings.TrimSpace(args[0]))
+		args = args[1:]
+	}
+	if subcommand == "record" || subcommand == "receipt" {
+		return c.adapterOutcomeCommand(args, "utility_record")
+	}
+	if subcommand == "verify" {
+		return c.utilityVerify(args)
+	}
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"task-class": "task_class", "utility-unit": "utility_unit", "from": "from", "to": "to", "limit": "limit",
+		"minimum-pairs": "minimum_pairs", "minimum-observations": "minimum_observations",
+		"minimum-gain-per-1k": "minimum_gain_per_1k", "minimum-lower-bound": "minimum_lower_bound",
+		"maximum-failure-rate": "maximum_failure_rate",
+	}), commonBoolFlags())
+	if parsed.bool("help") || len(parsed.pos) > 0 {
+		return c.emitUsage("contextlattice utility [status|analytics|gate|record|verify] [--project p] [--task-class class] [--utility-unit unit] [--from RFC3339] [--to RFC3339] [--limit 20] [--pretty]")
+	}
+	c.applyBaseURL(parsed)
+	values := url.Values{}
+	for _, field := range []string{"project", "task_class", "utility_unit", "from", "to", "limit"} {
+		if value := parsed.string(field, ""); value != "" {
+			values.Set(field, value)
+		}
+	}
+	querySuffix := ""
+	if encoded := values.Encode(); encoded != "" {
+		querySuffix = "?" + encoded
+	}
+	timeout := parsed.float("timeout", 10)
+	switch subcommand {
+	case "status", "ledger":
+		result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/utility"+querySuffix, nil, timeout)
+		if err != nil {
+			return err
+		}
+		return c.emit(result, parsed.bool("pretty"))
+	case "analytics", "cohorts":
+		result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/utility/analytics"+querySuffix, nil, timeout)
+		if err != nil {
+			return err
+		}
+		return c.emit(result, parsed.bool("pretty"))
+	case "gate", "evaluate":
+		payload := map[string]any{
+			"project": parsed.string("project", ""), "task_class": parsed.string("task_class", ""),
+			"utility_unit": parsed.string("utility_unit", ""), "from": parsed.string("from", ""), "to": parsed.string("to", ""),
+		}
+		for _, field := range []struct {
+			name     string
+			fallback any
+			floating bool
+		}{
+			{name: "minimum_pairs", fallback: 2},
+			{name: "minimum_observations", fallback: 10},
+			{name: "minimum_gain_per_1k", fallback: 0.0, floating: true},
+			{name: "minimum_lower_bound", fallback: 0.0, floating: true},
+			{name: "maximum_failure_rate", fallback: 0.1, floating: true},
+		} {
+			if field.floating {
+				raw := parsed.string(field.name, "")
+				value := field.fallback.(float64)
+				if raw != "" {
+					parsedValue, err := strconv.ParseFloat(raw, 64)
+					if err != nil || math.IsNaN(parsedValue) || math.IsInf(parsedValue, 0) {
+						return fmt.Errorf("--%s requires a finite number", strings.ReplaceAll(field.name, "_", "-"))
+					}
+					value = parsedValue
+				}
+				payload[field.name] = value
+			} else {
+				raw := parsed.string(field.name, "")
+				value := field.fallback.(int)
+				if raw != "" {
+					parsedValue, err := strconv.Atoi(raw)
+					if err != nil {
+						return fmt.Errorf("--%s requires an integer", strings.ReplaceAll(field.name, "_", "-"))
+					}
+					value = parsedValue
+				}
+				payload[field.name] = value
+			}
+		}
+		result, _, err := c.requestJSON(context.Background(), http.MethodPost, "/telemetry/utility/policy/evaluate", dropEmpty(payload), timeout)
+		if err != nil {
+			return err
+		}
+		return c.emit(result, parsed.bool("pretty"))
+	default:
+		return c.emitUsage("contextlattice utility [status|analytics|gate|record|verify] [--project p] [--task-class class] [--utility-unit unit] [--pretty]")
+	}
+}
+
+func (c *cli) utilityVerify(args []string) error {
+	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice utility verify --session-id <id> --outcome-id <id> --sample-id <id> --verification-event-id <id> --utility-value n --utility-unit unit --verification-evidence-digest sha256:<hex> --verification-passed true --verifier-kind kind --verifier-id <id> --agent-id <same-verifier-id> --pretty")
+	}
+	c.applyBaseURL(parsed)
+	sessionID := parsed.string("session_id", "")
+	outcomeID := parsed.string("outcome_id", "")
+	sampleID := parsed.string("context_pack_quality_sample_id", "")
+	eventID := firstNonEmpty(parsed.string("verification_event_id", ""), parsed.string("event_id", ""))
+	unit := parsed.string("utility_unit", "")
+	digest := parsed.string("verification_evidence_digest", "")
+	verifierKind := strings.ToLower(parsed.string("verifier_kind", ""))
+	verifierID := parsed.string("verifier_id", "")
+	for label, value := range map[string]string{
+		"session-id": sessionID, "outcome-id": outcomeID, "sample-id": sampleID,
+		"verification-event-id": eventID, "utility-unit": unit,
+		"verification-evidence-digest": digest, "verifier-kind": verifierKind, "verifier-id": verifierID,
+	} {
+		if value == "" {
+			return fmt.Errorf("--%s is required", label)
+		}
+	}
+	valueRaw := parsed.string("utility_value", "")
+	value, err := strconv.ParseFloat(valueRaw, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > 1_000_000 {
+		return errors.New("--utility-value requires a finite number between -1000000 and 1000000")
+	}
+	passed, passedPresent, err := parsed.boolString("verification_passed")
+	if err != nil {
+		return err
+	}
+	if !passedPresent {
+		return errors.New("--verification-passed is required")
+	}
+	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+		return errors.New("--verification-evidence-digest must be sha256:<64-hex>")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
+		return errors.New("--verification-evidence-digest must be sha256:<64-hex>")
+	}
+	switch verifierKind {
+	case "artifact_verifier", "contract_validator", "deterministic_test", "external_evaluator", "human_review":
+	default:
+		return errors.New("--verifier-kind is not an allowed independent verifier kind")
+	}
+	profile := resolveAdapterProfile(parsed)
+	if profile.agentID == "" || !strings.EqualFold(profile.agentID, verifierID) {
+		return errors.New("--agent-id must exactly identify --verifier-id for an independent verification receipt")
+	}
+	project := parsed.string("project", "contextlattice")
+	payload := map[string]any{
+		"id": eventID, "session_id": sessionID, "agent": profile.agent, "agent_id": profile.agentID,
+		"project": project, "type": "verification.completed", "summary": "independent utility verification receipt recorded",
+		"metadata": map[string]any{
+			"adapter": "contextlattice-agent-adapter", "go_native_cli": true,
+			"utility_verification": map[string]any{
+				"outcome_id": outcomeID, "sample_id": sampleID, "utility_value": value,
+				"utility_unit": unit, "evidence_digest": digest, "verification_passed": passed,
+				"verifier_kind": verifierKind, "verifier_id": verifierID,
+			},
+		},
+	}
+	raw, _, err := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", payload, parsed.float("timeout", 10))
+	if err != nil {
+		return err
+	}
+	detail := map[string]any{"event": raw["event"], "event_recorded": len(asMap(raw["event"])) > 0}
+	reconciliation := asMap(raw["utility_reconciliation"])
+	if len(reconciliation) > 0 {
+		detail["utility_reconciliation"] = reconciliation
+	}
+	if eventRecorded, present := raw["event_recorded"]; present {
+		detail["event_recorded"] = asBool(eventRecorded)
+	}
+	reconciled := asBool(reconciliation["ok"]) && firstString(reconciliation["status"]) == "reconciled"
+	findings := []map[string]any{}
+	if !reconciled {
+		findings = append(findings, map[string]any{
+			"reason": "utility_reconciliation_incomplete",
+			"status": firstString(reconciliation["status"], "missing"),
+			"detail": "verification event was recorded but the durable Utility Ledger observation was not reconciled",
+		})
+	}
+	if err := c.emit(adapterResponse("utility_verify", reconciled, profile.agent, profile.agentID, project, sessionID, detail, findings), parsed.bool("pretty")); err != nil {
+		return err
+	}
+	if !reconciled {
+		return errors.New("utility verification event recorded but durable Utility Ledger reconciliation failed")
+	}
+	return nil
+}
+
 func (c *cli) cmdRuntimeProof(args []string) error {
 	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{"agent": "agent", "agent-id": "agent_id"}), commonBoolFlags())
 	if parsed.bool("help") {
@@ -3784,50 +3977,75 @@ func (c *cli) adapterBootstrap(args []string) error {
 
 func adapterStringFlags() map[string]string {
 	return mergeStringFlags(commonStringFlags(), contextPackTokenBudgetStringFlags(), map[string]string{
-		"agent":                          "agent",
-		"agent-id":                       "agent_id",
-		"session-id":                     "session_id",
-		"mission":                        "mission",
-		"objective":                      "objective",
-		"goal":                           "goal",
-		"query":                          "query",
-		"limit":                          "limit",
-		"max-facts":                      "max_facts",
-		"summary":                        "summary",
-		"next-action":                    "next_action",
-		"file":                           "file",
-		"content":                        "content",
-		"metadata-json":                  "metadata_json",
-		"status":                         "status",
-		"state":                          "state",
-		"authority":                      "authority",
-		"source":                         "source",
-		"ttl-seconds":                    "ttl_seconds",
-		"task-id":                        "task_id",
-		"repo":                           "repo",
-		"branch":                         "branch",
-		"worktree":                       "worktree",
-		"cwd":                            "cwd",
-		"native-session-id":              "native_session_id",
-		"needs-user":                     "needs_user",
-		"blocked-by":                     "blocked_by",
-		"context-pack-quality-sample-id": "context_pack_quality_sample_id",
-		"sample-id":                      "context_pack_quality_sample_id",
-		"first-pass-success":             "first_pass_success",
-		"succeeded-first-pass":           "first_pass_success",
-		"repair-required":                "repair_required",
-		"retry-count":                    "retry_count",
-		"retries":                        "retry_count",
-		"followup-tokens":                "followup_tokens",
-		"provider-prompt-tokens":         "provider_prompt_tokens",
-		"provider-completion-tokens":     "provider_completion_tokens",
-		"provider-total-tokens":          "provider_total_tokens",
-		"provider-usage-json":            "provider_usage_json",
-		"task-class":                     "task_class",
-		"outcome-source":                 "outcome_source",
-		"policy-id":                      "policy_id",
-		"policy-arm":                     "policy_arm",
-		"policy-phase":                   "policy_phase",
+		"agent":                           "agent",
+		"agent-id":                        "agent_id",
+		"session-id":                      "session_id",
+		"mission":                         "mission",
+		"objective":                       "objective",
+		"goal":                            "goal",
+		"query":                           "query",
+		"limit":                           "limit",
+		"max-facts":                       "max_facts",
+		"summary":                         "summary",
+		"next-action":                     "next_action",
+		"file":                            "file",
+		"content":                         "content",
+		"metadata-json":                   "metadata_json",
+		"status":                          "status",
+		"state":                           "state",
+		"authority":                       "authority",
+		"source":                          "source",
+		"ttl-seconds":                     "ttl_seconds",
+		"task-id":                         "task_id",
+		"repo":                            "repo",
+		"branch":                          "branch",
+		"worktree":                        "worktree",
+		"cwd":                             "cwd",
+		"native-session-id":               "native_session_id",
+		"needs-user":                      "needs_user",
+		"blocked-by":                      "blocked_by",
+		"context-pack-quality-sample-id":  "context_pack_quality_sample_id",
+		"sample-id":                       "context_pack_quality_sample_id",
+		"first-pass-success":              "first_pass_success",
+		"succeeded-first-pass":            "first_pass_success",
+		"repair-required":                 "repair_required",
+		"retry-count":                     "retry_count",
+		"retries":                         "retry_count",
+		"followup-tokens":                 "followup_tokens",
+		"provider-prompt-tokens":          "provider_prompt_tokens",
+		"provider-completion-tokens":      "provider_completion_tokens",
+		"provider-total-tokens":           "provider_total_tokens",
+		"provider-usage-json":             "provider_usage_json",
+		"task-class":                      "task_class",
+		"outcome-source":                  "outcome_source",
+		"policy-id":                       "policy_id",
+		"policy-arm":                      "policy_arm",
+		"policy-phase":                    "policy_phase",
+		"outcome-id":                      "outcome_id",
+		"utility-value":                   "utility_value",
+		"utility-unit":                    "utility_unit",
+		"verification-event-id":           "verification_event_id",
+		"verification-evidence-digest":    "verification_evidence_digest",
+		"verification-passed":             "verification_passed",
+		"verifier-kind":                   "verifier_kind",
+		"verifier-id":                     "verifier_id",
+		"latency-ms":                      "latency_ms",
+		"cost-microusd":                   "cost_microusd",
+		"tool-calls":                      "tool_calls",
+		"failures":                        "failures",
+		"pair-id":                         "pair_id",
+		"pair-arm":                        "pair_arm",
+		"matched-control-outcome-id":      "matched_control_outcome_id",
+		"task-match-digest":               "task_match_digest",
+		"matching-method":                 "matching_method",
+		"leakage-free":                    "leakage_free",
+		"experiment-id":                   "experiment_id",
+		"assignment-digest":               "assignment_digest",
+		"pair-model":                      "pair_model",
+		"pair-runner":                     "pair_runner",
+		"pair-harness":                    "pair_harness",
+		"context-reconstruction-contract": "context_reconstruction_contract",
+		"event-id":                        "event_id",
 	})
 }
 
@@ -3901,8 +4119,13 @@ func contextPackOutcomeReport(sessionID string, sampleID string) map[string]any 
 		"sample_id": sampleID,
 		"endpoint":  "/telemetry/context-pack-quality/outcome",
 		"command":   "contextlattice_agent_adapter outcome --session-id " + shellQuote(sessionID) + " --context-pack-quality-sample-id " + shellQuote(sampleID) + " --first-pass-success true --repair-required false --retry-count 0",
-		"fields":    []any{"first_pass_success", "repair_required", "retry_count", "followup_tokens", "provider_prompt_tokens", "provider_completion_tokens", "provider_total_tokens"},
-		"privacy":   "stores compact counters only; do not send prompts, completions, source text, or secrets",
+		"fields": []any{
+			"first_pass_success", "repair_required", "retry_count", "followup_tokens",
+			"provider_prompt_tokens", "provider_completion_tokens", "provider_total_tokens",
+			"utility", "economics", "pairing",
+		},
+		"utility_receipt": "optional verified utility requires an exact verification event id, evidence digest, value, unit, passing independent verifier, and exact model-visible ContextLattice token denominator",
+		"privacy":         "stores compact counters and verification digests only; do not send prompts, completions, source text, or secrets",
 	}
 }
 
@@ -4014,10 +4237,6 @@ func (c *cli) ensureAdapterSession(parsed parsedArgs, project, objective, agentI
 }
 
 func adapterResponse(command string, ok bool, agent, agentID, project, sessionID string, result map[string]any, findings []map[string]any) map[string]any {
-	status := "passed"
-	if !ok || len(findings) > 0 {
-		status = "failed"
-	}
 	return map[string]any{
 		"ok":               ok && len(findings) == 0,
 		"schema_id":        "universal_agent_adapter_response.v1",
@@ -4029,12 +4248,19 @@ func adapterResponse(command string, ok bool, agent, agentID, project, sessionID
 		"adapter_contract": defaultAdapterContract(),
 		"result":           result,
 		"findings":         findings,
-		"format_contract": map[string]any{
-			"schema_id": "universal_agent_adapter_response.v1",
-			"validation": map[string]any{
-				"status": status,
-			},
-		},
+		"format_contract":  adapterResponseFormatContract(),
+	}
+}
+
+func adapterResponseFormatContract() map[string]any {
+	return map[string]any{
+		"registry_id":          generatedAgentContractRegistryID,
+		"registry_version":     generatedAgentContractRegistryVersion,
+		"schema_id":            "universal_agent_adapter_response.v1",
+		"contract_version":     1,
+		"required_output_mode": "json_object",
+		"validator":            "contextlattice.boundary.v1",
+		"validation":           map[string]any{"status": "passed", "errors": []any{}},
 	}
 }
 
@@ -4174,6 +4400,7 @@ func defaultAdapterContract() map[string]any {
 		"schema_id":                  "contextlattice_universal_agent_adapter.v1",
 		"version":                    "2026-06-30",
 		"required_phases":            []any{"preflight", "auto_session", "agent_state", "context_pack", "context_pack_outcome", "checkpoint", "handoff", "completion"},
+		"required_exports":           []any{"CONTEXTLATTICE_ORCHESTRATOR_URL", "MEMMCP_ORCHESTRATOR_URL", "CONTEXTLATTICE_AGENT", "CONTEXTLATTICE_AGENT_ID", "MEMMCP_AGENT_ID", "CONTEXTLATTICE_SESSION_ID"},
 		"preflight_route":            "/v1/agents/preflight",
 		"event_route":                "/v1/agents/sessions/event",
 		"context_pack_route":         "/memory/context-pack",
@@ -4640,6 +4867,7 @@ func (c *cli) adapterEvent(args []string) error {
 	}
 	summary := parsed.string("summary", strings.Join(parsed.pos[1:], " "))
 	event, _, eventErr := c.requestJSON(context.Background(), http.MethodPost, "/v1/agents/sessions/event", dropEmpty(map[string]any{
+		"id":         parsed.string("event_id", ""),
 		"session_id": sessionID,
 		"agent":      profile.agent,
 		"agent_id":   profile.agentID,
@@ -4679,7 +4907,58 @@ func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string
 		return nil, false, err
 	}
 	providerUsage := parseJSONObject(parsed.string("provider_usage_json", ""))
+	verificationPassed, verificationPassedPresent, err := parsed.boolString("verification_passed")
+	if err != nil {
+		return nil, false, err
+	}
+	leakageFree, leakageFreePresent, err := parsed.boolString("leakage_free")
+	if err != nil {
+		return nil, false, err
+	}
+	utility := dropEmpty(map[string]any{
+		"unit":                  parsed.string("utility_unit", ""),
+		"verification_event_id": parsed.string("verification_event_id", ""),
+		"evidence_digest":       parsed.string("verification_evidence_digest", ""),
+		"verifier_kind":         parsed.string("verifier_kind", ""),
+		"verifier_id":           parsed.string("verifier_id", ""),
+	})
+	if parsed.has("utility_value") {
+		value, parseErr := strconv.ParseFloat(parsed.string("utility_value", ""), 64)
+		if parseErr != nil {
+			return nil, false, errors.New("--utility-value must be numeric")
+		}
+		utility["value"] = value
+	}
+	if verificationPassedPresent {
+		utility["verification_passed"] = verificationPassed
+	}
+	if verifierID := firstString(utility["verifier_id"]); verifierID != "" && strings.EqualFold(verifierID, profile.agentID) {
+		return nil, false, errors.New("--verifier-id must identify an independent verifier, not the reporting agent")
+	}
+	economics := map[string]any{}
+	for _, field := range []string{"latency_ms", "cost_microusd", "tool_calls", "failures"} {
+		if parsed.has(field) {
+			economics[field] = parsed.int(field, 0)
+		}
+	}
+	pairing := dropEmpty(map[string]any{
+		"pair_id":                         parsed.string("pair_id", ""),
+		"arm":                             parsed.string("pair_arm", ""),
+		"matched_control_outcome_id":      parsed.string("matched_control_outcome_id", ""),
+		"task_match_digest":               parsed.string("task_match_digest", ""),
+		"matching_method":                 parsed.string("matching_method", ""),
+		"experiment_id":                   parsed.string("experiment_id", ""),
+		"assignment_digest":               parsed.string("assignment_digest", ""),
+		"model":                           parsed.string("pair_model", ""),
+		"runner":                          parsed.string("pair_runner", ""),
+		"harness":                         parsed.string("pair_harness", ""),
+		"context_reconstruction_contract": parsed.string("context_reconstruction_contract", ""),
+	})
+	if leakageFreePresent {
+		pairing["leakage_free"] = leakageFree
+	}
 	payload := dropEmpty(map[string]any{
+		"outcome_id":                     parsed.string("outcome_id", ""),
 		"sample_id":                      sampleID,
 		"context_pack_quality_sample_id": sampleID,
 		"session_id":                     sessionID,
@@ -4697,6 +4976,9 @@ func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string
 		"provider_completion_tokens":     parsed.int("provider_completion_tokens", 0),
 		"provider_total_tokens":          parsed.int("provider_total_tokens", 0),
 		"provider_usage":                 providerUsage,
+		"utility":                        utility,
+		"economics":                      economics,
+		"pairing":                        pairing,
 	})
 	if firstPassPresent {
 		payload["first_pass_success"] = firstPass
@@ -4711,7 +4993,8 @@ func buildContextPackOutcomePayload(parsed parsedArgs, project, sessionID string
 		parsed.int("provider_prompt_tokens", 0) > 0 ||
 		parsed.int("provider_completion_tokens", 0) > 0 ||
 		parsed.int("provider_total_tokens", 0) > 0 ||
-		len(providerUsage) > 0
+		len(providerUsage) > 0 ||
+		len(utility) > 0
 	if !hasSignal {
 		return nil, false, errors.New("outcome requires at least one explicit outcome or usage signal")
 	}
@@ -4735,6 +5018,30 @@ func contextPackOutcomeRequested(parsed parsedArgs) bool {
 		"policy_id",
 		"policy_arm",
 		"policy_phase",
+		"outcome_id",
+		"utility_value",
+		"utility_unit",
+		"verification_event_id",
+		"verification_evidence_digest",
+		"verification_passed",
+		"verifier_kind",
+		"verifier_id",
+		"latency_ms",
+		"cost_microusd",
+		"tool_calls",
+		"failures",
+		"pair_id",
+		"pair_arm",
+		"matched_control_outcome_id",
+		"task_match_digest",
+		"matching_method",
+		"leakage_free",
+		"experiment_id",
+		"assignment_digest",
+		"pair_model",
+		"pair_runner",
+		"pair_harness",
+		"context_reconstruction_contract",
 	} {
 		if parsed.has(key) {
 			return true
@@ -4760,6 +5067,9 @@ func compactOutcomeMetadata(outcome map[string]any) map[string]any {
 		"policy_id":                  outcome["policy_id"],
 		"policy_arm":                 outcome["policy_arm"],
 		"policy_phase":               outcome["policy_phase"],
+		"utility":                    outcome["utility"],
+		"economics":                  outcome["economics"],
+		"pairing":                    outcome["pairing"],
 	})
 }
 
@@ -4796,9 +5106,16 @@ func (c *cli) postContextPackOutcome(parsed parsedArgs, project, sessionID strin
 }
 
 func (c *cli) adapterOutcome(args []string) error {
+	return c.adapterOutcomeCommand(args, "outcome")
+}
+
+func (c *cli) adapterOutcomeCommand(args []string, command string) error {
 	parsed := parseArgs(args, adapterStringFlags(), adapterBoolFlags())
 	if parsed.bool("help") {
-		return c.emitUsage("contextlattice_agent_adapter outcome --session-id <id> --context-pack-quality-sample-id <id> --first-pass-success true|false --repair-required true|false [--retry-count n] [--provider-total-tokens n] --pretty")
+		if command == "utility_record" {
+			return c.emitUsage("contextlattice utility record --session-id <id> --context-pack-quality-sample-id <id> --utility-value n --utility-unit unit --verification-event-id id --verification-evidence-digest sha256:<hex> --verification-passed true --verifier-kind kind --verifier-id id [pairing flags] --pretty")
+		}
+		return c.emitUsage("contextlattice_agent_adapter outcome --session-id <id> --context-pack-quality-sample-id <id> [--first-pass-success true|false] [--utility-value n --utility-unit unit --verification-event-id id --verification-evidence-digest sha256:<hex> --verification-passed true --verifier-kind kind --verifier-id id] --pretty")
 	}
 	c.applyBaseURL(parsed)
 	project := parsed.string("project", "contextlattice")
@@ -4806,7 +5123,7 @@ func (c *cli) adapterOutcome(args []string) error {
 	sessionID := resolveOutcomeSessionID(parsed, project)
 	raw, event, findings := c.postContextPackOutcome(parsed, project, sessionID, profile, "adapter_outcome")
 	ok := len(findings) == 0 && asBool(raw["ok"])
-	if err := c.emit(adapterResponse("outcome", ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
+	if err := c.emit(adapterResponse(command, ok, profile.agent, profile.agentID, project, sessionID, map[string]any{
 		"outcome":   raw["outcome"],
 		"telemetry": raw["telemetry"],
 		"event":     event,
@@ -4815,6 +5132,11 @@ func (c *cli) adapterOutcome(args []string) error {
 	}
 	c.autoDrainAsyncInbox(sessionID, project, profile.agentID)
 	if !ok {
+		if len(findings) > 0 {
+			if detail, _ := findings[0]["detail"].(string); strings.TrimSpace(detail) != "" {
+				return errors.New(detail)
+			}
+		}
 		return errors.New("context pack outcome report failed")
 	}
 	return nil

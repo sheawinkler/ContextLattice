@@ -453,6 +453,12 @@ func finalizeAgentPacketCore(packet map[string]any) map[string]any {
 
 func applyAgentPacketTransportAccounting(packet map[string]any, count tokenCountResult, target int, hard int) {
 	applyTransportTokenImpact(packet, count, "agent_packet_transport", "serialized_agent_packet_json")
+	modelVisible := contextPackCountAnyTokens(agentPacketModelVisibleProjection(packet))
+	if count.TokenizerExact && modelVisible.TokenizerExact {
+		impact := anyMap(packet["token_impact"])
+		impact["model_visible_context_tokens_exact"] = modelVisible.Tokens
+		packet["token_impact"] = impact
+	}
 	tokenBudget := anyMap(packet["token_budget"])
 	tokenBudget["actual_tokens"] = count.Tokens
 	tokenBudget["target_met"] = count.Tokens <= target
@@ -514,6 +520,7 @@ func applyTransportTokenImpact(payload map[string]any, count tokenCountResult, s
 	impact["compiled_prompt_tokens_estimate"] = compiled
 	impact["packed_tokens_estimate"] = transport
 	impact["transport_tokens_exact"] = transport
+	impact["wire_tokens_exact"] = transport
 	impact["saved_tokens_estimate"] = saved
 	impact["net_token_delta"] = net
 	impact["compression_ratio"] = ratio

@@ -1,0 +1,132 @@
+{
+  "schema_id": "frontier_t3_utility_holdout.v1",
+  "holdout_id": "frontier_t3_utility_adversarial_v1",
+  "frozen_at": "2026-07-17T22:00:00Z",
+  "base_commit": "ea7d0f36cfce50bf06539199630318dc62719eba",
+  "frontier_items": [30],
+  "independent_from_training": true,
+  "cases": [
+    {
+      "case_id": "positive_exact_pair_a",
+      "kind": "matched_pair",
+      "control_utility": 4,
+      "treatment_utility": 8,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 1, "gain_per_1k": 8}
+    },
+    {
+      "case_id": "positive_exact_pair_b",
+      "kind": "matched_pair",
+      "control_utility": 5,
+      "treatment_utility": 9,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 1, "gain_per_1k": 8}
+    },
+    {
+      "case_id": "negative_exact_pair_retained",
+      "kind": "matched_pair",
+      "control_utility": 10,
+      "treatment_utility": 8,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 1, "gain_per_1k": -4}
+    },
+    {
+      "case_id": "exact_observation_without_control",
+      "kind": "no_control",
+      "utility": 6,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 1, "causal_pairs": 0, "causal_exclusion": "matched_control_not_declared"}
+    },
+    {
+      "case_id": "estimated_token_denominator",
+      "kind": "inexact_tokens",
+      "utility": 7,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 0, "observation_exclusion": "model_visible_context_tokens_not_exact"}
+    },
+    {
+      "case_id": "verification_event_absent",
+      "kind": "missing_verification",
+      "utility": 7,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 0, "observation_exclusion": "verification_event_not_found"}
+    },
+    {
+      "case_id": "verification_failed",
+      "kind": "failed_verification",
+      "utility": 7,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 0, "observation_exclusion": "verification_failed"}
+    },
+    {
+      "case_id": "self_verification_rejected",
+      "kind": "self_verification",
+      "utility": 7,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 0, "observation_exclusion": "verification_not_independent"}
+    },
+    {
+      "case_id": "matched_pair_leakage_unproven",
+      "kind": "leaky_pair",
+      "control_utility": 5,
+      "treatment_utility": 9,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 0, "causal_exclusion": "treatment_leakage_unproven"}
+    },
+    {
+      "case_id": "matched_pair_digest_mismatch",
+      "kind": "digest_mismatch_pair",
+      "control_utility": 5,
+      "treatment_utility": 9,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 0, "causal_exclusion": "task_match_digest_mismatch"}
+    },
+    {
+      "case_id": "matched_pair_task_class_mismatch",
+      "kind": "task_class_mismatch_pair",
+      "control_utility": 5,
+      "treatment_utility": 9,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 0, "causal_exclusion": "task_class_mismatch"}
+    },
+    {
+      "case_id": "matched_pair_model_mismatch",
+      "kind": "model_mismatch_pair",
+      "control_utility": 5,
+      "treatment_utility": 9,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 2, "causal_pairs": 0, "causal_exclusion": "model_mismatch"}
+    },
+    {
+      "case_id": "cross_source_identity_mismatch",
+      "kind": "source_identity_mismatch",
+      "utility": 7,
+      "model_visible_tokens": 500,
+      "expected": {"observed_eligible": 0, "observation_exclusion": "source_identity_mismatch"}
+    }
+  ],
+  "aggregate_expectation": {
+    "observation_count": 20,
+    "observed_yield_eligible_count": 15,
+    "causal_pair_count": 3,
+    "verified_utility_sum": 106,
+    "model_visible_context_tokens_exact": 7500,
+    "observed_utility_per_1k_model_visible_tokens": 14.133333,
+    "causal_utility_gain_per_1k_model_visible_tokens": 4,
+    "claim_status": "causal_estimate",
+    "negative_pair_count": 1,
+    "provider_calls": 0,
+    "external_network_calls": 0
+  },
+  "release_gates": {
+    "case_classification_accuracy": 1,
+    "exact_denominator_separation": true,
+    "self_verification_rejection_rate": 1,
+    "leakage_rejection_rate": 1,
+    "mismatched_control_rejection_rate": 1,
+    "negative_gain_retention_rate": 1,
+    "ordinary_memory_mutations": 0,
+    "provider_calls": 0,
+    "external_network_calls": 0
+  }
+}

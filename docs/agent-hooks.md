@@ -54,7 +54,7 @@ Installed commands:
 
 | Command | Purpose |
 | --- | --- |
-| `contextlattice` | Primary compact workflow: `context`, `resume`, `remember`, `finish`, `correct`, and `doctor`. |
+| `contextlattice` | Primary compact workflow: `context`, `resume`, `remember`, `finish`, `correct`, `utility`, and `doctor`. |
 | `contextlattice_agent_start` | Compact startup guard for agents. |
 | `contextlattice_agent_adapter` | Universal agent lifecycle adapter for bootstrap, context-pack, checkpoint, handoff, state, event, and completion. |
 | `contextlattice_agent_discover` | Best-effort local agent discovery for profile authority, process evidence, hook evidence, repo instruction evidence, and lifecycle explanations. |
@@ -129,6 +129,84 @@ Runner adapter completions write compact `runner_quality_sample.v1` rows when ta
 | `contextlattice_pre_compaction_write` | Persist objective state before compaction/handoff. |
 | `contextlattice_post_compaction_read` | Read objective state after compaction/resume. |
 
+### Verified utility receipts
+
+`contextlattice utility status` reads the public, bounded Utility Ledger. It
+reports wire tokens, exact model-visible ContextLattice tokens, and observed
+provider totals as separate denominators. An outcome contributes observed yield
+only when its declared verification event, evidence digest, value, unit,
+verifier, and pass result match exactly. Missing controls, estimated tokens,
+failed verification, identity mismatch, and leakage remain visible as exclusion
+evidence rather than disappearing from the denominator.
+
+Use the primary CLI with an explicit outcome and event ID when a deterministic
+test, artifact validator, external evaluator, or named human review verifies
+utility. The reporting agent records the claim. The independent verifier then
+appends the linked receipt under its own `--agent-id`, including after a
+terminal session. The two commands may arrive in either order; the ledger
+reconciles the exact event ID without turning the reporter's claim into proof:
+
+```bash
+contextlattice utility record \
+  --session-id <session-id> \
+  --context-pack-quality-sample-id <sample-id> \
+  --outcome-id <outcome-id> \
+  --utility-value 8 \
+  --utility-unit acceptance_points \
+  --verification-event-id <event-id> \
+  --verification-evidence-digest sha256:<64-hex-evidence-digest> \
+  --verification-passed true \
+  --verifier-kind deterministic_test \
+  --verifier-id <independent-verifier-id> \
+  --latency-ms 240 --tool-calls 3 --failures 0 \
+  --pretty
+
+contextlattice utility verify \
+  --agent-id <independent-verifier-id> \
+  --session-id <session-id> \
+  --sample-id <sample-id> \
+  --outcome-id <outcome-id> \
+  --utility-value 8 \
+  --utility-unit acceptance_points \
+  --verification-event-id <event-id> \
+  --verification-evidence-digest sha256:<64-hex-evidence-digest> \
+  --verification-passed true \
+  --verifier-kind deterministic_test \
+  --verifier-id <independent-verifier-id> \
+  --pretty
+
+contextlattice utility status --project <project> --pretty
+```
+
+Utility claims are acknowledged only after durable atomic replacement and fsync
+when the ledger is enabled. Treat `utility_persistence_unavailable` as a failed
+Utility Ledger receipt even though the authoritative Context Pack outcome was accepted;
+retry only after storage health is restored. Any ambiguous write, fsync, or
+compaction failure latches the Utility Ledger closed until runtime restart so a
+retry cannot overwrite uncertain bytes. If `contextlattice utility verify`
+records the authoritative verification event but cannot reconcile the durable
+observation, it emits `ok:false`, preserves `event_recorded:true`, and exits
+nonzero; do not replay that event blindly. Explicitly disabling the ledger
+records no derived utility observations.
+
+For causal evaluation, both arms also declare the same exact `--pair-id`,
+`--experiment-id`, `--assignment-digest`, `--task-match-digest`,
+`--matching-method`, `--pair-model`, `--pair-runner`, `--pair-harness`,
+`--context-reconstruction-contract`, task class, project, utility unit, and
+`--leakage-free true`. Treatment declares `--pair-arm treatment` and
+`--matched-control-outcome-id`; controls use `--pair-arm control`. A control is
+used once. Missing execution context, mixed utility units, and mismatched arms
+abstain instead of manufacturing a comparison. Control and treatment must use
+the same exact model-visible token count and tokenizer encoding. Negative gains remain eligible
+and visible. Paid/private runtimes add `contextlattice utility analytics` and
+`contextlattice utility gate`; filter policy gates with `--utility-unit` when a
+ledger contains more than one unit. The gate is advisory only.
+
+Verifier identity is locally attested, not a remote identity-provider claim:
+the verification event's `agent_id` must equal `verifier_id`, and that identity
+must differ from the reporting agent. Signed external evidence can be bound by
+its digest without storing the artifact in ordinary memory.
+
 ## Recommended startup sequence
 
 ```bash
@@ -138,6 +216,7 @@ contextlattice resume --project contextlattice --pretty
 contextlattice remember "checkpoint summary" --project contextlattice --pretty
 contextlattice correct "retrieval was useful" --category useful --project contextlattice --pretty
 contextlattice finish "verified result" --success --project contextlattice --pretty
+contextlattice utility status --project contextlattice --pretty
 ```
 
 Adapter, trace, discovery, and adoption commands remain available as advanced

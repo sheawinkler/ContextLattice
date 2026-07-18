@@ -56,6 +56,10 @@ REQUIRED_CONTRACTS = (
     "objective_graph.v1",
     "decision_change.v1",
     "decision_change_query.v1",
+    "utility_observation.v1",
+    "utility_ledger.v1",
+    "utility_analytics.v1",
+    "utility_policy_evaluation.v1",
     "retrieval_plan.v1",
     "context_policy_candidate.v1",
     "context_policy_evaluation.v1",
@@ -2025,6 +2029,123 @@ def validate_expected_failure(contract_id: str, payload: dict[str, Any], reason:
     return None
 
 
+def sample_utility_observation() -> dict[str, Any]:
+    return attach_format_contract("utility_observation.v1", {
+        "schema_id": "utility_observation.v1",
+        "version": 1,
+        "revision": 1,
+        "observation_id": "util_audit",
+        "observation_digest": "sha256:" + "a" * 64,
+        "source_claim_digest": "sha256:" + "b" * 64,
+        "outcome_id": "outcome_audit",
+        "sample_id": "sample_audit",
+        "captured_at": "2026-07-17T00:00:00Z",
+        "updated_at": "2026-07-17T00:00:00Z",
+        "task_class": "coding",
+        "quality": {"sample_present": True, "quality_score": 90, "confidence": "high"},
+        "denominator": {
+            "wire_tokens": 700,
+            "wire_tokens_exact": True,
+            "model_visible_context_tokens": 500,
+            "model_visible_context_tokens_exact": True,
+            "provider_total_tokens_observed": 0,
+            "provider_usage_observed": False,
+        },
+        "utility": {
+            "value": 8.0,
+            "unit": "acceptance_points",
+            "independently_verified": True,
+            "verification_status": "verified",
+            "verification_actor_id": "deterministic_verifier",
+        },
+        "economics": {"latency_ms": 40, "cost_microusd": 0, "tool_calls": 2, "failures": 0},
+        "pairing": {},
+        "eligibility": {
+            "observed_yield_eligible": True,
+            "causal_gain_eligible": False,
+            "exclusion_reasons": [],
+            "causal_exclusion_reasons": ["matched_control_not_evaluated"],
+        },
+        "status": "verified_exact",
+        "measurement_limit": "Exact observed yield only.",
+    })
+
+
+def sample_utility_summary() -> dict[str, Any]:
+    return {
+        "observation_count": 1,
+        "independently_verified_count": 1,
+        "observed_yield_eligible_count": 1,
+        "causal_pair_count": 0,
+        "claim_status": "observed_yield_only",
+        "denominators": {
+            "wire_tokens_exact": 700,
+            "model_visible_context_tokens_exact": 500,
+            "provider_total_tokens_observed": 0,
+        },
+        "economics": {"latency_sample_count": 1, "average_latency_ms": 40, "tool_calls": 2, "failures": 0, "failed_observation_count": 0},
+        "observation_exclusions": {},
+        "causal_exclusions": {},
+    }
+
+
+def sample_utility_ledger() -> dict[str, Any]:
+    return attach_format_contract(
+        "utility_ledger.v1",
+        {
+            "ok": True,
+            "schema_id": "utility_ledger.v1",
+            "version": 1,
+            "updated_at": "2026-07-17T00:00:00Z",
+            "claim_posture": {"observed_yield": "verified exact only", "causal_gain": "matched controls only"},
+            "filters": {"project": "contextlattice", "task_class": "coding", "from": None, "to": None},
+            "summary": sample_utility_summary(),
+            "task_classes": [],
+            "observations": [sample_utility_observation()],
+            "storage": {"enabled": True, "durability": "bounded_fsync_ndjson"},
+            "measurement_limit": "No provider usage or causality is inferred.",
+        },
+    )
+
+
+def sample_utility_analytics() -> dict[str, Any]:
+    return attach_format_contract(
+        "utility_analytics.v1",
+        {
+            "ok": True,
+            "schema_id": "utility_analytics.v1",
+            "feature_id": "frontier_utility_analytics",
+            "updated_at": "2026-07-17T00:00:00Z",
+            "window": {"project": "contextlattice", "task_class": "coding", "from": None, "to": None},
+            "summary": sample_utility_summary(),
+            "daily_cohorts": [],
+            "task_classes": [],
+            "policy_readiness": {"ready_for_gate_evaluation": False, "advisory_only": True},
+            "measurement_limit": "Verified exact observations only.",
+        },
+    )
+
+
+def sample_utility_policy_evaluation() -> dict[str, Any]:
+    return attach_format_contract(
+        "utility_policy_evaluation.v1",
+        {
+            "ok": True,
+            "schema_id": "utility_policy_evaluation.v1",
+            "feature_id": "frontier_utility_analytics",
+            "updated_at": "2026-07-17T00:00:00Z",
+            "decision": "abstain",
+            "advisory_only": True,
+            "thresholds": {"minimum_pairs": 2},
+            "evidence": {"summary": sample_utility_summary()},
+            "reasons": ["minimum_matched_pairs_not_met"],
+            "network_calls": 0,
+            "ordinary_memory_mutated": False,
+            "measurement_limit": "Advisory only.",
+        },
+    )
+
+
 def run_audit() -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     try:
@@ -2083,6 +2204,10 @@ def run_audit() -> list[dict[str, Any]]:
         ("objective_graph.v1", sample_objective_graph()),
         ("decision_change.v1", sample_decision_change()),
         ("decision_change_query.v1", sample_decision_change_query()),
+        ("utility_observation.v1", sample_utility_observation()),
+        ("utility_ledger.v1", sample_utility_ledger()),
+        ("utility_analytics.v1", sample_utility_analytics()),
+        ("utility_policy_evaluation.v1", sample_utility_policy_evaluation()),
         ("retrieval_plan.v1", sample_retrieval_plan()),
         ("synthesis_pack.v2", sample_synthesis_pack_v2()),
         ("context_policy_candidate.v1", sample_context_policy_candidate()),

@@ -23,7 +23,7 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "3.19.1" || commercialTruthStableTag != "v3.19.1" || commercialTruthReleaseTrain != "3.19" {
+	if commercialTruthProductVersion != "3.20.0" || commercialTruthStableTag != "v3.20.0" || commercialTruthReleaseTrain != "3.20" {
 		t.Fatalf(
 			"unexpected generated release truth: version=%q tag=%q train=%q",
 			commercialTruthProductVersion,
@@ -31,17 +31,28 @@ func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
 			commercialTruthReleaseTrain,
 		)
 	}
-	if len(commercialTruthProtectedPaidRoutes) != 16 {
-		t.Fatalf("protected route count=%d, want 16", len(commercialTruthProtectedPaidRoutes))
+	if len(commercialTruthProtectedPaidRoutes) != 18 {
+		t.Fatalf("protected route count=%d, want 18", len(commercialTruthProtectedPaidRoutes))
 	}
 	wantFeatures := map[string]string{
-		"/memory/continuity/automation":   "frontier_semantic_continuity_automation",
-		"/memory/objectives/shared":       "frontier_shared_objective_graph",
-		"/memory/decision-changes/shared": "frontier_shared_decision_provenance",
+		"/memory/continuity/automation":      "frontier_semantic_continuity_automation",
+		"/memory/objectives/shared":          "frontier_shared_objective_graph",
+		"/memory/decision-changes/shared":    "frontier_shared_decision_provenance",
+		"/telemetry/utility/analytics":       "frontier_utility_analytics",
+		"/telemetry/utility/policy/evaluate": "frontier_utility_analytics",
 	}
 	for path, featureID := range wantFeatures {
 		if got := commercialTruthPaidRouteRequiredFeature(path); got != featureID {
 			t.Fatalf("paid route feature path=%s got=%s want=%s", path, got, featureID)
+		}
+	}
+	for _, path := range []string{
+		"/memory/agent-packet/shared",
+		"/memory/agent-proof-timeline/shared",
+		"/memory/agent-proof-timeline/shared/lifecycle",
+	} {
+		if got := commercialTruthPaidRouteRequiredFeature(path); got != "" {
+			t.Fatalf("OSS runtime generated an unavailable T2 paid route %s: %s", path, got)
 		}
 	}
 	if *commercialTruthPlans["team"].Limits.IncludedSeats != 5 || *commercialTruthPlans["starter"].Limits.IncludedSeats != 1 {

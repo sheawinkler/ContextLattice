@@ -50,6 +50,20 @@ var optionalFrontierT1ProjectBoundary = func(*server, http.ResponseWriter, *http
 	return true
 }
 
+var optionalFrontierT3UtilityAnalyticsRoute = func(_ *server, w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusNotFound, map[string]any{
+		"ok": false, "error": "premium_utility_analytics_unavailable",
+		"detail": "The local Utility Ledger remains available through contextlattice utility.",
+	})
+}
+
+var optionalFrontierT3UtilityPolicyRoute = func(_ *server, w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusNotFound, map[string]any{
+		"ok": false, "error": "premium_utility_policy_unavailable",
+		"detail": "Policy evaluation requires the paid runtime artifact.",
+	})
+}
+
 func (s *server) enforceOptionalFrontierT1ProjectBoundary(w http.ResponseWriter, r *http.Request, operationClass string) bool {
 	return optionalFrontierT1ProjectBoundary(s, w, r, operationClass)
 }
