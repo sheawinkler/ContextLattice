@@ -23,7 +23,7 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "3.20.2" || commercialTruthStableTag != "v3.20.2" || commercialTruthReleaseTrain != "3.20" {
+	if commercialTruthProductVersion != "3.20.3" || commercialTruthStableTag != "v3.20.3" || commercialTruthReleaseTrain != "3.20" {
 		t.Fatalf(
 			"unexpected generated release truth: version=%q tag=%q train=%q",
 			commercialTruthProductVersion,
@@ -39,7 +39,7 @@ func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
 		"/memory/objectives/shared":          "frontier_shared_objective_graph",
 		"/memory/decision-changes/shared":    "frontier_shared_decision_provenance",
 		"/telemetry/utility/analytics":       "frontier_utility_analytics",
-		"/telemetry/utility/policy/evaluate": "frontier_utility_analytics",
+		"/telemetry/utility/policy/evaluate": "frontier_verified_efficiency_operations",
 	}
 	for path, featureID := range wantFeatures {
 		if got := commercialTruthPaidRouteRequiredFeature(path); got != featureID {

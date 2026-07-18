@@ -53,8 +53,8 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "3.20.2")
-        self.assertEqual(contract["product"]["stable_tag"], "v3.20.2")
+        self.assertEqual(contract["product"]["version"], "3.20.3")
+        self.assertEqual(contract["product"]["stable_tag"], "v3.20.3")
         self.assertEqual(contract["product"]["release_train"], "3.20")
         self.assertEqual(contract["product"]["primary_interface"], "cli")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
@@ -88,12 +88,17 @@ class CommercialTruthTests(unittest.TestCase):
         frontier = frontier_t1 | {packet_automation, shared_proof}
         utility_core = "frontier_verified_utility_ledger"
         utility_analytics = "frontier_utility_analytics"
+        utility_operations = "frontier_verified_efficiency_operations"
         self.assertTrue(frontier.isdisjoint(plans["free"]["feature_ids"]))
         self.assertIn(utility_core, plans["free"]["feature_ids"])
         self.assertTrue((frontier_t1 | {shared_proof}).isdisjoint(plans["starter"]["feature_ids"]))
         self.assertIn(packet_automation, plans["starter"]["feature_ids"])
         for plan_id in {"starter", "team", "operator", "enterprise"}:
             self.assertTrue({utility_core, utility_analytics}.issubset(plans[plan_id]["feature_ids"]))
+        for plan_id in {"free", "starter", "team"}:
+            self.assertNotIn(utility_operations, plans[plan_id]["feature_ids"])
+        for plan_id in {"operator", "enterprise"}:
+            self.assertIn(utility_operations, plans[plan_id]["feature_ids"])
         self.assertTrue(frontier.issubset(plans["team"]["feature_ids"]))
         self.assertTrue(frontier.issubset(plans["enterprise"]["feature_ids"]))
         self.assertEqual(
@@ -102,9 +107,9 @@ class CommercialTruthTests(unittest.TestCase):
         )
         self.assertEqual(
             {row["feature_id"] for row in contract["paid_feature_route_contracts"]},
-            frontier | {utility_analytics},
+            frontier | {utility_analytics, utility_operations},
         )
-        for feature_id in frontier | {utility_core, utility_analytics}:
+        for feature_id in frontier | {utility_core, utility_analytics, utility_operations}:
             self.assertEqual(
                 contract["release_availability"][feature_id],
                 {
@@ -139,7 +144,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "3.20.2")
+        self.assertEqual(public_truth["product"]["version"], "3.20.3")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
@@ -154,6 +159,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertIn("/memory/agent-packet/shared", public_truth["paid_route_contract"]["routes"])
         self.assertIn("/memory/agent-proof-timeline/shared", public_truth["paid_route_contract"]["routes"])
         self.assertIn("/telemetry/utility/analytics", public_truth["paid_route_contract"]["routes"])
+        self.assertIn("/telemetry/utility/policy/evaluate", public_truth["paid_route_contract"]["routes"])
         for relative in (
             "services/gateway-go/entitlement_policy.go",
             "services/gateway-go/frontier_t3_utility_entitled.go",
@@ -267,7 +273,7 @@ class CommercialTruthTests(unittest.TestCase):
             copy_fixture(fixture)
             launch = fixture / "launch_service/config/contextlattice.launch.json"
             launch.write_text(
-                launch.read_text(encoding="utf-8").replace("v3.20.2", "v9.9.9", 1),
+                launch.read_text(encoding="utf-8").replace("v3.20.3", "v9.9.9", 1),
                 encoding="utf-8",
             )
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)

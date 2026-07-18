@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 31,
-  "updated_at": "2026-07-17T22:42:14Z",
+  "registry_version": 32,
+  "updated_at": "2026-07-18T10:01:31Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -5019,7 +5019,7 @@
       "forbidden_scope": "recursive",
       "required_string_contains": {
         "schema_id": "utility_policy_evaluation.v1",
-        "feature_id": "frontier_utility_analytics",
+        "feature_id": "frontier_verified_efficiency_operations",
         "format_contract.schema_id": "utility_policy_evaluation.v1"
       }
     }
