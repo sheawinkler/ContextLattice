@@ -337,6 +337,46 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("frontierDeltaPacketAutomationID", result.stderr)
 
+    def test_public_sync_allows_generated_paid_metadata_but_rejects_runtime_reference(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="public-generated-paid-metadata-") as tmp:
+            repo = Path(tmp)
+            init_repo(repo)
+            (repo / "scripts").mkdir()
+            shutil.copy2(ROOT / "scripts/public_sync_guard.sh", repo / "scripts/public_sync_guard.sh")
+            (repo / "config").mkdir()
+            shutil.copy2(ROOT / "config/public_sync_blocklist.txt", repo / "config/public_sync_blocklist.txt")
+            (repo / "README.md").write_text("public baseline\n", encoding="utf-8")
+            commit_all(repo, "public baseline")
+            base = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+            run(["git", "update-ref", "refs/remotes/public/main", base], repo)
+
+            generated_files = (
+                "services/gateway-go/agent_contracts_generated.go",
+                "services/gateway-go/cmd/contextlattice-agent-tools/agent_contracts_generated.go",
+                "services/gateway-go/commercial_contract_generated.go",
+                "services/gateway-go/commercial_contract_generated_test.go",
+            )
+            for relative in generated_files:
+                generated = repo / relative
+                generated.parent.mkdir(parents=True, exist_ok=True)
+                generated.write_text(
+                    "package main\n// frontier_shared_proof_timeline catalog metadata\n",
+                    encoding="utf-8",
+                )
+            commit_all(repo, "generated catalog metadata")
+            result = run(["bash", "scripts/public_sync_guard.sh", "public", "main"], repo)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            runtime = repo / "services/gateway-go/main.go"
+            runtime.write_text(
+                "package main\nvar _ = frontierDeltaPacketAutomationID\n",
+                encoding="utf-8",
+            )
+            commit_all(repo, "dangling paid runtime reference")
+            result = run(["bash", "scripts/public_sync_guard.sh", "public", "main"], repo)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("frontierDeltaPacketAutomationID", result.stderr)
+
     def test_public_lane_rejects_paid_packet_runtime_symbols(self) -> None:
         with tempfile.TemporaryDirectory(prefix="public-packet-runtime-lane-") as tmp:
             repo = Path(tmp)
@@ -396,12 +436,18 @@ class PublicBoundaryGuardTests(unittest.TestCase):
             "services/gateway-go/frontier_t1_eval_test.go",
             "services/gateway-go/frontier_t2_packet_retention_entitled.go",
             "services/gateway-go/frontier_t2_packet_retention_entitled_test.go",
+            "services/gateway-go/frontier_t2_proof_timeline_entitled.go",
+            "services/gateway-go/frontier_t2_proof_timeline_entitled_test.go",
+            "services/gateway-go/frontier_t3_utility_entitled.go",
+            "services/gateway-go/frontier_t3_utility_entitled_test.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_test.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_unix.go",
             "services/gateway-go/cmd/contextlattice-agent-tools/packet_sync_lock_windows.go",
             "docs/entitled-frontier-t1.md",
             "docs/evals/v3.18-frontier-t1-paid-activation.json",
+            "docs/evals/v3.19-frontier-t2-paid-activation.json",
+            "docs/evals/v3.20-frontier-t3-paid-activation.json",
             "config/frontier_t1_release_provenance.v1.json",
             "scripts/agent/audit-frontier-30-program",
             "scripts/agent/generate-frontier-t1-source-manifest",
@@ -771,6 +817,27 @@ class PublicBoundaryGuardTests(unittest.TestCase):
                 gateway = compose.split("\n  gateway-go:\n", 1)[1]
                 for marker in identity_args:
                     self.assertIn(marker, gateway)
+
+    def test_utility_ledger_storage_controls_reach_gateway_compose(self) -> None:
+        markers = (
+            "GO_UTILITY_LEDGER_ENABLED",
+            "GO_UTILITY_LEDGER_PATH",
+            "GO_UTILITY_LEDGER_MAX_BYTES",
+            "GO_UTILITY_LEDGER_MAX_SAMPLES",
+            "GO_UTILITY_LEDGER_MEMORY_SAMPLES",
+        )
+        for path in ("docker-compose.yml", "docker-compose.lite.yml"):
+            with self.subTest(path=path):
+                compose = (ROOT / path).read_text(encoding="utf-8")
+                gateway = compose.split("\n  gateway-go:\n", 1)[1]
+                for marker in markers:
+                    self.assertIn(marker, gateway)
+                self.assertIn("/data/memory-bank/_contextlattice/utility_ledger.ndjson", gateway)
+        for path in (".env.example", "config/env/strict_runtime.env"):
+            with self.subTest(path=path):
+                env = (ROOT / path).read_text(encoding="utf-8")
+                for marker in markers:
+                    self.assertIn(marker + "=", env)
 
     def test_requested_cargo_smoke_fails_when_manifest_is_absent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextlattice-cargo-smoke-") as tmp:

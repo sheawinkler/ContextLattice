@@ -2,16 +2,16 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "0063c6ab969e760cdbf69650924d2e07b2c9f22888093a95e597dfcb5239fc79";
+export const COMMERCIAL_CONTRACT_SHA256 = "c1431c929cab88d3f40030d5a267080f0e69a6df7ec85ce43c75511b33494506";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.19.1",
-    "stable_tag": "v3.19.1",
-    "release_train": "3.19",
+    "version": "3.20.0",
+    "stable_tag": "v3.20.0",
+    "release_train": "3.20",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -101,6 +101,16 @@ export const COMMERCIAL_TRUTH = {
       "id": "frontier_shared_proof_timeline",
       "buyer_label": "Every agent run, with receipts",
       "description": "Retain, inspect, analyze, and export one integrity-checked timeline of what an agent knew, did, corrected, proved, and taught across an authorized workspace."
+    },
+    {
+      "id": "frontier_verified_utility_ledger",
+      "buyer_label": "Proof of useful work",
+      "description": "Measure independently verified utility against exact model-visible ContextLattice tokens while keeping wire, provider, latency, cost, calls, failures, and exclusions honest and separate."
+    },
+    {
+      "id": "frontier_utility_analytics",
+      "buyer_label": "The economics of intelligence",
+      "description": "Turn verified utility into continuous cohorts, task-class economics, matched-control confidence intervals, and advisory policy gates that abstain before they bluff."
     }
   ],
   "plans": [
@@ -127,7 +137,8 @@ export const COMMERCIAL_TRUTH = {
         "durable_memory",
         "staged_retrieval",
         "agent_session_context",
-        "dashboard_visibility"
+        "dashboard_visibility",
+        "frontier_verified_utility_ledger"
       ]
     },
     {
@@ -157,7 +168,9 @@ export const COMMERCIAL_TRUTH = {
         "premium_artifact_downloads",
         "premium_runtime_keys",
         "protected_runtime_operations",
-        "frontier_delta_packet_automation"
+        "frontier_delta_packet_automation",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics"
       ]
     },
     {
@@ -193,7 +206,9 @@ export const COMMERCIAL_TRUTH = {
         "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
-        "frontier_shared_decision_provenance"
+        "frontier_shared_decision_provenance",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics"
       ]
     },
     {
@@ -227,7 +242,9 @@ export const COMMERCIAL_TRUTH = {
         "frontier_delta_packet_automation",
         "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
-        "frontier_shared_objective_graph"
+        "frontier_shared_objective_graph",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics"
       ]
     },
     {
@@ -264,6 +281,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
         "frontier_shared_decision_provenance",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics",
         "scim_token_management"
       ]
     }
@@ -311,7 +330,9 @@ export const COMMERCIAL_TRUTH = {
       "/memory/decision-changes/shared",
       "/memory/agent-packet/shared",
       "/memory/agent-proof-timeline/shared",
-      "/memory/agent-proof-timeline/shared/lifecycle"
+      "/memory/agent-proof-timeline/shared/lifecycle",
+      "/telemetry/utility/analytics",
+      "/telemetry/utility/policy/evaluate"
     ]
   },
   "paid_feature_route_contracts": [
@@ -389,9 +410,26 @@ export const COMMERCIAL_TRUTH = {
       "routes": [
         "/memory/agent-proof-timeline/shared"
       ]
+    },
+    {
+      "feature_id": "frontier_utility_analytics",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/telemetry/utility/analytics",
+        "/telemetry/utility/policy/evaluate"
+      ]
     }
   ],
-  "contract_sha256": "0063c6ab969e760cdbf69650924d2e07b2c9f22888093a95e597dfcb5239fc79"
+  "contract_sha256": "c1431c929cab88d3f40030d5a267080f0e69a6df7ec85ce43c75511b33494506"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

@@ -150,8 +150,19 @@ if [[ "$TARGET_REMOTE" == "public" ]]; then
 
   # Paid source files are blocklisted, but shared Go/launcher files can still
   # carry dangling references that break or silently advertise the OSS lane.
-  paid_runtime_pattern='frontier_delta_packet_automation|CONTEXTLATTICE_FRONTIER_T2_|frontierT2Packet(Retention|Automation)|frontierDeltaPacketAutomationID|contextlattice_packet_sync|cmdPacketSync|--shared-packet|packet-sync'
+  paid_runtime_pattern='frontier_delta_packet_automation|CONTEXTLATTICE_FRONTIER_T2_|frontierT2Packet(Retention|Automation)|frontierDeltaPacketAutomationID|contextlattice_packet_sync|cmdPacketSync|--shared-packet|packet-sync|frontier_shared_proof_timeline|frontierT2SharedProof|CONTEXTLATTICE_FRONTIER_T2_SHARED_PROOF|/memory/agent-proof-timeline/shared|--proof[[:space:]]+--shared'
   for p in "${changed[@]}"; do
+    # These exact files describe generated contracts/catalogs; they do not
+    # register or execute paid runtime behavior. Their generators and drift
+    # audits remain the authority for their contents.
+    case "$p" in
+      services/gateway-go/agent_contracts_generated.go|\
+      services/gateway-go/cmd/contextlattice-agent-tools/agent_contracts_generated.go|\
+      services/gateway-go/commercial_contract_generated.go|\
+      services/gateway-go/commercial_contract_generated_test.go)
+        continue
+        ;;
+    esac
     case "$p" in
       services/gateway-go/*|\
       Dockerfile.gateway-go|\

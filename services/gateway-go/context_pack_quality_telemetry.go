@@ -249,32 +249,34 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 		modeledCalls = 0
 	}
 	entry := map[string]any{
-		"schema_id":                         contextPackQualitySchemaID,
-		"version":                           1,
-		"capturedAt":                        firstNonEmptyStrings(anyToString(sample["capturedAt"]), nowUTCISO()),
-		"sample_id":                         sampleID,
-		"query_hash":                        anyToString(sample["query_hash"]),
-		"project":                           anyToString(sample["project"]),
-		"topic_path":                        anyToString(sample["topic_path"]),
-		"quality_score":                     qualityScore,
-		"confidence":                        firstNonEmptyStrings(anyToString(sample["confidence"]), "low"),
-		"calibration_grade":                 firstNonEmptyStrings(anyToString(sample["calibration_grade"]), "modeled_counterfactual"),
-		"exact_prompt_tokens_saved":         exactSaved,
-		"modeled_inference_tokens_avoided":  modeledAvoided,
-		"modeled_extra_calls_avoided":       roundFloat(modeledCalls, 3),
-		"counterfactual_baseline":           firstNonEmptyStrings(anyToString(sample["counterfactual_baseline"]), "raw_candidate_replay"),
-		"ranked_evidence_count":             anyToInt(sample["ranked_evidence_count"], 0),
-		"high_impact_evidence_count":        anyToInt(sample["high_impact_evidence_count"], 0),
-		"omitted_high_value_count":          anyToInt(sample["omitted_high_value_count"], 0),
-		"returned_source_count":             anyToInt(sample["returned_source_count"], 0),
-		"warning_count":                     anyToInt(sample["warning_count"], 0),
-		"tokenizer_exact":                   anyToBool(sample["tokenizer_exact"]),
-		"token_budget_active":               anyToBool(sample["token_budget_active"]),
-		"source_coverage_complete":          anyToBool(sample["source_coverage_complete"]),
-		"graph_context_used":                anyToBool(sample["graph_context_used"]),
-		"model_call_token_basis":            anyToInt(sample["model_call_token_basis"], 0),
-		"raw_retry_probability_estimate":    roundFloat(anyToFloat(sample["raw_retry_probability_estimate"]), 3),
-		"packed_retry_probability_estimate": roundFloat(anyToFloat(sample["packed_retry_probability_estimate"]), 3),
+		"schema_id":                          contextPackQualitySchemaID,
+		"version":                            1,
+		"capturedAt":                         firstNonEmptyStrings(anyToString(sample["capturedAt"]), nowUTCISO()),
+		"sample_id":                          sampleID,
+		"query_hash":                         anyToString(sample["query_hash"]),
+		"project":                            anyToString(sample["project"]),
+		"topic_path":                         anyToString(sample["topic_path"]),
+		"quality_score":                      qualityScore,
+		"confidence":                         firstNonEmptyStrings(anyToString(sample["confidence"]), "low"),
+		"calibration_grade":                  firstNonEmptyStrings(anyToString(sample["calibration_grade"]), "modeled_counterfactual"),
+		"exact_prompt_tokens_saved":          exactSaved,
+		"modeled_inference_tokens_avoided":   modeledAvoided,
+		"modeled_extra_calls_avoided":        roundFloat(modeledCalls, 3),
+		"counterfactual_baseline":            firstNonEmptyStrings(anyToString(sample["counterfactual_baseline"]), "raw_candidate_replay"),
+		"ranked_evidence_count":              anyToInt(sample["ranked_evidence_count"], 0),
+		"high_impact_evidence_count":         anyToInt(sample["high_impact_evidence_count"], 0),
+		"omitted_high_value_count":           anyToInt(sample["omitted_high_value_count"], 0),
+		"returned_source_count":              anyToInt(sample["returned_source_count"], 0),
+		"warning_count":                      anyToInt(sample["warning_count"], 0),
+		"tokenizer_exact":                    anyToBool(sample["tokenizer_exact"]),
+		"wire_tokens_exact":                  anyToInt(firstPresentAny(sample["wire_tokens_exact"], sample["transport_tokens_exact"]), 0),
+		"model_visible_context_tokens_exact": anyToInt(sample["model_visible_context_tokens_exact"], 0),
+		"token_budget_active":                anyToBool(sample["token_budget_active"]),
+		"source_coverage_complete":           anyToBool(sample["source_coverage_complete"]),
+		"graph_context_used":                 anyToBool(sample["graph_context_used"]),
+		"model_call_token_basis":             anyToInt(sample["model_call_token_basis"], 0),
+		"raw_retry_probability_estimate":     roundFloat(anyToFloat(sample["raw_retry_probability_estimate"]), 3),
+		"packed_retry_probability_estimate":  roundFloat(anyToFloat(sample["packed_retry_probability_estimate"]), 3),
 	}
 	copyProofTimelineIdentity(entry, sample)
 	if encoding := anyToString(sample["tokenizer_encoding"]); encoding != "" {
@@ -398,10 +400,48 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 	if providerTotalTokens > 0 {
 		entry["provider_total_tokens"] = providerTotalTokens
 	}
-	if retryCount == 0 && followupTokens == 0 && providerTotalTokens == 0 && !firstPassPresent && !repairPresent {
+	for _, key := range []string{"utility", "verified_utility", "economics", "pairing", "matched_control"} {
+		if value := anyMap(sample[key]); len(value) > 0 {
+			entry[key] = compactAgentSessionValue(value, 4)
+		}
+	}
+	for _, key := range []string{
+		"utility_value", "verified_utility_value", "utility_unit", "verification_event_id",
+		"verification_evidence_digest", "evidence_digest", "verification_passed", "verifier_kind",
+		"verifier_id", "latency_ms", "duration_ms", "cost_microusd", "tool_calls",
+		"tool_call_count", "failures", "failure_count", "pair_id", "pair_arm", "arm",
+		"matched_control_outcome_id", "task_match_digest", "matching_method", "leakage_free",
+	} {
+		if value, present := sample[key]; present {
+			entry[key] = compactAgentSessionValue(value, 2)
+		}
+	}
+	utilityPresent := len(anyMap(entry["utility"])) > 0 || len(anyMap(entry["verified_utility"])) > 0
+	if !utilityPresent {
+		_, utilityPresent = firstPresentValue(entry["utility_value"], entry["verified_utility_value"])
+	}
+	if retryCount == 0 && followupTokens == 0 && providerTotalTokens == 0 && !firstPassPresent && !repairPresent && !utilityPresent {
 		return nil
 	}
 	return entry
+}
+
+func (t *contextPackQualityTelemetry) sampleForUtility(sampleID string) (map[string]any, bool) {
+	if t == nil || strings.TrimSpace(sampleID) == "" {
+		return nil, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rows := t.proofSamples.ordered()
+	if len(rows) == 0 {
+		rows = t.samples
+	}
+	for index := len(rows) - 1; index >= 0; index-- {
+		if anyToString(rows[index]["sample_id"]) == sampleID {
+			return cloneAnyMap(rows[index]), true
+		}
+	}
+	return nil, false
 }
 
 func contextPackOutcomeFirstPresent(sample map[string]any, keys ...string) (any, bool) {
@@ -809,34 +849,35 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		confidence = "medium"
 	}
 	sample := map[string]any{
-		"schema_id":                         contextPackQualitySchemaID,
-		"version":                           1,
-		"capturedAt":                        nowUTCISO(),
-		"sample_id":                         "cpq_" + sha256Hex(sampleSeed)[:24],
-		"query_hash":                        queryHash[:16],
-		"project":                           strings.TrimSpace(input.Project),
-		"topic_path":                        strings.TrimSpace(input.TopicPath),
-		"quality_score":                     qualityScore,
-		"confidence":                        confidence,
-		"calibration_grade":                 "modeled_counterfactual",
-		"exact_prompt_tokens_saved":         exactPromptSaved,
-		"modeled_inference_tokens_avoided":  retryModel.ModeledInferenceTokensAvoided,
-		"modeled_extra_calls_avoided":       retryModel.ExtraCallsAvoided,
-		"counterfactual_baseline":           "raw_candidate_replay",
-		"ranked_evidence_count":             len(ranked),
-		"high_impact_evidence_count":        highImpactCount,
-		"omitted_high_value_count":          len(omitted),
-		"returned_source_count":             returnedSources,
-		"warning_count":                     warningCount,
-		"tokenizer_exact":                   tokenizerExact,
-		"tokenizer_encoding":                anyToString(input.TokenImpact["tokenizer_encoding"]),
-		"token_budget_active":               tokenBudgetActive,
-		"source_coverage_complete":          coverageComplete,
-		"graph_context_used":                graphUsed,
-		"model_call_token_basis":            retryModel.ModelCallTokenBasis,
-		"raw_retry_probability_estimate":    retryModel.RawRetryProbability,
-		"packed_retry_probability_estimate": retryModel.PackedRetryProbability,
-		"measurement_limit":                 contextPackQualityMeasurementLimit(false),
+		"schema_id":                          contextPackQualitySchemaID,
+		"version":                            1,
+		"capturedAt":                         nowUTCISO(),
+		"sample_id":                          "cpq_" + sha256Hex(sampleSeed)[:24],
+		"query_hash":                         queryHash[:16],
+		"project":                            strings.TrimSpace(input.Project),
+		"topic_path":                         strings.TrimSpace(input.TopicPath),
+		"quality_score":                      qualityScore,
+		"confidence":                         confidence,
+		"calibration_grade":                  "modeled_counterfactual",
+		"exact_prompt_tokens_saved":          exactPromptSaved,
+		"modeled_inference_tokens_avoided":   retryModel.ModeledInferenceTokensAvoided,
+		"modeled_extra_calls_avoided":        retryModel.ExtraCallsAvoided,
+		"counterfactual_baseline":            "raw_candidate_replay",
+		"ranked_evidence_count":              len(ranked),
+		"high_impact_evidence_count":         highImpactCount,
+		"omitted_high_value_count":           len(omitted),
+		"returned_source_count":              returnedSources,
+		"warning_count":                      warningCount,
+		"tokenizer_exact":                    tokenizerExact,
+		"tokenizer_encoding":                 anyToString(input.TokenImpact["tokenizer_encoding"]),
+		"model_visible_context_tokens_exact": anyToInt(input.TokenImpact["model_visible_context_tokens_exact"], 0),
+		"token_budget_active":                tokenBudgetActive,
+		"source_coverage_complete":           coverageComplete,
+		"graph_context_used":                 graphUsed,
+		"model_call_token_basis":             retryModel.ModelCallTokenBasis,
+		"raw_retry_probability_estimate":     retryModel.RawRetryProbability,
+		"packed_retry_probability_estimate":  retryModel.PackedRetryProbability,
+		"measurement_limit":                  contextPackQualityMeasurementLimit(false),
 	}
 	copyProofTimelineIdentity(sample, map[string]any{
 		"session_id":        input.SessionID,
@@ -966,5 +1007,32 @@ func (s *server) telemetryContextPackQualityOutcomeRoute(w http.ResponseWriter, 
 		return
 	}
 	recorded := s.recordContextPackQualityOutcome(entry)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "recorded": recorded, "duplicate": !recorded, "outcome": entry, "telemetry": s.contextPackQualityTelemetrySnapshot()})
+	utilityObservation, utilityRecorded, utilityErr := s.recordUtilityOutcome(entry)
+	var utilityStore *utilityLedgerStore
+	if s != nil && s.utility != nil {
+		utilityStore = s.utility.store
+	}
+	if errors.Is(utilityErr, errUtilityOutcomeConflict) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "error": "utility_outcome_conflict",
+			"detail":   "outcome_id is already bound to a different utility source claim",
+			"recorded": recorded, "utility_recorded": false, "utility_observation": utilityObservation,
+		})
+		return
+	}
+	if errors.Is(utilityErr, errUtilityPersistenceUnavailable) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok": false, "error": "utility_persistence_unavailable",
+			"detail":   "the authoritative outcome was accepted, but the derived Utility Ledger did not acknowledge durable persistence",
+			"recorded": recorded, "utility_recorded": false,
+			"utility_storage": utilityStorageStatus(utilityStore),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "recorded": recorded, "duplicate": !recorded, "outcome": entry,
+		"utility_recorded": utilityRecorded, "utility_observation": utilityObservation,
+		"utility_storage": utilityStorageStatus(utilityStore),
+		"telemetry":       s.contextPackQualityTelemetrySnapshot(),
+	})
 }

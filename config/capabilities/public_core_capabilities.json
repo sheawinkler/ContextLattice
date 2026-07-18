@@ -1,7 +1,7 @@
 {
   "schema_id": "contextlattice_public_core_capabilities.v1",
-  "version": 1,
-  "release_train": "v3.19",
+  "version": 2,
+  "release_train": "v3.20",
   "purpose": "Public-safe core capabilities that must remain identical and present in every ContextLattice distribution.",
   "invariants": [
     "public_core_is_present_in_every_distribution",
@@ -241,6 +241,19 @@
       "artifacts": [
         "services/gateway-go/token_impact_telemetry.go",
         "services/gateway-go/context_pack_quality_telemetry.go"
+      ]
+    },
+    {
+      "id": "verified_utility_ledger.v1",
+      "summary": "Independently verified utility joins exact model-visible context tokens without mixing wire or provider totals, while causal claims require leakage-free matched controls and retain negative results.",
+      "contracts": [
+        "utility_observation.v1",
+        "utility_ledger.v1"
+      ],
+      "artifacts": [
+        "services/gateway-go/utility_ledger.go",
+        "services/gateway-go/context_pack_quality_telemetry.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/main.go"
       ]
     },
     {

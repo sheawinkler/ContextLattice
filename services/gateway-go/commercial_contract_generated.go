@@ -8,10 +8,10 @@ import (
 )
 
 const commercialTruthSchemaID = "contextlattice_commercial_truth.v1"
-const commercialTruthProductVersion = "3.19.1"
-const commercialTruthStableTag = "v3.19.1"
-const commercialTruthReleaseTrain = "3.19"
-const commercialTruthContractSHA256 = "0063c6ab969e760cdbf69650924d2e07b2c9f22888093a95e597dfcb5239fc79"
+const commercialTruthProductVersion = "3.20.0"
+const commercialTruthStableTag = "v3.20.0"
+const commercialTruthReleaseTrain = "3.20"
+const commercialTruthContractSHA256 = "c1431c929cab88d3f40030d5a267080f0e69a6df7ec85ce43c75511b33494506"
 
 type commercialTruthLimits struct {
 	MaxAPIKeys    *int
@@ -47,11 +47,11 @@ type commercialTruthFeatureRouteRequirement struct {
 func commercialTruthInt(value int) *int { return &value }
 
 var commercialTruthPlans = map[string]commercialTruthPlan{
-	"free":       {ID: "free", BuyerLabel: "Free", Description: "Local-first core for individual builders and evaluation.", Paid: false, SelfServePurchasable: false, MonthlyUSD: commercialTruthInt(0), AnnualUSD: commercialTruthInt(0), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility"}},
-	"starter":    {ID: "starter", BuyerLabel: "Starter", Description: "Paid single-operator access to hosted artifacts and protected runtime operations.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(24), AnnualUSD: commercialTruthInt(240), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(3), MaxProjects: commercialTruthInt(5), MaxWriteBytes: commercialTruthInt(50000), IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "protected_runtime_operations"}},
-	"team":       {ID: "team", BuyerLabel: "Team", Description: "Shared workspace and analytics access for teams shipping agent workflows.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(99), AnnualUSD: commercialTruthInt(990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(10), MaxProjects: commercialTruthInt(25), MaxWriteBytes: commercialTruthInt(200000), IncludedSeats: commercialTruthInt(5)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance"}},
-	"operator":   {ID: "operator", BuyerLabel: "Operator", Description: "Advanced operator lane for protected runtime operations and analytics.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(299), AnnualUSD: commercialTruthInt(2990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph"}},
-	"enterprise": {ID: "enterprise", BuyerLabel: "Enterprise", Description: "Custom-priced enterprise access with workspace controls and SCIM token management.", Paid: true, SelfServePurchasable: false, MonthlyUSD: nil, AnnualUSD: nil, CustomPricing: true, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(100), MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(100)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance", "scim_token_management"}},
+	"free":       {ID: "free", BuyerLabel: "Free", Description: "Local-first core for individual builders and evaluation.", Paid: false, SelfServePurchasable: false, MonthlyUSD: commercialTruthInt(0), AnnualUSD: commercialTruthInt(0), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "frontier_verified_utility_ledger"}},
+	"starter":    {ID: "starter", BuyerLabel: "Starter", Description: "Paid single-operator access to hosted artifacts and protected runtime operations.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(24), AnnualUSD: commercialTruthInt(240), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(3), MaxProjects: commercialTruthInt(5), MaxWriteBytes: commercialTruthInt(50000), IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "protected_runtime_operations", "frontier_verified_utility_ledger", "frontier_utility_analytics"}},
+	"team":       {ID: "team", BuyerLabel: "Team", Description: "Shared workspace and analytics access for teams shipping agent workflows.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(99), AnnualUSD: commercialTruthInt(990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(10), MaxProjects: commercialTruthInt(25), MaxWriteBytes: commercialTruthInt(200000), IncludedSeats: commercialTruthInt(5)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance", "frontier_verified_utility_ledger", "frontier_utility_analytics"}},
+	"operator":   {ID: "operator", BuyerLabel: "Operator", Description: "Advanced operator lane for protected runtime operations and analytics.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(299), AnnualUSD: commercialTruthInt(2990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_verified_utility_ledger", "frontier_utility_analytics"}},
+	"enterprise": {ID: "enterprise", BuyerLabel: "Enterprise", Description: "Custom-priced enterprise access with workspace controls and SCIM token management.", Paid: true, SelfServePurchasable: false, MonthlyUSD: nil, AnnualUSD: nil, CustomPricing: true, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(100), MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(100)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance", "frontier_verified_utility_ledger", "frontier_utility_analytics", "scim_token_management"}},
 }
 
 var commercialTruthPlanAliases = map[string]string{
@@ -80,15 +80,19 @@ var commercialTruthProtectedPaidRoutes = []string{
 	"/memory/continuity/automation",
 	"/memory/objectives/shared",
 	"/memory/decision-changes/shared",
+	"/telemetry/utility/analytics",
+	"/telemetry/utility/policy/evaluate",
 }
 
 var commercialTruthPaidRouteEligiblePlans = []string{"starter", "team", "operator", "enterprise"}
 var commercialTruthPaidRouteAllowedRoles = []string{"owner", "admin"}
 
 var commercialTruthPaidFeatureRouteRequirements = map[string]commercialTruthFeatureRouteRequirement{
-	"/memory/continuity/automation":   {FeatureID: "frontier_semantic_continuity_automation", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/objectives/shared":       {FeatureID: "frontier_shared_objective_graph", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/decision-changes/shared": {FeatureID: "frontier_shared_decision_provenance", EligiblePlanIDs: []string{"team", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/continuity/automation":      {FeatureID: "frontier_semantic_continuity_automation", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/objectives/shared":          {FeatureID: "frontier_shared_objective_graph", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/decision-changes/shared":    {FeatureID: "frontier_shared_decision_provenance", EligiblePlanIDs: []string{"team", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/telemetry/utility/analytics":       {FeatureID: "frontier_utility_analytics", EligiblePlanIDs: []string{"starter", "team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/telemetry/utility/policy/evaluate": {FeatureID: "frontier_utility_analytics", EligiblePlanIDs: []string{"starter", "team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
 }
 
 func commercialTruthPaidRouteRequiredFeature(path string) string {

@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 30;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 31;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -66,6 +66,10 @@ pub const TASK_IDENTITY_RECONCILIATION_V1: &str = "task_identity_reconciliation.
 pub const TEMPORAL_CLAIM_V1: &str = "temporal_claim.v1";
 pub const TEMPORAL_CLAIM_QUERY_V1: &str = "temporal_claim_query.v1";
 pub const UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1: &str = "universal_agent_adapter_response.v1";
+pub const UTILITY_ANALYTICS_V1: &str = "utility_analytics.v1";
+pub const UTILITY_LEDGER_V1: &str = "utility_ledger.v1";
+pub const UTILITY_OBSERVATION_V1: &str = "utility_observation.v1";
+pub const UTILITY_POLICY_EVALUATION_V1: &str = "utility_policy_evaluation.v1";
 pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 
 pub const AGENT_CONTRACT_IDS: &[&str] = &[
@@ -124,6 +128,10 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     TEMPORAL_CLAIM_V1,
     TEMPORAL_CLAIM_QUERY_V1,
     UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1,
+    UTILITY_ANALYTICS_V1,
+    UTILITY_LEDGER_V1,
+    UTILITY_OBSERVATION_V1,
+    UTILITY_POLICY_EVALUATION_V1,
     WRITEBACK_RESULT_V1,
 ];
 
@@ -455,6 +463,30 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: UNIVERSAL_AGENT_ADAPTER_RESPONSE_V1,
         payload_kind: "universal_agent_adapter_response",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: UTILITY_ANALYTICS_V1,
+        payload_kind: "entitled_continuous_utility_cohort_analytics",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: UTILITY_LEDGER_V1,
+        payload_kind: "bounded_verified_utility_ledger",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: UTILITY_OBSERVATION_V1,
+        payload_kind: "verified_utility_observation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: UTILITY_POLICY_EVALUATION_V1,
+        payload_kind: "entitled_advisory_verified_utility_policy_gate",
         contract_version: 1,
         required_output_mode: "json_object",
     },

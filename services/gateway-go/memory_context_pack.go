@@ -1258,6 +1258,9 @@ func buildContextPackTokenImpact(query string, contextPack map[string]any, compi
 			"omitted high-value references",
 		},
 	}
+	if tokenizerExact && packedCount.Tokens > 0 {
+		impact["model_visible_context_tokens_exact"] = packedCount.Tokens
+	}
 	if tokenizerEncoding != "" {
 		impact["tokenizer_encoding"] = tokenizerEncoding
 	}

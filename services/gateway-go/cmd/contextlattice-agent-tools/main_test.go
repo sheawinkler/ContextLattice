@@ -1158,6 +1158,293 @@ func TestOutcomePolicyAndSkillFoundryCommandsUseNativeEndpoints(t *testing.T) {
 	}
 }
 
+func TestUtilityCLIUsesCanonicalLedgerAnalyticsAndGateRoutes(t *testing.T) {
+	type requestRecord struct {
+		method string
+		query  url.Values
+		body   map[string]any
+	}
+	records := map[string]requestRecord{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := map[string]any{}
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode %s: %v", r.URL.Path, err)
+			}
+		}
+		records[r.URL.Path] = requestRecord{method: r.Method, query: r.URL.Query(), body: body}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "schema_id": "utility_test.v1"})
+	}))
+	defer gateway.Close()
+
+	commands := [][]string{
+		{"contextlattice", "utility", "status", "--project", "alpha", "--task-class", "coding", "--utility-unit", "acceptance_points", "--limit", "17", "--raw"},
+		{"contextlattice", "utility", "analytics", "--project", "alpha", "--from", "2026-07-01T00:00:00Z", "--raw"},
+		{"contextlattice", "utility", "gate", "--project", "alpha", "--minimum-pairs", "3", "--minimum-observations", "12", "--minimum-gain-per-1k", "1.5", "--minimum-lower-bound", "0.25", "--maximum-failure-rate", "0.05", "--raw"},
+	}
+	for _, args := range commands {
+		var stdout bytes.Buffer
+		c := newCLI(&stdout, ioDiscard{})
+		c.baseURL = gateway.URL
+		if err := c.run(args); err != nil {
+			t.Fatalf("run %v: %v output=%s", args, err, stdout.String())
+		}
+	}
+	if record := records["/telemetry/utility"]; record.method != http.MethodGet || record.query.Get("project") != "alpha" || record.query.Get("task_class") != "coding" || record.query.Get("utility_unit") != "acceptance_points" || record.query.Get("limit") != "17" {
+		t.Fatalf("utility status routing mismatch: %#v", record)
+	}
+	if record := records["/telemetry/utility/analytics"]; record.method != http.MethodGet || record.query.Get("from") != "2026-07-01T00:00:00Z" {
+		t.Fatalf("utility analytics routing mismatch: %#v", record)
+	}
+	gate := records["/telemetry/utility/policy/evaluate"]
+	if gate.method != http.MethodPost || asInt(gate.body["minimum_pairs"]) != 3 || asInt(gate.body["minimum_observations"]) != 12 || gate.body["minimum_gain_per_1k"] != 1.5 || gate.body["maximum_failure_rate"] != 0.05 {
+		t.Fatalf("utility gate payload mismatch: %#v", gate)
+	}
+}
+
+func TestUtilityRecordPrimaryCLIAppendsOutcomeReceiptOnly(t *testing.T) {
+	t.Setenv("CONTEXTLATTICE_ASYNC_INBOX_ACK_PATH", filepath.Join(t.TempDir(), "seen.json"))
+	events := []map[string]any{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/telemetry/context-pack-quality/outcome":
+			payload := map[string]any{}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode utility outcome: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "outcome": map[string]any{
+				"schema_id": "contextlattice_context_pack_outcome.v1", "outcome_id": payload["outcome_id"],
+				"sample_id": payload["sample_id"], "utility": payload["utility"], "pairing": payload["pairing"],
+			}})
+		case "/v1/agents/sessions/event":
+			payload := map[string]any{}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode utility event: %v", err)
+			}
+			events = append(events, payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "event": map[string]any{"id": payload["id"], "type": payload["type"]}})
+		case "/v1/agents/sessions/session_utility_cli/rollup":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rollup": map[string]any{"agent_inbox": map[string]any{"items": []any{}}}})
+		default:
+			t.Fatalf("unexpected utility record path %s", r.URL.Path)
+		}
+	}))
+	defer gateway.Close()
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if err := c.run([]string{
+		"contextlattice", "utility", "record", "--agent", "codex", "--agent-id", "codex_test",
+		"--project", "alpha", "--session-id", "session_utility_cli", "--context-pack-quality-sample-id", "sample_utility_cli",
+		"--outcome-id", "outcome_utility_cli", "--utility-value", "8", "--utility-unit", "acceptance_points",
+		"--verification-event-id", "event_utility_cli", "--verification-evidence-digest", digest,
+		"--verification-passed", "true", "--verifier-kind", "deterministic_test", "--verifier-id", "go_holdout",
+		"--raw",
+	}); err != nil {
+		t.Fatalf("primary utility record command failed: %v output=%s", err, stdout.String())
+	}
+	if len(events) != 1 || firstString(events[0]["type"]) != "context_pack.outcome_reported" {
+		t.Fatalf("utility receipt lifecycle is incomplete: %#v", events)
+	}
+	output := map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil || firstString(output["command"]) != "utility_record" || !asBool(output["ok"]) {
+		t.Fatalf("unexpected primary utility receipt output: err=%v output=%#v", err, output)
+	}
+}
+
+func TestUtilityVerifyPrimaryCLIAppendsIndependentReceipt(t *testing.T) {
+	var captured map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/sessions/event" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected utility verify request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode utility verification receipt: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "event": captured,
+			"utility_reconciliation": map[string]any{"ok": true, "status": "reconciled", "revision": 2},
+		})
+	}))
+	defer gateway.Close()
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	digest := "sha256:" + strings.Repeat("d", 64)
+	if err := c.run([]string{
+		"contextlattice", "utility", "verify", "--agent", "verifier", "--agent-id", "go_holdout",
+		"--project", "alpha", "--session-id", "session_utility_cli", "--sample-id", "sample_utility_cli",
+		"--outcome-id", "outcome_utility_cli", "--utility-value", "8", "--utility-unit", "acceptance_points",
+		"--verification-event-id", "event_utility_cli", "--verification-evidence-digest", digest,
+		"--verification-passed", "true", "--verifier-kind", "deterministic_test", "--verifier-id", "go_holdout", "--raw",
+	}); err != nil {
+		t.Fatalf("primary utility verify command failed: %v output=%s", err, stdout.String())
+	}
+	proof := asMap(asMap(captured["metadata"])["utility_verification"])
+	if firstString(captured["type"]) != "verification.completed" || firstString(captured["agent_id"]) != "go_holdout" ||
+		firstString(proof["outcome_id"]) != "outcome_utility_cli" || firstString(proof["evidence_digest"]) != digest || !asBool(proof["verification_passed"]) {
+		t.Fatalf("independent verification receipt lost exact identity or evidence: %#v", captured)
+	}
+	output := map[string]any{}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil || firstString(output["command"]) != "utility_verify" || !asBool(output["ok"]) {
+		t.Fatalf("unexpected primary utility verification output: err=%v output=%#v", err, output)
+	}
+	if reconciliation := asMap(asMap(output["result"])["utility_reconciliation"]); !asBool(reconciliation["ok"]) || firstString(reconciliation["status"]) != "reconciled" {
+		t.Fatalf("utility reconciliation result was hidden from the verifier: %#v", output)
+	}
+}
+
+func TestUtilityVerifyPrimaryCLIFailsWhenDurableReconciliationFails(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agents/sessions/event" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected utility verify request %s %s", r.Method, r.URL.Path)
+		}
+		payload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode utility verification receipt: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": false, "partial": true, "event_recorded": true, "event": payload,
+			"utility_reconciliation": map[string]any{"ok": false, "status": "persistence_unavailable", "outcome_id": "outcome_utility_cli"},
+		})
+	}))
+	defer gateway.Close()
+	var stdout bytes.Buffer
+	c := newCLI(&stdout, ioDiscard{})
+	c.baseURL = gateway.URL
+	digest := "sha256:" + strings.Repeat("f", 64)
+	err := c.run([]string{
+		"contextlattice", "utility", "verify", "--agent", "verifier", "--agent-id", "go_holdout",
+		"--project", "alpha", "--session-id", "session_utility_cli", "--sample-id", "sample_utility_cli",
+		"--outcome-id", "outcome_utility_cli", "--utility-value", "8", "--utility-unit", "acceptance_points",
+		"--verification-event-id", "event_utility_cli_failure", "--verification-evidence-digest", digest,
+		"--verification-passed", "true", "--verifier-kind", "deterministic_test", "--verifier-id", "go_holdout", "--raw",
+	})
+	if err == nil || !strings.Contains(err.Error(), "durable Utility Ledger reconciliation failed") {
+		t.Fatalf("CLI did not fail on incomplete durable reconciliation: err=%v output=%s", err, stdout.String())
+	}
+	output := map[string]any{}
+	if decodeErr := json.Unmarshal(stdout.Bytes(), &output); decodeErr != nil || asBool(output["ok"]) {
+		t.Fatalf("CLI emitted a successful verification envelope: err=%v output=%#v", decodeErr, output)
+	}
+	result := asMap(output["result"])
+	if !asBool(result["event_recorded"]) || firstString(asMap(result["utility_reconciliation"])["status"]) != "persistence_unavailable" || len(asList(output["findings"])) != 1 {
+		t.Fatalf("CLI hid authoritative event or reconciliation failure: %#v", output)
+	}
+	formatContract := asMap(output["format_contract"])
+	if firstString(formatContract["registry_id"]) != generatedAgentContractRegistryID ||
+		asInt(formatContract["registry_version"]) != generatedAgentContractRegistryVersion ||
+		firstString(asMap(formatContract["validation"])["status"]) != "passed" {
+		t.Fatalf("operational failure emitted an invalid adapter contract: %#v", output)
+	}
+}
+
+func TestAdapterResponseContractIsCompleteForSuccessAndOperationalFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		ok       bool
+		findings []map[string]any
+	}{
+		{name: "success", ok: true},
+		{name: "operational_failure", ok: false, findings: []map[string]any{{"reason": "utility_reconciliation_incomplete"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := adapterResponse("utility_verify", tc.ok, "verifier", "go_holdout", "alpha", "session", map[string]any{}, tc.findings)
+			if asBool(response["ok"]) != (tc.ok && len(tc.findings) == 0) {
+				t.Fatalf("unexpected operational status: %#v", response)
+			}
+			contract := asMap(response["adapter_contract"])
+			exports := asList(contract["required_exports"])
+			if firstString(contract["schema_id"]) != "contextlattice_universal_agent_adapter.v1" || len(exports) != 6 {
+				t.Fatalf("adapter contract is incomplete: %#v", contract)
+			}
+			formatContract := asMap(response["format_contract"])
+			validation := asMap(formatContract["validation"])
+			if firstString(formatContract["registry_id"]) != generatedAgentContractRegistryID ||
+				asInt(formatContract["registry_version"]) != generatedAgentContractRegistryVersion ||
+				firstString(formatContract["schema_id"]) != "universal_agent_adapter_response.v1" ||
+				asInt(formatContract["contract_version"]) != 1 ||
+				firstString(formatContract["required_output_mode"]) != "json_object" ||
+				firstString(formatContract["validator"]) != "contextlattice.boundary.v1" ||
+				firstString(validation["status"]) != "passed" || len(asList(validation["errors"])) != 0 {
+				t.Fatalf("format contract is incomplete: %#v", formatContract)
+			}
+		})
+	}
+}
+
+func TestUtilityVerifyRejectsVerifierIdentityMismatch(t *testing.T) {
+	c := newCLI(ioDiscard{}, ioDiscard{})
+	err := c.run([]string{
+		"contextlattice", "utility", "verify", "--agent-id", "reporter", "--session-id", "session",
+		"--sample-id", "sample", "--outcome-id", "outcome", "--utility-value", "1", "--utility-unit", "point",
+		"--verification-event-id", "event", "--verification-evidence-digest", "sha256:" + strings.Repeat("e", 64),
+		"--verification-passed", "true", "--verifier-kind", "deterministic_test", "--verifier-id", "independent",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--agent-id must exactly identify --verifier-id") {
+		t.Fatalf("mismatched verifier event identity was not rejected: %v", err)
+	}
+}
+
+func TestUtilityRecordRejectsReportingAgentAsVerifier(t *testing.T) {
+	c := newCLI(ioDiscard{}, ioDiscard{})
+	err := c.run([]string{
+		"contextlattice", "utility", "record", "--agent-id", "codex_test", "--project", "alpha",
+		"--session-id", "session_self", "--context-pack-quality-sample-id", "sample_self",
+		"--utility-value", "1", "--utility-unit", "point", "--verifier-id", "codex_test", "--raw",
+	})
+	if err == nil || !strings.Contains(err.Error(), "independent verifier") {
+		t.Fatalf("reporting agent self-verification was not rejected: %v", err)
+	}
+}
+
+func TestUtilityCLIGateRejectsInvalidNumericThresholds(t *testing.T) {
+	for _, args := range [][]string{
+		{"contextlattice", "utility", "gate", "--minimum-pairs", "many", "--raw"},
+		{"contextlattice", "utility", "gate", "--minimum-gain-per-1k", "NaN", "--raw"},
+		{"contextlattice", "utility", "gate", "--maximum-failure-rate", "+Inf", "--raw"},
+	} {
+		c := newCLI(ioDiscard{}, ioDiscard{})
+		if err := c.run(args); err == nil {
+			t.Fatalf("invalid utility gate threshold was silently accepted: %v", args)
+		}
+	}
+}
+
+func TestContextPackOutcomeAcceptsUtilityOnlyEvidence(t *testing.T) {
+	parsed := parseArgs([]string{
+		"--context-pack-quality-sample-id", "sample_utility", "--outcome-id", "outcome_utility",
+		"--utility-value", "7.5", "--utility-unit", "acceptance_points",
+		"--verification-event-id", "evt_utility", "--verification-evidence-digest", "sha256:" + strings.Repeat("a", 64),
+		"--verification-passed", "true", "--verifier-kind", "deterministic_test", "--verifier-id", "go_holdout",
+		"--latency-ms", "42", "--cost-microusd", "11", "--tool-calls", "3", "--failures", "0",
+		"--pair-id", "pair_utility", "--pair-arm", "treatment", "--matched-control-outcome-id", "control_utility",
+		"--task-match-digest", "sha256:" + strings.Repeat("b", 64), "--matching-method", "exact_holdout", "--leakage-free", "true",
+		"--experiment-id", "experiment_utility", "--assignment-digest", "sha256:" + strings.Repeat("c", 64),
+		"--pair-model", "gpt-test", "--pair-runner", "test-runner", "--pair-harness", "go-test",
+		"--context-reconstruction-contract", "agent_packet_reconstruction.v1",
+	}, adapterStringFlags(), adapterBoolFlags())
+	payload, requested, err := buildContextPackOutcomePayload(parsed, "contextlattice", "session_utility", adapterProfile{agent: "codex", agentID: "codex_test"}, "test")
+	if err != nil || !requested {
+		t.Fatalf("utility-only outcome was rejected: requested=%v err=%v", requested, err)
+	}
+	utility := asMap(payload["utility"])
+	if utility["value"] != 7.5 || !asBool(utility["verification_passed"]) || firstString(utility["verifier_id"]) != "go_holdout" {
+		t.Fatalf("utility proof fields missing: %#v", utility)
+	}
+	if asInt(asMap(payload["economics"])["latency_ms"]) != 42 || !asBool(asMap(payload["pairing"])["leakage_free"]) {
+		t.Fatalf("utility economics or pairing missing: %#v", payload)
+	}
+	if firstString(asMap(payload["pairing"])["model"]) != "gpt-test" || firstString(asMap(payload["pairing"])["assignment_digest"]) == "" {
+		t.Fatalf("matched-control execution context missing: %#v", payload["pairing"])
+	}
+	if !contextPackOutcomeRequested(parsed) {
+		t.Fatal("utility flags did not request outcome reporting")
+	}
+}
+
 func TestMemoryGraphRepairAndEfficacyCommandsUseBoundedNativeEndpoints(t *testing.T) {
 	captured := map[string][]map[string]any{}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -35,20 +35,21 @@ ContextLattice provides a single memory contract for agentic systems:
 - Agent runtime sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready reference packages, exportable run traces, and exact-linked proof timelines.
 - Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
 - Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
+- A verified Utility Ledger that keeps exact model-visible ContextLattice tokens separate from wire and observed provider totals, then claims causal gain only when a leakage-free matched control actually exists.
 - Go/Rust runtime ownership for the active application path.
 - Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
 - Local-first deployment with optional hosted surfaces.
 
 ## Current Public Baseline
 
-`v3.19.1` is the current public baseline. It hardens the v3.19 Agent Packet and proof release so CLI session completion cannot panic, `complete` and `fail` emit canonical lifecycle events, and legacy singular events are healed at ingestion instead of leaving finished work falsely active. Digest-verified deltas, exact full fallback, and the local proof timeline remain unchanged. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces. Governed shared retention and workspace timelines remain paid capabilities, while local delta reconstruction and local proof stay in the public core.
+`v3.20.0` is the current public baseline. Its Utility Ledger turns context economics from vibes into receipts: independently verified outcomes produce observed utility yield against exact model-visible ContextLattice tokens, while wire tokens and observed provider totals remain separate. Causal gain exists only when a leakage-free matched control survives every identity check, and negative results stay visible. The public core includes the bounded local ledger and CLI receipts; paid lanes add cohorts, task-class economics, confidence intervals, and advisory policy gates. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
 
-## Public Runtime Stack (v3.19)
+## Public Runtime Stack (v3.20)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
 - Retrieval policy: staged fast-return, async continuation lifecycle, and impact-per-token allocation.
-- Primary interface: `contextlattice context|resume|remember|finish|correct|doctor`.
+- Primary interface: `contextlattice context|resume|remember|finish|correct|utility|doctor`.
 - Advanced CLI helpers such as `contextlattice_adopt`, `contextlattice_agent_adapter`, `contextlattice_agent_session`, and `contextlattice_runner_quality` remain available for integration and debugging.
 - Companion surfaces: dashboard for visibility, HTTP for app integration, and MCP-compatible clients for host/harness integrations.
 - Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
@@ -70,6 +71,15 @@ contextlattice resume --project contextlattice --pretty
 contextlattice correct "retrieval was stale" --category stale --project contextlattice --pretty
 contextlattice finish "verified result" --success --project contextlattice --pretty
 
+# Measure useful work without mixing model-visible, wire, or provider totals.
+contextlattice utility status --project contextlattice --pretty
+# Record the claim, then have the named independent verifier attest the result.
+contextlattice utility record --session-id <id> --context-pack-quality-sample-id <id> --outcome-id <id> --utility-value 1 --utility-unit acceptance_points --verification-event-id <id> --verification-evidence-digest sha256:<64-hex> --verification-passed true --verifier-kind deterministic_test --verifier-id <independent-verifier> --pretty
+contextlattice utility verify --agent-id <independent-verifier> --session-id <id> --sample-id <id> --outcome-id <id> --utility-value 1 --utility-unit acceptance_points --verification-event-id <id> --verification-evidence-digest sha256:<64-hex> --verification-passed true --verifier-kind deterministic_test --verifier-id <independent-verifier> --pretty
+# Paid analytics and gates are advisory only; they never rewrite retrieval policy.
+contextlattice utility analytics --project contextlattice --pretty
+contextlattice utility gate --project contextlattice --utility-unit acceptance_points --minimum-pairs 2 --pretty
+
 # Optional delta transport for clients that retain the last trusted packet.
 # A full packet is the safe fallback and becomes the next base directly.
 contextlattice context "continue the release proof" --project contextlattice \
@@ -88,8 +98,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.19.1 \
-  --statement "The current public release is 3.19.1." \
+  --object 3.20.0 \
+  --statement "The current public release is 3.20.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -432,6 +442,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Updates: `https://contextlattice.io/updates.html`
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.20.0.md` (verified Utility Ledger, exact context economics, and advisory paid analytics)
   - `docs/releases/v3.19.1.md` (panic-free terminal session commands, canonical lifecycle events, and legacy-client healing)
   - `docs/releases/v3.19.0.md` (digest-verified Agent Packet deltas, exact reconstruction, and one gap-aware proof timeline)
   - `docs/releases/v3.18.0.md` (durable continuity identity, holdout-locked semantic reconciliation, shared objective graphs, and witnessed decision provenance)

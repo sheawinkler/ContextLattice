@@ -1,0 +1,20 @@
+{
+  "schema_id": "frontier_t3_utility_baseline.v1",
+  "baseline_id": "frontier_t3_v3192_telemetry_baseline",
+  "frozen_at": "2026-07-17T22:00:00Z",
+  "base_commit": "ea7d0f36cfce50bf06539199630318dc62719eba",
+  "baseline_release": "v3.19.2",
+  "frontier_items": [30],
+  "behavior": "Context Pack quality, exact token impact, provider usage, session verification events, and task outcomes existed as separate evidence surfaces. No durable read model joined them by exact identity, independently verified utility, retained matched controls, or evaluated advisory policy gates.",
+  "measurements": {
+    "utility_ledger_present": false,
+    "independent_verification_join_present": false,
+    "exact_model_visible_utility_yield_present": false,
+    "matched_control_causal_estimate_present": false,
+    "task_class_economics_present": false,
+    "advisory_policy_gate_present": false,
+    "negative_gain_retained": false
+  },
+  "buyer_baseline": "Operators could inspect quality and token savings separately, but could not answer whether a specific ContextLattice packet produced independently verified useful work per exact model-visible token or whether one policy beat a matched control.",
+  "frozen_before_tuning": true
+}

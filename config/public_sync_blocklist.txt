@@ -70,6 +70,10 @@ services/gateway-go/frontier_t1_governance_entitled_test.go
 services/gateway-go/frontier_t1_eval_test.go
 services/gateway-go/frontier_t2_packet_retention_entitled.go
 services/gateway-go/frontier_t2_packet_retention_entitled_test.go
+services/gateway-go/frontier_t2_proof_timeline_entitled.go
+services/gateway-go/frontier_t2_proof_timeline_entitled_test.go
+services/gateway-go/frontier_t3_utility_entitled.go
+services/gateway-go/frontier_t3_utility_entitled_test.go
 
 # Paid-only operator documentation and reproducible eval ledgers.
 docs/entitled-cognition-activation.md
@@ -78,6 +82,8 @@ docs/entitled-context-mesh-orchestration.md
 docs/evals/v3.14-entitled-context-mesh-orchestration.json
 docs/entitled-frontier-t1.md
 docs/evals/v3.18-frontier-t1-paid-activation.json
+docs/evals/v3.19-frontier-t2-paid-activation.json
+docs/evals/v3.20-frontier-t3-paid-activation.json
 
 # Paid release, signing, and operator control surfaces.
 .github/workflows/release-installers.yml

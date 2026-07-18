@@ -4,9 +4,9 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.19.1",
-    "stable_tag": "v3.19.1",
-    "release_train": "3.19",
+    "version": "3.20.0",
+    "stable_tag": "v3.20.0",
+    "release_train": "3.20",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -37,6 +37,18 @@
       "production_proven": true
     },
     "frontier_shared_proof_timeline": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_verified_utility_ledger": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_utility_analytics": {
       "availability": "generally_available",
       "release_gate": "PASS",
       "release_decision": "PROVEN",
@@ -128,6 +140,16 @@
       "id": "frontier_shared_proof_timeline",
       "buyer_label": "Every agent run, with receipts",
       "description": "Retain, inspect, analyze, and export one integrity-checked timeline of what an agent knew, did, corrected, proved, and taught across an authorized workspace."
+    },
+    {
+      "id": "frontier_verified_utility_ledger",
+      "buyer_label": "Proof of useful work",
+      "description": "Measure independently verified utility against exact model-visible ContextLattice tokens while keeping wire, provider, latency, cost, calls, failures, and exclusions honest and separate."
+    },
+    {
+      "id": "frontier_utility_analytics",
+      "buyer_label": "The economics of intelligence",
+      "description": "Turn verified utility into continuous cohorts, task-class economics, matched-control confidence intervals, and advisory policy gates that abstain before they bluff."
     }
   ],
   "plans": [
@@ -154,7 +176,8 @@
         "durable_memory",
         "staged_retrieval",
         "agent_session_context",
-        "dashboard_visibility"
+        "dashboard_visibility",
+        "frontier_verified_utility_ledger"
       ]
     },
     {
@@ -184,7 +207,9 @@
         "premium_artifact_downloads",
         "premium_runtime_keys",
         "protected_runtime_operations",
-        "frontier_delta_packet_automation"
+        "frontier_delta_packet_automation",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics"
       ]
     },
     {
@@ -220,7 +245,9 @@
         "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
-        "frontier_shared_decision_provenance"
+        "frontier_shared_decision_provenance",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics"
       ]
     },
     {
@@ -254,7 +281,9 @@
         "frontier_delta_packet_automation",
         "frontier_shared_proof_timeline",
         "frontier_semantic_continuity_automation",
-        "frontier_shared_objective_graph"
+        "frontier_shared_objective_graph",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics"
       ]
     },
     {
@@ -291,6 +320,8 @@
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
         "frontier_shared_decision_provenance",
+        "frontier_verified_utility_ledger",
+        "frontier_utility_analytics",
         "scim_token_management"
       ]
     }
@@ -338,39 +369,103 @@
       "/memory/decision-changes/shared",
       "/memory/agent-packet/shared",
       "/memory/agent-proof-timeline/shared",
-      "/memory/agent-proof-timeline/shared/lifecycle"
+      "/memory/agent-proof-timeline/shared/lifecycle",
+      "/telemetry/utility/analytics",
+      "/telemetry/utility/policy/evaluate"
     ]
   },
   "paid_feature_route_contracts": [
     {
       "feature_id": "frontier_semantic_continuity_automation",
-      "eligible_plan_ids": ["team", "operator", "enterprise"],
-      "allowed_roles": ["owner", "admin"],
-      "routes": ["/memory/continuity/automation"]
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/continuity/automation"
+      ]
     },
     {
       "feature_id": "frontier_shared_objective_graph",
-      "eligible_plan_ids": ["team", "operator", "enterprise"],
-      "allowed_roles": ["owner", "admin"],
-      "routes": ["/memory/objectives/shared"]
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/objectives/shared"
+      ]
     },
     {
       "feature_id": "frontier_shared_decision_provenance",
-      "eligible_plan_ids": ["team", "enterprise"],
-      "allowed_roles": ["owner", "admin"],
-      "routes": ["/memory/decision-changes/shared"]
+      "eligible_plan_ids": [
+        "team",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/decision-changes/shared"
+      ]
     },
     {
       "feature_id": "frontier_delta_packet_automation",
-      "eligible_plan_ids": ["starter", "team", "operator", "enterprise"],
-      "allowed_roles": ["owner", "admin"],
-      "routes": ["/memory/agent-packet/shared"]
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-packet/shared"
+      ]
     },
     {
       "feature_id": "frontier_shared_proof_timeline",
-      "eligible_plan_ids": ["team", "operator", "enterprise"],
-      "allowed_roles": ["owner", "admin"],
-      "routes": ["/memory/agent-proof-timeline/shared"]
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-proof-timeline/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_utility_analytics",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/telemetry/utility/analytics",
+        "/telemetry/utility/policy/evaluate"
+      ]
     }
   ]
 }

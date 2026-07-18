@@ -608,7 +608,7 @@ func proofTimelineStageForEvent(eventType string) string {
 		return "correction"
 	case strings.Contains(lower, "writeback") || strings.Contains(lower, "checkpoint") || strings.Contains(lower, "claim") || strings.Contains(lower, "skill") || strings.Contains(lower, "learn"):
 		return "learning"
-	case strings.Contains(lower, "verify") || strings.Contains(lower, "test") || strings.Contains(lower, "audit") || strings.Contains(lower, "check"):
+	case strings.Contains(lower, "verif") || strings.Contains(lower, "test") || strings.Contains(lower, "audit") || strings.Contains(lower, "check"):
 		return "verification"
 	case strings.Contains(lower, "outcome") || strings.Contains(lower, "feedback"):
 		return "outcome"
