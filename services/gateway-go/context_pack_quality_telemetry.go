@@ -416,6 +416,12 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 			entry[key] = compactAgentSessionValue(value, 2)
 		}
 	}
+	if attribution := normalizeEvidenceAttributions(sample); len(attribution) > 0 {
+		entry["evidence_attribution"] = attribution
+	}
+	for key, value := range derivedRegressionLedgerFields(sample) {
+		entry[key] = value
+	}
 	utilityPresent := len(anyMap(entry["utility"])) > 0 || len(anyMap(entry["verified_utility"])) > 0
 	if !utilityPresent {
 		_, utilityPresent = firstPresentValue(entry["utility_value"], entry["verified_utility_value"])
@@ -424,6 +430,29 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 		return nil
 	}
 	return entry
+}
+
+func (t *contextPackQualityTelemetry) outcomeSourceRows(limit int) []map[string]any {
+	if t == nil {
+		return nil
+	}
+	limit = clampInt(limit, 1, evidenceReputationMaxRows)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rows := t.proofOutcomes.ordered()
+	if len(rows) == 0 {
+		rows = t.outcomes
+	}
+	start := maxInt(0, len(rows)-limit)
+	out := make([]map[string]any, 0, len(rows)-start)
+	for _, row := range rows[start:] {
+		out = append(out, cloneJSONMap(row))
+	}
+	return out
+}
+
+func (t *contextPackQualityTelemetry) derivedRegressionSourceRows(limit int) []map[string]any {
+	return t.outcomeSourceRows(clampInt(limit, 1, derivedRegressionMaxRows))
 }
 
 func (t *contextPackQualityTelemetry) sampleForUtility(sampleID string) (map[string]any, bool) {

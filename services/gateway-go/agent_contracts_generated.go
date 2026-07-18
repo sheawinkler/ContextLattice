@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 32
+const GeneratedAgentContractRegistryVersion = 34
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -26,6 +26,7 @@ const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
 const GeneratedAgentContractAgentTaskLeaseV1 = "agent_task_lease.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
+const GeneratedAgentContractCausalBridgeExplanationV1 = "causal_bridge_explanation.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
 const GeneratedAgentContractContextMeshEnvelopeV1 = "context_mesh_envelope.v1"
 const GeneratedAgentContractContextMeshGrantV1 = "context_mesh_grant.v1"
@@ -43,11 +44,18 @@ const GeneratedAgentContractContextlatticeLifecycleReceiptV1 = "contextlattice_l
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractDecisionChangeV1 = "decision_change.v1"
 const GeneratedAgentContractDecisionChangeQueryV1 = "decision_change_query.v1"
+const GeneratedAgentContractDerivedRegressionSuiteV1 = "derived_regression_suite.v1"
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
+const GeneratedAgentContractEvidenceReputationV1 = "evidence_reputation.v1"
+const GeneratedAgentContractFrontierT4RetrievalGovernanceV1 = "frontier_t4_retrieval_governance.v1"
+const GeneratedAgentContractMemoryTrustAssessmentV1 = "memory_trust_assessment.v1"
 const GeneratedAgentContractObjectiveGraphV1 = "objective_graph.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractObjectiveTransitionV1 = "objective_transition.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
+const GeneratedAgentContractRetrievalAblationV1 = "retrieval_ablation.v1"
+const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_report.v1"
+const GeneratedAgentContractRetrievalDecisionTraceV1 = "retrieval_decision_trace.v1"
 const GeneratedAgentContractRetrievalPlanV1 = "retrieval_plan.v1"
 const GeneratedAgentContractRetrievalProgressV1 = "retrieval_progress.v1"
 const GeneratedAgentContractReviewModeResponseV1 = "review_mode_response.v1"
@@ -88,6 +96,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentTaskLeaseV1,
 	GeneratedAgentContractAgentTaskResultV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
+	GeneratedAgentContractCausalBridgeExplanationV1,
 	GeneratedAgentContractCodexCompactHookStdoutV1,
 	GeneratedAgentContractContextMeshEnvelopeV1,
 	GeneratedAgentContractContextMeshGrantV1,
@@ -105,11 +114,18 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractDecisionChangeV1,
 	GeneratedAgentContractDecisionChangeQueryV1,
+	GeneratedAgentContractDerivedRegressionSuiteV1,
 	GeneratedAgentContractDreamModeResponseV1,
+	GeneratedAgentContractEvidenceReputationV1,
+	GeneratedAgentContractFrontierT4RetrievalGovernanceV1,
+	GeneratedAgentContractMemoryTrustAssessmentV1,
 	GeneratedAgentContractObjectiveGraphV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractObjectiveTransitionV1,
 	GeneratedAgentContractPolicyContextPackageV1,
+	GeneratedAgentContractRetrievalAblationV1,
+	GeneratedAgentContractRetrievalAblationReportV1,
+	GeneratedAgentContractRetrievalDecisionTraceV1,
 	GeneratedAgentContractRetrievalPlanV1,
 	GeneratedAgentContractRetrievalProgressV1,
 	GeneratedAgentContractReviewModeResponseV1,
@@ -222,6 +238,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractCausalBridgeExplanationV1,
+		PayloadKind:        "bounded_proof_carrying_cross_project_causal_bridge_explanation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractCodexCompactHookStdoutV1,
 		PayloadKind:        "codex_compact_hook_stdout",
 		ContractVersion:    1,
@@ -324,8 +346,32 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractDerivedRegressionSuiteV1,
+		PayloadKind:        "immutable_review_only_derived_retrieval_regression_proposals",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractDreamModeResponseV1,
 		PayloadKind:        "dream_mode_response",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractEvidenceReputationV1,
+		PayloadKind:        "advisory_calibrated_evidence_reputation_projection",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractFrontierT4RetrievalGovernanceV1,
+		PayloadKind:        "entitled_bounded_retrieval_receipt_policy_and_operations_governance",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractMemoryTrustAssessmentV1,
+		PayloadKind:        "bounded_retrieval_memory_trust_assessment",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -350,6 +396,24 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPolicyContextPackageV1,
 		PayloadKind:        "agent_policy_context_package",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRetrievalAblationV1,
+		PayloadKind:        "same_snapshot_leave_one_evidence_retrieval_ablation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRetrievalAblationReportV1,
+		PayloadKind:        "bounded_retrieval_ablation_summary",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRetrievalDecisionTraceV1,
+		PayloadKind:        "bounded_retrieval_decision_receipt_trace",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

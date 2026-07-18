@@ -81,13 +81,21 @@ while IFS= read -r source_path; do
     docs/private/*|private_docs/*|private/*|.ops/*|\
     config/runtime-license/*|\
     services/gateway-go/cognition_activation_entitled.go|\
-    services/gateway-go/context_mesh_orchestration_entitled.go)
+    services/gateway-go/context_mesh_orchestration_entitled.go|\
+    services/gateway-go/frontier_t1_governance_entitled.go|\
+    services/gateway-go/frontier_t2_packet_retention_entitled.go|\
+    services/gateway-go/frontier_t2_proof_timeline_entitled.go|\
+    services/gateway-go/frontier_t3_utility_entitled.go|\
+    services/gateway-go/frontier_t4_retrieval_entitled.go|\
+    services/gateway-go/frontier_t4_retrieval_entitled_test.go|\
+    config/frontier_t1_release_provenance.v1.json|\
+    docs/evals/v3.21-frontier-t4-paid-activation.json)
       fail "public source ref contains a paid/private path: ${source_path}"
       ;;
   esac
 done < <(git -C "${ROOT_DIR}" ls-tree -r --name-only "${source_commit}")
 
-public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|contextlattice_runtime_license_public_keys\.v1|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
 if git -C "${ROOT_DIR}" grep -n -I -E "${public_runtime_marker}" "${source_commit}" -- \
     Dockerfile.gateway-go docker-compose.yml services/gateway-go \
     >"${TMP_DIR}/public-runtime-markers.txt" 2>/dev/null; then

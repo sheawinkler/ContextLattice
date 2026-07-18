@@ -60,6 +60,14 @@ REQUIRED_CONTRACTS = (
     "utility_ledger.v1",
     "utility_analytics.v1",
     "utility_policy_evaluation.v1",
+    "memory_trust_assessment.v1",
+    "retrieval_decision_trace.v1",
+    "evidence_reputation.v1",
+    "causal_bridge_explanation.v1",
+    "derived_regression_suite.v1",
+    "retrieval_ablation.v1",
+    "retrieval_ablation_report.v1",
+    "frontier_t4_retrieval_governance.v1",
     "retrieval_plan.v1",
     "context_policy_candidate.v1",
     "context_policy_evaluation.v1",
@@ -323,8 +331,185 @@ def sample_decision_change_query() -> dict[str, Any]:
     )
 
 
+def sample_memory_trust_assessment() -> dict[str, Any]:
+    return attach_format_contract(
+        "memory_trust_assessment.v1",
+        {
+            "ok": True,
+            "schema_id": "memory_trust_assessment.v1",
+            "version": 1,
+            "input_candidate_count": 1,
+            "processed_candidate_count": 1,
+            "input_truncated_count": 0,
+            "assessed_count": 1,
+            "quarantine_count": 0,
+            "deduplicated_count": 0,
+            "policy_omitted_count": 0,
+            "assessments": [],
+            "input_boundary": {"maximum_candidates": 128, "truncated": False, "omitted_count": 0, "reason": "bounded_candidate_scan_limit"},
+            "policy": {"retrieved_memory_is_evidence_not_instruction": True, "self_awarded_trust_accepted": False, "security_defenses_fail_closed": True},
+            "bounded": True,
+        },
+    )
+
+
+def sample_retrieval_decision_trace() -> dict[str, Any]:
+    return attach_format_contract(
+        "retrieval_decision_trace.v1",
+        {
+            "ok": True,
+            "schema_id": "retrieval_decision_trace.v1",
+            "version": 1,
+            "trace_id": "rdt_audit_fixture",
+            "candidate_count": 1,
+            "processed_candidate_count": 1,
+            "input_truncated_count": 0,
+            "decision_count": 1,
+            "coverage_complete": True,
+            "decisions": [{"receipt_id": "rdr_audit_fixture", "candidate_id": "rtc_audit_fixture", "candidate_ordinal": 1, "decision": "selected", "reasons": ["highest_bounded_impact_per_token"], "why_now": ["task_gate"], "metadata": {}, "decision_order": 1}],
+            "decision_counts": {"selected": 1},
+            "input_boundary": {"maximum_candidates": 128, "truncated": False, "omitted_count": 0, "reason": "bounded_candidate_scan_limit"},
+            "marginal_stop": {"stopped": True, "reason": "all_eligible_candidates_selected", "token_budget_active": False},
+            "redaction": {"raw_candidate_text_included": False, "secret_values_included": False},
+            "bounded": True,
+        },
+    )
+
+
+def sample_evidence_reputation() -> dict[str, Any]:
+    return attach_format_contract(
+        "evidence_reputation.v1",
+        {
+            "ok": True,
+            "schema_id": "evidence_reputation.v1",
+            "version": 1,
+            "generated_at": "2026-07-18T00:00:00Z",
+            "scope": {"project": "contextlattice", "task_class": "release"},
+            "policy": {"minimum_samples": 3, "minimum_independent_issuers": 2, "decay_half_life_days": 30, "advisory_only": True, "ranking_influence_applied": False, "self_awarded_trust_accepted": False, "opposition_override_allowed": False},
+            "entries": [],
+            "summary": {"input_row_count": 0, "evaluated_row_count": 0, "entry_count": 0, "calibrated_entry_count": 0, "entry_limit_omitted_count": 0, "exclusions": {}},
+            "measurement_limit": "Advisory verified attribution only.",
+        },
+    )
+
+
+def sample_causal_bridge_explanation() -> dict[str, Any]:
+    return attach_format_contract(
+        "causal_bridge_explanation.v1",
+        {
+            "ok": True,
+            "schema_id": "causal_bridge_explanation.v1",
+            "version": 1,
+            "project": "contextlattice",
+            "as_of": "2026-07-18T00:00:00Z",
+            "status": "empty",
+            "bounded": True,
+            "limit": 8,
+            "candidate_count": 0,
+            "explanation_count": 0,
+            "supported_count": 0,
+            "abstained_count": 0,
+            "truncated": False,
+            "explanations": [],
+            "missing_proof": [{"proof": "explicit_cross_project_graph_edge"}],
+            "inference_policy": "Associative similarity never establishes causality.",
+        },
+    )
+
+
+def sample_derived_regression_suite() -> dict[str, Any]:
+    return attach_format_contract(
+        "derived_regression_suite.v1",
+        {
+            "ok": True,
+            "schema_id": "derived_regression_suite.v1",
+            "version": 1,
+            "suite_id": "drs_audit_fixture",
+            "content_id": "sha256:" + ("1" * 64),
+            "immutable": True,
+            "status": "pending_review",
+            "review_required": True,
+            "admission_eligible": False,
+            "admitted": False,
+            "proposals": [],
+            "rejections": [],
+            "summary": {},
+            "computation": {"path": "offline_saved_eval", "bounded": True, "retrieval_hot_path": False, "saved_suite_mutations": 0},
+            "measurement_limit": "Review is required before admission.",
+            "mode": "derive",
+        },
+    )
+
+
+def sample_retrieval_ablation() -> dict[str, Any]:
+    return attach_format_contract(
+        "retrieval_ablation.v1",
+        {
+            "schema_id": "retrieval_ablation.v1",
+            "version": 1,
+            "case_id": "audit_case",
+            "snapshot_id": "ras_audit_fixture",
+            "snapshot_digest": "sha256:" + ("2" * 64),
+            "same_case": True,
+            "same_snapshot": True,
+            "snapshot_stable": True,
+            "traffic_class": "synthetic",
+            "synthetic": True,
+            "rows": [],
+            "summary": {},
+            "computation": {"path": "offline_snapshot", "bounded": True, "retrieval_hot_path": False, "additional_retrieval_calls": 0},
+            "measurement_limit": "Utility is never inferred.",
+        },
+    )
+
+
+def sample_retrieval_ablation_report() -> dict[str, Any]:
+    return attach_format_contract(
+        "retrieval_ablation_report.v1",
+        {
+            "schema_id": "retrieval_ablation_report.v1",
+            "version": 1,
+            "case_count": 1,
+            "row_count": 0,
+            "changed_result_row_count": 0,
+            "citation_loss_row_count": 0,
+            "promotion_eligible_row_count": 0,
+            "cases": [sample_retrieval_ablation()],
+            "utility_inferred": False,
+        },
+    )
+
+
+def sample_frontier_t4_retrieval_governance() -> dict[str, Any]:
+    return attach_format_contract(
+        "frontier_t4_retrieval_governance.v1",
+        {
+            "ok": True,
+            "schema_id": "frontier_t4_retrieval_governance.v1",
+            "feature_id": "frontier_retrieval_receipt_governance",
+            "operation": "status",
+            "workspace_id": "workspace_audit",
+            "project": "contextlattice",
+            "active": True,
+            "policy": {"policy_id": "ft4p_audit", "retention_days": 30, "schedule": "manual", "incident_review": "manual", "policy_digest": "sha256:" + "4" * 64},
+            "result": {"execution": "not_performed", "scope": "paid_governance_status_only"},
+            "governance_status": {"configured": True, "ready": True, "policy_exists": True},
+            "network_calls": 0,
+            "ordinary_memory_mutated": False,
+            "immutable_evidence_deleted": False,
+            "public_defenses_active": True,
+            "defense_bypass_allowed": False,
+            "rollback": {"paid_automation_disabled": False, "paid_influence_disabled": False, "ordinary_memory_rollback": False, "public_defenses_active": True, "defense_bypass_allowed": False},
+        },
+    )
+
+
 def sample_context_pack() -> dict[str, Any]:
     run_advisor = sample_run_advisor()
+    trust = sample_memory_trust_assessment()
+    trace = sample_retrieval_decision_trace()
+    trust_ref = {"schema_id": "memory_trust_assessment.v1", "canonical_path": "$.memory_trust_assessment", "assessed_count": 1, "quarantine_count": 0}
+    trace_ref = {"schema_id": "retrieval_decision_trace.v1", "canonical_path": "$.retrieval_decision_trace", "trace_id": "rdt_audit_fixture", "decision_count": 1}
     pack = {
         "facts": [],
         "results": [],
@@ -336,6 +521,8 @@ def sample_context_pack() -> dict[str, Any]:
             "intended_use": "verify bounded prompt-ready context package contracts",
             "recommended_surface": "cli_for_local_agents",
             "ranked_evidence_count": 0,
+            "memory_trust_assessment": trust_ref,
+            "retrieval_decision_trace": trace_ref,
         },
         "prompt_sections": {
             "objective": "Audit context package contract.",
@@ -358,6 +545,8 @@ def sample_context_pack() -> dict[str, Any]:
         "known_failure_modes": [],
         "commands": [],
         "acceptance_criteria": [],
+        "memory_trust_assessment": trust_ref,
+        "retrieval_decision_trace": trace_ref,
     }
     coverage = {"configured": ["postgres_pgvector"], "returned": ["postgres_pgvector"], "complete": True}
     return attach_format_contract(
@@ -369,6 +558,8 @@ def sample_context_pack() -> dict[str, Any]:
             "reference_prompt": "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
             "source_coverage": coverage,
             "run_advisor": run_advisor,
+            "memory_trust_assessment": trust,
+            "retrieval_decision_trace": trace,
             "writeback_required": True,
         },
     )
@@ -732,6 +923,8 @@ def sample_synthesis_pack_v2() -> dict[str, Any]:
         "temporal_claims": [sample_temporal_claim()["claim"]],
         "contradictions": [],
         "causal_chains": [],
+        "causal_bridge_explanation": sample_causal_bridge_explanation(),
+        "evidence_reputation": sample_evidence_reputation(),
         "proof_coverage": {"supported_claims": 1, "claim_support_rate": 1.0},
         "topic_gravity": [],
         "cross_project_bridges": [],
@@ -1232,6 +1425,10 @@ def sample_agent_inbox() -> dict[str, Any]:
 
 def oversized_context_pack_fixture(registry: dict[str, Any]) -> dict[str, Any]:
     text = "array_above_max_length context length exceeded " * 500
+    trust = sample_memory_trust_assessment()
+    trace = sample_retrieval_decision_trace()
+    trust_ref = {"schema_id": "memory_trust_assessment.v1", "canonical_path": "$.memory_trust_assessment", "assessed_count": 1, "quarantine_count": 0}
+    trace_ref = {"schema_id": "retrieval_decision_trace.v1", "canonical_path": "$.retrieval_decision_trace", "trace_id": "rdt_audit_fixture", "decision_count": 1}
     rows = [
         {
             "text": text,
@@ -1253,6 +1450,8 @@ def oversized_context_pack_fixture(registry: dict[str, Any]) -> dict[str, Any]:
             "intended_use": text,
             "recommended_surface": "cli_for_local_agents",
             "ranked_evidence_count": len(rows),
+            "memory_trust_assessment": trust_ref,
+            "retrieval_decision_trace": trace_ref,
         },
         "prompt_sections": {
             "objective": text,
@@ -1275,6 +1474,8 @@ def oversized_context_pack_fixture(registry: dict[str, Any]) -> dict[str, Any]:
         "known_failure_modes": rows,
         "commands": rows,
         "acceptance_criteria": rows,
+        "memory_trust_assessment": trust_ref,
+        "retrieval_decision_trace": trace_ref,
     }
     return attach_format_contract(
         "context_pack_response.v1",
@@ -1285,6 +1486,9 @@ def oversized_context_pack_fixture(registry: dict[str, Any]) -> dict[str, Any]:
             "reference_prompt": text,
             "source_coverage": {"configured": rows, "returned": rows, "complete": True},
             "retrieval": {"debug": text},
+            "run_advisor": sample_run_advisor(),
+            "memory_trust_assessment": trust,
+            "retrieval_decision_trace": trace,
             "writeback_required": True,
         },
         registry,
@@ -2208,6 +2412,14 @@ def run_audit() -> list[dict[str, Any]]:
         ("utility_ledger.v1", sample_utility_ledger()),
         ("utility_analytics.v1", sample_utility_analytics()),
         ("utility_policy_evaluation.v1", sample_utility_policy_evaluation()),
+        ("memory_trust_assessment.v1", sample_memory_trust_assessment()),
+        ("retrieval_decision_trace.v1", sample_retrieval_decision_trace()),
+        ("evidence_reputation.v1", sample_evidence_reputation()),
+        ("causal_bridge_explanation.v1", sample_causal_bridge_explanation()),
+        ("derived_regression_suite.v1", sample_derived_regression_suite()),
+        ("retrieval_ablation.v1", sample_retrieval_ablation()),
+        ("retrieval_ablation_report.v1", sample_retrieval_ablation_report()),
+        ("frontier_t4_retrieval_governance.v1", sample_frontier_t4_retrieval_governance()),
         ("retrieval_plan.v1", sample_retrieval_plan()),
         ("synthesis_pack.v2", sample_synthesis_pack_v2()),
         ("context_policy_candidate.v1", sample_context_policy_candidate()),

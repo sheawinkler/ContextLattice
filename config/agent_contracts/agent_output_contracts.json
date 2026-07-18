@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 32,
-  "updated_at": "2026-07-18T10:01:31Z",
+  "registry_version": 34,
+  "updated_at": "2026-07-18T20:42:00Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -1631,6 +1631,8 @@
         "context_compiler",
         "reference_prompt",
         "run_advisor",
+        "memory_trust_assessment",
+        "retrieval_decision_trace",
         "format_contract"
       ],
       "field_types": {
@@ -1642,6 +1644,8 @@
         "agent_guidance": "object",
         "reference_prompt": "string",
         "run_advisor": "object",
+        "memory_trust_assessment": "object",
+        "retrieval_decision_trace": "object",
         "format_contract": "object"
       },
       "required_fields_by_path": {
@@ -1659,7 +1663,9 @@
           "runbooks",
           "known_failure_modes",
           "commands",
-          "acceptance_criteria"
+          "acceptance_criteria",
+          "memory_trust_assessment",
+          "retrieval_decision_trace"
         ],
         "context_compiler": [
           "schema_id",
@@ -1667,7 +1673,9 @@
           "strategy",
           "intended_use",
           "recommended_surface",
-          "ranked_evidence_count"
+          "ranked_evidence_count",
+          "memory_trust_assessment",
+          "retrieval_decision_trace"
         ],
         "source_coverage": [
           "configured",
@@ -4230,6 +4238,8 @@
           "temporal_claims",
           "contradictions",
           "causal_chains",
+          "causal_bridge_explanation",
+          "evidence_reputation",
           "proof_coverage",
           "topic_gravity",
           "cross_project_bridges",
@@ -5021,6 +5031,711 @@
         "schema_id": "utility_policy_evaluation.v1",
         "feature_id": "frontier_verified_efficiency_operations",
         "format_contract.schema_id": "utility_policy_evaluation.v1"
+      }
+    },
+    "memory_trust_assessment.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_retrieval_memory_trust_assessment",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "quarantine_suspicious_retrieved_content_and_assign_zero_prompt_influence",
+      "max_total_json_bytes": 320000,
+      "max_string_bytes": 2000,
+      "max_list_items": 256,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "input_candidate_count",
+        "processed_candidate_count",
+        "input_truncated_count",
+        "assessed_count",
+        "quarantine_count",
+        "deduplicated_count",
+        "policy_omitted_count",
+        "assessments",
+        "input_boundary",
+        "policy",
+        "bounded",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "input_candidate_count": "int",
+        "processed_candidate_count": "int",
+        "input_truncated_count": "int",
+        "assessed_count": "int",
+        "quarantine_count": "int",
+        "deduplicated_count": "int",
+        "policy_omitted_count": "int",
+        "assessments": "list",
+        "input_boundary": "object",
+        "policy": "object",
+        "bounded": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "input_boundary": [
+          "maximum_candidates",
+          "truncated",
+          "omitted_count",
+          "reason"
+        ],
+        "policy": [
+          "retrieved_memory_is_evidence_not_instruction",
+          "self_awarded_trust_accepted",
+          "security_defenses_fail_closed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "policy.self_awarded_trust_accepted"
+      ],
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_candidate_text",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "memory_trust_assessment.v1",
+        "format_contract.schema_id": "memory_trust_assessment.v1"
+      }
+    },
+    "retrieval_decision_trace.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_retrieval_decision_receipt_trace",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_explicit_omission_or_quarantine_receipts_without_raw_candidate_text",
+      "max_total_json_bytes": 320000,
+      "max_string_bytes": 2000,
+      "max_list_items": 256,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "trace_id",
+        "candidate_count",
+        "processed_candidate_count",
+        "input_truncated_count",
+        "decision_count",
+        "coverage_complete",
+        "decisions",
+        "decision_counts",
+        "input_boundary",
+        "marginal_stop",
+        "redaction",
+        "bounded",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "trace_id": "string",
+        "candidate_count": "int",
+        "processed_candidate_count": "int",
+        "input_truncated_count": "int",
+        "decision_count": "int",
+        "coverage_complete": "bool",
+        "decisions": "list",
+        "decision_counts": "object",
+        "input_boundary": "object",
+        "marginal_stop": "object",
+        "redaction": "object",
+        "bounded": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "input_boundary": [
+          "maximum_candidates",
+          "truncated",
+          "omitted_count",
+          "reason"
+        ],
+        "marginal_stop": [
+          "stopped",
+          "reason",
+          "token_budget_active"
+        ],
+        "redaction": [
+          "raw_candidate_text_included",
+          "secret_values_included"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "redaction.raw_candidate_text_included",
+        "redaction.secret_values_included"
+      ],
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_candidate_text",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "retrieval_decision_trace.v1",
+        "format_contract.schema_id": "retrieval_decision_trace.v1"
+      }
+    },
+    "evidence_reputation.v1": {
+      "contract_version": 1,
+      "payload_kind": "advisory_calibrated_evidence_reputation_projection",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "remain_advisory_and_never_override_quarantine_contradiction_or_opposition",
+      "max_total_json_bytes": 180000,
+      "max_string_bytes": 3000,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "generated_at",
+        "scope",
+        "policy",
+        "entries",
+        "summary",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "generated_at": "string",
+        "scope": "object",
+        "policy": "object",
+        "entries": "list",
+        "summary": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "policy": [
+          "minimum_samples",
+          "minimum_independent_issuers",
+          "decay_half_life_days",
+          "advisory_only",
+          "ranking_influence_applied",
+          "self_awarded_trust_accepted",
+          "opposition_override_allowed"
+        ],
+        "summary": [
+          "input_row_count",
+          "evaluated_row_count",
+          "entry_count",
+          "calibrated_entry_count",
+          "entry_limit_omitted_count",
+          "exclusions"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "policy.ranking_influence_applied",
+        "policy.self_awarded_trust_accepted",
+        "policy.opposition_override_allowed"
+      ],
+      "forbidden_fields": [
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "evidence_reputation.v1",
+        "format_contract.schema_id": "evidence_reputation.v1"
+      }
+    },
+    "causal_bridge_explanation.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_proof_carrying_cross_project_causal_bridge_explanation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "abstain_without_explicit_causal_edge_current_claim_pair_and_sufficient_citations",
+      "max_total_json_bytes": 180000,
+      "max_string_bytes": 4000,
+      "max_list_items": 128,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "project",
+        "as_of",
+        "status",
+        "bounded",
+        "limit",
+        "candidate_count",
+        "explanation_count",
+        "supported_count",
+        "abstained_count",
+        "truncated",
+        "explanations",
+        "missing_proof",
+        "inference_policy",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "project": "string",
+        "as_of": "string",
+        "status": "string",
+        "bounded": "bool",
+        "limit": "int",
+        "candidate_count": "int",
+        "explanation_count": "int",
+        "supported_count": "int",
+        "abstained_count": "int",
+        "truncated": "bool",
+        "explanations": "list",
+        "missing_proof": "list",
+        "inference_policy": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "causal_bridge_explanation.v1",
+        "format_contract.schema_id": "causal_bridge_explanation.v1"
+      }
+    },
+    "derived_regression_suite.v1": {
+      "contract_version": 1,
+      "payload_kind": "immutable_review_only_derived_retrieval_regression_proposals",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unverified_leaky_or_incomplete_fixture_material_without_mutating_the_saved_suite",
+      "max_total_json_bytes": 400000,
+      "max_string_bytes": 6000,
+      "max_list_items": 256,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "suite_id",
+        "content_id",
+        "immutable",
+        "status",
+        "review_required",
+        "admission_eligible",
+        "admitted",
+        "proposals",
+        "rejections",
+        "summary",
+        "computation",
+        "measurement_limit",
+        "mode",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "suite_id": "string",
+        "content_id": "string",
+        "immutable": "bool",
+        "status": "string",
+        "review_required": "bool",
+        "admission_eligible": "bool",
+        "admitted": "bool",
+        "proposals": "list",
+        "rejections": "list",
+        "summary": "object",
+        "computation": "object",
+        "measurement_limit": "string",
+        "mode": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "computation": [
+          "path",
+          "bounded",
+          "retrieval_hot_path",
+          "saved_suite_mutations"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "admission_eligible",
+        "admitted",
+        "computation.retrieval_hot_path"
+      ],
+      "forbidden_fields": [
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "derived_regression_suite.v1",
+        "format_contract.schema_id": "derived_regression_suite.v1"
+      }
+    },
+    "retrieval_ablation.v1": {
+      "contract_version": 1,
+      "payload_kind": "same_snapshot_leave_one_evidence_retrieval_ablation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "report_exact_result_and_citation_deltas_without_inferring_utility",
+      "max_total_json_bytes": 480000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "case_id",
+        "snapshot_id",
+        "snapshot_digest",
+        "same_case",
+        "same_snapshot",
+        "snapshot_stable",
+        "traffic_class",
+        "synthetic",
+        "rows",
+        "summary",
+        "computation",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "case_id": "string",
+        "snapshot_id": "string",
+        "snapshot_digest": "string",
+        "same_case": "bool",
+        "same_snapshot": "bool",
+        "snapshot_stable": "bool",
+        "traffic_class": "string",
+        "synthetic": "bool",
+        "rows": "list",
+        "summary": "object",
+        "computation": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "computation": [
+          "path",
+          "bounded",
+          "retrieval_hot_path",
+          "additional_retrieval_calls"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "computation.retrieval_hot_path"
+      ],
+      "forbidden_fields": [
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "retrieval_ablation.v1",
+        "format_contract.schema_id": "retrieval_ablation.v1"
+      }
+    },
+    "retrieval_ablation_report.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_retrieval_ablation_summary",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "report_case_coverage_and_exact_deltas_without_claiming_unobserved_utility",
+      "max_total_json_bytes": 600000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "case_count",
+        "row_count",
+        "changed_result_row_count",
+        "citation_loss_row_count",
+        "promotion_eligible_row_count",
+        "cases",
+        "utility_inferred",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "case_count": "int",
+        "row_count": "int",
+        "changed_result_row_count": "int",
+        "citation_loss_row_count": "int",
+        "promotion_eligible_row_count": "int",
+        "cases": "list",
+        "utility_inferred": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "utility_inferred"
+      ],
+      "forbidden_fields": [
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "retrieval_ablation_report.v1",
+        "format_contract.schema_id": "retrieval_ablation_report.v1"
+      }
+    },
+    "frontier_t4_retrieval_governance.v1": {
+      "contract_version": 1,
+      "payload_kind": "entitled_bounded_retrieval_receipt_policy_and_operations_governance",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "fail_closed_without_executing_retrieval_or_disabling_public_trust_defenses",
+      "max_total_json_bytes": 160000,
+      "max_string_bytes": 5000,
+      "max_list_items": 256,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "feature_id",
+        "operation",
+        "workspace_id",
+        "project",
+        "active",
+        "policy",
+        "result",
+        "governance_status",
+        "network_calls",
+        "ordinary_memory_mutated",
+        "immutable_evidence_deleted",
+        "public_defenses_active",
+        "defense_bypass_allowed",
+        "rollback",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "feature_id": "string",
+        "operation": "string",
+        "workspace_id": "string",
+        "project": "string",
+        "active": "bool",
+        "policy": "object",
+        "result": "object",
+        "governance_status": "object",
+        "network_calls": "int",
+        "ordinary_memory_mutated": "bool",
+        "immutable_evidence_deleted": "bool",
+        "public_defenses_active": "bool",
+        "defense_bypass_allowed": "bool",
+        "rollback": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "rollback": [
+          "paid_automation_disabled",
+          "paid_influence_disabled",
+          "ordinary_memory_rollback",
+          "public_defenses_active",
+          "defense_bypass_allowed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "public_defenses_active",
+        "rollback.public_defenses_active"
+      ],
+      "required_false_paths": [
+        "ordinary_memory_mutated",
+        "immutable_evidence_deleted",
+        "defense_bypass_allowed",
+        "rollback.ordinary_memory_rollback",
+        "rollback.defense_bypass_allowed"
+      ],
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "internal_reasoning",
+        "hidden_reasoning",
+        "raw_candidate_text",
+        "raw_ledger",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "frontier_t4_retrieval_governance.v1",
+        "format_contract.schema_id": "frontier_t4_retrieval_governance.v1"
       }
     }
   }

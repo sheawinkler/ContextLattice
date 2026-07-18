@@ -253,7 +253,12 @@ if (Test-Path -LiteralPath $installedMetadataPath -PathType Leaf) {
 $installedPaidMarkers = @(
     "config\runtime-license",
     "services\gateway-go\cognition_activation_entitled.go",
-    "services\gateway-go\context_mesh_orchestration_entitled.go"
+    "services\gateway-go\context_mesh_orchestration_entitled.go",
+    "services\gateway-go\frontier_t1_governance_entitled.go",
+    "services\gateway-go\frontier_t2_packet_retention_entitled.go",
+    "services\gateway-go\frontier_t2_proof_timeline_entitled.go",
+    "services\gateway-go\frontier_t3_utility_entitled.go",
+    "services\gateway-go\frontier_t4_retrieval_entitled.go"
 )
 $installedHasPaidMarkers = $false
 foreach ($relativePath in $installedPaidMarkers) {
@@ -337,13 +342,19 @@ try {
         ".ops",
         "config\runtime-license",
         "services\gateway-go\cognition_activation_entitled.go",
-        "services\gateway-go\context_mesh_orchestration_entitled.go"
+        "services\gateway-go\context_mesh_orchestration_entitled.go",
+        "services\gateway-go\frontier_t1_governance_entitled.go",
+        "services\gateway-go\frontier_t2_packet_retention_entitled.go",
+        "services\gateway-go\frontier_t2_proof_timeline_entitled.go",
+        "services\gateway-go\frontier_t3_utility_entitled.go",
+        "services\gateway-go\frontier_t4_retrieval_entitled.go",
+        "config\frontier_t1_release_provenance.v1.json"
     )) {
         if (Test-Path -LiteralPath (Join-Path $payloadRoot $relativePath)) {
             throw "Public payload contains a paid/private path: $relativePath"
         }
     }
-    $runtimePattern = "context_policy_activation\.v1|context_mesh_orchestration\.v1|contextlattice_runtime_license_public_keys\.v1|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID"
+    $runtimePattern = "context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID"
     foreach ($relativePath in @("Dockerfile.gateway-go", "docker-compose.yml")) {
         $runtimePath = Join-Path $payloadRoot $relativePath
         if ((Test-Path -LiteralPath $runtimePath -PathType Leaf) -and

@@ -33,6 +33,7 @@ const (
 	maxAgentPacketCLIFileBytes     = 64 << 10
 	runtimeAuditMaximumAge         = 2 * time.Minute
 	runtimeAuditMaximumFutureSkew  = 30 * time.Second
+	retrievalGovernanceContractID  = "frontier_t4_retrieval_governance.v1"
 )
 
 var nativeToolNames = map[string]string{
@@ -42,6 +43,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_synthesis_pack":                  "synthesis-pack",
 	"contextlattice_synthesis_pack_v2":               "synthesis-pack-v2",
 	"contextlattice_retrieval_plan":                  "retrieval-plan",
+	"contextlattice_retrieval_governance":            "retrieval-governance",
 	"contextlattice_claim_write":                     "claim-write",
 	"contextlattice_claim_query":                     "claim-query",
 	"contextlattice_continuity_reconcile":            "continuity-reconcile",
@@ -86,6 +88,15 @@ var nativeToolNames = map[string]string{
 	"contextlattice_memory_graph_efficacy":           "memory-graph-efficacy",
 	"contextlattice_skills_index":                    "skills-index",
 	"contextlattice_async_inbox_drain":               "async-inbox-drain",
+}
+
+var retrievalGovernanceRoutes = map[string]string{
+	"receipts":       "/memory/retrieval/receipts/governance",
+	"causal-bridges": "/memory/causal-bridges/governance",
+	"counterfactual": "/memory/retrieval/ablation/operations",
+	"reputation":     "/memory/evidence-reputation/activation",
+	"regressions":    "/memory/recall/regressions/operations",
+	"defense":        "/memory/trust/defense/operations",
 }
 
 type cli struct {
@@ -161,6 +172,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdSynthesisPackV2(args)
 	case "retrieval-plan":
 		return c.cmdRetrievalPlan(args)
+	case "retrieval-governance":
+		return c.cmdRetrievalGovernance(args)
 	case "claim-write":
 		return c.cmdClaimWrite(args)
 	case "claim-query":
@@ -276,6 +289,7 @@ Advanced/compatibility commands:
   synthesis-pack                 synthesis package over ranked evidence, topics, and graph links
   synthesis-pack-v2              proof-carrying synthesis with temporal claims and retrieval plan
   retrieval-plan                 deterministic advisor-only evidence and source plan
+  retrieval-governance           CLI-primary paid retrieval policy, evaluation, and defense operations
   claim-write                    write or revise a structured temporal claim
   claim-query                    query structured temporal claims as of a point in time
   continuity-reconcile          exact-first task identity reconcile, merge, split, or lossless compaction
@@ -625,6 +639,7 @@ func adoptionInstallChecks(globalHome string) map[string]any {
 		"contextlattice_synthesis_pack",
 		"contextlattice_synthesis_pack_v2",
 		"contextlattice_retrieval_plan",
+		"contextlattice_retrieval_governance",
 		"contextlattice_claim_write",
 		"contextlattice_claim_query",
 		"contextlattice_continuity_reconcile",
@@ -1450,6 +1465,138 @@ func (c *cli) cmdSynthesisPackV2(args []string) error {
 
 func (c *cli) cmdRetrievalPlan(args []string) error {
 	return c.cmdPackWithRoute(args, "contextlattice_retrieval_plan", "/memory/retrieval/plan", "retrieval-plan")
+}
+
+func (c *cli) cmdRetrievalGovernance(args []string) error {
+	parsed := parseArgs(args, mergeStringFlags(commonStringFlags(), map[string]string{
+		"operation":       "operation",
+		"feature":         "feature",
+		"reason":          "reason",
+		"retention-days":  "retention_days",
+		"schedule":        "schedule",
+		"incident-review": "incident_review",
+	}), commonBoolFlags())
+	if parsed.bool("help") {
+		return c.emitUsage("contextlattice retrieval-governance {status|configure|evaluate|deactivate} --feature {receipts|causal-bridges|counterfactual|reputation|regressions|defense} --project <project> [--reason <single-line reason>] [--retention-days 1..365 --schedule manual|daily|weekly --incident-review manual|required] [--pretty|--raw]")
+	}
+
+	operation, err := retrievalGovernanceOperation(parsed)
+	if err != nil {
+		return err
+	}
+	feature := strings.ToLower(strings.TrimSpace(parsed.string("feature", "")))
+	route, ok := retrievalGovernanceRoutes[feature]
+	if !ok {
+		return errors.New("--feature must be receipts, causal-bridges, counterfactual, reputation, regressions, or defense")
+	}
+	project := strings.TrimSpace(parsed.string("project", ""))
+	if project == "" {
+		return errors.New("--project is required")
+	}
+
+	policyRequested := parsed.has("retention_days") || parsed.has("schedule") || parsed.has("incident_review")
+	if operation != "configure" && policyRequested {
+		return errors.New("--retention-days, --schedule, and --incident-review are valid only for configure")
+	}
+	if operation == "status" {
+		if parsed.has("reason") {
+			return errors.New("--reason is valid only for configure, evaluate, or deactivate")
+		}
+		c.applyBaseURL(parsed)
+		query := url.Values{}
+		query.Set("project", project)
+		result, _, err := c.requestJSON(context.Background(), http.MethodGet, route+"?"+query.Encode(), nil, parsed.float("timeout", 30))
+		if err != nil {
+			return err
+		}
+		return c.emit(result, !parsed.bool("raw"))
+	}
+
+	reason, err := retrievalGovernanceReason(parsed)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{
+		"operation": operation,
+		"project":   project,
+		"reason":    reason,
+	}
+	if operation == "configure" {
+		policy, err := retrievalGovernancePolicy(parsed)
+		if err != nil {
+			return err
+		}
+		if len(policy) > 0 {
+			payload["policy"] = policy
+		}
+	}
+	c.applyBaseURL(parsed)
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, route, payload, parsed.float("timeout", 30))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func retrievalGovernanceOperation(parsed parsedArgs) (string, error) {
+	operation := strings.ToLower(strings.TrimSpace(parsed.string("operation", "")))
+	positional := append([]string(nil), parsed.pos...)
+	if operation == "" && len(positional) > 0 {
+		operation = strings.ToLower(strings.TrimSpace(positional[0]))
+		positional = positional[1:]
+	}
+	if len(positional) > 0 {
+		return "", fmt.Errorf("unsupported retrieval-governance argument %q", positional[0])
+	}
+	if operation == "" {
+		operation = "status"
+	}
+	switch operation {
+	case "status", "configure", "evaluate", "deactivate":
+		return operation, nil
+	default:
+		return "", fmt.Errorf("unknown retrieval-governance operation %q", operation)
+	}
+}
+
+func retrievalGovernanceReason(parsed parsedArgs) (string, error) {
+	raw, present := parsed.values["reason"]
+	reason := strings.TrimSpace(raw)
+	if !present || reason == "" || len(reason) > 240 || strings.ContainsAny(raw, "\r\n\x00") {
+		return "", errors.New("--reason must be a non-empty single line of at most 240 bytes")
+	}
+	return reason, nil
+}
+
+func retrievalGovernancePolicy(parsed parsedArgs) (map[string]any, error) {
+	policy := map[string]any{}
+	if parsed.has("retention_days") {
+		raw := strings.TrimSpace(parsed.values["retention_days"])
+		retentionDays, err := strconv.Atoi(raw)
+		if err != nil || retentionDays < 1 || retentionDays > 365 {
+			return nil, errors.New("--retention-days must be an integer between 1 and 365")
+		}
+		policy["retention_days"] = retentionDays
+	}
+	if parsed.has("schedule") {
+		schedule := strings.ToLower(strings.TrimSpace(parsed.values["schedule"]))
+		switch schedule {
+		case "manual", "daily", "weekly":
+			policy["schedule"] = schedule
+		default:
+			return nil, errors.New("--schedule must be manual, daily, or weekly")
+		}
+	}
+	if parsed.has("incident_review") {
+		incidentReview := strings.ToLower(strings.TrimSpace(parsed.values["incident_review"]))
+		switch incidentReview {
+		case "manual", "required":
+			policy["incident_review"] = incidentReview
+		default:
+			return nil, errors.New("--incident-review must be manual or required")
+		}
+	}
+	return policy, nil
 }
 
 func (c *cli) cmdClaimWrite(args []string) error {
@@ -3400,9 +3547,10 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		"/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan",
 		"/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query",
 		"/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes",
+		"/memory/retrieval/receipts/governance", "/memory/causal-bridges/governance", "/memory/retrieval/ablation/operations", "/memory/evidence-reputation/activation", "/memory/recall/regressions/operations", "/memory/trust/defense/operations",
 		"policy_context_package", "scripts/agent/contextlattice-pack", "scripts/agent/compaction-handoff-payload",
 		"contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query",
-		"contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_decision_change list",
+		"contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_decision_change list", "contextlattice_retrieval_governance",
 		"contextlattice_async_inbox_drain",
 		"scripts/agent_hooks/contextlattice_pre_compaction_write.sh", "scripts/agent_hooks/contextlattice_post_compaction_read.sh",
 	}
@@ -3418,11 +3566,18 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 		{"/memory/objectives/graph", "objective_graph.v1"},
 		{"/memory/decision-changes", "decision_change.v1"},
 		{"/memory/decision-changes", "decision_change_query.v1"},
+		{"/memory/retrieval/receipts/governance", retrievalGovernanceContractID},
+		{"/memory/causal-bridges/governance", retrievalGovernanceContractID},
+		{"/memory/retrieval/ablation/operations", retrievalGovernanceContractID},
+		{"/memory/evidence-reputation/activation", retrievalGovernanceContractID},
+		{"/memory/recall/regressions/operations", retrievalGovernanceContractID},
+		{"/memory/trust/defense/operations", retrievalGovernanceContractID},
 		{"contextlattice_continuity_reconcile", "task_identity_reconciliation.v1"},
 		{"contextlattice_objective_transition", "objective_transition.v1"},
 		{"contextlattice_objective_graph", "objective_graph.v1"},
 		{"contextlattice_decision_change", "decision_change.v1"},
 		{"contextlattice_decision_change list", "decision_change_query.v1"},
+		{"contextlattice_retrieval_governance", retrievalGovernanceContractID},
 	}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "contextlattice_context_boundary.v1" {
@@ -3510,7 +3665,7 @@ func auditContextBoundary(payload map[string]any) map[string]any {
 }
 
 func auditNativeOwnership(payload map[string]any) map[string]any {
-	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/memory/agent-packet/reconstruct", "/tools/context_pack", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
+	required := []string{"/health", "/status", "/migration/runtime", "/ops/context-boundary", "/ops/native-ownership", "/memory/context-pack", "/memory/agent-packet/reconstruct", "/memory/retrieval/receipts/governance", "/memory/causal-bridges/governance", "/memory/retrieval/ablation/operations", "/memory/evidence-reputation/activation", "/memory/recall/regressions/operations", "/memory/trust/defense/operations", "/tools/context_pack", "/memory/continuity/reconcile", "/memory/objectives/transition", "/memory/objectives/graph", "/memory/decision-changes", "/memory/synthesis-pack", "/tools/synthesis_pack", "/memory/synthesis-pack/v2", "/tools/synthesis_pack_v2", "/memory/retrieval/plan", "/tools/retrieval_plan", "/memory/claims", "/memory/claims/query", "/tools/claim_write", "/tools/claim_query", "/telemetry/claim-graph", "/v1/agents/preflight", "/v1/codex/preflight", "/telemetry/sidecar-health", "/telemetry/strategies", "/telemetry/strategies/history"}
 	findings := []map[string]any{}
 	if firstString(payload["schema_id"]) != "strict_runtime_native_ownership.v1" {
 		findings = append(findings, map[string]any{"reason": "schema_id_mismatch", "actual": payload["schema_id"]})
@@ -3579,7 +3734,7 @@ func (c *cli) cmdRuntimeDoctor(args []string) error {
 	c.applyBaseURL(parsed)
 	globalHome := parsed.string("global_home", envString("CONTEXTLATTICE_GLOBAL_HOME", filepath.Join(homeDir(), ".contextlattice")))
 	binDir := filepath.Join(globalHome, "bin")
-	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
+	core := []string{"contextlattice_search", "contextlattice_pack", "contextlattice_synthesis_pack", "contextlattice_synthesis_pack_v2", "contextlattice_retrieval_plan", "contextlattice_retrieval_governance", "contextlattice_claim_write", "contextlattice_claim_query", "contextlattice_continuity_reconcile", "contextlattice_objective_transition", "contextlattice_objective_graph", "contextlattice_decision_change", "contextlattice_write", "contextlattice_agent_session", "contextlattice_agent_discover", "contextlattice_async_inbox_drain", "contextlattice_runner_quality", "contextlattice_run_advisor", "contextlattice_agent_runtime_doctor", "contextlattice_strict_runtime_native_ownership", "contextlattice_context_boundary"}
 	checks := []map[string]any{}
 	for _, name := range core {
 		path := filepath.Join(binDir, name)

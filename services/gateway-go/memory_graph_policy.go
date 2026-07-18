@@ -6,6 +6,46 @@ import (
 	"strings"
 )
 
+type causalBridgeEdgePolicy struct {
+	EdgeType        string
+	SemanticClass   string
+	CauseDirection  string
+	CausalCapable   bool
+	ExplicitlyTyped bool
+}
+
+func causalBridgePolicyForMemoryRelation(raw string) causalBridgeEdgePolicy {
+	relation, err := normalizeMemoryEdgeRelation(raw)
+	if err != nil {
+		relation = "unknown"
+	}
+	policy := causalBridgeEdgePolicy{
+		EdgeType:        relation,
+		SemanticClass:   "unclassified",
+		CauseDirection:  "unproven",
+		ExplicitlyTyped: relation != "unknown",
+	}
+	switch relation {
+	case "causes", "enables", "blocks", "prevents", "produces", "triggers":
+		policy.SemanticClass = "causal"
+		policy.CauseDirection = "source_to_target"
+		policy.CausalCapable = true
+	case "caused_by", "enabled_by", "blocked_by", "prevented_by", "depends_on", "requires":
+		policy.SemanticClass = "causal"
+		policy.CauseDirection = "target_to_source"
+		policy.CausalCapable = true
+	case "references", "supports":
+		policy.SemanticClass = "evidentiary"
+	case "contradicts":
+		policy.SemanticClass = "opposition"
+	case "supersedes":
+		policy.SemanticClass = "temporal_lineage"
+	case "same_topic", "same_session", "same_agent", "inferred_related", "related":
+		policy.SemanticClass = "associative"
+	}
+	return policy
+}
+
 func memoryGraphCSVEnvWithFallback(primary string, fallbackEnv string, fallback string) []string {
 	raw := strings.TrimSpace(os.Getenv(primary))
 	if raw == "" && strings.TrimSpace(fallbackEnv) != "" {

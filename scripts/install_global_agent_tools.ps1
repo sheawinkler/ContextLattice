@@ -478,6 +478,19 @@ if not exist "%PYTHON_EXE%" (
 "%PYTHON_EXE%" "%SCRIPT_PATH%" %*
 "@
 
+$recallQualityEvalCmd = @"
+@echo off
+set TOOL_HOME=%CONTEXTLATTICE_GLOBAL_HOME%
+if "%TOOL_HOME%"=="" set TOOL_HOME=%USERPROFILE%\.contextlattice
+set PYTHON_EXE=%TOOL_HOME%\venv-agent-tools\Scripts\python.exe
+set SCRIPT_PATH=%TOOL_HOME%\scripts\agent\recall-quality-eval
+if not exist "%PYTHON_EXE%" (
+  echo Missing %PYTHON_EXE%. Run scripts\install_global_agent_tools.ps1 first.
+  exit /b 1
+)
+"%PYTHON_EXE%" "%SCRIPT_PATH%" %*
+"@
+
 Set-Content -Path (Join-Path $BinDir "contextlattice_search.cmd") -Value $searchCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_write.cmd") -Value $writeCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_pack.cmd") -Value $packCmd -Encoding Ascii
@@ -498,6 +511,7 @@ Set-Content -Path (Join-Path $BinDir "contextlattice_skills_index.cmd") -Value $
 Set-Content -Path (Join-Path $BinDir "contextlattice_codex_session_store_doctor.cmd") -Value $codexSessionStoreDoctorCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_async_inbox_hook.cmd") -Value $asyncInboxHookCmd -Encoding Ascii
 Set-Content -Path (Join-Path $BinDir "contextlattice_runner_quality.cmd") -Value $runnerQualityCmd -Encoding Ascii
+Set-Content -Path (Join-Path $BinDir "contextlattice_recall_quality_eval.cmd") -Value $recallQualityEvalCmd -Encoding Ascii
 
 function Write-GoNativeCmd {
     param([string]$Name)
@@ -523,6 +537,7 @@ $goNativeCommands = @(
     "contextlattice_synthesis_pack",
     "contextlattice_synthesis_pack_v2",
     "contextlattice_retrieval_plan",
+    "contextlattice_retrieval_governance",
     "contextlattice_claim_write",
     "contextlattice_claim_query",
     "contextlattice_continuity_reconcile",

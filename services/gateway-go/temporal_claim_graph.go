@@ -89,6 +89,7 @@ type temporalClaimQuery struct {
 	Limit             int
 	IncludeExpired    bool
 	IncludeSuperseded bool
+	IncludeRetracted  bool
 }
 
 func newTemporalClaimStoreFromEnv() (*temporalClaimStore, error) {
@@ -573,7 +574,7 @@ func (s *temporalClaimStore) query(q temporalClaimQuery) []temporalClaim {
 		if status == "superseded" && !q.IncludeSuperseded {
 			continue
 		}
-		if status == "retracted" && q.Status != "retracted" {
+		if status == "retracted" && q.Status != "retracted" && !q.IncludeRetracted {
 			continue
 		}
 		score := temporalClaimTermScore(claim, terms)
@@ -635,6 +636,29 @@ func temporalClaimStatusAt(claim temporalClaim, asOf time.Time) string {
 		}
 	}
 	return "active"
+}
+
+func temporalClaimCanInfluence(claim temporalClaim) bool {
+	return strings.EqualFold(strings.TrimSpace(claim.Status), "active")
+}
+
+func temporalClaimIsHistoricalOpposition(claim temporalClaim) bool {
+	switch strings.ToLower(strings.TrimSpace(claim.Status)) {
+	case "expired", "superseded", "retracted":
+		return true
+	default:
+		return false
+	}
+}
+
+func temporalClaimInfluenceRank(claim temporalClaim) int {
+	if temporalClaimCanInfluence(claim) {
+		return 0
+	}
+	if temporalClaimIsHistoricalOpposition(claim) {
+		return 1
+	}
+	return 2
 }
 
 func temporalClaimTermScore(claim temporalClaim, terms []string) int {

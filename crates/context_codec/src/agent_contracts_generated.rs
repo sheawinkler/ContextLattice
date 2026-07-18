@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 32;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 34;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -25,6 +25,7 @@ pub const AGENT_SPAN_V1: &str = "agent_span.v1";
 pub const AGENT_TASK_LEASE_V1: &str = "agent_task_lease.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
 pub const ANTI_SCHEMING_PROTOCOL_V1: &str = "anti_scheming_protocol.v1";
+pub const CAUSAL_BRIDGE_EXPLANATION_V1: &str = "causal_bridge_explanation.v1";
 pub const CODEX_COMPACT_HOOK_STDOUT_V1: &str = "codex_compact_hook_stdout.v1";
 pub const CONTEXT_MESH_ENVELOPE_V1: &str = "context_mesh_envelope.v1";
 pub const CONTEXT_MESH_GRANT_V1: &str = "context_mesh_grant.v1";
@@ -42,11 +43,18 @@ pub const CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1: &str = "contextlattice_lifecycle_
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const DECISION_CHANGE_V1: &str = "decision_change.v1";
 pub const DECISION_CHANGE_QUERY_V1: &str = "decision_change_query.v1";
+pub const DERIVED_REGRESSION_SUITE_V1: &str = "derived_regression_suite.v1";
 pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
+pub const EVIDENCE_REPUTATION_V1: &str = "evidence_reputation.v1";
+pub const FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1: &str = "frontier_t4_retrieval_governance.v1";
+pub const MEMORY_TRUST_ASSESSMENT_V1: &str = "memory_trust_assessment.v1";
 pub const OBJECTIVE_GRAPH_V1: &str = "objective_graph.v1";
 pub const OBJECTIVE_RUNTIME_STATE_V1: &str = "objective_runtime_state.v1";
 pub const OBJECTIVE_TRANSITION_V1: &str = "objective_transition.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
+pub const RETRIEVAL_ABLATION_V1: &str = "retrieval_ablation.v1";
+pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
+pub const RETRIEVAL_DECISION_TRACE_V1: &str = "retrieval_decision_trace.v1";
 pub const RETRIEVAL_PLAN_V1: &str = "retrieval_plan.v1";
 pub const RETRIEVAL_PROGRESS_V1: &str = "retrieval_progress.v1";
 pub const REVIEW_MODE_RESPONSE_V1: &str = "review_mode_response.v1";
@@ -87,6 +95,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_TASK_LEASE_V1,
     AGENT_TASK_RESULT_V1,
     ANTI_SCHEMING_PROTOCOL_V1,
+    CAUSAL_BRIDGE_EXPLANATION_V1,
     CODEX_COMPACT_HOOK_STDOUT_V1,
     CONTEXT_MESH_ENVELOPE_V1,
     CONTEXT_MESH_GRANT_V1,
@@ -104,11 +113,18 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTRACT_ACKNOWLEDGEMENT_V1,
     DECISION_CHANGE_V1,
     DECISION_CHANGE_QUERY_V1,
+    DERIVED_REGRESSION_SUITE_V1,
     DREAM_MODE_RESPONSE_V1,
+    EVIDENCE_REPUTATION_V1,
+    FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1,
+    MEMORY_TRUST_ASSESSMENT_V1,
     OBJECTIVE_GRAPH_V1,
     OBJECTIVE_RUNTIME_STATE_V1,
     OBJECTIVE_TRANSITION_V1,
     POLICY_CONTEXT_PACKAGE_V1,
+    RETRIEVAL_ABLATION_V1,
+    RETRIEVAL_ABLATION_REPORT_V1,
+    RETRIEVAL_DECISION_TRACE_V1,
     RETRIEVAL_PLAN_V1,
     RETRIEVAL_PROGRESS_V1,
     REVIEW_MODE_RESPONSE_V1,
@@ -221,6 +237,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: CAUSAL_BRIDGE_EXPLANATION_V1,
+        payload_kind: "bounded_proof_carrying_cross_project_causal_bridge_explanation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: CODEX_COMPACT_HOOK_STDOUT_V1,
         payload_kind: "codex_compact_hook_stdout",
         contract_version: 1,
@@ -323,8 +345,32 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: DERIVED_REGRESSION_SUITE_V1,
+        payload_kind: "immutable_review_only_derived_retrieval_regression_proposals",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: DREAM_MODE_RESPONSE_V1,
         payload_kind: "dream_mode_response",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: EVIDENCE_REPUTATION_V1,
+        payload_kind: "advisory_calibrated_evidence_reputation_projection",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1,
+        payload_kind: "entitled_bounded_retrieval_receipt_policy_and_operations_governance",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: MEMORY_TRUST_ASSESSMENT_V1,
+        payload_kind: "bounded_retrieval_memory_trust_assessment",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -349,6 +395,24 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: POLICY_CONTEXT_PACKAGE_V1,
         payload_kind: "agent_policy_context_package",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: RETRIEVAL_ABLATION_V1,
+        payload_kind: "same_snapshot_leave_one_evidence_retrieval_ablation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: RETRIEVAL_ABLATION_REPORT_V1,
+        payload_kind: "bounded_retrieval_ablation_summary",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: RETRIEVAL_DECISION_TRACE_V1,
+        payload_kind: "bounded_retrieval_decision_receipt_trace",
         contract_version: 1,
         required_output_mode: "json_object",
     },

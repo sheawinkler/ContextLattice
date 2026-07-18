@@ -344,7 +344,7 @@ def _draw_metrics_card(w: int, h: int, out: Path) -> None:
     body = _load_font(max(16, int(h * 0.032)), bold=False)
     mono = _load_font(max(18, int(h * 0.036)), bold=True)
 
-    draw.text((x, y), "CONTEXTLATTICE v3.20.3", fill=(244, 249, 252), font=title)
+    draw.text((x, y), "CONTEXTLATTICE v3.21.0", fill=(244, 249, 252), font=title)
     y += int(title.size * 1.3)
     draw.text((x, y), "Published retrieval performance", fill=(207, 223, 244), font=sub)
     y += int(sub.size * 1.4)
@@ -367,7 +367,7 @@ def _draw_metrics_card(w: int, h: int, out: Path) -> None:
             y += int(mono.size * 1.2)
         y += int(h * 0.022)
 
-    draw.text((x, panel[3] - int(h * 0.06)), "Release: github.com/sheawinkler/ContextLattice/releases/tag/v3.20.3", fill=(172, 190, 214), font=body)
+    draw.text((x, panel[3] - int(h * 0.06)), "Release: github.com/sheawinkler/ContextLattice/releases/tag/v3.21.0", fill=(172, 190, 214), font=body)
     out.parent.mkdir(parents=True, exist_ok=True)
     img.save(out, format="PNG", optimize=True)
 

@@ -1,0 +1,28 @@
+{
+  "schema_id": "frontier_t4_retrieval_receipts_baseline.v1",
+  "baseline_id": "frontier_t4_retrieval_receipts_preimplementation_v1",
+  "captured_release": "v3.20.3",
+  "captured_commit": "dd8d386f3135b1bdfeb62d3555c795366b0932f0",
+  "captured_tree": "1f7fccc9aab38c6f6fe61327173eb16a0ca83c55",
+  "frozen_before_implementation": true,
+  "observed_behavior": {
+    "why_selected": "partial_signal_list_on_selected_evidence",
+    "why_omitted": "generic_budget_or_diversity_reason_for_at_most_eight_high_value_refs",
+    "why_now": "absent",
+    "deduplication_receipt": "absent",
+    "truncation_receipt": "absent",
+    "marginal_stop_reason": "absent",
+    "prompt_compilation_trust_assessment": "absent",
+    "ingress_trust_assessment": "absent",
+    "duplicate_campaign_detection": "absent",
+    "consensus_requirement": "absent",
+    "self_awarded_trust_rejected": false,
+    "quarantined_memory_influence": "not_explicitly_isolated"
+  },
+  "baseline_metrics": {
+    "decision_receipt_coverage": 0.25,
+    "adversarial_case_catch_rate": 0.0,
+    "quarantined_influence_isolation_rate": 0.0,
+    "explanation_reproducibility": 0.0
+  }
+}

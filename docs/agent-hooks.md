@@ -73,6 +73,7 @@ Installed commands:
 | `contextlattice_memory_graph_efficacy` | Generate explicit graph-neighbor holdouts and require healthy direct recall plus positive, hydrated graph contribution. |
 | `contextlattice_skills_index` | Skills Index search CLI for discovering capabilities without bloating startup context. |
 | `contextlattice_retrieval_plan` | Advisor-only evidence obligations, source/query plan, token allocation, graph expansion advice, and marginal-value stop conditions. |
+| `contextlattice_retrieval_governance` | Entitled receipt, causal-bridge, counterfactual, reputation, regression, and adversarial-defense policy governance; it never executes retrieval or disables public defenses. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
 | `contextlattice_continuity_reconcile` | Resolve one stable task identity exact-first, keep its execution lane separate, and abstain on semantic ambiguity; merge and split require explicit operator attribution and reason. |
@@ -102,6 +103,7 @@ Installed commands:
 | `contextlattice_source_backfill` | Optional development helper, installed with `--include-dev-python-tools`, for bounded import from files, JSONL, JSON, CSV, SQLite, DuckDB/Parquet, or Postgres. |
 | `contextlattice_codex_session_store_doctor` | Optional development helper, installed with `--include-dev-python-tools`, for Codex transcript storage checks. |
 | `contextlattice_runner_quality` | Primary CLI for bounded runner-quality telemetry and advisor-only runner recommendations. |
+| `contextlattice_recall_quality_eval` | Primary CLI for saved recall quality, same-snapshot ablation, review-only regression derivation, and advisory evidence reputation. |
 | `contextlattice_preflight_hook` | ContextLattice preflight wrapper. |
 | `contextlattice_checkpoint` | Write checkpoint and verify readback. |
 | `contextlattice_git_lane_guard` | Branch, upstream, clean-tree, sync checks. |

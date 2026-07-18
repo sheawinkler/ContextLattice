@@ -555,6 +555,11 @@ func (s *server) normalizeSourceRows(source string, rows []map[string]any) []map
 			dataClass = dataClassLearningMemory
 		}
 		cloned["data_class"] = dataClass
+		cloned["memory_trust_assessment"] = memoryTrustAssessmentForCandidate("memory", summary, map[string]any{
+			"project": project, "file": fileName, "source": normalizedSource,
+			"topic_path": topicPath, "source_owner": cloned["source_owner"],
+			"memory_id": firstPresentAny(cloned["memory_id"], cloned["id"]),
+		})
 		out = append(out, cloned)
 	}
 	return out
