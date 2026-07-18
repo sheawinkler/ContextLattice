@@ -144,6 +144,7 @@ elif [[ "${LANE}" == "public-paid" ]]; then
     ".github/workflows/release-installers.yml"
     "docs/evals/v3.18-frontier-t1-paid-activation.json"
     "docs/evals/v3.19-frontier-t2-paid-activation.json"
+    "docs/evals/v3.21-frontier-t4-paid-activation.json"
     "packaging/linux/ContextLattice-Install.sh"
     "packaging/windows/Install-ContextLattice.ps1"
     "scripts/agent/audit-paid-artifact-integrity"
@@ -156,6 +157,8 @@ if [[ "${LANE}" != "public" ]]; then
   required+=(
     "services/gateway-go/frontier_t2_proof_timeline_entitled.go"
     "services/gateway-go/frontier_t2_proof_timeline_entitled_test.go"
+    "services/gateway-go/frontier_t4_retrieval_entitled.go"
+    "services/gateway-go/frontier_t4_retrieval_entitled_test.go"
   )
 fi
 

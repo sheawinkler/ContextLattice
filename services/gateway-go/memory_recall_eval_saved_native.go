@@ -61,6 +61,32 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		}
 		payload = parsed
 	}
+	mode := strings.ToLower(strings.TrimSpace(anyToString(payload["mode"])))
+	if mode == "derive" {
+		maxRows := clampInt(anyToInt(payload["max_rows"], derivedRegressionDefaultMaxRows), 1, derivedRegressionMaxRows)
+		maxProposals := clampInt(anyToInt(payload["max_proposals"], derivedRegressionMaxProposals), 1, derivedRegressionMaxProposals)
+		rows := []map[string]any{}
+		if s != nil && s.contextPackQuality != nil {
+			rows = s.contextPackQuality.derivedRegressionSourceRows(maxRows)
+		}
+		response := buildDerivedRegressionSuite(rows, derivedRegressionSuiteOptions{MaxRows: maxRows, MaxProposals: maxProposals})
+		response["ok"] = true
+		response["mode"] = "derive"
+		writeJSON(w, http.StatusOK, attachPayloadFormatContract(
+			derivedRegressionSuiteSchemaID,
+			response,
+			"",
+			"derived_regression_suite",
+			"/memory/recall/evaluate/saved",
+		))
+		return
+	}
+	if mode != "" && mode != "evaluate" && mode != "ablation" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported saved recall evaluation mode", "supported_modes": []string{"evaluate", "derive", "ablation"}})
+		return
+	}
+	includeAblation := mode == "ablation"
+	maxAblationRows := clampInt(anyToInt(payload["max_ablation_rows"], retrievalAblationDefaultMaxRows), 1, retrievalAblationMaxRows)
 
 	cfg, cfgErr := loadSavedRecallEvalConfig()
 	if cfgErr != nil {
@@ -118,6 +144,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 	graphHelpedCases := 0
 	graphExplicitCases := 0
 	caseReports := make([]map[string]any, 0, len(cfg.Cases))
+	ablationReports := make([]map[string]any, 0, len(cfg.Cases))
 
 	for idx, rawCase := range cfg.Cases {
 		caseID := strings.TrimSpace(anyToString(rawCase["id"]))
@@ -328,6 +355,19 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		if includeRetrievalDebug {
 			report["retrieval"] = searchResp["retrieval_debug"]
 		}
+		if includeAblation {
+			ablation := attachPayloadFormatContract(retrievalAblationSchemaID, buildRetrievalAblation(retrievalAblationInput{
+				CaseID:         caseID,
+				Results:        results,
+				ExpectedFiles:  sortedKeys(expectedFiles),
+				K:              k,
+				TrafficClass:   "synthetic",
+				SnapshotStable: true,
+				MaxRows:        maxAblationRows,
+			}), "", "retrieval_ablation", "/memory/recall/evaluate/saved")
+			report["ablation"] = ablation
+			ablationReports = append(ablationReports, ablation)
+		}
 		caseReports = append(caseReports, report)
 	}
 
@@ -447,7 +487,7 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 		"retrievalAlertCount":   0,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"ok":              true,
 		"passed":          passed,
 		"quality_status":  qualityStatus,
@@ -467,7 +507,18 @@ func (s *server) memoryRecallEvaluateSavedNative(w http.ResponseWriter, r *http.
 			"updatedAt":   cfg.UpdatedAt,
 			"count":       len(cfg.Cases),
 		},
-	})
+	}
+	if includeAblation {
+		response["mode"] = "ablation"
+		response["ablation"] = attachPayloadFormatContract(
+			retrievalAblationReportSchemaID,
+			summarizeRetrievalAblations(ablationReports),
+			"",
+			"retrieval_ablation_report",
+			"/memory/recall/evaluate/saved",
+		)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) writeRecallEvalCaseSetInvalid(w http.ResponseWriter, cfg recallEvalSavedConfig, health map[string]any) {

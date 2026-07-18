@@ -94,14 +94,33 @@ func (s *server) buildSynthesisPackV2Response(
 	project := strings.TrimSpace(anyToString(legacy["project"]))
 	query := strings.TrimSpace(anyToString(legacy["query"]))
 	topicPath := strings.Trim(strings.TrimSpace(anyToString(legacy["topic_path"])), "/")
+	bridgeAsOf := causalBridgeProjectionAsOf(requestPayload)
 	claimCandidates := s.temporalClaims.query(temporalClaimQuery{
-		Project: project, Limit: 200,
-		IncludeExpired: true, IncludeSuperseded: true,
+		Project: project, AsOf: bridgeAsOf, Limit: 200,
+		IncludeExpired: true, IncludeSuperseded: true, IncludeRetracted: true,
 	})
 	claimRows := relevantTemporalClaims(query, contextPackAnyList(legacyPack["high_signal_findings"]), claimCandidates, 32)
 	proofClaims, excluded := proofClaimsFromSynthesis(project, contextPackAnyList(legacyPack["high_signal_findings"]), claimRows)
 	contradictions := proofContradictionSummary(claimRows)
 	causalChains := proofCausalChains(claimRows)
+	graphNeighbors := contextPackAnyList(anyMap(legacy["context_pack"])["graph_neighbors"])
+	bridgeClaims := causalBridgeClaimsForProjection(s.temporalClaims, project, graphNeighbors, bridgeAsOf)
+	causalBridgeExplanation := causalBridgeExplanationProjection(project, graphNeighbors, bridgeClaims, bridgeAsOf, causalBridgeExplanationMax)
+	causalBridgeExplanation["ok"] = true
+	causalBridgeExplanation = attachPayloadFormatContract(
+		causalBridgeExplanationContractID,
+		causalBridgeExplanation,
+		anyToString(legacy["agent_id"]),
+		"causal_bridge_explanation",
+		surface,
+	)
+	evidenceReputation := attachPayloadFormatContract(
+		evidenceReputationContractID,
+		s.evidenceReputationSnapshot(project, "", evidenceReputationDefaultMinSample, 8),
+		anyToString(legacy["agent_id"]),
+		"evidence_reputation",
+		surface,
+	)
 	retrievalPlanInput := map[string]any{
 		"query": query, "project": project, "topic_path": topicPath,
 		"retrieval_mode": legacy["retrieval_mode"], "retrieval_intent": "proof_synthesis",
@@ -134,6 +153,8 @@ func (s *server) buildSynthesisPackV2Response(
 		"temporal_claims":             temporalClaimMaps(claimRows),
 		"contradictions":              contradictions,
 		"causal_chains":               causalChains,
+		"causal_bridge_explanation":   causalBridgeExplanation,
+		"evidence_reputation":         evidenceReputation,
 		"proof_coverage":              proofCoverage,
 		"decision_gate":               decisionGate,
 		"topic_gravity":               legacyPack["topic_gravity"],
@@ -141,17 +162,18 @@ func (s *server) buildSynthesisPackV2Response(
 		"must_not_forget":             proofMustNotForget(legacyPack, proofClaims),
 		"recommended_next_actions":    recommendedActions,
 		"open_questions":              proofOpenQuestions(legacyPack, contradictions, proofClaims),
-		"semantic_tags":               appendUniqueAny(contextPackAnyList(legacyPack["semantic_tags"]), []any{"synthesis_pack_v2", "proof_carrying", "temporal_claim_graph"}, 32),
+		"semantic_tags":               appendUniqueAny(contextPackAnyList(legacyPack["semantic_tags"]), []any{"synthesis_pack_v2", "proof_carrying", "temporal_claim_graph", "causal_bridge_explanation", "evidence_reputation"}, 32),
 		"synthesis_quality":           proofSynthesisQuality(legacyPack, proofClaims, contradictions),
 		"unsupported_claims_excluded": excluded,
 		"limits": []any{
 			"Proof is bounded to evidence returned by Context Pack v1 and matching structured temporal claims.",
 			"Lexical claim matching is deterministic; it does not imply semantic equivalence.",
 			"Unverified temporal claims are labeled and cannot silently raise confidence.",
+			"Cross-project and lexical similarity never establish causality without an explicit typed edge and current structured claim proof.",
 		},
 		"synthesis_trace": map[string]any{
 			"mode": "deterministic_proof_v2", "llm_used": false, "surface": surface,
-			"basis":              []any{"synthesis_pack.v1 high-signal findings", "context_pack ranked evidence", "temporal_claim.v1 ledger", "retrieval_plan.v1 evidence obligations"},
+			"basis":              []any{"synthesis_pack.v1 high-signal findings", "context_pack ranked evidence", "temporal_claim.v1 ledger", "retrieval_plan.v1 evidence obligations", "causal_bridge_explanation.v1 projection"},
 			"inference_boundary": "Every emitted proof claim has at least one bounded evidence reference; unsupported findings are excluded rather than repaired with model inference.",
 		},
 	}
@@ -202,20 +224,54 @@ func relevantTemporalClaims(query string, findings []any, candidates []temporalC
 		}
 	}
 	type scoredClaim struct {
-		claim temporalClaim
-		score int
+		claim         temporalClaim
+		score         int
+		influenceRank int
+		explicitLink  bool
 	}
-	scored := []scoredClaim{}
+	scores := map[string]int{}
+	directIDs := map[string]struct{}{}
 	for _, claim := range candidates {
 		best := 0
 		for _, terms := range termSets {
 			best = maxInt(best, temporalClaimTermScore(claim, terms))
 		}
 		if best > 0 {
-			scored = append(scored, scoredClaim{claim: claim, score: best})
+			directIDs[claim.ClaimID] = struct{}{}
+		}
+		scores[claim.ClaimID] = best
+	}
+	linkedIDs := map[string]struct{}{}
+	for _, claim := range candidates {
+		if _, direct := directIDs[claim.ClaimID]; direct {
+			for _, targetID := range proofTemporalClaimLinkIDs(claim) {
+				linkedIDs[targetID] = struct{}{}
+			}
+		}
+		for _, targetID := range proofTemporalClaimLinkIDs(claim) {
+			if _, targetDirect := directIDs[targetID]; targetDirect {
+				linkedIDs[claim.ClaimID] = struct{}{}
+			}
 		}
 	}
+	scored := []scoredClaim{}
+	for _, claim := range candidates {
+		_, linked := linkedIDs[claim.ClaimID]
+		if scores[claim.ClaimID] == 0 && !linked {
+			continue
+		}
+		scored = append(scored, scoredClaim{
+			claim: claim, score: scores[claim.ClaimID],
+			influenceRank: temporalClaimInfluenceRank(claim), explicitLink: linked,
+		})
+	}
 	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].explicitLink != scored[j].explicitLink {
+			return scored[i].explicitLink
+		}
+		if scored[i].influenceRank != scored[j].influenceRank {
+			return scored[i].influenceRank < scored[j].influenceRank
+		}
 		if scored[i].score == scored[j].score {
 			if scored[i].claim.Confidence == scored[j].claim.Confidence {
 				return scored[i].claim.UpdatedAt > scored[j].claim.UpdatedAt
@@ -231,6 +287,14 @@ func relevantTemporalClaims(query string, findings []any, candidates []temporalC
 	for _, item := range scored {
 		out = append(out, item.claim)
 	}
+	return out
+}
+
+func proofTemporalClaimLinkIDs(claim temporalClaim) []string {
+	out := make([]string, 0, len(claim.Contradicts)+len(claim.CausedBy)+len(claim.Supersedes))
+	out = append(out, claim.Contradicts...)
+	out = append(out, claim.CausedBy...)
+	out = append(out, claim.Supersedes...)
 	return out
 }
 
@@ -258,60 +322,93 @@ func proofClaimsFromSynthesis(project string, findings []any, temporal []tempora
 			continue
 		}
 		terms := synthesisPackQueryTokens(statement)
-		matching := []temporalClaim{}
+		currentMatching := []temporalClaim{}
+		historicalMatching := []temporalClaim{}
+		nonCurrentMatching := 0
 		for _, claim := range temporal {
-			if proofClaimLexicallyMatches(claim, terms) {
-				matching = append(matching, claim)
+			if !proofClaimLexicallyMatches(claim, terms) {
+				continue
+			}
+			switch {
+			case temporalClaimCanInfluence(claim):
+				currentMatching = append(currentMatching, claim)
+			case temporalClaimIsHistoricalOpposition(claim):
+				historicalMatching = append(historicalMatching, claim)
+			default:
+				nonCurrentMatching++
 			}
 		}
-		sort.SliceStable(matching, func(i, j int) bool {
-			left := temporalClaimTermScore(matching[i], terms)
-			right := temporalClaimTermScore(matching[j], terms)
-			if left == right {
-				return matching[i].Confidence > matching[j].Confidence
-			}
-			return left > right
-		})
-		if len(matching) > 4 {
-			matching = matching[:4]
-		}
+		proofSortMatchingClaims(currentMatching, terms)
+		proofSortMatchingClaims(historicalMatching, terms)
+		currentMatching = proofLimitTemporalClaims(currentMatching, 4)
+		historicalMatching = proofLimitTemporalClaims(historicalMatching, 4)
 		support := []any{ref}
 		opposition := []any{}
 		temporalState := "evidence_timestamp_only"
 		causedBy := []any{}
 		verified := false
 		contested := false
-		for _, claim := range matching {
+		missingCurrentCause := false
+		for _, claim := range currentMatching {
 			claimRef := proofTemporalClaimReference(claim)
 			support = appendProofReferenceUnique(support, claimRef)
-			if len(claim.Contradicts) > 0 || len(claim.Opposition) > 0 || len(reverseOpposition[claim.ClaimID]) > 0 {
-				contested = true
-			}
 			for _, targetID := range claim.Contradicts {
 				if target, ok := byID[targetID]; ok {
-					opposition = appendProofReferenceUnique(opposition, proofTemporalClaimReference(target))
+					switch {
+					case temporalClaimIsHistoricalOpposition(target):
+						opposition = appendProofReferenceUnique(opposition, proofHistoricalTemporalClaimReference(target))
+					case temporalClaimCanInfluence(target):
+						opposition = appendProofReferenceUnique(opposition, proofTemporalClaimReference(target))
+						contested = true
+					default:
+						opposition = appendProofReferenceUnique(opposition, proofNonInfluentialTemporalClaimReference(target))
+					}
 				} else {
 					opposition = appendProofReferenceUnique(opposition, map[string]any{"ref_id": targetID, "kind": "temporal_claim", "status": "not_in_bounded_result"})
+					contested = true
 				}
 			}
 			for _, opposingClaim := range reverseOpposition[claim.ClaimID] {
-				opposition = appendProofReferenceUnique(opposition, proofTemporalClaimReference(opposingClaim))
+				switch {
+				case temporalClaimIsHistoricalOpposition(opposingClaim):
+					opposition = appendProofReferenceUnique(opposition, proofHistoricalTemporalClaimReference(opposingClaim))
+				case temporalClaimCanInfluence(opposingClaim):
+					opposition = appendProofReferenceUnique(opposition, proofTemporalClaimReference(opposingClaim))
+					contested = true
+				default:
+					opposition = appendProofReferenceUnique(opposition, proofNonInfluentialTemporalClaimReference(opposingClaim))
+				}
 			}
 			for _, evidence := range claim.Opposition {
 				opposition = appendProofReferenceUnique(opposition, map[string]any{
 					"ref_id": evidence.RefID, "kind": evidence.Kind, "memory_id": evidence.MemoryID,
 					"uri": evidence.URI, "content_hash": evidence.ContentHash, "excerpt": evidence.Excerpt,
+					"status": "current", "influence": "opposition",
 				})
+				contested = true
 			}
-			if claim.Status != "" {
-				temporalState = claim.Status
-			}
+			temporalState = "active"
 			for _, cause := range claim.CausedBy {
-				causedBy = append(causedBy, cause)
+				causeClaim, ok := byID[cause]
+				switch {
+				case ok && temporalClaimCanInfluence(causeClaim):
+					causedBy = appendUniqueAny(causedBy, []any{cause}, 16)
+				case ok && temporalClaimIsHistoricalOpposition(causeClaim):
+					opposition = appendProofReferenceUnique(opposition, proofHistoricalTemporalClaimReference(causeClaim))
+					missingCurrentCause = true
+				default:
+					missingCurrentCause = true
+				}
 			}
 			if anyToString(claim.Verification["status"]) == "verified" {
 				verified = true
 			}
+		}
+		for _, claim := range historicalMatching {
+			opposition = appendProofReferenceUnique(opposition, proofHistoricalTemporalClaimReference(claim))
+		}
+		if len(opposition) > 12 {
+			opposition = opposition[:12]
 		}
 		baseConfidence := anyToFloat(finding["confidence"])
 		if baseConfidence <= 0 {
@@ -327,8 +424,6 @@ func proofClaimsFromSynthesis(project string, findings []any, temporal []tempora
 		temporalConsistency := 0.7
 		if temporalState == "active" {
 			temporalConsistency = 0.95
-		} else if temporalState == "expired" || temporalState == "superseded" {
-			temporalConsistency = 0.35
 		}
 		contradictionPenalty := 0.0
 		if contested {
@@ -346,8 +441,14 @@ func proofClaimsFromSynthesis(project string, findings []any, temporal []tempora
 			finalConfidence = 1
 		}
 		missing := []any{}
-		if len(matching) == 0 {
+		if len(currentMatching) == 0 {
 			missing = append(missing, "structured temporal validity")
+		}
+		if nonCurrentMatching > 0 {
+			missing = append(missing, "currently valid structured temporal claim")
+		}
+		if missingCurrentCause {
+			missing = append(missing, "current causal antecedent")
 		}
 		if len(support) == 1 {
 			missing = append(missing, "independent corroboration")
@@ -362,7 +463,10 @@ func proofClaimsFromSynthesis(project string, findings []any, temporal []tempora
 		out = append(out, map[string]any{
 			"claim_id": claimID, "statement": statement, "claim_type": firstNonEmptyStrings(anyToString(finding["kind"]), "finding"),
 			"proof_status": status, "support": support, "opposition": opposition,
-			"temporal":     map[string]any{"state": temporalState, "matching_claim_count": len(matching)},
+			"temporal": map[string]any{
+				"state": temporalState, "matching_claim_count": len(currentMatching),
+				"historical_opposition_count": proofHistoricalOppositionCount(opposition),
+			},
 			"causal_chain": causedBy, "missing_proof": missing,
 			"confidence": map[string]any{
 				"base_evidence": roundFloat(baseConfidence, 4), "source_diversity": sourceDiversity,
@@ -373,6 +477,27 @@ func proofClaimsFromSynthesis(project string, findings []any, temporal []tempora
 		})
 	}
 	return out, excluded
+}
+
+func proofSortMatchingClaims(claims []temporalClaim, terms []string) {
+	sort.SliceStable(claims, func(i, j int) bool {
+		left := temporalClaimTermScore(claims[i], terms)
+		right := temporalClaimTermScore(claims[j], terms)
+		if left != right {
+			return left > right
+		}
+		if claims[i].Confidence != claims[j].Confidence {
+			return claims[i].Confidence > claims[j].Confidence
+		}
+		return claims[i].ClaimID < claims[j].ClaimID
+	})
+}
+
+func proofLimitTemporalClaims(claims []temporalClaim, limit int) []temporalClaim {
+	if len(claims) > limit {
+		return claims[:limit]
+	}
+	return claims
 }
 
 func proofClaimLexicallyMatches(claim temporalClaim, terms []string) bool {
@@ -393,6 +518,32 @@ func proofTemporalClaimReference(claim temporalClaim) map[string]any {
 		"status": claim.Status, "confidence": claim.Confidence, "observed_at": claim.ObservedAt,
 		"valid_from": claim.ValidFrom, "valid_to": claim.ValidTo,
 	}
+}
+
+func proofHistoricalTemporalClaimReference(claim temporalClaim) map[string]any {
+	ref := proofTemporalClaimReference(claim)
+	ref["role"] = "historical_opposition"
+	ref["historical"] = true
+	ref["influence"] = "none"
+	return ref
+}
+
+func proofNonInfluentialTemporalClaimReference(claim temporalClaim) map[string]any {
+	ref := proofTemporalClaimReference(claim)
+	ref["role"] = "temporally_invalid_opposition"
+	ref["historical"] = false
+	ref["influence"] = "none"
+	return ref
+}
+
+func proofHistoricalOppositionCount(raw []any) int {
+	count := 0
+	for _, item := range raw {
+		if anyToBool(anyMap(item)["historical"]) {
+			count++
+		}
+	}
+	return count
 }
 
 func appendProofReferenceUnique(rows []any, candidate map[string]any) []any {
@@ -423,15 +574,38 @@ func proofEvidenceReference(finding map[string]any) map[string]any {
 }
 
 func proofContradictionSummary(claims []temporalClaim) []any {
+	byID := map[string]temporalClaim{}
+	for _, claim := range claims {
+		byID[claim.ClaimID] = claim
+	}
 	out := []any{}
 	for _, claim := range claims {
-		if len(claim.Contradicts) == 0 && len(claim.Opposition) == 0 {
+		if !temporalClaimCanInfluence(claim) {
+			continue
+		}
+		currentTargets := []any{}
+		historicalTargets := []any{}
+		for _, targetID := range claim.Contradicts {
+			target, ok := byID[targetID]
+			switch {
+			case ok && temporalClaimIsHistoricalOpposition(target):
+				historicalTargets = append(historicalTargets, proofHistoricalTemporalClaimReference(target))
+			case ok && !temporalClaimCanInfluence(target):
+				// Pending or otherwise non-current claims cannot influence the contradiction gate.
+			case ok:
+				currentTargets = append(currentTargets, targetID)
+			default:
+				currentTargets = append(currentTargets, targetID)
+			}
+		}
+		if len(currentTargets) == 0 && len(claim.Opposition) == 0 {
 			continue
 		}
 		out = append(out, map[string]any{
 			"claim_id": claim.ClaimID, "statement": claim.Statement,
-			"contradicts": claim.Contradicts, "opposition": claim.Opposition,
-			"state": "unresolved", "repair_automatic": false,
+			"contradicts": currentTargets, "opposition": claim.Opposition,
+			"historical_opposition": historicalTargets,
+			"state":                 "unresolved", "repair_automatic": false,
 		})
 		if len(out) >= 12 {
 			break
@@ -441,14 +615,29 @@ func proofContradictionSummary(claims []temporalClaim) []any {
 }
 
 func proofCausalChains(claims []temporalClaim) []any {
+	byID := map[string]temporalClaim{}
+	for _, claim := range claims {
+		byID[claim.ClaimID] = claim
+	}
 	out := []any{}
 	for _, claim := range claims {
-		if len(claim.CausedBy) == 0 && len(claim.Supersedes) == 0 {
+		if !temporalClaimCanInfluence(claim) {
+			continue
+		}
+		currentCauses := []any{}
+		for _, causeID := range claim.CausedBy {
+			cause, ok := byID[causeID]
+			if ok && temporalClaimCanInfluence(cause) {
+				currentCauses = append(currentCauses, causeID)
+			}
+		}
+		if len(currentCauses) == 0 {
 			continue
 		}
 		out = append(out, map[string]any{
-			"claim_id": claim.ClaimID, "caused_by": claim.CausedBy,
-			"supersedes": claim.Supersedes, "branch": claim.Branch, "commit": claim.Commit,
+			"claim_id": claim.ClaimID, "caused_by": currentCauses,
+			"supersedes": claim.Supersedes, "supersession_role": "historical_lineage_only",
+			"branch": claim.Branch, "commit": claim.Commit,
 		})
 		if len(out) >= 12 {
 			break

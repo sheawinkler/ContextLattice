@@ -99,14 +99,61 @@ def print_terminal(summary: dict[str, Any]) -> None:
         print(f"  - {item}")
 
 
+def print_derive(payload: dict[str, Any]) -> None:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    print(
+        "derived-regression "
+        f"status={payload.get('status') or 'unknown'} "
+        f"proposals={as_int(summary.get('proposal_count'))} "
+        f"rejected={as_int(summary.get('rejected_row_count'))} "
+        f"train={as_int(summary.get('train_proposal_count'))} "
+        f"holdout={as_int(summary.get('holdout_proposal_count'))}"
+    )
+    print("  review required; no proposal was admitted")
+
+
+def print_ablation(payload: dict[str, Any], passed: bool) -> None:
+    print(
+        f"retrieval-ablation {'PASS' if passed else 'FAIL'} "
+        f"cases={as_int(payload.get('case_count'))} "
+        f"rows={as_int(payload.get('row_count'))} "
+        f"result_changes={as_int(payload.get('changed_result_row_count'))} "
+        f"citation_losses={as_int(payload.get('citation_loss_row_count'))} "
+        f"promotion_eligible={as_int(payload.get('promotion_eligible_row_count'))}"
+    )
+    print("  utility inferred=false")
+
+
+def print_reputation(payload: dict[str, Any]) -> None:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
+    print(
+        "evidence-reputation "
+        f"entries={as_int(summary.get('entry_count'))} "
+        f"calibrated={as_int(summary.get('calibrated_entry_count'))} "
+        f"rows={as_int(summary.get('evaluated_row_count'))} "
+        f"minimum_samples={as_int(policy.get('minimum_samples'))}"
+    )
+    print("  advisory only; ranking influence applied=false")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--derive", action="store_true", help="Build review-only regression-suite proposals from verified outcome rows.")
+    modes.add_argument("--ablation", action="store_true", help="Run paired leave-one-source and leave-one-memory snapshot ablation.")
+    modes.add_argument("--reputation", action="store_true", help="Inspect advisory reputation calibrated from independently verified outcomes.")
     parser.add_argument("--k", type=int, default=None, help="Override saved eval K.")
     parser.add_argument("--timeout", type=float, default=240.0)
     parser.add_argument("--include-debug", action="store_true")
     parser.add_argument("--include-preferences", action="store_true")
     parser.add_argument("--refresh-cases", action="store_true")
     parser.add_argument("--max-cases", type=int, default=12)
+    parser.add_argument("--derive-max-rows", type=int, default=128)
+    parser.add_argument("--max-proposals", type=int, default=128)
+    parser.add_argument("--max-ablation-rows", type=int, default=128)
+    parser.add_argument("--reputation-min-samples", type=int, default=3)
+    parser.add_argument("--reputation-limit", type=int, default=32)
     parser.add_argument("--min-hits", type=int, default=1)
     parser.add_argument("--project", default="")
     parser.add_argument("--topic-prefix", default="")
@@ -114,6 +161,38 @@ def main() -> int:
     parser.add_argument("--pretty", action="store_true")
     parser.add_argument("--json", action="store_true", help="Emit compact JSON instead of terminal view.")
     args = parser.parse_args()
+
+    if args.derive:
+        derived = request_json(
+            "POST",
+            "/memory/recall/evaluate/saved",
+            {
+                "mode": "derive",
+                "max_rows": args.derive_max_rows,
+                "max_proposals": args.max_proposals,
+            },
+            args.timeout,
+        )
+        if args.json or args.pretty:
+            emit(derived, pretty=args.pretty)
+        else:
+            print_derive(derived)
+        return 0
+
+    if args.reputation:
+        query = urllib.parse.urlencode(
+            {
+                "project": args.project,
+                "minimum_samples": str(args.reputation_min_samples),
+                "limit": str(args.reputation_limit),
+            }
+        )
+        reputation = request_json("GET", f"/telemetry/evidence-reputation?{query}", None, args.timeout)
+        if args.json or args.pretty:
+            emit(reputation, pretty=args.pretty)
+        else:
+            print_reputation(reputation)
+        return 0
 
     refresh_payload = {
         "max_cases": args.max_cases,
@@ -128,6 +207,9 @@ def main() -> int:
         "include_retrieval_debug": args.include_debug,
         "include_preferences": args.include_preferences,
     }
+    if args.ablation:
+        payload["mode"] = "ablation"
+        payload["max_ablation_rows"] = args.max_ablation_rows
     if args.k is not None:
         payload["k"] = args.k
     evaluation = request_json("POST", "/memory/recall/evaluate/saved", payload, args.timeout)
@@ -135,6 +217,13 @@ def main() -> int:
     if args.tuning:
         query = urllib.parse.urlencode({"max_samples": "96", "min_samples": "1"})
         tuning = request_json("GET", f"/telemetry/recall/tuning?{query}", None, args.timeout)
+    if args.ablation:
+        ablation = evaluation.get("ablation") if isinstance(evaluation.get("ablation"), dict) else {}
+        if args.json or args.pretty:
+            emit(ablation, pretty=args.pretty)
+        else:
+            print_ablation(ablation, bool(evaluation.get("passed", False)))
+        return 0 if bool(evaluation.get("passed", False)) else 1
     summary = compact_eval(evaluation, tuning)
     if args.json or args.pretty:
         emit(summary, pretty=args.pretty)

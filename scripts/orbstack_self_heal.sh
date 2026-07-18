@@ -41,6 +41,7 @@ SHED_SERVICES="${CONTEXTLATTICE_ORBSTACK_HEAL_SHED_SERVICES:-ollama}"
 SHED_ACTION="${CONTEXTLATTICE_ORBSTACK_HEAL_SHED_ACTION:-restart}"
 ALLOW_FORCE_STOP="${CONTEXTLATTICE_ORBSTACK_HEAL_FORCE_STOP:-1}"
 ALLOW_KILL="${CONTEXTLATTICE_ORBSTACK_HEAL_KILL:-0}"
+ALLOW_VM_RESTART="${CONTEXTLATTICE_ORBSTACK_HEAL_VM_RESTART:-0}"
 
 mkdir -p "$RUNTIME_DIR"
 
@@ -244,8 +245,13 @@ run_once() {
   fi
 
   if [[ "$docker_ok" != "true" ]]; then
-    action="restart_orbstack"
-    restart_orbstack || true
+    if [[ "$ALLOW_VM_RESTART" == "1" ]]; then
+      action="restart_orbstack"
+      restart_orbstack || true
+    else
+      action="docker_unavailable_no_restart"
+      log_line "action=$action result=observed"
+    fi
   elif awk "BEGIN {exit !($cpu >= $CPU_RESTART_THRESHOLD)}"; then
     action="restart_orbstack_high_cpu"
     restart_orbstack || true
@@ -287,7 +293,22 @@ status() {
 }
 
 start() {
-  mkdir -p "$(dirname "$LAUNCHD_PLIST")"
+  local launch_root launch_scripts launch_script launch_ensure launch_runtime launch_log current_script
+  launch_root="${CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCH_ROOT:-${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}}"
+  launch_scripts="${launch_root}/scripts"
+  launch_script="${launch_scripts}/orbstack_self_heal.sh"
+  launch_ensure="${launch_scripts}/ensure_docker_runtime.sh"
+  launch_runtime="${CONTEXTLATTICE_ORBSTACK_HEAL_LAUNCH_RUNTIME_DIR:-${launch_root}/.data/runtime/orbstack-self-heal}"
+  launch_log="${launch_runtime}/launchd.log"
+  current_script="${ROOT_DIR}/scripts/orbstack_self_heal.sh"
+
+  mkdir -p "$(dirname "$LAUNCHD_PLIST")" "$launch_scripts" "$launch_runtime"
+  if [[ "$current_script" != "$launch_script" ]]; then
+    install -m 0755 "$current_script" "$launch_script"
+  fi
+  if [[ "${ROOT_DIR}/scripts/ensure_docker_runtime.sh" != "$launch_ensure" ]]; then
+    install -m 0755 "${ROOT_DIR}/scripts/ensure_docker_runtime.sh" "$launch_ensure"
+  fi
   cat > "$LAUNCHD_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -298,17 +319,30 @@ start() {
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>-lc</string>
-    <string>cd "${ROOT_DIR}" &amp;&amp; CONTEXTLATTICE_DOCKER_RUNTIME=orbstack scripts/orbstack_self_heal.sh run-once --event launchd</string>
+    <string>${launch_script}</string>
+    <string>run-once</string>
+    <string>--event</string>
+    <string>launchd</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CONTEXTLATTICE_DOCKER_RUNTIME</key>
+    <string>orbstack</string>
+    <key>CONTEXTLATTICE_ORBSTACK_HEAL_RUNTIME_DIR</key>
+    <string>${launch_runtime}</string>
+    <key>DOCKER_CONTEXT</key>
+    <string>orbstack</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
   <integer>${INTERVAL_SECS}</integer>
   <key>StandardOutPath</key>
-  <string>${LOG_FILE}</string>
+  <string>${launch_log}</string>
   <key>StandardErrorPath</key>
-  <string>${LOG_FILE}</string>
+  <string>${launch_log}</string>
 </dict>
 </plist>
 EOF
@@ -316,7 +350,7 @@ EOF
   launchctl bootstrap "gui/${UID}" "$LAUNCHD_PLIST"
   launchctl enable "gui/${UID}/${LAUNCHD_LABEL}" >/dev/null 2>&1 || true
   launchctl kickstart -k "gui/${UID}/${LAUNCHD_LABEL}" >/dev/null 2>&1 || true
-  json_emit ok=true action=start launchd_label="$LAUNCHD_LABEL" plist="$LAUNCHD_PLIST"
+  json_emit ok=true action=start launchd_label="$LAUNCHD_LABEL" plist="$LAUNCHD_PLIST" launch_script="$launch_script" runtime_dir="$launch_runtime"
 }
 
 stop() {

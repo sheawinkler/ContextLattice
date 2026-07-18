@@ -4,9 +4,9 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.20.3",
-    "stable_tag": "v3.20.3",
-    "release_train": "3.20",
+    "version": "3.21.0",
+    "stable_tag": "v3.21.0",
+    "release_train": "3.21",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -55,6 +55,42 @@
       "production_proven": true
     },
     "frontier_verified_efficiency_operations": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_retrieval_receipt_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_causal_bridge_governance": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_continuous_counterfactual_eval": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_evidence_reputation_activation": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_continuous_retrieval_regression": {
+      "availability": "generally_available",
+      "release_gate": "PASS",
+      "release_decision": "PROVEN",
+      "production_proven": true
+    },
+    "frontier_adversarial_defense_operations": {
       "availability": "generally_available",
       "release_gate": "PASS",
       "release_decision": "PROVEN",
@@ -161,6 +197,36 @@
       "id": "frontier_verified_efficiency_operations",
       "buyer_label": "Intelligence that proves its keep",
       "description": "Evaluate governed efficiency policy across verified cohorts, with exact denominators, causal intervals, and an automatic abstain before weak evidence can steer the fleet."
+    },
+    {
+      "id": "frontier_retrieval_receipt_governance",
+      "buyer_label": "Every retrieval, with receipts",
+      "description": "Retain and govern the exact evidence decisions behind shared retrieval without moving the public retrieval engine behind a paywall."
+    },
+    {
+      "id": "frontier_causal_bridge_governance",
+      "buyer_label": "Causality with a witness",
+      "description": "Govern cross-workspace causal bridge policy, history, and review while the public engine continues to abstain unless typed evidence proves the link."
+    },
+    {
+      "id": "frontier_continuous_counterfactual_eval",
+      "buyer_label": "Every ranking earns its place",
+      "description": "Schedule bounded leave-one-source and leave-one-memory evaluations across governed cohorts without turning correlation into utility."
+    },
+    {
+      "id": "frontier_evidence_reputation_activation",
+      "buyer_label": "Trust learned from proof, not prestige",
+      "description": "Govern evidence-reputation activation across a workspace while self-awarded authority remains powerless and public defenses stay fail closed."
+    },
+    {
+      "id": "frontier_continuous_retrieval_regression",
+      "buyer_label": "Recall that learns without forgetting",
+      "description": "Continuously derive, review, and release-gate retrieval regressions from verified outcomes without silently admitting new fixtures."
+    },
+    {
+      "id": "frontier_adversarial_defense_operations",
+      "buyer_label": "A retrieval immune system",
+      "description": "Operate adversarial suites, incidents, and quarantine policy at workspace scale without any entitlement path that can disable core trust isolation."
     }
   ],
   "plans": [
@@ -258,7 +324,9 @@
         "frontier_shared_objective_graph",
         "frontier_shared_decision_provenance",
         "frontier_verified_utility_ledger",
-        "frontier_utility_analytics"
+        "frontier_utility_analytics",
+        "frontier_retrieval_receipt_governance",
+        "frontier_causal_bridge_governance"
       ]
     },
     {
@@ -295,7 +363,13 @@
         "frontier_shared_objective_graph",
         "frontier_verified_utility_ledger",
         "frontier_utility_analytics",
-        "frontier_verified_efficiency_operations"
+        "frontier_verified_efficiency_operations",
+        "frontier_retrieval_receipt_governance",
+        "frontier_causal_bridge_governance",
+        "frontier_continuous_counterfactual_eval",
+        "frontier_evidence_reputation_activation",
+        "frontier_continuous_retrieval_regression",
+        "frontier_adversarial_defense_operations"
       ]
     },
     {
@@ -335,7 +409,13 @@
         "frontier_verified_utility_ledger",
         "frontier_utility_analytics",
         "frontier_verified_efficiency_operations",
-        "scim_token_management"
+        "scim_token_management",
+        "frontier_retrieval_receipt_governance",
+        "frontier_causal_bridge_governance",
+        "frontier_continuous_counterfactual_eval",
+        "frontier_evidence_reputation_activation",
+        "frontier_continuous_retrieval_regression",
+        "frontier_adversarial_defense_operations"
       ]
     }
   ],
@@ -364,30 +444,138 @@
       "admin"
     ],
     "routes": [
-      "/v1/inference/route",
-      "/v1/inference/chat",
-      "/v1/inference/runtime-policy",
-      "/v1/inference/embedding-policy",
-      "/maintenance/storage/run",
       "/maintenance/memory/graph/prune-volatile",
+      "/maintenance/storage/run",
       "/maintenance/telemetry/blob-gc",
-      "/migration/runtime",
-      "/memory/context-policy/activate",
-      "/memory/context-policy/deactivate",
-      "/memory/skills/foundry/activate",
-      "/memory/skills/foundry/deactivate",
-      "/memory/context-mesh/orchestrate",
-      "/memory/continuity/automation",
-      "/memory/objectives/shared",
-      "/memory/decision-changes/shared",
       "/memory/agent-packet/shared",
       "/memory/agent-proof-timeline/shared",
       "/memory/agent-proof-timeline/shared/lifecycle",
+      "/memory/causal-bridges/governance",
+      "/memory/context-mesh/orchestrate",
+      "/memory/context-policy/activate",
+      "/memory/context-policy/deactivate",
+      "/memory/continuity/automation",
+      "/memory/decision-changes/shared",
+      "/memory/evidence-reputation/activation",
+      "/memory/objectives/shared",
+      "/memory/recall/regressions/operations",
+      "/memory/retrieval/ablation/operations",
+      "/memory/retrieval/receipts/governance",
+      "/memory/skills/foundry/activate",
+      "/memory/skills/foundry/deactivate",
+      "/memory/trust/defense/operations",
+      "/migration/runtime",
       "/telemetry/utility/analytics",
-      "/telemetry/utility/policy/evaluate"
+      "/telemetry/utility/policy/evaluate",
+      "/v1/inference/chat",
+      "/v1/inference/embedding-policy",
+      "/v1/inference/route",
+      "/v1/inference/runtime-policy"
     ]
   },
   "paid_feature_route_contracts": [
+    {
+      "feature_id": "frontier_adversarial_defense_operations",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/trust/defense/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_causal_bridge_governance",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/causal-bridges/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuous_counterfactual_eval",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/retrieval/ablation/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuous_retrieval_regression",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/recall/regressions/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_delta_packet_automation",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-packet/shared"
+      ]
+    },
+    {
+      "feature_id": "frontier_evidence_reputation_activation",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/evidence-reputation/activation"
+      ]
+    },
+    {
+      "feature_id": "frontier_retrieval_receipt_governance",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/retrieval/receipts/governance"
+      ]
+    },
     {
       "feature_id": "frontier_semantic_continuity_automation",
       "eligible_plan_ids": [
@@ -401,21 +589,6 @@
       ],
       "routes": [
         "/memory/continuity/automation"
-      ]
-    },
-    {
-      "feature_id": "frontier_shared_objective_graph",
-      "eligible_plan_ids": [
-        "team",
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/objectives/shared"
       ]
     },
     {
@@ -433,9 +606,8 @@
       ]
     },
     {
-      "feature_id": "frontier_delta_packet_automation",
+      "feature_id": "frontier_shared_objective_graph",
       "eligible_plan_ids": [
-        "starter",
         "team",
         "operator",
         "enterprise"
@@ -445,7 +617,7 @@
         "admin"
       ],
       "routes": [
-        "/memory/agent-packet/shared"
+        "/memory/objectives/shared"
       ]
     },
     {

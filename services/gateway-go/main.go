@@ -7087,6 +7087,24 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/preferences", s.preferencesRoute)
 	mux.HandleFunc("/memory/context-pack", s.memoryContextPack)
 	mux.HandleFunc(agentPacketReconstructionRoute, s.memoryAgentPacketReconstruct)
+	mux.HandleFunc(frontierT4RetrievalReceiptGovernancePath, func(w http.ResponseWriter, r *http.Request) {
+		frontierT4RetrievalReceiptGovernanceRoute(s, w, r)
+	})
+	mux.HandleFunc(frontierT4CausalBridgeGovernancePath, func(w http.ResponseWriter, r *http.Request) {
+		frontierT4CausalBridgeGovernanceRoute(s, w, r)
+	})
+	mux.HandleFunc(frontierT4CounterfactualEvalPath, func(w http.ResponseWriter, r *http.Request) {
+		frontierT4CounterfactualEvalRoute(s, w, r)
+	})
+	mux.HandleFunc(frontierT4EvidenceReputationPath, func(w http.ResponseWriter, r *http.Request) {
+		frontierT4EvidenceReputationRoute(s, w, r)
+	})
+	mux.HandleFunc(frontierT4RetrievalRegressionPath, func(w http.ResponseWriter, r *http.Request) {
+		frontierT4RetrievalRegressionRoute(s, w, r)
+	})
+	mux.HandleFunc(frontierT4DefenseOperationsPath, func(w http.ResponseWriter, r *http.Request) {
+		frontierT4DefenseOperationsRoute(s, w, r)
+	})
 	mux.HandleFunc("/memory/continuity/reconcile", s.memoryContinuityReconcile)
 	mux.HandleFunc("/memory/objectives/transition", s.memoryObjectiveTransition)
 	mux.HandleFunc("/memory/objectives/graph", s.memoryObjectiveGraph)
@@ -7123,6 +7141,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/token-impact", s.telemetryTokenImpactRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality", s.telemetryContextPackQualityRoute)
 	mux.HandleFunc("/telemetry/context-pack-quality/outcome", s.telemetryContextPackQualityOutcomeRoute)
+	mux.HandleFunc(evidenceReputationPath, s.telemetryEvidenceReputationRoute)
 	mux.HandleFunc(utilityTelemetryPath, s.telemetryUtilityRoute)
 	mux.HandleFunc(utilityAnalyticsPath, s.telemetryUtilityAnalyticsRoute)
 	mux.HandleFunc(utilityPolicyPath, s.telemetryUtilityPolicyRoute)

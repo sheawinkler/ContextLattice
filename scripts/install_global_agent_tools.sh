@@ -26,6 +26,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_synthesis_pack
   contextlattice_synthesis_pack_v2
   contextlattice_retrieval_plan
+  contextlattice_retrieval_governance
   contextlattice_claim_write
   contextlattice_claim_query
   contextlattice_continuity_reconcile
@@ -636,6 +637,19 @@ fi
 exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
 EOF
 
+cat > "${GLOBAL_BIN_DIR}/contextlattice_recall_quality_eval" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TOOL_HOME="${CONTEXTLATTICE_GLOBAL_HOME:-$HOME/.contextlattice}"
+PYTHON_BIN="${TOOL_HOME}/venv-agent-tools/bin/python"
+SCRIPT_PATH="${TOOL_HOME}/scripts/agent/recall-quality-eval"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Missing ${PYTHON_BIN}. Run scripts/install_global_agent_tools.sh first." >&2
+  exit 1
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_PATH}" "$@"
+EOF
+
 chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_search" \
   "${GLOBAL_BIN_DIR}/contextlattice_pack" \
@@ -656,7 +670,8 @@ chmod +x \
   "${GLOBAL_BIN_DIR}/contextlattice_source_backfill" \
   "${GLOBAL_BIN_DIR}/contextlattice_skills_index" \
   "${GLOBAL_BIN_DIR}/contextlattice_codex_session_store_doctor" \
-  "${GLOBAL_BIN_DIR}/contextlattice_runner_quality"
+  "${GLOBAL_BIN_DIR}/contextlattice_runner_quality" \
+  "${GLOBAL_BIN_DIR}/contextlattice_recall_quality_eval"
 
 build_go_agent_tools
 
@@ -668,6 +683,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice_synthesis_pack
   contextlattice_synthesis_pack_v2
   contextlattice_retrieval_plan
+  contextlattice_retrieval_governance
   contextlattice_claim_write
   contextlattice_claim_query
   contextlattice_continuity_reconcile
@@ -915,6 +931,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_packet_reconstruct"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack_v2"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_retrieval_plan"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_retrieval_governance"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_claim_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_claim_query"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_policy_candidate"
@@ -976,6 +993,7 @@ log "  contextlattice_pack 'release readiness' --project contextlattice --pretty
 log "  contextlattice_synthesis_pack 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_synthesis_pack_v2 'release readiness' --project contextlattice --pretty"
 log "  contextlattice_retrieval_plan 'release readiness' --project contextlattice --pretty"
+log "  contextlattice retrieval-governance status --feature receipts --project contextlattice --pretty"
 log "  contextlattice_claim_query 'current release state' --project contextlattice --pretty"
 log "  contextlattice_policy_candidate --project contextlattice --pretty"
 log "  contextlattice_policy_status --pretty"

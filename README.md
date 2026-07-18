@@ -42,9 +42,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.20.3` is the current public baseline. Its Utility Ledger turns context economics from vibes into receipts: independently verified outcomes produce observed utility yield against exact model-visible ContextLattice tokens, while wire tokens and observed provider totals remain separate. Causal gain exists only when a leakage-free matched control survives every identity check, and negative results stay visible. This patch makes the complete evaluation contract a pre-release gate and separates Starter+ read analytics from Operator/Enterprise efficiency-policy operations. The public core includes the bounded local ledger and CLI receipts; paid lanes add cohorts, task-class economics, confidence intervals, and governed advisory policy evaluation. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
+`v3.21.0` is the current public baseline. Retrieval Receipts turns recall from a black box into a proof-carrying decision: every selected, omitted, deduplicated, quarantined, and truncated candidate receives a bounded receipt; retrieved text is evidence, never instruction; and suspicious campaigns get zero prompt influence without destroying legitimate runbooks. Same-snapshot ablation shows what changed without pretending rank movement is utility. Verified outcomes can propose regressions and calibrate advisory evidence reputation, while causal synthesis abstains unless typed, current, cited proof survives opposition. The public core includes every local trust, receipt, ablation, regression, reputation, and causal behavior. Paid lanes add governed workspace retention, schedules, activation, and incident operations, but no paid switch can weaken the public fail-closed defense. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
 
-## Public Runtime Stack (v3.20)
+## Public Runtime Stack (v3.21)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -93,13 +93,17 @@ contextlattice packet-reconstruct --base-packet-file agent-packet.json \
 # Ask what evidence should be retrieved, from where, and when to stop.
 contextlattice_retrieval_plan "debug the current release regression" --project contextlattice --pretty
 
+# Inspect governed retrieval operations. Public installs discover the contract;
+# paid artifacts provide stateful workspace policy and operations.
+contextlattice retrieval-governance status --feature receipts --project contextlattice --pretty
+
 # Persist a structured, time-aware assertion with explicit provenance.
 contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.20.3 \
-  --statement "The current public release is 3.20.3." \
+  --object 3.21.0 \
+  --statement "The current public release is 3.21.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -441,7 +445,9 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Troubleshooting: `https://contextlattice.io/troubleshooting.html`
 - Updates: `https://contextlattice.io/updates.html`
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
+- Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.21.0.md` (retrieval receipts, trust isolation, ablation, causal proof, and governed paid operations)
   - `docs/releases/v3.20.3.md` (complete evaluation gate and governed efficiency-policy entitlement)
   - `docs/releases/v3.20.2.md` (source-identical paid release tests and exact artifact provenance)
   - `docs/releases/v3.20.1.md` (current-release provenance binding and historical-proof separation)

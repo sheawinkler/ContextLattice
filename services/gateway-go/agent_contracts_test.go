@@ -97,6 +97,12 @@ func testContextCompilerFixture(strategy string, evidenceCount int) map[string]a
 		"intended_use":          "verify bounded prompt-ready context packages",
 		"recommended_surface":   "cli_for_local_agents",
 		"ranked_evidence_count": evidenceCount,
+		"memory_trust_assessment": map[string]any{
+			"schema_id": memoryTrustAssessmentContractID, "canonical_path": "$.memory_trust_assessment",
+		},
+		"retrieval_decision_trace": map[string]any{
+			"schema_id": retrievalDecisionTraceContractID, "canonical_path": "$.retrieval_decision_trace",
+		},
 	}
 }
 
@@ -136,6 +142,12 @@ func testContextPackFixture(items []any) map[string]any {
 		"known_failure_modes": []any{},
 		"commands":            []any{},
 		"acceptance_criteria": []any{},
+		"memory_trust_assessment": map[string]any{
+			"schema_id": memoryTrustAssessmentContractID, "canonical_path": "$.memory_trust_assessment",
+		},
+		"retrieval_decision_trace": map[string]any{
+			"schema_id": retrievalDecisionTraceContractID, "canonical_path": "$.retrieval_decision_trace",
+		},
 	}
 }
 
@@ -375,6 +387,12 @@ func TestContextPackAndWritebackFormatContractsValidate(t *testing.T) {
 		"reference_prompt":   "Use this ContextLattice compiled context package as the factual packet for the next reasoning step.",
 		"source_coverage":    coverage,
 		"writeback_required": true,
+		"memory_trust_assessment": map[string]any{
+			"schema_id": memoryTrustAssessmentContractID,
+		},
+		"retrieval_decision_trace": map[string]any{
+			"schema_id": retrievalDecisionTraceContractID,
+		},
 	})
 	contextFormat, _ := contextResponse["format_contract"].(map[string]any)
 	contextValidation, _ := contextFormat["validation"].(map[string]any)
