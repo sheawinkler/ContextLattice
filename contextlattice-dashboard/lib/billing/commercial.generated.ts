@@ -2,15 +2,15 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "d45daf47ce3dd570e678c8f6a976014d3ad987a0f36031216c1b6e64d8809266";
+export const COMMERCIAL_CONTRACT_SHA256 = "4825d7f85e3e864417dbc962bca8968dc764b3013a707c51bae7a47e0b5c41ab";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.20.2",
-    "stable_tag": "v3.20.2",
+    "version": "3.20.3",
+    "stable_tag": "v3.20.3",
     "release_train": "3.20",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
@@ -110,7 +110,12 @@ export const COMMERCIAL_TRUTH = {
     {
       "id": "frontier_utility_analytics",
       "buyer_label": "The economics of intelligence",
-      "description": "Turn verified utility into continuous cohorts, task-class economics, matched-control confidence intervals, and advisory policy gates that abstain before they bluff."
+      "description": "Turn verified utility into continuous cohorts, task-class economics, and matched-control confidence intervals without hiding negative outcomes."
+    },
+    {
+      "id": "frontier_verified_efficiency_operations",
+      "buyer_label": "Intelligence that proves its keep",
+      "description": "Evaluate governed efficiency policy across verified cohorts, with exact denominators, causal intervals, and an automatic abstain before weak evidence can steer the fleet."
     }
   ],
   "plans": [
@@ -244,7 +249,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_semantic_continuity_automation",
         "frontier_shared_objective_graph",
         "frontier_verified_utility_ledger",
-        "frontier_utility_analytics"
+        "frontier_utility_analytics",
+        "frontier_verified_efficiency_operations"
       ]
     },
     {
@@ -283,6 +289,7 @@ export const COMMERCIAL_TRUTH = {
         "frontier_shared_decision_provenance",
         "frontier_verified_utility_ledger",
         "frontier_utility_analytics",
+        "frontier_verified_efficiency_operations",
         "scim_token_management"
       ]
     }
@@ -424,12 +431,25 @@ export const COMMERCIAL_TRUTH = {
         "admin"
       ],
       "routes": [
-        "/telemetry/utility/analytics",
+        "/telemetry/utility/analytics"
+      ]
+    },
+    {
+      "feature_id": "frontier_verified_efficiency_operations",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
         "/telemetry/utility/policy/evaluate"
       ]
     }
   ],
-  "contract_sha256": "d45daf47ce3dd570e678c8f6a976014d3ad987a0f36031216c1b6e64d8809266"
+  "contract_sha256": "4825d7f85e3e864417dbc962bca8968dc764b3013a707c51bae7a47e0b5c41ab"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

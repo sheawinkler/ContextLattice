@@ -88,7 +88,7 @@ HTTP integration fallbacks are:
 - `GET /telemetry/utility/analytics`: entitlement-gated
   `utility_analytics.v1` daily cohorts, task-class economics, and interval
   readiness.
-- `POST /telemetry/utility/policy/evaluate`: entitlement-gated advisory
+- `POST /telemetry/utility/policy/evaluate`: Operator/Enterprise entitlement-gated advisory policy evaluation
   `utility_policy_evaluation.v1`; it never activates policy or writes ordinary
   memory.
 - `POST /telemetry/context-pack-quality/outcome`: records the outcome claim,

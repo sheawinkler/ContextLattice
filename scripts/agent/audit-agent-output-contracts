@@ -2132,7 +2132,7 @@ def sample_utility_policy_evaluation() -> dict[str, Any]:
         {
             "ok": True,
             "schema_id": "utility_policy_evaluation.v1",
-            "feature_id": "frontier_utility_analytics",
+            "feature_id": "frontier_verified_efficiency_operations",
             "updated_at": "2026-07-17T00:00:00Z",
             "decision": "abstain",
             "advisory_only": True,
