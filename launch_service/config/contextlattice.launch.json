@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.20.1 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v3.20.2 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.20.1",
-      "body": "ContextLattice v3.20.1 gives agent intelligence receipts.\n\nHighlights:\n- independently verified outcomes join exact model-visible ContextLattice tokens\n- serialized wire, model-visible context, and observed provider totals remain separate\n- causal gain requires a leakage-free exact matched control\n- negative gains, exclusions, cost, latency, failures, and tool calls remain visible\n- paid cohorts and policy gates stay bounded, entitled, and advisory-only\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.20.2",
+      "body": "ContextLattice v3.20.2 gives agent intelligence receipts.\n\nHighlights:\n- independently verified outcomes join exact model-visible ContextLattice tokens\n- serialized wire, model-visible context, and observed provider totals remain separate\n- causal gain requires a leakage-free exact matched control\n- negative gains, exclusions, cost, latency, failures, and tool calls remain visible\n- paid cohorts and policy gates stay bounded, entitled, and advisory-only\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "ContextLattice v3.20.1 answers the question agent infrastructure keeps dodging:\n\nDid this context produce verified useful work, or did we just spend more tokens?\n\nExact model-visible tokens. Independent outcome receipts. Leakage-free matched controls. Negative gains kept on the record. Paid policy gates that advise instead of silently mutating behavior.\n\nIntelligence economics, without the theater.\n\nStart with the CLI: {docs_url}"
+      "body": "ContextLattice v3.20.2 answers the question agent infrastructure keeps dodging:\n\nDid this context produce verified useful work, or did we just spend more tokens?\n\nExact model-visible tokens. Independent outcome receipts. Leakage-free matched controls. Negative gains kept on the record. Paid policy gates that advise instead of silently mutating behavior.\n\nIntelligence economics, without the theater.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.20.1 turns agent context economics into verifiable infrastructure.\n\nThe Utility Ledger joins exact model-visible ContextLattice tokens to independently verified outcomes while keeping wire transport and observed provider totals separate. Observed utility can stand alone; causal gain requires a leakage-free matched control with exact task, model, runner, harness, and reconstruction identity. Negative gains stay visible.\n\nPaid analytics add bounded cohorts, task-class economics, conservative confidence intervals, and advisory policy gates. The system can recommend; it cannot silently rewrite retrieval behavior.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.20.2 turns agent context economics into verifiable infrastructure.\n\nThe Utility Ledger joins exact model-visible ContextLattice tokens to independently verified outcomes while keeping wire transport and observed provider totals separate. Observed utility can stand alone; causal gain requires a leakage-free matched control with exact task, model, runner, harness, and reconstruction identity. Negative gains stay visible.\n\nPaid analytics add bounded cohorts, task-class economics, conservative confidence intervals, and advisory policy gates. The system can recommend; it cannot silently rewrite retrieval behavior.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",
