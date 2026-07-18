@@ -42,7 +42,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.20.0` is the current public baseline. Its Utility Ledger turns context economics from vibes into receipts: independently verified outcomes produce observed utility yield against exact model-visible ContextLattice tokens, while wire tokens and observed provider totals remain separate. Causal gain exists only when a leakage-free matched control survives every identity check, and negative results stay visible. The public core includes the bounded local ledger and CLI receipts; paid lanes add cohorts, task-class economics, confidence intervals, and advisory policy gates. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
+`v3.20.1` is the current public baseline. Its Utility Ledger turns context economics from vibes into receipts: independently verified outcomes produce observed utility yield against exact model-visible ContextLattice tokens, while wire tokens and observed provider totals remain separate. Causal gain exists only when a leakage-free matched control survives every identity check, and negative results stay visible. The patch also hardens release-proof separation after the paid gate caught stale provenance before asset publication. The public core includes the bounded local ledger and CLI receipts; paid lanes add cohorts, task-class economics, confidence intervals, and advisory policy gates. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
 
 ## Public Runtime Stack (v3.20)
 
@@ -98,8 +98,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.20.0 \
-  --statement "The current public release is 3.20.0." \
+  --object 3.20.1 \
+  --statement "The current public release is 3.20.1." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -442,6 +442,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Updates: `https://contextlattice.io/updates.html`
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.20.1.md` (current-release provenance binding and historical-proof separation)
   - `docs/releases/v3.20.0.md` (verified Utility Ledger, exact context economics, and advisory paid analytics)
   - `docs/releases/v3.19.1.md` (panic-free terminal session commands, canonical lifecycle events, and legacy-client healing)
   - `docs/releases/v3.19.0.md` (digest-verified Agent Packet deltas, exact reconstruction, and one gap-aware proof timeline)
