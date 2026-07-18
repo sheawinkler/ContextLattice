@@ -62,14 +62,14 @@
         <span class="update-meta">2026-07-18 · v3.20.2 · One Source. Every Lane.</span>
         <h2>The comparator found one line of drift. Nothing shipped.</h2>
         <p>
-          Private and paid runtime behavior matched, but two test files had been edited per lane to account for a
-          private-development profile that paid must never contain. The release gate rejected the split before build.
+          Canonical and paid runtime behavior matched, but two test files had been edited per lane to account for a
+          developer-only profile that paid must never contain. The release gate rejected the split before build.
           v3.20.2 replaces both variants with one source-identical contract that understands the boundary explicitly.
         </p>
         <ul>
-          <li><strong>One test source:</strong> private and public-paid now prove commercial truth and storage controls with byte-identical code.</li>
-          <li><strong>No boundary blur:</strong> private development keeps its keyless profile; paid still excludes it completely.</li>
-          <li><strong>No artifact roulette:</strong> the paid candidate must match the approved private proof before compilation begins.</li>
+          <li><strong>One test source:</strong> canonical and public-paid now prove commercial truth and storage controls with byte-identical code.</li>
+          <li><strong>No boundary blur:</strong> developer-only configuration remains excluded from every paid artifact.</li>
+          <li><strong>No artifact roulette:</strong> the paid candidate must match the approved release proof before compilation begins.</li>
           <li><strong>No quiet rewrite:</strong> the failed paid patch stays asset-free and v3.20.2 receives a fresh immutable proof chain.</li>
         </ul>
       </article>
