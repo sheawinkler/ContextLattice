@@ -89,6 +89,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_memory_graph_efficacy":           "memory-graph-efficacy",
 	"contextlattice_skills_index":                    "skills-index",
 	"contextlattice_async_inbox_drain":               "async-inbox-drain",
+	"contextlattice_agent_fit":                       "agent-fit",
 }
 
 var retrievalGovernanceRoutes = map[string]string{
@@ -310,6 +311,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdSkillsIndex(args)
 	case "async-inbox-drain":
 		return c.cmdAsyncInboxDrain(args)
+	case "agent-fit":
+		return c.cmdAgentFit(args)
 	case "-h", "--help", "help":
 		return c.usage()
 	default:
@@ -384,6 +387,7 @@ Advanced/compatibility commands:
   memory-graph-efficacy          refresh graph holdouts and prove measured graph contribution
   skills-index                   active Skills Index search/reindex helper
   async-inbox-drain              bounded async continuation inbox drain for any agent
+  agent-fit                      steering, advisory selection, profiles, and context preparation
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
 contextlattice_pack, contextlattice_packet_reconstruct, contextlattice_synthesis_pack,
@@ -392,8 +396,8 @@ contextlattice_retrieval_plan, contextlattice_claim_write, contextlattice_claim_
 contextlattice_continuity_reconcile, contextlattice_objective_transition,
 contextlattice_objective_graph, contextlattice_decision_change,
 contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft,
-contextlattice_passport_export, contextlattice_mesh_export, contextlattice_write,
-contextlattice_agent_session, and other contextlattice_* commands.`)
+contextlattice_passport_export, contextlattice_mesh_export, contextlattice_agent_fit,
+contextlattice_write, contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
 
