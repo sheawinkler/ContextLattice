@@ -19,7 +19,7 @@ type contextBoundarySurface struct {
 }
 
 func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
-	return []contextBoundarySurface{
+	surfaces := []contextBoundarySurface{
 		{Name: "memory_context_pack", Path: "/memory/context-pack", Surface: "agent_http", ContractID: contextPackResponseContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "prompt-ready context package"},
 		{Name: "memory_agent_packet_reconstruct", Path: agentPacketReconstructionRoute, Surface: "agent_http", ContractID: agentPacketReconstructionContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "digest-verified Agent Packet delta reconstruction"},
 		{Name: "agent_proof_timeline", Path: "/v1/agents/sessions/{session_id}/proof-timeline", Surface: "agent_http", ContractID: agentProofTimelineContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "deterministic exact-linked agent proof timeline"},
@@ -75,6 +75,13 @@ func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 		{Name: "contextlattice_synthesis_pack_v2_cli", Path: "contextlattice_synthesis_pack_v2", Surface: "agent_cli", ContractID: synthesisPackV2ContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI proof-carrying synthesis"},
 		{Name: "contextlattice_retrieval_plan_cli", Path: "contextlattice_retrieval_plan", Surface: "agent_cli", ContractID: retrievalPlanContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI advisor-only retrieval plan"},
 		{Name: "contextlattice_retrieval_governance_cli", Path: "contextlattice_retrieval_governance", Surface: "operator_cli", ContractID: frontierT4RetrievalGovernanceContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI paid-governance discovery without local defense bypass"},
+		{Name: "memory_policy_simulation", Path: policySimulationPath, Surface: "agent_http", ContractID: policySimulationContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "same-snapshot no-persist policy replay"},
+		{Name: "memory_scoped_policy_card", Path: scopedPolicyCardPath, Surface: "agent_http", ContractID: scopedPolicyCardContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "project and task-scoped sparse-data policy card"},
+		{Name: "memory_policy_promotion", Path: policyPromotionRecommendationPath, Surface: "agent_http", ContractID: policyPromotionRecommendationContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "assignment and uncertainty-bound promotion recommendation"},
+		{Name: "memory_retirement", Path: memoryRetirementPath, Surface: "agent_http", ContractID: memoryRetirementContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "non-destructive reversible memory lifecycle receipt"},
+		{Name: "memory_contradiction_resolution", Path: contradictionResolutionPath, Surface: "agent_http", ContractID: contradictionResolutionContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "evidence-weighted contradiction workflow"},
+		{Name: "memory_storage_temperature", Path: storageTemperatureDecisionPath, Surface: "agent_http", ContractID: storageTemperatureDecisionContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "reversible retrieval temperature decision"},
+		{Name: "contextlattice_policy_lab_cli", Path: "contextlattice_policy_lab", Surface: "agent_cli", ContractID: frontierT5StatusContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI-primary Policy Laboratory surface"},
 		{Name: "contextlattice_claim_write_cli", Path: "contextlattice_claim_write", Surface: "agent_cli", ContractID: temporalClaimContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI temporal claim write"},
 		{Name: "contextlattice_claim_query_cli", Path: "contextlattice_claim_query", Surface: "agent_cli", ContractID: temporalClaimQueryContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI temporal claim query"},
 		{Name: "contextlattice_continuity_reconcile_cli", Path: "contextlattice_continuity_reconcile", Surface: "agent_cli", ContractID: taskIdentityReconciliationContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "CLI exact-first task identity reconciliation"},
@@ -104,6 +111,7 @@ func contextBoundaryRequiredSurfaces() []contextBoundarySurface {
 		{Name: "agent_session_rollup", Path: "/v1/agents/sessions/{session_id}/rollup", Surface: "agent_http", ContractID: agentSessionRollupContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "bounded session rollup"},
 		{Name: "agent_prompt_context_package", Path: "/v1/agents/sessions/{session_id}/context-package", Surface: "agent_http", ContractID: agentPromptContextPackageContractID, RuntimeOwner: sourceOwnerGoNative, Required: true, Detail: "bounded session prompt package"},
 	}
+	return surfaces
 }
 
 func contextBoundaryPayload() map[string]any {

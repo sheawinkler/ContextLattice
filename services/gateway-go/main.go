@@ -313,6 +313,7 @@ type server struct {
 	memoryProfilesStore             *memoryProfileStore
 	temporalClaims                  *temporalClaimStore
 	contextPolicy                   *contextPolicyStore
+	frontierT5                      *frontierT5Ledger
 	skillFoundry                    *skillFoundryStore
 	skillLifecycleMu                sync.Mutex
 	contextPassports                *contextPassportStore
@@ -1273,6 +1274,15 @@ func newServer() *server {
 		log.Printf("gateway-go context policy store disabled: %v", contextPolicyErr)
 		contextPolicyInstance = &contextPolicyStore{enabled: false, candidates: map[string]map[string]any{}, evaluations: []map[string]any{}, lastError: contextPolicyErr.Error()}
 	}
+	frontierT5Instance, frontierT5Err := newFrontierT5LedgerFromEnv()
+	if frontierT5Err != nil {
+		log.Printf("gateway-go Frontier T5 policy laboratory ledger disabled: %v", frontierT5Err)
+		frontierT5Instance = &frontierT5Ledger{
+			enabled: false, rows: []map[string]any{}, byID: map[string]map[string]any{},
+			lifecycleLatest: map[string]map[string]any{}, temperatureLatest: map[string]map[string]any{},
+			contradictionLatest: map[string]map[string]any{}, lastError: frontierT5Err.Error(),
+		}
+	}
 	skillFoundryInstance, skillFoundryErr := newSkillFoundryStoreFromEnv()
 	if skillFoundryErr != nil {
 		log.Printf("gateway-go skill foundry store disabled: %v", skillFoundryErr)
@@ -1307,6 +1317,7 @@ func newServer() *server {
 		memoryProfilesStore:             newMemoryProfileStore(policy),
 		temporalClaims:                  temporalClaimsInstance,
 		contextPolicy:                   contextPolicyInstance,
+		frontierT5:                      frontierT5Instance,
 		skillFoundry:                    skillFoundryInstance,
 		contextPassports:                contextPassportInstance,
 		contextMesh:                     contextMeshInstance,
@@ -4952,6 +4963,13 @@ func (s *server) callBackendSourceQuery(
 			row["source"] = source
 		}
 	}
+	if source == sourceQdrant || source == sourcePgvector {
+		filtered, suppressed := s.reconcileVectorRows(baseRequest, rows)
+		rows = filtered
+		if suppressed > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s authoritative memory state suppressed %d stale or non-ordinary fallback result(s)", source, suppressed))
+		}
+	}
 	warnings = append(warnings, fallbackWarnings...)
 	return rows, warnings, nil, sourceOwnerPythonBackendFallback, nil
 }
@@ -7105,6 +7123,13 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc(frontierT4DefenseOperationsPath, func(w http.ResponseWriter, r *http.Request) {
 		frontierT4DefenseOperationsRoute(s, w, r)
 	})
+	mux.HandleFunc(policySimulationPath, s.memoryPolicySimulation)
+	mux.HandleFunc(scopedPolicyCardPath, s.memoryScopedPolicyCard)
+	mux.HandleFunc(policyPromotionRecommendationPath, s.memoryPolicyPromotionRecommendation)
+	mux.HandleFunc(memoryRetirementPath, s.memoryRetirement)
+	mux.HandleFunc(contradictionResolutionPath, s.memoryContradictionResolution)
+	mux.HandleFunc(storageTemperatureDecisionPath, s.memoryStorageTemperature)
+	mux.HandleFunc(frontierT5StatusPath, s.telemetryPolicyLaboratory)
 	mux.HandleFunc("/memory/continuity/reconcile", s.memoryContinuityReconcile)
 	mux.HandleFunc("/memory/objectives/transition", s.memoryObjectiveTransition)
 	mux.HandleFunc("/memory/objectives/graph", s.memoryObjectiveGraph)

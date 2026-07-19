@@ -68,6 +68,13 @@ REQUIRED_CONTRACTS = (
     "retrieval_ablation.v1",
     "retrieval_ablation_report.v1",
     "frontier_t4_retrieval_governance.v1",
+    "policy_simulation.v1",
+    "scoped_policy_card.v1",
+    "policy_promotion_recommendation.v1",
+    "memory_retirement.v1",
+    "contradiction_resolution.v1",
+    "storage_temperature_decision.v1",
+    "frontier_t5_policy_laboratory_status.v1",
     "retrieval_plan.v1",
     "context_policy_candidate.v1",
     "context_policy_evaluation.v1",
@@ -500,6 +507,163 @@ def sample_frontier_t4_retrieval_governance() -> dict[str, Any]:
             "public_defenses_active": True,
             "defense_bypass_allowed": False,
             "rollback": {"paid_automation_disabled": False, "paid_influence_disabled": False, "ordinary_memory_rollback": False, "public_defenses_active": True, "defense_bypass_allowed": False},
+        },
+    )
+
+
+def sample_policy_simulation() -> dict[str, Any]:
+    return attach_format_contract(
+        "policy_simulation.v1",
+        {
+            "ok": True,
+            "schema_id": "policy_simulation.v1",
+            "version": 1,
+            "simulation_id": "polsim_audit",
+            "project": "contextlattice",
+            "generated_at": "2026-07-18T00:00:00Z",
+            "case_count": 0,
+            "same_snapshot_count": 0,
+            "truncated": False,
+            "rows": [],
+            "summary": {"predicted_not_observed": True, "activation_recommended": False},
+            "sensitivity": {"reason": "Replay-required sensitivity."},
+            "computation": {"deterministic": True, "network_calls": 0, "persisted": False, "runtime_policy_mutated": False},
+            "measurement_limit": "Same-snapshot advisory replay only.",
+        },
+    )
+
+
+def sample_scoped_policy_card() -> dict[str, Any]:
+    return attach_format_contract(
+        "scoped_policy_card.v1",
+        {
+            "ok": True,
+            "schema_id": "scoped_policy_card.v1",
+            "version": 1,
+            "card_id": "scopedpol_audit",
+            "project": "contextlattice",
+            "task_class": "coding",
+            "retrieval_intent": "balanced",
+            "generated_at": "2026-07-18T00:00:00Z",
+            "expires_at": "2026-08-17T00:00:00Z",
+            "status": "cold_start",
+            "cold_start": True,
+            "sparse_data_shrinkage": True,
+            "global_prior_weight": 20,
+            "project_evidence_weight": 0.0,
+            "minimum_outcomes": 20,
+            "eligible_outcomes": 0,
+            "global_prior": {},
+            "policy": {},
+            "evidence": {"cross_project_rows_used": 0},
+            "activation": {"active": False, "runtime_mutation": False, "reason": "Advisory card only."},
+            "measurement_limit": "Sparse evidence remains shrunk toward the disclosed prior.",
+        },
+    )
+
+
+def sample_policy_promotion_recommendation() -> dict[str, Any]:
+    return attach_format_contract(
+        "policy_promotion_recommendation.v1",
+        {
+            "ok": True,
+            "schema_id": "policy_promotion_recommendation.v1",
+            "version": 1,
+            "recommendation_id": "polprom_audit",
+            "candidate_id": "ctxpol_audit",
+            "project": "contextlattice",
+            "generated_at": "2026-07-18T00:00:00Z",
+            "recommendation": "hold",
+            "recommended_phase": "shadow",
+            "eligible": False,
+            "assignment_exposure_receipt": {"complete": False, "leakage_count": 0},
+            "uncertainty": {"method": "wilson_95", "count": 0},
+            "drift": {"passed": False},
+            "evaluation": {"decision": "hold"},
+            "activation": {"runtime_mutation": False, "automatic": False, "entitled_gate_required": True},
+            "measurement_limit": "Recommendation is not an activation decision.",
+        },
+    )
+
+
+def sample_memory_retirement() -> dict[str, Any]:
+    return attach_format_contract(
+        "memory_retirement.v1",
+        {
+            "ok": True,
+            "schema_id": "memory_retirement.v1",
+            "version": 1,
+            "operation": "propose",
+            "project": "contextlattice",
+            "generated_at": "2026-07-18T00:00:00Z",
+            "non_destructive": True,
+            "content_deleted": False,
+            "ordinary_memory_rewritten": False,
+            "proposals": [],
+            "receipt": {"restorable": True},
+            "legal_hold_respected": True,
+            "replacement_links_preserved": True,
+        },
+    )
+
+
+def sample_contradiction_resolution() -> dict[str, Any]:
+    return attach_format_contract(
+        "contradiction_resolution.v1",
+        {
+            "ok": True,
+            "schema_id": "contradiction_resolution.v1",
+            "version": 1,
+            "operation": "recommend",
+            "project": "contextlattice",
+            "generated_at": "2026-07-18T00:00:00Z",
+            "recommendation": {"decision": "abstain", "appeal_available": True},
+            "resolution": {"status": "unresolved", "evidence_margin": 0.0},
+            "recorded": True,
+            "ordinary_memory_mutated": False,
+            "claim_lifecycle_mutated": False,
+            "immutable_receipt": True,
+            "measurement_limit": "Abstention preserves the appeal path when evidence is insufficient.",
+        },
+    )
+
+
+def sample_storage_temperature_decision() -> dict[str, Any]:
+    return attach_format_contract(
+        "storage_temperature_decision.v1",
+        {
+            "ok": True,
+            "schema_id": "storage_temperature_decision.v1",
+            "version": 1,
+            "operation": "recommend",
+            "project": "contextlattice",
+            "generated_at": "2026-07-18T00:00:00Z",
+            "decisions": [],
+            "receipt": {"restorable": True},
+            "recorded": True,
+            "content_deleted": False,
+            "physical_store_changed": False,
+            "retrieval_temperature_changed": False,
+            "legal_hold_respected": True,
+            "measurement_limit": "Temperature is reversible logical retrieval metadata.",
+        },
+    )
+
+
+def sample_frontier_t5_policy_laboratory_status() -> dict[str, Any]:
+    return attach_format_contract(
+        "frontier_t5_policy_laboratory_status.v1",
+        {
+            "ok": True,
+            "schema_id": "frontier_t5_policy_laboratory_status.v1",
+            "version": 1,
+            "updated_at": "2026-07-18T00:00:00Z",
+            "mode": "advisory",
+            "ledger": {},
+            "context_policy": {},
+            "temporal_claims": {},
+            "network_calls": 0,
+            "automatic_runtime_activation": False,
         },
     )
 
@@ -2420,6 +2584,13 @@ def run_audit() -> list[dict[str, Any]]:
         ("retrieval_ablation.v1", sample_retrieval_ablation()),
         ("retrieval_ablation_report.v1", sample_retrieval_ablation_report()),
         ("frontier_t4_retrieval_governance.v1", sample_frontier_t4_retrieval_governance()),
+        ("policy_simulation.v1", sample_policy_simulation()),
+        ("scoped_policy_card.v1", sample_scoped_policy_card()),
+        ("policy_promotion_recommendation.v1", sample_policy_promotion_recommendation()),
+        ("memory_retirement.v1", sample_memory_retirement()),
+        ("contradiction_resolution.v1", sample_contradiction_resolution()),
+        ("storage_temperature_decision.v1", sample_storage_temperature_decision()),
+        ("frontier_t5_policy_laboratory_status.v1", sample_frontier_t5_policy_laboratory_status()),
         ("retrieval_plan.v1", sample_retrieval_plan()),
         ("synthesis_pack.v2", sample_synthesis_pack_v2()),
         ("context_policy_candidate.v1", sample_context_policy_candidate()),

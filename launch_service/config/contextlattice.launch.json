@@ -2,7 +2,7 @@
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
   "release_lane": "distribution-neutral",
-  "launch_window": "ContextLattice v3.18 release wave: July 2026",
+  "launch_window": "ContextLattice v3.22 release wave: July 2026",
   "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.21.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v3.22.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.21.0",
-      "body": "ContextLattice v3.21.0 gives retrieval a memory, a reason, and a receipt.\n\nHighlights:\n- every selected, omitted, deduplicated, quarantined, and truncated candidate carries bounded decision proof\n- retrieved text is evidence, never instruction\n- same-snapshot ablation reports exact deltas without inventing utility\n- causal synthesis abstains until typed, current, cited proof survives opposition\n- paid governance can schedule and retain proof, but can never weaken the public fail-closed defense\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.22.0",
+      "body": "ContextLattice v3.22.0 makes retrieval policy earn the keys.\n\nHighlights:\n- replay candidate policy against immutable snapshots before it can influence production\n- learn project, task-class, and retrieval-intent policy without cross-project leakage\n- block promotion when assignments, uncertainty, drift, or survivor bias do not hold up\n- retire stale memory, resolve contradictions, and cool storage through reversible receipts\n- add bounded paid canaries, review queues, schedules, and automation without hidden broad mutation\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Agent memory is not trustworthy because it showed up.\n\nContextLattice v3.21.0 makes every retrieval decision show its receipts: what entered, what was rejected, why it mattered now, and where the evidence stops.\n\nPrompt injection gets zero influence. Causal claims abstain without proof. Paid controls can scale governance, never disable the immune system.\n\nMemory with judgment. Recall with receipts.\n\nStart with the CLI: {docs_url}"
+      "body": "Retrieval policy should not reach production because it had a good vibe.\n\nContextLattice v3.22.0 replays the candidate, shows the trade, learns the fit for one project, and refuses promotion when the evidence folds.\n\nStale memory retires without disappearing. Contradictions become proof workflows. Storage cools through reversible receipts. Paid controls scale the laboratory, never the blast radius.\n\nMemory with judgment. Policy with proof.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.21.0 turns retrieval from an opaque ranking into verifiable agent infrastructure.\n\nEvery Context Pack now carries a bounded trust assessment and decision trace. Same-snapshot ablation reports exact result, rank, and citation deltas. Verified outcomes can propose regressions and calibrate advisory evidence reputation. Cross-project causal synthesis abstains unless typed, current, cited evidence survives opposition.\n\nPaid operations add workspace retention, schedules, activation policy, and incident review. The public trust boundary remains fail closed and cannot be disabled by entitlement.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.22.0 turns retrieval policy into an evidence-gated production discipline.\n\nSame-snapshot simulation separates predicted deltas from observed outcomes. Scoped policy learns by project, task class, and retrieval intent. Promotion requires assignment exposure, uncertainty, drift, and survivor-bias proof. Retirement, contradiction resolution, and storage temperature preserve history through immutable reversible receipts.\n\nPaid operations add bounded activation, canaries, queues, schedules, and automation. The public core remains explicit, local, and advisory until an operator applies a change.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

@@ -16,6 +16,9 @@ dependency on the A2A SDK yet.
   - Streaming/push -> future event bridge; do not bolt this onto writeback.
   - Opaque-agent collaboration -> no raw internal memory, prompts, tool calls,
     or secrets cross the boundary.
+- Policy Laboratory -> bounded status, simulation, recommendation, and
+  reversible lifecycle receipts remain explicit contract payloads; entitled
+  apply operations require approval and do not silently activate runtime policy.
 
 ## Why Not Vendor A2A Now
 

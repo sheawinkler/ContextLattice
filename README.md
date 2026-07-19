@@ -42,9 +42,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.21.0` is the current public baseline. Retrieval Receipts turns recall from a black box into a proof-carrying decision: every selected, omitted, deduplicated, quarantined, and truncated candidate receives a bounded receipt; retrieved text is evidence, never instruction; and suspicious campaigns get zero prompt influence without destroying legitimate runbooks. Same-snapshot ablation shows what changed without pretending rank movement is utility. Verified outcomes can propose regressions and calibrate advisory evidence reputation, while causal synthesis abstains unless typed, current, cited proof survives opposition. The public core includes every local trust, receipt, ablation, regression, reputation, and causal behavior. Paid lanes add governed workspace retention, schedules, activation, and incident operations, but no paid switch can weaken the public fail-closed defense. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
+`v3.22.0` is the current public baseline. Policy Laboratory makes retrieval and memory policy prove itself before it earns influence: replay candidates against the same immutable snapshot, learn project-specific policy without cross-project leakage, reject promotion when assignment, uncertainty, drift, or survivor-bias evidence fails, and keep retirement, contradiction resolution, and storage-temperature changes reversible through receipts. Retrieval Receipts, causal synthesis, the Utility Ledger, Agent Packets, proof timelines, Context Passports, Context Mesh, Skill Foundry, and agent integrations remain part of the same local-first contract. Paid lanes add governed workspace activation, canaries, queues, schedules, and bounded automation, but no paid switch can weaken the public fail-closed core or create hidden broad mutation. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
 
-## Public Runtime Stack (v3.21)
+## Public Runtime Stack (v3.22)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -93,6 +93,9 @@ contextlattice packet-reconstruct --base-packet-file agent-packet.json \
 # Ask what evidence should be retrieved, from where, and when to stop.
 contextlattice_retrieval_plan "debug the current release regression" --project contextlattice --pretty
 
+# Policy Laboratory is CLI-first and advisory unless an explicit operation applies a reversible receipt.
+contextlattice_policy_lab status --project contextlattice --pretty
+
 # Inspect governed retrieval operations. Public installs discover the contract;
 # paid artifacts provide stateful workspace policy and operations.
 contextlattice retrieval-governance status --feature receipts --project contextlattice --pretty
@@ -102,8 +105,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.21.0 \
-  --statement "The current public release is 3.21.0." \
+  --object 3.22.0 \
+  --statement "The current public release is 3.22.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -447,6 +450,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.22.0.md` (Policy Laboratory simulation, scoped learning, reversible lifecycle, contradiction, and storage governance)
   - `docs/releases/v3.21.0.md` (retrieval receipts, trust isolation, ablation, causal proof, and governed paid operations)
   - `docs/releases/v3.20.3.md` (complete evaluation gate and governed efficiency-policy entitlement)
   - `docs/releases/v3.20.2.md` (source-identical paid release tests and exact artifact provenance)

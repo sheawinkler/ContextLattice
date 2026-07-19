@@ -53,6 +53,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_policy_candidate":                "policy-candidate",
 	"contextlattice_policy_evaluate":                 "policy-evaluate",
 	"contextlattice_policy_status":                   "policy-status",
+	"contextlattice_policy_lab":                      "policy-lab",
 	"contextlattice_skill_draft":                     "skill-draft",
 	"contextlattice_skill_evaluate":                  "skill-evaluate",
 	"contextlattice_skill_export":                    "skill-export",
@@ -98,6 +99,53 @@ var retrievalGovernanceRoutes = map[string]string{
 	"regressions":    "/memory/recall/regressions/operations",
 	"defense":        "/memory/trust/defense/operations",
 }
+
+var frontierT5PolicyLabRoutes = map[string]string{
+	"simulate":      "/memory/policy/simulate",
+	"card":          "/memory/policy/card",
+	"promotion":     "/memory/policy/promotion",
+	"retirement":    "/memory/lifecycle/retirement",
+	"contradiction": "/memory/contradictions/resolve",
+	"temperature":   "/memory/storage/temperature",
+	"status":        "/telemetry/policy-laboratory",
+}
+
+var frontierT5PolicyLabStringFlags = map[string]string{
+	"operation": "operation", "action": "action", "task-class": "task_class",
+	"retrieval-intent": "retrieval_intent", "candidate-id": "candidate_id",
+	"payload-file": "payload_file", "file": "file", "reason": "reason",
+	"expected-content-hash": "expected_content_hash", "receipt-id": "receipt_id",
+	"resolution-id": "resolution_id", "claim-ids": "claim_ids",
+	"winning-claim-id": "winning_claim_id", "operator": "operator", "tier": "tier",
+	"disk-pressure": "disk_pressure", "stale-after-days": "stale_after_days",
+	"superseded-by": "superseded_by", "threshold": "threshold", "limit": "limit",
+}
+
+var frontierT5PolicyLabPayloadStringFields = map[string]string{
+	"task_class": "task_class", "retrieval_intent": "retrieval_intent",
+	"action": "action", "candidate_id": "candidate_id", "file": "file",
+	"reason": "reason", "expected_content_hash": "expected_content_hash",
+	"receipt_id": "receipt_id", "resolution_id": "resolution_id",
+	"winning_claim_id": "winning_claim_id", "operator": "operator", "tier": "tier",
+	"disk_pressure": "disk_pressure", "superseded_by": "superseded_by",
+}
+
+var frontierT5PolicyLabPolicyIntFields = map[string]string{}
+
+var frontierT5PolicyLabBoolFlags = map[string]string{
+	"approved": "approved", "legal-hold": "legal_hold",
+}
+
+func frontierT5PolicyLabUsage() string {
+	operations := make([]string, 0, len(frontierT5PolicyLabRoutes))
+	for operation := range frontierT5PolicyLabRoutes {
+		operations = append(operations, operation)
+	}
+	sort.Strings(operations)
+	return "contextlattice policy-lab {" + strings.Join(operations, "|") + "} [--payload-file file] [options]"
+}
+
+var errCLIConfigHomeUnavailable = errors.New("ContextLattice config home is unavailable")
 
 type cli struct {
 	baseURL string
@@ -192,6 +240,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdPolicyEvaluate(args)
 	case "policy-status":
 		return c.cmdPolicyStatus(args)
+	case "policy-lab":
+		return c.cmdPolicyLab(args)
 	case "skill-draft":
 		return c.cmdSkillDraft(args)
 	case "skill-evaluate":
@@ -299,6 +349,7 @@ Advanced/compatibility commands:
   policy-candidate               derive an advisory policy candidate from eligible outcomes
   policy-evaluate                evaluate one bounded shadow/canary lifecycle transition
   policy-status                  inspect advisory context-policy ledger status
+  policy-lab                     simulate, scope, promote, retire, reconcile, and temperature-govern policy
   skill-draft                    draft a skill from repeated verified workflow runs
   skill-evaluate                 evaluate a draft on independent holdouts
   skill-export                   export a passing human-approved skill without activation
@@ -760,7 +811,16 @@ func parseArgs(args []string, stringNames map[string]string, boolNames map[strin
 			name = name[:idx]
 		}
 		if canonical, ok := boolNames[name]; ok {
-			out.bools[canonical] = true
+			if value == "" {
+				out.bools[canonical] = true
+			} else {
+				switch strings.TrimSpace(strings.ToLower(value)) {
+				case "0", "false", "no", "off":
+					out.bools[canonical] = false
+				default:
+					out.bools[canonical] = true
+				}
+			}
 			continue
 		}
 		canonical, ok := stringNames[name]
@@ -1987,6 +2047,83 @@ func (c *cli) cmdPolicyStatus(args []string) error {
 	}
 	c.applyBaseURL(parsed)
 	result, _, err := c.requestJSON(context.Background(), http.MethodGet, "/telemetry/context-policy", nil, parsed.float("timeout", 15))
+	if err != nil {
+		return err
+	}
+	return c.emit(result, !parsed.bool("raw"))
+}
+
+func (c *cli) cmdPolicyLab(args []string) error {
+	parsed := parseArgs(
+		args,
+		mergeStringFlags(commonStringFlags(), frontierT5PolicyLabStringFlags),
+		mergeBoolFlags(commonBoolFlags(), frontierT5PolicyLabBoolFlags),
+	)
+	if parsed.bool("help") {
+		return c.emitUsage(frontierT5PolicyLabUsage())
+	}
+	if len(parsed.pos) == 0 {
+		return c.emitUsage(frontierT5PolicyLabUsage())
+	}
+	if len(parsed.pos) > 1 {
+		return fmt.Errorf("unexpected positional arguments for policy-lab: %s", strings.Join(parsed.pos[1:], " "))
+	}
+	labOperation := strings.ToLower(strings.TrimSpace(parsed.pos[0]))
+	path, ok := frontierT5PolicyLabRoutes[labOperation]
+	if !ok {
+		return fmt.Errorf("unknown policy-lab operation %q", parsed.pos[0])
+	}
+	c.applyBaseURL(parsed)
+	if labOperation == "status" {
+		result, _, err := c.requestJSON(context.Background(), http.MethodGet, path, nil, parsed.float("timeout", 15))
+		if err != nil {
+			return err
+		}
+		return c.emit(result, !parsed.bool("raw"))
+	}
+	payload, err := payloadFromOptionalFile(parsed.string("payload_file", ""))
+	if err != nil {
+		return err
+	}
+	if parsed.has("operation") {
+		payload["operation"] = parsed.string("operation", "")
+	}
+	if parsed.has("project") || firstString(payload["project"]) == "" {
+		payload["project"] = parsed.string("project", envString("CONTEXTLATTICE_PROJECT", "contextlattice"))
+	}
+	for flag, key := range frontierT5PolicyLabPayloadStringFields {
+		if parsed.has(flag) {
+			payload[key] = parsed.string(flag, "")
+		}
+	}
+	if parsed.has("claim_ids") {
+		payload["claim_ids"] = splitCSV(parsed.string("claim_ids", ""))
+	}
+	if parsed.has("stale_after_days") {
+		payload["stale_after_days"] = parsed.int("stale_after_days", 90)
+	}
+	if parsed.has("threshold") {
+		payload["threshold"] = parsed.float("threshold", 0.15)
+	}
+	if parsed.has("limit") {
+		payload["limit"] = parsed.int("limit", 100)
+	}
+	for flag, key := range frontierT5PolicyLabPolicyIntFields {
+		if parsed.has(flag) {
+			policy := map[string]any{}
+			for existingKey, value := range asMap(payload["policy"]) {
+				policy[existingKey] = value
+			}
+			policy[key] = parsed.int(flag, 0)
+			payload["policy"] = policy
+		}
+	}
+	for _, name := range frontierT5PolicyLabBoolFlags {
+		if parsed.has(name) {
+			payload[name] = parsed.bool(name)
+		}
+	}
+	result, _, err := c.requestJSON(context.Background(), http.MethodPost, path, payload, parsed.float("timeout", 30))
 	if err != nil {
 		return err
 	}

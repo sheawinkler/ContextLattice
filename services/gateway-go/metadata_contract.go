@@ -87,8 +87,29 @@ func normalizeMemoryLifecycle(raw string) string {
 		return "ephemeral"
 	case "test", "smoke", "synthetic", "fixture":
 		return "test"
+	case "retired", "inactive", "archived":
+		return "retired"
+	case "superseded", "replaced":
+		return "superseded"
+	case "retracted", "withdrawn":
+		return "retracted"
 	default:
 		return "durable"
+	}
+}
+
+func normalizeMemoryStorageTier(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "hot", "active":
+		return "hot"
+	case "warm":
+		return "warm"
+	case "deep", "cold", "archive":
+		return "deep"
+	case "retired":
+		return "retired"
+	default:
+		return "hot"
 	}
 }
 

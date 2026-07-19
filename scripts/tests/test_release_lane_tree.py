@@ -297,6 +297,7 @@ func TestFrontierT2SharedProofRetentionLatencyHoldout(t *testing.T) {
                 "docs/evals/v3.18-frontier-t1-paid-activation.json": "{}\n",
                 "docs/evals/v3.19-frontier-t2-paid-activation.json": "{}\n",
                 "docs/evals/v3.21-frontier-t4-paid-activation.json": "{}\n",
+                "docs/evals/v3.22-frontier-t5-paid-activation.json": "{}\n",
                 "packaging/linux/ContextLattice-Install.sh": "#!/bin/sh\nexit 0\n",
                 "packaging/windows/Install-ContextLattice.ps1": "exit 0\n",
                 "scripts/agent/audit-paid-artifact-integrity": "#!/bin/sh\nexit 0\n",
@@ -306,6 +307,8 @@ func TestFrontierT2SharedProofRetentionLatencyHoldout(t *testing.T) {
                 "services/gateway-go/frontier_t2_proof_timeline_entitled.go": "package releasegate\n",
                 "services/gateway-go/frontier_t4_retrieval_entitled.go": "package releasegate\n",
                 "services/gateway-go/frontier_t4_retrieval_entitled_test.go": "package releasegate\n",
+                "services/gateway-go/frontier_t5_policy_lab_entitled.go": "package releasegate\n",
+                "services/gateway-go/frontier_t5_policy_lab_entitled_test.go": "package releasegate\n",
             }
             for relative, content in paid_files.items():
                 target = repo / relative

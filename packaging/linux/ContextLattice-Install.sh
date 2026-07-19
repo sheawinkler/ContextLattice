@@ -237,12 +237,14 @@ for private_path in \
   services/gateway-go/frontier_t2_proof_timeline_entitled.go \
   services/gateway-go/frontier_t3_utility_entitled.go \
   services/gateway-go/frontier_t4_retrieval_entitled.go \
+  services/gateway-go/frontier_t5_policy_lab_entitled.go \
+  docs/evals/v3.22-frontier-t5-paid-activation.json \
   config/frontier_t1_release_provenance.v1.json; do
   if [[ -e "${PAYLOAD_ROOT}/${private_path}" || -L "${PAYLOAD_ROOT}/${private_path}" ]]; then
     fail "public payload contains a paid/private path: ${private_path}"
   fi
 done
-public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
 for runtime_file in Dockerfile.gateway-go docker-compose.yml; do
   if [[ -f "${PAYLOAD_ROOT}/${runtime_file}" ]] && grep -Eq "${public_runtime_marker}" "${PAYLOAD_ROOT}/${runtime_file}"; then
     fail "public payload contains paid/private runtime markers in ${runtime_file}."
@@ -309,7 +311,8 @@ for installed_marker in \
   services/gateway-go/frontier_t2_packet_retention_entitled.go \
   services/gateway-go/frontier_t2_proof_timeline_entitled.go \
   services/gateway-go/frontier_t3_utility_entitled.go \
-  services/gateway-go/frontier_t4_retrieval_entitled.go; do
+  services/gateway-go/frontier_t4_retrieval_entitled.go \
+  services/gateway-go/frontier_t5_policy_lab_entitled.go; do
   if [[ -e "${INSTALL_DIR}/${installed_marker}" || -L "${INSTALL_DIR}/${installed_marker}" ]]; then
     installed_paid_marker=1
     break

@@ -684,14 +684,19 @@ func (s *server) queryQdrantSource(
 			continue
 		}
 		rows = append(rows, map[string]any{
-			"project":    project,
-			"file":       fileName,
-			"summary":    summary,
-			"score":      score,
-			"source":     sourceQdrant,
-			"topic_path": topicPath,
-			"created_at": entry["created_at"],
+			"project":      project,
+			"file":         fileName,
+			"summary":      summary,
+			"score":        score,
+			"source":       sourceQdrant,
+			"topic_path":   topicPath,
+			"created_at":   entry["created_at"],
+			"content_hash": entry["content_hash"],
 		})
+	}
+	rows, suppressed := s.reconcileVectorRows(baseRequest, rows)
+	if suppressed > 0 {
+		warnings = append(warnings, fmt.Sprintf("qdrant authoritative memory state suppressed %d stale or non-ordinary result(s)", suppressed))
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return parseScore(rows[i]) > parseScore(rows[j])
@@ -1352,6 +1357,10 @@ func (s *server) queryPostgresPgvectorSource(
 	}
 	if rowsErr := rowsResult.Err(); rowsErr != nil {
 		return nil, warnings, rowsErr
+	}
+	rows, suppressed := s.reconcileVectorRows(baseRequest, rows)
+	if suppressed > 0 {
+		warnings = append(warnings, fmt.Sprintf("postgres_pgvector authoritative memory state suppressed %d stale or non-ordinary result(s)", suppressed))
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return parseScore(rows[i]) > parseScore(rows[j])

@@ -256,6 +256,8 @@ func contextPackQualityEntryFromSample(sample map[string]any) map[string]any {
 		"query_hash":                         anyToString(sample["query_hash"]),
 		"project":                            anyToString(sample["project"]),
 		"topic_path":                         anyToString(sample["topic_path"]),
+		"task_class":                         clipText(strings.ToLower(strings.TrimSpace(anyToString(sample["task_class"]))), 80),
+		"retrieval_intent":                   clipText(strings.ToLower(strings.TrimSpace(anyToString(sample["retrieval_intent"]))), 80),
 		"quality_score":                      qualityScore,
 		"confidence":                         firstNonEmptyStrings(anyToString(sample["confidence"]), "low"),
 		"calibration_grade":                  firstNonEmptyStrings(anyToString(sample["calibration_grade"]), "modeled_counterfactual"),
@@ -366,7 +368,8 @@ func contextPackQualityOutcomeFromSample(sample map[string]any) map[string]any {
 		"sample_id":                sampleID,
 		"task_id":                  taskID,
 		"project":                  clipText(anyToString(sample["project"]), 160),
-		"task_class":               clipText(anyToString(sample["task_class"]), 80),
+		"task_class":               clipText(strings.ToLower(strings.TrimSpace(anyToString(sample["task_class"]))), 80),
+		"retrieval_intent":         clipText(strings.ToLower(strings.TrimSpace(anyToString(sample["retrieval_intent"]))), 80),
 		"first_pass_success":       anyToBool(firstPassRaw),
 		"repair_required":          anyToBool(repairRaw),
 		"retry_count":              retryCount,
@@ -885,6 +888,8 @@ func buildContextPackQualitySample(input contextPackQualitySampleInput) map[stri
 		"query_hash":                         queryHash[:16],
 		"project":                            strings.TrimSpace(input.Project),
 		"topic_path":                         strings.TrimSpace(input.TopicPath),
+		"task_class":                         strings.ToLower(strings.TrimSpace(input.TaskClass)),
+		"retrieval_intent":                   strings.ToLower(strings.TrimSpace(input.RetrievalIntent)),
 		"quality_score":                      qualityScore,
 		"confidence":                         confidence,
 		"calibration_grade":                  "modeled_counterfactual",
@@ -922,6 +927,8 @@ type contextPackQualitySampleInput struct {
 	Query                string
 	Project              string
 	TopicPath            string
+	TaskClass            string
+	RetrievalIntent      string
 	SessionID            string
 	TaskID               string
 	TaskIdentityID       string

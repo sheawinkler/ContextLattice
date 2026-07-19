@@ -395,6 +395,7 @@ func attachPayloadFormatContract(contractID string, payload map[string]any, agen
 }
 
 func attachContextPackFormatContract(payload map[string]any) map[string]any {
+	ensureContextPackRetrievalProofReferences(payload)
 	ensureContextPackRunAdvisor(payload)
 	return attachPayloadFormatContract(
 		contextPackResponseContractID,
@@ -403,6 +404,60 @@ func attachContextPackFormatContract(payload map[string]any) map[string]any {
 		"context_pack",
 		"/memory/context-pack",
 	)
+}
+
+func ensureContextPackRetrievalProofReferences(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	contextPack := anyMap(payload["context_pack"])
+	compiler := anyMap(payload["context_compiler"])
+	if len(compiler) == 0 {
+		compiler = anyMap(contextPack["context_compiler"])
+	}
+	assessment := anyMap(payload["memory_trust_assessment"])
+	if len(assessment) == 0 {
+		assessment = anyMap(contextPack["memory_trust_assessment"])
+	}
+	if len(assessment) == 0 {
+		assessment = anyMap(compiler["memory_trust_assessment"])
+	}
+	if len(assessment) == 0 {
+		assessment = map[string]any{
+			"schema_id": memoryTrustAssessmentContractID, "canonical_path": "$.memory_trust_assessment",
+			"available": false, "reason": "trust assessment was not materialized by this compatibility path",
+		}
+	}
+	trace := anyMap(payload["retrieval_decision_trace"])
+	if len(trace) == 0 {
+		trace = anyMap(contextPack["retrieval_decision_trace"])
+	}
+	if len(trace) == 0 {
+		trace = anyMap(compiler["retrieval_decision_trace"])
+	}
+	if len(trace) == 0 {
+		trace = map[string]any{
+			"schema_id": retrievalDecisionTraceContractID, "canonical_path": "$.retrieval_decision_trace",
+			"available": false, "reason": "retrieval decision trace was not materialized by this compatibility path",
+		}
+	}
+	assessmentReference := memoryTrustAssessmentReference(assessment)
+	traceReference := retrievalDecisionTraceReference(trace)
+	payload["memory_trust_assessment"] = assessment
+	payload["retrieval_decision_trace"] = trace
+	if len(contextPack) > 0 {
+		contextPack["memory_trust_assessment"] = assessmentReference
+		contextPack["retrieval_decision_trace"] = traceReference
+		payload["context_pack"] = contextPack
+	}
+	if len(compiler) > 0 {
+		compiler["memory_trust_assessment"] = assessmentReference
+		compiler["retrieval_decision_trace"] = traceReference
+		payload["context_compiler"] = compiler
+		if len(contextPack) > 0 {
+			contextPack["context_compiler"] = compiler
+		}
+	}
 }
 
 func ensureContextPackRunAdvisor(payload map[string]any) {

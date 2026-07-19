@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 34,
-  "updated_at": "2026-07-18T20:42:00Z",
+  "registry_version": 35,
+  "updated_at": "2026-07-19T02:31:45Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -5736,6 +5736,577 @@
       "required_string_contains": {
         "schema_id": "frontier_t4_retrieval_governance.v1",
         "format_contract.schema_id": "frontier_t4_retrieval_governance.v1"
+      }
+    },
+    "policy_simulation.v1": {
+      "contract_version": 1,
+      "payload_kind": "same_snapshot_no_persist_retrieval_policy_simulation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_mutable_or_incomplete_replay_inputs_without_persisting_results_or_activating_policy",
+      "max_total_json_bytes": 500000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "simulation_id",
+        "project",
+        "generated_at",
+        "case_count",
+        "same_snapshot_count",
+        "truncated",
+        "rows",
+        "summary",
+        "sensitivity",
+        "computation",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "simulation_id": "string",
+        "project": "string",
+        "generated_at": "string",
+        "case_count": "int",
+        "same_snapshot_count": "int",
+        "truncated": "bool",
+        "rows": "list",
+        "summary": "object",
+        "sensitivity": "object",
+        "computation": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "computation": [
+          "deterministic",
+          "network_calls",
+          "persisted",
+          "runtime_policy_mutated"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "computation.persisted",
+        "computation.runtime_policy_mutated"
+      ],
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_ledger",
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "policy_simulation.v1",
+        "format_contract.schema_id": "policy_simulation.v1"
+      }
+    },
+    "scoped_policy_card.v1": {
+      "contract_version": 1,
+      "payload_kind": "project_task_and_intent_scoped_retrieval_policy_card",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "shrink_to_the_disclosed_safe_global_prior_without_cross_project_training_or_runtime_activation",
+      "max_total_json_bytes": 180000,
+      "max_string_bytes": 5000,
+      "max_list_items": 256,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "card_id",
+        "project",
+        "task_class",
+        "retrieval_intent",
+        "generated_at",
+        "expires_at",
+        "status",
+        "cold_start",
+        "sparse_data_shrinkage",
+        "global_prior_weight",
+        "project_evidence_weight",
+        "minimum_outcomes",
+        "eligible_outcomes",
+        "global_prior",
+        "policy",
+        "evidence",
+        "activation",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "card_id": "string",
+        "project": "string",
+        "task_class": "string",
+        "retrieval_intent": "string",
+        "generated_at": "string",
+        "expires_at": "string",
+        "status": "string",
+        "cold_start": "bool",
+        "sparse_data_shrinkage": "bool",
+        "global_prior_weight": "int",
+        "project_evidence_weight": "number",
+        "minimum_outcomes": "int",
+        "eligible_outcomes": "int",
+        "global_prior": "object",
+        "policy": "object",
+        "evidence": "object",
+        "activation": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "activation": [
+          "active",
+          "runtime_mutation",
+          "reason"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "activation.active",
+        "activation.runtime_mutation"
+      ],
+      "forbidden_fields": [
+        "raw_ledger",
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "scoped_policy_card.v1",
+        "format_contract.schema_id": "scoped_policy_card.v1"
+      }
+    },
+    "policy_promotion_recommendation.v1": {
+      "contract_version": 1,
+      "payload_kind": "assignment_bound_uncertainty_aware_policy_promotion_recommendation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "hold_or_recommend_rollback_when_assignment_exposure_drift_or_survivor_bias_proof_is_incomplete",
+      "max_total_json_bytes": 240000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "recommendation_id",
+        "candidate_id",
+        "project",
+        "generated_at",
+        "recommendation",
+        "recommended_phase",
+        "eligible",
+        "assignment_exposure_receipt",
+        "uncertainty",
+        "drift",
+        "evaluation",
+        "activation",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "recommendation_id": "string",
+        "candidate_id": "string",
+        "project": "string",
+        "generated_at": "string",
+        "recommendation": "string",
+        "recommended_phase": "string",
+        "eligible": "bool",
+        "assignment_exposure_receipt": "object",
+        "uncertainty": "object",
+        "drift": "object",
+        "evaluation": "object",
+        "activation": "object",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "activation": [
+          "runtime_mutation",
+          "automatic",
+          "entitled_gate_required"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "activation.runtime_mutation",
+        "activation.automatic"
+      ],
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_ledger",
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "policy_promotion_recommendation.v1",
+        "format_contract.schema_id": "policy_promotion_recommendation.v1"
+      }
+    },
+    "memory_retirement.v1": {
+      "contract_version": 1,
+      "payload_kind": "non_destructive_reversible_memory_retirement_workflow",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "propose_only_and_refuse_apply_when_identity_approval_legal_hold_or_runtime_state_guards_fail",
+      "max_total_json_bytes": 300000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "operation",
+        "project",
+        "generated_at",
+        "non_destructive",
+        "content_deleted",
+        "ordinary_memory_rewritten",
+        "proposals",
+        "receipt",
+        "legal_hold_respected",
+        "replacement_links_preserved",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "operation": "string",
+        "project": "string",
+        "generated_at": "string",
+        "non_destructive": "bool",
+        "content_deleted": "bool",
+        "ordinary_memory_rewritten": "bool",
+        "proposals": "list",
+        "receipt": "object",
+        "legal_hold_respected": "bool",
+        "replacement_links_preserved": "bool",
+        "format_contract": "object"
+      },
+      "required_true_paths": [
+        "non_destructive",
+        "legal_hold_respected",
+        "replacement_links_preserved"
+      ],
+      "required_false_paths": [
+        "content_deleted"
+      ],
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "memory_retirement.v1",
+        "format_contract.schema_id": "memory_retirement.v1"
+      }
+    },
+    "contradiction_resolution.v1": {
+      "contract_version": 1,
+      "payload_kind": "append_only_evidence_weighted_contradiction_resolution_and_appeal",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "abstain_without_explicit_contradiction_edges_sufficient_margin_verified_support_and_operator_approval",
+      "max_total_json_bytes": 300000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "operation",
+        "project",
+        "generated_at",
+        "recommendation",
+        "resolution",
+        "recorded",
+        "ordinary_memory_mutated",
+        "claim_lifecycle_mutated",
+        "immutable_receipt",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "operation": "string",
+        "project": "string",
+        "generated_at": "string",
+        "recommendation": "object",
+        "resolution": "object",
+        "recorded": "bool",
+        "ordinary_memory_mutated": "bool",
+        "claim_lifecycle_mutated": "bool",
+        "immutable_receipt": "bool",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_false_paths": [
+        "ordinary_memory_mutated"
+      ],
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "contradiction_resolution.v1",
+        "format_contract.schema_id": "contradiction_resolution.v1"
+      }
+    },
+    "storage_temperature_decision.v1": {
+      "contract_version": 1,
+      "payload_kind": "utility_based_reversible_memory_storage_temperature_decision",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "recommend_only_and_refuse_deep_or_retired_moves_for_legal_hold_or_protected_runtime_state",
+      "max_total_json_bytes": 300000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "operation",
+        "project",
+        "generated_at",
+        "decisions",
+        "receipt",
+        "recorded",
+        "content_deleted",
+        "physical_store_changed",
+        "retrieval_temperature_changed",
+        "legal_hold_respected",
+        "measurement_limit",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "operation": "string",
+        "project": "string",
+        "generated_at": "string",
+        "decisions": "list",
+        "receipt": "object",
+        "recorded": "bool",
+        "content_deleted": "bool",
+        "physical_store_changed": "bool",
+        "retrieval_temperature_changed": "bool",
+        "legal_hold_respected": "bool",
+        "measurement_limit": "string",
+        "format_contract": "object"
+      },
+      "required_true_paths": [
+        "legal_hold_respected"
+      ],
+      "required_false_paths": [
+        "content_deleted",
+        "physical_store_changed"
+      ],
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "storage_temperature_decision.v1",
+        "format_contract.schema_id": "storage_temperature_decision.v1"
+      }
+    },
+    "frontier_t5_policy_laboratory_status.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_policy_laboratory_runtime_status",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "report_disabled_or_degraded_subsystems_without_activating_policy_or_mutating_memory",
+      "max_total_json_bytes": 300000,
+      "max_string_bytes": 5000,
+      "max_list_items": 512,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "updated_at",
+        "mode",
+        "ledger",
+        "context_policy",
+        "temporal_claims",
+        "network_calls",
+        "automatic_runtime_activation",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "updated_at": "string",
+        "mode": "string",
+        "ledger": "object",
+        "context_policy": "object",
+        "temporal_claims": "object",
+        "network_calls": "int",
+        "automatic_runtime_activation": "bool",
+        "format_contract": "object"
+      },
+      "required_false_paths": [
+        "automatic_runtime_activation"
+      ],
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "forbidden_fields": [
+        "secret",
+        "password",
+        "api_key",
+        "authorization",
+        "credential",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive",
+      "required_string_contains": {
+        "schema_id": "frontier_t5_policy_laboratory_status.v1",
+        "format_contract.schema_id": "frontier_t5_policy_laboratory_status.v1"
       }
     }
   }

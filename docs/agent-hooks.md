@@ -225,6 +225,32 @@ Adapter, trace, discovery, and adoption commands remain available as advanced
 harness-integration and debugging surfaces; agents do not need them for the
 normal task lifecycle.
 
+## Policy Laboratory CLI
+
+Use the CLI as the primary read surface for policy-lab status:
+
+```bash
+contextlattice_policy_lab status --pretty
+```
+
+Policy simulation and scoped cards are advisory and do not persist replay
+results or activate runtime policy. Promotion recommendations are uncertainty-
+aware and hold when assignment exposure, drift, or survivor-bias evidence is
+incomplete. Memory retirement is propose-first and reversible; contradiction
+resolution is append-only, evidence-weighted, and may abstain with an appeal
+path. Storage temperature is logical retrieval-tier metadata, so moves can be
+restored without deleting content or claiming physical relocation.
+
+The public core exposes these read, simulate, recommend, propose, explicit
+single-item apply, and receipt-bound restore lanes. Paid governance adds
+workspace-scoped simulation history, independent project/task/intent policy
+activation with bounded inheritance, canary activation and automatic rollback,
+assigned contradiction review, and scheduled or batch lifecycle/temperature
+runs. Configure and activate through the same CLI with `--approved`; use a
+payload file for batch items and `--batch-approved` when the configured approval
+threshold is crossed. Every batch is size-bounded, records intent before work,
+reports partial failure honestly, and retains reversible core receipts.
+
 Agent lifecycle state is separate from retrieval lifecycle state. Use
 `idle`, `working`, `awaiting_user`, `blocked`, or `done` for the agent itself;
 `retrieval_lifecycle` remains source-fetch progress such as queued, partial, or

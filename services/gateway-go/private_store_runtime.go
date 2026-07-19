@@ -250,6 +250,8 @@ func (m *memoryStore) initializeAfterOwnerOnlyMigration() error {
 	m.initializeOnce.Do(func() {
 		for _, path := range []string{
 			filepath.Dir(m.policy.historyPath),
+			m.currentStateRootPath(),
+			filepath.Dir(m.policy.accessLogPath),
 			filepath.Dir(m.policy.edgePath),
 			filepath.Dir(m.policy.agentEdgePath),
 		} {
@@ -268,7 +270,15 @@ func (m *memoryStore) initializeAfterOwnerOnlyMigration() error {
 			m.initializeErr = err
 			return
 		}
+		if err := m.loadCurrentState(); err != nil {
+			m.initializeErr = err
+			return
+		}
 		if err := m.loadHistory(); err != nil {
+			m.initializeErr = err
+			return
+		}
+		if err := m.loadAccessLog(); err != nil {
 			m.initializeErr = err
 			return
 		}
