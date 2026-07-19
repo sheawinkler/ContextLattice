@@ -314,6 +314,7 @@ type server struct {
 	temporalClaims                  *temporalClaimStore
 	contextPolicy                   *contextPolicyStore
 	frontierT5                      *frontierT5Ledger
+	frontierT6                      *frontierT6AgentFitStore
 	skillFoundry                    *skillFoundryStore
 	skillLifecycleMu                sync.Mutex
 	contextPassports                *contextPassportStore
@@ -1283,6 +1284,13 @@ func newServer() *server {
 			contradictionLatest: map[string]map[string]any{}, lastError: frontierT5Err.Error(),
 		}
 	}
+	frontierT6Instance, frontierT6Err := newFrontierT6AgentFitStoreFromEnv()
+	if frontierT6Err != nil {
+		log.Printf("gateway-go Frontier T6 agent fit disabled: %v", frontierT6Err)
+		frontierT6Instance = &frontierT6AgentFitStore{
+			enabled: false, state: emptyFrontierT6AgentFitState(), limits: frontierT6DefaultLimits(),
+		}
+	}
 	skillFoundryInstance, skillFoundryErr := newSkillFoundryStoreFromEnv()
 	if skillFoundryErr != nil {
 		log.Printf("gateway-go skill foundry store disabled: %v", skillFoundryErr)
@@ -1318,6 +1326,7 @@ func newServer() *server {
 		temporalClaims:                  temporalClaimsInstance,
 		contextPolicy:                   contextPolicyInstance,
 		frontierT5:                      frontierT5Instance,
+		frontierT6:                      frontierT6Instance,
 		skillFoundry:                    skillFoundryInstance,
 		contextPassports:                contextPassportInstance,
 		contextMesh:                     contextMeshInstance,
@@ -7130,6 +7139,12 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc(contradictionResolutionPath, s.memoryContradictionResolution)
 	mux.HandleFunc(storageTemperatureDecisionPath, s.memoryStorageTemperature)
 	mux.HandleFunc(frontierT5StatusPath, s.telemetryPolicyLaboratory)
+	mux.HandleFunc(frontierT6SteeringPath, s.frontierT6SteeringRoute)
+	mux.HandleFunc(frontierT6SteeringEventsPath, s.frontierT6SteeringEventsRoute)
+	mux.HandleFunc(frontierT6SelectionPath, s.frontierT6SelectionRoute)
+	mux.HandleFunc(frontierT6ProfilePath, s.frontierT6ProfileRoute)
+	mux.HandleFunc(frontierT6ContextPrepPath, s.frontierT6ContextPrepRoute)
+	mux.HandleFunc(frontierT6TelemetryPath, s.frontierT6TelemetryRoute)
 	mux.HandleFunc("/memory/continuity/reconcile", s.memoryContinuityReconcile)
 	mux.HandleFunc("/memory/objectives/transition", s.memoryObjectiveTransition)
 	mux.HandleFunc("/memory/objectives/graph", s.memoryObjectiveGraph)

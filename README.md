@@ -42,9 +42,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.22.0` is the current public baseline. Policy Laboratory makes retrieval and memory policy prove itself before it earns influence: replay candidates against the same immutable snapshot, learn project-specific policy without cross-project leakage, reject promotion when assignment, uncertainty, drift, or survivor-bias evidence fails, and keep retirement, contradiction resolution, and storage-temperature changes reversible through receipts. Retrieval Receipts, causal synthesis, the Utility Ledger, Agent Packets, proof timelines, Context Passports, Context Mesh, Skill Foundry, and agent integrations remain part of the same local-first contract. Paid lanes add governed workspace activation, canaries, queues, schedules, and bounded automation, but no paid switch can weaken the public fail-closed core or create hidden broad mutation. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
+`v3.23.0` is the current public baseline. Agent Fit gives every harness a live briefing layer without turning ContextLattice into a runner: resumable steering arrives through SSE with bounded pull fallback, runner and model recommendations stay advisor-only, effective profiles resolve by explicit then stored then generic precedence, and prepared context is opt-in, source-bound, and rejected after task or authorization drift. The task worker authorizes only the target already named by the task; it never silently reroutes work. Policy Laboratory, Retrieval Receipts, causal synthesis, the Utility Ledger, Agent Packets, proof timelines, Context Passports, Context Mesh, Skill Foundry, and agent integrations remain part of the same local-first contract. Paid lanes add governed workspace rollout and explicit selection authorization, but no paid switch can weaken the public fail-closed core or make the gateway execute a model, subprocess, merge, or push. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
 
-## Public Runtime Stack (v3.22)
+## Public Runtime Stack (v3.23)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -105,8 +105,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.22.0 \
-  --statement "The current public release is 3.22.0." \
+  --object 3.23.0 \
+  --statement "The current public release is 3.23.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -142,6 +142,13 @@ contextlattice_skill_draft --payload-file workflow-runs.json --pretty
 contextlattice_skill_evaluate --draft-id <draft-id> --payload-file holdouts.json --pretty
 contextlattice_skill_export --draft-id <draft-id> --human-approved --approver <identity> --pretty
 contextlattice_skill_retire --draft-id <draft-id> --operator <identity> --reason "temporary proof completed" --pretty
+
+# Steer capable agents, resolve their effective profile, and request advisor-only
+# runner/model selection without moving execution into the gateway.
+contextlattice agent-fit steering-watch --project contextlattice --agent-id codex_gpt5 --once --raw
+contextlattice agent-fit profile-resolve --project contextlattice --agent-id codex_gpt5 --raw
+contextlattice agent-fit runner-select --payload-file runner-candidates.json --raw
+contextlattice agent-fit context-prep-schedule --project contextlattice --payload-file prep-request.json --raw
 
 # Carry a signed evidence packet to another machine without carrying the machine with it.
 contextlattice_passport_export "prepare the release handoff" --project contextlattice --output passport.json --pretty
@@ -450,6 +457,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.23.0.md` (Agent Fit steering, advisor-only selection, adaptive profiles, and explicit context preparation)
   - `docs/releases/v3.22.0.md` (Policy Laboratory simulation, scoped learning, reversible lifecycle, contradiction, and storage governance)
   - `docs/releases/v3.21.0.md` (retrieval receipts, trust isolation, ablation, causal proof, and governed paid operations)
   - `docs/releases/v3.20.3.md` (complete evaluation gate and governed efficiency-policy entitlement)

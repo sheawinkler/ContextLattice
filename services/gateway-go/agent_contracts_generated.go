@@ -10,9 +10,10 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 35
+const GeneratedAgentContractRegistryVersion = 36
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
+const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
 const GeneratedAgentContractAgentPacketV1 = "agent_packet.v1"
 const GeneratedAgentContractAgentPacketDeltaV1 = "agent_packet_delta.v1"
@@ -26,6 +27,9 @@ const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
 const GeneratedAgentContractAgentTaskLeaseV1 = "agent_task_lease.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
+const GeneratedAgentContractAsyncSteeringDeliveryV1 = "async_steering_delivery.v1"
+const GeneratedAgentContractAsyncSteeringEventV1 = "async_steering_event.v1"
+const GeneratedAgentContractAsyncSteeringStreamItemV1 = "async_steering_stream_item.v1"
 const GeneratedAgentContractCausalBridgeExplanationV1 = "causal_bridge_explanation.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
 const GeneratedAgentContractContextMeshEnvelopeV1 = "context_mesh_envelope.v1"
@@ -40,6 +44,8 @@ const GeneratedAgentContractContextPassportReplayV1 = "context_passport_replay.v
 const GeneratedAgentContractContextPassportVerifyV1 = "context_passport_verify.v1"
 const GeneratedAgentContractContextPolicyCandidateV1 = "context_policy_candidate.v1"
 const GeneratedAgentContractContextPolicyEvaluationV1 = "context_policy_evaluation.v1"
+const GeneratedAgentContractContextPrepV1 = "context_prep.v1"
+const GeneratedAgentContractContextPrepArtifactV1 = "context_prep_artifact.v1"
 const GeneratedAgentContractContextlatticeLifecycleReceiptV1 = "contextlattice_lifecycle_receipt.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractContradictionResolutionV1 = "contradiction_resolution.v1"
@@ -50,8 +56,12 @@ const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractEvidenceReputationV1 = "evidence_reputation.v1"
 const GeneratedAgentContractFrontierT4RetrievalGovernanceV1 = "frontier_t4_retrieval_governance.v1"
 const GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1 = "frontier_t5_policy_laboratory_status.v1"
+const GeneratedAgentContractFrontierT6AgentFitV1 = "frontier_t6_agent_fit.v1"
+const GeneratedAgentContractFrontierT6AgentFitStateV1 = "frontier_t6_agent_fit_state.v1"
+const GeneratedAgentContractFrontierT6AgentFitStatusV1 = "frontier_t6_agent_fit_status.v1"
 const GeneratedAgentContractMemoryRetirementV1 = "memory_retirement.v1"
 const GeneratedAgentContractMemoryTrustAssessmentV1 = "memory_trust_assessment.v1"
+const GeneratedAgentContractModelSelectionV1 = "model_selection.v1"
 const GeneratedAgentContractObjectiveGraphV1 = "objective_graph.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractObjectiveTransitionV1 = "objective_transition.v1"
@@ -68,6 +78,7 @@ const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
 const GeneratedAgentContractRunnerCapabilityV1 = "runner_capability.v1"
 const GeneratedAgentContractRunnerQualitySampleV1 = "runner_quality_sample.v1"
 const GeneratedAgentContractRunnerResultV1 = "runner_result.v1"
+const GeneratedAgentContractRunnerSelectionV1 = "runner_selection.v1"
 const GeneratedAgentContractScopedPolicyCardV1 = "scoped_policy_card.v1"
 const GeneratedAgentContractSkillDraftV1 = "skill_draft.v1"
 const GeneratedAgentContractSkillEvaluationV1 = "skill_evaluation.v1"
@@ -90,6 +101,7 @@ const GeneratedAgentContractWritebackResultV1 = "writeback_result.v1"
 
 var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractA2aReadinessProfileV1,
+	GeneratedAgentContractAgentContextProfileV1,
 	GeneratedAgentContractAgentFlightRecorderEventV1,
 	GeneratedAgentContractAgentPacketV1,
 	GeneratedAgentContractAgentPacketDeltaV1,
@@ -103,6 +115,9 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentTaskLeaseV1,
 	GeneratedAgentContractAgentTaskResultV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
+	GeneratedAgentContractAsyncSteeringDeliveryV1,
+	GeneratedAgentContractAsyncSteeringEventV1,
+	GeneratedAgentContractAsyncSteeringStreamItemV1,
 	GeneratedAgentContractCausalBridgeExplanationV1,
 	GeneratedAgentContractCodexCompactHookStdoutV1,
 	GeneratedAgentContractContextMeshEnvelopeV1,
@@ -117,6 +132,8 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextPassportVerifyV1,
 	GeneratedAgentContractContextPolicyCandidateV1,
 	GeneratedAgentContractContextPolicyEvaluationV1,
+	GeneratedAgentContractContextPrepV1,
+	GeneratedAgentContractContextPrepArtifactV1,
 	GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractContradictionResolutionV1,
@@ -127,8 +144,12 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractEvidenceReputationV1,
 	GeneratedAgentContractFrontierT4RetrievalGovernanceV1,
 	GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1,
+	GeneratedAgentContractFrontierT6AgentFitV1,
+	GeneratedAgentContractFrontierT6AgentFitStateV1,
+	GeneratedAgentContractFrontierT6AgentFitStatusV1,
 	GeneratedAgentContractMemoryRetirementV1,
 	GeneratedAgentContractMemoryTrustAssessmentV1,
+	GeneratedAgentContractModelSelectionV1,
 	GeneratedAgentContractObjectiveGraphV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractObjectiveTransitionV1,
@@ -145,6 +166,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractRunnerCapabilityV1,
 	GeneratedAgentContractRunnerQualitySampleV1,
 	GeneratedAgentContractRunnerResultV1,
+	GeneratedAgentContractRunnerSelectionV1,
 	GeneratedAgentContractScopedPolicyCardV1,
 	GeneratedAgentContractSkillDraftV1,
 	GeneratedAgentContractSkillEvaluationV1,
@@ -170,6 +192,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractA2aReadinessProfileV1,
 		PayloadKind:        "a2a_readiness_profile",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAgentContextProfileV1,
+		PayloadKind:        "effective_agent_context_profile",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -248,6 +276,24 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractAntiSchemingProtocolV1,
 		PayloadKind:        "policy_fragment",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAsyncSteeringDeliveryV1,
+		PayloadKind:        "durable_async_steering_delivery_receipt",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAsyncSteeringEventV1,
+		PayloadKind:        "durable_async_steering_event",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAsyncSteeringStreamItemV1,
+		PayloadKind:        "resumable_async_steering_stream_item",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -336,6 +382,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractContextPrepV1,
+		PayloadKind:        "opt_in_external_worker_context_preparation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPrepArtifactV1,
+		PayloadKind:        "bounded_prepared_context_artifact_reference",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 		PayloadKind:        "contextlattice_lifecycle_receipt",
 		ContractVersion:    1,
@@ -396,6 +454,24 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractFrontierT6AgentFitV1,
+		PayloadKind:        "bounded_agent_fit_operation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractFrontierT6AgentFitStateV1,
+		PayloadKind:        "bounded_owner_only_agent_fit_state",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractFrontierT6AgentFitStatusV1,
+		PayloadKind:        "bounded_agent_fit_runtime_status",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractMemoryRetirementV1,
 		PayloadKind:        "non_destructive_reversible_memory_retirement_workflow",
 		ContractVersion:    1,
@@ -404,6 +480,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractMemoryTrustAssessmentV1,
 		PayloadKind:        "bounded_retrieval_memory_trust_assessment",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractModelSelectionV1,
+		PayloadKind:        "advisor_only_model_selection_receipt",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -500,6 +582,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractRunnerResultV1,
 		PayloadKind:        "runner_result",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractRunnerSelectionV1,
+		PayloadKind:        "advisor_only_runner_selection_receipt",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

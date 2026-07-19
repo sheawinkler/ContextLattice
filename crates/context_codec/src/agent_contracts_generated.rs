@@ -9,9 +9,10 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 35;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 36;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
+pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
 pub const AGENT_PACKET_V1: &str = "agent_packet.v1";
 pub const AGENT_PACKET_DELTA_V1: &str = "agent_packet_delta.v1";
@@ -25,6 +26,9 @@ pub const AGENT_SPAN_V1: &str = "agent_span.v1";
 pub const AGENT_TASK_LEASE_V1: &str = "agent_task_lease.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
 pub const ANTI_SCHEMING_PROTOCOL_V1: &str = "anti_scheming_protocol.v1";
+pub const ASYNC_STEERING_DELIVERY_V1: &str = "async_steering_delivery.v1";
+pub const ASYNC_STEERING_EVENT_V1: &str = "async_steering_event.v1";
+pub const ASYNC_STEERING_STREAM_ITEM_V1: &str = "async_steering_stream_item.v1";
 pub const CAUSAL_BRIDGE_EXPLANATION_V1: &str = "causal_bridge_explanation.v1";
 pub const CODEX_COMPACT_HOOK_STDOUT_V1: &str = "codex_compact_hook_stdout.v1";
 pub const CONTEXT_MESH_ENVELOPE_V1: &str = "context_mesh_envelope.v1";
@@ -39,6 +43,8 @@ pub const CONTEXT_PASSPORT_REPLAY_V1: &str = "context_passport_replay.v1";
 pub const CONTEXT_PASSPORT_VERIFY_V1: &str = "context_passport_verify.v1";
 pub const CONTEXT_POLICY_CANDIDATE_V1: &str = "context_policy_candidate.v1";
 pub const CONTEXT_POLICY_EVALUATION_V1: &str = "context_policy_evaluation.v1";
+pub const CONTEXT_PREP_V1: &str = "context_prep.v1";
+pub const CONTEXT_PREP_ARTIFACT_V1: &str = "context_prep_artifact.v1";
 pub const CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1: &str = "contextlattice_lifecycle_receipt.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const CONTRADICTION_RESOLUTION_V1: &str = "contradiction_resolution.v1";
@@ -49,8 +55,12 @@ pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const EVIDENCE_REPUTATION_V1: &str = "evidence_reputation.v1";
 pub const FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1: &str = "frontier_t4_retrieval_governance.v1";
 pub const FRONTIER_T5_POLICY_LABORATORY_STATUS_V1: &str = "frontier_t5_policy_laboratory_status.v1";
+pub const FRONTIER_T6_AGENT_FIT_V1: &str = "frontier_t6_agent_fit.v1";
+pub const FRONTIER_T6_AGENT_FIT_STATE_V1: &str = "frontier_t6_agent_fit_state.v1";
+pub const FRONTIER_T6_AGENT_FIT_STATUS_V1: &str = "frontier_t6_agent_fit_status.v1";
 pub const MEMORY_RETIREMENT_V1: &str = "memory_retirement.v1";
 pub const MEMORY_TRUST_ASSESSMENT_V1: &str = "memory_trust_assessment.v1";
+pub const MODEL_SELECTION_V1: &str = "model_selection.v1";
 pub const OBJECTIVE_GRAPH_V1: &str = "objective_graph.v1";
 pub const OBJECTIVE_RUNTIME_STATE_V1: &str = "objective_runtime_state.v1";
 pub const OBJECTIVE_TRANSITION_V1: &str = "objective_transition.v1";
@@ -67,6 +77,7 @@ pub const RUN_ADVISOR_V1: &str = "run_advisor.v1";
 pub const RUNNER_CAPABILITY_V1: &str = "runner_capability.v1";
 pub const RUNNER_QUALITY_SAMPLE_V1: &str = "runner_quality_sample.v1";
 pub const RUNNER_RESULT_V1: &str = "runner_result.v1";
+pub const RUNNER_SELECTION_V1: &str = "runner_selection.v1";
 pub const SCOPED_POLICY_CARD_V1: &str = "scoped_policy_card.v1";
 pub const SKILL_DRAFT_V1: &str = "skill_draft.v1";
 pub const SKILL_EVALUATION_V1: &str = "skill_evaluation.v1";
@@ -89,6 +100,7 @@ pub const WRITEBACK_RESULT_V1: &str = "writeback_result.v1";
 
 pub const AGENT_CONTRACT_IDS: &[&str] = &[
     A2A_READINESS_PROFILE_V1,
+    AGENT_CONTEXT_PROFILE_V1,
     AGENT_FLIGHT_RECORDER_EVENT_V1,
     AGENT_PACKET_V1,
     AGENT_PACKET_DELTA_V1,
@@ -102,6 +114,9 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_TASK_LEASE_V1,
     AGENT_TASK_RESULT_V1,
     ANTI_SCHEMING_PROTOCOL_V1,
+    ASYNC_STEERING_DELIVERY_V1,
+    ASYNC_STEERING_EVENT_V1,
+    ASYNC_STEERING_STREAM_ITEM_V1,
     CAUSAL_BRIDGE_EXPLANATION_V1,
     CODEX_COMPACT_HOOK_STDOUT_V1,
     CONTEXT_MESH_ENVELOPE_V1,
@@ -116,6 +131,8 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_PASSPORT_VERIFY_V1,
     CONTEXT_POLICY_CANDIDATE_V1,
     CONTEXT_POLICY_EVALUATION_V1,
+    CONTEXT_PREP_V1,
+    CONTEXT_PREP_ARTIFACT_V1,
     CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
     CONTRADICTION_RESOLUTION_V1,
@@ -126,8 +143,12 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     EVIDENCE_REPUTATION_V1,
     FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1,
     FRONTIER_T5_POLICY_LABORATORY_STATUS_V1,
+    FRONTIER_T6_AGENT_FIT_V1,
+    FRONTIER_T6_AGENT_FIT_STATE_V1,
+    FRONTIER_T6_AGENT_FIT_STATUS_V1,
     MEMORY_RETIREMENT_V1,
     MEMORY_TRUST_ASSESSMENT_V1,
+    MODEL_SELECTION_V1,
     OBJECTIVE_GRAPH_V1,
     OBJECTIVE_RUNTIME_STATE_V1,
     OBJECTIVE_TRANSITION_V1,
@@ -144,6 +165,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     RUNNER_CAPABILITY_V1,
     RUNNER_QUALITY_SAMPLE_V1,
     RUNNER_RESULT_V1,
+    RUNNER_SELECTION_V1,
     SCOPED_POLICY_CARD_V1,
     SKILL_DRAFT_V1,
     SKILL_EVALUATION_V1,
@@ -169,6 +191,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: A2A_READINESS_PROFILE_V1,
         payload_kind: "a2a_readiness_profile",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGENT_CONTEXT_PROFILE_V1,
+        payload_kind: "effective_agent_context_profile",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -247,6 +275,24 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: ANTI_SCHEMING_PROTOCOL_V1,
         payload_kind: "policy_fragment",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: ASYNC_STEERING_DELIVERY_V1,
+        payload_kind: "durable_async_steering_delivery_receipt",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: ASYNC_STEERING_EVENT_V1,
+        payload_kind: "durable_async_steering_event",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: ASYNC_STEERING_STREAM_ITEM_V1,
+        payload_kind: "resumable_async_steering_stream_item",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -335,6 +381,18 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: CONTEXT_PREP_V1,
+        payload_kind: "opt_in_external_worker_context_preparation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_PREP_ARTIFACT_V1,
+        payload_kind: "bounded_prepared_context_artifact_reference",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
         payload_kind: "contextlattice_lifecycle_receipt",
         contract_version: 1,
@@ -395,6 +453,24 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: FRONTIER_T6_AGENT_FIT_V1,
+        payload_kind: "bounded_agent_fit_operation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: FRONTIER_T6_AGENT_FIT_STATE_V1,
+        payload_kind: "bounded_owner_only_agent_fit_state",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: FRONTIER_T6_AGENT_FIT_STATUS_V1,
+        payload_kind: "bounded_agent_fit_runtime_status",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: MEMORY_RETIREMENT_V1,
         payload_kind: "non_destructive_reversible_memory_retirement_workflow",
         contract_version: 1,
@@ -403,6 +479,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: MEMORY_TRUST_ASSESSMENT_V1,
         payload_kind: "bounded_retrieval_memory_trust_assessment",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: MODEL_SELECTION_V1,
+        payload_kind: "advisor_only_model_selection_receipt",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -499,6 +581,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: RUNNER_RESULT_V1,
         payload_kind: "runner_result",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: RUNNER_SELECTION_V1,
+        payload_kind: "advisor_only_runner_selection_receipt",
         contract_version: 1,
         required_output_mode: "json_object",
     },

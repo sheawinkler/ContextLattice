@@ -8,6 +8,7 @@ or a simple local model call when no runner is configured.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -55,6 +56,9 @@ DEFAULT_INFERENCE_CONTROL_PLANE_URL = os.getenv(
     "TASK_INFERENCE_CONTROL_PLANE_URL",
     DEFAULT_ORCH_URL,
 )
+AGENT_FIT_SELECTION_ACTIVATION_PATH = "/memory/agent-fit/selection/activation"
+AGENT_FIT_GOVERNANCE_SCHEMA_ID = "frontier_t6_agent_fit_governance.v1"
+AGENT_FIT_GOVERNANCE_FEATURE_ID = "frontier_agent_fit_governance"
 
 ADAPTER_AGENT_ALIASES = {
     "pi": "pi",
@@ -178,6 +182,152 @@ def _run_command(cmd: str, env: dict[str, str]) -> int:
 def _normalize_agent_alias(agent: str) -> str:
     normalized = str(agent or "").strip().lower().replace("_", "-")
     return ADAPTER_AGENT_ALIASES.get(normalized, normalized)
+
+
+def _agent_fit_opaque_digest(label: str, value: str) -> str:
+    raw = f"{label}\x00{str(value or '').strip()}".encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _agent_fit_selection_request(
+    task: dict[str, Any], agent_choice: str, model: str
+) -> tuple[dict[str, Any] | None, str, str]:
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    receipt = payload.get("agent_fit_selection_receipt")
+    if receipt is None:
+        return None, "", ""
+    if not isinstance(receipt, dict):
+        raise ValueError("agent_fit_selection_receipt must be an object")
+    if payload.get("agent_fit_selection_authorize") is not True:
+        raise ValueError("agent_fit_selection_authorize=true is required")
+    if task.get("approved") is not True:
+        raise ValueError("approved=true is required for governed selection")
+    kind = str(receipt.get("kind") or "").strip().lower()
+    selected_id = str(receipt.get("selected_id") or "").strip()
+    if kind not in {"runner", "model"} or not selected_id:
+        raise ValueError("governed selection requires a runner or model selected_id")
+    task_id = str(task.get("id") or "").strip()
+    if str(receipt.get("task_id") or "").strip() != task_id:
+        raise ValueError("governed selection task_id does not match the claimed task")
+    if kind == "runner" and _normalize_agent_alias(selected_id) != agent_choice:
+        raise ValueError("governed runner selection does not match the explicit task agent")
+    if kind == "model" and selected_id != str(model or "").strip():
+        raise ValueError("governed model selection does not match the explicit task model")
+    if os.getenv("TASK_AGENT_CMD"):
+        return None, kind, "explicit_task_agent_cmd_override"
+    try:
+        expected_generation = int(payload.get("agent_fit_selection_expected_generation"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("agent_fit_selection_expected_generation is required") from exc
+    if expected_generation < 1:
+        raise ValueError("agent_fit_selection_expected_generation must be positive")
+    receipt_id = str(receipt.get("receipt_id") or "").strip()
+    if not receipt_id:
+        raise ValueError("governed selection receipt_id is required")
+    idempotency_key = str(
+        payload.get("agent_fit_selection_idempotency_key")
+        or f"task-worker-{hashlib.sha256((task_id + chr(0) + receipt_id).encode('utf-8')).hexdigest()[:24]}"
+    ).strip()
+    request = {
+        "operation": "authorize",
+        "project": str(task.get("project") or payload.get("project") or "").strip(),
+        "approved": True,
+        "reason": "authorize an explicitly selected external task worker target",
+        "idempotency_key": idempotency_key,
+        "expected_generation": expected_generation,
+        "selection_receipt": dict(receipt),
+    }
+    if not request["project"]:
+        raise ValueError("project is required for governed selection")
+    return request, kind, selected_id
+
+
+def _authorize_agent_fit_selection(
+    orchestrator_url: str,
+    task: dict[str, Any],
+    agent_choice: str,
+    model: str,
+) -> dict[str, Any]:
+    request, kind, selected_id = _agent_fit_selection_request(
+        task, agent_choice, model
+    )
+    if request is None:
+        return {
+            "requested": bool(kind),
+            "authorized": False,
+            "reason": selected_id or "not_requested",
+        }
+    response = _post(
+        orchestrator_url,
+        AGENT_FIT_SELECTION_ACTIVATION_PATH,
+        request,
+        timeout=20.0,
+    )
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    safety = response.get("safety") if isinstance(response.get("safety"), dict) else {}
+    access = response.get("access") if isinstance(response.get("access"), dict) else {}
+    receipt = response.get("receipt") if isinstance(response.get("receipt"), dict) else {}
+    format_contract = (
+        response.get("format_contract")
+        if isinstance(response.get("format_contract"), dict)
+        else {}
+    )
+    validation = (
+        format_contract.get("validation")
+        if isinstance(format_contract.get("validation"), dict)
+        else {}
+    )
+    expected_selected_digest = _agent_fit_opaque_digest(
+        "frontier-t6-governance-selected", selected_id
+    )
+    expected_task_digest = _agent_fit_opaque_digest(
+        "frontier-t6-governance-task", str(task.get("id") or "")
+    )
+    execution_flags = (
+        bool(result.get("execution_performed")),
+        bool(safety.get("gateway_execution_performed")),
+        bool(safety.get("model_execution_performed")),
+        bool(safety.get("subprocess_execution_performed")),
+        bool(safety.get("prompt_injection_performed")),
+        bool(safety.get("ordinary_memory_mutated")),
+    )
+    valid = (
+        response.get("ok") is True
+        and response.get("schema_id") == AGENT_FIT_GOVERNANCE_SCHEMA_ID
+        and response.get("feature_id") == AGENT_FIT_GOVERNANCE_FEATURE_ID
+        and response.get("operation") == "authorize"
+        and result.get("activation_owner") == "external_task_worker"
+        and result.get("activation_delivery") == "explicit_pull"
+        and result.get("kind") == kind
+        and result.get("selected_id_digest") == expected_selected_digest
+        and result.get("task_digest") == expected_task_digest
+        and not any(execution_flags)
+        and _int_value(safety.get("network_calls"), -1) == 0
+        and safety.get("dispatch_owner") == "external_task_worker"
+        and safety.get("dispatch_mode") == "explicit_pull"
+        and access.get("workspace_project_binding_verified") is True
+        and format_contract.get("schema_id") == AGENT_FIT_GOVERNANCE_SCHEMA_ID
+        and validation.get("status") == "passed"
+        and bool(receipt.get("receipt_id"))
+        and bool(receipt.get("receipt_hash"))
+        and _int_value(receipt.get("policy_generation"), -1)
+        == _int_value(request.get("expected_generation"), -2)
+    )
+    if not valid:
+        raise RuntimeError("governed Agent Fit selection receipt failed validation")
+    return {
+        "requested": True,
+        "authorized": True,
+        "kind": kind,
+        "selected_id": selected_id,
+        "activation_id": str(result.get("activation_id") or ""),
+        "activation_owner": "external_task_worker",
+        "activation_delivery": "explicit_pull",
+        "governance_receipt_id": str(receipt.get("receipt_id") or ""),
+        "governance_receipt_hash": str(receipt.get("receipt_hash") or ""),
+        "policy_generation": receipt.get("policy_generation"),
+        "execution_performed": False,
+    }
 
 
 def _repo_root() -> Path:
@@ -675,6 +825,27 @@ def _handle_task(
     route_payload: dict[str, Any] = {}
     task_payload = task.get("payload") or {}
     agent_choice = _normalize_agent_alias(task.get("agent") or agent)
+    try:
+        agent_fit_selection = _authorize_agent_fit_selection(
+            orchestrator_url, task, agent_choice, model
+        )
+    except Exception as exc:
+        _post(
+            orchestrator_url,
+            f"/agents/tasks/{task['id']}/status",
+            {
+                "status": "blocked",
+                "message": "Governed Agent Fit selection authorization failed",
+                "metadata": {
+                    "agent_fit_selection": {
+                        "requested": True,
+                        "authorized": False,
+                        "reason": str(exc)[:240],
+                    }
+                },
+            },
+        )
+        return
     adapter_argv = None if os.getenv("TASK_AGENT_CMD") else _runner_adapter_for_agent(agent_choice)
 
     if not _gateway_inference_enabled() and adapter_argv is None:
@@ -835,6 +1006,7 @@ def _handle_task(
                     "runner_result": compact_result,
                     "runner_quality": runner_quality,
                     "context_pack_outcome": context_pack_outcome,
+                    "agent_fit_selection": agent_fit_selection,
                     "agent_state": agent_state,
                     "retrieval_lifecycle": lifecycle,
                 },
@@ -850,6 +1022,7 @@ def _handle_task(
                     "runner_result": compact_result,
                     "runner_quality": runner_quality,
                     "context_pack_outcome": context_pack_outcome,
+                    "agent_fit_selection": agent_fit_selection,
                     "agent_state": agent_state,
                     "lease": compact_result.get("metadata", {}).get("lease"),
                     "retrieval_lifecycle": lifecycle,
@@ -881,6 +1054,7 @@ def _handle_task(
                     "runner_result": compact_result,
                     "runner_quality": runner_quality,
                     "context_pack_outcome": context_pack_outcome,
+                    "agent_fit_selection": agent_fit_selection,
                     "agent_state": agent_state,
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
@@ -907,12 +1081,12 @@ def _handle_task(
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
-            {"status": status, "message": message, "metadata": {"context_pack_outcome": context_pack_outcome}},
+            {"status": status, "message": message, "metadata": {"context_pack_outcome": context_pack_outcome, "agent_fit_selection": agent_fit_selection}},
         )
         context_runtime.write_checkpoint(
             task=task,
             bundle=context_bundle,
-            output=json.dumps({"message": message, "context_pack_outcome": context_pack_outcome}, sort_keys=True),
+            output=json.dumps({"message": message, "context_pack_outcome": context_pack_outcome, "agent_fit_selection": agent_fit_selection}, sort_keys=True),
             provider=route_label,
             model=model,
             status=status,
@@ -920,27 +1094,28 @@ def _handle_task(
         if exit_code == 0:
             _post_feedback(
                 orchestrator_url,
-            {
-                "project": task.get("project"),
-                "task_id": task.get("id"),
-                "source": "agent",
-                "content": message,
-                "topic_path": topic_path,
-                "metadata": {
-                    "agent": agent_choice,
-                    "provider": route_provider,
-                    "model": model,
-                    "inference_route": {
+                {
+                    "project": task.get("project"),
+                    "task_id": task.get("id"),
+                    "source": "agent",
+                    "content": message,
+                    "topic_path": topic_path,
+                    "metadata": {
+                        "agent": agent_choice,
                         "provider": route_provider,
-                        "base_url": route_base_url,
-                        "reason": route_reason,
+                        "model": model,
+                        "inference_route": {
+                            "provider": route_provider,
+                            "base_url": route_base_url,
+                            "reason": route_reason,
+                        },
+                        "retrieval_lifecycle": lifecycle,
+                        "context_expansion": context_bundle.get("expansion"),
+                        "context_pack_outcome": context_pack_outcome,
+                        "agent_fit_selection": agent_fit_selection,
                     },
-                    "retrieval_lifecycle": lifecycle,
-                    "context_expansion": context_bundle.get("expansion"),
-                    "context_pack_outcome": context_pack_outcome,
                 },
-            },
-        )
+            )
         return
 
     try:
@@ -987,7 +1162,7 @@ def _handle_task(
         _post(
             orchestrator_url,
             f"/agents/tasks/{task['id']}/status",
-            {"status": "succeeded", "message": completion_message, "metadata": {"context_pack_outcome": context_pack_outcome}},
+            {"status": "succeeded", "message": completion_message, "metadata": {"context_pack_outcome": context_pack_outcome, "agent_fit_selection": agent_fit_selection}},
         )
         context_runtime.write_checkpoint(
             task=task,
@@ -1017,6 +1192,7 @@ def _handle_task(
                     "retrieval_lifecycle": lifecycle,
                     "context_expansion": context_bundle.get("expansion"),
                     "context_pack_outcome": context_pack_outcome,
+                    "agent_fit_selection": agent_fit_selection,
                 },
             },
         )
@@ -1044,7 +1220,7 @@ def _handle_task(
             {
                 "status": "failed",
                 "message": f"Runner error: {exc}",
-                "metadata": {"context_pack_outcome": context_pack_outcome},
+                "metadata": {"context_pack_outcome": context_pack_outcome, "agent_fit_selection": agent_fit_selection},
             },
         )
 

@@ -280,6 +280,187 @@ class PiDroidRunnerSupportTests(unittest.TestCase):
         with EnvPatch({"TASK_AGENT_CMD": "echo legacy"}):
             self.assertEqual(worker._runner_cmd_for_agent("pi"), "echo legacy")
 
+    def test_governed_agent_fit_selection_authorizes_explicit_runner(self) -> None:
+        worker = load_task_worker()
+        task = {
+            "id": "task-governed",
+            "title": "Use the explicit runner",
+            "project": "contextlattice",
+            "agent": "droid",
+            "approved": True,
+            "payload": {
+                "agent_fit_selection_authorize": True,
+                "agent_fit_selection_expected_generation": 4,
+                "agent_fit_selection_receipt": {
+                    "receipt_id": "selection-receipt-1",
+                    "task_id": "task-governed",
+                    "kind": "runner",
+                    "selected_id": "droid",
+                    "sample_count": 8,
+                    "decision": "selected",
+                    "advisory_only": True,
+                    "execution_performed": False,
+                    "evidence_digest": "sha256:" + "a" * 64,
+                    "expires_at": "2026-07-19T08:00:00Z",
+                },
+            },
+        }
+        captured: dict[str, Any] = {}
+
+        def fake_post(
+            _url: str,
+            path: str,
+            payload: dict[str, Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            captured["path"] = path
+            captured["payload"] = payload
+            return {
+                "ok": True,
+                "schema_id": "frontier_t6_agent_fit_governance.v1",
+                "feature_id": "frontier_agent_fit_governance",
+                "operation": "authorize",
+                "result": {
+                    "activation_id": "ft6ga_test",
+                    "activation_owner": "external_task_worker",
+                    "activation_delivery": "explicit_pull",
+                    "kind": "runner",
+                    "selected_id_digest": worker._agent_fit_opaque_digest(
+                        "frontier-t6-governance-selected", "droid"
+                    ),
+                    "task_digest": worker._agent_fit_opaque_digest(
+                        "frontier-t6-governance-task", "task-governed"
+                    ),
+                    "execution_performed": False,
+                },
+                "access": {"workspace_project_binding_verified": True},
+                "safety": {
+                    "gateway_execution_performed": False,
+                    "model_execution_performed": False,
+                    "subprocess_execution_performed": False,
+                    "prompt_injection_performed": False,
+                    "ordinary_memory_mutated": False,
+                    "network_calls": 0,
+                    "dispatch_owner": "external_task_worker",
+                    "dispatch_mode": "explicit_pull",
+                },
+                "receipt": {
+                    "receipt_id": "ft6gr_test",
+                    "receipt_hash": "sha256:" + "b" * 64,
+                    "policy_generation": 4,
+                },
+                "format_contract": {
+                    "schema_id": "frontier_t6_agent_fit_governance.v1",
+                    "validation": {"status": "passed"},
+                },
+            }
+
+        with mock.patch.object(worker, "_post", side_effect=fake_post):
+            result = worker._authorize_agent_fit_selection(
+                "http://127.0.0.1:8075", task, "droid", "model-explicit"
+            )
+
+        self.assertEqual(captured["path"], "/memory/agent-fit/selection/activation")
+        self.assertEqual(captured["payload"]["operation"], "authorize")
+        self.assertEqual(captured["payload"]["selection_receipt"]["selected_id"], "droid")
+        self.assertTrue(result["authorized"])
+        self.assertEqual(result["selected_id"], "droid")
+        self.assertFalse(result["execution_performed"])
+
+    def test_governed_agent_fit_mismatch_blocks_before_execution(self) -> None:
+        worker = load_task_worker()
+        posts: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_post(
+            _url: str,
+            path: str,
+            payload: dict[str, Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            posts.append((path, payload))
+            return {"ok": True}
+
+        blocked_surfaces = (
+            "_runner_adapter_for_agent",
+            "ContextExpansionRuntime",
+            "_run_llm_task_via_gateway",
+            "_run_adapter",
+            "_run_command",
+            "_write_memory",
+            "_post_context_pack_outcome",
+            "_post_feedback",
+        )
+        task = {
+            "id": "task-mismatch",
+            "title": "Reject hidden rerouting",
+            "project": "contextlattice",
+            "agent": "pi",
+            "approved": True,
+            "payload": {
+                "agent_fit_selection_authorize": True,
+                "agent_fit_selection_expected_generation": 1,
+                "agent_fit_selection_receipt": {
+                    "receipt_id": "selection-receipt-mismatch",
+                    "task_id": "task-mismatch",
+                    "kind": "runner",
+                    "selected_id": "droid",
+                },
+            },
+        }
+        with ExitStack() as stack:
+            surface_mocks = {
+                name: stack.enter_context(mock.patch.object(worker, name))
+                for name in blocked_surfaces
+            }
+            stack.enter_context(mock.patch.object(worker, "_post", side_effect=fake_post))
+            worker._handle_task(
+                "http://127.0.0.1:8075",
+                task,
+                "pi",
+                "auto",
+                "model-explicit",
+                None,
+                None,
+            )
+
+        for name, surface_mock in surface_mocks.items():
+            with self.subTest(surface=name):
+                surface_mock.assert_not_called()
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][0], "/agents/tasks/task-mismatch/status")
+        self.assertEqual(posts[0][1]["status"], "blocked")
+        self.assertIn("does not match", posts[0][1]["metadata"]["agent_fit_selection"]["reason"])
+
+    def test_governed_agent_fit_respects_legacy_command_override(self) -> None:
+        worker = load_task_worker()
+        task = {
+            "id": "task-legacy-governed",
+            "project": "contextlattice",
+            "agent": "pi",
+            "approved": True,
+            "payload": {
+                "agent_fit_selection_authorize": True,
+                "agent_fit_selection_expected_generation": 2,
+                "agent_fit_selection_receipt": {
+                    "receipt_id": "selection-receipt-legacy",
+                    "task_id": "task-legacy-governed",
+                    "kind": "runner",
+                    "selected_id": "pi",
+                },
+            },
+        }
+        with EnvPatch({"TASK_AGENT_CMD": "echo legacy"}):
+            with mock.patch.object(worker, "_post") as post:
+                result = worker._authorize_agent_fit_selection(
+                    "http://127.0.0.1:8075", task, "pi", "model-explicit"
+                )
+        post.assert_not_called()
+        self.assertTrue(result["requested"])
+        self.assertFalse(result["authorized"])
+        self.assertEqual(result["reason"], "explicit_task_agent_cmd_override")
+
     def test_unapproved_task_blocks_before_any_work(self) -> None:
         worker = load_task_worker()
         posts: list[tuple[str, dict[str, Any]]] = []
