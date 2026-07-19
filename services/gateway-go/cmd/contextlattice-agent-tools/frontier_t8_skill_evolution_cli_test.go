@@ -105,6 +105,9 @@ func TestFrontierT8SkillEvolutionCLIRejectsUnpassedContractAndUnsafeInputFile(t 
 	if err := os.WriteFile(unsafePath, []byte(`{"name":"bounded-candidate"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(unsafePath, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := frontierT8ReadSkillEvolutionInput(unsafePath); err == nil {
 		t.Fatal("CLI accepted a non-owner-only payload file")
 	}

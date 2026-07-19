@@ -23,7 +23,7 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "3.25.0" || commercialTruthStableTag != "v3.25.0" || commercialTruthReleaseTrain != "3.25" {
+	if commercialTruthProductVersion != "3.26.0" || commercialTruthStableTag != "v3.26.0" || commercialTruthReleaseTrain != "3.26" {
 		t.Fatalf(
 			"unexpected generated release truth: version=%q tag=%q train=%q",
 			commercialTruthProductVersion,

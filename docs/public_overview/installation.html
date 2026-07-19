@@ -164,11 +164,11 @@ brew info --cask sheawinkler/contextlattice/contextlattice</code></pre>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <ul class="spec-list">
           <!-- BEGIN GENERATED COMMERCIAL TRUTH: installation-sizing-release -->
-          <li><strong>Public <code>v3.25.x</code> Hugging Face / Glama lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>20-50 GB</code> SSD</li>
-          <li><strong>Public <code>v3.25.x</code> local Lite:</strong> <code>2-4</code> vCPU, <code>8-12 GB</code> RAM, <code>25-80 GB</code> SSD</li>
-          <li><strong>Public <code>v3.25.x</code> local Lite advanced:</strong> <code>4-6</code> vCPU, <code>12-16 GB</code> RAM, <code>80-140 GB</code> SSD</li>
-          <li><strong>Public <code>v3.25.x</code> local Full (no spike-lab):</strong> <code>6-8</code> vCPU, <code>12-20 GB</code> RAM, <code>100-180 GB</code> SSD</li>
-          <li><strong>Public <code>v3.25.x</code> local Full + spike-lab:</strong> <code>8-12</code> vCPU, <code>24-32 GB</code> RAM, <code>180-300 GB</code> SSD/NVMe</li>
+          <li><strong>Public <code>v3.26.x</code> Hugging Face / Glama lite:</strong> <code>2-4</code> vCPU, <code>4-8 GB</code> RAM, <code>20-50 GB</code> SSD</li>
+          <li><strong>Public <code>v3.26.x</code> local Lite:</strong> <code>2-4</code> vCPU, <code>8-12 GB</code> RAM, <code>25-80 GB</code> SSD</li>
+          <li><strong>Public <code>v3.26.x</code> local Lite advanced:</strong> <code>4-6</code> vCPU, <code>12-16 GB</code> RAM, <code>80-140 GB</code> SSD</li>
+          <li><strong>Public <code>v3.26.x</code> local Full (no spike-lab):</strong> <code>6-8</code> vCPU, <code>12-20 GB</code> RAM, <code>100-180 GB</code> SSD</li>
+          <li><strong>Public <code>v3.26.x</code> local Full + spike-lab:</strong> <code>8-12</code> vCPU, <code>24-32 GB</code> RAM, <code>180-300 GB</code> SSD/NVMe</li>
           <!-- END GENERATED COMMERCIAL TRUTH: installation-sizing-release -->
           <li><strong>Paid local/operator premium:</strong> <code>8-12</code> vCPU, <code>24-48 GB</code> RAM, <code>250 GB-1 TB</code> SSD/NVMe</li>
           <li><strong>Hosted operator baseline:</strong> <code>16+</code> vCPU host, <code>64+ GB</code> RAM, GPU lane, <code>1-2 TB</code> NVMe for retrieval indexes/snapshots</li>
@@ -209,7 +209,7 @@ $HOME/Documents/projects
           <p>Single-container lane for lowest operational overhead and maximum compatibility.</p>
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: installation-deployment-hf -->
-            <li><strong>App version lane:</strong> Public <code>v3.25.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.26.x</code></li>
             <!-- END GENERATED COMMERCIAL TRUTH: installation-deployment-hf -->
             <li><strong>Services:</strong> Gateway + orchestrator in one container, topic rollups retrieval lane</li>
             <li><strong>Retrieval lanes:</strong> <code>topic_rollups</code> default, async continuation where configured</li>
@@ -222,7 +222,7 @@ $HOME/Documents/projects
           <p>Runs the core memory services only. Best for laptop-first or resource-constrained local deployments.</p>
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: installation-deployment-lite -->
-            <li><strong>App version lane:</strong> Public <code>v3.25.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.26.x</code></li>
             <!-- END GENERATED COMMERCIAL TRUTH: installation-deployment-lite -->
             <li><strong>Services:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, MCP hub</li>
             <li><strong>Retrieval lanes:</strong> fast staged sources prioritize <code>topic_rollups + qdrant</code>; pgvector is available in full/operator stacks</li>
@@ -236,7 +236,7 @@ $HOME/Documents/projects
           <p>Enables full retrieval fabric and operations stack including analytics, observability, and deeper RAG support.</p>
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: installation-deployment-full -->
-            <li><strong>App version lane:</strong> Public <code>v3.25.x</code> Full</li>
+            <li><strong>App version lane:</strong> Public <code>v3.26.x</code> Full</li>
             <!-- END GENERATED COMMERCIAL TRUTH: installation-deployment-full -->
             <li><strong>Services:</strong> Lite stack plus MindsDB, Letta, and observability profile</li>
             <li><strong>Deep continuation lane:</strong> async coverage from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>

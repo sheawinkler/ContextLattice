@@ -76,6 +76,7 @@ Installed commands:
 | `contextlattice_retrieval_governance` | Entitled receipt, causal-bridge, counterfactual, reputation, regression, and adversarial-defense policy governance; it never executes retrieval or disables public defenses. |
 | `contextlattice_policy_lab` | Primary Policy Laboratory CLI for simulation, scoped cards, promotion evidence, reversible lifecycle, contradiction, storage-temperature, and governance status. |
 | `contextlattice_agent_fit` | Primary Agent Fit CLI for resumable steering, advisory runner/model selection, effective profiles, and explicit-use context preparation. |
+| `contextlattice_continuity_zero` | Primary zero-entry CLI: select one unambiguous live objective and bind its packet, checkpoint, Agent Fit profile, preparation, repository commit, provenance, risks, and next move into one path-free manifest. |
 | `contextlattice_agent_tools portable-continuation` | Primary Portable Continuation CLI family for signed grants, provenance-preserving imports, encrypted manifests, dry-run reconciliation, and bounded status. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
@@ -142,6 +143,12 @@ interface. POST operations require an owner-only `--payload-file`; use
 context. `manifest-reconcile` accepts that artifact through `--envelope-file`.
 The gateway verifies and records contracts only: an operator-chosen external
 adapter owns delivery and import execution.
+
+### Continuity Zero
+
+Run `contextlattice_continuity_zero --project <project> --agent <harness> --output continuity-zero.json --pretty` from the repository you are resuming. The CLI derives repository, branch, and commit identity with argv-safe Git calls, sends no local path to the gateway, and writes the optional artifact owner-only. It returns `ready` only when one fresh, non-terminal session matches the project, agent, harness, repository, and commit; ambiguity or stale/mismatched provenance abstains or rejects instead of guessing.
+
+The public route is advisory and never creates a session, runs a model, dispatches a runner, mutates a worktree, or transports the manifest. Entitled automation records only explicit `push` or `workspace_prepare` intents plus external-adapter receipts. ContextLattice remains the control and proof boundary; the selected adapter remains the executor.
 
 ### Verified Skill Evolution
 

@@ -84,6 +84,8 @@ services/gateway-go/frontier_t7_portable_continuation_entitled.go
 services/gateway-go/frontier_t7_portable_continuation_entitled_test.go
 services/gateway-go/frontier_t8_skill_evolution_entitled.go
 services/gateway-go/frontier_t8_skill_evolution_entitled_test.go
+services/gateway-go/frontier_t9_continuity_zero_entitled.go
+services/gateway-go/frontier_t9_continuity_zero_entitled_test.go
 services/gateway-go/cmd/contextlattice-agent-tools/frontier_t5_policy_lab_entitled.go
 services/gateway-go/cmd/contextlattice-agent-tools/frontier_t5_policy_lab_entitled_test.go
 
@@ -101,6 +103,7 @@ docs/evals/v3.22-frontier-t5-paid-activation.json
 docs/evals/v3.23-frontier-t6-paid-activation.json
 docs/evals/v3.24-frontier-t7-paid-activation.json
 docs/evals/v3.25-frontier-t8-paid-activation.json
+docs/evals/v3.26-frontier-t9-paid-activation.json
 
 # Paid release, signing, and operator control surfaces.
 .github/workflows/release-installers.yml

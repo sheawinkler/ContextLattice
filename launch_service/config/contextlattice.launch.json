@@ -2,7 +2,7 @@
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
   "release_lane": "distribution-neutral",
-  "launch_window": "ContextLattice v3.25 release wave: July 2026",
+  "launch_window": "ContextLattice v3.26 release wave: July 2026",
   "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.25.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v3.26.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.25.0",
-      "body": "ContextLattice v3.25.0 turns repeated, verified wins into reviewed skill candidates and makes decaying skills propose their own replacement before they become liabilities.\n\nHighlights:\n- resolve candidate evidence against persisted utility and session verification ledgers\n- keep discovery data separate from holdout evaluation\n- hand complete workflow material to Skill Foundry as one atomic, replay-safe transaction\n- require explicit operator approval for activation, replacement, retirement, and rollback\n- restore exact artifact identity through immutable receipts\n\nThe CLI remains the primary interface. Public core proposes; Operator and Enterprise govern. The gateway never runs a model, subprocess, filesystem mutation, git operation, network adapter, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.26.0",
+      "body": "ContextLattice v3.26.0 removes the cold-start ritual. Continuity Zero binds one unambiguous active mission to its packet, checkpoint, Agent Fit profile, preparation artifact, repository commit, provenance, risks, and next move.\n\nHighlights:\n- return one bounded, path-free continuity manifest through the CLI\n- abstain on ambiguous objectives instead of guessing\n- reject stale, mismatched, revoked, expired, or unsupported proof\n- keep governed delivery and workspace-preparation intents outside gateway execution\n- preserve immutable receipts, explicit approval, and exact rollback\n\nThe CLI remains the primary interface. Public core assembles; entitled runtimes govern external-adapter intents. The gateway never runs a model, subprocess, filesystem mutation, Git operation, network adapter, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Your agent should get better at the work, not merely better at remembering it.\n\nContextLattice v3.25.0 finds repeated verified wins, turns them into reviewable skill candidates, and catches decaying skills before stale behavior hardens into habit. Evidence stays attached. Activation stays human-governed. Rollback restores the exact artifact.\n\nMemory now compounds into capability.\n\nStart with the CLI: {docs_url}"
+      "body": "Open the agent. The mission is already there.\n\nContextLattice v3.26.0 binds the one unambiguous active objective to its packet, checkpoint, repository commit, provenance, risks, and next move. No transcript archaeology. No giant setup prompt. No path leakage. Ambiguity abstains instead of guessing.\n\nContinuity becomes the default.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.25.0 closes the loop between memory and capability.\n\nRepeated wins are no longer buried in transcripts. ContextLattice resolves them against persisted utility and verification evidence, separates discovery from holdout evaluation, and produces complete skill candidates for review. When a skill decays, it proposes replacement or retirement instead of silently poisoning future work.\n\nOperator and Enterprise add governed schedules, review, monitoring, activation, replacement, retirement, and exact-receipt rollback. ContextLattice remains the intelligence layer, not the harness: external workers execute; the gateway never runs a model, subprocess, filesystem mutation, git operation, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.26.0 makes continuity immediate.\n\nContinuity Zero assembles the exact active mission from durable evidence: objective, session packet, checkpoint, Agent Fit profile, preparation artifact, repository commit, provenance, risks, and next move. It returns one bounded manifest only when the evidence agrees. Ambiguity abstains. Stale or mismatched proof rejects.\n\nEntitled runtimes add governed delivery and workspace-preparation intents while external adapters remain the executors. ContextLattice remains the intelligence layer, not the harness: the gateway never runs a model, subprocess, filesystem mutation, Git operation, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

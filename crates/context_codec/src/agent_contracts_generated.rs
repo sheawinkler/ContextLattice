@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 51;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 52;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
@@ -55,6 +55,7 @@ pub const CONTEXT_POLICY_EVALUATION_V1: &str = "context_policy_evaluation.v1";
 pub const CONTEXT_PREP_V1: &str = "context_prep.v1";
 pub const CONTEXT_PREP_ARTIFACT_V1: &str = "context_prep_artifact.v1";
 pub const CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1: &str = "contextlattice_lifecycle_receipt.v1";
+pub const CONTINUITY_ZERO_V1: &str = "continuity_zero.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
 pub const CONTRADICTION_RESOLUTION_V1: &str = "contradiction_resolution.v1";
 pub const DECISION_CHANGE_V1: &str = "decision_change.v1";
@@ -158,6 +159,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_PREP_V1,
     CONTEXT_PREP_ARTIFACT_V1,
     CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
+    CONTINUITY_ZERO_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
     CONTRADICTION_RESOLUTION_V1,
     DECISION_CHANGE_V1,
@@ -474,6 +476,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
         payload_kind: "contextlattice_lifecycle_receipt",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTINUITY_ZERO_V1,
+        payload_kind: "path_free_fail_closed_zero_entry_continuity_manifest",
         contract_version: 1,
         required_output_mode: "json_object",
     },
