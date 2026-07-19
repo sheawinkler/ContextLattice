@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 36,
-  "updated_at": "2026-07-19T04:40:42Z",
+  "registry_version": 49,
+  "updated_at": "2026-07-19T11:47:45Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -542,7 +542,7 @@
       "required_output_mode": "json_object",
       "max_total_json_bytes": 180000,
       "max_string_bytes": 8000,
-      "max_list_items": 96,
+      "max_list_items": 128,
       "required_fields": [
         "ok",
         "service",
@@ -6317,12 +6317,51 @@
       "max_total_json_bytes": 262144,
       "max_string_bytes": 5000,
       "max_list_items": 128,
-      "required_fields": ["ok", "schema_id", "operation", "result", "network_calls", "automatic_model_execution", "format_contract"],
-      "field_types": {"ok": "bool", "schema_id": "string", "operation": "string", "result": "object", "network_calls": "int", "automatic_model_execution": "bool", "format_contract": "object"},
-      "required_fields_by_path": {"format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]},
-      "required_false_paths": ["automatic_model_execution"],
-      "required_string_contains": {"schema_id": "frontier_t6_agent_fit.v1", "format_contract.schema_id": "frontier_t6_agent_fit.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt", "messages", "tool_calls"],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "result",
+        "network_calls",
+        "automatic_model_execution",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "operation": "string",
+        "result": "object",
+        "network_calls": "int",
+        "automatic_model_execution": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "automatic_model_execution"
+      ],
+      "required_string_contains": {
+        "schema_id": "frontier_t6_agent_fit.v1",
+        "format_contract.schema_id": "frontier_t6_agent_fit.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
       "forbidden_scope": "recursive"
     },
     "async_steering_event.v1": {
@@ -6333,11 +6372,68 @@
       "max_total_json_bytes": 65536,
       "max_string_bytes": 5000,
       "max_list_items": 32,
-      "required_fields": ["schema_id", "version", "sequence", "cursor", "event_id", "scope", "kind", "message", "suggested_action", "injection_boundary", "fingerprint", "provenance", "created_at", "expires_at", "previous_hash", "event_hash"],
-      "field_types": {"schema_id": "string", "version": "int", "sequence": "int", "cursor": "string", "event_id": "string", "scope": "object", "kind": "string", "message": "string", "suggested_action": "string", "injection_boundary": "string", "fingerprint": "string", "provenance": "object", "created_at": "string", "expires_at": "string", "previous_hash": "string", "event_hash": "string"},
-      "required_fields_by_path": {"scope": ["workspace_id", "project", "session_id"], "provenance": ["source", "source_id", "source_generation", "content_digest", "authorization_digest", "observed_at", "fresh_until"]},
-      "required_string_contains": {"schema_id": "async_steering_event.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "sequence",
+        "cursor",
+        "event_id",
+        "scope",
+        "kind",
+        "message",
+        "suggested_action",
+        "injection_boundary",
+        "fingerprint",
+        "provenance",
+        "created_at",
+        "expires_at",
+        "previous_hash",
+        "event_hash"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "sequence": "int",
+        "cursor": "string",
+        "event_id": "string",
+        "scope": "object",
+        "kind": "string",
+        "message": "string",
+        "suggested_action": "string",
+        "injection_boundary": "string",
+        "fingerprint": "string",
+        "provenance": "object",
+        "created_at": "string",
+        "expires_at": "string",
+        "previous_hash": "string",
+        "event_hash": "string"
+      },
+      "required_fields_by_path": {
+        "scope": [
+          "workspace_id",
+          "project",
+          "session_id"
+        ],
+        "provenance": [
+          "source",
+          "source_id",
+          "source_generation",
+          "content_digest",
+          "authorization_digest",
+          "observed_at",
+          "fresh_until"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "async_steering_event.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt"
+      ],
       "forbidden_scope": "recursive"
     },
     "async_steering_delivery.v1": {
@@ -6348,10 +6444,46 @@
       "max_total_json_bytes": 32768,
       "max_string_bytes": 3000,
       "max_list_items": 16,
-      "required_fields": ["schema_id", "version", "delivery_id", "event_id", "event_sequence", "scope_digest", "subscriber_digest", "harness_id", "boundary", "status", "attempts", "created_at", "updated_at"],
-      "field_types": {"schema_id": "string", "version": "int", "delivery_id": "string", "event_id": "string", "event_sequence": "int", "scope_digest": "string", "subscriber_digest": "string", "harness_id": "string", "boundary": "string", "status": "string", "attempts": "int", "created_at": "string", "updated_at": "string"},
-      "required_string_contains": {"schema_id": "async_steering_delivery.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "delivery_id",
+        "event_id",
+        "event_sequence",
+        "scope_digest",
+        "subscriber_digest",
+        "harness_id",
+        "boundary",
+        "status",
+        "attempts",
+        "created_at",
+        "updated_at"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "delivery_id": "string",
+        "event_id": "string",
+        "event_sequence": "int",
+        "scope_digest": "string",
+        "subscriber_digest": "string",
+        "harness_id": "string",
+        "boundary": "string",
+        "status": "string",
+        "attempts": "int",
+        "created_at": "string",
+        "updated_at": "string"
+      },
+      "required_string_contains": {
+        "schema_id": "async_steering_delivery.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt"
+      ],
       "forbidden_scope": "recursive"
     },
     "async_steering_stream_item.v1": {
@@ -6362,13 +6494,70 @@
       "max_total_json_bytes": 262144,
       "max_string_bytes": 5000,
       "max_list_items": 64,
-      "required_fields": ["ok", "schema_id", "delivery_id", "claim_token", "cursor", "event", "injection_performed", "requires_explicit_agent_use", "format_contract"],
-      "field_types": {"ok": "bool", "schema_id": "string", "delivery_id": "string", "claim_token": "string", "cursor": "string", "event": "object", "injection_performed": "bool", "requires_explicit_agent_use": "bool", "format_contract": "object"},
-      "required_fields_by_path": {"event": ["schema_id", "event_id", "cursor", "scope", "message", "suggested_action", "injection_boundary", "provenance"], "format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]},
-      "required_true_paths": ["ok", "requires_explicit_agent_use"],
-      "required_false_paths": ["injection_performed"],
-      "required_string_contains": {"schema_id": "async_steering_stream_item.v1", "event.schema_id": "async_steering_event.v1", "format_contract.schema_id": "async_steering_stream_item.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt", "messages", "tool_calls"],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "delivery_id",
+        "claim_token",
+        "cursor",
+        "event",
+        "injection_performed",
+        "requires_explicit_agent_use",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "delivery_id": "string",
+        "claim_token": "string",
+        "cursor": "string",
+        "event": "object",
+        "injection_performed": "bool",
+        "requires_explicit_agent_use": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "event": [
+          "schema_id",
+          "event_id",
+          "cursor",
+          "scope",
+          "message",
+          "suggested_action",
+          "injection_boundary",
+          "provenance"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "ok",
+        "requires_explicit_agent_use"
+      ],
+      "required_false_paths": [
+        "injection_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "async_steering_stream_item.v1",
+        "event.schema_id": "async_steering_event.v1",
+        "format_contract.schema_id": "async_steering_stream_item.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
       "forbidden_scope": "recursive"
     },
     "runner_selection.v1": {
@@ -6379,13 +6568,75 @@
       "max_total_json_bytes": 131072,
       "max_string_bytes": 4000,
       "max_list_items": 128,
-      "required_fields": ["schema_id", "version", "receipt_id", "kind", "task_class", "decision", "confidence", "sample_floor", "constraints_digest", "candidates", "reasons", "recommended_surface", "advisory_only", "activation_allowed", "execution_performed", "network_calls", "created_at", "format_contract"],
-      "field_types": {"schema_id": "string", "version": "int", "receipt_id": "string", "kind": "string", "task_class": "string", "decision": "string", "confidence": "string", "sample_floor": "int", "constraints_digest": "string", "candidates": "list[object]", "reasons": "list[string]", "recommended_surface": "string", "advisory_only": "bool", "activation_allowed": "bool", "execution_performed": "bool", "network_calls": "int", "created_at": "string", "format_contract": "object"},
-      "required_fields_by_path": {"format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]},
-      "required_true_paths": ["advisory_only"],
-      "required_false_paths": ["activation_allowed", "execution_performed"],
-      "required_string_contains": {"schema_id": "runner_selection.v1", "format_contract.schema_id": "runner_selection.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "receipt_id",
+        "kind",
+        "task_class",
+        "decision",
+        "confidence",
+        "sample_floor",
+        "constraints_digest",
+        "candidates",
+        "reasons",
+        "recommended_surface",
+        "advisory_only",
+        "activation_allowed",
+        "execution_performed",
+        "network_calls",
+        "created_at",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "receipt_id": "string",
+        "kind": "string",
+        "task_class": "string",
+        "decision": "string",
+        "confidence": "string",
+        "sample_floor": "int",
+        "constraints_digest": "string",
+        "candidates": "list[object]",
+        "reasons": "list[string]",
+        "recommended_surface": "string",
+        "advisory_only": "bool",
+        "activation_allowed": "bool",
+        "execution_performed": "bool",
+        "network_calls": "int",
+        "created_at": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "advisory_only"
+      ],
+      "required_false_paths": [
+        "activation_allowed",
+        "execution_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "runner_selection.v1",
+        "format_contract.schema_id": "runner_selection.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt"
+      ],
       "forbidden_scope": "recursive"
     },
     "model_selection.v1": {
@@ -6396,13 +6647,75 @@
       "max_total_json_bytes": 131072,
       "max_string_bytes": 4000,
       "max_list_items": 128,
-      "required_fields": ["schema_id", "version", "receipt_id", "kind", "task_class", "decision", "confidence", "sample_floor", "constraints_digest", "candidates", "reasons", "recommended_surface", "advisory_only", "activation_allowed", "execution_performed", "network_calls", "created_at", "format_contract"],
-      "field_types": {"schema_id": "string", "version": "int", "receipt_id": "string", "kind": "string", "task_class": "string", "decision": "string", "confidence": "string", "sample_floor": "int", "constraints_digest": "string", "candidates": "list[object]", "reasons": "list[string]", "recommended_surface": "string", "advisory_only": "bool", "activation_allowed": "bool", "execution_performed": "bool", "network_calls": "int", "created_at": "string", "format_contract": "object"},
-      "required_fields_by_path": {"format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]},
-      "required_true_paths": ["advisory_only"],
-      "required_false_paths": ["activation_allowed", "execution_performed"],
-      "required_string_contains": {"schema_id": "model_selection.v1", "format_contract.schema_id": "model_selection.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "receipt_id",
+        "kind",
+        "task_class",
+        "decision",
+        "confidence",
+        "sample_floor",
+        "constraints_digest",
+        "candidates",
+        "reasons",
+        "recommended_surface",
+        "advisory_only",
+        "activation_allowed",
+        "execution_performed",
+        "network_calls",
+        "created_at",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "receipt_id": "string",
+        "kind": "string",
+        "task_class": "string",
+        "decision": "string",
+        "confidence": "string",
+        "sample_floor": "int",
+        "constraints_digest": "string",
+        "candidates": "list[object]",
+        "reasons": "list[string]",
+        "recommended_surface": "string",
+        "advisory_only": "bool",
+        "activation_allowed": "bool",
+        "execution_performed": "bool",
+        "network_calls": "int",
+        "created_at": "string",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "advisory_only"
+      ],
+      "required_false_paths": [
+        "activation_allowed",
+        "execution_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "model_selection.v1",
+        "format_contract.schema_id": "model_selection.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt"
+      ],
       "forbidden_scope": "recursive"
     },
     "agent_context_profile.v1": {
@@ -6413,10 +6726,28 @@
       "max_total_json_bytes": 131072,
       "max_string_bytes": 5000,
       "max_list_items": 128,
-      "required_fields": ["schema_id", "version", "agent_id", "profile_digest"],
-      "field_types": {"schema_id": "string", "version": "int", "agent_id": "string", "profile_digest": "string"},
-      "required_string_contains": {"schema_id": "agent_context_profile.v1"},
-      "forbidden_fields": ["api_key", "password", "authorization", "private_key", "raw_prompt"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "agent_id",
+        "profile_digest"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "agent_id": "string",
+        "profile_digest": "string"
+      },
+      "required_string_contains": {
+        "schema_id": "agent_context_profile.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt"
+      ],
       "forbidden_scope": "recursive"
     },
     "context_prep.v1": {
@@ -6427,11 +6758,63 @@
       "max_total_json_bytes": 131072,
       "max_string_bytes": 5000,
       "max_list_items": 128,
-      "required_fields": ["schema_id", "version", "prep_id", "dedupe_key", "scope", "task_id", "next_action_class", "prediction_confidence", "effective_profile_digest", "source_generation", "authorization_digest", "approval_digest", "provenance", "status", "attempts", "created_at", "updated_at", "expires_at"],
-      "field_types": {"schema_id": "string", "version": "int", "prep_id": "string", "dedupe_key": "string", "scope": "object", "task_id": "string", "next_action_class": "string", "prediction_confidence": "number", "effective_profile_digest": "string", "source_generation": "string", "authorization_digest": "string", "approval_digest": "string", "provenance": "object", "status": "string", "attempts": "int", "created_at": "string", "updated_at": "string", "expires_at": "string"},
-      "required_fields_by_path": {"scope": ["workspace_id", "project"]},
-      "required_string_contains": {"schema_id": "context_prep.v1"},
-      "forbidden_fields": ["api_key", "password", "private_key", "raw_prompt", "messages", "tool_calls"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "prep_id",
+        "dedupe_key",
+        "scope",
+        "task_id",
+        "next_action_class",
+        "prediction_confidence",
+        "effective_profile_digest",
+        "source_generation",
+        "authorization_digest",
+        "approval_digest",
+        "provenance",
+        "status",
+        "attempts",
+        "created_at",
+        "updated_at",
+        "expires_at"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "prep_id": "string",
+        "dedupe_key": "string",
+        "scope": "object",
+        "task_id": "string",
+        "next_action_class": "string",
+        "prediction_confidence": "number",
+        "effective_profile_digest": "string",
+        "source_generation": "string",
+        "authorization_digest": "string",
+        "approval_digest": "string",
+        "provenance": "object",
+        "status": "string",
+        "attempts": "int",
+        "created_at": "string",
+        "updated_at": "string",
+        "expires_at": "string"
+      },
+      "required_fields_by_path": {
+        "scope": [
+          "workspace_id",
+          "project"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "context_prep.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "private_key",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
       "forbidden_scope": "recursive"
     },
     "context_prep_artifact.v1": {
@@ -6442,10 +6825,43 @@
       "max_total_json_bytes": 131072,
       "max_string_bytes": 5000,
       "max_list_items": 128,
-      "required_fields": ["schema_id", "version", "artifact_id", "context_pack_digest", "retrieval_receipt_digest", "effective_profile_digest", "source_generation", "authorization_digest", "evidence_refs", "created_at", "expires_at"],
-      "field_types": {"schema_id": "string", "version": "int", "artifact_id": "string", "context_pack_digest": "string", "retrieval_receipt_digest": "string", "effective_profile_digest": "string", "source_generation": "string", "authorization_digest": "string", "evidence_refs": "list[object]", "created_at": "string", "expires_at": "string"},
-      "required_string_contains": {"schema_id": "context_prep_artifact.v1"},
-      "forbidden_fields": ["api_key", "password", "private_key", "raw_prompt", "messages", "tool_calls"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "artifact_id",
+        "context_pack_digest",
+        "retrieval_receipt_digest",
+        "effective_profile_digest",
+        "source_generation",
+        "authorization_digest",
+        "evidence_refs",
+        "created_at",
+        "expires_at"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "artifact_id": "string",
+        "context_pack_digest": "string",
+        "retrieval_receipt_digest": "string",
+        "effective_profile_digest": "string",
+        "source_generation": "string",
+        "authorization_digest": "string",
+        "evidence_refs": "list[object]",
+        "created_at": "string",
+        "expires_at": "string"
+      },
+      "required_string_contains": {
+        "schema_id": "context_prep_artifact.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "private_key",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
       "forbidden_scope": "recursive"
     },
     "frontier_t6_agent_fit_state.v1": {
@@ -6456,10 +6872,41 @@
       "max_total_json_bytes": 8388608,
       "max_string_bytes": 5000,
       "max_list_items": 4096,
-      "required_fields": ["schema_id", "version", "steering_events", "steering_anchor_sequence", "last_steering_sequence", "steering_deliveries", "profiles", "context_preps", "updated_at", "state_hash"],
-      "field_types": {"schema_id": "string", "version": "int", "steering_events": "list[object]", "steering_anchor_sequence": "int", "last_steering_sequence": "int", "steering_deliveries": "object", "profiles": "object", "context_preps": "object", "updated_at": "string", "state_hash": "string"},
-      "required_string_contains": {"schema_id": "frontier_t6_agent_fit_state.v1"},
-      "forbidden_fields": ["api_key", "password", "private_key", "raw_prompt", "messages", "tool_calls"],
+      "required_fields": [
+        "schema_id",
+        "version",
+        "steering_events",
+        "steering_anchor_sequence",
+        "last_steering_sequence",
+        "steering_deliveries",
+        "profiles",
+        "context_preps",
+        "updated_at",
+        "state_hash"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "steering_events": "list[object]",
+        "steering_anchor_sequence": "int",
+        "last_steering_sequence": "int",
+        "steering_deliveries": "object",
+        "profiles": "object",
+        "context_preps": "object",
+        "updated_at": "string",
+        "state_hash": "string"
+      },
+      "required_string_contains": {
+        "schema_id": "frontier_t6_agent_fit_state.v1"
+      },
+      "forbidden_fields": [
+        "api_key",
+        "password",
+        "private_key",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
       "forbidden_scope": "recursive"
     },
     "frontier_t6_agent_fit_status.v1": {
@@ -6470,12 +6917,1480 @@
       "max_total_json_bytes": 65536,
       "max_string_bytes": 4000,
       "max_list_items": 64,
-      "required_fields": ["ok", "schema_id", "enabled", "steering_events", "steering_deliveries", "profiles", "context_preps", "last_steering_sequence", "replay_floor", "updated_at", "state_hash", "limits", "execution_owner", "gateway_runner_execution", "automatic_model_execution", "network_calls", "format_contract"],
-      "field_types": {"ok": "bool", "schema_id": "string", "enabled": "bool", "steering_events": "int", "steering_deliveries": "int", "profiles": "int", "context_preps": "int", "last_steering_sequence": "int", "replay_floor": "string", "updated_at": "string", "state_hash": "string", "limits": "object", "execution_owner": "string", "gateway_runner_execution": "bool", "automatic_model_execution": "bool", "network_calls": "int", "format_contract": "object"},
-      "required_fields_by_path": {"format_contract": ["registry_id", "registry_version", "schema_id", "contract_version", "required_output_mode", "validator", "validation"]},
-      "required_false_paths": ["gateway_runner_execution", "automatic_model_execution"],
-      "required_string_contains": {"schema_id": "frontier_t6_agent_fit_status.v1", "format_contract.schema_id": "frontier_t6_agent_fit_status.v1"},
-      "forbidden_fields": ["path", "api_key", "password", "authorization", "private_key", "raw_prompt", "messages", "tool_calls"],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "enabled",
+        "steering_events",
+        "steering_deliveries",
+        "profiles",
+        "context_preps",
+        "last_steering_sequence",
+        "replay_floor",
+        "updated_at",
+        "state_hash",
+        "limits",
+        "execution_owner",
+        "gateway_runner_execution",
+        "automatic_model_execution",
+        "network_calls",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "enabled": "bool",
+        "steering_events": "int",
+        "steering_deliveries": "int",
+        "profiles": "int",
+        "context_preps": "int",
+        "last_steering_sequence": "int",
+        "replay_floor": "string",
+        "updated_at": "string",
+        "state_hash": "string",
+        "limits": "object",
+        "execution_owner": "string",
+        "gateway_runner_execution": "bool",
+        "automatic_model_execution": "bool",
+        "network_calls": "int",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "gateway_runner_execution",
+        "automatic_model_execution"
+      ],
+      "required_string_contains": {
+        "schema_id": "frontier_t6_agent_fit_status.v1",
+        "format_contract.schema_id": "frontier_t6_agent_fit_status.v1"
+      },
+      "forbidden_fields": [
+        "path",
+        "api_key",
+        "password",
+        "authorization",
+        "private_key",
+        "raw_prompt",
+        "messages",
+        "tool_calls"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_passport_diff_view.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_deterministic_redacted_context_passport_diff_view",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unverified_passports_and_return_no_diff_without_persistence_gateway_model_or_subprocess_execution",
+      "max_total_json_bytes": 262144,
+      "max_string_bytes": 4096,
+      "max_list_items": 64,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "base_passport_id",
+        "target_passport_id",
+        "lineage_id",
+        "lineage_valid",
+        "structural_diff",
+        "summary",
+        "objective",
+        "scope",
+        "claims",
+        "evidence",
+        "provenance",
+        "redaction",
+        "bounded",
+        "persisted",
+        "network_calls",
+        "model_calls",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "base_passport_id": "string",
+        "target_passport_id": "string",
+        "lineage_id": "string",
+        "lineage_valid": "bool",
+        "structural_diff": "object",
+        "summary": "list[string]",
+        "objective": "object",
+        "scope": "object",
+        "claims": "list[object]",
+        "evidence": "list[object]",
+        "provenance": "object",
+        "redaction": "object",
+        "bounded": "bool",
+        "persisted": "bool",
+        "network_calls": "int",
+        "model_calls": "int",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "objective": [
+          "before",
+          "after"
+        ],
+        "scope": [
+          "before",
+          "after"
+        ],
+        "provenance": [
+          "base_digest",
+          "target_digest",
+          "issuer_key_id",
+          "deterministic"
+        ],
+        "redaction": [
+          "applied",
+          "secret_keys",
+          "tokens",
+          "paths"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "bounded",
+        "provenance.deterministic"
+      ],
+      "required_false_paths": [
+        "persisted"
+      ],
+      "required_string_contains": {
+        "schema_id": "context_passport_diff_view.v1",
+        "format_contract.schema_id": "context_passport_diff_view.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "collaborative_context_grant.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_bounded_least_privilege_collaborative_context_grant",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unsigned_expired_overbroad_stale_subject_or_delegation_escalating_grants_without_execution",
+      "max_total_json_bytes": 131072,
+      "max_string_bytes": 4096,
+      "max_list_items": 32,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "grant_id",
+        "subject",
+        "project",
+        "topics",
+        "data_classes",
+        "actions",
+        "purpose",
+        "usage_limit",
+        "delegation_depth",
+        "approvers",
+        "key_epoch",
+        "recipient_key_id",
+        "not_before",
+        "expires_at",
+        "created_at",
+        "issuer",
+        "grant_digest",
+        "signature",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "grant_id": "string",
+        "subject": "object",
+        "project": "string",
+        "topics": "list[string]",
+        "data_classes": "list[string]",
+        "actions": "list[string]",
+        "purpose": "string",
+        "usage_limit": "int",
+        "parent_grant_id": "string",
+        "ancestor_grant_ids": "list[string]",
+        "delegation_depth": "int",
+        "approvers": "list[string]",
+        "key_epoch": "int",
+        "recipient_key_id": "string",
+        "not_before": "string",
+        "expires_at": "string",
+        "created_at": "string",
+        "issuer": "object",
+        "grant_digest": "string",
+        "signature": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "subject": [
+          "subject_id",
+          "roles",
+          "workspace_id",
+          "snapshot_digest",
+          "observed_at"
+        ],
+        "issuer": [
+          "instance_id",
+          "signing_key_id",
+          "signing_public_key"
+        ],
+        "signature": [
+          "algorithm",
+          "key_id",
+          "value"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "min_items": {
+        "subject.roles": 1,
+        "topics": 1,
+        "data_classes": 1,
+        "actions": 1,
+        "approvers": 1
+      },
+      "required_string_contains": {
+        "schema_id": "collaborative_context_grant.v1",
+        "format_contract.schema_id": "collaborative_context_grant.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "collaborative_context_grant_decision.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_digest_bound_collaborative_context_grant_decision",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "deny_when_signature_scope_subject_epoch_time_revocation_or_usage_cannot_be_verified_without_gateway_model_subprocess_or_network_execution",
+      "max_total_json_bytes": 65536,
+      "max_string_bytes": 4096,
+      "max_list_items": 64,
+      "required_fields": [
+        "schema_id",
+        "grant_id",
+        "grant_digest",
+        "allowed",
+        "reasons",
+        "capability_digest",
+        "remaining_uses",
+        "network_calls",
+        "execution_performed",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "grant_id": "string",
+        "grant_digest": "string",
+        "allowed": "bool",
+        "reasons": "list[string]",
+        "capability_digest": "string",
+        "remaining_uses": "int",
+        "network_calls": "int",
+        "execution_performed": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "execution_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "collaborative_context_grant_decision.v1",
+        "format_contract.schema_id": "collaborative_context_grant_decision.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "collaborative_context_grant_revocation.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_digest_only_collaborative_context_grant_revocation_tombstone",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unsigned_tampered_or_cross_project_revocations_and_record_only_a_bounded_local_tombstone_with_external_transport_ownership",
+      "max_total_json_bytes": 65536,
+      "max_string_bytes": 4096,
+      "max_list_items": 16,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "revocation_id",
+        "grant_id",
+        "grant_digest",
+        "project",
+        "subject_snapshot_digest",
+        "key_epoch",
+        "revoked_at",
+        "reason_digest",
+        "issuer",
+        "revocation_digest",
+        "signature",
+        "tombstone_only",
+        "transport_owned_by_contextlattice",
+        "transport_executed",
+        "private_key_exported",
+        "ordinary_memory_mutated",
+        "network_calls",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "revocation_id": "string",
+        "grant_id": "string",
+        "grant_digest": "string",
+        "project": "string",
+        "subject_snapshot_digest": "string",
+        "key_epoch": "int",
+        "revoked_at": "string",
+        "reason_digest": "string",
+        "issuer": "object",
+        "revocation_digest": "string",
+        "signature": "object",
+        "tombstone_only": "bool",
+        "transport_owned_by_contextlattice": "bool",
+        "transport_executed": "bool",
+        "private_key_exported": "bool",
+        "ordinary_memory_mutated": "bool",
+        "network_calls": "int",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "issuer": [
+          "instance_id",
+          "signing_key_id",
+          "signing_public_key"
+        ],
+        "signature": [
+          "algorithm",
+          "key_id",
+          "value"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "tombstone_only"
+      ],
+      "required_false_paths": [
+        "transport_owned_by_contextlattice",
+        "transport_executed",
+        "private_key_exported",
+        "ordinary_memory_mutated"
+      ],
+      "required_string_contains": {
+        "schema_id": "collaborative_context_grant_revocation.v1",
+        "format_contract.schema_id": "collaborative_context_grant_revocation.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "reason",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "provenance.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_redacted_digest_only_external_import_provenance",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_missing_consent_license_digests_relative_locators_or_redaction_manifests_without_reading_or_importing_source_content",
+      "max_total_json_bytes": 65536,
+      "max_string_bytes": 4096,
+      "max_list_items": 32,
+      "required_fields": [
+        "schema_id",
+        "source_alias",
+        "relative_locator",
+        "source_digest",
+        "content_digest",
+        "importer_digest",
+        "config_digest",
+        "transformation_manifest",
+        "redaction_manifest",
+        "classification",
+        "license",
+        "consent",
+        "deletion_locator",
+        "instruction_shaped"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "source_alias": "string",
+        "relative_locator": "string",
+        "source_digest": "string",
+        "content_digest": "string",
+        "importer_digest": "string",
+        "config_digest": "string",
+        "transformation_manifest": "object",
+        "redaction_manifest": "object",
+        "classification": "string",
+        "license": "string",
+        "consent": "bool",
+        "deletion_locator": "string",
+        "instruction_shaped": "bool"
+      },
+      "required_true_paths": [
+        "consent"
+      ],
+      "required_string_contains": {
+        "schema_id": "provenance.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_content",
+        "source_content",
+        "document_body",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "import_plan.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_redacted_digest_only_external_worker_import_plan",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_a_deterministic_plan_only_without_gateway_model_subprocess_execution_or_ordinary_memory_mutation",
+      "max_total_json_bytes": 1048576,
+      "max_string_bytes": 4096,
+      "max_list_items": 256,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "plan_id",
+        "project",
+        "batch_size",
+        "batch_count",
+        "mappings",
+        "plan_digest",
+        "warnings",
+        "atomic_batches",
+        "resumable",
+        "execution_owner",
+        "execution_performed",
+        "network_calls",
+        "ordinary_memory_mutated",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "plan_id": "string",
+        "project": "string",
+        "batch_size": "int",
+        "batch_count": "int",
+        "mappings": "list[object]",
+        "plan_digest": "string",
+        "warnings": "list[string]",
+        "atomic_batches": "bool",
+        "resumable": "bool",
+        "execution_owner": "string",
+        "execution_performed": "bool",
+        "network_calls": "int",
+        "ordinary_memory_mutated": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "atomic_batches",
+        "resumable"
+      ],
+      "required_false_paths": [
+        "execution_performed",
+        "ordinary_memory_mutated"
+      ],
+      "required_string_contains": {
+        "schema_id": "import_plan.v1",
+        "execution_owner": "external_import_worker",
+        "format_contract.schema_id": "import_plan.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_content",
+        "source_content",
+        "document_body",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "import_receipt.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_atomic_resumable_external_import_receipt",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_out_of_order_conflicting_or_digest_mismatched_receipts_without_gateway_memory_mutation_or_hidden_execution",
+      "max_total_json_bytes": 262144,
+      "max_string_bytes": 4096,
+      "max_list_items": 32,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "receipt_id",
+        "plan_id",
+        "plan_digest",
+        "batch_index",
+        "batch_count",
+        "status",
+        "mappings",
+        "resume_batch_index",
+        "external_execution_digest",
+        "execution_owner",
+        "recorded_at",
+        "receipt_digest",
+        "atomic",
+        "gateway_mutated_memory",
+        "network_calls",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "receipt_id": "string",
+        "plan_id": "string",
+        "plan_digest": "string",
+        "batch_index": "int",
+        "batch_count": "int",
+        "status": "string",
+        "mappings": "list[object]",
+        "resume_batch_index": "int",
+        "external_execution_digest": "string",
+        "execution_owner": "string",
+        "recorded_at": "string",
+        "receipt_digest": "string",
+        "atomic": "bool",
+        "gateway_mutated_memory": "bool",
+        "network_calls": "int",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "atomic"
+      ],
+      "required_false_paths": [
+        "gateway_mutated_memory"
+      ],
+      "required_string_contains": {
+        "schema_id": "import_receipt.v1",
+        "execution_owner": "external_import_worker",
+        "format_contract.schema_id": "import_receipt.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_content",
+        "source_content",
+        "document_body",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_continuation_manifest.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_bounded_digest_only_portable_context_continuation_manifest",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unsigned_expired_replayed_wrong_recipient_or_non_digest_references_without_transport_gateway_model_or_subprocess_execution",
+      "max_total_json_bytes": 131072,
+      "max_string_bytes": 4096,
+      "max_list_items": 64,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "manifest_id",
+        "project",
+        "passport_id",
+        "passport_digest",
+        "lineage_digest",
+        "checkpoint_digest",
+        "lifecycle_receipt_digest",
+        "unresolved_obligation_digests",
+        "repository_constraint_digest",
+        "destination_session_digest",
+        "recipient_key_id",
+        "grant_id",
+        "grant_digest",
+        "transport",
+        "created_at",
+        "expires_at",
+        "issuer",
+        "manifest_digest",
+        "signature",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "manifest_id": "string",
+        "project": "string",
+        "passport_id": "string",
+        "passport_digest": "string",
+        "lineage_digest": "string",
+        "checkpoint_digest": "string",
+        "lifecycle_receipt_digest": "string",
+        "unresolved_obligation_digests": "list[string]",
+        "repository_constraint_digest": "string",
+        "destination_session_digest": "string",
+        "recipient_key_id": "string",
+        "grant_id": "string",
+        "grant_digest": "string",
+        "transport": "string",
+        "created_at": "string",
+        "expires_at": "string",
+        "issuer": "object",
+        "manifest_digest": "string",
+        "signature": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "issuer": [
+          "instance_id",
+          "signing_key_id",
+          "signing_public_key"
+        ],
+        "signature": [
+          "algorithm",
+          "key_id",
+          "value"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_string_contains": {
+        "schema_id": "context_continuation_manifest.v1",
+        "format_contract.schema_id": "context_continuation_manifest.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "checkpoint",
+        "lifecycle_receipt",
+        "unresolved_obligations",
+        "repository_constraints",
+        "destination_session",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_continuation_payload.v1": {
+      "contract_version": 1,
+      "payload_kind": "signed_bounded_redacted_digest_only_mesh_continuation_payload",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unsigned_expired_oversized_or_non_digest_payloads_and_require_mesh_encryption_without_network_delivery_or_private_key_export",
+      "max_total_json_bytes": 262144,
+      "max_string_bytes": 4096,
+      "max_list_items": 64,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "envelope_id",
+        "project",
+        "created_at",
+        "expires_at",
+        "sender",
+        "mesh_grant_id",
+        "recipient_key_id",
+        "manifest",
+        "grant",
+        "manifest_digest",
+        "grant_digest",
+        "payload_digest",
+        "signature",
+        "bounded",
+        "redacted",
+        "mesh_encryption_required",
+        "plaintext_exported",
+        "delivery_performed",
+        "transport_owned_by_contextlattice",
+        "private_key_exported",
+        "network_calls"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "envelope_id": "string",
+        "project": "string",
+        "created_at": "string",
+        "expires_at": "string",
+        "sender": "object",
+        "mesh_grant_id": "string",
+        "recipient_key_id": "string",
+        "manifest": "object",
+        "grant": "object",
+        "manifest_digest": "string",
+        "grant_digest": "string",
+        "payload_digest": "string",
+        "signature": "object",
+        "bounded": "bool",
+        "redacted": "bool",
+        "mesh_encryption_required": "bool",
+        "plaintext_exported": "bool",
+        "delivery_performed": "bool",
+        "transport_owned_by_contextlattice": "bool",
+        "private_key_exported": "bool",
+        "network_calls": "int"
+      },
+      "required_fields_by_path": {
+        "sender": [
+          "instance_id",
+          "signing_key_id",
+          "signing_public_key",
+          "mesh_key_id",
+          "mesh_recipient"
+        ],
+        "manifest": [
+          "schema_id",
+          "version",
+          "manifest_id",
+          "project",
+          "passport_id",
+          "passport_digest",
+          "lineage_digest",
+          "checkpoint_digest",
+          "lifecycle_receipt_digest",
+          "unresolved_obligation_digests",
+          "repository_constraint_digest",
+          "destination_session_digest",
+          "recipient_key_id",
+          "grant_id",
+          "grant_digest",
+          "transport",
+          "created_at",
+          "expires_at",
+          "issuer",
+          "manifest_digest",
+          "signature"
+        ],
+        "grant": [
+          "schema_id",
+          "version",
+          "grant_id",
+          "subject",
+          "project",
+          "topics",
+          "data_classes",
+          "actions",
+          "purpose",
+          "usage_limit",
+          "delegation_depth",
+          "approvers",
+          "key_epoch",
+          "recipient_key_id",
+          "not_before",
+          "expires_at",
+          "created_at",
+          "issuer",
+          "grant_digest",
+          "signature"
+        ],
+        "signature": [
+          "algorithm",
+          "key_id",
+          "value"
+        ]
+      },
+      "required_true_paths": [
+        "bounded",
+        "redacted",
+        "mesh_encryption_required"
+      ],
+      "required_false_paths": [
+        "plaintext_exported",
+        "delivery_performed",
+        "transport_owned_by_contextlattice",
+        "private_key_exported"
+      ],
+      "required_string_contains": {
+        "schema_id": "context_continuation_payload.v1",
+        "manifest.schema_id": "context_continuation_manifest.v1",
+        "grant.schema_id": "collaborative_context_grant.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "checkpoint",
+        "lifecycle_receipt",
+        "unresolved_obligations",
+        "repository_constraints",
+        "destination_session",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_continuation_envelope.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_transport_neutral_encrypted_mesh_continuation_envelope",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_inactive_grants_wrong_recipients_oversized_ciphertext_or_invalid_digests_and_never_deliver_over_a_network_or_export_private_keys",
+      "max_total_json_bytes": 700000,
+      "max_string_bytes": 524288,
+      "max_list_items": 64,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "envelope_id",
+        "project",
+        "manifest_id",
+        "manifest_digest",
+        "grant_id",
+        "grant_digest",
+        "mesh_grant_id",
+        "recipient_key_id",
+        "created_at",
+        "expires_at",
+        "sender",
+        "encryption",
+        "ciphertext",
+        "ciphertext_bytes",
+        "ciphertext_digest",
+        "envelope_digest",
+        "signature",
+        "network_calls",
+        "delivery_performed",
+        "transport_owner",
+        "private_key_exported",
+        "ordinary_memory_mutated",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "envelope_id": "string",
+        "project": "string",
+        "manifest_id": "string",
+        "manifest_digest": "string",
+        "grant_id": "string",
+        "grant_digest": "string",
+        "mesh_grant_id": "string",
+        "recipient_key_id": "string",
+        "created_at": "string",
+        "expires_at": "string",
+        "sender": "object",
+        "encryption": "object",
+        "ciphertext": "string",
+        "ciphertext_bytes": "int",
+        "ciphertext_digest": "string",
+        "envelope_digest": "string",
+        "signature": "object",
+        "network_calls": "int",
+        "delivery_performed": "bool",
+        "transport_owner": "string",
+        "private_key_exported": "bool",
+        "ordinary_memory_mutated": "bool",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "sender": [
+          "instance_id",
+          "signing_key_id",
+          "signing_public_key",
+          "mesh_key_id",
+          "mesh_recipient"
+        ],
+        "encryption": [
+          "format",
+          "recipient_type",
+          "key_agreement",
+          "payload_cipher",
+          "multi_recipient"
+        ],
+        "signature": [
+          "algorithm",
+          "key_id",
+          "value"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_false_paths": [
+        "delivery_performed",
+        "private_key_exported",
+        "ordinary_memory_mutated"
+      ],
+      "required_string_contains": {
+        "schema_id": "context_continuation_envelope.v1",
+        "transport_owner": "external_adapter",
+        "encryption.format": "age-encryption.org/v1",
+        "encryption.recipient_type": "X25519",
+        "encryption.key_agreement": "X25519",
+        "encryption.payload_cipher": "ChaCha20-Poly1305",
+        "format_contract.schema_id": "context_continuation_envelope.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "context_continuation_reconciliation.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_dry_run_portable_context_continuation_reconciliation",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "return_bounded_findings_only_without_transport_import_gateway_model_or_subprocess_execution_and_without_ordinary_memory_mutation",
+      "max_total_json_bytes": 65536,
+      "max_string_bytes": 4096,
+      "max_list_items": 64,
+      "required_fields": [
+        "schema_id",
+        "manifest_id",
+        "accepted",
+        "dry_run",
+        "findings",
+        "action",
+        "transport",
+        "transport_owned_by_contextlattice",
+        "transport_executed",
+        "private_key_exported",
+        "ordinary_memory_mutated",
+        "gateway_execution_performed",
+        "model_execution_performed",
+        "subprocess_execution_performed",
+        "network_calls",
+        "format_contract"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "manifest_id": "string",
+        "accepted": "bool",
+        "dry_run": "bool",
+        "findings": "list[string]",
+        "action": "string",
+        "transport": "string",
+        "transport_owned_by_contextlattice": "bool",
+        "transport_executed": "bool",
+        "private_key_exported": "bool",
+        "ordinary_memory_mutated": "bool",
+        "gateway_execution_performed": "bool",
+        "model_execution_performed": "bool",
+        "subprocess_execution_performed": "bool",
+        "network_calls": "int",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "dry_run"
+      ],
+      "required_false_paths": [
+        "transport_owned_by_contextlattice",
+        "transport_executed",
+        "private_key_exported",
+        "ordinary_memory_mutated",
+        "gateway_execution_performed",
+        "model_execution_performed",
+        "subprocess_execution_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "context_continuation_reconciliation.v1",
+        "format_contract.schema_id": "context_continuation_reconciliation.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "portable_continuation_status.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_redacted_digest_only_portable_continuation_runtime_status",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "report_disabled_or_unavailable_without_raw_payloads_private_keys_local_paths_or_execution_claims",
+      "max_total_json_bytes": 65536,
+      "max_string_bytes": 4096,
+      "max_list_items": 64,
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "version",
+        "enabled",
+        "grants",
+        "revocations",
+        "import_plans",
+        "import_receipts",
+        "manifests",
+        "reconciliations",
+        "updated_at",
+        "state_hash",
+        "limits",
+        "ownership",
+        "data_handling",
+        "safety",
+        "network_calls",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "version": "int",
+        "enabled": "bool",
+        "grants": "int",
+        "revocations": "int",
+        "import_plans": "int",
+        "import_receipts": "int",
+        "manifests": "int",
+        "reconciliations": "int",
+        "updated_at": "string",
+        "state_hash": "string",
+        "limits": "object",
+        "ownership": "object",
+        "data_handling": "object",
+        "safety": "object",
+        "network_calls": "int",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "ownership": [
+          "import_execution_owner",
+          "transport_owned_by_contextlattice"
+        ],
+        "data_handling": [
+          "bounded",
+          "redacted",
+          "content_references_digest_only",
+          "raw_payloads_included"
+        ],
+        "safety": [
+          "gateway_execution_performed",
+          "model_execution_performed",
+          "subprocess_execution_performed",
+          "ordinary_memory_mutated",
+          "private_key_exported"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "data_handling.bounded",
+        "data_handling.redacted",
+        "data_handling.content_references_digest_only"
+      ],
+      "required_false_paths": [
+        "ownership.transport_owned_by_contextlattice",
+        "data_handling.raw_payloads_included",
+        "safety.gateway_execution_performed",
+        "safety.model_execution_performed",
+        "safety.subprocess_execution_performed",
+        "safety.ordinary_memory_mutated",
+        "safety.private_key_exported"
+      ],
+      "required_string_contains": {
+        "schema_id": "portable_continuation_status.v1",
+        "ownership.import_execution_owner": "external_import_worker",
+        "format_contract.schema_id": "portable_continuation_status.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_content",
+        "source_content",
+        "document_body",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "portable_continuation_state.v1": {
+      "contract_version": 1,
+      "payload_kind": "bounded_owner_only_redacted_digest_reference_portable_continuation_state",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "disable_portable_continuation_when_integrity_capacity_or_durable_commit_state_cannot_be_verified_without_touching_ordinary_memory",
+      "max_total_json_bytes": 67108864,
+      "max_string_bytes": 4096,
+      "max_list_items": 4096,
+      "required_fields": [
+        "schema_id",
+        "version",
+        "grants",
+        "grant_usage",
+        "revocations",
+        "import_plans",
+        "import_receipts",
+        "manifests",
+        "replay",
+        "updated_at",
+        "state_hash"
+      ],
+      "field_types": {
+        "schema_id": "string",
+        "version": "int",
+        "grants": "object",
+        "grant_usage": "object",
+        "revocations": "object",
+        "import_plans": "object",
+        "import_receipts": "object",
+        "manifests": "object",
+        "replay": "object",
+        "updated_at": "string",
+        "state_hash": "string"
+      },
+      "required_string_contains": {
+        "schema_id": "portable_continuation_state.v1"
+      },
+      "forbidden_fields": [
+        "chain_of_thought",
+        "raw_reasoning",
+        "hidden_reasoning",
+        "raw_content",
+        "source_content",
+        "document_body",
+        "secret",
+        "secrets",
+        "password",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "private_key",
+        "signing_private_key",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "token",
+        "raw_prompt",
+        "messages",
+        "tool_calls",
+        "command",
+        "argv",
+        "shell",
+        "url"
+      ],
       "forbidden_scope": "recursive"
     }
   }

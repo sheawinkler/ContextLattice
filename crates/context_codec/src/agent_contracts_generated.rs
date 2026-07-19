@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 36;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 49;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
@@ -31,6 +31,14 @@ pub const ASYNC_STEERING_EVENT_V1: &str = "async_steering_event.v1";
 pub const ASYNC_STEERING_STREAM_ITEM_V1: &str = "async_steering_stream_item.v1";
 pub const CAUSAL_BRIDGE_EXPLANATION_V1: &str = "causal_bridge_explanation.v1";
 pub const CODEX_COMPACT_HOOK_STDOUT_V1: &str = "codex_compact_hook_stdout.v1";
+pub const COLLABORATIVE_CONTEXT_GRANT_V1: &str = "collaborative_context_grant.v1";
+pub const COLLABORATIVE_CONTEXT_GRANT_DECISION_V1: &str = "collaborative_context_grant_decision.v1";
+pub const COLLABORATIVE_CONTEXT_GRANT_REVOCATION_V1: &str =
+    "collaborative_context_grant_revocation.v1";
+pub const CONTEXT_CONTINUATION_ENVELOPE_V1: &str = "context_continuation_envelope.v1";
+pub const CONTEXT_CONTINUATION_MANIFEST_V1: &str = "context_continuation_manifest.v1";
+pub const CONTEXT_CONTINUATION_PAYLOAD_V1: &str = "context_continuation_payload.v1";
+pub const CONTEXT_CONTINUATION_RECONCILIATION_V1: &str = "context_continuation_reconciliation.v1";
 pub const CONTEXT_MESH_ENVELOPE_V1: &str = "context_mesh_envelope.v1";
 pub const CONTEXT_MESH_GRANT_V1: &str = "context_mesh_grant.v1";
 pub const CONTEXT_MESH_IMPORT_V1: &str = "context_mesh_import.v1";
@@ -39,6 +47,7 @@ pub const CONTEXT_OVERFLOW_RECOVERY_V1: &str = "context_overflow_recovery.v1";
 pub const CONTEXT_PACK_RESPONSE_V1: &str = "context_pack_response.v1";
 pub const CONTEXT_PASSPORT_V1: &str = "context_passport.v1";
 pub const CONTEXT_PASSPORT_DIFF_V1: &str = "context_passport_diff.v1";
+pub const CONTEXT_PASSPORT_DIFF_VIEW_V1: &str = "context_passport_diff_view.v1";
 pub const CONTEXT_PASSPORT_REPLAY_V1: &str = "context_passport_replay.v1";
 pub const CONTEXT_PASSPORT_VERIFY_V1: &str = "context_passport_verify.v1";
 pub const CONTEXT_POLICY_CANDIDATE_V1: &str = "context_policy_candidate.v1";
@@ -58,6 +67,8 @@ pub const FRONTIER_T5_POLICY_LABORATORY_STATUS_V1: &str = "frontier_t5_policy_la
 pub const FRONTIER_T6_AGENT_FIT_V1: &str = "frontier_t6_agent_fit.v1";
 pub const FRONTIER_T6_AGENT_FIT_STATE_V1: &str = "frontier_t6_agent_fit_state.v1";
 pub const FRONTIER_T6_AGENT_FIT_STATUS_V1: &str = "frontier_t6_agent_fit_status.v1";
+pub const IMPORT_PLAN_V1: &str = "import_plan.v1";
+pub const IMPORT_RECEIPT_V1: &str = "import_receipt.v1";
 pub const MEMORY_RETIREMENT_V1: &str = "memory_retirement.v1";
 pub const MEMORY_TRUST_ASSESSMENT_V1: &str = "memory_trust_assessment.v1";
 pub const MODEL_SELECTION_V1: &str = "model_selection.v1";
@@ -67,6 +78,9 @@ pub const OBJECTIVE_TRANSITION_V1: &str = "objective_transition.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
 pub const POLICY_PROMOTION_RECOMMENDATION_V1: &str = "policy_promotion_recommendation.v1";
 pub const POLICY_SIMULATION_V1: &str = "policy_simulation.v1";
+pub const PORTABLE_CONTINUATION_STATE_V1: &str = "portable_continuation_state.v1";
+pub const PORTABLE_CONTINUATION_STATUS_V1: &str = "portable_continuation_status.v1";
+pub const PROVENANCE_V1: &str = "provenance.v1";
 pub const RETRIEVAL_ABLATION_V1: &str = "retrieval_ablation.v1";
 pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
 pub const RETRIEVAL_DECISION_TRACE_V1: &str = "retrieval_decision_trace.v1";
@@ -119,6 +133,13 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     ASYNC_STEERING_STREAM_ITEM_V1,
     CAUSAL_BRIDGE_EXPLANATION_V1,
     CODEX_COMPACT_HOOK_STDOUT_V1,
+    COLLABORATIVE_CONTEXT_GRANT_V1,
+    COLLABORATIVE_CONTEXT_GRANT_DECISION_V1,
+    COLLABORATIVE_CONTEXT_GRANT_REVOCATION_V1,
+    CONTEXT_CONTINUATION_ENVELOPE_V1,
+    CONTEXT_CONTINUATION_MANIFEST_V1,
+    CONTEXT_CONTINUATION_PAYLOAD_V1,
+    CONTEXT_CONTINUATION_RECONCILIATION_V1,
     CONTEXT_MESH_ENVELOPE_V1,
     CONTEXT_MESH_GRANT_V1,
     CONTEXT_MESH_IMPORT_V1,
@@ -127,6 +148,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_PACK_RESPONSE_V1,
     CONTEXT_PASSPORT_V1,
     CONTEXT_PASSPORT_DIFF_V1,
+    CONTEXT_PASSPORT_DIFF_VIEW_V1,
     CONTEXT_PASSPORT_REPLAY_V1,
     CONTEXT_PASSPORT_VERIFY_V1,
     CONTEXT_POLICY_CANDIDATE_V1,
@@ -146,6 +168,8 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     FRONTIER_T6_AGENT_FIT_V1,
     FRONTIER_T6_AGENT_FIT_STATE_V1,
     FRONTIER_T6_AGENT_FIT_STATUS_V1,
+    IMPORT_PLAN_V1,
+    IMPORT_RECEIPT_V1,
     MEMORY_RETIREMENT_V1,
     MEMORY_TRUST_ASSESSMENT_V1,
     MODEL_SELECTION_V1,
@@ -155,6 +179,9 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     POLICY_CONTEXT_PACKAGE_V1,
     POLICY_PROMOTION_RECOMMENDATION_V1,
     POLICY_SIMULATION_V1,
+    PORTABLE_CONTINUATION_STATE_V1,
+    PORTABLE_CONTINUATION_STATUS_V1,
+    PROVENANCE_V1,
     RETRIEVAL_ABLATION_V1,
     RETRIEVAL_ABLATION_REPORT_V1,
     RETRIEVAL_DECISION_TRACE_V1,
@@ -309,6 +336,48 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: COLLABORATIVE_CONTEXT_GRANT_V1,
+        payload_kind: "signed_bounded_least_privilege_collaborative_context_grant",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: COLLABORATIVE_CONTEXT_GRANT_DECISION_V1,
+        payload_kind: "bounded_digest_bound_collaborative_context_grant_decision",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: COLLABORATIVE_CONTEXT_GRANT_REVOCATION_V1,
+        payload_kind: "signed_digest_only_collaborative_context_grant_revocation_tombstone",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_CONTINUATION_ENVELOPE_V1,
+        payload_kind: "bounded_transport_neutral_encrypted_mesh_continuation_envelope",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_CONTINUATION_MANIFEST_V1,
+        payload_kind: "signed_bounded_digest_only_portable_context_continuation_manifest",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_CONTINUATION_PAYLOAD_V1,
+        payload_kind: "signed_bounded_redacted_digest_only_mesh_continuation_payload",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_CONTINUATION_RECONCILIATION_V1,
+        payload_kind: "bounded_dry_run_portable_context_continuation_reconciliation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: CONTEXT_MESH_ENVELOPE_V1,
         payload_kind: "transport_neutral_encrypted_context_envelope",
         contract_version: 1,
@@ -353,6 +422,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: CONTEXT_PASSPORT_DIFF_V1,
         payload_kind: "context_passport_diff",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: CONTEXT_PASSPORT_DIFF_VIEW_V1,
+        payload_kind: "bounded_deterministic_redacted_context_passport_diff_view",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -471,6 +546,18 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: IMPORT_PLAN_V1,
+        payload_kind: "bounded_redacted_digest_only_external_worker_import_plan",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: IMPORT_RECEIPT_V1,
+        payload_kind: "bounded_atomic_resumable_external_import_receipt",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: MEMORY_RETIREMENT_V1,
         payload_kind: "non_destructive_reversible_memory_retirement_workflow",
         contract_version: 1,
@@ -521,6 +608,24 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: POLICY_SIMULATION_V1,
         payload_kind: "same_snapshot_no_persist_retrieval_policy_simulation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: PORTABLE_CONTINUATION_STATE_V1,
+        payload_kind: "bounded_owner_only_redacted_digest_reference_portable_continuation_state",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: PORTABLE_CONTINUATION_STATUS_V1,
+        payload_kind: "bounded_redacted_digest_only_portable_continuation_runtime_status",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: PROVENANCE_V1,
+        payload_kind: "bounded_redacted_digest_only_external_import_provenance",
         contract_version: 1,
         required_output_mode: "json_object",
     },

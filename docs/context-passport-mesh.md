@@ -130,6 +130,47 @@ before import.
 Move the JSON through a channel you control. ContextLattice performs zero
 delivery network calls.
 
+## Continue The Work, Not Just The Passport
+
+Portable Continuation layers an explicit work-continuation contract on top of
+Context Passport and Context Mesh. A collaborative grant binds the project,
+topics, data classes, actions, purpose, recipient key, subject snapshot, key
+epoch, approval set, usage limit, delegation depth, and validity window. A
+signed manifest then references the Passport, lineage, checkpoint, lifecycle
+receipt, unresolved obligations, repository constraints, and destination
+session by digest only.
+
+The CLI is the prescribed interface:
+
+```bash
+contextlattice_agent_tools portable-continuation grant-create \
+  --payload-file grant-request.json \
+  --output grant.json \
+  --pretty
+
+contextlattice_agent_tools portable-continuation manifest-create \
+  --payload-file continuation-request.json \
+  --output continuation-envelope.json \
+  --pretty
+
+contextlattice_agent_tools portable-continuation manifest-reconcile \
+  --payload-file reconciliation-request.json \
+  --envelope-file continuation-envelope.json \
+  --pretty
+```
+
+The receiver decrypts the envelope, verifies the outer and inner signatures,
+checks sender/issuer identity, authorizes the collaborative grant again against
+current time, revocation, usage, subject, purpose, key epoch, and recipient,
+then records replay state atomically. Reconciliation remains a dry run and does
+not write ordinary memory.
+
+Provenance-preserving imports follow the same boundary. ContextLattice creates
+a deterministic atomic plan; an external worker performs the import and
+returns an opaque execution digest; ContextLattice records a resumable receipt.
+The gateway never reads source content, executes the adapter, or claims the
+import happened without that external proof.
+
 ## Dry Run Before Apply
 
 The receiving instance defaults to verification and reconciliation planning:
@@ -186,6 +227,10 @@ The CLI is the prescribed interface. App integrations can use:
 - `POST /memory/context-mesh/grants/revoke`
 - `POST /memory/context-mesh/export`
 - `POST /memory/context-mesh/import`
+- `GET|POST /memory/portable-continuation/grants`
+- `GET|POST /memory/portable-continuation/imports`
+- `GET|POST /memory/portable-continuation/manifests`
+- `GET /telemetry/portable-continuation`
 - `GET /telemetry/context-passport`
 - `GET /telemetry/context-mesh`
 
@@ -207,6 +252,8 @@ CONTEXTLATTICE_CONTEXT_MESH_MAX_REVOCATIONS=1024
 CONTEXTLATTICE_CONTEXT_MESH_MAX_RECEIPTS=512
 CONTEXTLATTICE_CONTEXT_MESH_MAX_ENVELOPE_BYTES=393216
 CONTEXTLATTICE_CONTEXT_MESH_MAX_PLAINTEXT_BYTES=262144
+CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_ENABLED=true
+CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_MAX_BYTES=8388608
 ```
 
 Passport compaction preserves the newest complete signed records that fit the
@@ -215,6 +262,11 @@ and import receipts. Revocation capacity fails closed instead of silently
 forgetting an older denylist entry; raise the explicit bound when necessary.
 Neither store contains raw model prompts, provider keys, or
 private identity material in telemetry responses.
+
+Portable Continuation adds a bounded owner-only digest/provenance store for
+signed grants, revocation tombstones, import plans and receipts, manifest
+metadata, usage, and replay records. It stores neither ciphertext nor plaintext
+continuation payloads; the caller owns the envelope artifact.
 
 ## Distribution Boundary
 

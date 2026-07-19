@@ -315,6 +315,7 @@ type server struct {
 	contextPolicy                   *contextPolicyStore
 	frontierT5                      *frontierT5Ledger
 	frontierT6                      *frontierT6AgentFitStore
+	frontierT7                      *frontierT7PortableStore
 	skillFoundry                    *skillFoundryStore
 	skillLifecycleMu                sync.Mutex
 	contextPassports                *contextPassportStore
@@ -1306,6 +1307,11 @@ func newServer() *server {
 		log.Printf("gateway-go context mesh disabled: %v", contextMeshErr)
 		contextMeshInstance = &contextMeshStore{enabled: false, grants: map[string]contextMeshGrant{}, revocations: map[string]contextMeshRevocation{}, receipts: []contextMeshReceipt{}, lastError: contextMeshErr.Error()}
 	}
+	frontierT7Instance, frontierT7Err := newFrontierT7PortableStoreFromEnv(contextMeshInstance.identity)
+	if frontierT7Err != nil {
+		log.Printf("gateway-go Frontier T7 portable continuation disabled: %v", frontierT7Err)
+		frontierT7Instance = &frontierT7PortableStore{enabled: false, identity: contextMeshInstance.identity, state: emptyFrontierT7PortableState(), limits: frontierT7DefaultStoreLimits(), lastErrorCode: "startup_failed"}
+	}
 	continuationDurable := newContinuationDurableQueue(policy)
 	t := newRetrievalTelemetry(policy)
 	s := &server{
@@ -1327,6 +1333,7 @@ func newServer() *server {
 		contextPolicy:                   contextPolicyInstance,
 		frontierT5:                      frontierT5Instance,
 		frontierT6:                      frontierT6Instance,
+		frontierT7:                      frontierT7Instance,
 		skillFoundry:                    skillFoundryInstance,
 		contextPassports:                contextPassportInstance,
 		contextMesh:                     contextMeshInstance,
@@ -7170,6 +7177,9 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/context-mesh/grants/revoke", s.memoryContextMeshGrantRevoke)
 	mux.HandleFunc("/memory/context-mesh/export", s.memoryContextMeshExport)
 	mux.HandleFunc("/memory/context-mesh/import", s.memoryContextMeshImport)
+	mux.HandleFunc(frontierT7GrantsPath, s.frontierT7GrantsRoute)
+	mux.HandleFunc(frontierT7ImportsPath, s.frontierT7ImportsRoute)
+	mux.HandleFunc(frontierT7ManifestsPath, s.frontierT7ManifestsRoute)
 	mux.HandleFunc("/memory/dream", s.memoryDream)
 	mux.HandleFunc("/memory/review", s.memoryReview)
 	mux.HandleFunc("/feedback", s.feedbackRoute)
@@ -7190,6 +7200,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/telemetry/skills/foundry", s.telemetrySkillFoundry)
 	mux.HandleFunc("/telemetry/context-passport", s.telemetryContextPassport)
 	mux.HandleFunc("/telemetry/context-mesh", s.telemetryContextMesh)
+	mux.HandleFunc(frontierT7TelemetryPath, s.frontierT7TelemetryRoute)
 	mux.HandleFunc("/telemetry/runner-quality", s.telemetryRunnerQualityRoute)
 	mux.HandleFunc("/telemetry/retrieval", s.telemetryRetrievalRoute)
 	mux.HandleFunc("/telemetry/retrieval/source-quality", s.telemetryRetrievalSourceQualityRoute)

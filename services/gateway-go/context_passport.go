@@ -1449,7 +1449,17 @@ func (s *server) memoryContextPassportDiff(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "passport_verification_failed", "findings": uniqueSortedStrings(findings)})
 		return
 	}
-	response := map[string]any{"ok": true, "schema_id": contextPassportDiffContractID, "diff": buildPassportDiff(base, target)}
+	view, err := buildFrontierT7PassportDiffView(base, target)
+	if err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "error": "passport_diff_view_failed", "detail": clipText(err.Error(), 500)})
+		return
+	}
+	response := map[string]any{
+		"ok": true, "schema_id": contextPassportDiffContractID,
+		"diff":            buildPassportDiff(base, target),
+		"view":            frontierT7AttachFormatContract(frontierT7PassportDiffViewSchemaID, view, "context_passport_diff_view", r.URL.Path),
+		"available_views": []string{"structural", "human_readable"},
+	}
 	writeJSON(w, http.StatusOK, attachPayloadFormatContract(contextPassportDiffContractID, response, target.Issuer.AgentID, "context_passport_diff", r.URL.Path))
 }
 

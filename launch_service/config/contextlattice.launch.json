@@ -2,7 +2,7 @@
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
   "release_lane": "distribution-neutral",
-  "launch_window": "ContextLattice v3.23 release wave: July 2026",
+  "launch_window": "ContextLattice v3.24 release wave: July 2026",
   "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.23.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v3.24.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.23.0",
-      "body": "ContextLattice v3.23.0 makes every agent arrive ready.\n\nHighlights:\n- deliver live, resumable steering over SSE with bounded pull fallback\n- learn outcome-calibrated profiles by project, task class, and retrieval intent\n- prepare source-bound context before work begins and reject it after authorization or task drift\n- recommend the right runner and model without silently rerouting execution\n- govern paid activation through receipts, workspace isolation, revocation, and rollback\n\nThe CLI remains the primary interface. ContextLattice still executes no model, subprocess, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.24.0",
+      "body": "ContextLattice v3.24.0 lets serious work leave one machine without leaving its trust boundary behind.\n\nHighlights:\n- carry signed, encrypted continuation manifests across machines through the CLI\n- bind collaborative grants to recipient, project, purpose, expiry, usage, delegation, and revocation\n- preserve provenance through deterministic import plans and external execution receipts\n- reconcile only after fresh authorization, lineage, key-epoch, and replay checks\n- give operators approval, retention, bulk revocation, and external-adapter governance without turning ContextLattice into a sync service\n\nThe CLI remains the primary interface. ContextLattice stores no continuation plaintext or ciphertext and executes no delivery, import, model, subprocess, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Every agent should arrive already knowing how to work with you.\n\nContextLattice v3.23.0 delivers live steering, outcome-calibrated profiles, and source-bound context before the first serious tool call. It can recommend the right runner and model, but it will never silently reroute your work.\n\nThe memory compounds. The agent adapts. You keep control.\n\nStart with the CLI: {docs_url}"
+      "body": "Your work should survive the machine without surrendering the trust boundary.\n\nContextLattice v3.24.0 carries signed, encrypted continuation manifests across machines, then rechecks recipient, scope, lineage, revocation, key epoch, and replay before reconciliation. ContextLattice never becomes the delivery channel.\n\nThe context travels. The proof stays attached. You keep control.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.23.0 gives every agent a live briefing layer.\n\nResumable steering survives disconnects. Agent profiles learn from outcomes without crossing project boundaries. Context preparation is source-bound and invalidated after drift. Runner and model selection stays advisor-only until an operator explicitly authorizes the named target.\n\nPaid governance adds durable receipts, workspace isolation, revocation, and rollback. ContextLattice remains the intelligence layer, not the harness: it executes no model, subprocess, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.24.0 makes long-running agent work portable without pretending trust is portable by default.\n\nSigned collaborative grants bind every continuation to a recipient, project, purpose, expiry, usage ceiling, delegation depth, and revocation state. Native age/X25519 encryption protects the envelope; deterministic import plans and opaque execution receipts preserve provenance while external adapters retain execution authority.\n\nPaid governance adds approval, retention, review queues, bulk revocation, and schedules for operator-chosen adapters. ContextLattice remains the intelligence layer, not the transport or harness: it stores no continuation payload and executes no delivery, import, model, subprocess, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",
