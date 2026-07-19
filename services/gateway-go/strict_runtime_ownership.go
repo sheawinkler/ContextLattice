@@ -75,6 +75,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/memory/skills/foundry/evaluate", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "independent skill holdout evaluation", Required: true},
 		{Path: "/memory/skills/foundry/export", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "human-approved inactive skill export", Required: true},
 		{Path: "/memory/skills/foundry/retire", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "immutable inactive-draft retirement", Required: true},
+		{Path: frontierT8SkillEvolutionPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "verified reusable-skill and non-terminal retirement candidates", Required: true},
 		{Path: "/tools/skill_foundry_draft", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "tool verified workflow skill drafting", Required: true},
 		{Path: "/tools/skill_foundry_evaluate", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "tool independent skill holdout evaluation", Required: true},
 		{Path: "/tools/skill_foundry_export", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "tool human-approved inactive skill export", Required: true},

@@ -2,7 +2,7 @@
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
   "release_lane": "distribution-neutral",
-  "launch_window": "ContextLattice v3.24 release wave: July 2026",
+  "launch_window": "ContextLattice v3.25 release wave: July 2026",
   "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.24.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v3.25.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.24.0",
-      "body": "ContextLattice v3.24.0 lets serious work leave one machine without leaving its trust boundary behind.\n\nHighlights:\n- carry signed, encrypted continuation manifests across machines through the CLI\n- bind collaborative grants to recipient, project, purpose, expiry, usage, delegation, and revocation\n- preserve provenance through deterministic import plans and external execution receipts\n- reconcile only after fresh authorization, lineage, key-epoch, and replay checks\n- give operators approval, retention, bulk revocation, and external-adapter governance without turning ContextLattice into a sync service\n\nThe CLI remains the primary interface. ContextLattice stores no continuation plaintext or ciphertext and executes no delivery, import, model, subprocess, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v3.25.0",
+      "body": "ContextLattice v3.25.0 turns repeated, verified wins into reviewed skill candidates and makes decaying skills propose their own replacement before they become liabilities.\n\nHighlights:\n- resolve candidate evidence against persisted utility and session verification ledgers\n- keep discovery data separate from holdout evaluation\n- hand complete workflow material to Skill Foundry as one atomic, replay-safe transaction\n- require explicit operator approval for activation, replacement, retirement, and rollback\n- restore exact artifact identity through immutable receipts\n\nThe CLI remains the primary interface. Public core proposes; Operator and Enterprise govern. The gateway never runs a model, subprocess, filesystem mutation, git operation, network adapter, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Your work should survive the machine without surrendering the trust boundary.\n\nContextLattice v3.24.0 carries signed, encrypted continuation manifests across machines, then rechecks recipient, scope, lineage, revocation, key epoch, and replay before reconciliation. ContextLattice never becomes the delivery channel.\n\nThe context travels. The proof stays attached. You keep control.\n\nStart with the CLI: {docs_url}"
+      "body": "Your agent should get better at the work, not merely better at remembering it.\n\nContextLattice v3.25.0 finds repeated verified wins, turns them into reviewable skill candidates, and catches decaying skills before stale behavior hardens into habit. Evidence stays attached. Activation stays human-governed. Rollback restores the exact artifact.\n\nMemory now compounds into capability.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.24.0 makes long-running agent work portable without pretending trust is portable by default.\n\nSigned collaborative grants bind every continuation to a recipient, project, purpose, expiry, usage ceiling, delegation depth, and revocation state. Native age/X25519 encryption protects the envelope; deterministic import plans and opaque execution receipts preserve provenance while external adapters retain execution authority.\n\nPaid governance adds approval, retention, review queues, bulk revocation, and schedules for operator-chosen adapters. ContextLattice remains the intelligence layer, not the transport or harness: it stores no continuation payload and executes no delivery, import, model, subprocess, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v3.25.0 closes the loop between memory and capability.\n\nRepeated wins are no longer buried in transcripts. ContextLattice resolves them against persisted utility and verification evidence, separates discovery from holdout evaluation, and produces complete skill candidates for review. When a skill decays, it proposes replacement or retirement instead of silently poisoning future work.\n\nOperator and Enterprise add governed schedules, review, monitoring, activation, replacement, retirement, and exact-receipt rollback. ContextLattice remains the intelligence layer, not the harness: external workers execute; the gateway never runs a model, subprocess, filesystem mutation, git operation, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 49
+const GeneratedAgentContractRegistryVersion = 51
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
@@ -86,6 +86,7 @@ const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_repo
 const GeneratedAgentContractRetrievalDecisionTraceV1 = "retrieval_decision_trace.v1"
 const GeneratedAgentContractRetrievalPlanV1 = "retrieval_plan.v1"
 const GeneratedAgentContractRetrievalProgressV1 = "retrieval_progress.v1"
+const GeneratedAgentContractReusableSkillCandidateV1 = "reusable_skill_candidate.v1"
 const GeneratedAgentContractReviewModeResponseV1 = "review_mode_response.v1"
 const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
 const GeneratedAgentContractRunnerCapabilityV1 = "runner_capability.v1"
@@ -97,6 +98,7 @@ const GeneratedAgentContractSkillDraftV1 = "skill_draft.v1"
 const GeneratedAgentContractSkillEvaluationV1 = "skill_evaluation.v1"
 const GeneratedAgentContractSkillExportV1 = "skill_export.v1"
 const GeneratedAgentContractSkillRetirementV1 = "skill_retirement.v1"
+const GeneratedAgentContractSkillRetirementCandidateV1 = "skill_retirement_candidate.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
 const GeneratedAgentContractStorageTemperatureDecisionV1 = "storage_temperature_decision.v1"
 const GeneratedAgentContractSynthesisPackV1 = "synthesis_pack.v1"
@@ -187,6 +189,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractRetrievalDecisionTraceV1,
 	GeneratedAgentContractRetrievalPlanV1,
 	GeneratedAgentContractRetrievalProgressV1,
+	GeneratedAgentContractReusableSkillCandidateV1,
 	GeneratedAgentContractReviewModeResponseV1,
 	GeneratedAgentContractRunAdvisorV1,
 	GeneratedAgentContractRunnerCapabilityV1,
@@ -198,6 +201,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractSkillEvaluationV1,
 	GeneratedAgentContractSkillExportV1,
 	GeneratedAgentContractSkillRetirementV1,
+	GeneratedAgentContractSkillRetirementCandidateV1,
 	GeneratedAgentContractSteeringCommentV1,
 	GeneratedAgentContractStorageTemperatureDecisionV1,
 	GeneratedAgentContractSynthesisPackV1,
@@ -660,6 +664,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractReusableSkillCandidateV1,
+		PayloadKind:        "inactive_verified_reusable_skill_candidate",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractReviewModeResponseV1,
 		PayloadKind:        "review_mode_response",
 		ContractVersion:    1,
@@ -722,6 +732,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractSkillRetirementV1,
 		PayloadKind:        "explicit_inactive_skill_draft_retirement",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractSkillRetirementCandidateV1,
+		PayloadKind:        "advisory_skill_retirement_candidate",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

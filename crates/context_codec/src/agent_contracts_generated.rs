@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 49;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 51;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
@@ -86,6 +86,7 @@ pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
 pub const RETRIEVAL_DECISION_TRACE_V1: &str = "retrieval_decision_trace.v1";
 pub const RETRIEVAL_PLAN_V1: &str = "retrieval_plan.v1";
 pub const RETRIEVAL_PROGRESS_V1: &str = "retrieval_progress.v1";
+pub const REUSABLE_SKILL_CANDIDATE_V1: &str = "reusable_skill_candidate.v1";
 pub const REVIEW_MODE_RESPONSE_V1: &str = "review_mode_response.v1";
 pub const RUN_ADVISOR_V1: &str = "run_advisor.v1";
 pub const RUNNER_CAPABILITY_V1: &str = "runner_capability.v1";
@@ -97,6 +98,7 @@ pub const SKILL_DRAFT_V1: &str = "skill_draft.v1";
 pub const SKILL_EVALUATION_V1: &str = "skill_evaluation.v1";
 pub const SKILL_EXPORT_V1: &str = "skill_export.v1";
 pub const SKILL_RETIREMENT_V1: &str = "skill_retirement.v1";
+pub const SKILL_RETIREMENT_CANDIDATE_V1: &str = "skill_retirement_candidate.v1";
 pub const STEERING_COMMENT_V1: &str = "steering_comment.v1";
 pub const STORAGE_TEMPERATURE_DECISION_V1: &str = "storage_temperature_decision.v1";
 pub const SYNTHESIS_PACK_V1: &str = "synthesis_pack.v1";
@@ -187,6 +189,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     RETRIEVAL_DECISION_TRACE_V1,
     RETRIEVAL_PLAN_V1,
     RETRIEVAL_PROGRESS_V1,
+    REUSABLE_SKILL_CANDIDATE_V1,
     REVIEW_MODE_RESPONSE_V1,
     RUN_ADVISOR_V1,
     RUNNER_CAPABILITY_V1,
@@ -198,6 +201,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     SKILL_EVALUATION_V1,
     SKILL_EXPORT_V1,
     SKILL_RETIREMENT_V1,
+    SKILL_RETIREMENT_CANDIDATE_V1,
     STEERING_COMMENT_V1,
     STORAGE_TEMPERATURE_DECISION_V1,
     SYNTHESIS_PACK_V1,
@@ -660,6 +664,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: REUSABLE_SKILL_CANDIDATE_V1,
+        payload_kind: "inactive_verified_reusable_skill_candidate",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: REVIEW_MODE_RESPONSE_V1,
         payload_kind: "review_mode_response",
         contract_version: 1,
@@ -722,6 +732,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: SKILL_RETIREMENT_V1,
         payload_kind: "explicit_inactive_skill_draft_retirement",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: SKILL_RETIREMENT_CANDIDATE_V1,
+        payload_kind: "advisory_skill_retirement_candidate",
         contract_version: 1,
         required_output_mode: "json_object",
     },

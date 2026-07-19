@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func TestFrontierT8ReusableSkillCandidateIsVerifiedBoundedAndInactive(t *testing
 	if after := frontierT8TestJSON(t, payload); before != after {
 		t.Fatal("advisory kernel mutated its input")
 	}
-	if anyToString(first["schema_id"]) != frontierT8ReusableSkillCandidateSchemaID || anyToString(first["status"]) != "review_required" {
+	if anyToString(first["schema_id"]) != frontierT8ReusableSkillCandidateSchemaID || anyToString(first["status"]) != "inactive" {
 		t.Fatalf("unexpected candidate identity: %#v", first)
 	}
 	if anyToString(anyMap(first["export"])["state"]) != "inactive" || anyToBool(anyMap(first["export"])["activation_allowed"]) {
@@ -65,7 +66,7 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 		mutate func(map[string]any)
 	}{
 		{
-			name: "superficially similar workflow",
+			name: "superficial_similarity",
 			want: "superficially similar",
 			mutate: func(payload map[string]any) {
 				holdouts := frontierT8TestReceiptRows(payload, "holdout_receipts")
@@ -74,14 +75,14 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "one off success",
+			name: "one_off_success",
 			want: "at least 3",
 			mutate: func(payload map[string]any) {
 				payload["training_receipts"] = contextPackAnyList(payload["training_receipts"])[:1]
 			},
 		},
 		{
-			name: "hidden manual step",
+			name: "hidden_manual_steps",
 			want: "manual workflow step",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
@@ -90,7 +91,7 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "stale verification command",
+			name: "stale_verification",
 			want: "stale",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
@@ -99,7 +100,7 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "unresolved evidence",
+			name: "unresolved_evidence",
 			want: "unresolved",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
@@ -109,7 +110,7 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "training holdout evidence leakage",
+			name: "evidence_overlap",
 			want: "training/holdout leakage",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
@@ -123,7 +124,7 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "fixture environment leakage",
+			name: "fixture_overlap",
 			want: "fixture_id",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
@@ -133,14 +134,14 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "secret bearing material",
+			name: "secret_material",
 			want: "secret-bearing",
 			mutate: func(payload map[string]any) {
 				payload["description"] = "Use credential sk-supersecretmaterial1234567890 during verification."
 			},
 		},
 		{
-			name: "unsafe workflow material",
+			name: "unsafe_workflow_material",
 			want: "unsafe workflow material",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
@@ -149,12 +150,110 @@ func TestFrontierT8ReusableSkillCandidateRejectsAdversarialHoldouts(t *testing.T
 			},
 		},
 		{
-			name: "broken hash link",
+			name: "broken_previous_hash",
 			want: "breaks the hash chain",
 			mutate: func(payload map[string]any) {
 				training := frontierT8TestReceiptRows(payload, "training_receipts")
 				training[1]["previous_receipt_digest"] = "sha256:" + strings.Repeat("f", 64)
 				training[1]["receipt_digest"] = frontierT8ReceiptDigest(training[1])
+			},
+		},
+		{
+			name: "receipt_overlap",
+			want: "receipt_id",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				holdouts := frontierT8TestReceiptRows(payload, "holdout_receipts")
+				holdouts[0]["receipt_id"] = training[0]["receipt_id"]
+				frontierT8TestRechain(holdouts)
+			},
+		},
+		{
+			name: "environment_overlap",
+			want: "environment_id",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				holdouts := frontierT8TestReceiptRows(payload, "holdout_receipts")
+				holdouts[0]["environment_id"] = training[0]["environment_id"]
+				frontierT8TestRechain(holdouts)
+			},
+		},
+		{
+			name: "unbounded_input",
+			want: "between 3 and 20",
+			mutate: func(payload map[string]any) {
+				payload["minimum_training_receipts"] = 21
+			},
+		},
+		{
+			name: "producer_verifier_overlap",
+			want: "producer/verifier independence",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				holdouts := frontierT8TestReceiptRows(payload, "holdout_receipts")
+				overlap := training[0]["producer_id"]
+				holdouts[0]["verifier_id"] = overlap
+				anyMap(contextPackAnyList(holdouts[0]["evidence_refs"])[0])["verifier_id"] = overlap
+				frontierT8TestRechain(holdouts)
+			},
+		},
+		{
+			name: "verification_command_digest_mismatch",
+			want: "verification_command_digest",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				training[0]["verification_command_digest"] = "sha256:" + strings.Repeat("0", 64)
+				frontierT8TestRechain(training)
+			},
+		},
+		{
+			name: "missing_prerequisites",
+			want: "prerequisites is required",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				training[0]["prerequisites"] = []any{}
+				frontierT8TestRechain(training)
+			},
+		},
+		{
+			name: "missing_rollback",
+			want: "rollback is required",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				training[0]["rollback"] = []any{}
+				frontierT8TestRechain(training)
+			},
+		},
+		{
+			name: "missing_side_effects",
+			want: "side_effects is required",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				training[0]["side_effects"] = []any{}
+				frontierT8TestRechain(training)
+			},
+		},
+		{
+			name: "missing_platform_constraints",
+			want: "platform_constraints is required",
+			mutate: func(payload map[string]any) {
+				training := frontierT8TestReceiptRows(payload, "training_receipts")
+				training[0]["platform_constraints"] = []any{}
+				frontierT8TestRechain(training)
+			},
+		},
+		{
+			name: "raw_prompt_or_content",
+			want: "raw prompt or content",
+			mutate: func(payload map[string]any) {
+				payload["raw_prompt"] = "unbounded hidden instruction material"
+			},
+		},
+		{
+			name: "local_absolute_path",
+			want: "personal absolute path",
+			mutate: func(payload map[string]any) {
+				payload["description"] = "Read /Volumes/private-work/receipt.json before reuse."
 			},
 		},
 	}
@@ -216,26 +315,26 @@ func TestFrontierT8SkillRetirementCandidateProtectsFalseRetirements(t *testing.T
 		mutate func(map[string]any)
 	}{
 		{
-			name: "seasonal skill",
-			want: "seasonal_evidence_window_incomplete",
+			name: "seasonal_skill",
+			want: "seasonal_skill",
 			mutate: func(payload map[string]any) {
-				payload["seasonality"] = map[string]any{"seasonal": true, "full_observation_cycle": false, "season_id": "tax-season"}
+				payload["seasonality"] = map[string]any{"seasonal": true, "full_observation_cycle": true, "season_id": "tax-season"}
 			},
 		},
 		{
-			name:   "rare high value skill",
+			name:   "rare_high_value_skill",
 			want:   "rare_high_value_skill",
 			mutate: func(payload map[string]any) { payload["rare_high_value"] = true },
 		},
 		{
-			name: "temporary provider failure",
-			want: "temporary_provider_failure_dominates_regressions",
+			name: "temporary_provider_failure",
+			want: "temporary_provider_failure_observed",
 			mutate: func(payload map[string]any) {
-				anyMap(payload["metrics"])["temporary_provider_failure_count"] = 3
+				anyMap(payload["metrics"])["temporary_provider_failure_count"] = 1
 			},
 		},
 		{
-			name: "narrower replacement",
+			name: "narrower_replacement",
 			want: "replacement_coverage_is_narrower_or_unverified",
 			mutate: func(payload map[string]any) {
 				anyMap(payload["replacement"])["coverage_ratio"] = 0.60
@@ -301,6 +400,53 @@ func TestFrontierT8PureAdvisoryKernelHasNoExecutionSurface(t *testing.T) {
 	}
 }
 
+func TestFrontierT8CheckedInHoldoutsCoverProgram(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "evals", "fixtures", "frontier-t8-public-core-holdouts.json"))
+	if err != nil {
+		t.Fatalf("read T8 holdout fixture: %v", err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("decode T8 holdout fixture: %v", err)
+	}
+	if anyToString(fixture["schema_id"]) != "frontier_t8_public_core_holdouts.v1" {
+		t.Fatalf("unexpected fixture schema: %#v", fixture["schema_id"])
+	}
+	expected := map[string][]string{
+		"baselines": {
+			"reusable_candidate_inactive_and_deterministic",
+			"explicit_foundry_handoff_stops_after_evaluation",
+			"retirement_candidate_distinct_and_pending_approval",
+		},
+		"item_21_rejections": {
+			"superficial_similarity", "one_off_success", "stale_verification", "unresolved_evidence",
+			"receipt_overlap", "evidence_overlap", "fixture_overlap", "environment_overlap",
+			"broken_previous_hash", "unbounded_input", "producer_verifier_overlap",
+			"verification_command_digest_mismatch", "missing_prerequisites", "missing_rollback",
+			"missing_side_effects", "missing_platform_constraints", "hidden_manual_steps",
+			"raw_prompt_or_content", "secret_material", "local_absolute_path", "unsafe_workflow_material",
+		},
+		"item_22_abstentions": {
+			"low_use_alone", "seasonal_skill", "rare_high_value_skill",
+			"temporary_provider_failure", "narrower_replacement",
+		},
+	}
+	for field, values := range expected {
+		actual := map[string]struct{}{}
+		for _, item := range contextPackAnyList(fixture[field]) {
+			actual[anyToString(item)] = struct{}{}
+		}
+		if len(actual) != len(values) {
+			t.Fatalf("fixture %s has %d entries, want %d", field, len(actual), len(values))
+		}
+		for _, value := range values {
+			if _, ok := actual[value]; !ok {
+				t.Fatalf("fixture %s is missing %q", field, value)
+			}
+		}
+	}
+}
+
 func frontierT8TestSkillCandidatePayload() map[string]any {
 	training := frontierT8TestReceiptChain("training", 3)
 	holdouts := frontierT8TestReceiptChain("holdout", 3)
@@ -324,6 +470,7 @@ func frontierT8TestReceiptChain(partition string, count int) []any {
 			"fixture_id": "fixture-" + tag, "environment_id": "environment-" + tag,
 			"producer_id": "producer-" + tag, "verifier_id": "verifier-" + tag,
 			"success": true, "verification_passed": true, "checks_passed": true,
+			"step_inventory_complete": true, "manual_steps_required": false,
 			"verified_at": "2026-07-17T12:00:00Z", "verification_command": command,
 			"verification_command_digest": frontierT8CommandDigest(command),
 			"steps":                       []any{"Compile the candidate.", "Run the bounded release selector."},

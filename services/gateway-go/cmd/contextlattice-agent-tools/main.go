@@ -315,6 +315,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdAgentFit(args)
 	case "portable-continuation":
 		return c.cmdPortableContinuation(args)
+	case "skill-evolution":
+		return c.cmdSkillEvolution(args)
 	case "-h", "--help", "help":
 		return c.usage()
 	default:
@@ -390,7 +392,8 @@ Advanced/compatibility commands:
   skills-index                   active Skills Index search/reindex helper
   async-inbox-drain              bounded async continuation inbox drain for any agent
   agent-fit                      steering, advisory selection, profiles, and context preparation
-  portable-continuation          portable grants, imports, manifests, and continuation status
+	  portable-continuation          portable grants, imports, manifests, and continuation status
+	  skill-evolution                reusable-skill and retirement advisory candidates
 
 The same binary is intended to be symlinked or wrapped as contextlattice_search,
 contextlattice_pack, contextlattice_packet_reconstruct, contextlattice_synthesis_pack,

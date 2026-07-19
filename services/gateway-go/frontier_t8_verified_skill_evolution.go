@@ -7,7 +7,6 @@ import (
 	"math"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +18,9 @@ const (
 	frontierT8MaxOutputBytes                   = 128 * 1024
 	frontierT8MaxReceipts                      = 48
 	frontierT8MaxEvidenceRefs                  = 12
+	frontierT8MaxCount                         = int64(1_000_000_000)
+	frontierT8MaxCostMicros                    = int64(1_000_000_000_000_000)
+	frontierT8MaxLatencyMS                     = int64(31_536_000_000)
 )
 
 var (
@@ -26,8 +28,10 @@ var (
 	frontierT8SHA256Pattern     = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 	frontierT8SensitiveKey      = regexp.MustCompile(`(?i)(api[_-]?key|(^|[_-])token($|[_-])|secret|password|credential|private[_-]?key|authorization|bearer)`)
 	frontierT8SecretValue       = regexp.MustCompile(`(?i)(bearer\s+[A-Za-z0-9._~+/=-]{12,}|sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[A-Z0-9]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)`)
-	frontierT8PersonalPath      = regexp.MustCompile(`(?i)(/Users/[^/\s]+|/home/[^/\s]+|[A-Z]:\\Users\\[^\\\s]+)`)
+	frontierT8PersonalPath      = regexp.MustCompile(`(?i)(file://|/(?:Users|home|Volumes|private|tmp)/[^\s]+|[A-Z]:\\Users\\[^\\\s]+)`)
 	frontierT8UnsafeMaterial    = regexp.MustCompile(`(?i)(\brm\s+-rf\b|\bgit\s+reset\s+--hard\b|\bgit\s+push\b[^\n]*--force|\bchmod\s+-R\b|\bchown\s+-R\b|\bsudo\b|\bcurl\b[^\n|]*\|\s*(sh|bash)\b|\bwget\b[^\n|]*\|\s*(sh|bash)\b)`)
+	frontierT8RawMaterialKey    = regexp.MustCompile(`(?i)^(raw[_-]?)?(prompt|content|log|logs|stdout|stderr|transcript|chain[_-]?of[_-]?thought)$`)
+	frontierT8ManualStep        = regexp.MustCompile(`(?i)\b(manual(?:ly)?|unrecorded|hidden\s+step|operator\s+intervention|human\s+intervention)\b`)
 )
 
 type frontierT8EvidenceRef struct {
@@ -80,11 +84,28 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 	if err := frontierT8ValidateAdvisoryInput(payload); err != nil {
 		return nil, err
 	}
-	project, err := sanitizeMemoryProject(firstNonEmptyStrings(anyToString(payload["project"]), "contextlattice"))
+	if err := frontierT8RejectUnknownFields(payload, "payload",
+		"project", "name", "description", "as_of", "minimum_training_receipts",
+		"minimum_holdout_receipts", "max_verification_age_days", "training_receipts", "holdout_receipts"); err != nil {
+		return nil, err
+	}
+	projectInput := "contextlattice"
+	if rawProject, exists := payload["project"]; exists {
+		projectText, ok := rawProject.(string)
+		if !ok {
+			return nil, errors.New("project must be a string")
+		}
+		projectInput = projectText
+	}
+	project, err := sanitizeMemoryProject(firstNonEmptyStrings(projectInput, "contextlattice"))
 	if err != nil {
 		return nil, err
 	}
-	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(anyToString(payload["name"])), "_", "-"))
+	nameInput, ok := payload["name"].(string)
+	if !ok {
+		return nil, errors.New("name must be a string")
+	}
+	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(nameInput), "_", "-"))
 	if !skillFoundryNamePattern.MatchString(name) {
 		return nil, errors.New("name must be 2-64 lowercase letters, digits, or hyphens")
 	}
@@ -96,9 +117,18 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 	if err != nil {
 		return nil, err
 	}
-	minimumTraining := frontierT8ClampedInt(payload["minimum_training_receipts"], 3, 3, 20)
-	minimumHoldouts := frontierT8ClampedInt(payload["minimum_holdout_receipts"], 3, 3, 20)
-	maxAgeDays := frontierT8ClampedInt(payload["max_verification_age_days"], 30, 1, 365)
+	minimumTraining, err := frontierT8OptionalBoundedInt(payload, "minimum_training_receipts", 3, 3, 20)
+	if err != nil {
+		return nil, err
+	}
+	minimumHoldouts, err := frontierT8OptionalBoundedInt(payload, "minimum_holdout_receipts", 3, 3, 20)
+	if err != nil {
+		return nil, err
+	}
+	maxAgeDays, err := frontierT8OptionalBoundedInt(payload, "max_verification_age_days", 30, 1, 365)
+	if err != nil {
+		return nil, err
+	}
 
 	training, err := frontierT8NormalizeReceiptChain(payload["training_receipts"], "training", minimumTraining, asOf, maxAgeDays)
 	if err != nil {
@@ -108,6 +138,9 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 	if err != nil {
 		return nil, fmt.Errorf("holdout receipts: %w", err)
 	}
+	if len(training)+len(holdouts) > frontierT8MaxReceipts {
+		return nil, fmt.Errorf("total receipt count exceeds %d", frontierT8MaxReceipts)
+	}
 	workflowID := training[0].WorkflowID
 	workflowSignature := training[0].WorkflowSignature
 	for _, receipt := range append(append([]frontierT8WorkflowReceipt{}, training...), holdouts...) {
@@ -115,7 +148,7 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 			return nil, errors.New("superficially similar workflows are not reusable: exact workflow identity and bounded material must match")
 		}
 	}
-	if err := frontierT8VerifyPartitionSeparation(training, holdouts); err != nil {
+	if err := frontierT8VerifyReceiptSeparation(training, holdouts); err != nil {
 		return nil, err
 	}
 
@@ -140,7 +173,7 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 	}
 	verificationCommands := frontierT8UniqueVerificationCommands(allReceipts)
 	seed := map[string]any{
-		"project": project, "name": name, "description": description, "as_of": asOfText,
+		"project": project, "name": name, "description": description,
 		"workflow_id": workflowID, "workflow_signature": workflowSignature,
 		"training_receipts": frontierT8ReceiptDigestList(training), "holdout_receipts": frontierT8ReceiptDigestList(holdouts),
 	}
@@ -149,7 +182,7 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 	candidate := map[string]any{
 		"schema_id": frontierT8ReusableSkillCandidateSchemaID, "version": 1,
 		"candidate_id": candidateID, "project": project, "name": name, "description": description,
-		"candidate_kind": "runbook_and_skill", "status": "review_required", "as_of": asOfText,
+		"candidate_kind": "runbook_and_skill", "status": "inactive", "as_of": asOfText,
 		"workflow_id": workflowID, "workflow_signature": workflowSignature,
 		"proposal": map[string]any{
 			"steps": stringSliceAny(training[0].Steps), "checks": stringSliceAny(training[0].Checks),
@@ -165,7 +198,7 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 			"network_calls":             economics["network_calls"], "model_calls": economics["model_calls"], "execution_count": economics["execution_count"],
 			"kernel_network_calls": 0, "kernel_model_calls": 0, "kernel_execution_count": 0,
 			"limitations": []any{
-				"Receipt evidence is deterministically validated from the supplied evidence bundle; the coordinator must re-resolve it before Foundry submission.",
+				"Receipt and hash material are deterministically checked in-kernel; the HTTP boundary authoritatively re-resolves every ref before returning or persisting a candidate.",
 				"Repeated verified outcomes establish reuse fitness for the represented fixtures and environments, not universal causal efficacy.",
 				"This advisory kernel does not inspect active Skills Index collisions or mutate ordinary memory.",
 			},
@@ -183,12 +216,20 @@ func frontierT8ReusableSkillCandidate(payload map[string]any) (map[string]any, e
 			"mode": "inactive_only", "state": "inactive", "automatic": false,
 			"activation_allowed": false, "installation_performed": false, "filesystem_mutation": false,
 		},
+		"persistence": map[string]any{
+			"mode": "advisory_non_persisting", "candidate_persisted": false,
+			"performed": false, "explicit_foundry_handoff_required": true,
+		},
 		"skill_foundry_handoff": map[string]any{
 			"target_contract": skillDraftContractID, "target_surface": "skill_foundry_draft",
 			"ready": true, "automatic_submit": false, "automatic_export": false,
 			"draft_payload": map[string]any{
 				"project": project, "name": name, "description": description,
 				"minimum_verified_runs": minimumTraining, "workflow_runs": foundryRuns,
+				"source_candidate_id": candidateID, "source_workflow_signature": workflowSignature,
+				"prerequisites": stringSliceAny(training[0].Prerequisites), "rollback": stringSliceAny(training[0].Rollback),
+				"side_effects": stringSliceAny(training[0].SideEffects), "platform_constraints": stringSliceAny(training[0].PlatformConstraints),
+				"verification_commands": verificationCommands,
 			},
 			"evaluation_template": map[string]any{
 				"minimum_holdouts": minimumHoldouts, "holdouts": foundryHoldouts,
@@ -210,7 +251,21 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 	if err := frontierT8ValidateAdvisoryInput(payload); err != nil {
 		return nil, err
 	}
-	project, err := sanitizeMemoryProject(firstNonEmptyStrings(anyToString(payload["project"]), "contextlattice"))
+	if err := frontierT8RejectUnknownFields(payload, "payload",
+		"project", "skill_id", "name", "skill_version", "as_of", "last_verified_at",
+		"review_window", "metrics", "thresholds", "evidence_refs", "security_change",
+		"dependency_change", "replacement", "impact", "seasonality", "rare_high_value"); err != nil {
+		return nil, err
+	}
+	projectInput := "contextlattice"
+	if rawProject, exists := payload["project"]; exists {
+		projectText, ok := rawProject.(string)
+		if !ok {
+			return nil, errors.New("project must be a string")
+		}
+		projectInput = projectText
+	}
+	project, err := sanitizeMemoryProject(firstNonEmptyStrings(projectInput, "contextlattice"))
 	if err != nil {
 		return nil, err
 	}
@@ -218,11 +273,18 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(anyToString(payload["name"])), "_", "-"))
+	nameInput, ok := payload["name"].(string)
+	if !ok {
+		return nil, errors.New("name must be a string")
+	}
+	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(nameInput), "_", "-"))
 	if !skillFoundryNamePattern.MatchString(name) {
 		return nil, errors.New("name must be 2-64 lowercase letters, digits, or hyphens")
 	}
-	skillVersion := frontierT8ClampedInt(payload["skill_version"], 1, 1, 1000000)
+	skillVersion, err := frontierT8OptionalBoundedInt(payload, "skill_version", 1, 1, 1_000_000)
+	if err != nil {
+		return nil, err
+	}
 	asOf, asOfText, err := frontierT8Timestamp(payload["as_of"], "as_of")
 	if err != nil {
 		return nil, err
@@ -235,6 +297,9 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 		return nil, errors.New("last_verified_at cannot be after as_of")
 	}
 	window := anyMap(payload["review_window"])
+	if err := frontierT8RejectUnknownFields(window, "review_window", "start_at", "end_at"); err != nil {
+		return nil, err
+	}
 	windowStart, windowStartText, err := frontierT8Timestamp(window["start_at"], "review_window.start_at")
 	if err != nil {
 		return nil, err
@@ -246,8 +311,18 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 	if !windowEnd.After(windowStart) || asOf.Before(windowStart) || !asOf.Before(windowEnd) {
 		return nil, errors.New("review_window must contain as_of and end after start")
 	}
+	if windowEnd.Sub(windowStart) > 366*24*time.Hour {
+		return nil, errors.New("review_window cannot exceed 366 days")
+	}
 
 	metrics := anyMap(payload["metrics"])
+	if err := frontierT8RejectUnknownFields(metrics, "metrics",
+		"baseline_verified_success_rate", "current_verified_success_rate", "baseline_sample_count",
+		"current_sample_count", "use_count", "verified_regression_count",
+		"temporary_provider_failure_count", "network_calls", "model_calls", "execution_count",
+		"total_cost_micros", "total_latency_ms"); err != nil {
+		return nil, err
+	}
 	baselineRate, err := frontierT8Rate(metrics["baseline_verified_success_rate"], "metrics.baseline_verified_success_rate")
 	if err != nil {
 		return nil, err
@@ -256,70 +331,105 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	baselineSamples, err := frontierT8RequiredNonNegativeInt(metrics, "baseline_sample_count")
+	baselineSamples, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "baseline_sample_count", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	currentSamples, err := frontierT8RequiredNonNegativeInt(metrics, "current_sample_count")
+	currentSamples, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "current_sample_count", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	useCount, err := frontierT8RequiredNonNegativeInt(metrics, "use_count")
+	useCount, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "use_count", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	regressions, err := frontierT8RequiredNonNegativeInt(metrics, "verified_regression_count")
+	regressions, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "verified_regression_count", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	temporaryProviderFailures, err := frontierT8RequiredNonNegativeInt(metrics, "temporary_provider_failure_count")
+	temporaryProviderFailures, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "temporary_provider_failure_count", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	networkCalls, err := frontierT8RequiredNonNegativeInt(metrics, "network_calls")
+	networkCalls, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "network_calls", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	modelCalls, err := frontierT8RequiredNonNegativeInt(metrics, "model_calls")
+	modelCalls, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "model_calls", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	executionCount, err := frontierT8RequiredNonNegativeInt(metrics, "execution_count")
+	executionCount, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "execution_count", frontierT8MaxCount)
 	if err != nil {
 		return nil, err
 	}
-	totalCostMicros, err := frontierT8RequiredNonNegativeInt(metrics, "total_cost_micros")
+	totalCostMicros, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "total_cost_micros", frontierT8MaxCostMicros)
 	if err != nil {
 		return nil, err
 	}
-	totalLatencyMS, err := frontierT8RequiredNonNegativeInt(metrics, "total_latency_ms")
+	totalLatencyMS, err := frontierT8RequiredBoundedNonNegativeInt(metrics, "total_latency_ms", frontierT8MaxLatencyMS)
 	if err != nil {
 		return nil, err
 	}
 
 	thresholds := anyMap(payload["thresholds"])
-	minimumSamples := int64(frontierT8ClampedInt(thresholds["minimum_samples"], 20, 10, 1000))
-	decayThreshold := frontierT8ClampedFloat(thresholds["efficacy_decay"], 0.15, 0.05, 0.50)
-	staleDaysThreshold := int64(frontierT8ClampedInt(thresholds["stale_days"], 90, 30, 730))
-	lowUseThreshold := int64(frontierT8ClampedInt(thresholds["low_use_count"], 2, 0, 100))
-	regressionThreshold := int64(frontierT8ClampedInt(thresholds["verified_regressions"], 3, 1, 100))
-	replacementCoverageThreshold := frontierT8ClampedFloat(thresholds["replacement_coverage"], 0.95, 0.80, 1.0)
-	rareValueThreshold := int64(frontierT8ClampedInt(thresholds["rare_value_per_use_micros"], 1000000, 1000, 1000000000))
+	if err := frontierT8RejectUnknownFields(thresholds, "thresholds", "minimum_samples", "efficacy_decay", "stale_days", "low_use_count", "verified_regressions", "replacement_coverage", "rare_value_per_use_micros"); err != nil {
+		return nil, err
+	}
+	minimumSamplesValue, err := frontierT8OptionalBoundedInt(thresholds, "minimum_samples", 20, 10, 1000)
+	if err != nil {
+		return nil, err
+	}
+	decayThreshold, err := frontierT8OptionalBoundedFloat(thresholds, "efficacy_decay", 0.15, 0.05, 0.50)
+	if err != nil {
+		return nil, err
+	}
+	staleDaysValue, err := frontierT8OptionalBoundedInt(thresholds, "stale_days", 90, 30, 730)
+	if err != nil {
+		return nil, err
+	}
+	lowUseValue, err := frontierT8OptionalBoundedInt(thresholds, "low_use_count", 2, 0, 100)
+	if err != nil {
+		return nil, err
+	}
+	regressionValue, err := frontierT8OptionalBoundedInt(thresholds, "verified_regressions", 3, 1, 100)
+	if err != nil {
+		return nil, err
+	}
+	replacementCoverageThreshold, err := frontierT8OptionalBoundedFloat(thresholds, "replacement_coverage", 0.95, 0.80, 1.0)
+	if err != nil {
+		return nil, err
+	}
+	rareValueThresholdValue, err := frontierT8OptionalBoundedInt(thresholds, "rare_value_per_use_micros", 1_000_000, 1_000, 1_000_000_000)
+	if err != nil {
+		return nil, err
+	}
+	minimumSamples := int64(minimumSamplesValue)
+	staleDaysThreshold := int64(staleDaysValue)
+	lowUseThreshold := int64(lowUseValue)
+	regressionThreshold := int64(regressionValue)
+	rareValueThreshold := int64(rareValueThresholdValue)
 
 	evidence, err := frontierT8NormalizeEvidence(payload["evidence_refs"], "skill_telemetry", "independent_reviewer")
 	if err != nil {
 		return nil, fmt.Errorf("retirement evidence: %w", err)
 	}
-	securityChange, err := frontierT8ChangeSignal(payload["security_change"], "security_change")
+	securityChange, securityEvidence, err := frontierT8ChangeSignal(payload["security_change"], "security_change")
 	if err != nil {
 		return nil, err
 	}
-	dependencyChange, err := frontierT8ChangeSignal(payload["dependency_change"], "dependency_change")
+	dependencyChange, dependencyEvidence, err := frontierT8ChangeSignal(payload["dependency_change"], "dependency_change")
 	if err != nil {
 		return nil, err
 	}
-	replacement, err := frontierT8Replacement(payload["replacement"])
+	replacement, replacementEvidence, err := frontierT8Replacement(payload["replacement"])
 	if err != nil {
+		return nil, err
+	}
+	if err := frontierT8VerifyEvidenceSeparation(map[string][]frontierT8EvidenceRef{
+		"retirement": evidence, "security_change": securityEvidence,
+		"dependency_change": dependencyEvidence, "replacement": replacementEvidence,
+	}); err != nil {
 		return nil, err
 	}
 	impact, err := frontierT8Impact(payload["impact"])
@@ -327,9 +437,22 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 		return nil, err
 	}
 	seasonality := anyMap(payload["seasonality"])
-	seasonal := anyToBool(seasonality["seasonal"])
-	fullSeasonObserved := anyToBool(seasonality["full_observation_cycle"])
-	seasonID, err := frontierT8BoundedText(seasonality["season_id"], "seasonality.season_id", 120, false)
+	if err := frontierT8RejectUnknownFields(seasonality, "seasonality", "seasonal", "full_observation_cycle", "season_id"); err != nil {
+		return nil, err
+	}
+	seasonal, err := frontierT8RequiredBool(seasonality, "seasonal")
+	if err != nil {
+		return nil, err
+	}
+	fullSeasonObserved, err := frontierT8RequiredBool(seasonality, "full_observation_cycle")
+	if err != nil {
+		return nil, err
+	}
+	seasonID, err := frontierT8BoundedText(seasonality["season_id"], "seasonality.season_id", 120, true)
+	if err != nil {
+		return nil, err
+	}
+	rareHighValueDeclared, err := frontierT8RequiredBool(payload, "rare_high_value")
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +467,7 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 	securitySignal := anyToBool(securityChange["detected"])
 	dependencySignal := anyToBool(dependencyChange["detected"])
 	valuePerUseMicros := anyToInt(impact["value_per_use_micros"], 0)
-	rareHighValue := anyToBool(payload["rare_high_value"]) || (lowUseSignal && int64(valuePerUseMicros) >= rareValueThreshold)
+	rareHighValue := rareHighValueDeclared || (lowUseSignal && int64(valuePerUseMicros) >= rareValueThreshold)
 	temporaryProviderNoise := regressions > 0 && temporaryProviderFailures*2 >= regressions
 	replacementPresent := anyToBool(replacement["present"])
 	replacementVerified := anyToBool(replacement["verified"])
@@ -352,11 +475,17 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 	narrowerReplacement := replacementPresent && (!replacementVerified || replacementCoverage < replacementCoverageThreshold)
 
 	protections := make([]any, 0, 4)
+	if seasonal {
+		protections = append(protections, "seasonal_skill")
+	}
 	if seasonal && !fullSeasonObserved {
 		protections = append(protections, "seasonal_evidence_window_incomplete")
 	}
 	if rareHighValue {
 		protections = append(protections, "rare_high_value_skill")
+	}
+	if temporaryProviderFailures > 0 {
+		protections = append(protections, "temporary_provider_failure_observed")
 	}
 	if temporaryProviderNoise {
 		protections = append(protections, "temporary_provider_failure_dominates_regressions")
@@ -389,9 +518,12 @@ func frontierT8SkillRetirementCandidate(payload map[string]any) (map[string]any,
 		"security_change": securityChange, "dependency_change": dependencyChange,
 	}
 	seed := map[string]any{
-		"project": project, "skill_id": skillID, "skill_version": skillVersion, "as_of": asOfText,
+		"project": project, "skill_id": skillID, "skill_version": skillVersion,
 		"signals": signals, "replacement": replacement, "protections": protections,
-		"evidence": frontierT8EvidenceMaps(evidence),
+		"evidence": map[string]any{
+			"retirement": frontierT8EvidenceMaps(evidence), "security_change": frontierT8EvidenceMaps(securityEvidence),
+			"dependency_change": frontierT8EvidenceMaps(dependencyEvidence), "replacement": frontierT8EvidenceMaps(replacementEvidence),
+		},
 	}
 	seedRaw, _ := json.Marshal(seed)
 	candidateID := "skillretcand_" + sha256Hex(string(seedRaw))[:24]
@@ -475,6 +607,9 @@ func frontierT8RejectUnsafeValue(value any, path string, depth int) error {
 		for _, key := range keys {
 			if frontierT8SensitiveKey.MatchString(key) && frontierT8Meaningful(typed[key]) {
 				return fmt.Errorf("%s.%s contains secret-bearing material", path, key)
+			}
+			if frontierT8RawMaterialKey.MatchString(strings.TrimSpace(key)) {
+				return fmt.Errorf("%s.%s contains raw prompt or content material", path, key)
 			}
 			if err := frontierT8RejectUnsafeValue(typed[key], path+"."+key, depth+1); err != nil {
 				return err
@@ -578,7 +713,29 @@ func frontierT8NormalizeReceipt(row map[string]any, partition string, asOf time.
 			return receipt, fmt.Errorf("hidden or manual workflow step %q is not reusable", key)
 		}
 	}
-	var err error
+	if err := frontierT8RejectUnknownFields(row, "receipt",
+		"schema_id", "receipt_id", "workflow_id", "partition", "fixture_id", "environment_id",
+		"producer_id", "verifier_id", "success", "verification_passed", "checks_passed",
+		"verified_at", "verification_command", "verification_command_digest", "steps", "checks",
+		"prerequisites", "rollback", "side_effects", "platform_constraints", "evidence_refs",
+		"cost", "latency_ms", "network_calls", "model_calls", "execution_count",
+		"previous_receipt_digest", "receipt_digest", "step_inventory_complete", "manual_steps_required"); err != nil {
+		return receipt, err
+	}
+	if anyToString(row["schema_id"]) != "workflow_receipt.v1" {
+		return receipt, errors.New("schema_id must be workflow_receipt.v1")
+	}
+	completeInventory, err := frontierT8RequiredBool(row, "step_inventory_complete")
+	if err != nil || !completeInventory {
+		return receipt, errors.New("step_inventory_complete=true is required")
+	}
+	manualStepsRequired, err := frontierT8RequiredBool(row, "manual_steps_required")
+	if err != nil {
+		return receipt, err
+	}
+	if manualStepsRequired {
+		return receipt, errors.New("manual workflow steps are not reusable")
+	}
 	receipt.ReceiptID, err = frontierT8Identifier(row["receipt_id"], "receipt_id")
 	if err != nil {
 		return receipt, err
@@ -587,7 +744,11 @@ func frontierT8NormalizeReceipt(row map[string]any, partition string, asOf time.
 	if err != nil {
 		return receipt, err
 	}
-	receipt.Partition = strings.ToLower(strings.TrimSpace(anyToString(row["partition"])))
+	partitionInput, ok := row["partition"].(string)
+	if !ok {
+		return receipt, errors.New("partition must be a string")
+	}
+	receipt.Partition = strings.ToLower(strings.TrimSpace(partitionInput))
 	if receipt.Partition != partition {
 		return receipt, fmt.Errorf("partition=%q want %q", receipt.Partition, partition)
 	}
@@ -610,14 +771,20 @@ func frontierT8NormalizeReceipt(row map[string]any, partition string, asOf time.
 	if strings.EqualFold(receipt.ProducerID, receipt.VerifierID) {
 		return receipt, errors.New("receipt verifier must be independent from its producer")
 	}
-	if !anyToBool(row["success"]) || !anyToBool(row["verification_passed"]) || !anyToBool(row["checks_passed"]) {
+	success, successErr := frontierT8RequiredBool(row, "success")
+	verified, verifiedErr := frontierT8RequiredBool(row, "verification_passed")
+	checksPassed, checksErr := frontierT8RequiredBool(row, "checks_passed")
+	if successErr != nil || verifiedErr != nil || checksErr != nil {
+		return receipt, errors.New("success, verification_passed, and checks_passed must be booleans")
+	}
+	if !success || !verified || !checksPassed {
 		return receipt, errors.New("receipt must be successful with independent verification and checks passed")
 	}
 	receipt.VerifiedAt, receipt.VerifiedAtText, err = frontierT8Timestamp(row["verified_at"], "verified_at")
 	if err != nil {
 		return receipt, err
 	}
-	if receipt.VerifiedAt.After(asOf.Add(5 * time.Minute)) {
+	if receipt.VerifiedAt.After(asOf) {
 		return receipt, errors.New("verified_at cannot be in the future")
 	}
 	if asOf.Sub(receipt.VerifiedAt) > time.Duration(maxAgeDays)*24*time.Hour {
@@ -655,34 +822,47 @@ func frontierT8NormalizeReceipt(row map[string]any, partition string, asOf time.
 	if err != nil {
 		return receipt, err
 	}
+	for _, value := range append(append(append(append(append([]string{}, receipt.Steps...), receipt.Checks...), receipt.Prerequisites...), receipt.Rollback...), receipt.SideEffects...) {
+		if frontierT8ManualStep.MatchString(value) {
+			return receipt, errors.New("manual or hidden workflow material is not reusable")
+		}
+	}
 	receipt.WorkflowSignature = frontierT8WorkflowSignature(receipt)
 	receipt.Evidence, err = frontierT8NormalizeEvidence(row["evidence_refs"], receipt.ProducerID, receipt.VerifierID)
 	if err != nil {
 		return receipt, err
 	}
+	for _, ref := range receipt.Evidence {
+		if !strings.EqualFold(ref.ProducerID, receipt.ProducerID) || !strings.EqualFold(ref.VerifierID, receipt.VerifierID) {
+			return receipt, fmt.Errorf("evidence ref %q is not bound to the receipt producer and verifier", ref.RefID)
+		}
+	}
 	cost := anyMap(row["cost"])
-	if receipt.Economics.InputTokens, err = frontierT8RequiredNonNegativeInt(cost, "input_tokens"); err != nil {
+	if err := frontierT8RejectUnknownFields(cost, "cost", "input_tokens", "output_tokens", "tool_calls", "provider_cost_micros"); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.OutputTokens, err = frontierT8RequiredNonNegativeInt(cost, "output_tokens"); err != nil {
+	if receipt.Economics.InputTokens, err = frontierT8RequiredBoundedNonNegativeInt(cost, "input_tokens", frontierT8MaxCount); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.ToolCalls, err = frontierT8RequiredNonNegativeInt(cost, "tool_calls"); err != nil {
+	if receipt.Economics.OutputTokens, err = frontierT8RequiredBoundedNonNegativeInt(cost, "output_tokens", frontierT8MaxCount); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.ProviderCostMicros, err = frontierT8RequiredNonNegativeInt(cost, "provider_cost_micros"); err != nil {
+	if receipt.Economics.ToolCalls, err = frontierT8RequiredBoundedNonNegativeInt(cost, "tool_calls", frontierT8MaxCount); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.LatencyMS, err = frontierT8RequiredNonNegativeInt(row, "latency_ms"); err != nil {
+	if receipt.Economics.ProviderCostMicros, err = frontierT8RequiredBoundedNonNegativeInt(cost, "provider_cost_micros", frontierT8MaxCostMicros); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.NetworkCalls, err = frontierT8RequiredNonNegativeInt(row, "network_calls"); err != nil {
+	if receipt.Economics.LatencyMS, err = frontierT8RequiredBoundedNonNegativeInt(row, "latency_ms", frontierT8MaxLatencyMS); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.ModelCalls, err = frontierT8RequiredNonNegativeInt(row, "model_calls"); err != nil {
+	if receipt.Economics.NetworkCalls, err = frontierT8RequiredBoundedNonNegativeInt(row, "network_calls", frontierT8MaxCount); err != nil {
 		return receipt, err
 	}
-	if receipt.Economics.ExecutionCount, err = frontierT8RequiredNonNegativeInt(row, "execution_count"); err != nil {
+	if receipt.Economics.ModelCalls, err = frontierT8RequiredBoundedNonNegativeInt(row, "model_calls", frontierT8MaxCount); err != nil {
+		return receipt, err
+	}
+	if receipt.Economics.ExecutionCount, err = frontierT8RequiredBoundedNonNegativeInt(row, "execution_count", frontierT8MaxCount); err != nil {
 		return receipt, err
 	}
 	if receipt.Economics.ExecutionCount == 0 {
@@ -718,57 +898,88 @@ func frontierT8WorkflowSignature(receipt frontierT8WorkflowReceipt) string {
 		"workflow_id": receipt.WorkflowID, "steps": receipt.Steps, "checks": receipt.Checks,
 		"prerequisites": receipt.Prerequisites, "rollback": receipt.Rollback,
 		"side_effects": receipt.SideEffects, "platform_constraints": receipt.PlatformConstraints,
+		"verification_command_digest": receipt.VerificationCommandDigest,
 	})
 	return "sha256:" + sha256Hex(string(raw))
 }
 
-func frontierT8VerifyPartitionSeparation(training, holdouts []frontierT8WorkflowReceipt) error {
-	trainingReceipts := map[string]struct{}{}
-	trainingFixtures := map[string]struct{}{}
-	trainingEnvironments := map[string]struct{}{}
-	trainingEvidenceIDs := map[string]struct{}{}
-	trainingEvidenceDigests := map[string]struct{}{}
-	trainingProducers := map[string]struct{}{}
-	for _, receipt := range training {
-		trainingReceipts[receipt.ReceiptID] = struct{}{}
-		trainingFixtures[receipt.FixtureID] = struct{}{}
-		trainingEnvironments[receipt.EnvironmentID] = struct{}{}
-		trainingProducers[strings.ToLower(receipt.ProducerID)] = struct{}{}
+func frontierT8VerifyReceiptSeparation(training, holdouts []frontierT8WorkflowReceipt) error {
+	type origin struct {
+		partition string
+		receiptID string
+	}
+	claim := func(seen map[string]origin, kind, value string, current origin) error {
+		key := strings.ToLower(value)
+		if previous, exists := seen[key]; exists {
+			if previous.partition != current.partition {
+				return fmt.Errorf("training/holdout leakage: %s %q overlaps", kind, value)
+			}
+			return fmt.Errorf("%s %q overlaps receipts %q and %q", kind, value, previous.receiptID, current.receiptID)
+		}
+		seen[key] = current
+		return nil
+	}
+
+	receiptIDs := map[string]origin{}
+	receiptDigests := map[string]origin{}
+	fixtureIDs := map[string]origin{}
+	environmentIDs := map[string]origin{}
+	evidenceIDs := map[string]origin{}
+	evidenceDigests := map[string]origin{}
+	verificationIDs := map[string]origin{}
+	producers := map[string]origin{}
+	verifiers := map[string]origin{}
+	all := append(append([]frontierT8WorkflowReceipt{}, training...), holdouts...)
+	for _, receipt := range all {
+		current := origin{partition: receipt.Partition, receiptID: receipt.ReceiptID}
+		for _, item := range []struct {
+			seen  map[string]origin
+			kind  string
+			value string
+		}{
+			{receiptIDs, "receipt_id", receipt.ReceiptID},
+			{receiptDigests, "receipt_digest", receipt.ReceiptDigest},
+			{fixtureIDs, "fixture_id", receipt.FixtureID},
+			{environmentIDs, "environment_id", receipt.EnvironmentID},
+		} {
+			if err := claim(item.seen, item.kind, item.value, current); err != nil {
+				return err
+			}
+		}
+		producers[strings.ToLower(receipt.ProducerID)] = current
+		verifiers[strings.ToLower(receipt.VerifierID)] = current
 		for _, ref := range receipt.Evidence {
-			trainingEvidenceIDs[ref.RefID] = struct{}{}
-			trainingEvidenceDigests[ref.Digest] = struct{}{}
+			if err := claim(evidenceIDs, "evidence ref_id", ref.RefID, current); err != nil {
+				return err
+			}
+			if err := claim(evidenceDigests, "evidence digest", ref.Digest, current); err != nil {
+				return err
+			}
+			if err := claim(verificationIDs, "evidence verification_id", ref.VerificationID, current); err != nil {
+				return err
+			}
+			producers[strings.ToLower(ref.ProducerID)] = current
+			verifiers[strings.ToLower(ref.VerifierID)] = current
 		}
 	}
-	holdoutFixtures := map[string]struct{}{}
-	holdoutEnvironments := map[string]struct{}{}
-	for _, receipt := range holdouts {
-		if _, leaked := trainingReceipts[receipt.ReceiptID]; leaked {
-			return fmt.Errorf("training/holdout leakage: receipt_id %q overlaps", receipt.ReceiptID)
+	for identity, producer := range producers {
+		if verifier, overlaps := verifiers[identity]; overlaps {
+			return fmt.Errorf("producer/verifier independence failed for %q across receipts %q and %q", identity, producer.receiptID, verifier.receiptID)
 		}
-		if _, leaked := trainingFixtures[receipt.FixtureID]; leaked {
-			return fmt.Errorf("training/holdout leakage: fixture_id %q overlaps", receipt.FixtureID)
+	}
+	for identity, fixture := range fixtureIDs {
+		if environment, overlaps := environmentIDs[identity]; overlaps {
+			return fmt.Errorf("fixture/environment overlap %q across receipts %q and %q", identity, fixture.receiptID, environment.receiptID)
 		}
-		if _, duplicate := holdoutFixtures[receipt.FixtureID]; duplicate {
-			return fmt.Errorf("holdout fixture_id %q is duplicated", receipt.FixtureID)
+	}
+	for identity, receipt := range receiptIDs {
+		if evidence, overlaps := evidenceIDs[identity]; overlaps {
+			return fmt.Errorf("receipt/evidence overlap %q across receipts %q and %q", identity, receipt.receiptID, evidence.receiptID)
 		}
-		holdoutFixtures[receipt.FixtureID] = struct{}{}
-		if _, leaked := trainingEnvironments[receipt.EnvironmentID]; leaked {
-			return fmt.Errorf("training/holdout leakage: environment_id %q overlaps", receipt.EnvironmentID)
-		}
-		if _, duplicate := holdoutEnvironments[receipt.EnvironmentID]; duplicate {
-			return fmt.Errorf("holdout environment_id %q is duplicated", receipt.EnvironmentID)
-		}
-		holdoutEnvironments[receipt.EnvironmentID] = struct{}{}
-		if _, dependent := trainingProducers[strings.ToLower(receipt.VerifierID)]; dependent {
-			return fmt.Errorf("holdout verifier %q is not independent from training producers", receipt.VerifierID)
-		}
-		for _, ref := range receipt.Evidence {
-			if _, leaked := trainingEvidenceIDs[ref.RefID]; leaked {
-				return fmt.Errorf("training/holdout leakage: evidence ref_id %q overlaps", ref.RefID)
-			}
-			if _, leaked := trainingEvidenceDigests[ref.Digest]; leaked {
-				return fmt.Errorf("training/holdout leakage: evidence digest %q overlaps", ref.Digest)
-			}
+	}
+	for digest, receipt := range receiptDigests {
+		if evidence, overlaps := evidenceDigests[digest]; overlaps {
+			return fmt.Errorf("receipt/evidence digest overlap %q across receipts %q and %q", digest, receipt.receiptID, evidence.receiptID)
 		}
 	}
 	return nil
@@ -782,27 +993,41 @@ func frontierT8NormalizeEvidence(raw any, defaultProducer, defaultVerifier strin
 	refs := make([]frontierT8EvidenceRef, 0, len(items))
 	seenIDs := map[string]struct{}{}
 	seenDigests := map[string]struct{}{}
+	seenVerificationIDs := map[string]struct{}{}
 	for index, item := range items {
 		row := anyMap(item)
+		if err := frontierT8RejectUnknownFields(row, fmt.Sprintf("evidence_refs[%d]", index),
+			"ref_id", "kind", "digest", "resolved_digest", "resolved", "verification_passed",
+			"producer_id", "verifier_id", "verification_id"); err != nil {
+			return nil, err
+		}
 		refID, err := frontierT8Identifier(row["ref_id"], fmt.Sprintf("evidence_refs[%d].ref_id", index))
 		if err != nil {
 			return nil, err
 		}
 		digest := strings.ToLower(strings.TrimSpace(anyToString(row["digest"])))
 		resolvedDigest := strings.ToLower(strings.TrimSpace(anyToString(row["resolved_digest"])))
-		if !frontierT8SHA256Pattern.MatchString(digest) || resolvedDigest != digest || !anyToBool(row["resolved"]) {
+		resolved, resolvedErr := frontierT8RequiredBool(row, "resolved")
+		if resolvedErr != nil || !frontierT8SHA256Pattern.MatchString(digest) || resolvedDigest != digest || !resolved {
 			return nil, fmt.Errorf("evidence ref %q is unresolved or has a mismatched digest", refID)
 		}
-		if !anyToBool(row["verification_passed"]) {
+		verificationPassed, verificationErr := frontierT8RequiredBool(row, "verification_passed")
+		if verificationErr != nil || !verificationPassed {
 			return nil, fmt.Errorf("evidence ref %q lacks passing verification", refID)
 		}
-		producer := firstNonEmptyStrings(anyToString(row["producer_id"]), defaultProducer)
-		verifier := firstNonEmptyStrings(anyToString(row["verifier_id"]), defaultVerifier)
-		producer, err = frontierT8Identifier(producer, fmt.Sprintf("evidence_refs[%d].producer_id", index))
+		producerRaw := any(defaultProducer)
+		if supplied, exists := row["producer_id"]; exists {
+			producerRaw = supplied
+		}
+		verifierRaw := any(defaultVerifier)
+		if supplied, exists := row["verifier_id"]; exists {
+			verifierRaw = supplied
+		}
+		producer, err := frontierT8Identifier(producerRaw, fmt.Sprintf("evidence_refs[%d].producer_id", index))
 		if err != nil {
 			return nil, err
 		}
-		verifier, err = frontierT8Identifier(verifier, fmt.Sprintf("evidence_refs[%d].verifier_id", index))
+		verifier, err := frontierT8Identifier(verifierRaw, fmt.Sprintf("evidence_refs[%d].verifier_id", index))
 		if err != nil {
 			return nil, err
 		}
@@ -823,8 +1048,12 @@ func frontierT8NormalizeEvidence(raw any, defaultProducer, defaultVerifier strin
 		if _, duplicate := seenDigests[digest]; duplicate {
 			return nil, fmt.Errorf("evidence digest %q is duplicated", digest)
 		}
+		if _, duplicate := seenVerificationIDs[verificationID]; duplicate {
+			return nil, fmt.Errorf("evidence verification_id %q is duplicated", verificationID)
+		}
 		seenIDs[refID] = struct{}{}
 		seenDigests[digest] = struct{}{}
+		seenVerificationIDs[verificationID] = struct{}{}
 		refs = append(refs, frontierT8EvidenceRef{
 			RefID: refID, Kind: kind, Digest: digest, ResolvedDigest: resolvedDigest,
 			ProducerID: producer, VerifierID: verifier, VerificationID: verificationID,
@@ -844,6 +1073,48 @@ func frontierT8EvidenceMaps(refs []frontierT8EvidenceRef) []any {
 		})
 	}
 	return out
+}
+
+func frontierT8VerifyEvidenceSeparation(groups map[string][]frontierT8EvidenceRef) error {
+	type origin struct{ group, refID string }
+	ids := map[string]origin{}
+	digests := map[string]origin{}
+	verificationIDs := map[string]origin{}
+	producers := map[string]origin{}
+	verifiers := map[string]origin{}
+	groupNames := make([]string, 0, len(groups))
+	for group := range groups {
+		groupNames = append(groupNames, group)
+	}
+	sort.Strings(groupNames)
+	for _, group := range groupNames {
+		for _, ref := range groups[group] {
+			current := origin{group: group, refID: ref.RefID}
+			for _, item := range []struct {
+				seen  map[string]origin
+				kind  string
+				value string
+			}{
+				{ids, "ref_id", ref.RefID},
+				{digests, "digest", ref.Digest},
+				{verificationIDs, "verification_id", ref.VerificationID},
+			} {
+				key := strings.ToLower(item.value)
+				if previous, exists := item.seen[key]; exists {
+					return fmt.Errorf("retirement evidence %s %q overlaps %s/%s and %s/%s", item.kind, item.value, previous.group, previous.refID, current.group, current.refID)
+				}
+				item.seen[key] = current
+			}
+			producers[strings.ToLower(ref.ProducerID)] = current
+			verifiers[strings.ToLower(ref.VerifierID)] = current
+		}
+	}
+	for identity, producer := range producers {
+		if verifier, overlaps := verifiers[identity]; overlaps {
+			return fmt.Errorf("retirement evidence producer/verifier independence failed for %q across %s and %s", identity, producer.group, verifier.group)
+		}
+	}
+	return nil
 }
 
 func frontierT8ReceiptProvenance(receipts []frontierT8WorkflowReceipt) []any {
@@ -934,60 +1205,96 @@ func frontierT8AggregateEconomics(receipts []frontierT8WorkflowReceipt) map[stri
 	}
 }
 
-func frontierT8ChangeSignal(raw any, field string) (map[string]any, error) {
+func frontierT8ChangeSignal(raw any, field string) (map[string]any, []frontierT8EvidenceRef, error) {
 	row := anyMap(raw)
-	detected := anyToBool(row["detected"])
+	if err := frontierT8RejectUnknownFields(row, field, "detected", "severity", "summary", "evidence_refs"); err != nil {
+		return nil, nil, err
+	}
+	detected, err := frontierT8RequiredBool(row, "detected")
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s.detected must be a boolean", field)
+	}
 	severity := strings.ToLower(strings.TrimSpace(anyToString(row["severity"])))
 	if severity == "" {
 		severity = "none"
 	}
 	allowed := map[string]struct{}{"none": {}, "low": {}, "medium": {}, "high": {}, "critical": {}}
 	if _, ok := allowed[severity]; !ok {
-		return nil, fmt.Errorf("%s.severity is invalid", field)
+		return nil, nil, fmt.Errorf("%s.severity is invalid", field)
+	}
+	if detected && severity == "none" {
+		return nil, nil, fmt.Errorf("%s.severity must be material when detected=true", field)
+	}
+	if !detected && severity != "none" {
+		return nil, nil, fmt.Errorf("%s.severity must be none when detected=false", field)
 	}
 	summary, err := frontierT8BoundedText(row["summary"], field+".summary", 400, detected)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	refs := []frontierT8EvidenceRef{}
 	if detected {
 		refs, err = frontierT8NormalizeEvidence(row["evidence_refs"], "skill_dependency_inventory", "independent_reviewer")
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", field, err)
+			return nil, nil, fmt.Errorf("%s: %w", field, err)
 		}
+	} else if frontierT8Meaningful(row["summary"]) || frontierT8Meaningful(row["evidence_refs"]) {
+		return nil, nil, fmt.Errorf("%s cannot include change evidence when detected=false", field)
 	}
-	return map[string]any{"detected": detected, "severity": severity, "summary": summary, "evidence_refs": frontierT8EvidenceMaps(refs)}, nil
+	return map[string]any{"detected": detected, "severity": severity, "summary": summary, "evidence_refs": frontierT8EvidenceMaps(refs)}, refs, nil
 }
 
-func frontierT8Replacement(raw any) (map[string]any, error) {
+func frontierT8Replacement(raw any) (map[string]any, []frontierT8EvidenceRef, error) {
 	row := anyMap(raw)
-	if len(row) == 0 || !anyToBool(firstPresentAny(row["present"], true)) {
-		return map[string]any{"present": false, "verified": false, "coverage_ratio": 0.0, "evidence_refs": []any{}}, nil
+	if err := frontierT8RejectUnknownFields(row, "replacement", "present", "skill_id", "verified", "coverage_ratio", "coverage_basis", "evidence_refs"); err != nil {
+		return nil, nil, err
+	}
+	if len(row) == 0 {
+		return map[string]any{"present": false, "verified": false, "coverage_ratio": 0.0, "coverage_basis": "", "evidence_refs": []any{}}, nil, nil
+	}
+	present, err := frontierT8RequiredBool(row, "present")
+	if err != nil {
+		return nil, nil, errors.New("replacement.present must be a boolean")
+	}
+	if !present {
+		for _, key := range []string{"skill_id", "verified", "coverage_ratio", "coverage_basis", "evidence_refs"} {
+			if frontierT8Meaningful(row[key]) {
+				return nil, nil, errors.New("replacement cannot include identity or coverage when present=false")
+			}
+		}
+		return map[string]any{"present": false, "verified": false, "coverage_ratio": 0.0, "coverage_basis": "", "evidence_refs": []any{}}, nil, nil
 	}
 	skillID, err := frontierT8Identifier(row["skill_id"], "replacement.skill_id")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	coverage, err := frontierT8Rate(row["coverage_ratio"], "replacement.coverage_ratio")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	coverageBasis, err := frontierT8BoundedText(row["coverage_basis"], "replacement.coverage_basis", 400, true)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	refs, err := frontierT8NormalizeEvidence(row["evidence_refs"], "replacement_evaluator", "independent_reviewer")
 	if err != nil {
-		return nil, fmt.Errorf("replacement: %w", err)
+		return nil, nil, fmt.Errorf("replacement: %w", err)
+	}
+	verified, err := frontierT8RequiredBool(row, "verified")
+	if err != nil {
+		return nil, nil, errors.New("replacement.verified must be a boolean")
 	}
 	return map[string]any{
-		"present": true, "skill_id": skillID, "verified": anyToBool(row["verified"]),
+		"present": true, "skill_id": skillID, "verified": verified,
 		"coverage_ratio": coverage, "coverage_basis": coverageBasis, "evidence_refs": frontierT8EvidenceMaps(refs),
-	}, nil
+	}, refs, nil
 }
 
 func frontierT8Impact(raw any) (map[string]any, error) {
 	row := anyMap(raw)
+	if err := frontierT8RejectUnknownFields(row, "impact", "severity", "summary", "affected_workflows", "value_per_use_micros", "user_visible"); err != nil {
+		return nil, err
+	}
 	severity := strings.ToLower(strings.TrimSpace(anyToString(row["severity"])))
 	allowed := map[string]struct{}{"low": {}, "medium": {}, "high": {}, "critical": {}}
 	if _, ok := allowed[severity]; !ok {
@@ -997,22 +1304,30 @@ func frontierT8Impact(raw any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	affected, err := frontierT8RequiredNonNegativeInt(row, "affected_workflows")
+	affected, err := frontierT8RequiredBoundedNonNegativeInt(row, "affected_workflows", frontierT8MaxCount)
 	if err != nil {
 		return nil, fmt.Errorf("impact: %w", err)
 	}
-	valuePerUse, err := frontierT8RequiredNonNegativeInt(row, "value_per_use_micros")
+	valuePerUse, err := frontierT8RequiredBoundedNonNegativeInt(row, "value_per_use_micros", frontierT8MaxCostMicros)
 	if err != nil {
 		return nil, fmt.Errorf("impact: %w", err)
+	}
+	userVisible, err := frontierT8RequiredBool(row, "user_visible")
+	if err != nil {
+		return nil, errors.New("impact.user_visible must be a boolean")
 	}
 	return map[string]any{
 		"severity": severity, "summary": summary, "affected_workflows": affected,
-		"value_per_use_micros": valuePerUse, "user_visible": anyToBool(row["user_visible"]),
+		"value_per_use_micros": valuePerUse, "user_visible": userVisible,
 	}, nil
 }
 
 func frontierT8Identifier(raw any, field string) (string, error) {
-	value := strings.TrimSpace(anyToString(raw))
+	value, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string identifier", field)
+	}
+	value = strings.TrimSpace(value)
 	if !frontierT8IdentifierPattern.MatchString(value) {
 		return "", fmt.Errorf("%s must be a bounded identifier", field)
 	}
@@ -1020,17 +1335,34 @@ func frontierT8Identifier(raw any, field string) (string, error) {
 }
 
 func frontierT8Timestamp(raw any, field string) (time.Time, string, error) {
-	value := strings.TrimSpace(anyToString(raw))
+	value, ok := raw.(string)
+	if !ok {
+		return time.Time{}, "", fmt.Errorf("%s must be an RFC3339 string", field)
+	}
+	value = strings.TrimSpace(value)
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("%s must be RFC3339: %w", field, err)
 	}
 	parsed = parsed.UTC()
+	if parsed.Year() < 2000 || parsed.Year() > 2200 {
+		return time.Time{}, "", fmt.Errorf("%s must be between years 2000 and 2200", field)
+	}
 	return parsed, parsed.Format(time.RFC3339Nano), nil
 }
 
 func frontierT8BoundedText(raw any, field string, maxBytes int, required bool) (string, error) {
-	value := strings.Join(strings.Fields(anyToString(raw)), " ")
+	if raw == nil {
+		if required {
+			return "", fmt.Errorf("%s is required", field)
+		}
+		return "", nil
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", field)
+	}
+	value := strings.Join(strings.Fields(text), " ")
 	if value == "" && required {
 		return "", fmt.Errorf("%s is required", field)
 	}
@@ -1044,6 +1376,13 @@ func frontierT8BoundedText(raw any, field string, maxBytes int, required bool) (
 }
 
 func frontierT8StringList(raw any, field string, limit, maxBytes int, required bool) ([]string, error) {
+	if raw != nil {
+		switch raw.(type) {
+		case []any, []string:
+		default:
+			return nil, fmt.Errorf("%s must be an array of strings", field)
+		}
+	}
 	items := contextPackAnyList(raw)
 	if required && len(items) == 0 {
 		return nil, fmt.Errorf("%s is required", field)
@@ -1060,7 +1399,7 @@ func frontierT8StringList(raw any, field string, limit, maxBytes int, required b
 		}
 		key := strings.ToLower(value)
 		if _, duplicate := seen[key]; duplicate {
-			continue
+			return nil, fmt.Errorf("%s contains duplicate entry %q", field, value)
 		}
 		seen[key] = struct{}{}
 		out = append(out, value)
@@ -1072,13 +1411,17 @@ func frontierT8StringList(raw any, field string, limit, maxBytes int, required b
 }
 
 func frontierT8RequiredNonNegativeInt(row map[string]any, field string) (int64, error) {
+	return frontierT8RequiredBoundedNonNegativeInt(row, field, math.MaxInt64)
+}
+
+func frontierT8RequiredBoundedNonNegativeInt(row map[string]any, field string, maximum int64) (int64, error) {
 	raw, ok := row[field]
 	if !ok {
 		return 0, fmt.Errorf("%s is required", field)
 	}
 	value, ok := frontierT8Int64(raw)
-	if !ok || value < 0 {
-		return 0, fmt.Errorf("%s must be a non-negative integer", field)
+	if !ok || value < 0 || value > maximum {
+		return 0, fmt.Errorf("%s must be a non-negative integer no greater than %d", field, maximum)
 	}
 	return value, nil
 }
@@ -1109,9 +1452,6 @@ func frontierT8Int64(raw any) (int64, bool) {
 	case json.Number:
 		parsed, err := value.Int64()
 		return parsed, err == nil
-	case string:
-		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		return parsed, err == nil
 	default:
 		return 0, false
 	}
@@ -1139,9 +1479,6 @@ func frontierT8Float(raw any) (float64, bool) {
 	case json.Number:
 		parsed, err := value.Float64()
 		return parsed, err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0)
-	case string:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		return parsed, err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0)
 	default:
 		return 0, false
 	}
@@ -1161,6 +1498,60 @@ func frontierT8ClampedFloat(raw any, fallback, minimum, maximum float64) float64
 		return fallback
 	}
 	return math.Max(minimum, math.Min(maximum, value))
+}
+
+func frontierT8OptionalBoundedInt(row map[string]any, field string, fallback, minimum, maximum int) (int, error) {
+	raw, exists := row[field]
+	if !exists {
+		return fallback, nil
+	}
+	value, ok := frontierT8Int64(raw)
+	if !ok || value < int64(minimum) || value > int64(maximum) {
+		return 0, fmt.Errorf("%s must be an integer between %d and %d", field, minimum, maximum)
+	}
+	return int(value), nil
+}
+
+func frontierT8OptionalBoundedFloat(row map[string]any, field string, fallback, minimum, maximum float64) (float64, error) {
+	raw, exists := row[field]
+	if !exists {
+		return fallback, nil
+	}
+	value, ok := frontierT8Float(raw)
+	if !ok || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be between %v and %v", field, minimum, maximum)
+	}
+	return roundFloat(value, 6), nil
+}
+
+func frontierT8RequiredBool(row map[string]any, field string) (bool, error) {
+	raw, exists := row[field]
+	if !exists {
+		return false, fmt.Errorf("%s is required", field)
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("%s must be a boolean", field)
+	}
+	return value, nil
+}
+
+func frontierT8RejectUnknownFields(row map[string]any, field string, allowed ...string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, key := range allowed {
+		allowedSet[key] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for key := range row {
+		if _, ok := allowedSet[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("%s contains unknown field %q", field, unknown[0])
 }
 
 func frontierT8EnsureBounded(payload map[string]any) error {

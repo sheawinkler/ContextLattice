@@ -1295,7 +1295,7 @@ func newServer() *server {
 	skillFoundryInstance, skillFoundryErr := newSkillFoundryStoreFromEnv()
 	if skillFoundryErr != nil {
 		log.Printf("gateway-go skill foundry store disabled: %v", skillFoundryErr)
-		skillFoundryInstance = &skillFoundryStore{enabled: false, drafts: map[string]map[string]any{}, evaluations: []map[string]any{}, exports: []map[string]any{}, lastError: skillFoundryErr.Error()}
+		skillFoundryInstance = &skillFoundryStore{enabled: false, drafts: map[string]map[string]any{}, evaluations: []map[string]any{}, exports: []map[string]any{}, retirements: []map[string]any{}, transactions: map[string]map[string]any{}, lastError: skillFoundryErr.Error()}
 	}
 	contextPassportInstance, contextPassportErr := newContextPassportStoreFromEnv()
 	if contextPassportErr != nil {
@@ -7167,6 +7167,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/skills/foundry/evaluate", s.memorySkillFoundryEvaluate)
 	mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)
 	mux.HandleFunc("/memory/skills/foundry/retire", s.memorySkillFoundryRetire)
+	mux.HandleFunc(frontierT8SkillEvolutionPath, s.memorySkillFoundryEvolution)
 	mux.HandleFunc("/memory/context-passport/export", s.memoryContextPassportExport)
 	mux.HandleFunc("/memory/context-passport/verify", s.memoryContextPassportVerify)
 	mux.HandleFunc("/memory/context-passport/diff", s.memoryContextPassportDiff)

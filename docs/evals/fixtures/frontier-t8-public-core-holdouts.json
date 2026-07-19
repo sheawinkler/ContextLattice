@@ -1,0 +1,46 @@
+{
+  "schema_id": "frontier_t8_public_core_holdouts.v1",
+  "version": 1,
+  "baselines": [
+    "reusable_candidate_inactive_and_deterministic",
+    "explicit_foundry_handoff_stops_after_evaluation",
+    "retirement_candidate_distinct_and_pending_approval"
+  ],
+  "item_21_rejections": [
+    "superficial_similarity",
+    "one_off_success",
+    "stale_verification",
+    "unresolved_evidence",
+    "receipt_overlap",
+    "evidence_overlap",
+    "fixture_overlap",
+    "environment_overlap",
+    "broken_previous_hash",
+    "unbounded_input",
+    "producer_verifier_overlap",
+    "verification_command_digest_mismatch",
+    "missing_prerequisites",
+    "missing_rollback",
+    "missing_side_effects",
+    "missing_platform_constraints",
+    "hidden_manual_steps",
+    "raw_prompt_or_content",
+    "secret_material",
+    "local_absolute_path",
+    "unsafe_workflow_material"
+  ],
+  "item_22_abstentions": [
+    "low_use_alone",
+    "seasonal_skill",
+    "rare_high_value_skill",
+    "temporary_provider_failure",
+    "narrower_replacement"
+  ],
+  "invariants": [
+    "no_model_network_subprocess_command_git_or_worktree_execution",
+    "no_raw_prompts_content_secrets_or_local_paths",
+    "no_automatic_export_install_activation_deactivation_or_terminal_retirement",
+    "candidate_only_operations_do_not_persist",
+    "native_skills_index_lookup_is_read_only"
+  ]
+}
