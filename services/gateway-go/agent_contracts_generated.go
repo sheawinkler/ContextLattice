@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 36
+const GeneratedAgentContractRegistryVersion = 47
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
@@ -32,6 +32,13 @@ const GeneratedAgentContractAsyncSteeringEventV1 = "async_steering_event.v1"
 const GeneratedAgentContractAsyncSteeringStreamItemV1 = "async_steering_stream_item.v1"
 const GeneratedAgentContractCausalBridgeExplanationV1 = "causal_bridge_explanation.v1"
 const GeneratedAgentContractCodexCompactHookStdoutV1 = "codex_compact_hook_stdout.v1"
+const GeneratedAgentContractCollaborativeContextGrantV1 = "collaborative_context_grant.v1"
+const GeneratedAgentContractCollaborativeContextGrantDecisionV1 = "collaborative_context_grant_decision.v1"
+const GeneratedAgentContractCollaborativeContextGrantRevocationV1 = "collaborative_context_grant_revocation.v1"
+const GeneratedAgentContractContextContinuationEnvelopeV1 = "context_continuation_envelope.v1"
+const GeneratedAgentContractContextContinuationManifestV1 = "context_continuation_manifest.v1"
+const GeneratedAgentContractContextContinuationPayloadV1 = "context_continuation_payload.v1"
+const GeneratedAgentContractContextContinuationReconciliationV1 = "context_continuation_reconciliation.v1"
 const GeneratedAgentContractContextMeshEnvelopeV1 = "context_mesh_envelope.v1"
 const GeneratedAgentContractContextMeshGrantV1 = "context_mesh_grant.v1"
 const GeneratedAgentContractContextMeshImportV1 = "context_mesh_import.v1"
@@ -40,6 +47,7 @@ const GeneratedAgentContractContextOverflowRecoveryV1 = "context_overflow_recove
 const GeneratedAgentContractContextPackResponseV1 = "context_pack_response.v1"
 const GeneratedAgentContractContextPassportV1 = "context_passport.v1"
 const GeneratedAgentContractContextPassportDiffV1 = "context_passport_diff.v1"
+const GeneratedAgentContractContextPassportDiffViewV1 = "context_passport_diff_view.v1"
 const GeneratedAgentContractContextPassportReplayV1 = "context_passport_replay.v1"
 const GeneratedAgentContractContextPassportVerifyV1 = "context_passport_verify.v1"
 const GeneratedAgentContractContextPolicyCandidateV1 = "context_policy_candidate.v1"
@@ -59,6 +67,8 @@ const GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1 = "frontier_t5_po
 const GeneratedAgentContractFrontierT6AgentFitV1 = "frontier_t6_agent_fit.v1"
 const GeneratedAgentContractFrontierT6AgentFitStateV1 = "frontier_t6_agent_fit_state.v1"
 const GeneratedAgentContractFrontierT6AgentFitStatusV1 = "frontier_t6_agent_fit_status.v1"
+const GeneratedAgentContractImportPlanV1 = "import_plan.v1"
+const GeneratedAgentContractImportReceiptV1 = "import_receipt.v1"
 const GeneratedAgentContractMemoryRetirementV1 = "memory_retirement.v1"
 const GeneratedAgentContractMemoryTrustAssessmentV1 = "memory_trust_assessment.v1"
 const GeneratedAgentContractModelSelectionV1 = "model_selection.v1"
@@ -68,6 +78,9 @@ const GeneratedAgentContractObjectiveTransitionV1 = "objective_transition.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
 const GeneratedAgentContractPolicyPromotionRecommendationV1 = "policy_promotion_recommendation.v1"
 const GeneratedAgentContractPolicySimulationV1 = "policy_simulation.v1"
+const GeneratedAgentContractPortableContinuationStateV1 = "portable_continuation_state.v1"
+const GeneratedAgentContractPortableContinuationStatusV1 = "portable_continuation_status.v1"
+const GeneratedAgentContractProvenanceV1 = "provenance.v1"
 const GeneratedAgentContractRetrievalAblationV1 = "retrieval_ablation.v1"
 const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_report.v1"
 const GeneratedAgentContractRetrievalDecisionTraceV1 = "retrieval_decision_trace.v1"
@@ -120,6 +133,13 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAsyncSteeringStreamItemV1,
 	GeneratedAgentContractCausalBridgeExplanationV1,
 	GeneratedAgentContractCodexCompactHookStdoutV1,
+	GeneratedAgentContractCollaborativeContextGrantV1,
+	GeneratedAgentContractCollaborativeContextGrantDecisionV1,
+	GeneratedAgentContractCollaborativeContextGrantRevocationV1,
+	GeneratedAgentContractContextContinuationEnvelopeV1,
+	GeneratedAgentContractContextContinuationManifestV1,
+	GeneratedAgentContractContextContinuationPayloadV1,
+	GeneratedAgentContractContextContinuationReconciliationV1,
 	GeneratedAgentContractContextMeshEnvelopeV1,
 	GeneratedAgentContractContextMeshGrantV1,
 	GeneratedAgentContractContextMeshImportV1,
@@ -128,6 +148,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextPackResponseV1,
 	GeneratedAgentContractContextPassportV1,
 	GeneratedAgentContractContextPassportDiffV1,
+	GeneratedAgentContractContextPassportDiffViewV1,
 	GeneratedAgentContractContextPassportReplayV1,
 	GeneratedAgentContractContextPassportVerifyV1,
 	GeneratedAgentContractContextPolicyCandidateV1,
@@ -147,6 +168,8 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractFrontierT6AgentFitV1,
 	GeneratedAgentContractFrontierT6AgentFitStateV1,
 	GeneratedAgentContractFrontierT6AgentFitStatusV1,
+	GeneratedAgentContractImportPlanV1,
+	GeneratedAgentContractImportReceiptV1,
 	GeneratedAgentContractMemoryRetirementV1,
 	GeneratedAgentContractMemoryTrustAssessmentV1,
 	GeneratedAgentContractModelSelectionV1,
@@ -156,6 +179,9 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractPolicyContextPackageV1,
 	GeneratedAgentContractPolicyPromotionRecommendationV1,
 	GeneratedAgentContractPolicySimulationV1,
+	GeneratedAgentContractPortableContinuationStateV1,
+	GeneratedAgentContractPortableContinuationStatusV1,
+	GeneratedAgentContractProvenanceV1,
 	GeneratedAgentContractRetrievalAblationV1,
 	GeneratedAgentContractRetrievalAblationReportV1,
 	GeneratedAgentContractRetrievalDecisionTraceV1,
@@ -310,6 +336,48 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractCollaborativeContextGrantV1,
+		PayloadKind:        "signed_bounded_least_privilege_collaborative_context_grant",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractCollaborativeContextGrantDecisionV1,
+		PayloadKind:        "bounded_digest_bound_collaborative_context_grant_decision",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractCollaborativeContextGrantRevocationV1,
+		PayloadKind:        "signed_digest_only_collaborative_context_grant_revocation_tombstone",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextContinuationEnvelopeV1,
+		PayloadKind:        "bounded_transport_neutral_encrypted_mesh_continuation_envelope",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextContinuationManifestV1,
+		PayloadKind:        "signed_bounded_digest_only_portable_context_continuation_manifest",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextContinuationPayloadV1,
+		PayloadKind:        "signed_bounded_redacted_digest_only_mesh_continuation_payload",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextContinuationReconciliationV1,
+		PayloadKind:        "bounded_dry_run_portable_context_continuation_reconciliation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractContextMeshEnvelopeV1,
 		PayloadKind:        "transport_neutral_encrypted_context_envelope",
 		ContractVersion:    1,
@@ -354,6 +422,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContextPassportDiffV1,
 		PayloadKind:        "context_passport_diff",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContextPassportDiffViewV1,
+		PayloadKind:        "bounded_deterministic_redacted_context_passport_diff_view",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -472,6 +546,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractImportPlanV1,
+		PayloadKind:        "bounded_redacted_digest_only_external_worker_import_plan",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractImportReceiptV1,
+		PayloadKind:        "bounded_atomic_resumable_external_import_receipt",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractMemoryRetirementV1,
 		PayloadKind:        "non_destructive_reversible_memory_retirement_workflow",
 		ContractVersion:    1,
@@ -522,6 +608,24 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPolicySimulationV1,
 		PayloadKind:        "same_snapshot_no_persist_retrieval_policy_simulation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractPortableContinuationStateV1,
+		PayloadKind:        "bounded_owner_only_redacted_digest_reference_portable_continuation_state",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractPortableContinuationStatusV1,
+		PayloadKind:        "bounded_redacted_digest_only_portable_continuation_runtime_status",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractProvenanceV1,
+		PayloadKind:        "bounded_redacted_digest_only_external_import_provenance",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

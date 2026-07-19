@@ -207,24 +207,25 @@ func TestFrontierT7ImportPlanPreservesProvenanceAndResumesAtomically(t *testing.
 	if len(plan.Warnings) != 1 || plan.Warnings[0] != "instruction_shaped_content_is_untrusted_data" {
 		t.Fatalf("warnings = %v", plan.Warnings)
 	}
+	executionDigest := frontierT7TestDigest("external-import-worker-execution")
 	for _, mapping := range plan.Mappings {
 		if mapping.Provenance.SchemaID != frontierT7ProvenanceSchemaID || mapping.TopicPath != "imports/research" || mapping.Provenance.DeletionLocator == "" {
 			t.Fatalf("mapping lost provenance: %#v", mapping)
 		}
 	}
-	if _, err := frontierT7CommitImportBatch(plan, 1, nil, time.Now().UTC()); err == nil {
+	if _, err := frontierT7CommitImportBatch(plan, 1, nil, executionDigest, time.Now().UTC()); err == nil {
 		t.Fatal("later batch committed without prior receipt")
 	}
-	first, err := frontierT7CommitImportBatch(plan, 0, nil, time.Now().UTC())
+	first, err := frontierT7CommitImportBatch(plan, 0, nil, executionDigest, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("commit first batch: %v", err)
 	}
 	prior := map[int]frontierT7ImportReceipt{0: first}
-	second, err := frontierT7CommitImportBatch(plan, 1, prior, time.Now().UTC())
+	second, err := frontierT7CommitImportBatch(plan, 1, prior, executionDigest, time.Now().UTC())
 	if err != nil || second.ResumeBatchIndex != 2 || len(second.Mappings) != 1 {
 		t.Fatalf("resume second batch: receipt=%#v err=%v", second, err)
 	}
-	replayed, err := frontierT7CommitImportBatch(plan, 0, prior, time.Now().UTC().Add(time.Hour))
+	replayed, err := frontierT7CommitImportBatch(plan, 0, prior, executionDigest, time.Now().UTC().Add(time.Hour))
 	if err != nil || replayed.ReceiptID != first.ReceiptID || replayed.RecordedAt != first.RecordedAt {
 		t.Fatalf("idempotent replay changed receipt: %#v err=%v", replayed, err)
 	}
@@ -239,7 +240,7 @@ func TestFrontierT7ImportPlanPreservesProvenanceAndResumesAtomically(t *testing.
 	}
 	tamperedCount := plan
 	tamperedCount.BatchCount++
-	if _, err := frontierT7CommitImportBatch(tamperedCount, 0, nil, time.Now().UTC()); err == nil {
+	if _, err := frontierT7CommitImportBatch(tamperedCount, 0, nil, executionDigest, time.Now().UTC()); err == nil {
 		t.Fatal("tampered batch count was accepted")
 	}
 	for _, locator := range []string{"notes/line\nbreak.md", "notes/null\x00byte.md", "notes/tab\tname.md"} {

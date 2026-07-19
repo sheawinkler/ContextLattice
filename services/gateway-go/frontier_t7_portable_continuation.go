@@ -46,7 +46,7 @@ func frontierT7ValidDigest(value string) bool {
 
 func frontierT7SafeID(value, field string, maxLen int) (string, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || len(value) > maxLen || strings.ContainsAny(value, "\r\n\x00") {
+	if value == "" || len(value) > maxLen || strings.IndexFunc(value, unicode.IsControl) >= 0 {
 		return "", fmt.Errorf("%s must be a bounded single-line identifier", field)
 	}
 	return value, nil
@@ -60,7 +60,7 @@ func frontierT7SortedUnique(values []string, limit int) ([]string, error) {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" || len(value) > 160 || strings.ContainsAny(value, "\r\n\x00") {
+		if value == "" || len(value) > 160 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
 			return nil, errors.New("list values must be bounded single-line identifiers")
 		}
 		if _, exists := seen[value]; exists {
@@ -536,20 +536,21 @@ type frontierT7ImportMapping struct {
 }
 
 type frontierT7ImportPlan struct {
-	SchemaID           string                    `json:"schema_id"`
-	Version            int                       `json:"version"`
-	PlanID             string                    `json:"plan_id"`
-	Project            string                    `json:"project"`
-	BatchSize          int                       `json:"batch_size"`
-	BatchCount         int                       `json:"batch_count"`
-	Mappings           []frontierT7ImportMapping `json:"mappings"`
-	PlanDigest         string                    `json:"plan_digest"`
-	Warnings           []string                  `json:"warnings"`
-	AtomicBatches      bool                      `json:"atomic_batches"`
-	Resumable          bool                      `json:"resumable"`
-	ExecutionOwner     string                    `json:"execution_owner"`
-	ExecutionPerformed bool                      `json:"execution_performed"`
-	NetworkCalls       int                       `json:"network_calls"`
+	SchemaID              string                    `json:"schema_id"`
+	Version               int                       `json:"version"`
+	PlanID                string                    `json:"plan_id"`
+	Project               string                    `json:"project"`
+	BatchSize             int                       `json:"batch_size"`
+	BatchCount            int                       `json:"batch_count"`
+	Mappings              []frontierT7ImportMapping `json:"mappings"`
+	PlanDigest            string                    `json:"plan_digest"`
+	Warnings              []string                  `json:"warnings"`
+	AtomicBatches         bool                      `json:"atomic_batches"`
+	Resumable             bool                      `json:"resumable"`
+	ExecutionOwner        string                    `json:"execution_owner"`
+	ExecutionPerformed    bool                      `json:"execution_performed"`
+	NetworkCalls          int                       `json:"network_calls"`
+	OrdinaryMemoryMutated bool                      `json:"ordinary_memory_mutated"`
 }
 
 func frontierT7RelativeLocator(value string) (string, error) {
@@ -662,26 +663,28 @@ func frontierT7BuildImportPlan(project string, records []frontierT7ImportRecord,
 		SchemaID: frontierT7ImportPlanSchemaID, Version: 1, PlanID: "importplan_" + strings.TrimPrefix(planDigest, "sha256:")[:24],
 		Project: project, BatchSize: batchSize, BatchCount: (len(mappings) + batchSize - 1) / batchSize,
 		Mappings: mappings, PlanDigest: planDigest, Warnings: uniqueSortedStrings(warnings), AtomicBatches: true, Resumable: true,
-		ExecutionOwner: "external_import_worker", ExecutionPerformed: false, NetworkCalls: 0,
+		ExecutionOwner: "external_import_worker", ExecutionPerformed: false, NetworkCalls: 0, OrdinaryMemoryMutated: false,
 	}, nil
 }
 
 type frontierT7ImportReceipt struct {
-	SchemaID             string                    `json:"schema_id"`
-	Version              int                       `json:"version"`
-	ReceiptID            string                    `json:"receipt_id"`
-	PlanID               string                    `json:"plan_id"`
-	PlanDigest           string                    `json:"plan_digest"`
-	BatchIndex           int                       `json:"batch_index"`
-	BatchCount           int                       `json:"batch_count"`
-	Status               string                    `json:"status"`
-	Mappings             []frontierT7ImportMapping `json:"mappings"`
-	ResumeBatchIndex     int                       `json:"resume_batch_index"`
-	RecordedAt           string                    `json:"recorded_at"`
-	ReceiptDigest        string                    `json:"receipt_digest"`
-	Atomic               bool                      `json:"atomic"`
-	GatewayMutatedMemory bool                      `json:"gateway_mutated_memory"`
-	NetworkCalls         int                       `json:"network_calls"`
+	SchemaID                string                    `json:"schema_id"`
+	Version                 int                       `json:"version"`
+	ReceiptID               string                    `json:"receipt_id"`
+	PlanID                  string                    `json:"plan_id"`
+	PlanDigest              string                    `json:"plan_digest"`
+	BatchIndex              int                       `json:"batch_index"`
+	BatchCount              int                       `json:"batch_count"`
+	Status                  string                    `json:"status"`
+	Mappings                []frontierT7ImportMapping `json:"mappings"`
+	ResumeBatchIndex        int                       `json:"resume_batch_index"`
+	ExternalExecutionDigest string                    `json:"external_execution_digest"`
+	ExecutionOwner          string                    `json:"execution_owner"`
+	RecordedAt              string                    `json:"recorded_at"`
+	ReceiptDigest           string                    `json:"receipt_digest"`
+	Atomic                  bool                      `json:"atomic"`
+	GatewayMutatedMemory    bool                      `json:"gateway_mutated_memory"`
+	NetworkCalls            int                       `json:"network_calls"`
 }
 
 func frontierT7ImportReceiptDigest(receipt frontierT7ImportReceipt) string {
@@ -689,7 +692,8 @@ func frontierT7ImportReceiptDigest(receipt frontierT7ImportReceipt) string {
 		"schema_id": receipt.SchemaID, "version": receipt.Version, "receipt_id": receipt.ReceiptID,
 		"plan_id": receipt.PlanID, "plan_digest": receipt.PlanDigest, "batch_index": receipt.BatchIndex,
 		"batch_count": receipt.BatchCount, "status": receipt.Status, "mappings": receipt.Mappings,
-		"resume_batch_index": receipt.ResumeBatchIndex, "recorded_at": receipt.RecordedAt,
+		"resume_batch_index": receipt.ResumeBatchIndex, "external_execution_digest": receipt.ExternalExecutionDigest,
+		"execution_owner": receipt.ExecutionOwner, "recorded_at": receipt.RecordedAt,
 		"atomic": receipt.Atomic, "gateway_mutated_memory": receipt.GatewayMutatedMemory, "network_calls": receipt.NetworkCalls,
 	})
 }
@@ -701,19 +705,31 @@ func frontierT7ValidImportReceipt(receipt frontierT7ImportReceipt, plan frontier
 	}
 	return receipt.SchemaID == frontierT7ImportReceiptSchemaID && receipt.Version == 1 && receipt.PlanID == plan.PlanID &&
 		receipt.PlanDigest == plan.PlanDigest && receipt.BatchIndex == expectedBatch && receipt.BatchCount == expectedBatchCount &&
-		receipt.Status == "committed" && receipt.Atomic && !receipt.GatewayMutatedMemory && receipt.NetworkCalls == 0 &&
+		receipt.Status == "committed" && frontierT7ValidDigest(receipt.ExternalExecutionDigest) && receipt.ExecutionOwner == "external_import_worker" &&
+		receipt.Atomic && !receipt.GatewayMutatedMemory && receipt.NetworkCalls == 0 &&
 		receipt.ResumeBatchIndex == expectedBatch+1 && receipt.ReceiptDigest == frontierT7ImportReceiptDigest(receipt)
 }
 
-func frontierT7CommitImportBatch(plan frontierT7ImportPlan, batchIndex int, prior map[int]frontierT7ImportReceipt, now time.Time) (frontierT7ImportReceipt, error) {
+func frontierT7ValidateImportPlan(plan frontierT7ImportPlan) error {
 	expectedBatchCount, batchErr := frontierT7ImportBatchCount(plan)
 	if batchErr != nil || plan.SchemaID != frontierT7ImportPlanSchemaID || plan.Version != 1 || plan.BatchCount != expectedBatchCount ||
 		plan.PlanDigest != frontierT7Digest(map[string]any{"project": plan.Project, "batch_size": plan.BatchSize, "mappings": plan.Mappings}) ||
-		plan.PlanID != "importplan_"+strings.TrimPrefix(plan.PlanDigest, "sha256:")[:24] || !plan.AtomicBatches || !plan.Resumable || plan.ExecutionPerformed || plan.NetworkCalls != 0 || plan.ExecutionOwner != "external_import_worker" {
-		return frontierT7ImportReceipt{}, errors.New("import plan digest mismatch")
+		plan.PlanID != "importplan_"+strings.TrimPrefix(plan.PlanDigest, "sha256:")[:24] || !plan.AtomicBatches || !plan.Resumable || plan.ExecutionPerformed || plan.NetworkCalls != 0 || plan.OrdinaryMemoryMutated || plan.ExecutionOwner != "external_import_worker" {
+		return errors.New("import plan digest mismatch")
 	}
+	return nil
+}
+
+func frontierT7CommitImportBatch(plan frontierT7ImportPlan, batchIndex int, prior map[int]frontierT7ImportReceipt, externalExecutionDigest string, now time.Time) (frontierT7ImportReceipt, error) {
+	if err := frontierT7ValidateImportPlan(plan); err != nil {
+		return frontierT7ImportReceipt{}, err
+	}
+	expectedBatchCount, _ := frontierT7ImportBatchCount(plan)
 	if batchIndex < 0 || batchIndex >= expectedBatchCount {
 		return frontierT7ImportReceipt{}, errors.New("batch index is outside the plan")
+	}
+	if !frontierT7ValidDigest(externalExecutionDigest) {
+		return frontierT7ImportReceipt{}, errors.New("external execution digest is required")
 	}
 	for index := 0; index < batchIndex; index++ {
 		if receipt, exists := prior[index]; !exists || !frontierT7ValidImportReceipt(receipt, plan, index) {
@@ -721,7 +737,7 @@ func frontierT7CommitImportBatch(plan frontierT7ImportPlan, batchIndex int, prio
 		}
 	}
 	if existing, exists := prior[batchIndex]; exists {
-		if !frontierT7ValidImportReceipt(existing, plan, batchIndex) {
+		if !frontierT7ValidImportReceipt(existing, plan, batchIndex) || existing.ExternalExecutionDigest != externalExecutionDigest {
 			return frontierT7ImportReceipt{}, errors.New("conflicting batch receipt")
 		}
 		return existing, nil
@@ -733,6 +749,7 @@ func frontierT7CommitImportBatch(plan frontierT7ImportPlan, batchIndex int, prio
 	receipt := frontierT7ImportReceipt{
 		SchemaID: frontierT7ImportReceiptSchemaID, Version: 1, ReceiptID: receiptID, PlanID: plan.PlanID, PlanDigest: plan.PlanDigest,
 		BatchIndex: batchIndex, BatchCount: expectedBatchCount, Status: "committed", Mappings: rows, ResumeBatchIndex: batchIndex + 1,
+		ExternalExecutionDigest: externalExecutionDigest, ExecutionOwner: "external_import_worker",
 		RecordedAt: now.UTC().Format(time.RFC3339Nano), Atomic: true, GatewayMutatedMemory: false, NetworkCalls: 0,
 	}
 	receipt.ReceiptDigest = frontierT7ImportReceiptDigest(receipt)
@@ -871,16 +888,21 @@ func frontierT7CreateContinuationManifest(keys *contextIdentityKeys, request fro
 }
 
 type frontierT7ContinuationReconciliation struct {
-	SchemaID           string   `json:"schema_id"`
-	ManifestID         string   `json:"manifest_id"`
-	Accepted           bool     `json:"accepted"`
-	DryRun             bool     `json:"dry_run"`
-	Findings           []string `json:"findings"`
-	Action             string   `json:"action"`
-	Transport          string   `json:"transport"`
-	TransportExecuted  bool     `json:"transport_executed"`
-	PrivateKeyExported bool     `json:"private_key_exported"`
-	NetworkCalls       int      `json:"network_calls"`
+	SchemaID                       string   `json:"schema_id"`
+	ManifestID                     string   `json:"manifest_id"`
+	Accepted                       bool     `json:"accepted"`
+	DryRun                         bool     `json:"dry_run"`
+	Findings                       []string `json:"findings"`
+	Action                         string   `json:"action"`
+	Transport                      string   `json:"transport"`
+	TransportOwnedByContextLattice bool     `json:"transport_owned_by_contextlattice"`
+	TransportExecuted              bool     `json:"transport_executed"`
+	PrivateKeyExported             bool     `json:"private_key_exported"`
+	OrdinaryMemoryMutated          bool     `json:"ordinary_memory_mutated"`
+	GatewayExecutionPerformed      bool     `json:"gateway_execution_performed"`
+	ModelExecutionPerformed        bool     `json:"model_execution_performed"`
+	SubprocessExecutionPerformed   bool     `json:"subprocess_execution_performed"`
+	NetworkCalls                   int      `json:"network_calls"`
 }
 
 type frontierT7ContinuationAuthorization struct {
@@ -979,6 +1001,8 @@ func frontierT7ReconcileContinuation(manifest frontierT7ContinuationManifest, gr
 	return frontierT7ContinuationReconciliation{
 		SchemaID: frontierT7ReconciliationSchemaID, ManifestID: manifest.ManifestID, Accepted: len(findings) == 0,
 		DryRun: true, Findings: findings, Action: action, Transport: manifest.Transport,
-		TransportExecuted: false, PrivateKeyExported: false, NetworkCalls: 0,
+		TransportOwnedByContextLattice: false, TransportExecuted: false, PrivateKeyExported: false,
+		OrdinaryMemoryMutated: false, GatewayExecutionPerformed: false, ModelExecutionPerformed: false,
+		SubprocessExecutionPerformed: false, NetworkCalls: 0,
 	}
 }
