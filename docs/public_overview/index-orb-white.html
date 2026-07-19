@@ -482,11 +482,11 @@ gmake monitor-check</code></pre>
       <div class="grid component-grid">
         <article class="card component-card">
           <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-release-heading -->
-          <h3>Public v3.24 (current release train)</h3>
+          <h3>Public v3.25 (current release train)</h3>
           <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-release-heading -->
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-release-summary -->
-            <li><strong>Current public release:</strong> <code>v3.24.0</code></li>
+            <li><strong>Current public release:</strong> <code>v3.25.0</code></li>
             <li><strong>Primary interface:</strong> CLI workflows for install, context, resume, remember, finish, correct, and doctor; dashboard, HTTP, and MCP are companion surfaces</li>
             <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-release-summary -->
             <li><strong>Frontdoor:</strong> <code>gateway-go</code> on <code>:8075</code></li>
@@ -517,7 +517,7 @@ gmake monitor-check</code></pre>
         <div class="mermaid">
 flowchart LR
   <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-release-diagram -->
-  A[Agent or App] --> B["Public Lane: v3.24"]
+  A[Agent or App] --> B["Public Lane: v3.25"]
   <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-release-diagram -->
   B --> C["Gateway-Go :8075"]
   C --> D["Public default fast sources: topic_rollups + qdrant"]
@@ -765,7 +765,7 @@ flowchart LR
           <p>Single-container lane focused on compatibility and low footprint.</p>
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-deployment-hf -->
-            <li><strong>App version lane:</strong> Public <code>v3.24.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.25.x</code></li>
             <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-deployment-hf -->
             <li><strong>Includes:</strong> gateway + orchestrator container with topic-rollup-first retrieval</li>
             <li><strong>Compute:</strong> 2-4 vCPU recommended</li>
@@ -778,7 +778,7 @@ flowchart LR
           <p>Best for local development and constrained laptops where stable memory services matter more than deep analytics.</p>
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-deployment-lite -->
-            <li><strong>App version lane:</strong> Public <code>v3.24.x</code></li>
+            <li><strong>App version lane:</strong> Public <code>v3.25.x</code></li>
             <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-deployment-lite -->
             <li><strong>Includes:</strong> Gateway-Go frontdoor, orchestrator core, Memory Bank MCP, Mongo raw, Qdrant, outbox fanout, retention workers</li>
             <li><strong>Fast staged retrieval:</strong> <code>topic_rollups + qdrant</code> by default; pgvector remains first-class for full/operator stacks</li>
@@ -792,7 +792,7 @@ flowchart LR
           <p>Best for high-write workloads and richer retrieval where learning loops use every sink, including RAG through Letta.</p>
           <ul class="spec-list">
             <!-- BEGIN GENERATED COMMERCIAL TRUTH: index-orb-white-deployment-full -->
-            <li><strong>App version lane:</strong> Public <code>v3.24.x</code> Full</li>
+            <li><strong>App version lane:</strong> Public <code>v3.25.x</code> Full</li>
             <!-- END GENERATED COMMERCIAL TRUTH: index-orb-white-deployment-full -->
             <li><strong>Includes:</strong> Lite mode plus MindsDB analytics, Letta archival memory, observability stack, and full rehydrate tooling</li>
             <li><strong>Deep continuation lane:</strong> async enrichment from <code>mindsdb + mongo_raw + letta + memory_bank</code></li>

@@ -21,6 +21,7 @@ const (
 	skillExportContractID      = "skill_export.v1"
 	skillRetirementContractID  = "skill_retirement.v1"
 	skillFoundryStatusSchemaID = "skill_foundry_status.v1"
+	skillFoundryTransactionID  = "skill_foundry_transaction.v1"
 )
 
 var skillFoundryNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,63}$`)
@@ -39,6 +40,7 @@ type skillFoundryStore struct {
 	evaluations     []map[string]any
 	exports         []map[string]any
 	retirements     []map[string]any
+	transactions    map[string]map[string]any
 	logEntries      int
 	parseErrors     int
 	compactionCount int
@@ -48,15 +50,16 @@ type skillFoundryStore struct {
 
 func newSkillFoundryStoreFromEnv() (*skillFoundryStore, error) {
 	store := &skillFoundryStore{
-		enabled:     envBool("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", true),
-		path:        resolveStoragePath("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", filepath.Join(".data", "orchestrator", "skill_foundry.ndjson")),
-		maxBytes:    int64(clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_BYTES", 4*1024*1024), 64*1024, 64*1024*1024)),
-		maxEntries:  clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_ENTRIES", 2000), 20, 20000),
-		fsync:       envBool("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", true),
-		drafts:      map[string]map[string]any{},
-		evaluations: make([]map[string]any, 0, 100),
-		exports:     make([]map[string]any, 0, 100),
-		retirements: make([]map[string]any, 0, 100),
+		enabled:      envBool("CONTEXTLATTICE_SKILL_FOUNDRY_ENABLED", true),
+		path:         resolveStoragePath("CONTEXTLATTICE_SKILL_FOUNDRY_PATH", filepath.Join(".data", "orchestrator", "skill_foundry.ndjson")),
+		maxBytes:     int64(clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_BYTES", 4*1024*1024), 64*1024, 64*1024*1024)),
+		maxEntries:   clampInt(envInt("CONTEXTLATTICE_SKILL_FOUNDRY_MAX_ENTRIES", 2000), 20, 20000),
+		fsync:        envBool("CONTEXTLATTICE_SKILL_FOUNDRY_FSYNC", true),
+		drafts:       map[string]map[string]any{},
+		evaluations:  make([]map[string]any, 0, 100),
+		exports:      make([]map[string]any, 0, 100),
+		retirements:  make([]map[string]any, 0, 100),
+		transactions: map[string]map[string]any{},
 	}
 	if !store.enabled || strings.TrimSpace(store.path) == "" {
 		store.enabled = false
@@ -92,18 +95,13 @@ func (s *skillFoundryStore) load() error {
 			s.parseErrors++
 			continue
 		}
-		switch anyToString(row["schema_id"]) {
-		case skillDraftContractID:
-			if id := anyToString(row["draft_id"]); id != "" {
-				s.drafts[id] = cloneMap(row)
+		if anyToString(row["schema_id"]) == skillFoundryTransactionID {
+			if s.loadTransactionLocked(row) {
+				s.logEntries++
 			}
-		case skillEvaluationContractID:
-			s.evaluations = append(s.evaluations, cloneMap(row))
-		case skillExportContractID:
-			s.exports = append(s.exports, cloneMap(row))
-		case skillRetirementContractID:
-			s.retirements = append(s.retirements, cloneMap(row))
+			continue
 		}
+		s.applyRowLocked(row)
 		s.logEntries++
 	}
 	if err := scanner.Err(); err != nil {
@@ -145,6 +143,7 @@ func (s *skillFoundryStore) trimLocked() {
 	s.exports = retainLatestGroupedRows(s.exports, "draft_id", s.maxEntries)
 	s.retirements = retainLatestGroupedRows(s.retirements, "draft_id", s.maxEntries)
 	if len(s.drafts) <= s.maxEntries {
+		s.trimTransactionsLocked()
 		return
 	}
 	type draftAge struct{ id, updated string }
@@ -156,6 +155,83 @@ func (s *skillFoundryStore) trimLocked() {
 	for _, item := range ages[s.maxEntries:] {
 		delete(s.drafts, item.id)
 	}
+	s.trimTransactionsLocked()
+}
+
+func (s *skillFoundryStore) trimTransactionsLocked() {
+	if len(s.transactions) <= s.maxEntries {
+		return
+	}
+	type transactionAge struct{ id, created string }
+	ages := make([]transactionAge, 0, len(s.transactions))
+	for id, transaction := range s.transactions {
+		ages = append(ages, transactionAge{id: id, created: anyToString(transaction["created_at"])})
+	}
+	sort.Slice(ages, func(i, j int) bool {
+		if ages[i].created == ages[j].created {
+			return ages[i].id > ages[j].id
+		}
+		return ages[i].created > ages[j].created
+	})
+	for _, item := range ages[s.maxEntries:] {
+		delete(s.transactions, item.id)
+	}
+}
+
+func (s *skillFoundryStore) applyRowLocked(row map[string]any) map[string]any {
+	row = cloneMap(row)
+	switch anyToString(row["schema_id"]) {
+	case skillDraftContractID:
+		if id := anyToString(row["draft_id"]); id != "" {
+			if existing := s.drafts[id]; len(existing) > 0 && skillFoundryStatusRank[anyToString(existing["status"])] > skillFoundryStatusRank[anyToString(row["status"])] {
+				row["status"] = existing["status"]
+				row["created_at"] = firstNonEmptyStrings(anyToString(existing["created_at"]), anyToString(row["created_at"]))
+				if approval := anyMap(existing["approval"]); len(approval) > 0 {
+					row["approval"] = cloneMap(approval)
+				}
+				if anyToString(existing["status"]) == "retired" {
+					row["updated_at"] = existing["updated_at"]
+					row["retirement"] = cloneMap(anyMap(existing["retirement"]))
+					row["activation"] = cloneMap(anyMap(existing["activation"]))
+				}
+			}
+			s.drafts[id] = cloneMap(row)
+		}
+	case skillEvaluationContractID:
+		s.evaluations = append(s.evaluations, cloneMap(row))
+	case skillExportContractID:
+		s.exports = append(s.exports, cloneMap(row))
+	case skillRetirementContractID:
+		s.retirements = append(s.retirements, cloneMap(row))
+	}
+	return row
+}
+
+func (s *skillFoundryStore) loadTransactionLocked(transaction map[string]any) bool {
+	id := strings.TrimSpace(anyToString(transaction["transaction_id"]))
+	digest := strings.TrimSpace(anyToString(transaction["transaction_digest"]))
+	if id == "" || digest == "" {
+		s.parseErrors++
+		return false
+	}
+	if existing := s.transactions[id]; len(existing) > 0 {
+		if anyToString(existing["transaction_digest"]) != digest {
+			s.parseErrors++
+		}
+		return false
+	}
+	rows := contextPackAnyList(transaction["rows"])
+	if len(rows) > 0 {
+		if skillFoundryTransactionDigest(anyToString(transaction["kind"]), anyMap(transaction["metadata"]), rows) != digest {
+			s.parseErrors++
+			return false
+		}
+		for _, raw := range rows {
+			s.applyRowLocked(anyMap(raw))
+		}
+	}
+	s.transactions[id] = cloneMap(transaction)
+	return true
 }
 
 func (s *skillFoundryStore) draft(id string) map[string]any {
@@ -201,37 +277,112 @@ func (s *skillFoundryStore) record(rows ...map[string]any) error {
 	}
 	s.mu.Lock()
 	for index, row := range rows {
-		switch anyToString(row["schema_id"]) {
-		case skillDraftContractID:
-			if id := anyToString(row["draft_id"]); id != "" {
-				merged := cloneMap(row)
-				if existing := s.drafts[id]; len(existing) > 0 && skillFoundryStatusRank[anyToString(existing["status"])] > skillFoundryStatusRank[anyToString(merged["status"])] {
-					merged["status"] = existing["status"]
-					merged["created_at"] = firstNonEmptyStrings(anyToString(existing["created_at"]), anyToString(merged["created_at"]))
-					if approval := anyMap(existing["approval"]); len(approval) > 0 {
-						merged["approval"] = cloneMap(approval)
-					}
-					if anyToString(existing["status"]) == "retired" {
-						merged["updated_at"] = existing["updated_at"]
-						merged["retirement"] = cloneMap(anyMap(existing["retirement"]))
-						merged["activation"] = cloneMap(anyMap(existing["activation"]))
-					}
-				}
-				s.drafts[id] = cloneMap(merged)
-				rows[index] = merged
-				replaceMapContents(row, merged)
-			}
-		case skillEvaluationContractID:
-			s.evaluations = append(s.evaluations, cloneMap(row))
-		case skillExportContractID:
-			s.exports = append(s.exports, cloneMap(row))
-		case skillRetirementContractID:
-			s.retirements = append(s.retirements, cloneMap(row))
-		}
+		merged := s.applyRowLocked(row)
+		rows[index] = merged
+		replaceMapContents(row, merged)
 	}
 	s.trimLocked()
 	s.mu.Unlock()
 	return s.appendRows(rows...)
+}
+
+func skillFoundryTransactionDigest(kind string, metadata map[string]any, rows []any) string {
+	raw, err := json.Marshal(map[string]any{"kind": kind, "metadata": metadata, "rows": rows})
+	if err != nil {
+		return ""
+	}
+	return "sha256:" + sha256Hex(string(raw))
+}
+
+func (s *skillFoundryStore) transaction(id string) map[string]any {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneMap(s.transactions[strings.TrimSpace(id)])
+}
+
+// recordTransaction persists the complete lifecycle transition as one NDJSON
+// record. A torn append is ignored on reload, while a committed replay returns
+// the original receipt without adding duplicate evaluations.
+func (s *skillFoundryStore) recordTransaction(transactionID, kind string, metadata map[string]any, rows ...map[string]any) (map[string]any, bool, error) {
+	if s == nil || !s.enabled {
+		return nil, false, errors.New("skill foundry store disabled")
+	}
+	transactionID = strings.TrimSpace(transactionID)
+	kind = strings.TrimSpace(kind)
+	if transactionID == "" || len(transactionID) > 160 || kind == "" || len(kind) > 80 || len(rows) == 0 || len(rows) > 8 {
+		return nil, false, errors.New("invalid bounded skill Foundry transaction")
+	}
+	rowValues := make([]any, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			return nil, false, errors.New("skill Foundry transaction contains an empty row")
+		}
+		rowValues = append(rowValues, cloneMap(row))
+	}
+	metadata = cloneMap(metadata)
+	digest := skillFoundryTransactionDigest(kind, metadata, rowValues)
+	if digest == "" {
+		return nil, false, errors.New("skill Foundry transaction digest failed")
+	}
+
+	s.ioMu.Lock()
+	defer s.ioMu.Unlock()
+	s.mu.RLock()
+	existing := cloneMap(s.transactions[transactionID])
+	s.mu.RUnlock()
+	if len(existing) > 0 {
+		if anyToString(existing["transaction_digest"]) != digest {
+			return existing, true, errors.New("skill Foundry transaction id conflicts with existing material")
+		}
+		return existing, true, nil
+	}
+	now := nowUTCISO()
+	transaction := map[string]any{
+		"schema_id": skillFoundryTransactionID, "version": 1,
+		"transaction_id": transactionID, "transaction_digest": digest,
+		"kind": kind, "created_at": now, "metadata": metadata, "rows": rowValues,
+	}
+	file, err := openOwnerOnlyAppend(s.path, false)
+	if err != nil {
+		s.setError(err)
+		return nil, false, err
+	}
+	if err := json.NewEncoder(file).Encode(transaction); err != nil {
+		_ = file.Close()
+		s.setError(err)
+		return nil, false, err
+	}
+	if s.fsync {
+		if err := file.Sync(); err != nil {
+			_ = file.Close()
+			s.setError(err)
+			return nil, false, err
+		}
+	}
+	if err := file.Close(); err != nil {
+		s.setError(err)
+		return nil, false, err
+	}
+
+	s.mu.Lock()
+	for _, raw := range rowValues {
+		s.applyRowLocked(anyMap(raw))
+	}
+	s.transactions[transactionID] = cloneMap(transaction)
+	s.trimLocked()
+	s.logEntries++
+	s.lastPersistedAt = now
+	s.lastError = ""
+	s.mu.Unlock()
+	if info, statErr := os.Stat(s.path); statErr == nil && info.Size() > s.maxBytes {
+		if compactErr := s.compactLockedIO(); compactErr != nil {
+			return transaction, false, compactErr
+		}
+	}
+	return cloneMap(transaction), false, nil
 }
 
 func (s *skillFoundryStore) appendRows(rows ...map[string]any) error {
@@ -290,11 +441,22 @@ func (s *skillFoundryStore) compactLockedIO() error {
 	evaluations := append([]map[string]any{}, s.evaluations...)
 	exports := append([]map[string]any{}, s.exports...)
 	retirements := append([]map[string]any{}, s.retirements...)
+	transactions := make([]map[string]any, 0, len(s.transactions))
+	for _, transaction := range s.transactions {
+		receipt := cloneMap(transaction)
+		delete(receipt, "rows")
+		receipt["compacted"] = true
+		transactions = append(transactions, receipt)
+	}
 	s.mu.RUnlock()
 	sort.Slice(drafts, func(i, j int) bool { return anyToString(drafts[i]["draft_id"]) < anyToString(drafts[j]["draft_id"]) })
+	sort.Slice(transactions, func(i, j int) bool {
+		return anyToString(transactions[i]["transaction_id"]) < anyToString(transactions[j]["transaction_id"])
+	})
 	history := append(evaluations, exports...)
 	history = append(history, retirements...)
 	rows := append(drafts, history...)
+	rows = append(rows, transactions...)
 	tmp := s.path + ".tmp"
 	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -366,7 +528,8 @@ func (s *skillFoundryStore) snapshot() map[string]any {
 		"schema_id": skillFoundryStatusSchemaID, "version": 1, "enabled": s.enabled,
 		"activation_state": "inactive", "automatic_activation": false,
 		"draft_count": len(s.drafts), "evaluation_count": len(s.evaluations), "export_count": len(s.exports), "retirement_count": len(s.retirements),
-		"status_counts": statusCounts, "drafts": items,
+		"transaction_count": len(s.transactions),
+		"status_counts":     statusCounts, "drafts": items,
 		"storage":    map[string]any{"enabled": s.enabled, "max_bytes": s.maxBytes, "max_entries": s.maxEntries, "log_entries": s.logEntries, "parse_errors": s.parseErrors, "compaction_count": s.compactionCount, "last_persisted_at": s.lastPersistedAt, "last_error": s.lastError},
 		"updated_at": nowUTCISO(),
 	}
@@ -418,6 +581,26 @@ func (s *server) buildSkillDraft(payload map[string]any) (map[string]any, error)
 	minimumRuns := clampInt(anyToInt(payload["minimum_verified_runs"], 3), 3, 20)
 	skillVersion := clampInt(anyToInt(payload["skill_version"], 1), 1, 100000)
 	supersedes := clipText(strings.TrimSpace(anyToString(payload["supersedes"])), 160)
+	sourceCandidateID := clipText(strings.TrimSpace(anyToString(payload["source_candidate_id"])), 160)
+	sourceWorkflowSignature := strings.ToLower(strings.TrimSpace(anyToString(payload["source_workflow_signature"])))
+	if sourceWorkflowSignature != "" && !regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(sourceWorkflowSignature) {
+		return nil, errors.New("source_workflow_signature must be sha256:<64-hex>")
+	}
+	prerequisites := normalizeFoundryStrings(payload["prerequisites"], 16, 400)
+	rollback := normalizeFoundryStrings(payload["rollback"], 16, 400)
+	sideEffects := normalizeFoundryStrings(payload["side_effects"], 16, 400)
+	platformConstraints := normalizeFoundryStrings(payload["platform_constraints"], 16, 400)
+	verificationCommands, err := normalizeFoundryVerificationCommands(payload["verification_commands"])
+	if err != nil {
+		return nil, err
+	}
+	workflowMaterial := map[string]any{
+		"source_candidate_id": sourceCandidateID, "source_workflow_signature": sourceWorkflowSignature,
+		"prerequisites": stringSliceAny(prerequisites), "rollback": stringSliceAny(rollback),
+		"side_effects": stringSliceAny(sideEffects), "platform_constraints": stringSliceAny(platformConstraints),
+		"verification_commands": verificationCommands,
+	}
+	workflowMaterialPresent := sourceCandidateID != "" || sourceWorkflowSignature != "" || len(prerequisites) > 0 || len(rollback) > 0 || len(sideEffects) > 0 || len(platformConstraints) > 0 || len(verificationCommands) > 0
 	type runGroup struct {
 		steps, checks []string
 		runs          []map[string]any
@@ -477,7 +660,7 @@ func (s *server) buildSkillDraft(payload map[string]any) (map[string]any, error)
 	draftSeed, _ := json.Marshal(map[string]any{
 		"project": project, "name": name, "description": description, "skill_version": skillVersion,
 		"supersedes": supersedes, "workflow_signature": dominantSignature,
-		"steps": dominant.steps, "checks": dominant.checks,
+		"steps": dominant.steps, "checks": dominant.checks, "workflow_material": workflowMaterial,
 	})
 	draftFingerprint := sha256Hex(string(draftSeed))
 	draftID := "skilldraft_" + draftFingerprint[:24]
@@ -497,6 +680,9 @@ func (s *server) buildSkillDraft(payload map[string]any) (map[string]any, error)
 		"evaluation": map[string]any{"required": true, "minimum_holdouts": 3, "training_holdout_separation": true},
 		"activation": map[string]any{"state": "inactive", "automatic": false, "reason": "Drafts require independent holdouts and explicit human approval before export."},
 		"retirement": map[string]any{"automatic": false, "superseded_skill": supersedes, "reason": "Retirement remains an explicit Skills Index action."},
+	}
+	if workflowMaterialPresent {
+		draft["workflow_material"] = workflowMaterial
 	}
 	draft["skill_markdown"] = renderFoundrySkillMarkdown(draft)
 	if len(existing) > 0 && skillFoundryStatusRank[anyToString(existing["status"])] > skillFoundryStatusRank[anyToString(draft["status"])] {
@@ -550,7 +736,67 @@ func renderFoundrySkillMarkdown(draft map[string]any) string {
 		}
 	}
 	lines = append(lines, "", "## Boundaries", "", "- Preserve user work and stop on contradictory evidence.", "- Do not claim completion without matching verification.", "")
+	material := anyMap(draft["workflow_material"])
+	appendSection := func(title string, raw any) {
+		values := contextPackAnyList(raw)
+		if len(values) == 0 {
+			return
+		}
+		lines = append(lines, "## "+title, "")
+		for _, value := range values {
+			lines = append(lines, "- "+anyToString(value))
+		}
+		lines = append(lines, "")
+	}
+	appendSection("Prerequisites", material["prerequisites"])
+	appendSection("Rollback", material["rollback"])
+	appendSection("Side Effects", material["side_effects"])
+	appendSection("Platform Constraints", material["platform_constraints"])
+	commands := contextPackAnyList(material["verification_commands"])
+	if len(commands) > 0 {
+		lines = append(lines, "## Verification Commands", "")
+		for _, raw := range commands {
+			command := anyMap(raw)
+			lines = append(lines, "- `"+anyToString(command["command"])+"` ("+anyToString(command["digest"])+")")
+		}
+		lines = append(lines, "")
+	}
 	return strings.Join(lines, "\n")
+}
+
+func normalizeFoundryVerificationCommands(raw any) ([]any, error) {
+	values := make([]any, 0, 16)
+	seen := map[string]struct{}{}
+	for _, item := range contextPackAnyList(raw) {
+		row := anyMap(item)
+		command := ""
+		digest := ""
+		if len(row) > 0 {
+			command = clipText(strings.Join(strings.Fields(anyToString(row["command"])), " "), 1000)
+			digest = strings.ToLower(strings.TrimSpace(anyToString(row["digest"])))
+		} else {
+			command = clipText(strings.Join(strings.Fields(anyToString(item)), " "), 1000)
+		}
+		if command == "" {
+			continue
+		}
+		expected := "sha256:" + sha256Hex(command)
+		if digest == "" {
+			digest = expected
+		}
+		if digest != expected {
+			return nil, errors.New("verification command digest does not match its bounded command")
+		}
+		if _, exists := seen[digest]; exists {
+			continue
+		}
+		seen[digest] = struct{}{}
+		values = append(values, map[string]any{"command": command, "digest": digest})
+		if len(values) >= 16 {
+			break
+		}
+	}
+	return values, nil
 }
 
 func (s *server) evaluateSkillDraft(payload map[string]any) (map[string]any, map[string]any, error) {
@@ -561,6 +807,15 @@ func (s *server) evaluateSkillDraft(payload map[string]any) (map[string]any, map
 	draft := s.skillFoundry.draft(draftID)
 	if len(draft) == 0 {
 		return nil, nil, errors.New("draft not found")
+	}
+	return s.evaluateSkillDraftRecord(draft, payload)
+}
+
+func (s *server) evaluateSkillDraftRecord(draft map[string]any, payload map[string]any) (map[string]any, map[string]any, error) {
+	draft = cloneMap(draft)
+	draftID := strings.TrimSpace(anyToString(draft["draft_id"]))
+	if draftID == "" {
+		return nil, nil, errors.New("draft_id is required")
 	}
 	if anyToString(draft["status"]) == "exported" {
 		return nil, draft, errors.New("exported drafts are immutable; create a new version for further evaluation")

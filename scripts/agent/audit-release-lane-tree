@@ -148,6 +148,7 @@ elif [[ "${LANE}" == "public-paid" ]]; then
     "docs/evals/v3.22-frontier-t5-paid-activation.json"
     "docs/evals/v3.23-frontier-t6-paid-activation.json"
     "docs/evals/v3.24-frontier-t7-paid-activation.json"
+    "docs/evals/v3.25-frontier-t8-paid-activation.json"
     "packaging/linux/ContextLattice-Install.sh"
     "packaging/windows/Install-ContextLattice.ps1"
     "scripts/agent/audit-paid-artifact-integrity"
@@ -168,6 +169,8 @@ if [[ "${LANE}" != "public" ]]; then
     "services/gateway-go/frontier_t6_agent_fit_entitled_test.go"
     "services/gateway-go/frontier_t7_portable_continuation_entitled.go"
     "services/gateway-go/frontier_t7_portable_continuation_entitled_test.go"
+    "services/gateway-go/frontier_t8_skill_evolution_entitled.go"
+    "services/gateway-go/frontier_t8_skill_evolution_entitled_test.go"
   )
 fi
 

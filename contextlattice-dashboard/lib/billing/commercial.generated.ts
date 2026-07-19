@@ -2,16 +2,16 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "412273d1a609180c48f01c1c1490bc1e1230cd842099de278fec5a68545c314e";
+export const COMMERCIAL_CONTRACT_SHA256 = "cc52e6c2ab6f6547f6a948bf941dceb7778b17707e22e39fa3f3712430fd0d5d";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.24.0",
-    "stable_tag": "v3.24.0",
-    "release_train": "3.24",
+    "version": "3.25.0",
+    "stable_tag": "v3.25.0",
+    "release_train": "3.25",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -161,6 +161,11 @@ export const COMMERCIAL_TRUTH = {
       "id": "frontier_portable_continuation_governance",
       "buyer_label": "Continuations that travel under policy",
       "description": "Govern digest-only grant, import, manifest, delivery, and bulk-revocation metadata while external adapters retain all execution ownership."
+    },
+    {
+      "id": "frontier_skill_evolution_governance",
+      "buyer_label": "A skill system that compounds",
+      "description": "Discover repeated verified wins, review exact skill artifacts, monitor their real utility, and reverse activation, replacement, or retirement through immutable receipts."
     }
   ],
   "plans": [
@@ -306,7 +311,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_adversarial_defense_operations",
         "frontier_policy_laboratory_automation",
         "frontier_agent_fit_governance",
-        "frontier_portable_continuation_governance"
+        "frontier_portable_continuation_governance",
+        "frontier_skill_evolution_governance"
       ]
     },
     {
@@ -355,7 +361,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_adversarial_defense_operations",
         "frontier_policy_laboratory_automation",
         "frontier_agent_fit_governance",
-        "frontier_portable_continuation_governance"
+        "frontier_portable_continuation_governance",
+        "frontier_skill_evolution_governance"
       ]
     }
   ],
@@ -421,7 +428,8 @@ export const COMMERCIAL_TRUTH = {
       "/memory/agent-fit/profile/governance",
       "/memory/agent-fit/context-prep/governance",
       "/memory/agent-fit/selection/activation",
-      "/memory/portable-continuation/governance"
+      "/memory/portable-continuation/governance",
+      "/memory/skills/foundry/evolution/governance"
     ]
   },
   "paid_feature_route_contracts": [
@@ -665,9 +673,23 @@ export const COMMERCIAL_TRUTH = {
       "routes": [
         "/memory/portable-continuation/governance"
       ]
+    },
+    {
+      "feature_id": "frontier_skill_evolution_governance",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/skills/foundry/evolution/governance"
+      ]
     }
   ],
-  "contract_sha256": "412273d1a609180c48f01c1c1490bc1e1230cd842099de278fec5a68545c314e"
+  "contract_sha256": "cc52e6c2ab6f6547f6a948bf941dceb7778b17707e22e39fa3f3712430fd0d5d"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

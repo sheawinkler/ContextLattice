@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 49,
-  "updated_at": "2026-07-19T11:47:45Z",
+  "registry_version": 51,
+  "updated_at": "2026-07-19T14:06:39Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -8390,6 +8390,381 @@
         "argv",
         "shell",
         "url"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "reusable_skill_candidate.v1": {
+      "contract_version": 1,
+      "payload_kind": "inactive_verified_reusable_skill_candidate",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "reject_unbounded_unresolved_stale_overlapping_or_non_independent_receipts_without_persistence_export_installation_or_activation",
+      "max_total_json_bytes": 196608,
+      "max_string_bytes": 1200,
+      "max_list_items": 64,
+      "allowed_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "candidate",
+        "skills_index",
+        "persistence",
+        "foundry_handoff",
+        "format_contract"
+      ],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "candidate",
+        "skills_index",
+        "persistence",
+        "foundry_handoff",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "operation": "string",
+        "candidate": "object",
+        "skills_index": "object",
+        "persistence": "object",
+        "foundry_handoff": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "candidate": [
+          "schema_id",
+          "version",
+          "candidate_id",
+          "project",
+          "name",
+          "description",
+          "candidate_kind",
+          "status",
+          "as_of",
+          "workflow_id",
+          "workflow_signature",
+          "proposal",
+          "provenance",
+          "economics",
+          "measurement",
+          "review",
+          "export",
+          "persistence",
+          "skill_foundry_handoff",
+          "safety"
+        ],
+        "candidate.provenance": [
+          "hash_chains_verified",
+          "evidence_resolved",
+          "independent_verification",
+          "training_holdout_separated",
+          "fixture_environment_separated",
+          "training",
+          "holdouts"
+        ],
+        "candidate.economics": [
+          "exact",
+          "receipt_count",
+          "provider_cost_micros",
+          "latency_ms_total",
+          "network_calls",
+          "model_calls",
+          "execution_count"
+        ],
+        "candidate.export": [
+          "mode",
+          "state",
+          "automatic",
+          "activation_allowed",
+          "installation_performed",
+          "filesystem_mutation"
+        ],
+        "candidate.persistence": [
+          "mode",
+          "candidate_persisted",
+          "performed",
+          "explicit_foundry_handoff_required"
+        ],
+        "candidate.skill_foundry_handoff": [
+          "target_contract",
+          "target_surface",
+          "ready",
+          "automatic_submit",
+          "automatic_export",
+          "draft_payload",
+          "evaluation_template"
+        ],
+        "candidate.safety": [
+          "advisory_only",
+          "activation_performed",
+          "deactivation_performed",
+          "ordinary_memory_writes",
+          "filesystem_mutations",
+          "provider_calls",
+          "network_calls",
+          "subprocess_calls",
+          "paid_automation"
+        ],
+        "skills_index": [
+          "index",
+          "lookup_mode",
+          "mutation_performed",
+          "candidate_name"
+        ],
+        "persistence": [
+          "candidate_persisted",
+          "ordinary_memory_mutated",
+          "foundry_handoff_requested",
+          "foundry_handoff_performed"
+        ],
+        "foundry_handoff": [
+          "requested",
+          "explicit",
+          "performed",
+          "draft_recorded",
+          "evaluation_recorded",
+          "export_performed",
+          "installation_performed",
+          "activation_performed",
+          "deactivation_performed",
+          "terminal_retirement_performed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "ok",
+        "candidate.provenance.hash_chains_verified",
+        "candidate.provenance.evidence_resolved",
+        "candidate.provenance.independent_verification",
+        "candidate.provenance.training_holdout_separated",
+        "candidate.provenance.fixture_environment_separated",
+        "candidate.economics.exact",
+        "candidate.review.required",
+        "candidate.persistence.explicit_foundry_handoff_required",
+        "candidate.skill_foundry_handoff.ready",
+        "candidate.safety.advisory_only"
+      ],
+      "required_false_paths": [
+        "candidate.export.automatic",
+        "candidate.export.activation_allowed",
+        "candidate.export.installation_performed",
+        "candidate.export.filesystem_mutation",
+        "candidate.persistence.candidate_persisted",
+        "candidate.persistence.performed",
+        "candidate.skill_foundry_handoff.automatic_submit",
+        "candidate.skill_foundry_handoff.automatic_export",
+        "candidate.safety.activation_performed",
+        "candidate.safety.deactivation_performed",
+        "candidate.safety.paid_automation",
+        "skills_index.mutation_performed",
+        "persistence.candidate_persisted",
+        "persistence.ordinary_memory_mutated",
+        "foundry_handoff.export_performed",
+        "foundry_handoff.installation_performed",
+        "foundry_handoff.activation_performed",
+        "foundry_handoff.deactivation_performed",
+        "foundry_handoff.terminal_retirement_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "reusable_skill_candidate.v1",
+        "candidate.schema_id": "reusable_skill_candidate.v1",
+        "candidate.status": "inactive",
+        "candidate.export.state": "inactive",
+        "candidate.skill_foundry_handoff.target_contract": "skill_draft.v1",
+        "format_contract.schema_id": "reusable_skill_candidate.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_prompt",
+        "prompt",
+        "raw_content",
+        "content",
+        "raw_logs",
+        "local_path",
+        "chain_of_thought"
+      ],
+      "forbidden_scope": "recursive"
+    },
+    "skill_retirement_candidate.v1": {
+      "contract_version": 1,
+      "payload_kind": "advisory_skill_retirement_candidate",
+      "required_output_mode": "json_object",
+      "safe_failure_behavior": "abstain_for_low_use_alone_seasonality_rare_high_value_provider_failure_or_narrower_replacement_without_deactivation_or_terminal_retirement",
+      "max_total_json_bytes": 131072,
+      "max_string_bytes": 1200,
+      "max_list_items": 64,
+      "allowed_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "candidate",
+        "skills_index",
+        "persistence",
+        "format_contract"
+      ],
+      "required_fields": [
+        "ok",
+        "schema_id",
+        "operation",
+        "candidate",
+        "skills_index",
+        "persistence",
+        "format_contract"
+      ],
+      "field_types": {
+        "ok": "bool",
+        "schema_id": "string",
+        "operation": "string",
+        "candidate": "object",
+        "skills_index": "object",
+        "persistence": "object",
+        "format_contract": "object"
+      },
+      "required_fields_by_path": {
+        "candidate": [
+          "schema_id",
+          "version",
+          "candidate_id",
+          "project",
+          "skill_id",
+          "name",
+          "skill_version",
+          "status",
+          "recommendation",
+          "as_of",
+          "terminal_retirement",
+          "automatic",
+          "mutation_performed",
+          "signals",
+          "metrics",
+          "last_verified_at",
+          "seasonality",
+          "replacement",
+          "protections",
+          "review_window",
+          "impact",
+          "approval",
+          "provenance",
+          "measurement",
+          "safety"
+        ],
+        "candidate.metrics": [
+          "baseline_verified_success_rate",
+          "current_verified_success_rate",
+          "baseline_sample_count",
+          "current_sample_count",
+          "use_count",
+          "verified_regression_count",
+          "temporary_provider_failure_count",
+          "network_calls",
+          "model_calls",
+          "execution_count",
+          "total_cost_micros",
+          "total_latency_ms",
+          "exact"
+        ],
+        "candidate.approval": [
+          "required",
+          "explicit",
+          "state",
+          "approved",
+          "terminal_action_surface"
+        ],
+        "candidate.provenance": [
+          "evidence_resolved",
+          "independently_verified",
+          "evidence_refs"
+        ],
+        "candidate.safety": [
+          "advisory_only",
+          "activation_performed",
+          "deactivation_performed",
+          "ordinary_memory_writes",
+          "filesystem_mutations",
+          "provider_calls",
+          "network_calls",
+          "subprocess_calls",
+          "paid_automation"
+        ],
+        "skills_index": [
+          "index",
+          "lookup_mode",
+          "mutation_performed",
+          "current_skill",
+          "replacement"
+        ],
+        "persistence": [
+          "candidate_persisted",
+          "ordinary_memory_mutated",
+          "deactivation_performed",
+          "terminal_retirement_performed"
+        ],
+        "format_contract": [
+          "registry_id",
+          "registry_version",
+          "schema_id",
+          "contract_version",
+          "required_output_mode",
+          "validator",
+          "validation"
+        ]
+      },
+      "required_true_paths": [
+        "ok",
+        "candidate.metrics.exact",
+        "candidate.approval.required",
+        "candidate.approval.explicit",
+        "candidate.provenance.evidence_resolved",
+        "candidate.provenance.independently_verified",
+        "candidate.safety.advisory_only"
+      ],
+      "required_false_paths": [
+        "candidate.terminal_retirement",
+        "candidate.automatic",
+        "candidate.mutation_performed",
+        "candidate.approval.approved",
+        "candidate.safety.activation_performed",
+        "candidate.safety.deactivation_performed",
+        "candidate.safety.paid_automation",
+        "skills_index.mutation_performed",
+        "persistence.candidate_persisted",
+        "persistence.ordinary_memory_mutated",
+        "persistence.deactivation_performed",
+        "persistence.terminal_retirement_performed"
+      ],
+      "required_string_contains": {
+        "schema_id": "skill_retirement_candidate.v1",
+        "candidate.schema_id": "skill_retirement_candidate.v1",
+        "candidate.approval.state": "pending",
+        "candidate.approval.terminal_action_surface": "skill_retirement.v1",
+        "format_contract.schema_id": "skill_retirement_candidate.v1"
+      },
+      "forbidden_fields": [
+        "secret",
+        "secrets",
+        "api_key",
+        "password",
+        "authorization",
+        "raw_prompt",
+        "prompt",
+        "raw_content",
+        "content",
+        "raw_logs",
+        "local_path",
+        "chain_of_thought"
       ],
       "forbidden_scope": "recursive"
     }

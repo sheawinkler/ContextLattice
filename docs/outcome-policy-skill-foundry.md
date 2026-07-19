@@ -111,6 +111,44 @@ Minimal draft input:
 Provide at least three distinct rows. Holdouts use the same shape plus
 `checks_passed=true`, with IDs not used during drafting.
 
+## Verified Skill Evolution
+
+Verified Skill Evolution turns repeated, independently verified workflow wins
+into inactive review candidates and turns measured skill decay into protected
+replacement or retirement proposals. The gateway replaces caller timestamps
+with its own clock and resolves every evidence reference against both the
+persisted Utility Ledger and the agent-session verification event before a
+candidate can cross into Skill Foundry. Training and holdout identities remain
+disjoint, while prerequisites, rollback steps, side effects, platform limits,
+and verification-command digests survive the handoff as one atomic,
+idempotent Foundry transaction.
+
+The CLI is the primary interface:
+
+```bash
+contextlattice_agent_tools skill-evolution reusable-candidate \
+  --payload-file reusable-candidate.json --pretty
+contextlattice_agent_tools skill-evolution foundry-handoff \
+  --payload-file reusable-candidate.json --pretty
+contextlattice_agent_tools skill-evolution retirement-candidate \
+  --payload-file retirement-candidate.json --pretty
+```
+
+Public core stops at inactive, explicit-review artifacts. Operator and
+Enterprise distributions add an entitlement-gated governance ledger for
+scheduled external discovery, review, exact-artifact activation,
+deactivation, replacement, monitoring, and receipt-backed rollback:
+
+```bash
+contextlattice_agent_tools skill-evolution governance \
+  --payload-file skill-governance-request.json --pretty
+```
+
+The governance request carries its operation, project, expected generation,
+idempotency key, bounded reason, and `operator_approved=true`. ContextLattice
+records policy and lifecycle metadata only. An external worker still owns all
+model calls, subprocesses, filesystem changes, and Git operations.
+
 ## HTTP fallbacks
 
 CLI is the prescribed local-agent interface. HTTP remains available for app
@@ -124,6 +162,8 @@ integration:
 - `POST /memory/skills/foundry/export`
 - `POST /memory/skills/foundry/retire`
 - `GET /telemetry/skills/foundry`
+- `POST /memory/skills/foundry/evolution`
+- `GET|POST /memory/skills/foundry/evolution/governance` (Operator/Enterprise)
 
 Tool-call hosts use the existing `/tools/context_policy_*` and Foundry
 draft/evaluate/export wrappers. Retirement stays CLI/HTTP-only so lifecycle
@@ -147,3 +187,6 @@ Contracts:
 - `skill_evaluation.v1`
 - `skill_export.v1`
 - `skill_retirement.v1`
+- `reusable_skill_candidate.v1`
+- `skill_retirement_candidate.v1`
+- `frontier_t8_skill_evolution_governance.v1` (Operator/Enterprise)

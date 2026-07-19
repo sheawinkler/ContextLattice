@@ -143,6 +143,18 @@ context. `manifest-reconcile` accepts that artifact through `--envelope-file`.
 The gateway verifies and records contracts only: an operator-chosen external
 adapter owns delivery and import execution.
 
+### Verified Skill Evolution
+
+Use `contextlattice_agent_tools skill-evolution` as the canonical interface for
+`reusable-candidate`, explicit `foundry-handoff`, and
+`retirement-candidate`. Every operation reads one bounded owner-only JSON file;
+the gateway authoritatively resolves referenced Utility Ledger outcomes and
+agent-session verification receipts before returning a contract-valid result.
+Operator and Enterprise runtimes also expose the `governance` operation for
+reviewed scheduling, activation, replacement, monitoring, and rollback
+metadata. That paid route never runs a model, subprocess, filesystem mutation,
+or Git operation; external workers retain execution ownership.
+
 ### Verified utility receipts
 
 `contextlattice utility status` reads the public, bounded Utility Ledger. It

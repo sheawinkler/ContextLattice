@@ -114,6 +114,19 @@
       ]
     },
     {
+      "id": "verified_skill_evolution.v1",
+      "summary": "Bounded hash-linked workflow receipts derive inactive reusable candidates, while distinct retirement advisories abstain on protected cases and require explicit review without automatic lifecycle actions.",
+      "contracts": [
+        "reusable_skill_candidate.v1",
+        "skill_retirement_candidate.v1"
+      ],
+      "artifacts": [
+        "services/gateway-go/frontier_t8_verified_skill_evolution.go",
+        "services/gateway-go/frontier_t8_verified_skill_evolution_routes.go",
+        "services/gateway-go/cmd/contextlattice-agent-tools/frontier_t8_skill_evolution_cli.go"
+      ]
+    },
+    {
       "id": "skills_index.v1",
       "summary": "Agents discover relevant capabilities without loading every skill into startup context.",
       "contracts": [],
