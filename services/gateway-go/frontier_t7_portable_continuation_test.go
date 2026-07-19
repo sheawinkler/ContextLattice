@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,6 +143,37 @@ func TestFrontierT7CollaborativeGrantEnforcesLeastPrivilegeAndRevocation(t *test
 	}, now); err == nil {
 		t.Fatal("delegation scope escalation was accepted")
 	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*frontierT7GrantCreateRequest)
+	}{
+		{"subject", func(r *frontierT7GrantCreateRequest) { r.Subject.SubjectID = "different-subject" }},
+		{"recipient", func(r *frontierT7GrantCreateRequest) { r.RecipientKeyID = "age-x25519:different" }},
+		{"key-epoch", func(r *frontierT7GrantCreateRequest) { r.KeyEpoch++ }},
+	} {
+		t.Run("delegation-"+tc.name, func(t *testing.T) {
+			request := frontierT7GrantCreateRequest{
+				Subject: grant.Subject, Project: grant.Project, Topics: []string{"frontier-30"},
+				DataClasses: []string{"context-pack"}, Actions: []string{"read"}, Purpose: grant.Purpose,
+				UsageLimit: 2, Parent: &grant, DelegationDepth: 1, Approvers: []string{"owner"},
+				KeyEpoch: grant.KeyEpoch, RecipientKeyID: grant.RecipientKeyID,
+				NotBefore: now, ExpiresAt: now.Add(30 * time.Minute),
+			}
+			tc.mutate(&request)
+			if _, err := frontierT7CreateCollaborativeGrant(keys, request, now); err == nil {
+				t.Fatalf("delegation %s escalation was accepted", tc.name)
+			}
+		})
+	}
+	variant, err := frontierT7CreateCollaborativeGrant(keys, frontierT7GrantCreateRequest{
+		Subject: grant.Subject, Project: grant.Project, Topics: grant.Topics, DataClasses: grant.DataClasses,
+		Actions: grant.Actions, Purpose: grant.Purpose, UsageLimit: grant.UsageLimit + 1, Approvers: grant.Approvers,
+		KeyEpoch: grant.KeyEpoch, RecipientKeyID: grant.RecipientKeyID,
+		NotBefore: mustParseFrontierT7Time(grant.NotBefore), ExpiresAt: mustParseFrontierT7Time(grant.ExpiresAt),
+	}, now)
+	if err != nil || variant.GrantID == grant.GrantID {
+		t.Fatalf("authority-bearing grant fields did not produce a unique id: variant=%#v err=%v", variant, err)
+	}
 }
 
 func frontierT7TestImportRecord(locator, content string) frontierT7ImportRecord {
@@ -205,6 +237,17 @@ func TestFrontierT7ImportPlanPreservesProvenanceAndResumesAtomically(t *testing.
 	if _, err := frontierT7BuildImportPlan("contextlattice", []frontierT7ImportRecord{bad}, nil, 1); err == nil {
 		t.Fatal("symlink import accepted")
 	}
+	tamperedCount := plan
+	tamperedCount.BatchCount++
+	if _, err := frontierT7CommitImportBatch(tamperedCount, 0, nil, time.Now().UTC()); err == nil {
+		t.Fatal("tampered batch count was accepted")
+	}
+	for _, locator := range []string{"notes/line\nbreak.md", "notes/null\x00byte.md", "notes/tab\tname.md"} {
+		bad = frontierT7TestImportRecord(locator, "bad")
+		if _, err := frontierT7BuildImportPlan("contextlattice", []frontierT7ImportRecord{bad}, nil, 1); err == nil {
+			t.Fatalf("control-character locator %q was accepted", locator)
+		}
+	}
 }
 
 func TestFrontierT7ContinuationManifestFailsClosedOnReplayAndConflict(t *testing.T) {
@@ -221,18 +264,20 @@ func TestFrontierT7ContinuationManifestFailsClosedOnReplayAndConflict(t *testing
 		UnresolvedObligationDigests: []string{frontierT7TestDigest("obligation")},
 		RepositoryConstraintDigest:  frontierT7TestDigest("repo-constraints"),
 		DestinationSessionDigest:    frontierT7TestDigest("destination-session"),
-		RecipientKeyID:              grant.RecipientKeyID, Grant: grant, Transport: "operator-chosen", ExpiresAt: now.Add(time.Hour),
+		RecipientKeyID:              grant.RecipientKeyID, Grant: grant, Transport: "operator-chosen", ExpiresAt: now.Add(2 * time.Hour),
 	}
 	manifest, err := frontierT7CreateContinuationManifest(keys, request, now)
 	if err != nil {
 		t.Fatalf("create continuation: %v", err)
 	}
-	decision := frontierT7AuthorizeGrant(grant, frontierT7GrantUseRequest{
-		Project: grant.Project, Topic: "frontier-30", DataClass: "context-pack", Action: "continue",
-		Purpose: grant.Purpose, RecipientKeyID: grant.RecipientKeyID,
-		SubjectSnapshotDigest: grant.Subject.SnapshotDigest, KeyEpoch: grant.KeyEpoch, Now: now,
-	})
-	reconciled := frontierT7ReconcileContinuation(manifest, now, grant.RecipientKeyID, request.LineageDigest, decision, nil)
+	if manifest.ExpiresAt != grant.ExpiresAt {
+		t.Fatalf("manifest expiry %s was not capped at grant expiry %s", manifest.ExpiresAt, grant.ExpiresAt)
+	}
+	authorization := frontierT7ContinuationAuthorization{
+		Topic: "frontier-30", DataClass: "context-pack", Purpose: grant.Purpose,
+		SubjectSnapshotDigest: grant.Subject.SnapshotDigest, KeyEpoch: grant.KeyEpoch,
+	}
+	reconciled := frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, newFrontierT7MemoryReplayGuard())
 	if !reconciled.Accepted || !reconciled.DryRun || reconciled.TransportExecuted || reconciled.PrivateKeyExported || reconciled.NetworkCalls != 0 {
 		t.Fatalf("valid continuation did not remain dry-run: %#v", reconciled)
 	}
@@ -243,23 +288,27 @@ func TestFrontierT7ContinuationManifestFailsClosedOnReplayAndConflict(t *testing
 		want string
 	}{
 		{"replay", func() frontierT7ContinuationReconciliation {
-			return frontierT7ReconcileContinuation(manifest, now, grant.RecipientKeyID, request.LineageDigest, decision, map[string]string{manifest.ManifestID: manifest.ManifestDigest})
+			guard := newFrontierT7MemoryReplayGuard()
+			_ = frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, guard)
+			return frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, guard)
 		}, "manifest_replay"},
 		{"wrong-recipient", func() frontierT7ContinuationReconciliation {
-			return frontierT7ReconcileContinuation(manifest, now, "other-recipient", request.LineageDigest, decision, nil)
+			return frontierT7ReconcileContinuation(manifest, grant, now, "other-recipient", request.LineageDigest, authorization, newFrontierT7MemoryReplayGuard())
 		}, "wrong_recipient"},
 		{"divergent-lineage", func() frontierT7ContinuationReconciliation {
-			return frontierT7ReconcileContinuation(manifest, now, grant.RecipientKeyID, frontierT7TestDigest("other-lineage"), decision, nil)
+			return frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, frontierT7TestDigest("other-lineage"), authorization, newFrontierT7MemoryReplayGuard())
 		}, "divergent_lineage"},
 		{"expired", func() frontierT7ContinuationReconciliation {
-			return frontierT7ReconcileContinuation(manifest, now.Add(2*time.Hour), grant.RecipientKeyID, request.LineageDigest, decision, nil)
+			return frontierT7ReconcileContinuation(manifest, grant, now.Add(2*time.Hour), grant.RecipientKeyID, request.LineageDigest, authorization, newFrontierT7MemoryReplayGuard())
 		}, "manifest_expired_or_invalid"},
 		{"revoked", func() frontierT7ContinuationReconciliation {
-			denied := decision
-			denied.Allowed = false
-			denied.Reasons = []string{"grant_revoked"}
-			return frontierT7ReconcileContinuation(manifest, now, grant.RecipientKeyID, request.LineageDigest, denied, nil)
+			revoked := authorization
+			revoked.RevokedGrantIDs = map[string]struct{}{grant.GrantID: {}}
+			return frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, request.LineageDigest, revoked, newFrontierT7MemoryReplayGuard())
 		}, "grant_denied_or_mismatched"},
+		{"missing-replay-guard", func() frontierT7ContinuationReconciliation {
+			return frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, nil)
+		}, "replay_guard_unavailable"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -272,8 +321,33 @@ func TestFrontierT7ContinuationManifestFailsClosedOnReplayAndConflict(t *testing
 
 	tampered := manifest
 	tampered.CheckpointDigest = frontierT7TestDigest("tampered")
-	result := frontierT7ReconcileContinuation(tampered, now, grant.RecipientKeyID, request.LineageDigest, decision, nil)
+	result := frontierT7ReconcileContinuation(tampered, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, newFrontierT7MemoryReplayGuard())
 	if result.Accepted || !containsString(result.Findings, "manifest_digest_mismatch") || !containsString(result.Findings, "manifest_signature_invalid") {
 		t.Fatalf("tamper was not rejected: %#v", result)
+	}
+
+	guard := newFrontierT7MemoryReplayGuard()
+	const workers = 16
+	results := make(chan frontierT7ContinuationReconciliation, workers)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			results <- frontierT7ReconcileContinuation(manifest, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, guard)
+		}()
+	}
+	wait.Wait()
+	close(results)
+	accepted, replayed := 0, 0
+	for item := range results {
+		if item.Accepted {
+			accepted++
+		} else if containsString(item.Findings, "manifest_replay") {
+			replayed++
+		}
+	}
+	if accepted != 1 || replayed != workers-1 {
+		t.Fatalf("atomic replay guard accepted=%d replayed=%d", accepted, replayed)
 	}
 }

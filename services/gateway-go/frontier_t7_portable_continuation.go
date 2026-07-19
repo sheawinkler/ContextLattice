@@ -8,7 +8,9 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 )
 
 const (
@@ -374,8 +376,11 @@ func frontierT7CreateCollaborativeGrant(keys *contextIdentityKeys, request front
 		if findings := frontierT7VerifyGrant(parent); len(findings) > 0 {
 			return frontierT7CollaborativeGrant{}, fmt.Errorf("parent grant invalid: %s", strings.Join(findings, ","))
 		}
+		parentNotBefore := mustParseFrontierT7Time(parent.NotBefore)
 		if parent.Project != project || !frontierT7StringSubset(topics, parent.Topics) || !frontierT7StringSubset(dataClasses, parent.DataClasses) || !frontierT7StringSubset(actions, parent.Actions) ||
-			request.UsageLimit > parent.UsageLimit || request.DelegationDepth != parent.DelegationDepth+1 || request.DelegationDepth > 4 || !request.ExpiresAt.Before(mustParseFrontierT7Time(parent.ExpiresAt).Add(time.Nanosecond)) {
+			!jsonValuesEqual(request.Subject, parent.Subject) || purpose != parent.Purpose || recipient != parent.RecipientKeyID || request.KeyEpoch != parent.KeyEpoch ||
+			!frontierT7StringSubset(approvers, parent.Approvers) || request.NotBefore.Before(parentNotBefore) || request.UsageLimit > parent.UsageLimit ||
+			request.DelegationDepth != parent.DelegationDepth+1 || request.DelegationDepth > 4 || !request.ExpiresAt.Before(mustParseFrontierT7Time(parent.ExpiresAt).Add(time.Nanosecond)) {
 			return frontierT7CollaborativeGrant{}, errors.New("delegated grant exceeds parent authority")
 		}
 		if !frontierT7StringSubset([]string{"delegate"}, parent.Actions) {
@@ -384,14 +389,21 @@ func frontierT7CreateCollaborativeGrant(keys *contextIdentityKeys, request front
 		parentID = parent.GrantID
 	}
 	issuer := contextPassportIssuer{InstanceID: keys.InstanceID, SigningKeyID: keys.SigningKeyID, SigningPublicKey: keys.SigningPublicKey}
-	seed := map[string]any{"subject": request.Subject, "project": project, "topics": topics, "classes": dataClasses, "actions": actions, "purpose": purpose, "recipient": recipient, "epoch": request.KeyEpoch, "not_before": request.NotBefore.UTC().Format(time.RFC3339Nano), "expires": request.ExpiresAt.UTC().Format(time.RFC3339Nano), "parent": parentID}
+	createdAt := now.UTC().Format(time.RFC3339Nano)
+	seed := map[string]any{
+		"subject": request.Subject, "project": project, "topics": topics, "classes": dataClasses, "actions": actions,
+		"purpose": purpose, "usage_limit": request.UsageLimit, "parent": parentID, "delegation_depth": request.DelegationDepth,
+		"approvers": approvers, "recipient": recipient, "epoch": request.KeyEpoch,
+		"not_before": request.NotBefore.UTC().Format(time.RFC3339Nano), "expires": request.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		"created_at": createdAt, "issuer_instance_id": issuer.InstanceID, "issuer_key_id": issuer.SigningKeyID,
+	}
 	grant := frontierT7CollaborativeGrant{
 		SchemaID: frontierT7CollaborativeGrantSchemaID, Version: 1, GrantID: "ctxgrant_" + strings.TrimPrefix(frontierT7Digest(seed), "sha256:")[:24],
 		Subject: request.Subject, Project: project, Topics: topics, DataClasses: dataClasses, Actions: actions,
 		Purpose: purpose, UsageLimit: request.UsageLimit, ParentGrantID: parentID, DelegationDepth: request.DelegationDepth,
 		Approvers: approvers, KeyEpoch: request.KeyEpoch, RecipientKeyID: recipient,
 		NotBefore: request.NotBefore.UTC().Format(time.RFC3339Nano), ExpiresAt: request.ExpiresAt.UTC().Format(time.RFC3339Nano),
-		CreatedAt: now.UTC().Format(time.RFC3339Nano), Issuer: issuer,
+		CreatedAt: createdAt, Issuer: issuer,
 	}
 	unsigned := frontierT7GrantUnsignedValue(grant)
 	grant.GrantDigest = frontierT7Digest(unsigned)
@@ -543,10 +555,18 @@ type frontierT7ImportPlan struct {
 func frontierT7RelativeLocator(value string) (string, error) {
 	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
 	clean := path.Clean(value)
-	if value == "" || path.IsAbs(value) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, ":") || len(clean) > 1024 {
+	containsControl := strings.IndexFunc(value, unicode.IsControl) >= 0
+	if value == "" || containsControl || path.IsAbs(value) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, ":") || len(clean) > 1024 {
 		return "", errors.New("locator must be a bounded relative path")
 	}
 	return clean, nil
+}
+
+func frontierT7ImportBatchCount(plan frontierT7ImportPlan) (int, error) {
+	if plan.BatchSize < 1 || plan.BatchSize > frontierT7MaxBatchRows || len(plan.Mappings) < 1 || len(plan.Mappings) > frontierT7MaxImportRows {
+		return 0, errors.New("import plan batch bounds are invalid")
+	}
+	return (len(plan.Mappings) + plan.BatchSize - 1) / plan.BatchSize, nil
 }
 
 func frontierT7BuildImportPlan(project string, records []frontierT7ImportRecord, existing map[string]string, batchSize int) (frontierT7ImportPlan, error) {
@@ -675,17 +695,24 @@ func frontierT7ImportReceiptDigest(receipt frontierT7ImportReceipt) string {
 }
 
 func frontierT7ValidImportReceipt(receipt frontierT7ImportReceipt, plan frontierT7ImportPlan, expectedBatch int) bool {
+	expectedBatchCount, err := frontierT7ImportBatchCount(plan)
+	if err != nil || plan.BatchCount != expectedBatchCount {
+		return false
+	}
 	return receipt.SchemaID == frontierT7ImportReceiptSchemaID && receipt.Version == 1 && receipt.PlanID == plan.PlanID &&
-		receipt.PlanDigest == plan.PlanDigest && receipt.BatchIndex == expectedBatch && receipt.BatchCount == plan.BatchCount &&
+		receipt.PlanDigest == plan.PlanDigest && receipt.BatchIndex == expectedBatch && receipt.BatchCount == expectedBatchCount &&
 		receipt.Status == "committed" && receipt.Atomic && !receipt.GatewayMutatedMemory && receipt.NetworkCalls == 0 &&
 		receipt.ResumeBatchIndex == expectedBatch+1 && receipt.ReceiptDigest == frontierT7ImportReceiptDigest(receipt)
 }
 
 func frontierT7CommitImportBatch(plan frontierT7ImportPlan, batchIndex int, prior map[int]frontierT7ImportReceipt, now time.Time) (frontierT7ImportReceipt, error) {
-	if plan.SchemaID != frontierT7ImportPlanSchemaID || plan.Version != 1 || plan.PlanDigest != frontierT7Digest(map[string]any{"project": plan.Project, "batch_size": plan.BatchSize, "mappings": plan.Mappings}) {
+	expectedBatchCount, batchErr := frontierT7ImportBatchCount(plan)
+	if batchErr != nil || plan.SchemaID != frontierT7ImportPlanSchemaID || plan.Version != 1 || plan.BatchCount != expectedBatchCount ||
+		plan.PlanDigest != frontierT7Digest(map[string]any{"project": plan.Project, "batch_size": plan.BatchSize, "mappings": plan.Mappings}) ||
+		plan.PlanID != "importplan_"+strings.TrimPrefix(plan.PlanDigest, "sha256:")[:24] || !plan.AtomicBatches || !plan.Resumable || plan.ExecutionPerformed || plan.NetworkCalls != 0 || plan.ExecutionOwner != "external_import_worker" {
 		return frontierT7ImportReceipt{}, errors.New("import plan digest mismatch")
 	}
-	if batchIndex < 0 || batchIndex >= plan.BatchCount {
+	if batchIndex < 0 || batchIndex >= expectedBatchCount {
 		return frontierT7ImportReceipt{}, errors.New("batch index is outside the plan")
 	}
 	for index := 0; index < batchIndex; index++ {
@@ -705,7 +732,7 @@ func frontierT7CommitImportBatch(plan frontierT7ImportPlan, batchIndex int, prio
 	receiptID := "impreceipt_" + strings.TrimPrefix(frontierT7Digest(map[string]any{"plan": plan.PlanDigest, "batch": batchIndex, "rows": rows}), "sha256:")[:24]
 	receipt := frontierT7ImportReceipt{
 		SchemaID: frontierT7ImportReceiptSchemaID, Version: 1, ReceiptID: receiptID, PlanID: plan.PlanID, PlanDigest: plan.PlanDigest,
-		BatchIndex: batchIndex, BatchCount: plan.BatchCount, Status: "committed", Mappings: rows, ResumeBatchIndex: batchIndex + 1,
+		BatchIndex: batchIndex, BatchCount: expectedBatchCount, Status: "committed", Mappings: rows, ResumeBatchIndex: batchIndex + 1,
 		RecordedAt: now.UTC().Format(time.RFC3339Nano), Atomic: true, GatewayMutatedMemory: false, NetworkCalls: 0,
 	}
 	receipt.ReceiptDigest = frontierT7ImportReceiptDigest(receipt)
@@ -818,6 +845,9 @@ func frontierT7CreateContinuationManifest(keys *contextIdentityKeys, request fro
 	if !request.ExpiresAt.After(now) || request.ExpiresAt.Sub(now) > 24*time.Hour {
 		return frontierT7ContinuationManifest{}, errors.New("continuation manifest expiry must be within 24 hours")
 	}
+	if request.ExpiresAt.After(grantExpiry) {
+		request.ExpiresAt = grantExpiry
+	}
 	obligations := append([]string(nil), request.UnresolvedObligationDigests...)
 	sort.Strings(obligations)
 	issuer := contextPassportIssuer{InstanceID: keys.InstanceID, SigningKeyID: keys.SigningKeyID, SigningPublicKey: keys.SigningPublicKey}
@@ -853,7 +883,46 @@ type frontierT7ContinuationReconciliation struct {
 	NetworkCalls       int      `json:"network_calls"`
 }
 
-func frontierT7ReconcileContinuation(manifest frontierT7ContinuationManifest, now time.Time, localRecipientKeyID, expectedLineageDigest string, grantDecision frontierT7GrantDecision, seen map[string]string) frontierT7ContinuationReconciliation {
+type frontierT7ContinuationAuthorization struct {
+	Topic                 string
+	DataClass             string
+	Purpose               string
+	SubjectSnapshotDigest string
+	KeyEpoch              int
+	UsageCount            int
+	RevokedGrantIDs       map[string]struct{}
+}
+
+type frontierT7ReplayGuard interface {
+	checkAndRecord(manifestID, manifestDigest string) (string, bool, error)
+}
+
+type frontierT7MemoryReplayGuard struct {
+	mu   sync.Mutex
+	seen map[string]string
+}
+
+func newFrontierT7MemoryReplayGuard() *frontierT7MemoryReplayGuard {
+	return &frontierT7MemoryReplayGuard{seen: map[string]string{}}
+}
+
+func (g *frontierT7MemoryReplayGuard) checkAndRecord(manifestID, manifestDigest string) (string, bool, error) {
+	if g == nil {
+		return "", false, errors.New("replay guard unavailable")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.seen == nil {
+		g.seen = map[string]string{}
+	}
+	previous, exists := g.seen[manifestID]
+	if !exists {
+		g.seen[manifestID] = manifestDigest
+	}
+	return previous, exists, nil
+}
+
+func frontierT7ReconcileContinuation(manifest frontierT7ContinuationManifest, grant frontierT7CollaborativeGrant, now time.Time, localRecipientKeyID, expectedLineageDigest string, authorization frontierT7ContinuationAuthorization, replayGuard frontierT7ReplayGuard) frontierT7ContinuationReconciliation {
 	findings := []string{}
 	if manifest.SchemaID != frontierT7ContinuationSchemaID || manifest.Version != 1 {
 		findings = append(findings, "unsupported_manifest")
@@ -879,14 +948,27 @@ func frontierT7ReconcileContinuation(manifest frontierT7ContinuationManifest, no
 	if manifest.LineageDigest != expectedLineageDigest {
 		findings = append(findings, "divergent_lineage")
 	}
-	if !grantDecision.Allowed || grantDecision.GrantID != manifest.GrantID || grantDecision.GrantDigest != manifest.GrantDigest {
+	grantDecision := frontierT7AuthorizeGrant(grant, frontierT7GrantUseRequest{
+		Project: manifest.Project, Topic: authorization.Topic, DataClass: authorization.DataClass, Action: "continue",
+		Purpose: authorization.Purpose, RecipientKeyID: manifest.RecipientKeyID,
+		SubjectSnapshotDigest: authorization.SubjectSnapshotDigest, KeyEpoch: authorization.KeyEpoch,
+		UsageCount: authorization.UsageCount, RevokedGrantIDs: authorization.RevokedGrantIDs, Now: now,
+	})
+	if grant.SchemaID != frontierT7CollaborativeGrantSchemaID || !grantDecision.Allowed || grantDecision.SchemaID != frontierT7GrantDecisionSchemaID || grantDecision.GrantID != manifest.GrantID || grantDecision.GrantDigest != manifest.GrantDigest {
 		findings = append(findings, "grant_denied_or_mismatched")
 	}
-	if previousDigest, exists := seen[manifest.ManifestID]; exists {
-		if previousDigest == manifest.ManifestDigest {
-			findings = append(findings, "manifest_replay")
-		} else {
-			findings = append(findings, "manifest_id_collision")
+	findings = uniqueSortedStrings(findings)
+	if len(findings) == 0 {
+		if replayGuard == nil {
+			findings = append(findings, "replay_guard_unavailable")
+		} else if previousDigest, exists, err := replayGuard.checkAndRecord(manifest.ManifestID, manifest.ManifestDigest); err != nil {
+			findings = append(findings, "replay_guard_unavailable")
+		} else if exists {
+			if previousDigest == manifest.ManifestDigest {
+				findings = append(findings, "manifest_replay")
+			} else {
+				findings = append(findings, "manifest_id_collision")
+			}
 		}
 	}
 	findings = uniqueSortedStrings(findings)
