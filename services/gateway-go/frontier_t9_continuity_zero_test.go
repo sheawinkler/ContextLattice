@@ -32,7 +32,7 @@ func frontierT9SeedSession(t *testing.T, s *server, id, status, commit string) {
 		"project": "contextlattice", "status": status,
 		"objective":       "Finish the release using /Volumes/private-work/evidence without leaking paths.",
 		"objective_state": "implementation", "next_action": "Inspect /Users/example/private and run the focused gate.",
-		"repo": "/Volumes/private-work/context-lattice-private", "branch": "main",
+		"repo": "/workspace/ContextLattice", "branch": "main",
 		"task_id": "task-frontier-t9",
 	})
 	if err != nil {
@@ -55,8 +55,8 @@ func frontierT9RequestPayload(sessionID string) map[string]any {
 	return map[string]any{
 		"project": "contextlattice", "agent": "codex", "agent_id": "codex_gpt5",
 		"harness": "codex", "session_id": sessionID,
-		"repository_id":      "sheawinkler/http-context-and-memory-orchestrator",
-		"repository_aliases": []any{"context-lattice-private"},
+		"repository_id":      "sheawinkler/ContextLattice",
+		"repository_aliases": []any{"ContextLattice"},
 		"branch":             "main", "commit": frontierT9TestCommit,
 	}
 }
