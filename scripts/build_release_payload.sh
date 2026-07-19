@@ -100,18 +100,21 @@ while IFS= read -r source_path; do
     services/gateway-go/frontier_t7_portable_continuation_entitled_test.go|\
     services/gateway-go/frontier_t8_skill_evolution_entitled.go|\
     services/gateway-go/frontier_t8_skill_evolution_entitled_test.go|\
+    services/gateway-go/frontier_t9_continuity_zero_entitled.go|\
+    services/gateway-go/frontier_t9_continuity_zero_entitled_test.go|\
     config/frontier_t1_release_provenance.v1.json|\
     docs/evals/v3.21-frontier-t4-paid-activation.json|\
     docs/evals/v3.22-frontier-t5-paid-activation.json|\
     docs/evals/v3.23-frontier-t6-paid-activation.json|\
     docs/evals/v3.24-frontier-t7-paid-activation.json|\
-    docs/evals/v3.25-frontier-t8-paid-activation.json)
+    docs/evals/v3.25-frontier-t8-paid-activation.json|\
+    docs/evals/v3.26-frontier-t9-paid-activation.json)
       fail "public source ref contains a paid/private path: ${source_path}"
       ;;
   esac
 done < <(git -C "${ROOT_DIR}" ls-tree -r --name-only "${source_commit}")
 
-public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|frontier_t6_agent_fit_governance_state\.v1|frontier_t7_portable_continuation_governance_state\.v1|frontier_t8_skill_evolution_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|frontier_t6_agent_fit_governance_state\.v1|frontier_t7_portable_continuation_governance_state\.v1|frontier_t8_skill_evolution_governance_state\.v1|frontier_t9_continuity_zero_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
 if git -C "${ROOT_DIR}" grep -n -I -E "${public_runtime_marker}" "${source_commit}" -- \
     Dockerfile.gateway-go docker-compose.yml services/gateway-go \
     >"${TMP_DIR}/public-runtime-markers.txt" 2>/dev/null; then
@@ -205,6 +208,9 @@ paid_markers = {
     "services/gateway-go/frontier_t8_skill_evolution_entitled.go": "frontier_t8_skill_evolution_governance.v1",
     "services/gateway-go/frontier_t8_skill_evolution_entitled_test.go": "frontier_t8_skill_evolution_governance.v1",
     "docs/evals/v3.25-frontier-t8-paid-activation.json": "frontier_t8_paid_activation.v1",
+    "services/gateway-go/frontier_t9_continuity_zero_entitled.go": "frontier_t9_continuity_zero_governance.v1",
+    "services/gateway-go/frontier_t9_continuity_zero_entitled_test.go": "frontier_t9_continuity_zero_governance.v1",
+    "docs/evals/v3.26-frontier-t9-paid-activation.json": "frontier_t9_paid_activation.v1",
 }
 paid_runtime_files = {
     "Dockerfile.gateway-go": "COPY config/runtime-license ./config/runtime-license",

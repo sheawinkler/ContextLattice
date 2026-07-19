@@ -53,9 +53,9 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "3.25.0")
-        self.assertEqual(contract["product"]["stable_tag"], "v3.25.0")
-        self.assertEqual(contract["product"]["release_train"], "3.25")
+        self.assertEqual(contract["product"]["version"], "3.26.0")
+        self.assertEqual(contract["product"]["stable_tag"], "v3.26.0")
+        self.assertEqual(contract["product"]["release_train"], "3.26")
         self.assertEqual(contract["product"]["primary_interface"], "cli")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
 
@@ -101,6 +101,7 @@ class CommercialTruthTests(unittest.TestCase):
         agent_fit = "frontier_agent_fit_governance"
         portable_governance = "frontier_portable_continuation_governance"
         skill_evolution = "frontier_skill_evolution_governance"
+        continuity_zero = "frontier_continuity_zero_automation"
         self.assertTrue(frontier.isdisjoint(plans["free"]["feature_ids"]))
         self.assertIn(utility_core, plans["free"]["feature_ids"])
         self.assertTrue((frontier_t1 | {shared_proof}).isdisjoint(plans["starter"]["feature_ids"]))
@@ -116,6 +117,7 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertIn(agent_fit, plans[plan_id]["feature_ids"])
             self.assertIn(portable_governance, plans[plan_id]["feature_ids"])
             self.assertIn(skill_evolution, plans[plan_id]["feature_ids"])
+            self.assertIn(continuity_zero, plans[plan_id]["feature_ids"])
         self.assertTrue(frontier_t4.isdisjoint(plans["free"]["feature_ids"]))
         self.assertTrue(frontier_t4.isdisjoint(plans["starter"]["feature_ids"]))
         for plan_id in {"free", "starter", "team"}:
@@ -123,6 +125,9 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertNotIn(agent_fit, plans[plan_id]["feature_ids"])
             self.assertNotIn(portable_governance, plans[plan_id]["feature_ids"])
             self.assertNotIn(skill_evolution, plans[plan_id]["feature_ids"])
+        self.assertNotIn(continuity_zero, plans["free"]["feature_ids"])
+        self.assertIn(continuity_zero, plans["starter"]["feature_ids"])
+        self.assertIn(continuity_zero, plans["team"]["feature_ids"])
         self.assertTrue(
             {"frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance"}.issubset(
                 plans["team"]["feature_ids"]
@@ -143,6 +148,7 @@ class CommercialTruthTests(unittest.TestCase):
                 agent_fit,
                 portable_governance,
                 skill_evolution,
+                continuity_zero,
                 utility_analytics,
                 utility_operations,
             },
@@ -152,6 +158,7 @@ class CommercialTruthTests(unittest.TestCase):
             agent_fit,
             portable_governance,
             skill_evolution,
+            continuity_zero,
             utility_core,
             utility_analytics,
             utility_operations,
@@ -190,7 +197,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "3.25.0")
+        self.assertEqual(public_truth["product"]["version"], "3.26.0")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
@@ -211,6 +218,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertIn("/memory/agent-fit/selection/activation", public_truth["paid_route_contract"]["routes"])
         self.assertIn("/memory/portable-continuation/governance", public_truth["paid_route_contract"]["routes"])
         self.assertIn("/memory/skills/foundry/evolution/governance", public_truth["paid_route_contract"]["routes"])
+        self.assertIn("/memory/continuity-zero/governance", public_truth["paid_route_contract"]["routes"])
         for relative in (
             "services/gateway-go/entitlement_policy.go",
             "services/gateway-go/frontier_t3_utility_entitled.go",
@@ -223,10 +231,13 @@ class CommercialTruthTests(unittest.TestCase):
             "services/gateway-go/frontier_t7_portable_continuation_entitled_test.go",
             "services/gateway-go/frontier_t8_skill_evolution_entitled.go",
             "services/gateway-go/frontier_t8_skill_evolution_entitled_test.go",
+            "services/gateway-go/frontier_t9_continuity_zero_entitled.go",
+            "services/gateway-go/frontier_t9_continuity_zero_entitled_test.go",
             "docs/evals/v3.21-frontier-t4-paid-activation.json",
             "docs/evals/v3.23-frontier-t6-paid-activation.json",
             "docs/evals/v3.24-frontier-t7-paid-activation.json",
             "docs/evals/v3.25-frontier-t8-paid-activation.json",
+            "docs/evals/v3.26-frontier-t9-paid-activation.json",
         ):
             self.assertFalse((ROOT / relative).exists(), relative)
 
@@ -336,7 +347,7 @@ class CommercialTruthTests(unittest.TestCase):
             copy_fixture(fixture)
             launch = fixture / "launch_service/config/contextlattice.launch.json"
             launch.write_text(
-                launch.read_text(encoding="utf-8").replace("v3.25.0", "v9.9.9", 1),
+                launch.read_text(encoding="utf-8").replace("v3.26.0", "v9.9.9", 1),
                 encoding="utf-8",
             )
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)

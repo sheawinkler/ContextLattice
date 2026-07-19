@@ -155,6 +155,7 @@ if [[ "$TARGET_REMOTE" == "public" ]]; then
   paid_runtime_pattern="${paid_runtime_pattern}|frontierT6Governance|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|frontier_t6_agent_fit_governance|/memory/agent-fit/(steering|profile|context-prep)/governance|/memory/agent-fit/selection/activation"
   paid_runtime_pattern="${paid_runtime_pattern}|frontierT7Governance|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|frontier_t7_portable_continuation_governance|/memory/portable-continuation/governance"
   paid_runtime_pattern="${paid_runtime_pattern}|frontierT8Governance|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|frontier_t8_skill_evolution_governance|/memory/skills/foundry/evolution/governance"
+  paid_runtime_pattern="${paid_runtime_pattern}|frontierT9Governance|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|frontier_t9_continuity_zero_governance|/memory/continuity-zero/governance"
   for p in "${changed[@]}"; do
     # These exact files describe generated contracts/catalogs; they do not
     # register or execute paid runtime behavior. Their generators and drift

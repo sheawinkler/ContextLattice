@@ -7168,6 +7168,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/skills/foundry/export", s.memorySkillFoundryExport)
 	mux.HandleFunc("/memory/skills/foundry/retire", s.memorySkillFoundryRetire)
 	mux.HandleFunc(frontierT8SkillEvolutionPath, s.memorySkillFoundryEvolution)
+	mux.HandleFunc(frontierT9ContinuityZeroPath, s.memoryContinuityZero)
 	mux.HandleFunc("/memory/context-passport/export", s.memoryContextPassportExport)
 	mux.HandleFunc("/memory/context-passport/verify", s.memoryContextPassportVerify)
 	mux.HandleFunc("/memory/context-passport/diff", s.memoryContextPassportDiff)

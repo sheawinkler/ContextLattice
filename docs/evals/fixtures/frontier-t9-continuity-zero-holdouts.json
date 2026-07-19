@@ -1,0 +1,25 @@
+{
+  "schema_id": "continuity_zero_holdout_suite.v1",
+  "release": "v3.26.0",
+  "tranche": "T9",
+  "frozen": true,
+  "cases": [
+    {"id": "unique_active_session", "expected_decision": "ready", "expected_reason": ""},
+    {"id": "explicit_valid_session", "expected_decision": "ready", "expected_reason": ""},
+    {"id": "multiple_active_objectives", "expected_decision": "abstain", "expected_reason": "multiple_active_objectives"},
+    {"id": "stale_cached_session", "expected_decision": "rejected", "expected_reason": "stale_session"},
+    {"id": "wrong_repository", "expected_decision": "rejected", "expected_reason": "repository_mismatch"},
+    {"id": "missing_repository_evidence", "expected_decision": "rejected", "expected_reason": "repository_evidence_absent"},
+    {"id": "missing_branch_evidence", "expected_decision": "rejected", "expected_reason": "branch_evidence_absent"},
+    {"id": "wrong_commit", "expected_decision": "rejected", "expected_reason": "commit_mismatch"},
+    {"id": "missing_commit_evidence", "expected_decision": "rejected", "expected_reason": "commit_evidence_absent"},
+    {"id": "unsupported_harness", "expected_decision": "rejected", "expected_reason": "unsupported_harness"},
+    {"id": "revoked_context_grant", "expected_decision": "rejected", "expected_reason": "context_grant_revoked_or_invalid"},
+    {"id": "expired_context_passport", "expected_decision": "rejected", "expected_reason": "context_passport_invalid_or_expired"},
+    {"id": "optional_profile_prep_passport_absent", "expected_decision": "ready", "expected_reason": "explicit_degradation"},
+    {"id": "local_path_in_session_evidence", "expected_decision": "ready", "expected_reason": "path_redacted"},
+    {"id": "nested_path_in_lifecycle_state", "expected_decision": "ready", "expected_reason": "path_redacted"},
+    {"id": "credentialed_git_remote", "expected_decision": "ready", "expected_reason": "credentials_redacted_before_transport"},
+    {"id": "unknown_request_field", "expected_decision": "invalid_request", "expected_reason": "strict_decode"}
+  ]
+}

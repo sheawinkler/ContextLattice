@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 51
+const GeneratedAgentContractRegistryVersion = 52
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
@@ -55,6 +55,7 @@ const GeneratedAgentContractContextPolicyEvaluationV1 = "context_policy_evaluati
 const GeneratedAgentContractContextPrepV1 = "context_prep.v1"
 const GeneratedAgentContractContextPrepArtifactV1 = "context_prep_artifact.v1"
 const GeneratedAgentContractContextlatticeLifecycleReceiptV1 = "contextlattice_lifecycle_receipt.v1"
+const GeneratedAgentContractContinuityZeroV1 = "continuity_zero.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
 const GeneratedAgentContractContradictionResolutionV1 = "contradiction_resolution.v1"
 const GeneratedAgentContractDecisionChangeV1 = "decision_change.v1"
@@ -158,6 +159,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextPrepV1,
 	GeneratedAgentContractContextPrepArtifactV1,
 	GeneratedAgentContractContextlatticeLifecycleReceiptV1,
+	GeneratedAgentContractContinuityZeroV1,
 	GeneratedAgentContractContractAcknowledgementV1,
 	GeneratedAgentContractContradictionResolutionV1,
 	GeneratedAgentContractDecisionChangeV1,
@@ -474,6 +476,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 		PayloadKind:        "contextlattice_lifecycle_receipt",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractContinuityZeroV1,
+		PayloadKind:        "path_free_fail_closed_zero_entry_continuity_manifest",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

@@ -540,6 +540,7 @@ $goNativeCommands = @(
     "contextlattice_retrieval_governance",
     "contextlattice_policy_lab",
     "contextlattice_agent_fit",
+    "contextlattice_continuity_zero",
     "contextlattice_claim_write",
     "contextlattice_claim_query",
     "contextlattice_continuity_reconcile",
@@ -633,6 +634,7 @@ Write-Host "  contextlattice_claim_query `"current project state`" --project con
 Write-Host "  contextlattice_policy_candidate --project contextlattice --pretty"
 Write-Host "  contextlattice_policy_status --pretty"
 Write-Host "  contextlattice_skill_foundry_status --pretty"
+Write-Host "  contextlattice_continuity_zero --project contextlattice --agent codex --output continuity-zero.json --pretty"
 Write-Host "  contextlattice_memory_graph_repair --project contextlattice --pretty"
 Write-Host "  contextlattice_passport_export `"portable task context`" --project contextlattice --output passport.json --pretty"
 Write-Host "  contextlattice_passport_verify --file passport.json --pretty"

@@ -33,6 +33,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
 - Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
 - Portable Continuation that binds signed least-privilege grants, digest-only work manifests, provenance-preserving import receipts, and replay-safe cross-machine reconciliation into one CLI-first handoff.
+- Continuity Zero that opens one unambiguous active mission already assembled: packet, checkpoint, Agent Fit, preparation, repository commit, provenance, risks, and next move, without a giant setup prompt or local-path leakage.
 - Agent runtime sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready reference packages, exportable run traces, and exact-linked proof timelines.
 - Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
 - Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
@@ -43,9 +44,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.25.0` is the current release baseline. Verified Skill Evolution closes the loop between memory and capability: ContextLattice finds repeated workflows that survived real verification, resolves their evidence against persisted Utility Ledger and session records, keeps discovery separate from holdout evaluation, and hands complete skill material to Skill Foundry through one replay-safe transaction. Decaying skills become explicit replacement or retirement proposals instead of silent liabilities. Public core proposes only; Operator and Enterprise add governed discovery schedules, evaluation, activation, monitoring, replacement, retirement, and exact-receipt rollback. The gateway never runs a model, subprocess, filesystem mutation, git operation, network adapter, merge, or push. The CLI remains the prescribed path; HTTP is the integration fallback. Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Agent Packet deltas, proof timelines, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain part of the same contract.
+`v3.26.0` is the current release baseline. Continuity Zero removes the cold-start ritual: run one CLI command inside a repository and ContextLattice returns `ready` only when exactly one fresh objective matches the project, harness, repository, commit, ownership, and provenance evidence. Ambiguity abstains. Stale, mismatched, revoked, or expired proof rejects. The free core produces the path-free manifest; entitled runtimes add governed external-delivery and workspace-preparation intents for Starter, Team, Operator, and Enterprise without moving execution into the gateway. The CLI remains the prescribed path; HTTP is the integration fallback. Verified Skill Evolution, Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Agent Packet deltas, proof timelines, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain one coherent contract.
 
-## Public Runtime Stack (v3.25)
+## Public Runtime Stack (v3.26)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -106,8 +107,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.25.0 \
-  --statement "The current public release is 3.25.0." \
+  --object 3.26.0 \
+  --statement "The current public release is 3.26.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -151,7 +152,12 @@ contextlattice agent-fit profile-resolve --project contextlattice --agent-id cod
 contextlattice agent-fit runner-select --payload-file runner-candidates.json --raw
 contextlattice agent-fit context-prep-schedule --project contextlattice --payload-file prep-request.json --raw
 
-# Carry a signed evidence packet to another machine without carrying the machine with it.
+# Continuity Zero: open the one unambiguous active mission already assembled.
+# The optional artifact is written owner-only; no local path is sent to the gateway.
+contextlattice_continuity_zero --project contextlattice --agent codex \
+  --output continuity-zero.json --pretty
+
+# Carry signed evidence across machines without surrendering trust or transport.
 contextlattice_passport_export "prepare the release handoff" --project contextlattice --output passport.json --pretty
 contextlattice_passport_verify --file passport.json --pretty
 contextlattice_mesh_identity --pretty
@@ -468,6 +474,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.26.0.md` (zero-entry continuity, fail-closed objective selection, and governed external-adapter intents)
   - `docs/releases/v3.25.0.md` (evidence-qualified skill evolution, atomic Foundry handoff, and exact-receipt governance)
   - `docs/releases/v3.24.0.md` (signed collaborative grants, provenance-preserving imports, and encrypted replay-safe continuation)
   - `docs/releases/v3.23.0.md` (Agent Fit steering, advisor-only selection, adaptive profiles, and explicit context preparation)

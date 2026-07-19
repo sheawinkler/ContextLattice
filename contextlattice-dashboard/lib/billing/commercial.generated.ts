@@ -2,16 +2,16 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "cc52e6c2ab6f6547f6a948bf941dceb7778b17707e22e39fa3f3712430fd0d5d";
+export const COMMERCIAL_CONTRACT_SHA256 = "838f8e71b1abf8947d65588eee82e76571a9cc54ea2ebd3b0fb1e5576c580b06";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.25.0",
-    "stable_tag": "v3.25.0",
-    "release_train": "3.25",
+    "version": "3.26.0",
+    "stable_tag": "v3.26.0",
+    "release_train": "3.26",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -166,6 +166,11 @@ export const COMMERCIAL_TRUTH = {
       "id": "frontier_skill_evolution_governance",
       "buyer_label": "A skill system that compounds",
       "description": "Discover repeated verified wins, review exact skill artifacts, monitor their real utility, and reverse activation, replacement, or retirement through immutable receipts."
+    },
+    {
+      "id": "frontier_continuity_zero_automation",
+      "buyer_label": "Open an agent. Already there.",
+      "description": "Bind the exact active mission, checkpoint, agent fit, preparation, repository identity, provenance, risks, and next move into one zero-entry manifest, then govern external delivery without surrendering execution control."
     }
   ],
   "plans": [
@@ -225,7 +230,8 @@ export const COMMERCIAL_TRUTH = {
         "protected_runtime_operations",
         "frontier_delta_packet_automation",
         "frontier_verified_utility_ledger",
-        "frontier_utility_analytics"
+        "frontier_utility_analytics",
+        "frontier_continuity_zero_automation"
       ]
     },
     {
@@ -265,7 +271,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_verified_utility_ledger",
         "frontier_utility_analytics",
         "frontier_retrieval_receipt_governance",
-        "frontier_causal_bridge_governance"
+        "frontier_causal_bridge_governance",
+        "frontier_continuity_zero_automation"
       ]
     },
     {
@@ -312,7 +319,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_policy_laboratory_automation",
         "frontier_agent_fit_governance",
         "frontier_portable_continuation_governance",
-        "frontier_skill_evolution_governance"
+        "frontier_skill_evolution_governance",
+        "frontier_continuity_zero_automation"
       ]
     },
     {
@@ -362,7 +370,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_policy_laboratory_automation",
         "frontier_agent_fit_governance",
         "frontier_portable_continuation_governance",
-        "frontier_skill_evolution_governance"
+        "frontier_skill_evolution_governance",
+        "frontier_continuity_zero_automation"
       ]
     }
   ],
@@ -429,7 +438,8 @@ export const COMMERCIAL_TRUTH = {
       "/memory/agent-fit/context-prep/governance",
       "/memory/agent-fit/selection/activation",
       "/memory/portable-continuation/governance",
-      "/memory/skills/foundry/evolution/governance"
+      "/memory/skills/foundry/evolution/governance",
+      "/memory/continuity-zero/governance"
     ]
   },
   "paid_feature_route_contracts": [
@@ -687,9 +697,25 @@ export const COMMERCIAL_TRUTH = {
       "routes": [
         "/memory/skills/foundry/evolution/governance"
       ]
+    },
+    {
+      "feature_id": "frontier_continuity_zero_automation",
+      "eligible_plan_ids": [
+        "starter",
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/continuity-zero/governance"
+      ]
     }
   ],
-  "contract_sha256": "cc52e6c2ab6f6547f6a948bf941dceb7778b17707e22e39fa3f3712430fd0d5d"
+  "contract_sha256": "838f8e71b1abf8947d65588eee82e76571a9cc54ea2ebd3b0fb1e5576c580b06"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 
