@@ -339,6 +339,9 @@ func (s *frontierT7PortableStore) saveLocked(now time.Time) error {
 	s.trimExpiredLocked(now)
 	s.state.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 	s.state.StateHash = frontierT7StateHash(s.state)
+	if err := frontierT7ValidatePortableState(s.state, s.limits); err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(s.state, "", "  ")
 	if err != nil {
 		return err
@@ -414,6 +417,22 @@ func frontierT7RevokedSet(values map[string]frontierT7GrantRevocation) map[strin
 	return out
 }
 
+func frontierT7GrantRevocationReason(grant frontierT7CollaborativeGrant, revoked map[string]struct{}) string {
+	if _, exists := revoked[grant.GrantID]; exists {
+		return "grant_revoked"
+	}
+	ancestors, valid := frontierT7GrantAncestorIDs(grant)
+	if !valid {
+		return "ancestor_chain_invalid"
+	}
+	for _, ancestorID := range ancestors {
+		if _, exists := revoked[ancestorID]; exists {
+			return "ancestor_grant_revoked"
+		}
+	}
+	return ""
+}
+
 func (s *frontierT7PortableStore) getGrant(grantID string) (frontierT7CollaborativeGrant, bool) {
 	if s == nil || !s.enabled {
 		return frontierT7CollaborativeGrant{}, false
@@ -435,8 +454,8 @@ func (s *frontierT7PortableStore) createGrant(request frontierT7GrantCreateReque
 			if !exists || parent.GrantDigest != request.Parent.GrantDigest {
 				return errors.New("parent grant is not present in the local signed store")
 			}
-			if _, revoked := s.state.Revocations[parent.GrantID]; revoked {
-				return errors.New("parent grant is revoked")
+			if reason := frontierT7GrantRevocationReason(parent, frontierT7RevokedSet(s.state.Revocations)); reason != "" {
+				return fmt.Errorf("parent grant is unavailable: %s", reason)
 			}
 			request.Parent = &parent
 		}
@@ -611,8 +630,8 @@ func (s *frontierT7PortableStore) prepareManifest(request frontierT7Continuation
 	if !exists || grant.GrantDigest != request.Grant.GrantDigest {
 		return frontierT7ContinuationManifest{}, errors.New("continuation grant not found")
 	}
-	if _, revoked := s.state.Revocations[grant.GrantID]; revoked {
-		return frontierT7ContinuationManifest{}, errors.New("continuation grant is revoked")
+	if reason := frontierT7GrantRevocationReason(grant, frontierT7RevokedSet(s.state.Revocations)); reason != "" {
+		return frontierT7ContinuationManifest{}, fmt.Errorf("continuation grant is unavailable: %s", reason)
 	}
 	request.Grant = grant
 	return frontierT7CreateContinuationManifest(s.identity, request, now)
@@ -624,8 +643,8 @@ func (s *frontierT7PortableStore) recordCreatedManifest(manifest frontierT7Conti
 		if !exists || grant.GrantDigest != manifest.GrantDigest {
 			return false, errors.New("continuation grant not found")
 		}
-		if _, revoked := s.state.Revocations[grant.GrantID]; revoked {
-			return false, errors.New("continuation grant is revoked")
+		if reason := frontierT7GrantRevocationReason(grant, frontierT7RevokedSet(s.state.Revocations)); reason != "" {
+			return false, fmt.Errorf("continuation grant is unavailable: %s", reason)
 		}
 		if err := frontierT7ValidateContinuationArtifacts(manifest, grant, now); err != nil {
 			return false, err
@@ -716,8 +735,9 @@ func (s *frontierT7PortableStore) snapshot(now time.Time) map[string]any {
 	defer s.mu.RUnlock()
 	active, exhausted := 0, 0
 	reconciliations := 0
+	revoked := frontierT7RevokedSet(s.state.Revocations)
 	for id, grant := range s.state.Grants {
-		if _, revoked := s.state.Revocations[id]; revoked {
+		if frontierT7GrantRevocationReason(grant, revoked) != "" {
 			continue
 		}
 		if expiry := mustParseFrontierT7Time(grant.ExpiresAt); !expiry.IsZero() && now.Before(expiry) {

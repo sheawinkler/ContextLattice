@@ -1,7 +1,7 @@
 {
   "registry_id": "contextlattice_agent_output_contracts",
-  "registry_version": 47,
-  "updated_at": "2026-07-19T08:56:01Z",
+  "registry_version": 49,
+  "updated_at": "2026-07-19T11:47:45Z",
   "default_validator": "contextlattice.boundary.v1",
   "purpose": "Agent-facing ContextLattice payloads must carry explicit contract identifiers and pass boundary validation before being returned or handed to another agent.",
   "shared_fragments": {
@@ -542,7 +542,7 @@
       "required_output_mode": "json_object",
       "max_total_json_bytes": 180000,
       "max_string_bytes": 8000,
-      "max_list_items": 96,
+      "max_list_items": 128,
       "required_fields": [
         "ok",
         "service",
@@ -7148,6 +7148,7 @@
         "purpose": "string",
         "usage_limit": "int",
         "parent_grant_id": "string",
+        "ancestor_grant_ids": "list[string]",
         "delegation_depth": "int",
         "approvers": "list[string]",
         "key_epoch": "int",

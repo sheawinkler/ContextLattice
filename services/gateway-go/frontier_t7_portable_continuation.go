@@ -28,6 +28,7 @@ const (
 	frontierT7MaxImportRows  = 256
 	frontierT7MaxBatchRows   = 32
 	frontierT7MaxObligations = 64
+	frontierT7MaxSubjectAge  = 24 * time.Hour
 )
 
 func frontierT7Digest(value any) string {
@@ -179,49 +180,51 @@ type frontierT7GrantSubject struct {
 }
 
 type frontierT7CollaborativeGrant struct {
-	SchemaID        string                   `json:"schema_id"`
-	Version         int                      `json:"version"`
-	GrantID         string                   `json:"grant_id"`
-	Subject         frontierT7GrantSubject   `json:"subject"`
-	Project         string                   `json:"project"`
-	Topics          []string                 `json:"topics"`
-	DataClasses     []string                 `json:"data_classes"`
-	Actions         []string                 `json:"actions"`
-	Purpose         string                   `json:"purpose"`
-	UsageLimit      int                      `json:"usage_limit"`
-	ParentGrantID   string                   `json:"parent_grant_id,omitempty"`
-	DelegationDepth int                      `json:"delegation_depth"`
-	Approvers       []string                 `json:"approvers"`
-	KeyEpoch        int                      `json:"key_epoch"`
-	RecipientKeyID  string                   `json:"recipient_key_id"`
-	NotBefore       string                   `json:"not_before"`
-	ExpiresAt       string                   `json:"expires_at"`
-	CreatedAt       string                   `json:"created_at"`
-	Issuer          contextPassportIssuer    `json:"issuer"`
-	GrantDigest     string                   `json:"grant_digest"`
-	Signature       contextPassportSignature `json:"signature"`
+	SchemaID         string                   `json:"schema_id"`
+	Version          int                      `json:"version"`
+	GrantID          string                   `json:"grant_id"`
+	Subject          frontierT7GrantSubject   `json:"subject"`
+	Project          string                   `json:"project"`
+	Topics           []string                 `json:"topics"`
+	DataClasses      []string                 `json:"data_classes"`
+	Actions          []string                 `json:"actions"`
+	Purpose          string                   `json:"purpose"`
+	UsageLimit       int                      `json:"usage_limit"`
+	ParentGrantID    string                   `json:"parent_grant_id,omitempty"`
+	AncestorGrantIDs []string                 `json:"ancestor_grant_ids,omitempty"`
+	DelegationDepth  int                      `json:"delegation_depth"`
+	Approvers        []string                 `json:"approvers"`
+	KeyEpoch         int                      `json:"key_epoch"`
+	RecipientKeyID   string                   `json:"recipient_key_id"`
+	NotBefore        string                   `json:"not_before"`
+	ExpiresAt        string                   `json:"expires_at"`
+	CreatedAt        string                   `json:"created_at"`
+	Issuer           contextPassportIssuer    `json:"issuer"`
+	GrantDigest      string                   `json:"grant_digest"`
+	Signature        contextPassportSignature `json:"signature"`
 }
 
 type frontierT7GrantUnsigned struct {
-	SchemaID        string                 `json:"schema_id"`
-	Version         int                    `json:"version"`
-	GrantID         string                 `json:"grant_id"`
-	Subject         frontierT7GrantSubject `json:"subject"`
-	Project         string                 `json:"project"`
-	Topics          []string               `json:"topics"`
-	DataClasses     []string               `json:"data_classes"`
-	Actions         []string               `json:"actions"`
-	Purpose         string                 `json:"purpose"`
-	UsageLimit      int                    `json:"usage_limit"`
-	ParentGrantID   string                 `json:"parent_grant_id,omitempty"`
-	DelegationDepth int                    `json:"delegation_depth"`
-	Approvers       []string               `json:"approvers"`
-	KeyEpoch        int                    `json:"key_epoch"`
-	RecipientKeyID  string                 `json:"recipient_key_id"`
-	NotBefore       string                 `json:"not_before"`
-	ExpiresAt       string                 `json:"expires_at"`
-	CreatedAt       string                 `json:"created_at"`
-	Issuer          contextPassportIssuer  `json:"issuer"`
+	SchemaID         string                 `json:"schema_id"`
+	Version          int                    `json:"version"`
+	GrantID          string                 `json:"grant_id"`
+	Subject          frontierT7GrantSubject `json:"subject"`
+	Project          string                 `json:"project"`
+	Topics           []string               `json:"topics"`
+	DataClasses      []string               `json:"data_classes"`
+	Actions          []string               `json:"actions"`
+	Purpose          string                 `json:"purpose"`
+	UsageLimit       int                    `json:"usage_limit"`
+	ParentGrantID    string                 `json:"parent_grant_id,omitempty"`
+	AncestorGrantIDs []string               `json:"ancestor_grant_ids,omitempty"`
+	DelegationDepth  int                    `json:"delegation_depth"`
+	Approvers        []string               `json:"approvers"`
+	KeyEpoch         int                    `json:"key_epoch"`
+	RecipientKeyID   string                 `json:"recipient_key_id"`
+	NotBefore        string                 `json:"not_before"`
+	ExpiresAt        string                 `json:"expires_at"`
+	CreatedAt        string                 `json:"created_at"`
+	Issuer           contextPassportIssuer  `json:"issuer"`
 }
 
 func frontierT7GrantUnsignedValue(grant frontierT7CollaborativeGrant) frontierT7GrantUnsigned {
@@ -229,10 +232,47 @@ func frontierT7GrantUnsignedValue(grant frontierT7CollaborativeGrant) frontierT7
 		SchemaID: grant.SchemaID, Version: grant.Version, GrantID: grant.GrantID, Subject: grant.Subject,
 		Project: grant.Project, Topics: grant.Topics, DataClasses: grant.DataClasses, Actions: grant.Actions,
 		Purpose: grant.Purpose, UsageLimit: grant.UsageLimit, ParentGrantID: grant.ParentGrantID,
-		DelegationDepth: grant.DelegationDepth, Approvers: grant.Approvers, KeyEpoch: grant.KeyEpoch,
+		AncestorGrantIDs: grant.AncestorGrantIDs,
+		DelegationDepth:  grant.DelegationDepth, Approvers: grant.Approvers, KeyEpoch: grant.KeyEpoch,
 		RecipientKeyID: grant.RecipientKeyID, NotBefore: grant.NotBefore, ExpiresAt: grant.ExpiresAt,
 		CreatedAt: grant.CreatedAt, Issuer: grant.Issuer,
 	}
+}
+
+func frontierT7GrantAncestorIDs(grant frontierT7CollaborativeGrant) ([]string, bool) {
+	if grant.DelegationDepth == 0 {
+		return []string{}, grant.ParentGrantID == "" && len(grant.AncestorGrantIDs) == 0
+	}
+	// Pre-release depth-one grants did not carry the explicit ancestry vector.
+	// Their signed parent id remains sufficient for the single-hop case.
+	if len(grant.AncestorGrantIDs) == 0 {
+		if grant.DelegationDepth == 1 && grant.ParentGrantID != "" {
+			return []string{grant.ParentGrantID}, true
+		}
+		return nil, false
+	}
+	if len(grant.AncestorGrantIDs) != grant.DelegationDepth || grant.AncestorGrantIDs[len(grant.AncestorGrantIDs)-1] != grant.ParentGrantID {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(grant.AncestorGrantIDs))
+	for _, ancestorID := range grant.AncestorGrantIDs {
+		if _, err := frontierT7SafeID(ancestorID, "ancestor_grant_id", 200); err != nil {
+			return nil, false
+		}
+		if _, exists := seen[ancestorID]; exists || ancestorID == grant.GrantID {
+			return nil, false
+		}
+		seen[ancestorID] = struct{}{}
+	}
+	return append([]string(nil), grant.AncestorGrantIDs...), true
+}
+
+func frontierT7SubjectFresh(observedAt string, now time.Time) bool {
+	observed, err := time.Parse(time.RFC3339Nano, observedAt)
+	if err != nil || now.IsZero() {
+		return false
+	}
+	return !observed.After(now.Add(2*time.Minute)) && observed.After(now.Add(-frontierT7MaxSubjectAge))
 }
 
 type frontierT7GrantCreateRequest struct {
@@ -309,6 +349,9 @@ func frontierT7VerifyGrant(grant frontierT7CollaborativeGrant) []string {
 	if (grant.DelegationDepth == 0) != (grant.ParentGrantID == "") {
 		findings = append(findings, "parent_depth_invalid")
 	}
+	if _, valid := frontierT7GrantAncestorIDs(grant); !valid {
+		findings = append(findings, "ancestor_chain_invalid")
+	}
 	return uniqueSortedStrings(findings)
 }
 
@@ -329,7 +372,7 @@ func frontierT7CreateCollaborativeGrant(keys *contextIdentityKeys, request front
 		return frontierT7CollaborativeGrant{}, err
 	}
 	observedAt, observedErr := time.Parse(time.RFC3339Nano, request.Subject.ObservedAt)
-	if observedErr != nil || observedAt.After(now.Add(2*time.Minute)) {
+	if observedErr != nil || !frontierT7SubjectFresh(request.Subject.ObservedAt, now) {
 		return frontierT7CollaborativeGrant{}, errors.New("subject observed_at is invalid")
 	}
 	request.Subject.ObservedAt = observedAt.UTC().Format(time.RFC3339Nano)
@@ -367,10 +410,11 @@ func frontierT7CreateCollaborativeGrant(keys *contextIdentityKeys, request front
 	if request.NotBefore.IsZero() {
 		request.NotBefore = now
 	}
-	if !request.ExpiresAt.After(request.NotBefore) || request.ExpiresAt.Sub(request.NotBefore) > 30*24*time.Hour {
+	if !request.ExpiresAt.After(now) || !request.ExpiresAt.After(request.NotBefore) || request.ExpiresAt.Sub(request.NotBefore) > 30*24*time.Hour {
 		return frontierT7CollaborativeGrant{}, errors.New("grant expiry must be within 30 days")
 	}
 	parentID := ""
+	ancestorGrantIDs := []string{}
 	if request.Parent != nil {
 		parent := *request.Parent
 		if findings := frontierT7VerifyGrant(parent); len(findings) > 0 {
@@ -386,13 +430,21 @@ func frontierT7CreateCollaborativeGrant(keys *contextIdentityKeys, request front
 		if !frontierT7StringSubset([]string{"delegate"}, parent.Actions) {
 			return frontierT7CollaborativeGrant{}, errors.New("parent grant does not permit delegation")
 		}
+		parentAncestors, valid := frontierT7GrantAncestorIDs(parent)
+		if !valid {
+			return frontierT7CollaborativeGrant{}, errors.New("parent grant ancestry is invalid")
+		}
+		ancestorGrantIDs = append(parentAncestors, parent.GrantID)
+		if len(ancestorGrantIDs) != request.DelegationDepth {
+			return frontierT7CollaborativeGrant{}, errors.New("delegation ancestry does not match depth")
+		}
 		parentID = parent.GrantID
 	}
 	issuer := contextPassportIssuer{InstanceID: keys.InstanceID, SigningKeyID: keys.SigningKeyID, SigningPublicKey: keys.SigningPublicKey}
 	createdAt := now.UTC().Format(time.RFC3339Nano)
 	seed := map[string]any{
 		"subject": request.Subject, "project": project, "topics": topics, "classes": dataClasses, "actions": actions,
-		"purpose": purpose, "usage_limit": request.UsageLimit, "parent": parentID, "delegation_depth": request.DelegationDepth,
+		"purpose": purpose, "usage_limit": request.UsageLimit, "parent": parentID, "ancestors": ancestorGrantIDs, "delegation_depth": request.DelegationDepth,
 		"approvers": approvers, "recipient": recipient, "epoch": request.KeyEpoch,
 		"not_before": request.NotBefore.UTC().Format(time.RFC3339Nano), "expires": request.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		"created_at": createdAt, "issuer_instance_id": issuer.InstanceID, "issuer_key_id": issuer.SigningKeyID,
@@ -400,7 +452,7 @@ func frontierT7CreateCollaborativeGrant(keys *contextIdentityKeys, request front
 	grant := frontierT7CollaborativeGrant{
 		SchemaID: frontierT7CollaborativeGrantSchemaID, Version: 1, GrantID: "ctxgrant_" + strings.TrimPrefix(frontierT7Digest(seed), "sha256:")[:24],
 		Subject: request.Subject, Project: project, Topics: topics, DataClasses: dataClasses, Actions: actions,
-		Purpose: purpose, UsageLimit: request.UsageLimit, ParentGrantID: parentID, DelegationDepth: request.DelegationDepth,
+		Purpose: purpose, UsageLimit: request.UsageLimit, ParentGrantID: parentID, AncestorGrantIDs: ancestorGrantIDs, DelegationDepth: request.DelegationDepth,
 		Approvers: approvers, KeyEpoch: request.KeyEpoch, RecipientKeyID: recipient,
 		NotBefore: request.NotBefore.UTC().Format(time.RFC3339Nano), ExpiresAt: request.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		CreatedAt: createdAt, Issuer: issuer,
@@ -459,12 +511,20 @@ func frontierT7AuthorizeGrant(grant frontierT7CollaborativeGrant, request fronti
 	if beforeErr != nil || expiresErr != nil || request.Now.Add(request.ClockSkew).Before(notBefore) || !request.Now.Add(-request.ClockSkew).Before(expires) {
 		reasons = append(reasons, "grant_time_window_invalid")
 	}
+	if !frontierT7SubjectFresh(grant.Subject.ObservedAt, request.Now) {
+		reasons = append(reasons, "stale_subject")
+	}
 	if _, revoked := request.RevokedGrantIDs[grant.GrantID]; revoked {
 		reasons = append(reasons, "grant_revoked")
 	}
-	if grant.ParentGrantID != "" {
-		if _, revoked := request.RevokedGrantIDs[grant.ParentGrantID]; revoked {
-			reasons = append(reasons, "parent_grant_revoked")
+	if ancestors, valid := frontierT7GrantAncestorIDs(grant); !valid {
+		reasons = append(reasons, "ancestor_chain_invalid")
+	} else {
+		for _, ancestorID := range ancestors {
+			if _, revoked := request.RevokedGrantIDs[ancestorID]; revoked {
+				reasons = append(reasons, "ancestor_grant_revoked")
+				break
+			}
 		}
 	}
 	if grant.Project != request.Project {

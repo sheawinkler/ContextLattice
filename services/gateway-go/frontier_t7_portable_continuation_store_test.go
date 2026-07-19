@@ -141,6 +141,36 @@ func TestFrontierT7PortableStoreFailsClosedAtCapacity(t *testing.T) {
 	}
 }
 
+func TestFrontierT7PortableStoreRejectsExpiredGrantWithoutPoisoningRestart(t *testing.T) {
+	root := t.TempDir()
+	identity, err := loadOrCreateContextIdentity(filepath.Join(root, "identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, "portable.json")
+	store, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	request := frontierT7StoreTestGrantRequest(identity, now)
+	request.NotBefore = now.Add(-2 * time.Hour)
+	request.ExpiresAt = now.Add(-time.Hour)
+	if _, err := store.createGrant(request, now); err == nil {
+		store.close()
+		t.Fatal("expired grant was persisted")
+	}
+	store.close()
+	reopened, err := newFrontierT7PortableStore(statePath, frontierT7StoreLimits{}, identity)
+	if err != nil {
+		t.Fatalf("rejected mutation poisoned restart validation: %v", err)
+	}
+	defer reopened.close()
+	if len(reopened.state.Grants) != 0 {
+		t.Fatalf("rejected grant mutated durable state: %#v", reopened.state.Grants)
+	}
+}
+
 func TestFrontierT7PortableStoreDeniedReconciliationDoesNotMutateState(t *testing.T) {
 	root := t.TempDir()
 	identity, err := loadOrCreateContextIdentity(filepath.Join(root, "identity.json"))

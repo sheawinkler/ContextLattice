@@ -157,13 +157,29 @@ func TestFrontierT7CollaborativeGrantEnforcesLeastPrivilegeAndRevocation(t *test
 
 	child, err := frontierT7CreateCollaborativeGrant(keys, frontierT7GrantCreateRequest{
 		Subject: grant.Subject, Project: grant.Project, Topics: []string{"frontier-30"},
-		DataClasses: []string{"context-pack"}, Actions: []string{"read"}, Purpose: grant.Purpose,
+		DataClasses: []string{"context-pack"}, Actions: []string{"delegate", "read"}, Purpose: grant.Purpose,
 		UsageLimit: 2, Parent: &grant, DelegationDepth: 1, Approvers: []string{"owner"},
 		KeyEpoch: grant.KeyEpoch, RecipientKeyID: grant.RecipientKeyID,
 		NotBefore: now, ExpiresAt: now.Add(30 * time.Minute),
 	}, now)
 	if err != nil || child.ParentGrantID != grant.GrantID {
 		t.Fatalf("bounded delegation failed: child=%#v err=%v", child, err)
+	}
+	grandchild, err := frontierT7CreateCollaborativeGrant(keys, frontierT7GrantCreateRequest{
+		Subject: child.Subject, Project: child.Project, Topics: child.Topics,
+		DataClasses: child.DataClasses, Actions: []string{"read"}, Purpose: child.Purpose,
+		UsageLimit: 1, Parent: &child, DelegationDepth: 2, Approvers: child.Approvers,
+		KeyEpoch: child.KeyEpoch, RecipientKeyID: child.RecipientKeyID,
+		NotBefore: now, ExpiresAt: now.Add(20 * time.Minute),
+	}, now)
+	if err != nil || !jsonValuesEqual(grandchild.AncestorGrantIDs, []string{grant.GrantID, child.GrantID}) {
+		t.Fatalf("signed delegation ancestry was not preserved: grandchild=%#v err=%v", grandchild, err)
+	}
+	grandchildRequest := base
+	grandchildRequest.Action = "read"
+	grandchildRequest.RevokedGrantIDs = map[string]struct{}{grant.GrantID: {}}
+	if decision := frontierT7AuthorizeGrant(grandchild, grandchildRequest); decision.Allowed || !containsString(decision.Reasons, "ancestor_grant_revoked") {
+		t.Fatalf("root revocation did not invalidate the grandchild: %#v", decision)
 	}
 	if _, err := frontierT7CreateCollaborativeGrant(keys, frontierT7GrantCreateRequest{
 		Subject: grant.Subject, Project: grant.Project, Topics: []string{"unauthorized"},
@@ -204,6 +220,42 @@ func TestFrontierT7CollaborativeGrantEnforcesLeastPrivilegeAndRevocation(t *test
 	}, now)
 	if err != nil || variant.GrantID == grant.GrantID {
 		t.Fatalf("authority-bearing grant fields did not produce a unique id: variant=%#v err=%v", variant, err)
+	}
+}
+
+func TestFrontierT7CollaborativeGrantRejectsStaleSubjectsAndPastExpiry(t *testing.T) {
+	keys, err := loadOrCreateContextIdentity(filepath.Join(t.TempDir(), "identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	request := frontierT7GrantCreateRequest{
+		Subject: frontierT7GrantSubject{
+			SubjectID: "stale-reviewer", Roles: []string{"reviewer"}, WorkspaceID: "workspace-team",
+			SnapshotDigest: frontierT7TestDigest("stale-subject"), ObservedAt: now.Add(-frontierT7MaxSubjectAge - time.Second).Format(time.RFC3339Nano),
+		},
+		Project: "contextlattice", Topics: []string{"frontier-30"}, DataClasses: []string{"context-pack"},
+		Actions: []string{"read"}, Purpose: "continue-reviewed-work", UsageLimit: 1, Approvers: []string{"owner"},
+		KeyEpoch: 1, RecipientKeyID: "age-x25519:recipient", NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+	}
+	if _, err := frontierT7CreateCollaborativeGrant(keys, request, now); err == nil {
+		t.Fatal("stale subject snapshot was accepted")
+	}
+	request.Subject.ObservedAt = now.Format(time.RFC3339Nano)
+	request.NotBefore = now.Add(-2 * time.Hour)
+	request.ExpiresAt = now.Add(-time.Hour)
+	if _, err := frontierT7CreateCollaborativeGrant(keys, request, now); err == nil {
+		t.Fatal("already-expired grant was accepted")
+	}
+
+	grant := frontierT7TestGrant(t, keys, now)
+	decision := frontierT7AuthorizeGrant(grant, frontierT7GrantUseRequest{
+		Project: grant.Project, Topic: "frontier-30", DataClass: "context-pack", Action: "read", Purpose: grant.Purpose,
+		RecipientKeyID: grant.RecipientKeyID, SubjectSnapshotDigest: grant.Subject.SnapshotDigest, KeyEpoch: grant.KeyEpoch,
+		Now: now.Add(frontierT7MaxSubjectAge + time.Second),
+	})
+	if decision.Allowed || !containsString(decision.Reasons, "stale_subject") {
+		t.Fatalf("authorization accepted a stale signed subject snapshot: %#v", decision)
 	}
 }
 

@@ -124,6 +124,13 @@ func frontierT7SetPortableContinuationOperation(payload map[string]any, expected
 	return nil
 }
 
+func frontierT7OwnerOnlyFileModeAllowed(mode os.FileMode, operatingSystem string) bool {
+	if !mode.IsRegular() {
+		return false
+	}
+	return operatingSystem == "windows" || mode.Perm() == 0o600
+}
+
 func frontierT7ReadPortableContinuationJSON(path, label string, objectOnly bool) (any, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("--%s file is required", label)
@@ -132,7 +139,7 @@ func frontierT7ReadPortableContinuationJSON(path, label string, objectOnly bool)
 	if err != nil {
 		return nil, fmt.Errorf("open portable-continuation %s file failed", label)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !privateConfigFileModeAllowed(info.Mode(), runtime.GOOS) {
+	if info.Mode()&os.ModeSymlink != 0 || !frontierT7OwnerOnlyFileModeAllowed(info.Mode(), runtime.GOOS) {
 		return nil, fmt.Errorf("portable-continuation %s file must be a regular owner-only file", label)
 	}
 
@@ -142,7 +149,7 @@ func frontierT7ReadPortableContinuationJSON(path, label string, objectOnly bool)
 	}
 	defer file.Close()
 	openedInfo, err := file.Stat()
-	if err != nil || !os.SameFile(info, openedInfo) || openedInfo.Mode()&os.ModeSymlink != 0 || !privateConfigFileModeAllowed(openedInfo.Mode(), runtime.GOOS) {
+	if err != nil || !os.SameFile(info, openedInfo) || openedInfo.Mode()&os.ModeSymlink != 0 || !frontierT7OwnerOnlyFileModeAllowed(openedInfo.Mode(), runtime.GOOS) {
 		return nil, fmt.Errorf("portable-continuation %s file must be a regular owner-only file", label)
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, frontierT7PortableContinuationMaxInputBytes+1))
