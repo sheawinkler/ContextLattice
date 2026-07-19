@@ -2,7 +2,7 @@
   "product_name": "ContextLattice",
   "category": "Agent Memory Infrastructure",
   "release_lane": "distribution-neutral",
-  "launch_window": "ContextLattice v3.26 release wave: July 2026",
+  "launch_window": "ContextLattice v4.0 release wave: July 2026",
   "schedule_state": "unscheduled",
   "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
   "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v3.26.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v4.0.0 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v3.26.0",
-      "body": "ContextLattice v3.26.0 removes the cold-start ritual. Continuity Zero binds one unambiguous active mission to its packet, checkpoint, Agent Fit profile, preparation artifact, repository commit, provenance, risks, and next move.\n\nHighlights:\n- return one bounded, path-free continuity manifest through the CLI\n- abstain on ambiguous objectives instead of guessing\n- reject stale, mismatched, revoked, expired, or unsupported proof\n- keep governed delivery and workspace-preparation intents outside gateway execution\n- preserve immutable receipts, explicit approval, and exact rollback\n\nThe CLI remains the primary interface. Public core assembles; entitled runtimes govern external-adapter intents. The gateway never runs a model, subprocess, filesystem mutation, Git operation, network adapter, merge, or push.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v4.0.0",
+      "body": "ContextLattice v4.0.0 lets memory compound without giving itself away. Aggregate Signal accepts only explicitly opted-in, clipped sufficient statistics; suppresses cohorts below 20; bounds composition, replay, expiry, and opt-out; and performs zero external network calls by default.\n\nThe CLI remains the primary interface. The public core ships local preview and accounting. Operator and Enterprise add credential-derived workspace governance, while production cohort contribution and reporting remain blocked until six independent privacy and utility reviews pass. No raw memory, prompt, path, project, or stable identity enters the signal boundary.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Open the agent. The mission is already there.\n\nContextLattice v3.26.0 binds the one unambiguous active objective to its packet, checkpoint, repository commit, provenance, risks, and next move. No transcript archaeology. No giant setup prompt. No path leakage. Ambiguity abstains instead of guessing.\n\nContinuity becomes the default.\n\nStart with the CLI: {docs_url}"
+      "body": "Memory that compounds without giving itself away.\n\nContextLattice v4.0.0 turns explicitly opted-in, clipped outcome statistics into cohort-suppressed local signal. Raw memory, prompts, paths, projects, and stable identities stay outside the boundary. Small cohorts disappear. Privacy budgets stop release. Production paid aggregation stays held until independent reviews pass.\n\nSignal becomes useful without becoming surveillance.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v3.26.0 makes continuity immediate.\n\nContinuity Zero assembles the exact active mission from durable evidence: objective, session packet, checkpoint, Agent Fit profile, preparation artifact, repository commit, provenance, risks, and next move. It returns one bounded manifest only when the evidence agrees. Ambiguity abstains. Stale or mismatched proof rejects.\n\nEntitled runtimes add governed delivery and workspace-preparation intents while external adapters remain the executors. ContextLattice remains the intelligence layer, not the harness: the gateway never runs a model, subprocess, filesystem mutation, Git operation, merge, or push.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v4.0.0 adds Aggregate Signal: a bounded learning surface for system outcomes that refuses raw memory, prompts, embeddings, paths, projects, exact timestamps, and stable installation identities.\n\nLocal preview and accounting are explicit and network-free by default. Cohorts below 20 are suppressed. Composition budgets, replay rejection, expiry, revocation, and opt-out are enforced. Operator and Enterprise add workspace governance, but production contribution and reporting remain hard-blocked until independent privacy and utility reviews pass.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",

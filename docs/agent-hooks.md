@@ -77,6 +77,7 @@ Installed commands:
 | `contextlattice_policy_lab` | Primary Policy Laboratory CLI for simulation, scoped cards, promotion evidence, reversible lifecycle, contradiction, storage-temperature, and governance status. |
 | `contextlattice_agent_fit` | Primary Agent Fit CLI for resumable steering, advisory runner/model selection, effective profiles, and explicit-use context preparation. |
 | `contextlattice_continuity_zero` | Primary zero-entry CLI: select one unambiguous live objective and bind its packet, checkpoint, Agent Fit profile, preparation, repository commit, provenance, risks, and next move into one path-free manifest. |
+| `contextlattice_aggregate_signal` | Primary Aggregate Signal CLI for local preview, explicit opt-in queueing, cohort-suppressed reports, privacy accounting, and immediate opt-out. |
 | `contextlattice_agent_tools portable-continuation` | Primary Portable Continuation CLI family for signed grants, provenance-preserving imports, encrypted manifests, dry-run reconciliation, and bounded status. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
@@ -149,6 +150,12 @@ adapter owns delivery and import execution.
 Run `contextlattice_continuity_zero --project <project> --agent <harness> --output continuity-zero.json --pretty` from the repository you are resuming. The CLI derives repository, branch, and commit identity with argv-safe Git calls, sends no local path to the gateway, and writes the optional artifact owner-only. It returns `ready` only when one fresh, non-terminal session matches the project, agent, harness, repository, and commit; ambiguity or stale/mismatched provenance abstains or rejects instead of guessing.
 
 The public route is advisory and never creates a session, runs a model, dispatches a runner, mutates a worktree, or transports the manifest. Entitled automation records only explicit `push` or `workspace_prepare` intents plus external-adapter receipts. ContextLattice remains the control and proof boundary; the selected adapter remains the executor.
+
+### Aggregate Signal
+
+Start with `contextlattice_aggregate_signal preview --metric <metric> --value <number> --pretty`. Preview is local, does not persist, and performs no network call. Queueing requires both `--opt-in` and a fresh bounded `--nonce`; `status` exposes the local 90-day privacy composition, and `opt-out --confirm` deletes unreleased contributions, rotates the local commitment secret, and stops future contribution without claiming that an already released aggregate can be subtracted.
+
+Only allowlisted, clipped numerical or categorical sufficient statistics enter the queue. Raw memory, prompts, embeddings, file paths, project names, exact timestamps, and stable installation identifiers are rejected recursively. Reports suppress cohorts below 20, cap each release at epsilon 0.25 and the rolling 90-day budget at epsilon 2.0, and remain explicitly research-only with no formal privacy claim until independent attack and utility reviews pass. Operator and Enterprise artifacts may add signed-credential cohort governance; ContextLattice never installs or enables external transport for it.
 
 ### Verified Skill Evolution
 

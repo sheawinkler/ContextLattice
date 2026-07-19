@@ -89,6 +89,8 @@ if [ "$TARGET_REMOTE" = "public-paid" ]; then
     "scripts/lib/private_dev_posture.sh"
     "scripts/setup_paid_local_env.sh"
     "scripts/tests/test_private_dev_posture.py"
+    "services/gateway-go/frontier_t10_secure_aggregation_research_private.go"
+    "services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go"
     ".backup/*"
     "dev/backups/*"
     "development/*"
@@ -156,6 +158,7 @@ if [[ "$TARGET_REMOTE" == "public" ]]; then
   paid_runtime_pattern="${paid_runtime_pattern}|frontierT7Governance|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|frontier_t7_portable_continuation_governance|/memory/portable-continuation/governance"
   paid_runtime_pattern="${paid_runtime_pattern}|frontierT8Governance|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|frontier_t8_skill_evolution_governance|/memory/skills/foundry/evolution/governance"
   paid_runtime_pattern="${paid_runtime_pattern}|frontierT9Governance|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|frontier_t9_continuity_zero_governance|/memory/continuity-zero/governance"
+  paid_runtime_pattern="${paid_runtime_pattern}|frontierT10Governance|CONTEXTLATTICE_FRONTIER_T10_AGGREGATE_GOVERNANCE|frontier_t10_aggregate_governance|frontierT10SecureAggregation|frontier_t10_secure_aggregation_research|/memory/aggregate-signal/(governance|research)"
   for p in "${changed[@]}"; do
     # These exact files describe generated contracts/catalogs; they do not
     # register or execute paid runtime behavior. Their generators and drift
@@ -164,7 +167,9 @@ if [[ "$TARGET_REMOTE" == "public" ]]; then
       services/gateway-go/agent_contracts_generated.go|\
       services/gateway-go/cmd/contextlattice-agent-tools/agent_contracts_generated.go|\
       services/gateway-go/commercial_contract_generated.go|\
-      services/gateway-go/commercial_contract_generated_test.go)
+      services/gateway-go/commercial_contract_generated_test.go|\
+      services/gateway-go/cmd/contextlattice-agent-tools/frontier_t10_aggregate_signal_cli.go|\
+      services/gateway-go/cmd/contextlattice-agent-tools/frontier_t10_aggregate_signal_cli_test.go)
         continue
         ;;
     esac

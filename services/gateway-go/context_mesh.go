@@ -1009,6 +1009,28 @@ func (s *contextMeshStore) snapshot() map[string]any {
 	}
 }
 
+func (s *contextMeshStore) aggregateSignalSufficientStatistics(now time.Time) map[string]any {
+	if s == nil {
+		return map[string]any{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	active := 0
+	for _, grant := range s.grants {
+		if grant.Status == "revoked" {
+			continue
+		}
+		if expires, err := time.Parse(time.RFC3339Nano, grant.ExpiresAt); err == nil && !now.UTC().Before(expires) {
+			continue
+		}
+		active++
+	}
+	return map[string]any{
+		"active_mesh_grant_count": active,
+		"mesh_revocation_count":   len(s.revocations),
+	}
+}
+
 func (s *server) memoryContextMeshIdentity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})

@@ -1,0 +1,37 @@
+{
+  "schema_id": "frontier_t10_aggregate_signal_baseline.v1",
+  "version": 1,
+  "frozen_at": "2026-07-18T00:00:00Z",
+  "base_release": "v3.26.0",
+  "frontier_items": [26],
+  "behavior": {
+    "local_contribution_contract": "absent",
+    "local_privacy_accountant": "absent",
+    "cohort_suppression_and_noise": "absent",
+    "opt_out_and_expiry_receipts": "absent",
+    "paid_cohort_aggregation": "absent",
+    "secure_aggregation_research": "absent"
+  },
+  "measurements": {
+    "aggregate_policy_lift": null,
+    "privacy_budget_accounted": 0.0,
+    "minimum_cohort_enforced": false,
+    "contribution_coverage": 0.0,
+    "attack_review_pass_rate": 0.0,
+    "bytes_sent": 0,
+    "network_calls": 0
+  },
+  "frozen_privacy_contract": {
+    "status": "research_only",
+    "privacy_unit": "one installation within one metric contribution window",
+    "allowed_payload": "allowlisted clipped numerical or categorical sufficient statistics only",
+    "minimum_cohort": 20,
+    "release_epsilon_max": 0.25,
+    "rolling_90_day_epsilon_max": 2.0,
+    "delta_max": 0.000001,
+    "one_contribution_per_metric_week": true,
+    "raw_memory_export_allowed": false,
+    "raw_prompt_telemetry_allowed": false,
+    "network_default": "disabled"
+  }
+}

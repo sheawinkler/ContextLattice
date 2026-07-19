@@ -266,7 +266,9 @@ $installedPaidMarkers = @(
     "services\gateway-go\frontier_t8_skill_evolution_entitled.go",
     "services\gateway-go\frontier_t8_skill_evolution_entitled_test.go",
     "services\gateway-go\frontier_t9_continuity_zero_entitled.go",
-    "services\gateway-go\frontier_t9_continuity_zero_entitled_test.go"
+    "services\gateway-go\frontier_t9_continuity_zero_entitled_test.go",
+    "services\gateway-go\frontier_t10_aggregate_signal_entitled.go",
+    "services\gateway-go\frontier_t10_aggregate_signal_entitled_test.go"
 )
 $installedHasPaidMarkers = $false
 foreach ($relativePath in $installedPaidMarkers) {
@@ -369,13 +371,18 @@ try {
         "services\gateway-go\frontier_t9_continuity_zero_entitled.go",
         "services\gateway-go\frontier_t9_continuity_zero_entitled_test.go",
         "docs\evals\v3.26-frontier-t9-paid-activation.json",
+        "services\gateway-go\frontier_t10_aggregate_signal_entitled.go",
+        "services\gateway-go\frontier_t10_aggregate_signal_entitled_test.go",
+        "services\gateway-go\frontier_t10_secure_aggregation_research_private.go",
+        "services\gateway-go\frontier_t10_secure_aggregation_research_private_test.go",
+        "docs\evals\v4.0-frontier-t10-paid-activation.json",
         "config\frontier_t1_release_provenance.v1.json"
     )) {
         if (Test-Path -LiteralPath (Join-Path $payloadRoot $relativePath)) {
             throw "Public payload contains a paid/private path: $relativePath"
         }
     }
-    $runtimePattern = "context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|frontier_t6_agent_fit_governance_state\.v1|frontier_t7_portable_continuation_governance_state\.v1|frontier_t8_skill_evolution_governance_state\.v1|frontier_t9_continuity_zero_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID"
+    $runtimePattern = "context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|frontier_t6_agent_fit_governance_state\.v1|frontier_t7_portable_continuation_governance_state\.v1|frontier_t8_skill_evolution_governance_state\.v1|frontier_t9_continuity_zero_governance_state\.v1|frontier_t10_aggregate_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T7_PORTABLE_CONTINUATION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T8_SKILL_EVOLUTION_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T9_CONTINUITY_ZERO_GOVERNANCE|CONTEXTLATTICE_FRONTIER_T10_AGGREGATE_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID"
     foreach ($relativePath in @("Dockerfile.gateway-go", "docker-compose.yml")) {
         $runtimePath = Join-Path $payloadRoot $relativePath
         if ((Test-Path -LiteralPath $runtimePath -PathType Leaf) -and

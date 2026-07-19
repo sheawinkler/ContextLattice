@@ -320,6 +320,7 @@ type server struct {
 	skillLifecycleMu                sync.Mutex
 	contextPassports                *contextPassportStore
 	contextMesh                     *contextMeshStore
+	aggregateSignal                 *frontierT10AggregateStore
 	feedbackStore                   *feedbackStore
 	telemetrySink                   *telemetrySink
 	telemetrySpool                  *telemetrySpool
@@ -1307,6 +1308,15 @@ func newServer() *server {
 		log.Printf("gateway-go context mesh disabled: %v", contextMeshErr)
 		contextMeshInstance = &contextMeshStore{enabled: false, grants: map[string]contextMeshGrant{}, revocations: map[string]contextMeshRevocation{}, receipts: []contextMeshReceipt{}, lastError: contextMeshErr.Error()}
 	}
+	aggregateSignalInstance, aggregateSignalErr := newFrontierT10AggregateStoreFromEnv()
+	if aggregateSignalErr != nil {
+		log.Printf("gateway-go Aggregate Signal disabled: %v", aggregateSignalErr)
+		state, _ := emptyFrontierT10AggregateState()
+		aggregateSignalInstance = &frontierT10AggregateStore{
+			enabled: false, maxBytes: frontierT10DefaultMaxBytes, maxRecords: frontierT10DefaultMaxRecords,
+			state: state, lastErrorCode: "startup_failed",
+		}
+	}
 	frontierT7Instance, frontierT7Err := newFrontierT7PortableStoreFromEnv(contextMeshInstance.identity)
 	if frontierT7Err != nil {
 		log.Printf("gateway-go Frontier T7 portable continuation disabled: %v", frontierT7Err)
@@ -1337,6 +1347,7 @@ func newServer() *server {
 		skillFoundry:                    skillFoundryInstance,
 		contextPassports:                contextPassportInstance,
 		contextMesh:                     contextMeshInstance,
+		aggregateSignal:                 aggregateSignalInstance,
 		feedbackStore:                   feedbackStoreInstance,
 		telemetrySink:                   telemetrySinkInstance,
 		telemetrySpool:                  telemetrySpoolInstance,
@@ -7169,6 +7180,7 @@ func buildNativeMux(s *server) *http.ServeMux {
 	mux.HandleFunc("/memory/skills/foundry/retire", s.memorySkillFoundryRetire)
 	mux.HandleFunc(frontierT8SkillEvolutionPath, s.memorySkillFoundryEvolution)
 	mux.HandleFunc(frontierT9ContinuityZeroPath, s.memoryContinuityZero)
+	mux.HandleFunc(frontierT10AggregatePath, s.memoryAggregateSignal)
 	mux.HandleFunc("/memory/context-passport/export", s.memoryContextPassportExport)
 	mux.HandleFunc("/memory/context-passport/verify", s.memoryContextPassportVerify)
 	mux.HandleFunc("/memory/context-passport/diff", s.memoryContextPassportDiff)
