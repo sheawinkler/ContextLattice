@@ -686,6 +686,8 @@ GO_NATIVE_COMMANDS=(
   contextlattice_synthesis_pack_v2
   contextlattice_retrieval_plan
   contextlattice_retrieval_governance
+  contextlattice_policy_lab
+  contextlattice_agent_fit
   contextlattice_claim_write
   contextlattice_claim_query
   contextlattice_continuity_reconcile
