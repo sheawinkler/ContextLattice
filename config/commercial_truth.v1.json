@@ -4,8 +4,8 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "4.0.0",
-    "stable_tag": "v4.0.0",
+    "version": "4.0.1",
+    "stable_tag": "v4.0.1",
     "release_train": "4.0",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"

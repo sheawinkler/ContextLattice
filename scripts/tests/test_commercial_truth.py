@@ -53,8 +53,8 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "4.0.0")
-        self.assertEqual(contract["product"]["stable_tag"], "v4.0.0")
+        self.assertEqual(contract["product"]["version"], "4.0.1")
+        self.assertEqual(contract["product"]["stable_tag"], "v4.0.1")
         self.assertEqual(contract["product"]["release_train"], "4.0")
         self.assertEqual(contract["product"]["primary_interface"], "cli")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
@@ -217,7 +217,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "4.0.0")
+        self.assertEqual(public_truth["product"]["version"], "4.0.1")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
@@ -269,8 +269,20 @@ class CommercialTruthTests(unittest.TestCase):
             self.assertFalse((ROOT / relative).exists(), relative)
 
     def test_ga_posture_is_public_without_mutating_runtime_entitlement_contract(self) -> None:
+        contract = json.loads(
+            (ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8")
+        )
+        preview_features = {
+            feature_id
+            for feature_id, posture in contract["release_availability"].items()
+            if posture["availability"] == "controlled_activation_preview"
+        }
+        self.assertEqual(
+            preview_features,
+            {"frontier_aggregate_signal", "frontier_private_aggregate_learning"},
+        )
         premium = (ROOT / "docs/public_overview/premium.html").read_text(encoding="utf-8")
-        self.assertNotIn("Controlled activation preview", premium)
+        self.assertEqual(premium.count("Controlled activation preview:"), 2)
         typescript = (ROOT / "contextlattice-dashboard/lib/billing/commercial.generated.ts").read_text(
             encoding="utf-8"
         )
@@ -391,8 +403,13 @@ class CommercialTruthTests(unittest.TestCase):
             fixture = Path(tmp)
             copy_fixture(fixture)
             launch = fixture / "launch_service/config/contextlattice.launch.json"
+            stable_tag = json.loads(
+                (fixture / "config/commercial_truth.v1.json").read_text(encoding="utf-8")
+            )["product"]["stable_tag"]
+            launch_text = launch.read_text(encoding="utf-8")
+            self.assertIn(stable_tag, launch_text)
             launch.write_text(
-                launch.read_text(encoding="utf-8").replace("v3.26.0", "v9.9.9", 1),
+                launch_text.replace(stable_tag, "v9.9.9", 1),
                 encoding="utf-8",
             )
             result = run(str(fixture / "scripts/agent/audit-commercial-truth"), "--root", str(fixture), root=fixture)
