@@ -44,7 +44,17 @@ func frontierT7TestGrant(t testing.TB, keys *contextIdentityKeys, now time.Time)
 func TestFrontierT7PassportDiffIsHumanReadableBoundedAndRedacted(t *testing.T) {
 	store := newTestPassportStore(t, t.TempDir())
 	base := signedTestPassport(t, store, "contextlattice", "lineage-t7", 1, nil, "base")
+	base.Claims = append(base.Claims, map[string]any{"portable_id": "claim-equivalent", "statement": "equivalent claim", "confidence": 1})
+	base.Evidence = []map[string]any{
+		{"portable_id": "evidence-a", "content_ref": frontierT7TestDigest("evidence-a")},
+		{"portable_id": "evidence-b", "content_ref": frontierT7TestDigest("evidence-b")},
+	}
+	if err := signContextPassport(&base, store.identity); err != nil {
+		t.Fatalf("re-sign base: %v", err)
+	}
 	target := signedTestPassport(t, store, "contextlattice", "lineage-t7", 2, &base, "target")
+	target.Claims = append([]map[string]any{}, base.Claims...)
+	target.Evidence = []map[string]any{base.Evidence[1], base.Evidence[0]}
 	target.Objective = map[string]any{
 		"objective": "continue safely",
 		"api_key":   "must-not-serialize",
@@ -82,6 +92,27 @@ func TestFrontierT7PassportDiffIsHumanReadableBoundedAndRedacted(t *testing.T) {
 	claimRows, _ := view["claims"].([]map[string]any)
 	if len(claimRows) > frontierT7MaxDiffRows {
 		t.Fatalf("diff exceeded row bound: %d", len(claimRows))
+	}
+	for _, row := range claimRows {
+		if anyToString(row["portable_id"]) == "claim-equivalent" {
+			t.Fatalf("equivalent claim was reported as changed: %#v", row)
+		}
+	}
+	if evidenceRows, _ := view["evidence"].([]map[string]any); len(evidenceRows) != 0 {
+		t.Fatalf("reordered evidence was reported as changed: %#v", evidenceRows)
+	}
+
+	divergent := target
+	divergent.LineageID = "lineage-t7-divergent"
+	if err := signContextPassport(&divergent, store.identity); err != nil {
+		t.Fatalf("sign divergent passport: %v", err)
+	}
+	divergentView, err := buildFrontierT7PassportDiffView(base, divergent)
+	if err != nil {
+		t.Fatalf("build divergent diff view: %v", err)
+	}
+	if anyToBool(divergentView["lineage_valid"]) || !strings.Contains(strings.Join(anyToStringSlice(divergentView["summary"]), " "), "requires review") {
+		t.Fatalf("divergent lineage was not surfaced for review: %#v", divergentView)
 	}
 }
 
@@ -249,6 +280,29 @@ func TestFrontierT7ImportPlanPreservesProvenanceAndResumesAtomically(t *testing.
 			t.Fatalf("control-character locator %q was accepted", locator)
 		}
 	}
+
+	duplicatePlan, err := frontierT7BuildImportPlan("contextlattice", append(records, records[0]), nil, 2)
+	if err != nil || len(duplicatePlan.Mappings) != len(records) || !containsString(duplicatePlan.Warnings, "duplicate_source_record_collapsed") {
+		t.Fatalf("duplicate record was not deterministically collapsed: plan=%#v err=%v", duplicatePlan, err)
+	}
+	secretRecord := frontierT7TestImportRecord("notes/secret.md", "secret")
+	secretRecord.Provenance.RedactionManifest = map[string]any{
+		"api_key": "must-not-serialize",
+		"note":    "Bearer abcdefghijklmnopqrstuvwxyz123456 at /home/example/private",
+	}
+	secretPlan, err := frontierT7BuildImportPlan("contextlattice", []frontierT7ImportRecord{secretRecord}, nil, 1)
+	if err != nil {
+		t.Fatalf("secret-safe import plan: %v", err)
+	}
+	secretJSON, err := json.Marshal(secretPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"must-not-serialize", "abcdefghijklmnopqrstuvwxyz123456", "/home/example/private"} {
+		if strings.Contains(string(secretJSON), forbidden) {
+			t.Fatalf("import plan leaked %q: %s", forbidden, secretJSON)
+		}
+	}
 }
 
 func TestFrontierT7ContinuationManifestFailsClosedOnReplayAndConflict(t *testing.T) {
@@ -325,6 +379,12 @@ func TestFrontierT7ContinuationManifestFailsClosedOnReplayAndConflict(t *testing
 	result := frontierT7ReconcileContinuation(tampered, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, newFrontierT7MemoryReplayGuard())
 	if result.Accepted || !containsString(result.Findings, "manifest_digest_mismatch") || !containsString(result.Findings, "manifest_signature_invalid") {
 		t.Fatalf("tamper was not rejected: %#v", result)
+	}
+	repackaged := manifest
+	repackaged.Issuer.InstanceID = "third-party-repackager"
+	result = frontierT7ReconcileContinuation(repackaged, grant, now, grant.RecipientKeyID, request.LineageDigest, authorization, newFrontierT7MemoryReplayGuard())
+	if result.Accepted || !containsString(result.Findings, "manifest_digest_mismatch") || !containsString(result.Findings, "manifest_signature_invalid") {
+		t.Fatalf("third-party repackaging was not rejected: %#v", result)
 	}
 
 	guard := newFrontierT7MemoryReplayGuard()
