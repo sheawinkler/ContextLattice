@@ -80,6 +80,10 @@ while IFS= read -r source_path; do
   case "${source_path}" in
     docs/private/*|private_docs/*|private/*|.ops/*|\
     config/runtime-license/*|\
+    contextlattice-dashboard/app/api/workspace/invitations/*|\
+    contextlattice-dashboard/app/api/workspace/members/*|\
+    contextlattice-dashboard/app/auth/invite/*|\
+    contextlattice-dashboard/lib/workspaceInvitations.ts|\
     services/gateway-go/cognition_activation_entitled.go|\
     services/gateway-go/context_mesh_orchestration_entitled.go|\
     services/gateway-go/frontier_t1_governance_entitled.go|\
@@ -88,19 +92,33 @@ while IFS= read -r source_path; do
     services/gateway-go/frontier_t3_utility_entitled.go|\
     services/gateway-go/frontier_t4_retrieval_entitled.go|\
     services/gateway-go/frontier_t4_retrieval_entitled_test.go|\
+    services/gateway-go/frontier_t5_policy_lab_entitled.go|\
+    services/gateway-go/frontier_t5_policy_lab_entitled_test.go|\
     config/frontier_t1_release_provenance.v1.json|\
-    docs/evals/v3.21-frontier-t4-paid-activation.json)
+    docs/evals/v3.21-frontier-t4-paid-activation.json|\
+    docs/evals/v3.22-frontier-t5-paid-activation.json)
       fail "public source ref contains a paid/private path: ${source_path}"
       ;;
   esac
 done < <(git -C "${ROOT_DIR}" ls-tree -r --name-only "${source_commit}")
 
-public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
+public_runtime_marker='context_policy_activation\.v1|context_mesh_orchestration\.v1|frontier_t1_governance_state\.v1|frontier_delta_packet_automation\.v1|frontier_shared_proof_timeline\.v1|frontier_t4_retrieval_governance_state\.v1|frontier_t5_policy_laboratory_governance_state\.v1|contextlattice_runtime_license_public_keys\.v1|CONTEXTLATTICE_FRONTIER_T2_|CONTEXTLATTICE_FRONTIER_T5_POLICY_GOVERNANCE|GO_V4_(ENTITLEMENT|RUNTIME_LICENSE|MACHINE_BINDING)|runtimeLicenseVerifier|runtimeLicenseSchemaID'
 if git -C "${ROOT_DIR}" grep -n -I -E "${public_runtime_marker}" "${source_commit}" -- \
     Dockerfile.gateway-go docker-compose.yml services/gateway-go \
     >"${TMP_DIR}/public-runtime-markers.txt" 2>/dev/null; then
   cat "${TMP_DIR}/public-runtime-markers.txt" >&2
   fail "public source ref contains paid/private runtime markers."
+fi
+
+public_paid_dashboard_marker='(/api/workspace/(members|invitations)|WorkspaceInvitation|workspaceInvitations|activeWorkspaceId|Workspace people)'
+if git -C "${ROOT_DIR}" grep -n -I -E "${public_paid_dashboard_marker}" "${source_commit}" -- \
+    contextlattice-dashboard/app \
+    contextlattice-dashboard/components \
+    contextlattice-dashboard/lib \
+    contextlattice-dashboard/prisma \
+    >"${TMP_DIR}/public-paid-dashboard-markers.txt" 2>/dev/null; then
+  cat "${TMP_DIR}/public-paid-dashboard-markers.txt" >&2
+  fail "public source ref contains paid workspace-collaboration markers."
 fi
 
 untracked_non_dist="$(

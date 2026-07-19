@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 34;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 35;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_FLIGHT_RECORDER_EVENT_V1: &str = "agent_flight_recorder_event.v1";
@@ -41,17 +41,22 @@ pub const CONTEXT_POLICY_CANDIDATE_V1: &str = "context_policy_candidate.v1";
 pub const CONTEXT_POLICY_EVALUATION_V1: &str = "context_policy_evaluation.v1";
 pub const CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1: &str = "contextlattice_lifecycle_receipt.v1";
 pub const CONTRACT_ACKNOWLEDGEMENT_V1: &str = "contract_acknowledgement.v1";
+pub const CONTRADICTION_RESOLUTION_V1: &str = "contradiction_resolution.v1";
 pub const DECISION_CHANGE_V1: &str = "decision_change.v1";
 pub const DECISION_CHANGE_QUERY_V1: &str = "decision_change_query.v1";
 pub const DERIVED_REGRESSION_SUITE_V1: &str = "derived_regression_suite.v1";
 pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const EVIDENCE_REPUTATION_V1: &str = "evidence_reputation.v1";
 pub const FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1: &str = "frontier_t4_retrieval_governance.v1";
+pub const FRONTIER_T5_POLICY_LABORATORY_STATUS_V1: &str = "frontier_t5_policy_laboratory_status.v1";
+pub const MEMORY_RETIREMENT_V1: &str = "memory_retirement.v1";
 pub const MEMORY_TRUST_ASSESSMENT_V1: &str = "memory_trust_assessment.v1";
 pub const OBJECTIVE_GRAPH_V1: &str = "objective_graph.v1";
 pub const OBJECTIVE_RUNTIME_STATE_V1: &str = "objective_runtime_state.v1";
 pub const OBJECTIVE_TRANSITION_V1: &str = "objective_transition.v1";
 pub const POLICY_CONTEXT_PACKAGE_V1: &str = "policy_context_package.v1";
+pub const POLICY_PROMOTION_RECOMMENDATION_V1: &str = "policy_promotion_recommendation.v1";
+pub const POLICY_SIMULATION_V1: &str = "policy_simulation.v1";
 pub const RETRIEVAL_ABLATION_V1: &str = "retrieval_ablation.v1";
 pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
 pub const RETRIEVAL_DECISION_TRACE_V1: &str = "retrieval_decision_trace.v1";
@@ -62,11 +67,13 @@ pub const RUN_ADVISOR_V1: &str = "run_advisor.v1";
 pub const RUNNER_CAPABILITY_V1: &str = "runner_capability.v1";
 pub const RUNNER_QUALITY_SAMPLE_V1: &str = "runner_quality_sample.v1";
 pub const RUNNER_RESULT_V1: &str = "runner_result.v1";
+pub const SCOPED_POLICY_CARD_V1: &str = "scoped_policy_card.v1";
 pub const SKILL_DRAFT_V1: &str = "skill_draft.v1";
 pub const SKILL_EVALUATION_V1: &str = "skill_evaluation.v1";
 pub const SKILL_EXPORT_V1: &str = "skill_export.v1";
 pub const SKILL_RETIREMENT_V1: &str = "skill_retirement.v1";
 pub const STEERING_COMMENT_V1: &str = "steering_comment.v1";
+pub const STORAGE_TEMPERATURE_DECISION_V1: &str = "storage_temperature_decision.v1";
 pub const SYNTHESIS_PACK_V1: &str = "synthesis_pack.v1";
 pub const SYNTHESIS_PACK_V2: &str = "synthesis_pack.v2";
 pub const TASK_IDENTITY_RECEIPT_V1: &str = "task_identity_receipt.v1";
@@ -111,17 +118,22 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     CONTEXT_POLICY_EVALUATION_V1,
     CONTEXTLATTICE_LIFECYCLE_RECEIPT_V1,
     CONTRACT_ACKNOWLEDGEMENT_V1,
+    CONTRADICTION_RESOLUTION_V1,
     DECISION_CHANGE_V1,
     DECISION_CHANGE_QUERY_V1,
     DERIVED_REGRESSION_SUITE_V1,
     DREAM_MODE_RESPONSE_V1,
     EVIDENCE_REPUTATION_V1,
     FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1,
+    FRONTIER_T5_POLICY_LABORATORY_STATUS_V1,
+    MEMORY_RETIREMENT_V1,
     MEMORY_TRUST_ASSESSMENT_V1,
     OBJECTIVE_GRAPH_V1,
     OBJECTIVE_RUNTIME_STATE_V1,
     OBJECTIVE_TRANSITION_V1,
     POLICY_CONTEXT_PACKAGE_V1,
+    POLICY_PROMOTION_RECOMMENDATION_V1,
+    POLICY_SIMULATION_V1,
     RETRIEVAL_ABLATION_V1,
     RETRIEVAL_ABLATION_REPORT_V1,
     RETRIEVAL_DECISION_TRACE_V1,
@@ -132,11 +144,13 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     RUNNER_CAPABILITY_V1,
     RUNNER_QUALITY_SAMPLE_V1,
     RUNNER_RESULT_V1,
+    SCOPED_POLICY_CARD_V1,
     SKILL_DRAFT_V1,
     SKILL_EVALUATION_V1,
     SKILL_EXPORT_V1,
     SKILL_RETIREMENT_V1,
     STEERING_COMMENT_V1,
+    STORAGE_TEMPERATURE_DECISION_V1,
     SYNTHESIS_PACK_V1,
     SYNTHESIS_PACK_V2,
     TASK_IDENTITY_RECEIPT_V1,
@@ -333,6 +347,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: CONTRADICTION_RESOLUTION_V1,
+        payload_kind: "append_only_evidence_weighted_contradiction_resolution_and_appeal",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: DECISION_CHANGE_V1,
         payload_kind: "decision_change",
         contract_version: 1,
@@ -369,6 +389,18 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: FRONTIER_T5_POLICY_LABORATORY_STATUS_V1,
+        payload_kind: "bounded_policy_laboratory_runtime_status",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: MEMORY_RETIREMENT_V1,
+        payload_kind: "non_destructive_reversible_memory_retirement_workflow",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: MEMORY_TRUST_ASSESSMENT_V1,
         payload_kind: "bounded_retrieval_memory_trust_assessment",
         contract_version: 1,
@@ -395,6 +427,18 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: POLICY_CONTEXT_PACKAGE_V1,
         payload_kind: "agent_policy_context_package",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: POLICY_PROMOTION_RECOMMENDATION_V1,
+        payload_kind: "assignment_bound_uncertainty_aware_policy_promotion_recommendation",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: POLICY_SIMULATION_V1,
+        payload_kind: "same_snapshot_no_persist_retrieval_policy_simulation",
         contract_version: 1,
         required_output_mode: "json_object",
     },
@@ -459,6 +503,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: SCOPED_POLICY_CARD_V1,
+        payload_kind: "project_task_and_intent_scoped_retrieval_policy_card",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: SKILL_DRAFT_V1,
         payload_kind: "verified_workflow_skill_draft",
         contract_version: 1,
@@ -485,6 +535,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: STEERING_COMMENT_V1,
         payload_kind: "steering_comment",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: STORAGE_TEMPERATURE_DECISION_V1,
+        payload_kind: "utility_based_reversible_memory_storage_temperature_decision",
         contract_version: 1,
         required_output_mode: "json_object",
     },

@@ -37,6 +37,7 @@ type normalizedWrite struct {
 	tags           []string
 	createdAt      string
 	lifecycle      string
+	storageTier    string
 	dataClass      string
 	itemID         string
 	idempotencyKey string

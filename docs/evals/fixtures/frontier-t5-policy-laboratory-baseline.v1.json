@@ -1,0 +1,23 @@
+{
+  "schema_id": "frontier_t5_policy_laboratory_baseline.v1",
+  "version": 1,
+  "frozen_at": "2026-07-18T00:00:00Z",
+  "base_release": "v3.21.0",
+  "frontier_items": [19, 10, 3, 8, 9, 27],
+  "behavior": {
+    "policy_simulation": "No same-snapshot no-persist comparison contract.",
+    "scoped_policy": "No project, task-class, and retrieval-intent policy card or governed scoped activation.",
+    "policy_promotion": "Candidate lifecycle existed without assignment exposure, drift, survivor-bias, or uncertainty receipts.",
+    "memory_retirement": "Typed lifecycle existed without proposal-first consolidation and immutable apply/restore receipts.",
+    "contradiction_resolution": "Contradictions were disclosed but had no weighted recommendation, abstention, decision, reopen, or appeal workflow.",
+    "storage_temperature": "Hot-store bounds existed without utility-based hot, warm, deep, and retired decisions or reversible movement receipts."
+  },
+  "measurements": {
+    "same_snapshot_simulation_coverage": 0.0,
+    "scoped_policy_isolation_rate": 0.0,
+    "assignment_bound_promotion_rate": 0.0,
+    "reversible_lifecycle_operation_rate": 0.0,
+    "contradiction_workflow_coverage": 0.0,
+    "reversible_temperature_decision_rate": 0.0
+  }
+}

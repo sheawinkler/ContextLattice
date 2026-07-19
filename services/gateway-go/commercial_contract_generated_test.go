@@ -23,7 +23,7 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "3.21.0" || commercialTruthStableTag != "v3.21.0" || commercialTruthReleaseTrain != "3.21" {
+	if commercialTruthProductVersion != "3.22.0" || commercialTruthStableTag != "v3.22.0" || commercialTruthReleaseTrain != "3.22" {
 		t.Fatalf(
 			"unexpected generated release truth: version=%q tag=%q train=%q",
 			commercialTruthProductVersion,
@@ -31,8 +31,17 @@ func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
 			commercialTruthReleaseTrain,
 		)
 	}
-	if len(commercialTruthProtectedPaidRoutes) != 18 {
-		t.Fatalf("protected route count=%d, want 18", len(commercialTruthProtectedPaidRoutes))
+	protectedRoutes := make(map[string]struct{}, len(commercialTruthProtectedPaidRoutes))
+	for _, path := range commercialTruthProtectedPaidRoutes {
+		if _, duplicate := protectedRoutes[path]; duplicate {
+			t.Fatalf("duplicate protected paid route: %s", path)
+		}
+		protectedRoutes[path] = struct{}{}
+	}
+	for path := range commercialTruthPaidFeatureRouteRequirements {
+		if _, protected := protectedRoutes[path]; !protected {
+			t.Fatalf("feature-bound route is not protected: %s", path)
+		}
 	}
 	wantFeatures := map[string]string{
 		"/memory/continuity/automation":      "frontier_semantic_continuity_automation",

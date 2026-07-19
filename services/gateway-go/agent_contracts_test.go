@@ -151,6 +151,58 @@ func testContextPackFixture(items []any) map[string]any {
 	}
 }
 
+func TestContextPackRetrievalProofReferencesStayCanonicalAndBounded(t *testing.T) {
+	assessment := map[string]any{
+		"schema_id":      memoryTrustAssessmentContractID,
+		"assessed_count": 3,
+		"assessments":    []any{map[string]any{"candidate_id": "candidate-a"}},
+	}
+	trace := map[string]any{
+		"schema_id":       retrievalDecisionTraceContractID,
+		"trace_id":        "trace-a",
+		"candidate_count": 3,
+		"decisions":       []any{map[string]any{"candidate_id": "candidate-a"}},
+	}
+	pack := testContextPackFixture(nil)
+	compiler := cloneContractMap(anyMap(pack["context_compiler"]))
+	payload := map[string]any{
+		"context_pack":             pack,
+		"context_compiler":         compiler,
+		"memory_trust_assessment":  assessment,
+		"retrieval_decision_trace": trace,
+	}
+
+	ensureContextPackRetrievalProofReferences(payload)
+	if _, ok := anyMap(payload["memory_trust_assessment"])["assessments"]; !ok {
+		t.Fatal("root trust assessment must retain the canonical receipt")
+	}
+	if _, ok := anyMap(payload["retrieval_decision_trace"])["decisions"]; !ok {
+		t.Fatal("root decision trace must retain the canonical receipt")
+	}
+	nested := anyMap(payload["context_pack"])
+	if _, ok := anyMap(nested["memory_trust_assessment"])["assessments"]; ok {
+		t.Fatal("nested trust proof must remain a bounded canonical reference")
+	}
+	if _, ok := anyMap(nested["retrieval_decision_trace"])["decisions"]; ok {
+		t.Fatal("nested decision proof must remain a bounded canonical reference")
+	}
+	if anyToString(anyMap(nested["memory_trust_assessment"])["canonical_path"]) != "$.memory_trust_assessment" ||
+		anyToString(anyMap(nested["retrieval_decision_trace"])["canonical_path"]) != "$.retrieval_decision_trace" {
+		t.Fatalf("nested proof references lost canonical paths: %#v", nested)
+	}
+	compiler = anyMap(payload["context_compiler"])
+	if _, ok := anyMap(compiler["memory_trust_assessment"])["assessments"]; ok {
+		t.Fatal("compiler trust proof must remain a bounded canonical reference")
+	}
+	if _, ok := anyMap(compiler["retrieval_decision_trace"])["decisions"]; ok {
+		t.Fatal("compiler decision proof must remain a bounded canonical reference")
+	}
+	if anyToString(anyMap(compiler["memory_trust_assessment"])["canonical_path"]) != "$.memory_trust_assessment" ||
+		anyToString(anyMap(compiler["retrieval_decision_trace"])["canonical_path"]) != "$.retrieval_decision_trace" {
+		t.Fatalf("compiler proof references lost canonical paths: %#v", compiler)
+	}
+}
+
 func TestPolicyContextPackageContractValidationPassesAndFails(t *testing.T) {
 	pack := map[string]any{
 		"context_pack": testContextPackFixture([]any{map[string]any{"text": "f1", "source": "test"}}),

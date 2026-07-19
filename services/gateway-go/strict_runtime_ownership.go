@@ -16,7 +16,7 @@ type nativeOwnedRoute struct {
 }
 
 func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
-	return []nativeOwnedRoute{
+	routes := []nativeOwnedRoute{
 		{Path: "/health", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "gateway liveness and queue health", Required: true},
 		{Path: "/status", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "strict runtime status and service health", Required: true},
 		{Path: "/migration/runtime", Surface: "runtime", Owner: sourceOwnerGoNative, Status: "native", Detail: "Go/Rust migration flags", Required: true},
@@ -37,6 +37,13 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: frontierT4EvidenceReputationPath, Surface: "operator", Owner: sourceOwnerGoNative, Status: "native", Detail: "paid evidence reputation activation discovery without OSS state mutation", Required: true},
 		{Path: frontierT4RetrievalRegressionPath, Surface: "operator", Owner: sourceOwnerGoNative, Status: "native", Detail: "paid regression operations discovery without OSS state mutation", Required: true},
 		{Path: frontierT4DefenseOperationsPath, Surface: "operator", Owner: sourceOwnerGoNative, Status: "native", Detail: "paid defense operations discovery without weakening OSS defenses", Required: true},
+		{Path: policySimulationPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "same-snapshot no-persist retrieval policy replay", Required: true},
+		{Path: scopedPolicyCardPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "project and task-scoped sparse-data policy card", Required: true},
+		{Path: policyPromotionRecommendationPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "assignment-bound advisory policy promotion recommendation", Required: true},
+		{Path: memoryRetirementPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "explicit reversible non-destructive memory retirement", Required: true},
+		{Path: contradictionResolutionPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "evidence-weighted contradiction recommendation and appeal", Required: true},
+		{Path: storageTemperatureDecisionPath, Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "utility-based reversible retrieval temperature decision", Required: true},
+		{Path: frontierT5StatusPath, Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "Policy Laboratory lifecycle and storage telemetry", Required: true},
 		{Path: "/tools/context_pack", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "MCP/tool context package wrapper", Required: true},
 		{Path: "/memory/continuity/reconcile", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "exact-first task identity reconciliation with semantic abstention", Required: true},
 		{Path: "/memory/objectives/transition", Surface: "agent", Owner: sourceOwnerGoNative, Status: "native", Detail: "append-only typed objective transition", Required: true},
@@ -105,6 +112,7 @@ func strictRuntimeOwnedRoutes() []nativeOwnedRoute {
 		{Path: "/telemetry/recall", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "recall quality telemetry", Required: true},
 		{Path: "/telemetry/recall/monitor", Surface: "telemetry", Owner: sourceOwnerGoNative, Status: "native", Detail: "recall monitor history", Required: true},
 	}
+	return routes
 }
 
 func pythonFallbackPathCounts(snapshot map[string]any) map[string]int {

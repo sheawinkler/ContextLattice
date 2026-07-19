@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,8 @@ type memoryStorePolicy struct {
 	enabled                    bool
 	rootPath                   string
 	historyPath                string
+	currentStatePath           string
+	accessLogPath              string
 	edgePath                   string
 	agentEdgePath              string
 	contentAddressed           bool
@@ -36,6 +39,7 @@ type memoryStorePolicy struct {
 	rollupUseHistoryIndex      bool
 	historyStartupMaxLines     int
 	historyStartupTailMaxBytes int64
+	accessStartupMaxLines      int
 	edgeStartupMaxLines        int
 	agentEdgeStartupMaxLines   int
 	maxRecent                  int
@@ -53,6 +57,13 @@ type memoryStorePolicy struct {
 	maxRollupReadBytes         int64
 	maxRollupFileBytes         int64
 	rollupCacheTTL             time.Duration
+	hotIndexMaxAgeDays         int
+	userHorizonEnabled         bool
+	userHorizonTagPrefix       string
+	confidencePriorAlpha       float64
+	confidencePriorBeta        float64
+	confidenceWriteWeight      float64
+	confidenceReadWeight       float64
 }
 
 type memoryStoreEntry struct {
@@ -68,47 +79,70 @@ type memoryStoreEntry struct {
 	ContentRef  string   `json:"content_ref,omitempty"`
 	DataClass   string   `json:"data_class,omitempty"`
 	Lifecycle   string   `json:"lifecycle,omitempty"`
+	StorageTier string   `json:"storage_tier,omitempty"`
+	ObjectID    string   `json:"object_id,omitempty"`
+	HorizonDays int      `json:"horizon_days,omitempty"`
 	DiffState   string   `json:"diff_state,omitempty"`
+	DiffDelta   float64  `json:"diff_delta,omitempty"`
+	Confidence  float64  `json:"confidence,omitempty"`
+	LastAccess  string   `json:"last_accessed_at,omitempty"`
 	CreatedAt   string   `json:"created_at"`
 	RawBytes    int      `json:"raw_bytes,omitempty"`
 	Source      string   `json:"source,omitempty"`
 }
 
 type memoryStoreDoc struct {
-	Project   string
-	FileName  string
-	TopicPath string
-	Summary   string
-	AgentID   string
-	SessionID string
-	UpdatedAt time.Time
-	RawBytes  int
+	Project     string
+	FileName    string
+	TopicPath   string
+	Summary     string
+	UpdatedAt   time.Time
+	ObjectID    string
+	Horizon     int
+	Score       float64
+	LastTouch   time.Time
+	Lifecycle   string
+	StorageTier string
+}
+
+type memoryAccessLogEntry struct {
+	Project    string `json:"project"`
+	FileName   string `json:"file"`
+	Reason     string `json:"reason,omitempty"`
+	AccessedAt string `json:"accessed_at"`
 }
 
 type topicRollupAggregate struct {
-	path           string
-	project        string
-	depth          int
-	eventCount     int
-	recentCount    int
-	writeCount     int
-	uniqueFiles    map[string]struct{}
-	uniqueAgents   map[string]struct{}
-	uniqueSessions map[string]struct{}
-	rawBytes       int
-	latestAt       time.Time
-	summarySnips   []string
-	children       map[string]struct{}
-	filePartitions []map[string]any
+	path            string
+	project         string
+	depth           int
+	eventCount      int
+	recentCount     int
+	confidenceSum   float64
+	confidenceCount int
+	maxHorizonDays  int
+	uniqueFiles     map[string]struct{}
+	uniqueAgents    map[string]struct{}
+	uniqueSessions  map[string]struct{}
+	lifecycleCounts map[string]int
+	diffStateCounts map[string]int
+	rawBytes        int
+	latestAt        time.Time
+	summarySnips    []string
+	children        map[string]struct{}
+	filePartitions  []map[string]any
 }
 
 type topicRollupSignal struct {
-	writeCount     int
-	recentCount    int
-	rawBytes       int
-	latestAt       time.Time
-	uniqueAgents   map[string]struct{}
-	uniqueSessions map[string]struct{}
+	recentCount        int
+	writeCount         int
+	unattributedWrites int
+	uniqueAgents       map[string]struct{}
+	uniqueSessions     map[string]struct{}
+	lifecycleCounts    map[string]int
+	diffStateCounts    map[string]int
+	latestAt           time.Time
+	rawBytes           int
 }
 
 type memoryStore struct {
@@ -120,8 +154,14 @@ type memoryStore struct {
 	initializeErr        error
 	mu                   sync.RWMutex
 	recent               []memoryStoreEntry
+	currentState         map[string]memoryCurrentState
 	latestTopic          map[string]string
 	latestHash           map[string]string
+	latestHorizon        map[string]int
+	latestLifecycle      map[string]string
+	latestStorageTier    map[string]string
+	lastAccess           map[string]time.Time
+	confidence           map[string]confidenceState
 	rollupCache          map[string]topicRollupCacheEntry
 	edges                map[string]memoryEdgeEntry
 	edgeOrder            []string
@@ -143,6 +183,11 @@ type memoryPathLock struct {
 	refs int
 }
 
+type confidenceState struct {
+	alpha float64
+	beta  float64
+}
+
 type topicRollupCacheEntry struct {
 	generatedAt time.Time
 	total       int
@@ -162,6 +207,11 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	historyPath := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_HISTORY_PATH"))
 	if historyPath == "" {
 		historyPath = filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	}
+	currentStatePath := filepath.Join(root, "_contextlattice", "memory_current_state")
+	accessLogPath := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_ACCESS_LOG_PATH"))
+	if accessLogPath == "" {
+		accessLogPath = filepath.Join(root, "_contextlattice", "memory_access_log.ndjson")
 	}
 	edgePath := strings.TrimSpace(os.Getenv("GO_MEMORY_GRAPH_EDGE_PATH"))
 	if edgePath == "" {
@@ -196,6 +246,10 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		1024*1024,
 		1024*1024*1024,
 	))
+	accessStartupMaxLines := envInt("GO_MEMORY_STORE_ACCESS_STARTUP_MAX_LINES", 50000)
+	if accessStartupMaxLines < 0 {
+		accessStartupMaxLines = 0
+	}
 	edgeStartupMaxLines := envInt("GO_MEMORY_GRAPH_EDGE_STARTUP_MAX_LINES", 50000)
 	if edgeStartupMaxLines < 0 {
 		edgeStartupMaxLines = 0
@@ -204,10 +258,39 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 	if agentEdgeStartupMaxLines < 0 {
 		agentEdgeStartupMaxLines = 0
 	}
+	hotIndexMaxAgeDays := envInt("GO_MEMORY_STORE_HOT_INDEX_MAX_AGE_DAYS", 0)
+	if hotIndexMaxAgeDays < 0 {
+		hotIndexMaxAgeDays = 0
+	}
+	if hotIndexMaxAgeDays > 36500 {
+		hotIndexMaxAgeDays = 36500
+	}
+	userHorizonTagPrefix := strings.TrimSpace(os.Getenv("GO_MEMORY_STORE_HORIZON_TAG_PREFIX"))
+	if userHorizonTagPrefix == "" {
+		userHorizonTagPrefix = "horizon_days:"
+	}
+	confidencePriorAlpha := envFloat("GO_MEMORY_STORE_CONFIDENCE_PRIOR_ALPHA", 1.0)
+	confidencePriorBeta := envFloat("GO_MEMORY_STORE_CONFIDENCE_PRIOR_BETA", 1.0)
+	confidenceWriteWeight := envFloat("GO_MEMORY_STORE_CONFIDENCE_WRITE_WEIGHT", 0.5)
+	confidenceReadWeight := envFloat("GO_MEMORY_STORE_CONFIDENCE_READ_WEIGHT", 1.0)
+	if confidencePriorAlpha <= 0 {
+		confidencePriorAlpha = 1.0
+	}
+	if confidencePriorBeta <= 0 {
+		confidencePriorBeta = 1.0
+	}
+	if confidenceWriteWeight <= 0 {
+		confidenceWriteWeight = 0.5
+	}
+	if confidenceReadWeight <= 0 {
+		confidenceReadWeight = 1.0
+	}
 	return memoryStorePolicy{
 		enabled:                    envBool("GO_MEMORY_STORE_ENABLED", true),
 		rootPath:                   root,
 		historyPath:                filepath.Clean(historyPath),
+		currentStatePath:           filepath.Clean(currentStatePath),
+		accessLogPath:              filepath.Clean(accessLogPath),
 		edgePath:                   filepath.Clean(edgePath),
 		agentEdgePath:              filepath.Clean(agentEdgePath),
 		contentAddressed:           envBool("GO_MEMORY_STORE_CONTENT_ADDRESSING_ENABLED", true),
@@ -218,6 +301,7 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 		rollupUseHistoryIndex:      envBool("GO_MEMORY_STORE_ROLLUP_USE_HISTORY_INDEX", true),
 		historyStartupMaxLines:     historyStartupMaxLines,
 		historyStartupTailMaxBytes: historyStartupTailMaxBytes,
+		accessStartupMaxLines:      accessStartupMaxLines,
 		edgeStartupMaxLines:        edgeStartupMaxLines,
 		agentEdgeStartupMaxLines:   agentEdgeStartupMaxLines,
 		maxRecent:                  clampInt(envInt("GO_MEMORY_STORE_MAX_RECENT", 6000), 64, 100000),
@@ -242,26 +326,39 @@ func loadMemoryStorePolicy() memoryStorePolicy {
 			1024,
 			64*1024*1024,
 		)),
-		rollupCacheTTL: envDurationSeconds("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", 15),
+		rollupCacheTTL:        envDurationSeconds("GO_MEMORY_STORE_ROLLUP_CACHE_TTL_SECS", 15),
+		hotIndexMaxAgeDays:    hotIndexMaxAgeDays,
+		userHorizonEnabled:    envBool("GO_MEMORY_STORE_USER_HORIZON_ENABLED", true),
+		userHorizonTagPrefix:  userHorizonTagPrefix,
+		confidencePriorAlpha:  confidencePriorAlpha,
+		confidencePriorBeta:   confidencePriorBeta,
+		confidenceWriteWeight: confidenceWriteWeight,
+		confidenceReadWeight:  confidenceReadWeight,
 	}
 }
 
 func newMemoryStoreFromEnv() (*memoryStore, error) {
 	policy := loadMemoryStorePolicy()
 	store := &memoryStore{
-		policy:          policy,
-		recent:          make([]memoryStoreEntry, 0, policy.maxRecent),
-		latestTopic:     map[string]string{},
-		latestHash:      map[string]string{},
-		rollupCache:     map[string]topicRollupCacheEntry{},
-		edges:           map[string]memoryEdgeEntry{},
-		edgeOrder:       []string{},
-		edgeOrdinal:     map[string]int64{},
-		edgeAdjacency:   map[string]map[string]struct{}{},
-		agentEdges:      map[string]AgentEventEdge{},
-		agentEdgeOrder:  []string{},
-		exactStatePaths: map[string]struct{}{},
-		pathLocks:       map[string]*memoryPathLock{},
+		policy:            policy,
+		recent:            make([]memoryStoreEntry, 0, policy.maxRecent),
+		currentState:      map[string]memoryCurrentState{},
+		latestTopic:       map[string]string{},
+		latestHash:        map[string]string{},
+		latestHorizon:     map[string]int{},
+		latestLifecycle:   map[string]string{},
+		latestStorageTier: map[string]string{},
+		lastAccess:        map[string]time.Time{},
+		confidence:        map[string]confidenceState{},
+		rollupCache:       map[string]topicRollupCacheEntry{},
+		edges:             map[string]memoryEdgeEntry{},
+		edgeOrder:         []string{},
+		edgeOrdinal:       map[string]int64{},
+		edgeAdjacency:     map[string]map[string]struct{}{},
+		agentEdges:        map[string]AgentEventEdge{},
+		agentEdgeOrder:    []string{},
+		exactStatePaths:   map[string]struct{}{},
+		pathLocks:         map[string]*memoryPathLock{},
 	}
 	store.migration = newOwnerOnlyMigrationRuntime(policy.rootPath, policy.enabled)
 	if !policy.enabled {
@@ -315,6 +412,20 @@ func (m *memoryStore) loadHistory() error {
 	}
 	exactStatePaths := m.exactStatePathsSnapshot()
 	writePolicy := loadWriteIngressPolicy()
+	dirtyCurrentStateShards := map[int]struct{}{}
+	recordLoadedEntry := func(entry memoryStoreEntry) {
+		m.recordEntry(entry)
+		key := memoryStoreKey(entry.Project, entry.FileName)
+		if key != "::" {
+			dirtyCurrentStateShards[memoryCurrentStateShardForKey(key)] = struct{}{}
+		}
+	}
+	persistLoadedCurrentState := func() error {
+		if err := m.persistCurrentStateShardsLocked(dirtyCurrentStateShards); err != nil {
+			return fmt.Errorf("persist memory current state after history load: %w", err)
+		}
+		return nil
+	}
 	file, err := os.Open(m.policy.historyPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -341,8 +452,11 @@ func (m *memoryStore) loadHistory() error {
 				writePolicy.isDurableMemoryFile(normalizedWrite{project: entry.Project, fileName: entry.FileName}) {
 				continue
 			}
-			m.recordEntry(entry)
+			recordLoadedEntry(entry)
 			loaded += 1
+		}
+		if err := persistLoadedCurrentState(); err != nil {
+			return err
 		}
 		log.Printf(
 			"gateway-go memory store history startup load: scanned=%d loaded=%d cap=%d mode=tail",
@@ -371,11 +485,14 @@ func (m *memoryStore) loadHistory() error {
 			writePolicy.isDurableMemoryFile(normalizedWrite{project: entry.Project, fileName: entry.FileName}) {
 			continue
 		}
-		m.recordEntry(entry)
+		recordLoadedEntry(entry)
 		loaded += 1
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan memory store history: %w", err)
+	}
+	if err := persistLoadedCurrentState(); err != nil {
+		return err
 	}
 	log.Printf("gateway-go memory store history startup load: scanned=%d loaded=%d cap=%d", loaded, loaded, 0)
 	return nil
@@ -449,6 +566,214 @@ func readHistoryTailLines(file *os.File, maxLines int, maxBytes int64) ([]string
 		lines = lines[len(lines)-maxLines:]
 	}
 	return lines, nil
+}
+
+func parseHorizonDaysFromTags(tags []string, prefix string) (int, bool) {
+	basePrefix := strings.ToLower(strings.TrimSpace(prefix))
+	if basePrefix == "" {
+		basePrefix = "horizon_days:"
+	}
+	for _, raw := range tags {
+		tag := strings.TrimSpace(strings.ToLower(raw))
+		if tag == "" {
+			continue
+		}
+		if !strings.HasPrefix(tag, basePrefix) {
+			continue
+		}
+		suffix := strings.TrimSpace(strings.TrimPrefix(tag, basePrefix))
+		if suffix == "" {
+			continue
+		}
+		value, err := strconv.Atoi(suffix)
+		if err != nil {
+			continue
+		}
+		if value < 0 {
+			value = 0
+		}
+		if value > 36500 {
+			value = 36500
+		}
+		return value, true
+	}
+	return 0, false
+}
+
+func tokenSetSimilarity(left string, right string) float64 {
+	left = strings.TrimSpace(strings.ToLower(left))
+	right = strings.TrimSpace(strings.ToLower(right))
+	if left == right {
+		return 1.0
+	}
+	leftSet := map[string]struct{}{}
+	for _, token := range strings.Fields(left) {
+		if token == "" {
+			continue
+		}
+		leftSet[token] = struct{}{}
+	}
+	rightSet := map[string]struct{}{}
+	for _, token := range strings.Fields(right) {
+		if token == "" {
+			continue
+		}
+		rightSet[token] = struct{}{}
+	}
+	if len(leftSet) == 0 && len(rightSet) == 0 {
+		return 1.0
+	}
+	if len(leftSet) == 0 || len(rightSet) == 0 {
+		return 0.0
+	}
+	union := map[string]struct{}{}
+	for token := range leftSet {
+		union[token] = struct{}{}
+	}
+	for token := range rightSet {
+		union[token] = struct{}{}
+	}
+	shared := 0
+	for token := range leftSet {
+		if _, ok := rightSet[token]; ok {
+			shared += 1
+		}
+	}
+	return float64(shared) / float64(len(union))
+}
+
+func diffStateFromDelta(delta float64) string {
+	if delta <= 0.03 {
+		return "unchanged"
+	}
+	if delta <= 0.35 {
+		return "revision"
+	}
+	return "rewrite"
+}
+
+func (m *memoryStore) objectIDFor(project string, fileName string, topicPath string, contentHash string) string {
+	seed := strings.ToLower(strings.TrimSpace(project)) + "|" +
+		strings.ToLower(strings.TrimSpace(fileName)) + "|" +
+		strings.ToLower(strings.TrimSpace(topicPath)) + "|" +
+		strings.ToLower(strings.TrimSpace(contentHash))
+	digest := sha256Hex(seed)
+	if len(digest) > 24 {
+		digest = digest[:24]
+	}
+	return "obj_" + digest
+}
+
+func (m *memoryStore) loadAccessLog() error {
+	if m == nil || !m.isConfigured() {
+		return nil
+	}
+	file, err := os.Open(m.policy.accessLogPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("open memory store access log: %w", err)
+	}
+	defer file.Close()
+
+	limit := m.policy.accessStartupMaxLines
+	lines := []string{}
+	if limit > 0 {
+		lines, err = readHistoryTailLines(file, limit, 32*1024*1024)
+		if err != nil {
+			return fmt.Errorf("read memory store access log tail: %w", err)
+		}
+	} else {
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				lines = append(lines, line)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("scan memory store access log: %w", err)
+		}
+	}
+
+	loaded := 0
+	for _, line := range lines {
+		entry := memoryAccessLogEntry{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		project, err := sanitizeMemoryProject(entry.Project)
+		if err != nil {
+			continue
+		}
+		fileName, err := sanitizeMemoryFile(entry.FileName)
+		if err != nil {
+			continue
+		}
+		accessedAt, ok := parseTimeBestEffort(entry.AccessedAt)
+		if !ok {
+			continue
+		}
+		key := memoryStoreKey(project, fileName)
+		if key == "::" {
+			continue
+		}
+		if current, ok := m.lastAccess[key]; !ok || accessedAt.After(current) {
+			m.lastAccess[key] = accessedAt
+			loaded += 1
+		}
+	}
+	if loaded > 0 {
+		log.Printf("gateway-go memory store access log startup load: loaded=%d cap=%d", loaded, limit)
+	}
+	return nil
+}
+
+func (m *memoryStore) appendAccessLog(project string, fileName string, reason string, at time.Time) {
+	if m == nil || !m.isEnabled() {
+		return
+	}
+	entry := memoryAccessLogEntry{
+		Project:    project,
+		FileName:   fileName,
+		Reason:     strings.TrimSpace(reason),
+		AccessedAt: at.UTC().Format(time.RFC3339Nano),
+	}
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	line := append(payload, '\n')
+	file, err := openOwnerOnlyAppend(m.policy.accessLogPath, true)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = file.Write(line)
+}
+
+func (m *memoryStore) markAccess(project string, fileName string, reason string) {
+	if m == nil || !m.isEnabled() {
+		return
+	}
+	at := time.Now().UTC()
+	key := memoryStoreKey(project, fileName)
+	if key == "::" {
+		return
+	}
+	m.mu.Lock()
+	current, ok := m.lastAccess[key]
+	if !ok || at.After(current) {
+		m.lastAccess[key] = at
+	}
+	if state, ok := m.confidence[key]; ok {
+		state.alpha += m.policy.confidenceReadWeight
+		m.confidence[key] = state
+	}
+	m.mu.Unlock()
+	m.appendAccessLog(project, fileName, reason, at)
 }
 
 func sanitizeMemoryProject(project string) (string, error) {
@@ -640,6 +965,9 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 	if m == nil {
 		return
 	}
+	if m.latestStorageTier == nil {
+		m.latestStorageTier = map[string]string{}
+	}
 	if strings.TrimSpace(entry.EventID) == "" {
 		entry.EventID = bson.NewObjectID().Hex()
 	}
@@ -652,14 +980,58 @@ func (m *memoryStore) recordEntry(entry memoryStoreEntry) {
 	if strings.TrimSpace(entry.Source) == "" {
 		entry.Source = "go_memory_store"
 	}
+	if strings.TrimSpace(entry.Lifecycle) == "" {
+		entry.Lifecycle = normalizeMemoryLifecycle(lifecycleFromTags(entry.Tags))
+	}
+	entry.StorageTier = normalizeMemoryStorageTier(entry.StorageTier)
 	key := memoryStoreKey(entry.Project, entry.FileName)
-	if key != "::" {
+	becameCurrent := m.applyCurrentStateEntryLocked(entry)
+	if isMemoryTombstone(entry) {
+		if becameCurrent && key != "::" {
+			delete(m.latestTopic, key)
+			delete(m.latestHash, key)
+			delete(m.latestHorizon, key)
+			delete(m.latestLifecycle, key)
+			delete(m.latestStorageTier, key)
+			delete(m.lastAccess, key)
+			delete(m.confidence, key)
+		}
+		if becameCurrent {
+			m.invalidateTopicRollupCacheLocked(entry.Project)
+		}
+		m.recent = append(m.recent, entry)
+		if len(m.recent) > m.policy.maxRecent {
+			over := len(m.recent) - m.policy.maxRecent
+			m.recent = m.recent[over:]
+		}
+		return
+	}
+	if becameCurrent && key != "::" {
 		m.latestTopic[key] = entry.TopicPath
+		m.latestLifecycle[key] = normalizeMemoryLifecycle(entry.Lifecycle)
+		m.latestStorageTier[key] = normalizeMemoryStorageTier(entry.StorageTier)
 		if strings.TrimSpace(entry.ContentHash) != "" {
 			m.latestHash[key] = entry.ContentHash
 		}
+		if entry.HorizonDays != 0 {
+			m.latestHorizon[key] = entry.HorizonDays
+		}
+		if strings.TrimSpace(entry.LastAccess) != "" {
+			if accessedAt, ok := parseTimeBestEffort(entry.LastAccess); ok {
+				if current, exists := m.lastAccess[key]; !exists || accessedAt.After(current) {
+					m.lastAccess[key] = accessedAt
+				}
+			}
+		}
+		if entry.Confidence > 0 {
+			alpha := m.policy.confidencePriorAlpha + (entry.Confidence * (m.policy.confidenceReadWeight + m.policy.confidenceWriteWeight))
+			beta := m.policy.confidencePriorBeta + ((1.0 - entry.Confidence) * (m.policy.confidenceReadWeight + m.policy.confidenceWriteWeight))
+			m.confidence[key] = confidenceState{alpha: alpha, beta: beta}
+		}
 	}
-	m.invalidateTopicRollupCacheLocked(entry.Project)
+	if becameCurrent {
+		m.invalidateTopicRollupCacheLocked(entry.Project)
+	}
 	m.recent = append(m.recent, entry)
 	if len(m.recent) > m.policy.maxRecent {
 		over := len(m.recent) - m.policy.maxRecent
@@ -681,11 +1053,19 @@ func normalizeRollupProject(project string) string {
 	return strings.ToLower(strings.TrimSpace(project))
 }
 
-func topicRollupCacheKey(project string, minCount int) string {
+func topicRollupCacheKey(project string, minCount int, includeCold bool, includeEphemeral bool) string {
 	if minCount < 1 {
 		minCount = 1
 	}
-	return normalizeRollupProject(project) + "|" + strconv.Itoa(minCount)
+	mode := "hot"
+	if includeCold {
+		mode = "cold"
+	}
+	lifecycleMode := "durable"
+	if includeEphemeral {
+		lifecycleMode = "all"
+	}
+	return normalizeRollupProject(project) + "|" + strconv.Itoa(minCount) + "|" + mode + "|" + lifecycleMode
 }
 
 func (m *memoryStore) invalidateTopicRollupCacheLocked(project string) {
@@ -704,11 +1084,11 @@ func (m *memoryStore) invalidateTopicRollupCacheLocked(project string) {
 	}
 }
 
-func (m *memoryStore) getTopicRollupCache(project string, minCount int) (topicRollupCacheEntry, bool) {
+func (m *memoryStore) getTopicRollupCache(project string, minCount int, includeCold bool, includeEphemeral bool) (topicRollupCacheEntry, bool) {
 	if m == nil || m.policy.rollupCacheTTL <= 0 {
 		return topicRollupCacheEntry{}, false
 	}
-	key := topicRollupCacheKey(project, minCount)
+	key := topicRollupCacheKey(project, minCount, includeCold, includeEphemeral)
 	now := time.Now()
 	m.mu.RLock()
 	entry, ok := m.rollupCache[key]
@@ -726,11 +1106,11 @@ func (m *memoryStore) getTopicRollupCache(project string, minCount int) (topicRo
 	return entry, true
 }
 
-func (m *memoryStore) putTopicRollupCache(project string, minCount int, rows []map[string]any, total int) {
+func (m *memoryStore) putTopicRollupCache(project string, minCount int, includeCold bool, includeEphemeral bool, rows []map[string]any, total int) {
 	if m == nil || m.policy.rollupCacheTTL <= 0 {
 		return
 	}
-	key := topicRollupCacheKey(project, minCount)
+	key := topicRollupCacheKey(project, minCount, includeCold, includeEphemeral)
 	m.mu.Lock()
 	m.rollupCache[key] = topicRollupCacheEntry{
 		generatedAt: time.Now(),
@@ -911,6 +1291,9 @@ func (m *memoryStore) putExactStateMirror(item normalizedWrite) (memoryStoreEntr
 	if err := ensureOwnerOnlyDirectory(filepath.Dir(filePath), true); err != nil {
 		return memoryStoreEntry{}, false, fmt.Errorf("create exact state mirror directory: %w", err)
 	}
+	if err := ensureOwnerOnlyFile(filePath); err != nil {
+		return memoryStoreEntry{}, false, fmt.Errorf("prepare exact state mirror: %w", err)
+	}
 	previous := ""
 	if raw, readErr := os.ReadFile(filePath); readErr == nil {
 		previous = string(raw)
@@ -923,16 +1306,27 @@ func (m *memoryStore) putExactStateMirror(item normalizedWrite) (memoryStoreEntr
 			return memoryStoreEntry{}, false, fmt.Errorf("commit exact state mirror: %w", err)
 		}
 	}
+
 	diffState := "new"
+	diffDelta := 1.0
 	if previous != "" {
 		if deduped {
 			diffState = "unchanged"
+			diffDelta = 0
 		} else {
-			diffState = "updated"
+			diffDelta = 1 - tokenSetSimilarity(previous, content)
+			if diffDelta < 0 {
+				diffDelta = 0
+			}
+			if diffDelta > 1 {
+				diffDelta = 1
+			}
+			diffState = diffStateFromDelta(diffDelta)
 		}
 	}
 	topicPath := sanitizeTopicPath(item.topicPath, fileName)
 	contentHash := sha256Hex(content)
+	nowISO := nowUTCISO()
 	return memoryStoreEntry{
 		EventID:     bson.NewObjectID().Hex(),
 		Project:     project,
@@ -946,8 +1340,14 @@ func (m *memoryStore) putExactStateMirror(item normalizedWrite) (memoryStoreEntr
 		ContentRef:  "sha256:" + contentHash,
 		DataClass:   dataClassRuntimeStateMirror,
 		Lifecycle:   normalizeMemoryLifecycle(item.lifecycle),
+		StorageTier: normalizeMemoryStorageTier(item.storageTier),
+		ObjectID:    m.objectIDFor(project, fileName, topicPath, dataClassRuntimeStateMirror),
+		HorizonDays: -1,
 		DiffState:   diffState,
-		CreatedAt:   nowUTCISO(),
+		DiffDelta:   diffDelta,
+		Confidence:  1,
+		LastAccess:  nowISO,
+		CreatedAt:   nowISO,
 		RawBytes:    len(content),
 		Source:      "go_exact_state_mirror",
 	}, deduped, nil
@@ -981,12 +1381,74 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	topicPath := sanitizeTopicPath(item.topicPath, fileName)
 	contentHash := sha256Hex(content)
 	filePath := filepath.Join(m.policy.rootPath, project, filepath.FromSlash(fileName))
+	objectID := m.objectIDFor(project, fileName, topicPath, contentHash)
+	now := time.Now().UTC()
+	nowISO := now.Format(time.RFC3339Nano)
+
+	horizonDays := 0
+	if m.policy.userHorizonEnabled {
+		if parsed, ok := parseHorizonDaysFromTags(item.tags, m.policy.userHorizonTagPrefix); ok {
+			// -1 means explicit infinite horizon override for this file.
+			if parsed == 0 {
+				horizonDays = -1
+			} else {
+				horizonDays = parsed
+			}
+		}
+	}
 
 	m.mu.RLock()
 	previousHash := m.latestHash[key]
 	previousTopic := m.latestTopic[key]
+	previousHorizon := m.latestHorizon[key]
+	previousLifecycle := normalizeMemoryLifecycle(m.latestLifecycle[key])
+	previousStorageTier := normalizeMemoryStorageTier(m.latestStorageTier[key])
+	previousState, previousStateExists := m.currentState[key]
+	previousTags := append([]string(nil), previousState.Entry.Tags...)
+	confState := m.confidence[key]
 	m.mu.RUnlock()
 	deduped := previousHash != "" && previousHash == contentHash
+
+	previousContent := ""
+	if bytes, readErr := os.ReadFile(filePath); readErr == nil {
+		previousContent = string(bytes)
+	}
+	diffDelta := 1.0
+	diffState := "new"
+	if previousHash != "" {
+		if deduped {
+			diffDelta = 0.0
+			diffState = "unchanged"
+		} else {
+			similarity := tokenSetSimilarity(previousContent, content)
+			diffDelta = 1.0 - similarity
+			if diffDelta < 0 {
+				diffDelta = 0
+			}
+			if diffDelta > 1 {
+				diffDelta = 1
+			}
+			diffState = diffStateFromDelta(diffDelta)
+		}
+	}
+
+	if confState.alpha <= 0 || confState.beta <= 0 {
+		confState = confidenceState{
+			alpha: m.policy.confidencePriorAlpha,
+			beta:  m.policy.confidencePriorBeta,
+		}
+	}
+	confState.alpha += m.policy.confidenceWriteWeight
+	if diffState == "rewrite" {
+		confState.beta += m.policy.confidenceWriteWeight * 0.5
+	}
+	confidence := confState.alpha / (confState.alpha + confState.beta)
+	if confidence < 0 {
+		confidence = 0
+	}
+	if confidence > 1 {
+		confidence = 1
+	}
 
 	buildEntry := func() memoryStoreEntry {
 		return memoryStoreEntry{
@@ -1002,15 +1464,32 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 			ContentRef:  "sha256:" + contentHash,
 			DataClass:   dataClassLearningMemory,
 			Lifecycle:   normalizeMemoryLifecycle(item.lifecycle),
-			CreatedAt:   nowUTCISO(),
+			StorageTier: normalizeMemoryStorageTier(item.storageTier),
+			ObjectID:    objectID,
+			HorizonDays: horizonDays,
+			DiffState:   diffState,
+			DiffDelta:   diffDelta,
+			Confidence:  confidence,
+			LastAccess:  nowISO,
+			CreatedAt:   nowISO,
 			RawBytes:    len(content),
 			Source:      "go_memory_store",
 		}
 	}
 
-	if deduped && strings.EqualFold(strings.TrimSpace(previousTopic), strings.TrimSpace(topicPath)) {
+	if deduped &&
+		strings.EqualFold(strings.TrimSpace(previousTopic), strings.TrimSpace(topicPath)) &&
+		previousLifecycle == normalizeMemoryLifecycle(item.lifecycle) &&
+		previousStorageTier == normalizeMemoryStorageTier(item.storageTier) &&
+		previousStateExists && memoryTagsEqual(previousTags, item.tags) &&
+		horizonDays == 0 &&
+		previousHorizon == 0 {
 		// No payload or topic change: skip redundant rewrite/history append.
 		if _, err := os.Stat(filePath); err == nil {
+			m.mu.Lock()
+			m.confidence[key] = confState
+			m.mu.Unlock()
+			m.markAccess(project, fileName, "write_dedup")
 			return buildEntry(), true, nil
 		}
 	}
@@ -1036,13 +1515,13 @@ func (m *memoryStore) put(item normalizedWrite) (memoryStoreEntry, bool, error) 
 	}
 
 	entry := buildEntry()
-
-	m.mu.Lock()
-	m.recordEntry(entry)
-	m.mu.Unlock()
 	if err := m.appendHistory(entry); err != nil {
 		return memoryStoreEntry{}, false, err
 	}
+	if err := m.persistAndRecordEntry(entry); err != nil {
+		return memoryStoreEntry{}, false, err
+	}
+	m.appendAccessLog(project, fileName, "write", now)
 	if err := m.storeAgentEdges(entry); err != nil {
 		log.Printf("memory agent edge fanout skipped: %v", err)
 	}
@@ -1072,27 +1551,148 @@ func (m *memoryStore) parseProjectFileFromPath(path string) (string, string, err
 }
 
 func (m *memoryStore) readFile(project string, fileName string) (string, os.FileInfo, error) {
+	content, info, cleanProject, cleanFile, err := m.readFileUntracked(project, fileName)
+	if err != nil {
+		return "", nil, err
+	}
+	m.markAccess(cleanProject, cleanFile, "read")
+	return content, info, nil
+}
+
+func (m *memoryStore) readFileUntracked(project string, fileName string) (string, os.FileInfo, string, string, error) {
 	if m == nil || !m.isEnabled() {
-		return "", nil, errors.New("go memory store is disabled")
+		return "", nil, "", "", errors.New("go memory store is disabled")
 	}
 	cleanProject, err := sanitizeMemoryProject(project)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", "", err
 	}
 	cleanFile, err := sanitizeMemoryFile(fileName)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", "", err
 	}
 	abs := filepath.Join(m.policy.rootPath, cleanProject, filepath.FromSlash(cleanFile))
 	bytes, err := os.ReadFile(abs)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", "", err
 	}
 	info, statErr := os.Stat(abs)
 	if statErr != nil {
-		return string(bytes), nil, nil
+		return string(bytes), nil, cleanProject, cleanFile, nil
 	}
-	return string(bytes), info, nil
+	return string(bytes), info, cleanProject, cleanFile, nil
+}
+
+func (m *memoryStore) purgeEphemeral(project string, topicPath string, filePrefix string, dryRun bool, reason string) (map[string]any, error) {
+	if m == nil || !m.isEnabled() {
+		return map[string]any{"ok": false, "error": "go memory store is disabled"}, errors.New("go memory store is disabled")
+	}
+	cleanProject, err := sanitizeMemoryProject(project)
+	if err != nil {
+		return nil, err
+	}
+	cleanPrefix, err := sanitizeMemoryFile(filePrefix)
+	if err != nil {
+		return nil, err
+	}
+	cleanTopic := strings.Trim(strings.TrimSpace(topicPath), "/")
+	if !safeEphemeralPurgeSelector(cleanProject, cleanTopic, cleanPrefix) {
+		return nil, errors.New("unsafe ephemeral purge selector")
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "ephemeral_memory_purge"
+	}
+
+	type candidate struct {
+		project   string
+		fileName  string
+		topicPath string
+		lifecycle string
+	}
+	candidates := []candidate{}
+	m.mu.RLock()
+	for key, storedTopic := range m.latestTopic {
+		rowProject, rowFile, ok := parseMemoryStoreKeyToken(key)
+		if !ok {
+			continue
+		}
+		if rowProject != cleanProject {
+			continue
+		}
+		if !strings.HasPrefix(rowFile, cleanPrefix) {
+			continue
+		}
+		if cleanTopic != "" {
+			normalizedTopic := strings.Trim(strings.TrimSpace(storedTopic), "/")
+			if normalizedTopic != cleanTopic && !strings.HasPrefix(normalizedTopic, cleanTopic+"/") {
+				continue
+			}
+		}
+		lifecycle := normalizeMemoryLifecycle(m.latestLifecycle[key])
+		if !isEphemeralMemoryIdentity(rowFile, storedTopic, "", lifecycle) {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			project:   rowProject,
+			fileName:  rowFile,
+			topicPath: storedTopic,
+			lifecycle: lifecycle,
+		})
+	}
+	m.mu.RUnlock()
+
+	filesDeleted := 0
+	filesMissing := 0
+	tombstoned := 0
+	errorsOut := []string{}
+	if !dryRun {
+		for _, row := range candidates {
+			abs := filepath.Join(m.policy.rootPath, row.project, filepath.FromSlash(row.fileName))
+			if err := os.Remove(abs); err == nil {
+				filesDeleted += 1
+			} else if errors.Is(err, os.ErrNotExist) {
+				filesMissing += 1
+			} else {
+				errorsOut = append(errorsOut, row.fileName+": "+err.Error())
+				continue
+			}
+			now := nowUTCISO()
+			tombstone := memoryStoreEntry{
+				EventID:   bson.NewObjectID().Hex(),
+				Project:   row.project,
+				FileName:  row.fileName,
+				TopicPath: row.topicPath,
+				DataClass: "memory_tombstone",
+				Lifecycle: normalizeMemoryLifecycle(row.lifecycle),
+				Summary:   reason,
+				CreatedAt: now,
+				Source:    "go_memory_store",
+			}
+			if err := m.appendHistory(tombstone); err != nil {
+				errorsOut = append(errorsOut, row.fileName+": tombstone append failed: "+err.Error())
+				continue
+			}
+			if err := m.persistAndRecordEntry(tombstone); err != nil {
+				errorsOut = append(errorsOut, row.fileName+": tombstone state persist failed: "+err.Error())
+				continue
+			}
+			tombstoned += 1
+		}
+	}
+	return map[string]any{
+		"ok":             len(errorsOut) == 0,
+		"dry_run":        dryRun,
+		"matched":        len(candidates),
+		"files_deleted":  filesDeleted,
+		"files_missing":  filesMissing,
+		"tombstoned":     tombstoned,
+		"errors":         errorsOut,
+		"project":        cleanProject,
+		"topic_path":     cleanTopic,
+		"file_prefix":    cleanPrefix,
+		"source":         "go_memory_store",
+		"purge_semantic": "ephemeral_tombstone",
+	}, nil
 }
 
 func (m *memoryStore) fetchByMemoryID(memoryID string) (map[string]any, error) {
@@ -1104,15 +1704,31 @@ func (m *memoryStore) fetchByMemoryID(memoryID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	key := memoryStoreKey(project, fileName)
+	horizonDays := m.effectiveHotHorizonDays(key)
+	confidence := m.confidenceForKey(key)
+	lastAccess := ""
+	if touched := m.docLastTouch(key, time.Time{}); !touched.IsZero() {
+		lastAccess = touched.UTC().Format(time.RFC3339Nano)
+	}
+	contentHash := sha256Hex(content)
 	result := map[string]any{
 		"memory_id": memoryID,
 		"memory": map[string]any{
-			"project":    project,
-			"file":       fileName,
-			"topic_path": deriveTopicFromFile(fileName),
-			"content":    content,
+			"project":      project,
+			"file":         fileName,
+			"topic_path":   deriveTopicFromFile(fileName),
+			"content":      content,
+			"object_id":    m.objectIDFor(project, fileName, deriveTopicFromFile(fileName), contentHash),
+			"horizon_days": horizonDays,
+			"confidence":   confidence,
+			"content_hash": contentHash,
+			"content_ref":  "sha256:" + contentHash,
 		},
 		"source": "go_memory_store",
+	}
+	if lastAccess != "" {
+		result["memory"].(map[string]any)["last_accessed_at"] = lastAccess
 	}
 	if info != nil {
 		result["memory"].(map[string]any)["updated_at"] = info.ModTime().UTC().Format(time.RFC3339Nano)
@@ -1145,6 +1761,9 @@ func (m *memoryStore) recentItems(project string, topicPath string, limit int, o
 	skipped := 0
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
+		if isMemoryTombstone(entry) {
+			continue
+		}
 		if cleanProject != "" && !strings.EqualFold(strings.TrimSpace(entry.Project), cleanProject) {
 			continue
 		}
@@ -1165,9 +1784,23 @@ func (m *memoryStore) recentItems(project string, topicPath string, limit int, o
 			"topic_path":   entry.TopicPath,
 			"summary":      entry.Summary,
 			"content_hash": entry.ContentHash,
-			"created_at":   entry.CreatedAt,
-			"raw_bytes":    entry.RawBytes,
-			"source":       entry.Source,
+			"data_class":   entry.DataClass,
+			"lifecycle":    normalizeMemoryLifecycle(entry.Lifecycle),
+			"storage_tier": normalizeMemoryStorageTier(entry.StorageTier),
+			"object_id":    entry.ObjectID,
+			"horizon_days": entry.HorizonDays,
+			"diff_state":   entry.DiffState,
+			"diff_delta":   entry.DiffDelta,
+			"confidence":   entry.Confidence,
+			"last_accessed_at": func() any {
+				if strings.TrimSpace(entry.LastAccess) == "" {
+					return nil
+				}
+				return entry.LastAccess
+			}(),
+			"created_at": entry.CreatedAt,
+			"raw_bytes":  entry.RawBytes,
+			"source":     entry.Source,
 		})
 		if len(rows) >= limit {
 			break
@@ -1176,20 +1809,90 @@ func (m *memoryStore) recentItems(project string, topicPath string, limit int, o
 	return rows
 }
 
-func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string) ([]memoryStoreDoc, error) {
+func (m *memoryStore) effectiveHotHorizonDays(key string) int {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if key != "::" {
+		if specific, ok := m.latestHorizon[key]; ok {
+			// -1 represents explicit infinite horizon override.
+			if specific < 0 {
+				return 0
+			}
+			return specific
+		}
+	}
+	return m.policy.hotIndexMaxAgeDays
+}
+
+func (m *memoryStore) docLastTouch(key string, updatedAt time.Time) time.Time {
+	if m == nil {
+		return updatedAt
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if key != "::" {
+		if accessAt, ok := m.lastAccess[key]; ok && !accessAt.IsZero() {
+			if updatedAt.IsZero() || accessAt.After(updatedAt) {
+				return accessAt
+			}
+		}
+	}
+	return updatedAt
+}
+
+func (m *memoryStore) confidenceForKey(key string) float64 {
+	if m == nil || key == "::" {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	state, ok := m.confidence[key]
+	if !ok {
+		return 0
+	}
+	denominator := state.alpha + state.beta
+	if denominator <= 0 {
+		return 0
+	}
+	score := state.alpha / denominator
+	if score < 0 {
+		return 0
+	}
+	if score > 1 {
+		return 1
+	}
+	return score
+}
+
+func memoryStoreIncludeOptions(options []bool) (includeCold bool, includeEphemeral bool) {
+	if len(options) > 0 {
+		includeCold = options[0]
+	}
+	if len(options) > 1 {
+		includeEphemeral = options[1]
+	}
+	return includeCold, includeEphemeral
+}
+
+func (m *memoryStore) collectDocs(ctx context.Context, projectFilter string, options ...bool) ([]memoryStoreDoc, error) {
+	includeCold, includeEphemeral := memoryStoreIncludeOptions(options)
 	if m == nil || !m.isEnabled() {
 		return []memoryStoreDoc{}, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if docs, ok := m.collectDocsFromHistoryIndex(ctx, projectFilter); ok {
+	if docs, ok := m.collectDocsFromHistoryIndex(ctx, projectFilter, includeCold, includeEphemeral); ok {
 		return docs, nil
 	}
-	return m.collectDocsFromDisk(ctx, projectFilter, true, false)
+	return m.collectDocsFromDisk(ctx, projectFilter, includeCold, includeEphemeral)
 }
 
-func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter string, includeCold bool, includeEphemeral bool) ([]memoryStoreDoc, error) {
+func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter string, options ...bool) ([]memoryStoreDoc, error) {
+	includeCold, includeEphemeral := memoryStoreIncludeOptions(options)
 	if m == nil || !m.isEnabled() {
 		return []memoryStoreDoc{}, nil
 	}
@@ -1216,6 +1919,14 @@ func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter str
 	for key, value := range m.latestTopic {
 		latestTopic[key] = value
 	}
+	latestLifecycle := make(map[string]string, len(m.latestLifecycle))
+	for key, value := range m.latestLifecycle {
+		latestLifecycle[key] = value
+	}
+	latestStorageTier := make(map[string]string, len(m.latestStorageTier))
+	for key, value := range m.latestStorageTier {
+		latestStorageTier[key] = value
+	}
 	exactStatePaths := make(map[string]struct{}, len(m.exactStatePaths))
 	for key := range m.exactStatePaths {
 		exactStatePaths[key] = struct{}{}
@@ -1223,8 +1934,8 @@ func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter str
 	m.mu.RUnlock()
 
 	docs := make([]memoryStoreDoc, 0, 1024)
-	writePolicy := loadWriteIngressPolicy()
 	scanned := 0
+	writePolicy := loadWriteIngressPolicy()
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
@@ -1287,20 +1998,46 @@ func (m *memoryStore) collectDocsFromDisk(ctx context.Context, projectFilter str
 			return ctx.Err()
 		default:
 		}
-		topic := latestTopic[memoryStoreKey(project, fileName)]
+		key := memoryStoreKey(project, fileName)
+		topic := latestTopic[key]
 		if strings.TrimSpace(topic) == "" {
 			topic = deriveTopicFromFile(fileName)
+		}
+		lifecycle := normalizeMemoryLifecycle(latestLifecycle[key])
+		storageTier := normalizeMemoryStorageTier(latestStorageTier[key])
+		if isEphemeralMemoryIdentity(fileName, topic, string(bytes), lifecycle) {
+			lifecycle = "test"
+		}
+		if !shouldSurfaceMemoryLifecycle(lifecycle, includeEphemeral) {
+			return nil
+		}
+		if !includeCold && (storageTier == "deep" || storageTier == "retired") {
+			return nil
 		}
 		updatedAt := time.Time{}
 		if info != nil {
 			updatedAt = info.ModTime().UTC()
 		}
+		lastTouch := m.docLastTouch(key, updatedAt)
+		horizonDays := m.effectiveHotHorizonDays(key)
+		if !includeCold && horizonDays > 0 && !lastTouch.IsZero() {
+			cutoff := time.Now().UTC().Add(-time.Duration(horizonDays) * 24 * time.Hour)
+			if lastTouch.Before(cutoff) {
+				return nil
+			}
+		}
 		docs = append(docs, memoryStoreDoc{
-			Project:   project,
-			FileName:  fileName,
-			TopicPath: topic,
-			Summary:   clipSummary(string(bytes), m.policy.maxSummaryChars),
-			UpdatedAt: updatedAt,
+			Project:     project,
+			FileName:    fileName,
+			TopicPath:   topic,
+			Summary:     clipSummary(string(bytes), m.policy.maxSummaryChars),
+			UpdatedAt:   updatedAt,
+			ObjectID:    m.objectIDFor(project, fileName, topic, sha256Hex(string(bytes))),
+			Horizon:     horizonDays,
+			Score:       m.confidenceForKey(key),
+			LastTouch:   lastTouch,
+			Lifecycle:   lifecycle,
+			StorageTier: storageTier,
 		})
 		return nil
 	})
@@ -1329,7 +2066,8 @@ func parseMemoryStoreKeyToken(token string) (string, string, bool) {
 	return project, fileName, true
 }
 
-func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFilter string) ([]memoryStoreDoc, bool) {
+func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFilter string, options ...bool) ([]memoryStoreDoc, bool) {
+	includeCold, includeEphemeral := memoryStoreIncludeOptions(options)
 	if m == nil || !m.policy.rollupUseHistoryIndex {
 		return nil, false
 	}
@@ -1339,7 +2077,10 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 	for key, value := range m.latestTopic {
 		latestTopic[key] = value
 	}
-	recent := append([]memoryStoreEntry(nil), m.recent...)
+	currentState := make(map[string]memoryCurrentState, len(m.currentState))
+	for key, state := range m.currentState {
+		currentState[key] = state
+	}
 	exactStatePaths := make(map[string]struct{}, len(m.exactStatePaths))
 	for key := range m.exactStatePaths {
 		exactStatePaths[key] = struct{}{}
@@ -1349,20 +2090,23 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 		return nil, false
 	}
 	type recentMeta struct {
-		summary   string
-		updated   time.Time
-		agentID   string
-		sessionID string
-		rawBytes  int
+		summary     string
+		updated     time.Time
+		objectID    string
+		horizon     int
+		confidence  float64
+		lastAccess  string
+		contentRef  string
+		lifecycle   string
+		storageTier string
 	}
 	metadataByKey := map[string]recentMeta{}
-	for i := len(recent) - 1; i >= 0; i-- {
-		entry := recent[i]
-		key := memoryStoreKey(entry.Project, entry.FileName)
-		if key == "::" {
+	for key, state := range currentState {
+		if state.Tombstone {
 			continue
 		}
-		if _, exists := metadataByKey[key]; exists {
+		entry := state.Entry
+		if key == "::" {
 			continue
 		}
 		updated := time.Time{}
@@ -1370,11 +2114,15 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 			updated = parsed.UTC()
 		}
 		metadataByKey[key] = recentMeta{
-			summary:   strings.TrimSpace(entry.Summary),
-			updated:   updated,
-			agentID:   strings.TrimSpace(entry.AgentID),
-			sessionID: strings.TrimSpace(entry.SessionID),
-			rawBytes:  entry.RawBytes,
+			summary:     strings.TrimSpace(entry.Summary),
+			updated:     updated,
+			objectID:    strings.TrimSpace(entry.ObjectID),
+			horizon:     entry.HorizonDays,
+			confidence:  entry.Confidence,
+			lastAccess:  strings.TrimSpace(entry.LastAccess),
+			contentRef:  strings.TrimSpace(entry.ContentRef),
+			lifecycle:   normalizeMemoryLifecycle(entry.Lifecycle),
+			storageTier: normalizeMemoryStorageTier(entry.StorageTier),
 		}
 	}
 	docs := make([]memoryStoreDoc, 0, len(latestTopic))
@@ -1400,15 +2148,57 @@ func (m *memoryStore) collectDocsFromHistoryIndex(ctx context.Context, projectFi
 			topic = deriveTopicFromFile(fileName)
 		}
 		meta := metadataByKey[key]
+		lifecycle := normalizeMemoryLifecycle(meta.lifecycle)
+		if isEphemeralMemoryIdentity(fileName, topic, meta.summary, lifecycle) {
+			lifecycle = "test"
+		}
+		if !shouldSurfaceMemoryLifecycle(lifecycle, includeEphemeral) {
+			continue
+		}
+		storageTier := normalizeMemoryStorageTier(meta.storageTier)
+		if !includeCold && (storageTier == "deep" || storageTier == "retired") {
+			continue
+		}
+		effectiveHorizon := m.effectiveHotHorizonDays(key)
+		if meta.horizon != 0 {
+			effectiveHorizon = meta.horizon
+			if effectiveHorizon < 0 {
+				effectiveHorizon = 0
+			}
+		}
+		lastTouch := meta.updated
+		if accessedAt, ok := parseTimeBestEffort(meta.lastAccess); ok {
+			if lastTouch.IsZero() || accessedAt.After(lastTouch) {
+				lastTouch = accessedAt
+			}
+		}
+		lastTouch = m.docLastTouch(key, lastTouch)
+		if !includeCold && effectiveHorizon > 0 && !lastTouch.IsZero() {
+			cutoff := time.Now().UTC().Add(-time.Duration(effectiveHorizon) * 24 * time.Hour)
+			if lastTouch.Before(cutoff) {
+				continue
+			}
+		}
+		objectID := strings.TrimSpace(meta.objectID)
+		if objectID == "" {
+			objectID = m.objectIDFor(project, fileName, topic, strings.TrimPrefix(strings.ToLower(meta.contentRef), "sha256:"))
+		}
+		score := meta.confidence
+		if score <= 0 {
+			score = m.confidenceForKey(key)
+		}
 		docs = append(docs, memoryStoreDoc{
-			Project:   project,
-			FileName:  fileName,
-			TopicPath: topic,
-			Summary:   clipSummary(meta.summary, m.policy.maxSummaryChars),
-			AgentID:   meta.agentID,
-			SessionID: meta.sessionID,
-			UpdatedAt: meta.updated,
-			RawBytes:  meta.rawBytes,
+			Project:     project,
+			FileName:    fileName,
+			TopicPath:   topic,
+			Summary:     clipSummary(meta.summary, m.policy.maxSummaryChars),
+			UpdatedAt:   meta.updated,
+			ObjectID:    objectID,
+			Horizon:     effectiveHorizon,
+			Score:       score,
+			LastTouch:   lastTouch,
+			Lifecycle:   lifecycle,
+			StorageTier: storageTier,
 		})
 	}
 	return docs, true
@@ -1436,60 +2226,158 @@ func topicDepth(topic string) int {
 }
 
 func (m *memoryStore) topicRollups(project string, minCount int, limit int, offset int) map[string]any {
-	return m.topicRollupsWithContext(context.Background(), project, minCount, limit, offset)
+	return m.topicRollupsWithContext(context.Background(), project, minCount, limit, offset, false)
 }
 
-func (m *memoryStore) topicRollupSignals(project string) map[string]topicRollupSignal {
-	signals := map[string]topicRollupSignal{}
+func (m *memoryStore) topicRollupsWithContext(
+	ctx context.Context,
+	project string,
+	minCount int,
+	limit int,
+	offset int,
+	options ...bool,
+) map[string]any {
+	includeCold, _ := memoryStoreIncludeOptions(options)
+	return m.topicRollupsWithOptions(ctx, project, minCount, limit, offset, includeCold, false)
+}
+
+func (m *memoryStore) topicRollupSignals(project string, includeCold bool, includeEphemeral bool) map[string]*topicRollupSignal {
 	if m == nil || !m.isEnabled() {
-		return signals
+		return map[string]*topicRollupSignal{}
 	}
-	normalizedProject := strings.TrimSpace(project)
+	windowHours := envInt("GO_MEMORY_REVIEW_RECENT_WINDOW_HOURS", 72)
+	if windowHours < 1 {
+		windowHours = 72
+	}
+	if windowHours > 2160 {
+		windowHours = 2160
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(windowHours) * time.Hour)
+	projectFilter := strings.TrimSpace(project)
+
 	m.mu.RLock()
 	entries := append([]memoryStoreEntry(nil), m.recent...)
 	m.mu.RUnlock()
+
+	signals := map[string]*topicRollupSignal{}
+	ensure := func(path string) *topicRollupSignal {
+		signal := signals[path]
+		if signal == nil {
+			signal = &topicRollupSignal{
+				uniqueAgents:    map[string]struct{}{},
+				uniqueSessions:  map[string]struct{}{},
+				lifecycleCounts: map[string]int{},
+				diffStateCounts: map[string]int{},
+			}
+			signals[path] = signal
+		}
+		return signal
+	}
+
 	for _, entry := range entries {
-		if normalizedProject != "" && !strings.EqualFold(strings.TrimSpace(entry.Project), normalizedProject) {
+		if isMemoryTombstone(entry) {
 			continue
 		}
-		if !shouldSurfaceMemoryLifecycle(entry.Lifecycle, false) {
+		if projectFilter != "" && !strings.EqualFold(strings.TrimSpace(entry.Project), projectFilter) {
 			continue
 		}
-		topic := strings.Trim(strings.TrimSpace(entry.TopicPath), "/")
-		if topic == "" {
-			topic = deriveTopicFromFile(entry.FileName)
+		topicPath := strings.Trim(strings.TrimSpace(entry.TopicPath), "/")
+		if topicPath == "" {
+			topicPath = deriveTopicFromFile(entry.FileName)
+		}
+		lifecycle := normalizeMemoryLifecycle(entry.Lifecycle)
+		if !shouldSurfaceMemoryLifecycle(lifecycle, includeEphemeral) {
+			continue
 		}
 		createdAt := time.Time{}
 		if parsed, ok := parseTimeBestEffort(entry.CreatedAt); ok {
-			createdAt = parsed
+			createdAt = parsed.UTC()
 		}
-		for _, prefix := range topicPrefixes(topic) {
-			signal := signals[prefix]
-			if signal.uniqueAgents == nil {
-				signal.uniqueAgents = map[string]struct{}{}
+		key := memoryStoreKey(entry.Project, entry.FileName)
+		effectiveHorizon := m.effectiveHotHorizonDays(key)
+		if entry.HorizonDays != 0 {
+			effectiveHorizon = entry.HorizonDays
+			if effectiveHorizon < 0 {
+				effectiveHorizon = 0
 			}
-			if signal.uniqueSessions == nil {
-				signal.uniqueSessions = map[string]struct{}{}
+		}
+		lastTouch := createdAt
+		if accessedAt, ok := parseTimeBestEffort(entry.LastAccess); ok && (lastTouch.IsZero() || accessedAt.After(lastTouch)) {
+			lastTouch = accessedAt.UTC()
+		}
+		lastTouch = m.docLastTouch(key, lastTouch)
+		if !includeCold && effectiveHorizon > 0 && !lastTouch.IsZero() {
+			hotCutoff := time.Now().UTC().Add(-time.Duration(effectiveHorizon) * 24 * time.Hour)
+			if lastTouch.Before(hotCutoff) {
+				continue
 			}
+		}
+		recent := createdAt.IsZero() || createdAt.After(cutoff) || createdAt.Equal(cutoff)
+		for _, prefix := range topicPrefixes(topicPath) {
+			signal := ensure(prefix)
 			signal.writeCount += 1
-			signal.recentCount += 1
+			if recent {
+				signal.recentCount += 1
+			}
+			if agentID := strings.TrimSpace(entry.AgentID); agentID != "" {
+				signal.uniqueAgents[agentID] = struct{}{}
+			} else {
+				signal.unattributedWrites += 1
+			}
+			if sessionID := strings.TrimSpace(entry.SessionID); sessionID != "" {
+				signal.uniqueSessions[sessionID] = struct{}{}
+			}
+			signal.lifecycleCounts[lifecycle] += 1
+			diffState := strings.TrimSpace(entry.DiffState)
+			if diffState == "" {
+				diffState = "unknown"
+			}
+			signal.diffStateCounts[diffState] += 1
 			signal.rawBytes += entry.RawBytes
 			if !createdAt.IsZero() && (signal.latestAt.IsZero() || createdAt.After(signal.latestAt)) {
 				signal.latestAt = createdAt
 			}
-			if strings.TrimSpace(entry.AgentID) != "" {
-				signal.uniqueAgents[strings.TrimSpace(entry.AgentID)] = struct{}{}
-			}
-			if strings.TrimSpace(entry.SessionID) != "" {
-				signal.uniqueSessions[strings.TrimSpace(entry.SessionID)] = struct{}{}
-			}
-			signals[prefix] = signal
 		}
 	}
 	return signals
 }
 
-func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project string, minCount int, limit int, offset int) map[string]any {
+func topicRollupIntensityScore(eventCount int, recentCount int, uniqueAgentCount int, uniqueSessionCount int, rewriteCount int) int {
+	score := recentCount*8 + uniqueAgentCount*12 + uniqueSessionCount*6 + rewriteCount*5 + int(math.Sqrt(float64(maxInt(eventCount, 0)))*6)
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func cloneIntCounts(counts map[string]int) map[string]int {
+	out := map[string]int{}
+	for key, value := range counts {
+		out[key] = value
+	}
+	return out
+}
+
+func intCountsToAny(counts map[string]int) map[string]any {
+	out := map[string]any{}
+	for key, value := range counts {
+		out[key] = value
+	}
+	return out
+}
+
+func (m *memoryStore) topicRollupsWithOptions(
+	ctx context.Context,
+	project string,
+	minCount int,
+	limit int,
+	offset int,
+	includeCold bool,
+	includeEphemeral bool,
+) map[string]any {
 	if minCount < 1 {
 		minCount = 1
 	}
@@ -1502,7 +2390,7 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 	if offset < 0 {
 		offset = 0
 	}
-	if cached, ok := m.getTopicRollupCache(project, minCount); ok {
+	if cached, ok := m.getTopicRollupCache(project, minCount, includeCold, includeEphemeral); ok {
 		topics := cached.topics
 		total := cached.total
 		if offset >= total {
@@ -1518,19 +2406,23 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 			out = append(out, row)
 		}
 		return map[string]any{
-			"project":               project,
-			"topics":                out,
-			"total":                 total,
-			"offset":                offset,
-			"limit":                 limit,
-			"min_count":             minCount,
-			"historyEntriesScanned": len(m.recent),
-			"historyEntriesDeduped": len(m.recent),
-			"generatedAt":           nowUTCISO(),
-			"cache":                 "hit",
+			"project":                project,
+			"topics":                 out,
+			"total":                  total,
+			"offset":                 offset,
+			"limit":                  limit,
+			"min_count":              minCount,
+			"historyEntriesScanned":  len(m.recent),
+			"historyEntriesDeduped":  len(m.recent),
+			"generatedAt":            nowUTCISO(),
+			"cache":                  "hit",
+			"include_cold":           includeCold,
+			"include_ephemeral":      includeEphemeral,
+			"hot_index_horizon_days": m.policy.hotIndexMaxAgeDays,
+			"user_horizon_enabled":   m.policy.userHorizonEnabled,
 		}
 	}
-	rows, err := m.collectDocs(ctx, project)
+	rows, err := m.collectDocs(ctx, project, includeCold, includeEphemeral)
 	if err != nil {
 		return map[string]any{
 			"project": project,
@@ -1547,28 +2439,31 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 			agg := aggs[prefix]
 			if agg == nil {
 				agg = &topicRollupAggregate{
-					path:           prefix,
-					project:        doc.Project,
-					depth:          topicDepth(prefix),
-					uniqueFiles:    map[string]struct{}{},
-					uniqueAgents:   map[string]struct{}{},
-					uniqueSessions: map[string]struct{}{},
-					children:       map[string]struct{}{},
-					summarySnips:   []string{},
-					filePartitions: []map[string]any{},
+					path:            prefix,
+					project:         doc.Project,
+					depth:           topicDepth(prefix),
+					uniqueFiles:     map[string]struct{}{},
+					uniqueAgents:    map[string]struct{}{},
+					uniqueSessions:  map[string]struct{}{},
+					lifecycleCounts: map[string]int{},
+					diffStateCounts: map[string]int{},
+					children:        map[string]struct{}{},
+					summarySnips:    []string{},
+					filePartitions:  []map[string]any{},
 				}
 				aggs[prefix] = agg
 			}
 			agg.eventCount += 1
-			agg.writeCount += 1
-			agg.rawBytes += doc.RawBytes
+			if doc.Score > 0 {
+				agg.confidenceSum += doc.Score
+				agg.confidenceCount += 1
+			}
+			if doc.Horizon > agg.maxHorizonDays {
+				agg.maxHorizonDays = doc.Horizon
+			}
 			agg.uniqueFiles[doc.FileName] = struct{}{}
-			if strings.TrimSpace(doc.AgentID) != "" {
-				agg.uniqueAgents[strings.TrimSpace(doc.AgentID)] = struct{}{}
-			}
-			if strings.TrimSpace(doc.SessionID) != "" {
-				agg.uniqueSessions[strings.TrimSpace(doc.SessionID)] = struct{}{}
-			}
+			lifecycle := normalizeMemoryLifecycle(doc.Lifecycle)
+			agg.lifecycleCounts[lifecycle] += 1
 			if !doc.UpdatedAt.IsZero() && (agg.latestAt.IsZero() || doc.UpdatedAt.After(agg.latestAt)) {
 				agg.latestAt = doc.UpdatedAt
 			}
@@ -1588,6 +2483,7 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 				agg.filePartitions = append(agg.filePartitions, map[string]any{
 					"file":       doc.FileName,
 					"topic_path": doc.TopicPath,
+					"lifecycle":  normalizeMemoryLifecycle(doc.Lifecycle),
 				})
 			}
 		}
@@ -1601,36 +2497,47 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 		}
 	}
 
-	signals := m.topicRollupSignals(project)
+	signals := m.topicRollupSignals(project, includeCold, includeEphemeral)
 	for path, signal := range signals {
+		if signal == nil {
+			continue
+		}
 		agg := aggs[path]
 		if agg == nil {
+			projectName := strings.TrimSpace(project)
+			if projectName == "" {
+				projectName = "workspace"
+			}
 			agg = &topicRollupAggregate{
-				path:           path,
-				project:        project,
-				depth:          topicDepth(path),
-				uniqueFiles:    map[string]struct{}{},
-				uniqueAgents:   map[string]struct{}{},
-				uniqueSessions: map[string]struct{}{},
-				children:       map[string]struct{}{},
-				summarySnips:   []string{},
-				filePartitions: []map[string]any{},
+				path:            path,
+				project:         projectName,
+				depth:           topicDepth(path),
+				uniqueFiles:     map[string]struct{}{},
+				uniqueAgents:    map[string]struct{}{},
+				uniqueSessions:  map[string]struct{}{},
+				lifecycleCounts: map[string]int{},
+				diffStateCounts: map[string]int{},
+				children:        map[string]struct{}{},
+				summarySnips:    []string{},
+				filePartitions:  []map[string]any{},
 			}
 			aggs[path] = agg
 		}
-		agg.writeCount = maxInt(agg.writeCount, signal.writeCount)
+		if agg.eventCount == 0 {
+			agg.eventCount = signal.writeCount
+		}
 		agg.recentCount = maxInt(agg.recentCount, signal.recentCount)
-		if signal.rawBytes > agg.rawBytes {
-			agg.rawBytes = signal.rawBytes
-		}
-		if !signal.latestAt.IsZero() && (agg.latestAt.IsZero() || signal.latestAt.After(agg.latestAt)) {
-			agg.latestAt = signal.latestAt
-		}
+		agg.rawBytes += signal.rawBytes
 		for agent := range signal.uniqueAgents {
 			agg.uniqueAgents[agent] = struct{}{}
 		}
 		for session := range signal.uniqueSessions {
 			agg.uniqueSessions[session] = struct{}{}
+		}
+		agg.lifecycleCounts = cloneIntCounts(signal.lifecycleCounts)
+		agg.diffStateCounts = cloneIntCounts(signal.diffStateCounts)
+		if !signal.latestAt.IsZero() && (agg.latestAt.IsZero() || signal.latestAt.After(agg.latestAt)) {
+			agg.latestAt = signal.latestAt
 		}
 	}
 
@@ -1663,24 +2570,36 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 		if !agg.latestAt.IsZero() {
 			latest = agg.latestAt.UTC().Format(time.RFC3339Nano)
 		}
-		intensity := minInt(100, agg.writeCount*8+len(uniqueAgents)*12+len(uniqueSessions)*5)
+		confidenceMean := 0.0
+		if agg.confidenceCount > 0 {
+			confidenceMean = agg.confidenceSum / float64(agg.confidenceCount)
+		}
+		writeCount := agg.eventCount
+		if signal := signals[agg.path]; signal != nil && signal.writeCount > writeCount {
+			writeCount = signal.writeCount
+		}
+		rewriteCount := agg.diffStateCounts["rewrite"]
 		topics = append(topics, map[string]any{
 			"project":             agg.project,
 			"path":                agg.path,
 			"depth":               agg.depth,
 			"eventCount":          agg.eventCount,
 			"recentEventCount":    agg.recentCount,
-			"writeCount":          agg.writeCount,
-			"rawBytes":            agg.rawBytes,
+			"writeCount":          writeCount,
 			"uniqueFileCount":     len(uniqueFiles),
 			"uniqueFiles":         uniqueFiles,
 			"uniqueAgentCount":    len(uniqueAgents),
 			"uniqueAgents":        uniqueAgents,
 			"uniqueSessionCount":  len(uniqueSessions),
 			"uniqueSessions":      uniqueSessions,
-			"agentIntensityScore": intensity,
+			"lifecycleCounts":     intCountsToAny(agg.lifecycleCounts),
+			"diffStateCounts":     intCountsToAny(agg.diffStateCounts),
+			"rawBytes":            agg.rawBytes,
+			"agentIntensityScore": topicRollupIntensityScore(agg.eventCount, agg.recentCount, len(uniqueAgents), len(uniqueSessions), rewriteCount),
 			"latestTimestamp":     latest,
 			"summarySnippets":     agg.summarySnips,
+			"confidenceMean":      confidenceMean,
+			"maxHorizonDays":      agg.maxHorizonDays,
 			"numericFacts":        []any{},
 			"inference": []string{
 				"Go memory-store rollup generated from project files and write history.",
@@ -1700,7 +2619,7 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 	})
 
 	total := len(topics)
-	m.putTopicRollupCache(project, minCount, topics, total)
+	m.putTopicRollupCache(project, minCount, includeCold, includeEphemeral, topics, total)
 	if offset >= total {
 		topics = []map[string]any{}
 	} else {
@@ -1715,23 +2634,21 @@ func (m *memoryStore) topicRollupsWithContext(ctx context.Context, project strin
 		out = append(out, row)
 	}
 	return map[string]any{
-		"project":               project,
-		"topics":                out,
-		"total":                 total,
-		"offset":                offset,
-		"limit":                 limit,
-		"min_count":             minCount,
-		"historyEntriesScanned": len(m.recent),
-		"historyEntriesDeduped": len(m.recent),
-		"generatedAt":           nowUTCISO(),
-		"cache":                 "miss",
+		"project":                project,
+		"topics":                 out,
+		"total":                  total,
+		"offset":                 offset,
+		"limit":                  limit,
+		"min_count":              minCount,
+		"historyEntriesScanned":  len(m.recent),
+		"historyEntriesDeduped":  len(m.recent),
+		"generatedAt":            nowUTCISO(),
+		"cache":                  "miss",
+		"include_cold":           includeCold,
+		"include_ephemeral":      includeEphemeral,
+		"hot_index_horizon_days": m.policy.hotIndexMaxAgeDays,
+		"user_horizon_enabled":   m.policy.userHorizonEnabled,
 	}
-}
-
-func (m *memoryStore) topicRollupsWithOptions(ctx context.Context, project string, minCount int, limit int, offset int, includeCold bool, includeEphemeral bool) map[string]any {
-	_ = includeCold
-	_ = includeEphemeral
-	return m.topicRollupsWithContext(ctx, project, minCount, limit, offset)
 }
 
 func buildTopicTree(counts map[string]int) map[string]any {

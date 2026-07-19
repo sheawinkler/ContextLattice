@@ -24,7 +24,7 @@ Product positioning (public-safe):
 - Context Lattice is local-first memory infrastructure for AI agents.
 - Context Lattice complements local AI workspaces: workspaces are cockpits, while ContextLattice is the durable memory infrastructure and shared memory spine they can plug into.
 # BEGIN GENERATED COMMERCIAL TRUTH: llms-release
-- Current public release baseline is v3.21.0. The CLI is the primary product interface; the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration.
+- Current public release baseline is v3.22.0. The CLI is the primary product interface; the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration.
 # END GENERATED COMMERCIAL TRUTH: llms-release
 - Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery; full/operator stacks can add pgvector, raw ledger, behavior provenance, deeper async recall lanes, and stronger reliability controls behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, behavior provenance, and retrieval quality over time.
@@ -47,6 +47,7 @@ Agent usage expectations:
 - If an agent runtime supports post-tool hooks, configure `contextlattice_async_inbox_hook --session-id <id>` as a fail-open hook; it delegates to the same bounded inbox drain.
 - Use `contextlattice_agent_trace --session-id <id> --tree` to inspect the bounded run-shaping trail and `contextlattice_agent_trace --session-id <id> --markdown` to export a run card. Add `--proof` for the deterministic six-stage evidence timeline; it exposes gaps instead of inferring missing links.
 - Use `contextlattice_run_advisor "<task>" --pretty` to check prompt readiness, continuation advice, objective coherence, graph quality, and next actions before a hard model call.
+- Use `contextlattice_policy_lab status --pretty` to inspect Policy Laboratory readiness; use its simulation, policy-card, promotion, retirement, contradiction, and temperature subcommands only with explicit project scope and approval for mutations.
 - Use `contextlattice_skills_index search "<query>" --pretty` to discover relevant active skills/capabilities from configured roots such as `$HOME/.codex/skills` without loading the whole skills tree into prompt context.
 - For operator validation, prefer the one-command live proof: `contextlattice_agent_runtime_proof --pretty`.
 - Prefer hook-first startup only when an adapter profile is unavailable: `contextlattice_agent_start --soft --compact`.

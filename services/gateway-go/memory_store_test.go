@@ -133,7 +133,7 @@ func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
 		t.Fatalf("seed put failed: %v", err)
 	}
 
-	first := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0)
+	first := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0, false)
 	totalBefore := anyToInt(first["total"], 0)
 	if totalBefore < 1 {
 		t.Fatalf("expected non-empty topic rollups, got %#v", first)
@@ -146,7 +146,7 @@ func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
 		t.Fatalf("write manual file failed: %v", err)
 	}
 
-	cached := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0)
+	cached := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0, false)
 	totalCached := anyToInt(cached["total"], 0)
 	if totalCached != totalBefore {
 		t.Fatalf("expected cached rollups unchanged before ttl expiry, before=%d cached=%d", totalBefore, totalCached)
@@ -156,7 +156,7 @@ func TestMemoryStoreTopicRollupCacheTTL(t *testing.T) {
 	}
 
 	time.Sleep(1200 * time.Millisecond)
-	after := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0)
+	after := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 5000, 0, false)
 	totalAfter := anyToInt(after["total"], 0)
 	if totalAfter <= totalBefore {
 		t.Fatalf("expected cache expiry to pick up manual file, before=%d after=%d", totalBefore, totalAfter)
@@ -198,7 +198,7 @@ func TestMemoryStoreCollectDocsSkipsLargeFilesAndBoundsRead(t *testing.T) {
 		t.Fatalf("write large file failed: %v", err)
 	}
 
-	rows, err := store.collectDocs(context.Background(), "contextlattice")
+	rows, err := store.collectDocs(context.Background(), "contextlattice", false, false)
 	if err != nil {
 		t.Fatalf("collectDocs failed: %v", err)
 	}
@@ -297,6 +297,237 @@ func TestMemoryStoreContentAddressedBlobHardlinkMode(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreHotHorizonFiltersOldDocsButIncludeColdRestores(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+	t.Setenv("GO_MEMORY_STORE_HOT_INDEX_MAX_AGE_DAYS", "1")
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	if _, _, err := store.put(normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/horizon.md",
+		content:   "horizon test",
+		topicPath: "runbooks/hot-cold",
+	}); err != nil {
+		t.Fatalf("put failed: %v", err)
+	}
+
+	key := memoryStoreKey("contextlattice", "notes/horizon.md")
+	oldTs := time.Now().UTC().Add(-72 * time.Hour)
+	oldISO := oldTs.Format(time.RFC3339Nano)
+	store.mu.Lock()
+	store.lastAccess[key] = oldTs
+	current := store.currentState[key]
+	current.Entry.CreatedAt = oldISO
+	current.Entry.LastAccess = oldISO
+	store.currentState[key] = current
+	for idx := range store.recent {
+		if store.recent[idx].Project == "contextlattice" && store.recent[idx].FileName == "notes/horizon.md" {
+			store.recent[idx].LastAccess = oldISO
+			store.recent[idx].CreatedAt = oldISO
+		}
+	}
+	store.mu.Unlock()
+	filePath := filepath.Join(root, "contextlattice", "notes", "horizon.md")
+	if err := os.Chtimes(filePath, oldTs, oldTs); err != nil {
+		t.Fatalf("chtimes failed: %v", err)
+	}
+
+	hotOnly := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 100, 0, false)
+	if anyToInt(hotOnly["total"], 0) != 0 {
+		t.Fatalf("expected hot-only rollups to filter old docs, payload=%v", hotOnly)
+	}
+
+	withCold := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 100, 0, true)
+	if anyToInt(withCold["total"], 0) < 1 {
+		t.Fatalf("expected include_cold to restore rows, payload=%v", withCold)
+	}
+}
+
+func TestMemoryStorePerWriteHorizonOverridesGlobal(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+	t.Setenv("GO_MEMORY_STORE_HOT_INDEX_MAX_AGE_DAYS", "1")
+	t.Setenv("GO_MEMORY_STORE_HORIZON_TAG_PREFIX", "horizon_days:")
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	if _, _, err := store.put(normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/overridden.md",
+		content:   "override",
+		topicPath: "runbooks/hot-cold",
+		tags:      []string{"horizon_days:30"},
+	}); err != nil {
+		t.Fatalf("put failed: %v", err)
+	}
+	key := memoryStoreKey("contextlattice", "notes/overridden.md")
+	oldTs := time.Now().UTC().Add(-7 * 24 * time.Hour)
+	oldISO := oldTs.Format(time.RFC3339Nano)
+	store.mu.Lock()
+	store.lastAccess[key] = oldTs
+	for idx := range store.recent {
+		if store.recent[idx].Project == "contextlattice" && store.recent[idx].FileName == "notes/overridden.md" {
+			store.recent[idx].LastAccess = oldISO
+			store.recent[idx].CreatedAt = oldISO
+		}
+	}
+	store.mu.Unlock()
+	filePath := filepath.Join(root, "contextlattice", "notes", "overridden.md")
+	if err := os.Chtimes(filePath, oldTs, oldTs); err != nil {
+		t.Fatalf("chtimes failed: %v", err)
+	}
+
+	hotOnly := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 100, 0, false)
+	if anyToInt(hotOnly["total"], 0) < 1 {
+		t.Fatalf("expected per-write horizon override to keep row hot, payload=%v", hotOnly)
+	}
+}
+
+func TestMemoryStoreEphemeralLifecycleExcludedFromRollupsByDefault(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	if _, _, err := store.put(normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/durable.md",
+		content:   "durable marker",
+		topicPath: "runbooks/lifecycle",
+		lifecycle: "durable",
+	}); err != nil {
+		t.Fatalf("put durable failed: %v", err)
+	}
+	if _, _, err := store.put(normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/ephemeral.md",
+		content:   "ephemeral marker",
+		topicPath: "runbooks/lifecycle",
+		lifecycle: "ephemeral",
+	}); err != nil {
+		t.Fatalf("put ephemeral failed: %v", err)
+	}
+
+	defaultRollups := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 100, 0, false)
+	defaultTopic := findRollupTopicForTest(defaultRollups, "runbooks/lifecycle")
+	if anyToInt(defaultTopic["eventCount"], 0) != 1 {
+		t.Fatalf("expected default rollup to exclude ephemeral row, topic=%#v payload=%#v", defaultTopic, defaultRollups)
+	}
+
+	withEphemeral := store.topicRollupsWithOptions(context.Background(), "contextlattice", 1, 100, 0, false, true)
+	includedTopic := findRollupTopicForTest(withEphemeral, "runbooks/lifecycle")
+	if anyToInt(includedTopic["eventCount"], 0) != 2 {
+		t.Fatalf("expected includeEphemeral rollup to include both rows, topic=%#v payload=%#v", includedTopic, withEphemeral)
+	}
+}
+
+func TestMemoryStoreTopicRollupsExposeAgentIntensitySignals(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	writes := []normalizedWrite{
+		{project: "contextlattice", fileName: "notes/review-a.md", content: "first review signal", topicPath: "runbooks/review", agentID: "agent-a", sessionID: "session-1"},
+		{project: "contextlattice", fileName: "notes/review-b.md", content: "second review signal", topicPath: "runbooks/review", agentID: "agent-b", sessionID: "session-2"},
+		{project: "contextlattice", fileName: "notes/review-a.md", content: "rewritten review signal with mitigation", topicPath: "runbooks/review", agentID: "agent-a", sessionID: "session-1"},
+	}
+	for _, item := range writes {
+		if _, _, err := store.put(item); err != nil {
+			t.Fatalf("put failed: %v", err)
+		}
+	}
+
+	rollups := store.topicRollupsWithContext(context.Background(), "contextlattice", 1, 100, 0, false)
+	topic := findRollupTopicForTest(rollups, "runbooks/review")
+	if anyToInt(topic["writeCount"], 0) < 3 {
+		t.Fatalf("expected writeCount from history, topic=%#v payload=%#v", topic, rollups)
+	}
+	if anyToInt(topic["recentEventCount"], 0) < 3 {
+		t.Fatalf("expected recent event count from write history, topic=%#v", topic)
+	}
+	if anyToInt(topic["uniqueAgentCount"], 0) != 2 {
+		t.Fatalf("expected uniqueAgentCount=2, topic=%#v", topic)
+	}
+	if anyToInt(topic["uniqueSessionCount"], 0) != 2 {
+		t.Fatalf("expected uniqueSessionCount=2, topic=%#v", topic)
+	}
+	if anyToInt(topic["agentIntensityScore"], 0) <= 0 {
+		t.Fatalf("expected positive intensity score, topic=%#v", topic)
+	}
+	diffCounts := anyMap(topic["diffStateCounts"])
+	if anyToInt(diffCounts["rewrite"], 0) < 1 {
+		t.Fatalf("expected rewrite diff signal, topic=%#v", topic)
+	}
+}
+
+func findRollupTopicForTest(payload map[string]any, path string) map[string]any {
+	rawTopics, _ := payload["topics"].([]any)
+	for _, raw := range rawTopics {
+		row, _ := raw.(map[string]any)
+		if anyToString(row["path"]) == path {
+			return row
+		}
+	}
+	return map[string]any{}
+}
+
+func TestMemoryStorePutIntegrityFieldsPresent(t *testing.T) {
+	root := t.TempDir()
+	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
+	t.Setenv("GO_MEMORY_STORE_ENABLED", "true")
+	t.Setenv("GO_MEMORY_STORE_ROOT", root)
+	t.Setenv("GO_MEMORY_STORE_HISTORY_PATH", historyPath)
+
+	store, err := newMemoryStoreFromEnv()
+	if err != nil {
+		t.Fatalf("newMemoryStoreFromEnv failed: %v", err)
+	}
+	entry, _, err := store.put(normalizedWrite{
+		project:   "contextlattice",
+		fileName:  "notes/integrity.md",
+		content:   "integrity payload",
+		topicPath: "runbooks/integrity",
+	})
+	if err != nil {
+		t.Fatalf("put failed: %v", err)
+	}
+	if strings.TrimSpace(entry.ObjectID) == "" {
+		t.Fatalf("expected object_id to be populated")
+	}
+	if entry.Confidence <= 0 {
+		t.Fatalf("expected confidence > 0, got %f", entry.Confidence)
+	}
+	if strings.TrimSpace(entry.DiffState) == "" {
+		t.Fatalf("expected diff_state to be populated")
+	}
+	if strings.TrimSpace(entry.LastAccess) == "" {
+		t.Fatalf("expected last_accessed_at to be populated")
+	}
+}
+
 func TestMemoryStoreAgentEdgesAndReviewSignals(t *testing.T) {
 	root := t.TempDir()
 	historyPath := filepath.Join(root, "_contextlattice", "memory_write_history.ndjson")
@@ -354,17 +585,6 @@ func TestMemoryStoreAgentEdgesAndReviewSignals(t *testing.T) {
 	if len(patterns) == 0 {
 		t.Fatalf("expected review patterns from agent intensity")
 	}
-}
-
-func findRollupTopicForTest(payload map[string]any, path string) map[string]any {
-	rawTopics, _ := payload["topics"].([]any)
-	for _, raw := range rawTopics {
-		row, _ := raw.(map[string]any)
-		if anyToString(row["path"]) == path {
-			return row
-		}
-	}
-	return map[string]any{}
 }
 
 func asAnySliceForTest(value any) []any {

@@ -2,16 +2,16 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "254f9cb054ff13f8d45a028724705e04b749d3faab597d4ea075faa75086ca38";
+export const COMMERCIAL_CONTRACT_SHA256 = "91689d4ca0c8d47edc3c68934889e0dd2b5b10c9a6bf8cd6cbe90c4006483fcf";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.21.0",
-    "stable_tag": "v3.21.0",
-    "release_train": "3.21",
+    "version": "3.22.0",
+    "stable_tag": "v3.22.0",
+    "release_train": "3.22",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -146,6 +146,11 @@ export const COMMERCIAL_TRUTH = {
       "id": "frontier_adversarial_defense_operations",
       "buyer_label": "A retrieval immune system",
       "description": "Operate adversarial suites, incidents, and quarantine policy at workspace scale without any entitlement path that can disable core trust isolation."
+    },
+    {
+      "id": "frontier_policy_laboratory_automation",
+      "buyer_label": "Let retrieval policy earn the keys",
+      "description": "Simulate, compare, activate, schedule, and reverse evidence-bound retrieval and memory-lifecycle policy inside explicit workspace limits."
     }
   ],
   "plans": [
@@ -288,7 +293,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_continuous_counterfactual_eval",
         "frontier_evidence_reputation_activation",
         "frontier_continuous_retrieval_regression",
-        "frontier_adversarial_defense_operations"
+        "frontier_adversarial_defense_operations",
+        "frontier_policy_laboratory_automation"
       ]
     },
     {
@@ -334,7 +340,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_continuous_counterfactual_eval",
         "frontier_evidence_reputation_activation",
         "frontier_continuous_retrieval_regression",
-        "frontier_adversarial_defense_operations"
+        "frontier_adversarial_defense_operations",
+        "frontier_policy_laboratory_automation"
       ]
     }
   ],
@@ -363,138 +370,42 @@ export const COMMERCIAL_TRUTH = {
       "admin"
     ],
     "routes": [
-      "/maintenance/memory/graph/prune-volatile",
+      "/v1/inference/route",
+      "/v1/inference/chat",
+      "/v1/inference/runtime-policy",
+      "/v1/inference/embedding-policy",
       "/maintenance/storage/run",
+      "/maintenance/memory/graph/prune-volatile",
       "/maintenance/telemetry/blob-gc",
+      "/migration/runtime",
+      "/memory/context-policy/activate",
+      "/memory/context-policy/deactivate",
+      "/memory/skills/foundry/activate",
+      "/memory/skills/foundry/deactivate",
+      "/memory/context-mesh/orchestrate",
+      "/memory/continuity/automation",
+      "/memory/objectives/shared",
+      "/memory/decision-changes/shared",
       "/memory/agent-packet/shared",
       "/memory/agent-proof-timeline/shared",
       "/memory/agent-proof-timeline/shared/lifecycle",
-      "/memory/causal-bridges/governance",
-      "/memory/context-mesh/orchestrate",
-      "/memory/context-policy/activate",
-      "/memory/context-policy/deactivate",
-      "/memory/continuity/automation",
-      "/memory/decision-changes/shared",
-      "/memory/evidence-reputation/activation",
-      "/memory/objectives/shared",
-      "/memory/recall/regressions/operations",
-      "/memory/retrieval/ablation/operations",
-      "/memory/retrieval/receipts/governance",
-      "/memory/skills/foundry/activate",
-      "/memory/skills/foundry/deactivate",
-      "/memory/trust/defense/operations",
-      "/migration/runtime",
       "/telemetry/utility/analytics",
       "/telemetry/utility/policy/evaluate",
-      "/v1/inference/chat",
-      "/v1/inference/embedding-policy",
-      "/v1/inference/route",
-      "/v1/inference/runtime-policy"
+      "/memory/retrieval/receipts/governance",
+      "/memory/causal-bridges/governance",
+      "/memory/retrieval/ablation/operations",
+      "/memory/evidence-reputation/activation",
+      "/memory/recall/regressions/operations",
+      "/memory/trust/defense/operations",
+      "/memory/policy/simulation/history",
+      "/memory/policy/scoped/activation",
+      "/memory/context-policy/canary",
+      "/memory/lifecycle/automation",
+      "/memory/contradictions/review-queue",
+      "/memory/storage/temperature/automation"
     ]
   },
   "paid_feature_route_contracts": [
-    {
-      "feature_id": "frontier_adversarial_defense_operations",
-      "eligible_plan_ids": [
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/trust/defense/operations"
-      ]
-    },
-    {
-      "feature_id": "frontier_causal_bridge_governance",
-      "eligible_plan_ids": [
-        "team",
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/causal-bridges/governance"
-      ]
-    },
-    {
-      "feature_id": "frontier_continuous_counterfactual_eval",
-      "eligible_plan_ids": [
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/retrieval/ablation/operations"
-      ]
-    },
-    {
-      "feature_id": "frontier_continuous_retrieval_regression",
-      "eligible_plan_ids": [
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/recall/regressions/operations"
-      ]
-    },
-    {
-      "feature_id": "frontier_delta_packet_automation",
-      "eligible_plan_ids": [
-        "starter",
-        "team",
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/agent-packet/shared"
-      ]
-    },
-    {
-      "feature_id": "frontier_evidence_reputation_activation",
-      "eligible_plan_ids": [
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/evidence-reputation/activation"
-      ]
-    },
-    {
-      "feature_id": "frontier_retrieval_receipt_governance",
-      "eligible_plan_ids": [
-        "team",
-        "operator",
-        "enterprise"
-      ],
-      "allowed_roles": [
-        "owner",
-        "admin"
-      ],
-      "routes": [
-        "/memory/retrieval/receipts/governance"
-      ]
-    },
     {
       "feature_id": "frontier_semantic_continuity_automation",
       "eligible_plan_ids": [
@@ -508,6 +419,21 @@ export const COMMERCIAL_TRUTH = {
       ],
       "routes": [
         "/memory/continuity/automation"
+      ]
+    },
+    {
+      "feature_id": "frontier_shared_objective_graph",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/objectives/shared"
       ]
     },
     {
@@ -525,8 +451,9 @@ export const COMMERCIAL_TRUTH = {
       ]
     },
     {
-      "feature_id": "frontier_shared_objective_graph",
+      "feature_id": "frontier_delta_packet_automation",
       "eligible_plan_ids": [
+        "starter",
         "team",
         "operator",
         "enterprise"
@@ -536,7 +463,7 @@ export const COMMERCIAL_TRUTH = {
         "admin"
       ],
       "routes": [
-        "/memory/objectives/shared"
+        "/memory/agent-packet/shared"
       ]
     },
     {
@@ -583,9 +510,114 @@ export const COMMERCIAL_TRUTH = {
       "routes": [
         "/telemetry/utility/policy/evaluate"
       ]
+    },
+    {
+      "feature_id": "frontier_retrieval_receipt_governance",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/retrieval/receipts/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_causal_bridge_governance",
+      "eligible_plan_ids": [
+        "team",
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/causal-bridges/governance"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuous_counterfactual_eval",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/retrieval/ablation/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_evidence_reputation_activation",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/evidence-reputation/activation"
+      ]
+    },
+    {
+      "feature_id": "frontier_continuous_retrieval_regression",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/recall/regressions/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_adversarial_defense_operations",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/trust/defense/operations"
+      ]
+    },
+    {
+      "feature_id": "frontier_policy_laboratory_automation",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/policy/simulation/history",
+        "/memory/policy/scoped/activation",
+        "/memory/context-policy/canary",
+        "/memory/lifecycle/automation",
+        "/memory/contradictions/review-queue",
+        "/memory/storage/temperature/automation"
+      ]
     }
   ],
-  "contract_sha256": "254f9cb054ff13f8d45a028724705e04b749d3faab597d4ea075faa75086ca38"
+  "contract_sha256": "91689d4ca0c8d47edc3c68934889e0dd2b5b10c9a6bf8cd6cbe90c4006483fcf"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 34
+const GeneratedAgentContractRegistryVersion = 35
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentFlightRecorderEventV1 = "agent_flight_recorder_event.v1"
@@ -42,17 +42,22 @@ const GeneratedAgentContractContextPolicyCandidateV1 = "context_policy_candidate
 const GeneratedAgentContractContextPolicyEvaluationV1 = "context_policy_evaluation.v1"
 const GeneratedAgentContractContextlatticeLifecycleReceiptV1 = "contextlattice_lifecycle_receipt.v1"
 const GeneratedAgentContractContractAcknowledgementV1 = "contract_acknowledgement.v1"
+const GeneratedAgentContractContradictionResolutionV1 = "contradiction_resolution.v1"
 const GeneratedAgentContractDecisionChangeV1 = "decision_change.v1"
 const GeneratedAgentContractDecisionChangeQueryV1 = "decision_change_query.v1"
 const GeneratedAgentContractDerivedRegressionSuiteV1 = "derived_regression_suite.v1"
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractEvidenceReputationV1 = "evidence_reputation.v1"
 const GeneratedAgentContractFrontierT4RetrievalGovernanceV1 = "frontier_t4_retrieval_governance.v1"
+const GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1 = "frontier_t5_policy_laboratory_status.v1"
+const GeneratedAgentContractMemoryRetirementV1 = "memory_retirement.v1"
 const GeneratedAgentContractMemoryTrustAssessmentV1 = "memory_trust_assessment.v1"
 const GeneratedAgentContractObjectiveGraphV1 = "objective_graph.v1"
 const GeneratedAgentContractObjectiveRuntimeStateV1 = "objective_runtime_state.v1"
 const GeneratedAgentContractObjectiveTransitionV1 = "objective_transition.v1"
 const GeneratedAgentContractPolicyContextPackageV1 = "policy_context_package.v1"
+const GeneratedAgentContractPolicyPromotionRecommendationV1 = "policy_promotion_recommendation.v1"
+const GeneratedAgentContractPolicySimulationV1 = "policy_simulation.v1"
 const GeneratedAgentContractRetrievalAblationV1 = "retrieval_ablation.v1"
 const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_report.v1"
 const GeneratedAgentContractRetrievalDecisionTraceV1 = "retrieval_decision_trace.v1"
@@ -63,11 +68,13 @@ const GeneratedAgentContractRunAdvisorV1 = "run_advisor.v1"
 const GeneratedAgentContractRunnerCapabilityV1 = "runner_capability.v1"
 const GeneratedAgentContractRunnerQualitySampleV1 = "runner_quality_sample.v1"
 const GeneratedAgentContractRunnerResultV1 = "runner_result.v1"
+const GeneratedAgentContractScopedPolicyCardV1 = "scoped_policy_card.v1"
 const GeneratedAgentContractSkillDraftV1 = "skill_draft.v1"
 const GeneratedAgentContractSkillEvaluationV1 = "skill_evaluation.v1"
 const GeneratedAgentContractSkillExportV1 = "skill_export.v1"
 const GeneratedAgentContractSkillRetirementV1 = "skill_retirement.v1"
 const GeneratedAgentContractSteeringCommentV1 = "steering_comment.v1"
+const GeneratedAgentContractStorageTemperatureDecisionV1 = "storage_temperature_decision.v1"
 const GeneratedAgentContractSynthesisPackV1 = "synthesis_pack.v1"
 const GeneratedAgentContractSynthesisPackV2 = "synthesis_pack.v2"
 const GeneratedAgentContractTaskIdentityReceiptV1 = "task_identity_receipt.v1"
@@ -112,17 +119,22 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractContextPolicyEvaluationV1,
 	GeneratedAgentContractContextlatticeLifecycleReceiptV1,
 	GeneratedAgentContractContractAcknowledgementV1,
+	GeneratedAgentContractContradictionResolutionV1,
 	GeneratedAgentContractDecisionChangeV1,
 	GeneratedAgentContractDecisionChangeQueryV1,
 	GeneratedAgentContractDerivedRegressionSuiteV1,
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractEvidenceReputationV1,
 	GeneratedAgentContractFrontierT4RetrievalGovernanceV1,
+	GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1,
+	GeneratedAgentContractMemoryRetirementV1,
 	GeneratedAgentContractMemoryTrustAssessmentV1,
 	GeneratedAgentContractObjectiveGraphV1,
 	GeneratedAgentContractObjectiveRuntimeStateV1,
 	GeneratedAgentContractObjectiveTransitionV1,
 	GeneratedAgentContractPolicyContextPackageV1,
+	GeneratedAgentContractPolicyPromotionRecommendationV1,
+	GeneratedAgentContractPolicySimulationV1,
 	GeneratedAgentContractRetrievalAblationV1,
 	GeneratedAgentContractRetrievalAblationReportV1,
 	GeneratedAgentContractRetrievalDecisionTraceV1,
@@ -133,11 +145,13 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractRunnerCapabilityV1,
 	GeneratedAgentContractRunnerQualitySampleV1,
 	GeneratedAgentContractRunnerResultV1,
+	GeneratedAgentContractScopedPolicyCardV1,
 	GeneratedAgentContractSkillDraftV1,
 	GeneratedAgentContractSkillEvaluationV1,
 	GeneratedAgentContractSkillExportV1,
 	GeneratedAgentContractSkillRetirementV1,
 	GeneratedAgentContractSteeringCommentV1,
+	GeneratedAgentContractStorageTemperatureDecisionV1,
 	GeneratedAgentContractSynthesisPackV1,
 	GeneratedAgentContractSynthesisPackV2,
 	GeneratedAgentContractTaskIdentityReceiptV1,
@@ -334,6 +348,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractContradictionResolutionV1,
+		PayloadKind:        "append_only_evidence_weighted_contradiction_resolution_and_appeal",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractDecisionChangeV1,
 		PayloadKind:        "decision_change",
 		ContractVersion:    1,
@@ -370,6 +390,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1,
+		PayloadKind:        "bounded_policy_laboratory_runtime_status",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractMemoryRetirementV1,
+		PayloadKind:        "non_destructive_reversible_memory_retirement_workflow",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractMemoryTrustAssessmentV1,
 		PayloadKind:        "bounded_retrieval_memory_trust_assessment",
 		ContractVersion:    1,
@@ -396,6 +428,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPolicyContextPackageV1,
 		PayloadKind:        "agent_policy_context_package",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractPolicyPromotionRecommendationV1,
+		PayloadKind:        "assignment_bound_uncertainty_aware_policy_promotion_recommendation",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractPolicySimulationV1,
+		PayloadKind:        "same_snapshot_no_persist_retrieval_policy_simulation",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},
@@ -460,6 +504,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractScopedPolicyCardV1,
+		PayloadKind:        "project_task_and_intent_scoped_retrieval_policy_card",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractSkillDraftV1,
 		PayloadKind:        "verified_workflow_skill_draft",
 		ContractVersion:    1,
@@ -486,6 +536,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractSteeringCommentV1,
 		PayloadKind:        "steering_comment",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractStorageTemperatureDecisionV1,
+		PayloadKind:        "utility_based_reversible_memory_storage_temperature_decision",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

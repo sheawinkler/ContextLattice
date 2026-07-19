@@ -433,6 +433,8 @@ func (s *server) buildContextPolicyCandidate(payload map[string]any) (map[string
 	if err != nil {
 		return nil, false, err
 	}
+	taskClass := strings.ToLower(strings.TrimSpace(anyToString(payload["task_class"])))
+	retrievalIntent := strings.ToLower(strings.TrimSpace(anyToString(payload["retrieval_intent"])))
 	minimum := clampInt(anyToInt(payload["minimum_outcomes"], envInt("CONTEXTLATTICE_CONTEXT_POLICY_MIN_OUTCOMES", 20)), 10, 100)
 	samples, outcomes := s.contextPolicyObservationRows()
 	sampleByID := map[string]map[string]any{}
@@ -461,6 +463,14 @@ func (s *server) buildContextPolicyCandidate(payload map[string]any) (map[string
 		if outcomeProject == "" && sample == nil {
 			continue
 		}
+		outcomeTaskClass := strings.ToLower(strings.TrimSpace(firstNonEmptyStrings(anyToString(outcome["task_class"]), anyToString(sample["task_class"]))))
+		if taskClass != "" && outcomeTaskClass != taskClass {
+			continue
+		}
+		outcomeRetrievalIntent := strings.ToLower(strings.TrimSpace(firstNonEmptyStrings(anyToString(outcome["retrieval_intent"]), anyToString(sample["retrieval_intent"]))))
+		if retrievalIntent != "" && outcomeRetrievalIntent != retrievalIntent {
+			continue
+		}
 		if sample != nil {
 			outcome["context_sample"] = sample
 		}
@@ -487,7 +497,10 @@ func (s *server) buildContextPolicyCandidate(payload map[string]any) (map[string
 	sort.Strings(evidenceKeys)
 	sort.Strings(displayOutcomeIDs)
 	evidenceSHA := sha256Hex(strings.Join(evidenceKeys, "\x00"))
-	seed, _ := json.Marshal(map[string]any{"project": project, "minimum_outcomes": minimum, "metrics": metrics, "policy": policy, "evidence_sha256": evidenceSHA})
+	seed, _ := json.Marshal(map[string]any{
+		"project": project, "task_class": taskClass, "retrieval_intent": retrievalIntent,
+		"minimum_outcomes": minimum, "metrics": metrics, "policy": policy, "evidence_sha256": evidenceSHA,
+	})
 	candidateID := "ctxpol_" + sha256Hex(string(seed))[:24]
 	outcomeIDs := make([]any, 0, minInt(len(displayOutcomeIDs), 64))
 	for _, id := range displayOutcomeIDs[:minInt(len(displayOutcomeIDs), 64)] {
@@ -508,6 +521,8 @@ func (s *server) buildContextPolicyCandidate(payload map[string]any) (map[string
 		"version":           1,
 		"candidate_id":      candidateID,
 		"project":           project,
+		"task_class":        taskClass,
+		"retrieval_intent":  retrievalIntent,
 		"status":            status,
 		"mode":              "advisor_only",
 		"created_at":        createdAt,
@@ -520,7 +535,10 @@ func (s *server) buildContextPolicyCandidate(payload map[string]any) (map[string
 			"metrics":                   metrics,
 			"outcome_ids":               outcomeIDs,
 			"calibration_eligible_only": true,
-			"counterfactual_limit":      "Historical outcomes seed a candidate; controlled canary outcomes are required before promotion.",
+			"scope_filter": map[string]any{
+				"task_class": taskClass, "retrieval_intent": retrievalIntent, "exact_match_required": taskClass != "" || retrievalIntent != "",
+			},
+			"counterfactual_limit": "Historical outcomes seed a candidate; controlled canary outcomes are required before promotion.",
 		},
 		"lifecycle": map[string]any{
 			"current_phase":       status,
