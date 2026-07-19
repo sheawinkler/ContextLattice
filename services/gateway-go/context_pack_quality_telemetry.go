@@ -129,6 +129,39 @@ func (s *server) contextPackQualityTelemetrySnapshot() map[string]any {
 	return s.contextPackQuality.snapshot()
 }
 
+// aggregateSignalSufficientStatistics exposes only clipped scalar inputs for
+// the opt-in Aggregate Signal boundary; sample rows and scope labels stay local.
+func (t *contextPackQualityTelemetry) aggregateSignalSufficientStatistics() map[string]any {
+	if t == nil {
+		return map[string]any{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	statistics := map[string]any{
+		"exact_prompt_tokens_saved":        t.totalExactPromptSaved,
+		"modeled_inference_tokens_avoided": t.totalModeledInferenceAvoided,
+		"provider_total_tokens":            t.totalProviderTotalTokens,
+	}
+	grade := "modeled_counterfactual"
+	if t.calibrationOutcomeCount > 0 {
+		grade = "outcome_seeded"
+	}
+	if t.calibrationOutcomeCount >= 20 {
+		grade = "outcome_adjusted"
+	}
+	statistics["calibration_grade"] = grade
+	if t.sampleCount > 0 {
+		statistics["context_quality_score"] = roundFloat(float64(t.totalQualityScore)/float64(t.sampleCount), 6)
+		statistics["contribution_coverage"] = roundFloat(math.Min(1, float64(t.calibrationOutcomeCount)/float64(t.sampleCount)), 6)
+	}
+	if t.calibrationOutcomeCount > 0 {
+		statistics["first_pass_success_rate"] = roundFloat(float64(t.firstPassSuccessCount)/float64(t.calibrationOutcomeCount), 6)
+		statistics["repair_rate"] = roundFloat(float64(t.repairRequiredCount)/float64(t.calibrationOutcomeCount), 6)
+		statistics["average_retry_count"] = roundFloat(float64(t.totalRetryCount)/float64(t.calibrationOutcomeCount), 6)
+	}
+	return statistics
+}
+
 func defaultContextPackQualityTelemetrySnapshot(ledger *contextPackQualityLedger) map[string]any {
 	return map[string]any{
 		"schema_id":                              contextPackQualityTelemetrySchemaID,

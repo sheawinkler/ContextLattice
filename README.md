@@ -34,6 +34,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
 - Portable Continuation that binds signed least-privilege grants, digest-only work manifests, provenance-preserving import receipts, and replay-safe cross-machine reconciliation into one CLI-first handoff.
 - Continuity Zero that opens one unambiguous active mission already assembled: packet, checkpoint, Agent Fit, preparation, repository commit, provenance, risks, and next move, without a giant setup prompt or local-path leakage.
+- Aggregate Signal that turns explicitly opted-in, clipped local sufficient statistics into cohort-suppressed learning with bounded privacy accounting, immediate opt-out, and zero network calls by default.
 - Agent runtime sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready reference packages, exportable run traces, and exact-linked proof timelines.
 - Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
 - Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
@@ -44,9 +45,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.26.0` is the current release baseline. Continuity Zero removes the cold-start ritual: run one CLI command inside a repository and ContextLattice returns `ready` only when exactly one fresh objective matches the project, harness, repository, commit, ownership, and provenance evidence. Ambiguity abstains. Stale, mismatched, revoked, or expired proof rejects. The free core produces the path-free manifest; entitled runtimes add governed external-delivery and workspace-preparation intents for Starter, Team, Operator, and Enterprise without moving execution into the gateway. The CLI remains the prescribed path; HTTP is the integration fallback. Verified Skill Evolution, Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Agent Packet deltas, proof timelines, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain one coherent contract.
+`v4.0.0` is the current release baseline. Aggregate Signal adds a privacy-bounded learning loop without making memory exportable: only explicitly opted-in, clipped sufficient statistics enter a local queue; small cohorts disappear behind suppression; composition, replay, expiry, and opt-out are enforced; and external network calls remain zero by default. Operator and Enterprise artifacts add credential-derived workspace governance, while production cohort contribution and reporting stay hard-blocked until independent privacy and utility reviews pass. The CLI remains the prescribed path; HTTP is the integration fallback. Continuity Zero, Verified Skill Evolution, Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Utility Ledger, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain one coherent contract.
 
-## Public Runtime Stack (v3.26)
+## Public Runtime Stack (v4.0)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -107,8 +108,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.26.0 \
-  --statement "The current public release is 3.26.0." \
+  --object 4.0.0 \
+  --statement "The current public release is 4.0.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -474,6 +475,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v4.0.0.md` (privacy-bounded Aggregate Signal, explicit consent, cohort suppression, and proof-held paid governance)
   - `docs/releases/v3.26.0.md` (zero-entry continuity, fail-closed objective selection, and governed external-adapter intents)
   - `docs/releases/v3.25.0.md` (evidence-qualified skill evolution, atomic Foundry handoff, and exact-receipt governance)
   - `docs/releases/v3.24.0.md` (signed collaborative grants, provenance-preserving imports, and encrypted replay-safe continuation)

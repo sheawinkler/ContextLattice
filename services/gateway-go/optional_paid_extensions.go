@@ -67,3 +67,81 @@ var optionalFrontierT3UtilityPolicyRoute = func(_ *server, w http.ResponseWriter
 func (s *server) enforceOptionalFrontierT1ProjectBoundary(w http.ResponseWriter, r *http.Request, operationClass string) bool {
 	return optionalFrontierT1ProjectBoundary(s, w, r, operationClass)
 }
+
+// optionalFrontierT10Route keeps paid Aggregate Signal cohort governance out
+// of the public build. Entitled builds populate this registry from paid-only
+// source; the public local preview/accounting route remains available.
+type optionalFrontierT10Route struct {
+	Name             string
+	Path             string
+	ContractID       string
+	BoundarySurface  string
+	BoundaryDetail   string
+	OwnershipSurface string
+	OwnershipDetail  string
+	Handler          func(*server, http.ResponseWriter, *http.Request)
+}
+
+var optionalFrontierT10RouteRegistry []optionalFrontierT10Route
+
+var optionalFrontierT10Routes = func() []optionalFrontierT10Route {
+	return append([]optionalFrontierT10Route(nil), optionalFrontierT10RouteRegistry...)
+}
+
+func addOptionalFrontierT10Routes(routes ...optionalFrontierT10Route) {
+	optionalFrontierT10RouteRegistry = append(optionalFrontierT10RouteRegistry, routes...)
+}
+
+func optionalFrontierT10RequiredRoutePaths() []string {
+	routes := optionalFrontierT10Routes()
+	paths := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if route.Path != "" {
+			paths = append(paths, route.Path)
+		}
+	}
+	return paths
+}
+
+func optionalFrontierT10BoundarySurfaces() []contextBoundarySurface {
+	routes := optionalFrontierT10Routes()
+	surfaces := make([]contextBoundarySurface, 0, len(routes))
+	for _, route := range routes {
+		if route.Path == "" {
+			continue
+		}
+		surfaces = append(surfaces, contextBoundarySurface{
+			Name: route.Name, Path: route.Path, Surface: route.BoundarySurface,
+			ContractID: route.ContractID, RuntimeOwner: sourceOwnerGoNative,
+			Required: true, Detail: route.BoundaryDetail,
+		})
+	}
+	return surfaces
+}
+
+func optionalFrontierT10OwnedRoutes() []nativeOwnedRoute {
+	routes := optionalFrontierT10Routes()
+	owned := make([]nativeOwnedRoute, 0, len(routes))
+	for _, route := range routes {
+		if route.Path == "" {
+			continue
+		}
+		owned = append(owned, nativeOwnedRoute{
+			Path: route.Path, Surface: route.OwnershipSurface, Owner: sourceOwnerGoNative,
+			Status: "native", Detail: route.OwnershipDetail, Required: true,
+		})
+	}
+	return owned
+}
+
+func registerOptionalFrontierT10Routes(mux *http.ServeMux, s *server) {
+	for _, route := range optionalFrontierT10Routes() {
+		if route.Path == "" || route.Handler == nil {
+			continue
+		}
+		handler := route.Handler
+		mux.HandleFunc(route.Path, func(w http.ResponseWriter, r *http.Request) {
+			handler(s, w, r)
+		})
+	}
+}

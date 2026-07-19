@@ -370,6 +370,17 @@ func TestAgentPreflightFormatContractValidationPassesAndFails(t *testing.T) {
 	if strings.TrimSpace(anyToString(validation["status"])) != "passed" {
 		t.Fatalf("expected preflight validation passed, got %#v", validation)
 	}
+	listed := contextPackAnyList(contracts["contracts"])
+	if len(listed) != 21 {
+		t.Fatalf("expected 21 preflight-relevant contracts, got %d: %#v", len(listed), listed)
+	}
+	registry, err := loadAgentContractsRegistry()
+	if err != nil {
+		t.Fatalf("load agent contracts registry: %v", err)
+	}
+	if len(listed) >= len(registry.Contracts) {
+		t.Fatalf("preflight metadata must not echo the full contract registry: listed=%d", len(listed))
+	}
 	assertBoundaryMetadata(t, response, "format_contracts", false)
 
 	bad := cloneContractMap(response)

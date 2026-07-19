@@ -30,6 +30,7 @@ Installs Go-native ContextLattice agent helpers to ~/.contextlattice and creates
   contextlattice_policy_lab
   contextlattice_agent_fit
   contextlattice_continuity_zero
+  contextlattice_aggregate_signal
   contextlattice_claim_write
   contextlattice_claim_query
   contextlattice_continuity_reconcile
@@ -690,6 +691,7 @@ GO_NATIVE_COMMANDS=(
   contextlattice_policy_lab
   contextlattice_agent_fit
   contextlattice_continuity_zero
+  contextlattice_aggregate_signal
   contextlattice_claim_write
   contextlattice_claim_query
   contextlattice_continuity_reconcile
@@ -939,6 +941,7 @@ log "  - ${GLOBAL_BIN_DIR}/contextlattice_synthesis_pack_v2"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_retrieval_plan"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_retrieval_governance"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_continuity_zero"
+log "  - ${GLOBAL_BIN_DIR}/contextlattice_aggregate_signal"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_claim_write"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_claim_query"
 log "  - ${GLOBAL_BIN_DIR}/contextlattice_policy_candidate"
@@ -1002,6 +1005,7 @@ log "  contextlattice_synthesis_pack_v2 'release readiness' --project contextlat
 log "  contextlattice_retrieval_plan 'release readiness' --project contextlattice --pretty"
 log "  contextlattice retrieval-governance status --feature receipts --project contextlattice --pretty"
 log "  contextlattice_continuity_zero --project contextlattice --agent codex --output continuity-zero.json --pretty"
+log "  contextlattice_aggregate_signal preview --metric repair_rate --value 0.1 --pretty"
 log "  contextlattice_claim_query 'current release state' --project contextlattice --pretty"
 log "  contextlattice_policy_candidate --project contextlattice --pretty"
 log "  contextlattice_policy_status --pretty"

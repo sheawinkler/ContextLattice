@@ -9,7 +9,7 @@ pub struct AgentContractRef {
 }
 
 pub const AGENT_CONTRACT_REGISTRY_ID: &str = "contextlattice_agent_output_contracts";
-pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 52;
+pub const AGENT_CONTRACT_REGISTRY_VERSION: u32 = 53;
 
 pub const A2A_READINESS_PROFILE_V1: &str = "a2a_readiness_profile.v1";
 pub const AGENT_CONTEXT_PROFILE_V1: &str = "agent_context_profile.v1";
@@ -25,6 +25,8 @@ pub const AGENT_SESSION_ROLLUP_V1: &str = "agent_session_rollup.v1";
 pub const AGENT_SPAN_V1: &str = "agent_span.v1";
 pub const AGENT_TASK_LEASE_V1: &str = "agent_task_lease.v1";
 pub const AGENT_TASK_RESULT_V1: &str = "agent_task_result.v1";
+pub const AGGREGATE_CONTRIBUTION_V1: &str = "aggregate_contribution.v1";
+pub const AGGREGATE_REPORT_V1: &str = "aggregate_report.v1";
 pub const ANTI_SCHEMING_PROTOCOL_V1: &str = "anti_scheming_protocol.v1";
 pub const ASYNC_STEERING_DELIVERY_V1: &str = "async_steering_delivery.v1";
 pub const ASYNC_STEERING_EVENT_V1: &str = "async_steering_event.v1";
@@ -63,6 +65,9 @@ pub const DECISION_CHANGE_QUERY_V1: &str = "decision_change_query.v1";
 pub const DERIVED_REGRESSION_SUITE_V1: &str = "derived_regression_suite.v1";
 pub const DREAM_MODE_RESPONSE_V1: &str = "dream_mode_response.v1";
 pub const EVIDENCE_REPUTATION_V1: &str = "evidence_reputation.v1";
+pub const FRONTIER_T10_AGGREGATE_GOVERNANCE_V1: &str = "frontier_t10_aggregate_governance.v1";
+pub const FRONTIER_T10_SECURE_AGGREGATION_RESEARCH_V1: &str =
+    "frontier_t10_secure_aggregation_research.v1";
 pub const FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1: &str = "frontier_t4_retrieval_governance.v1";
 pub const FRONTIER_T5_POLICY_LABORATORY_STATUS_V1: &str = "frontier_t5_policy_laboratory_status.v1";
 pub const FRONTIER_T6_AGENT_FIT_V1: &str = "frontier_t6_agent_fit.v1";
@@ -81,6 +86,7 @@ pub const POLICY_PROMOTION_RECOMMENDATION_V1: &str = "policy_promotion_recommend
 pub const POLICY_SIMULATION_V1: &str = "policy_simulation.v1";
 pub const PORTABLE_CONTINUATION_STATE_V1: &str = "portable_continuation_state.v1";
 pub const PORTABLE_CONTINUATION_STATUS_V1: &str = "portable_continuation_status.v1";
+pub const PRIVACY_ACCOUNTANT_V1: &str = "privacy_accountant.v1";
 pub const PROVENANCE_V1: &str = "provenance.v1";
 pub const RETRIEVAL_ABLATION_V1: &str = "retrieval_ablation.v1";
 pub const RETRIEVAL_ABLATION_REPORT_V1: &str = "retrieval_ablation_report.v1";
@@ -130,6 +136,8 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     AGENT_SPAN_V1,
     AGENT_TASK_LEASE_V1,
     AGENT_TASK_RESULT_V1,
+    AGGREGATE_CONTRIBUTION_V1,
+    AGGREGATE_REPORT_V1,
     ANTI_SCHEMING_PROTOCOL_V1,
     ASYNC_STEERING_DELIVERY_V1,
     ASYNC_STEERING_EVENT_V1,
@@ -167,6 +175,8 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     DERIVED_REGRESSION_SUITE_V1,
     DREAM_MODE_RESPONSE_V1,
     EVIDENCE_REPUTATION_V1,
+    FRONTIER_T10_AGGREGATE_GOVERNANCE_V1,
+    FRONTIER_T10_SECURE_AGGREGATION_RESEARCH_V1,
     FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1,
     FRONTIER_T5_POLICY_LABORATORY_STATUS_V1,
     FRONTIER_T6_AGENT_FIT_V1,
@@ -185,6 +195,7 @@ pub const AGENT_CONTRACT_IDS: &[&str] = &[
     POLICY_SIMULATION_V1,
     PORTABLE_CONTINUATION_STATE_V1,
     PORTABLE_CONTINUATION_STATUS_V1,
+    PRIVACY_ACCOUNTANT_V1,
     PROVENANCE_V1,
     RETRIEVAL_ABLATION_V1,
     RETRIEVAL_ABLATION_REPORT_V1,
@@ -304,6 +315,18 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         payload_kind: "agent_task_result",
         contract_version: 1,
         required_output_mode: "json_object_or_markdown_with_json_frontmatter",
+    },
+    AgentContractRef {
+        schema_id: AGGREGATE_CONTRIBUTION_V1,
+        payload_kind: "opt_in_bounded_local_aggregate_contribution",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: AGGREGATE_REPORT_V1,
+        payload_kind: "cohort_suppressed_idempotent_noisy_aggregate_report",
+        contract_version: 1,
+        required_output_mode: "json_object",
     },
     AgentContractRef {
         schema_id: ANTI_SCHEMING_PROTOCOL_V1,
@@ -528,6 +551,18 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
         required_output_mode: "json_object",
     },
     AgentContractRef {
+        schema_id: FRONTIER_T10_AGGREGATE_GOVERNANCE_V1,
+        payload_kind: "entitlement_gated_opt_in_workspace_cohort_aggregation_governance",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: FRONTIER_T10_SECURE_AGGREGATION_RESEARCH_V1,
+        payload_kind: "private_keyless_secure_aggregation_research_and_attack_review_gate",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
         schema_id: FRONTIER_T4_RETRIEVAL_GOVERNANCE_V1,
         payload_kind: "entitled_bounded_retrieval_receipt_policy_and_operations_governance",
         contract_version: 1,
@@ -632,6 +667,12 @@ pub const AGENT_CONTRACTS: &[AgentContractRef] = &[
     AgentContractRef {
         schema_id: PORTABLE_CONTINUATION_STATUS_V1,
         payload_kind: "bounded_redacted_digest_only_portable_continuation_runtime_status",
+        contract_version: 1,
+        required_output_mode: "json_object",
+    },
+    AgentContractRef {
+        schema_id: PRIVACY_ACCOUNTANT_V1,
+        payload_kind: "bounded_local_aggregate_privacy_accountant_and_expiry_receipts",
         contract_version: 1,
         required_output_mode: "json_object",
     },

@@ -10,7 +10,7 @@ type GeneratedAgentContractRef struct {
 }
 
 const GeneratedAgentContractRegistryID = "contextlattice_agent_output_contracts"
-const GeneratedAgentContractRegistryVersion = 52
+const GeneratedAgentContractRegistryVersion = 53
 
 const GeneratedAgentContractA2aReadinessProfileV1 = "a2a_readiness_profile.v1"
 const GeneratedAgentContractAgentContextProfileV1 = "agent_context_profile.v1"
@@ -26,6 +26,8 @@ const GeneratedAgentContractAgentSessionRollupV1 = "agent_session_rollup.v1"
 const GeneratedAgentContractAgentSpanV1 = "agent_span.v1"
 const GeneratedAgentContractAgentTaskLeaseV1 = "agent_task_lease.v1"
 const GeneratedAgentContractAgentTaskResultV1 = "agent_task_result.v1"
+const GeneratedAgentContractAggregateContributionV1 = "aggregate_contribution.v1"
+const GeneratedAgentContractAggregateReportV1 = "aggregate_report.v1"
 const GeneratedAgentContractAntiSchemingProtocolV1 = "anti_scheming_protocol.v1"
 const GeneratedAgentContractAsyncSteeringDeliveryV1 = "async_steering_delivery.v1"
 const GeneratedAgentContractAsyncSteeringEventV1 = "async_steering_event.v1"
@@ -63,6 +65,8 @@ const GeneratedAgentContractDecisionChangeQueryV1 = "decision_change_query.v1"
 const GeneratedAgentContractDerivedRegressionSuiteV1 = "derived_regression_suite.v1"
 const GeneratedAgentContractDreamModeResponseV1 = "dream_mode_response.v1"
 const GeneratedAgentContractEvidenceReputationV1 = "evidence_reputation.v1"
+const GeneratedAgentContractFrontierT10AggregateGovernanceV1 = "frontier_t10_aggregate_governance.v1"
+const GeneratedAgentContractFrontierT10SecureAggregationResearchV1 = "frontier_t10_secure_aggregation_research.v1"
 const GeneratedAgentContractFrontierT4RetrievalGovernanceV1 = "frontier_t4_retrieval_governance.v1"
 const GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1 = "frontier_t5_policy_laboratory_status.v1"
 const GeneratedAgentContractFrontierT6AgentFitV1 = "frontier_t6_agent_fit.v1"
@@ -81,6 +85,7 @@ const GeneratedAgentContractPolicyPromotionRecommendationV1 = "policy_promotion_
 const GeneratedAgentContractPolicySimulationV1 = "policy_simulation.v1"
 const GeneratedAgentContractPortableContinuationStateV1 = "portable_continuation_state.v1"
 const GeneratedAgentContractPortableContinuationStatusV1 = "portable_continuation_status.v1"
+const GeneratedAgentContractPrivacyAccountantV1 = "privacy_accountant.v1"
 const GeneratedAgentContractProvenanceV1 = "provenance.v1"
 const GeneratedAgentContractRetrievalAblationV1 = "retrieval_ablation.v1"
 const GeneratedAgentContractRetrievalAblationReportV1 = "retrieval_ablation_report.v1"
@@ -130,6 +135,8 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractAgentSpanV1,
 	GeneratedAgentContractAgentTaskLeaseV1,
 	GeneratedAgentContractAgentTaskResultV1,
+	GeneratedAgentContractAggregateContributionV1,
+	GeneratedAgentContractAggregateReportV1,
 	GeneratedAgentContractAntiSchemingProtocolV1,
 	GeneratedAgentContractAsyncSteeringDeliveryV1,
 	GeneratedAgentContractAsyncSteeringEventV1,
@@ -167,6 +174,8 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractDerivedRegressionSuiteV1,
 	GeneratedAgentContractDreamModeResponseV1,
 	GeneratedAgentContractEvidenceReputationV1,
+	GeneratedAgentContractFrontierT10AggregateGovernanceV1,
+	GeneratedAgentContractFrontierT10SecureAggregationResearchV1,
 	GeneratedAgentContractFrontierT4RetrievalGovernanceV1,
 	GeneratedAgentContractFrontierT5PolicyLaboratoryStatusV1,
 	GeneratedAgentContractFrontierT6AgentFitV1,
@@ -185,6 +194,7 @@ var GeneratedAgentContractIDs = []string{
 	GeneratedAgentContractPolicySimulationV1,
 	GeneratedAgentContractPortableContinuationStateV1,
 	GeneratedAgentContractPortableContinuationStatusV1,
+	GeneratedAgentContractPrivacyAccountantV1,
 	GeneratedAgentContractProvenanceV1,
 	GeneratedAgentContractRetrievalAblationV1,
 	GeneratedAgentContractRetrievalAblationReportV1,
@@ -304,6 +314,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		PayloadKind:        "agent_task_result",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object_or_markdown_with_json_frontmatter",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAggregateContributionV1,
+		PayloadKind:        "opt_in_bounded_local_aggregate_contribution",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractAggregateReportV1,
+		PayloadKind:        "cohort_suppressed_idempotent_noisy_aggregate_report",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
 	},
 	{
 		SchemaID:           GeneratedAgentContractAntiSchemingProtocolV1,
@@ -528,6 +550,18 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 		RequiredOutputMode: "json_object",
 	},
 	{
+		SchemaID:           GeneratedAgentContractFrontierT10AggregateGovernanceV1,
+		PayloadKind:        "entitlement_gated_opt_in_workspace_cohort_aggregation_governance",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractFrontierT10SecureAggregationResearchV1,
+		PayloadKind:        "private_keyless_secure_aggregation_research_and_attack_review_gate",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
 		SchemaID:           GeneratedAgentContractFrontierT4RetrievalGovernanceV1,
 		PayloadKind:        "entitled_bounded_retrieval_receipt_policy_and_operations_governance",
 		ContractVersion:    1,
@@ -632,6 +666,12 @@ var GeneratedAgentContracts = []GeneratedAgentContractRef{
 	{
 		SchemaID:           GeneratedAgentContractPortableContinuationStatusV1,
 		PayloadKind:        "bounded_redacted_digest_only_portable_continuation_runtime_status",
+		ContractVersion:    1,
+		RequiredOutputMode: "json_object",
+	},
+	{
+		SchemaID:           GeneratedAgentContractPrivacyAccountantV1,
+		PayloadKind:        "bounded_local_aggregate_privacy_accountant_and_expiry_receipts",
 		ContractVersion:    1,
 		RequiredOutputMode: "json_object",
 	},

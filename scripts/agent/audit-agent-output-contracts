@@ -92,6 +92,11 @@ REQUIRED_CONTRACTS = (
     "context_mesh_import.v1",
     "run_advisor.v1",
     "contract_acknowledgement.v1",
+    "aggregate_contribution.v1",
+    "aggregate_report.v1",
+    "privacy_accountant.v1",
+    "frontier_t10_aggregate_governance.v1",
+    "frontier_t10_secure_aggregation_research.v1",
     "writeback_result.v1",
     "agent_span.v1",
     "agent_flight_recorder_event.v1",
@@ -2514,6 +2519,172 @@ def sample_utility_policy_evaluation() -> dict[str, Any]:
     )
 
 
+def sample_aggregate_contribution() -> dict[str, Any]:
+    return attach_format_contract(
+        "aggregate_contribution.v1",
+        {
+            "ok": True,
+            "schema_id": "aggregate_contribution.v1",
+            "version": 1,
+            "operation": "preview",
+            "decision": "previewed",
+            "contribution_id": "contribution_audit_fixture",
+            "metric": "repair_rate",
+            "statistic_type": "numeric",
+            "cohort_window": "2026-W29",
+            "unit_epoch_commitment": "a" * 64,
+            "nonce_digest": "b" * 64,
+            "statistic": {"value": 0.1},
+            "clipping": {"minimum": 0.0, "maximum": 1.0, "clipped": False},
+            "source": "manual",
+            "persisted": False,
+            "privacy": {
+                "opt_in_required": True,
+                "local_only": True,
+                "one_per_unit_metric_week": True,
+                "epsilon_consumed": 0.0,
+                "delta_consumed": 0.0,
+            },
+            "safety": {
+                "network_calls": 0,
+                "bytes_sent": 0,
+                "raw_memory_exported": False,
+                "raw_prompt_exported": False,
+                "stable_installation_id_exported": False,
+                "external_transport_performed": False,
+            },
+        },
+    )
+
+
+def sample_aggregate_report() -> dict[str, Any]:
+    return attach_format_contract(
+        "aggregate_report.v1",
+        {
+            "ok": True,
+            "schema_id": "aggregate_report.v1",
+            "version": 1,
+            "operation": "report",
+            "decision": "released",
+            "report_id": "report_audit_fixture",
+            "metric": "repair_rate",
+            "statistic_type": "numeric",
+            "cohort_window": "2026-W29",
+            "cohort": {"minimum_size": 20, "exact_count_disclosed": False},
+            "estimate": {"mean": 0.1},
+            "suppression": {"suppressed": False, "reason": ""},
+            "privacy_accountant": {
+                "schema_id": "privacy_accountant.v1",
+                "release_epsilon": 0.25,
+                "rolling_90_day_epsilon": 0.25,
+                "delta": 0.000001,
+                "budget_remaining": 1.75,
+            },
+            "receipt": {
+                "receipt_id": "receipt_audit_fixture",
+                "request_digest": "c" * 64,
+                "release_window": "2026-W29",
+                "expires_on": "2026-10-17",
+                "idempotent": False,
+            },
+            "safety": {
+                "network_calls": 0,
+                "bytes_sent": 0,
+                "raw_memory_exported": False,
+                "raw_prompt_exported": False,
+                "stable_installation_id_exported": False,
+                "external_transport_performed": False,
+                "formal_privacy_claim": False,
+            },
+        },
+    )
+
+
+def sample_privacy_accountant() -> dict[str, Any]:
+    return attach_format_contract(
+        "privacy_accountant.v1",
+        {
+            "ok": True,
+            "schema_id": "privacy_accountant.v1",
+            "version": 1,
+            "operation": "status",
+            "opted_in": False,
+            "research_status": "research_only",
+            "queue": {"count": 0},
+            "composition": {"rolling_90_day_epsilon": 0.0, "delta": 0.0},
+            "limits": {
+                "minimum_cohort": 20,
+                "release_epsilon_max": 0.25,
+                "rolling_90_day_epsilon_max": 2.0,
+                "delta_max": 0.000001,
+                "max_bytes": 67108864,
+                "max_records": 100000,
+            },
+            "receipts": [],
+            "promotion_gate": {"passed": False, "required_reviews": ["membership_inference"]},
+            "safety": {
+                "network_calls": 0,
+                "bytes_sent": 0,
+                "raw_memory_exported": False,
+                "raw_prompt_exported": False,
+                "stable_installation_id_exported": False,
+                "external_transport_performed": False,
+            },
+        },
+    )
+
+
+def sample_frontier_t10_aggregate_governance() -> dict[str, Any]:
+    return attach_format_contract(
+        "frontier_t10_aggregate_governance.v1",
+        {
+            "ok": True,
+            "schema_id": "frontier_t10_aggregate_governance.v1",
+            "version": 1,
+            "feature_id": "frontier_private_aggregate_learning",
+            "operation": "status",
+            "scope_digest": "d" * 64,
+            "authorization": {"mode": "runtime_license", "plan": "operator", "role": "owner", "credential_derived": True},
+            "cohort": {"queued": 0, "minimum_size": 20},
+            "report": {},
+            "accountant": {"rolling_90_day_epsilon": 0.0},
+            "revocation": {"revoked": False},
+            "audit": {"receipt_count": 0},
+            "privacy_gate": {"status": "research_only", "production_promotion_allowed": False, "required_reviews": ["membership_inference"]},
+            "safety": {
+                "opt_in_required": True,
+                "network_calls": 0,
+                "raw_memory_exported": False,
+                "raw_prompt_exported": False,
+                "stable_installation_id_exported": False,
+                "gateway_model_execution": False,
+                "gateway_runner_execution": False,
+            },
+        },
+    )
+
+
+def sample_frontier_t10_secure_aggregation_research() -> dict[str, Any]:
+    return attach_format_contract(
+        "frontier_t10_secure_aggregation_research.v1",
+        {
+            "ok": True,
+            "schema_id": "frontier_t10_secure_aggregation_research.v1",
+            "version": 1,
+            "operation": "status",
+            "research_status": "research_only",
+            "experiment": {},
+            "promotion_gate": {"passed": False, "independent_review_required": True, "reviews": {}},
+            "safety": {
+                "keyless_private_development": True,
+                "production_activation": False,
+                "network_calls": 0,
+                "raw_memory_exported": False,
+                "stable_installation_id_exported": False,
+            },
+        },
+    )
+
 def run_audit() -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     try:
@@ -2591,6 +2762,11 @@ def run_audit() -> list[dict[str, Any]]:
         ("contradiction_resolution.v1", sample_contradiction_resolution()),
         ("storage_temperature_decision.v1", sample_storage_temperature_decision()),
         ("frontier_t5_policy_laboratory_status.v1", sample_frontier_t5_policy_laboratory_status()),
+        ("aggregate_contribution.v1", sample_aggregate_contribution()),
+        ("aggregate_report.v1", sample_aggregate_report()),
+        ("privacy_accountant.v1", sample_privacy_accountant()),
+        ("frontier_t10_aggregate_governance.v1", sample_frontier_t10_aggregate_governance()),
+        ("frontier_t10_secure_aggregation_research.v1", sample_frontier_t10_secure_aggregation_research()),
         ("retrieval_plan.v1", sample_retrieval_plan()),
         ("synthesis_pack.v2", sample_synthesis_pack_v2()),
         ("context_policy_candidate.v1", sample_context_policy_candidate()),

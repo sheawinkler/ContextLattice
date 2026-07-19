@@ -378,6 +378,29 @@ func (s *contextPolicyStore) snapshot() map[string]any {
 	}
 }
 
+func (s *contextPolicyStore) aggregateSignalSufficientStatistics() map[string]any {
+	if s == nil {
+		return map[string]any{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	promoted := 0
+	for _, candidate := range s.candidates {
+		if anyToString(candidate["status"]) == "promoted" {
+			promoted++
+		}
+	}
+	promotionRate := 0.0
+	if len(s.candidates) > 0 {
+		promotionRate = float64(promoted) / float64(len(s.candidates))
+	}
+	return map[string]any{
+		"policy_candidate_count":  len(s.candidates),
+		"policy_evaluation_count": len(s.evaluations),
+		"policy_promotion_rate":   roundFloat(promotionRate, 6),
+	}
+}
+
 func (s *contextPolicyStore) advisoryCandidate(project string) map[string]any {
 	if s == nil {
 		return nil

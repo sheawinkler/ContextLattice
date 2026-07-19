@@ -23,7 +23,7 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "3.26.0" || commercialTruthStableTag != "v3.26.0" || commercialTruthReleaseTrain != "3.26" {
+	if commercialTruthProductVersion != "4.0.0" || commercialTruthStableTag != "v4.0.0" || commercialTruthReleaseTrain != "4.0" {
 		t.Fatalf(
 			"unexpected generated release truth: version=%q tag=%q train=%q",
 			commercialTruthProductVersion,
@@ -54,6 +54,7 @@ func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
 		"/memory/agent-fit/context-prep/governance":   "frontier_agent_fit_governance",
 		"/memory/agent-fit/selection/activation":      "frontier_agent_fit_governance",
 		"/memory/skills/foundry/evolution/governance": "frontier_skill_evolution_governance",
+		"/memory/aggregate-signal/governance":         "frontier_private_aggregate_learning",
 	}
 	for path, featureID := range wantFeatures {
 		if got := commercialTruthPaidRouteRequiredFeature(path); got != featureID {

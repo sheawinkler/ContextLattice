@@ -302,15 +302,14 @@ func preflightContractsSummary(findings []map[string]any, stats agentBoundarySta
 	if err == nil {
 		registryID = registry.RegistryID
 		registryVersion = registry.RegistryVersion
-		contractIDs = make([]any, 0, len(registry.Contracts))
-		keys := make([]string, 0, len(registry.Contracts))
-		for key := range registry.Contracts {
-			keys = append(keys, key)
+		relevant := make([]any, 0, len(contractIDs))
+		for _, rawID := range contractIDs {
+			contractID := strings.TrimSpace(anyToString(rawID))
+			if _, exists := registry.Contracts[contractID]; exists {
+				relevant = append(relevant, contractID)
+			}
 		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			contractIDs = append(contractIDs, key)
-		}
+		contractIDs = relevant
 	}
 	status := "passed"
 	if err != nil || len(findings) > 0 {

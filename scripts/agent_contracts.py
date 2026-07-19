@@ -805,6 +805,34 @@ def preflight_contracts_summary(
     registry = load_agent_contracts_registry()
     errors = findings or []
     preflight_contract = _contract(registry, "agent_preflight_response.v1")
+    available_contracts = registry.get("contracts") if isinstance(registry.get("contracts"), dict) else {}
+    relevant_contracts = [
+        contract_id
+        for contract_id in (
+            "agent_preflight_response.v1",
+            "policy_context_package.v1",
+            "objective_runtime_state.v1",
+            "anti_scheming_protocol.v1",
+            "context_pack_response.v1",
+            "dream_mode_response.v1",
+            "review_mode_response.v1",
+            "writeback_result.v1",
+            "codex_compact_hook_stdout.v1",
+            "agent_task_result.v1",
+            "contract_acknowledgement.v1",
+            "agent_span.v1",
+            "agent_flight_recorder_event.v1",
+            "a2a_readiness_profile.v1",
+            "agent_session_rollup.v1",
+            "agent_prompt_context_package.v1",
+            "agent_run_trace.v1",
+            "agent_proof_timeline.v1",
+            "run_advisor.v1",
+            "retrieval_progress.v1",
+            "steering_comment.v1",
+        )
+        if contract_id in available_contracts
+    ]
     observed_counts = _boundary_omitted_counts(payload) if isinstance(payload, dict) else _empty_boundary_counts()
     if original_json_bytes > 0 and bounded_json_bytes > 0 and original_json_bytes > bounded_json_bytes:
         observed_counts["json_bytes_reduced"] += original_json_bytes - bounded_json_bytes
@@ -814,7 +842,7 @@ def preflight_contracts_summary(
     summary = {
         "registry_id": str(registry.get("registry_id") or "contextlattice_agent_output_contracts"),
         "registry_version": int(registry.get("registry_version") or 0),
-        "contracts": agent_contract_ids(registry),
+        "contracts": relevant_contracts,
         "max_total_json_bytes": int(preflight_contract.get("max_total_json_bytes") or 0),
         "max_string_bytes": int(preflight_contract.get("max_string_bytes") or 0),
         "max_list_items": int(preflight_contract.get("max_list_items") or 0),

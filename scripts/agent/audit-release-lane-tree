@@ -150,6 +150,7 @@ elif [[ "${LANE}" == "public-paid" ]]; then
     "docs/evals/v3.24-frontier-t7-paid-activation.json"
     "docs/evals/v3.25-frontier-t8-paid-activation.json"
     "docs/evals/v3.26-frontier-t9-paid-activation.json"
+    "docs/evals/v4.0-frontier-t10-paid-activation.json"
     "packaging/linux/ContextLattice-Install.sh"
     "packaging/windows/Install-ContextLattice.ps1"
     "scripts/agent/audit-paid-artifact-integrity"
@@ -174,6 +175,14 @@ if [[ "${LANE}" != "public" ]]; then
     "services/gateway-go/frontier_t8_skill_evolution_entitled_test.go"
     "services/gateway-go/frontier_t9_continuity_zero_entitled.go"
     "services/gateway-go/frontier_t9_continuity_zero_entitled_test.go"
+    "services/gateway-go/frontier_t10_aggregate_signal_entitled.go"
+    "services/gateway-go/frontier_t10_aggregate_signal_entitled_test.go"
+  )
+fi
+if [[ "${LANE}" == "private" ]]; then
+  required+=(
+    "services/gateway-go/frontier_t10_secure_aggregation_research_private.go"
+    "services/gateway-go/frontier_t10_secure_aggregation_research_private_test.go"
   )
 fi
 

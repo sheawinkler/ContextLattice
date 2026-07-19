@@ -50,6 +50,10 @@ FRONTIER_REQUIRED_RELEASE_GATES = (
     "full_test_matrix",
     "live_runtime",
 )
+FRONTIER_T10_FEATURES = {
+    "frontier_aggregate_signal",
+    "frontier_private_aggregate_learning",
+}
 
 
 def load_generator(root: Path) -> ModuleType:
@@ -120,6 +124,7 @@ def audit_static_pages(
 ) -> None:
     version = contract["product"]["version"]
     train = contract["product"]["release_train"]
+    release_major = int(version.split(".", 1)[0])
     version_patterns = (
         (re.compile(r"Current public release:</strong>\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
         (re.compile(r"Current release:\s*<code>v(\d+\.\d+\.\d+)</code>"), version),
@@ -138,7 +143,7 @@ def audit_static_pages(
         lower = text.lower()
         if "cli" not in lower or ("primary" not in lower and "canonical local flow" not in lower):
             findings.append(finding("cli_not_primary", str(relative), "page does not identify CLI as primary"))
-        if re.search(r"\bv4\b|version\s*4", text, flags=re.IGNORECASE):
+        if release_major < 4 and re.search(r"\bv4\b|version\s*4", text, flags=re.IGNORECASE):
             findings.append(finding("unreleased_v4_copy", str(relative), "static commercial page mentions unreleased v4"))
         for pattern, expected in version_patterns:
             for match in pattern.finditer(text):
@@ -391,6 +396,17 @@ def audit_frontier_release_availability(
 ) -> None:
     availability = contract.get("release_availability", {})
     frontier = {feature["id"] for feature in contract["features"] if feature["id"].startswith("frontier_")}
+    legacy_frontier = frontier - FRONTIER_T10_FEATURES
+    active_t10 = frontier & FRONTIER_T10_FEATURES
+    missing_t10 = sorted(FRONTIER_T10_FEATURES - frontier)
+    if missing_t10:
+        findings.append(
+            finding(
+                "frontier_release_truth_mismatch",
+                "config/commercial_truth.v1.json",
+                f"missing required T10 capabilities: {missing_t10!r}",
+            )
+        )
     expected_posture: dict[str, Any] | None = None
     eval_text = read_text(root, FRONTIER_EVAL_PATH)
     if eval_text:
@@ -435,7 +451,7 @@ def audit_frontier_release_availability(
             )
             return
     else:
-        observed = [availability.get(feature_id, {}) for feature_id in sorted(frontier)]
+        observed = [availability.get(feature_id, {}) for feature_id in sorted(legacy_frontier)]
         if observed and all(posture == FRONTIER_PREVIEW_POSTURE for posture in observed):
             expected_posture = FRONTIER_PREVIEW_POSTURE
         elif observed and all(posture == FRONTIER_GA_POSTURE for posture in observed):
@@ -445,12 +461,12 @@ def audit_frontier_release_availability(
                 finding(
                     "frontier_release_truth_mismatch",
                     "config/commercial_truth.v1.json",
-                    "Frontier capabilities must share one exact preview or generally-available posture",
+                    "published pre-T10 Frontier capabilities must share one exact evidence posture",
                 )
             )
             return
 
-    for feature_id in sorted(frontier):
+    for feature_id in sorted(legacy_frontier):
         posture = availability.get(feature_id, {})
         if posture != expected_posture:
             findings.append(
@@ -461,9 +477,23 @@ def audit_frontier_release_availability(
                 )
             )
 
+    for feature_id in sorted(active_t10):
+        posture = availability.get(feature_id, {})
+        if posture != FRONTIER_PREVIEW_POSTURE:
+            findings.append(
+                finding(
+                    "frontier_release_truth_mismatch",
+                    "config/commercial_truth.v1.json",
+                    f"{feature_id} must remain an exact controlled activation preview until its release gate passes",
+                )
+            )
+
     premium = read_text(root, Path("docs/public_overview/premium.html"))
     preview_count = premium.lower().count("controlled activation preview")
-    if expected_posture == FRONTIER_PREVIEW_POSTURE and frontier and preview_count < len(frontier):
+    preview_features = len(active_t10)
+    if expected_posture == FRONTIER_PREVIEW_POSTURE:
+        preview_features += len(legacy_frontier)
+    if preview_count < preview_features:
         findings.append(
             finding(
                 "frontier_preview_copy_missing",
@@ -471,7 +501,7 @@ def audit_frontier_release_availability(
                 "every unproven Frontier capability must be visibly labeled as a controlled activation preview",
             )
         )
-    if expected_posture == FRONTIER_GA_POSTURE and preview_count:
+    if preview_features == 0 and preview_count:
         findings.append(
             finding(
                 "frontier_ga_copy_stale",

@@ -91,6 +91,7 @@ var nativeToolNames = map[string]string{
 	"contextlattice_async_inbox_drain":               "async-inbox-drain",
 	"contextlattice_agent_fit":                       "agent-fit",
 	"contextlattice_continuity_zero":                 "continuity-zero",
+	"contextlattice_aggregate_signal":                "aggregate-signal",
 }
 
 var retrievalGovernanceRoutes = map[string]string{
@@ -316,6 +317,8 @@ func (c *cli) run(argv []string) error {
 		return c.cmdAgentFit(args)
 	case "continuity-zero":
 		return c.cmdContinuityZero(args)
+	case "aggregate-signal":
+		return c.cmdAggregateSignal(args)
 	case "portable-continuation":
 		return c.cmdPortableContinuation(args)
 	case "skill-evolution":
@@ -396,6 +399,7 @@ Advanced/compatibility commands:
   async-inbox-drain              bounded async continuation inbox drain for any agent
   agent-fit                      steering, advisory selection, profiles, and context preparation
   continuity-zero               restore one unambiguous active objective with bounded proof and next move
+  aggregate-signal              preview, opt in, queue, release, inspect, or revoke bounded aggregate statistics
   portable-continuation          portable grants, imports, manifests, and continuation status
   skill-evolution                reusable-skill and retirement advisory candidates
 
@@ -407,6 +411,7 @@ contextlattice_continuity_reconcile, contextlattice_objective_transition,
 contextlattice_objective_graph, contextlattice_decision_change,
 contextlattice_policy_candidate, contextlattice_policy_evaluate, contextlattice_skill_draft,
 contextlattice_passport_export, contextlattice_mesh_export, contextlattice_agent_fit, contextlattice_continuity_zero,
+contextlattice_aggregate_signal,
 contextlattice_write, contextlattice_agent_session, and other contextlattice_* commands.`)
 	return err
 }
