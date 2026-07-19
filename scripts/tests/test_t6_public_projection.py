@@ -84,7 +84,7 @@ class T6PublicProjectionTests(unittest.TestCase):
             shutil.copytree(GATEWAY, projected)
             for relative in PAID_T6_PATHS:
                 target = projected / Path(relative).relative_to("services/gateway-go")
-                target.unlink()
+                target.unlink(missing_ok=True)
             result = run([go, "test", "-run", "^$", "."], projected)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

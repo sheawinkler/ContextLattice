@@ -25,16 +25,6 @@ func (w *frontierT6EmissionWriter) Write(raw []byte) (int, error) {
 func frontierT6CLIEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CONTEXTLATTICE_CONFIG_HOME", t.TempDir())
-	for _, name := range []string{
-		"CONTEXTLATTICE_RUNTIME_LICENSE",
-		"CONTEXTLATTICE_ENTITLEMENT_KEY",
-		"GO_V4_ENTITLEMENT_KEY",
-		"CONTEXTLATTICE_PLAN",
-		"CONTEXTLATTICE_WORKSPACE_ROLE",
-		"CONTEXTLATTICE_MACHINE_ID",
-	} {
-		t.Setenv(name, "")
-	}
 }
 
 func TestFrontierT6AgentFitSteeringWatchResumesEmitsThenAcknowledges(t *testing.T) {

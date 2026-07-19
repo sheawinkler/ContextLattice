@@ -270,18 +270,6 @@ func (c *cli) frontierT6OpenSteeringSSE(ctx context.Context, scope map[string]an
 	if c.apiKey != "" {
 		request.Header.Set("x-api-key", c.apiKey)
 	}
-	headers, err := entitlementHeaders()
-	if err != nil {
-		return nil, "", err
-	}
-	for header, value := range headers {
-		if strings.TrimSpace(value) != "" {
-			request.Header.Set(header, value)
-		}
-	}
-	if err := addRuntimeLicenseRequestProof(request, nil); err != nil {
-		return nil, "", err
-	}
 	response, err := c.client.Do(request)
 	if err != nil {
 		return nil, "sse_transport_unavailable", nil
