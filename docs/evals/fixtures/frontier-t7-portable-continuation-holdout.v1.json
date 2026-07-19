@@ -1,0 +1,31 @@
+{
+  "schema_id": "frontier_t7_portable_continuation_holdout.v1",
+  "version": 1,
+  "frozen_at": "2026-07-19T00:00:00Z",
+  "frontier_items": [16, 18, 25, 17],
+  "cases": [
+    {"id":"diff_reordered_evidence_stays_faithful","item":16,"surface":"passport_diff","scenario":"reordered_evidence","expected":{"decision":"explain"}},
+    {"id":"diff_redacted_values_do_not_leak","item":16,"surface":"passport_diff","scenario":"redacted_values","expected":{"decision":"redact"}},
+    {"id":"diff_equivalent_claims_are_bounded","item":16,"surface":"passport_diff","scenario":"equivalent_claims","expected":{"decision":"explain"}},
+    {"id":"diff_divergent_lineage_is_visible","item":16,"surface":"passport_diff","scenario":"divergent_lineage","expected":{"decision":"conflict"}},
+    {"id":"diff_machine_roots_are_removed","item":16,"surface":"passport_diff","scenario":"renamed_files","expected":{"decision":"redact"}},
+
+    {"id":"grant_role_downgrade_denied","item":18,"surface":"collaborative_grant","scenario":"role_downgrade","expected":{"decision":"deny"}},
+    {"id":"grant_nested_delegation_ceiling_enforced","item":18,"surface":"collaborative_grant","scenario":"nested_delegation","expected":{"decision":"deny"}},
+    {"id":"grant_wrong_project_denied","item":18,"surface":"collaborative_grant","scenario":"wrong_project","expected":{"decision":"deny"}},
+    {"id":"grant_capability_escalation_denied","item":18,"surface":"collaborative_grant","scenario":"capability_escalation","expected":{"decision":"deny"}},
+    {"id":"grant_revocation_is_fresh_and_signed","item":18,"surface":"collaborative_grant","scenario":"stale_revocation","expected":{"decision":"deny"}},
+
+    {"id":"import_malformed_export_rejected","item":25,"surface":"provenance_import","scenario":"malformed_export","expected":{"decision":"reject"}},
+    {"id":"import_secret_content_redacted","item":25,"surface":"provenance_import","scenario":"secret_content","expected":{"decision":"redact"}},
+    {"id":"import_duplicate_notes_deduplicated","item":25,"surface":"provenance_import","scenario":"duplicate_notes","expected":{"decision":"deduplicate"}},
+    {"id":"import_interruption_resumes_atomically","item":25,"surface":"provenance_import","scenario":"interrupted_import","expected":{"decision":"resume"}},
+    {"id":"import_execution_remains_external","item":25,"surface":"provenance_import","scenario":"external_execution_digest","expected":{"decision":"record_receipt"}},
+
+    {"id":"continuation_wrong_recipient_rejected","item":17,"surface":"continuation","scenario":"wrong_recipient","expected":{"decision":"reject"}},
+    {"id":"continuation_expired_envelope_rejected","item":17,"surface":"continuation","scenario":"expired_envelope","expected":{"decision":"reject"}},
+    {"id":"continuation_replay_rejected_without_mutation","item":17,"surface":"continuation","scenario":"replay","expected":{"decision":"reject"}},
+    {"id":"continuation_divergent_lineage_rejected","item":17,"surface":"continuation","scenario":"divergent_lineage","expected":{"decision":"conflict"}},
+    {"id":"continuation_third_party_repackaging_rejected","item":17,"surface":"continuation","scenario":"issuer_repackaging","expected":{"decision":"reject"}}
+  ]
+}

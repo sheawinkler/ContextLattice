@@ -32,6 +32,7 @@ ContextLattice provides a single memory contract for agentic systems:
 - Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports with explicit, non-destructive draft retirement.
 - Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
 - Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
+- Portable Continuation that binds signed least-privilege grants, digest-only work manifests, provenance-preserving import receipts, and replay-safe cross-machine reconciliation into one CLI-first handoff.
 - Agent runtime sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready reference packages, exportable run traces, and exact-linked proof timelines.
 - Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
 - Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
@@ -42,9 +43,9 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v3.23.0` is the current public baseline. Agent Fit gives every harness a live briefing layer without turning ContextLattice into a runner: resumable steering arrives through SSE with bounded pull fallback, runner and model recommendations stay advisor-only, effective profiles resolve by explicit then stored then generic precedence, and prepared context is opt-in, source-bound, and rejected after task or authorization drift. The task worker authorizes only the target already named by the task; it never silently reroutes work. Policy Laboratory, Retrieval Receipts, causal synthesis, the Utility Ledger, Agent Packets, proof timelines, Context Passports, Context Mesh, Skill Foundry, and agent integrations remain part of the same local-first contract. Paid lanes add governed workspace rollout and explicit selection authorization, but no paid switch can weaken the public fail-closed core or make the gateway execute a model, subprocess, merge, or push. The CLI remains the prescribed path; dashboard, HTTP, and MCP are companion integration surfaces.
+`v3.24.0` is the current release baseline. Portable Continuation lets an agent carry the proof of ongoing work across machines without shipping a prompt dump or surrendering control to a sync service: human-readable Passport diffs expose what changed, signed collaborative grants constrain exactly who may continue what and why, Context Mesh seals digest-only manifests with age X25519, receivers authorize again and reject replay, and provenance-preserving import plans require an external worker execution digest before recording a receipt. Operator and Enterprise add workspace policy, review queues, bulk revocation governance, retention, and external-adapter schedules, but the gateway never delivers an envelope, contacts a connector, executes an import, runs a model or subprocess, merges, or pushes. The CLI remains the prescribed path; HTTP is the integration fallback. Agent Fit, Policy Laboratory, Retrieval Receipts, the Utility Ledger, Agent Packet deltas, proof timelines, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Skill Foundry, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain part of the same contract.
 
-## Public Runtime Stack (v3.23)
+## Public Runtime Stack (v3.24)
 
 - Ingress: `gateway-go`.
 - Core memory + retrieval lanes: Go + Rust services.
@@ -105,8 +106,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 3.23.0 \
-  --statement "The current public release is 3.23.0." \
+  --object 3.24.0 \
+  --statement "The current public release is 3.24.0." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -154,6 +155,16 @@ contextlattice agent-fit context-prep-schedule --project contextlattice --payloa
 contextlattice_passport_export "prepare the release handoff" --project contextlattice --output passport.json --pretty
 contextlattice_passport_verify --file passport.json --pretty
 contextlattice_mesh_identity --pretty
+
+# Portable Continuation: grant narrowly, seal locally, move through your chosen
+# channel, then decrypt and reconcile without importing or executing anything.
+contextlattice_agent_tools portable-continuation grant-create \
+  --payload-file grant-request.json --output grant.json --pretty
+contextlattice_agent_tools portable-continuation manifest-create \
+  --payload-file continuation-request.json --output continuation-envelope.json --pretty
+contextlattice_agent_tools portable-continuation manifest-reconcile \
+  --payload-file reconciliation-request.json --envelope-file continuation-envelope.json --pretty
+contextlattice_agent_tools portable-continuation status --pretty
 ```
 
 The planner remains `shadow_only`: learned candidates are advice, not a hidden configuration rewrite. Skill exports remain inactive files until reviewed and installed through the normal Skills Index workflow. Passport replay never executes imported text, and Mesh never owns transport. See [`docs/continuity-identity.md`](docs/continuity-identity.md), [`docs/cognition-proof-core.md`](docs/cognition-proof-core.md), [`docs/outcome-policy-skill-foundry.md`](docs/outcome-policy-skill-foundry.md), and [`docs/context-passport-mesh.md`](docs/context-passport-mesh.md) for contracts, safety boundaries, and HTTP fallbacks.
@@ -457,6 +468,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v3.24.0.md` (signed collaborative grants, provenance-preserving imports, and encrypted replay-safe continuation)
   - `docs/releases/v3.23.0.md` (Agent Fit steering, advisor-only selection, adaptive profiles, and explicit context preparation)
   - `docs/releases/v3.22.0.md` (Policy Laboratory simulation, scoped learning, reversible lifecycle, contradiction, and storage governance)
   - `docs/releases/v3.21.0.md` (retrieval receipts, trust isolation, ablation, causal proof, and governed paid operations)

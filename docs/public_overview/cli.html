@@ -186,8 +186,19 @@ contextlattice_mesh_export \
 
 # receiving import is dry-run first
 contextlattice_mesh_import --file envelope.json --pretty
-contextlattice_mesh_import --file envelope.json --apply --pretty</code></pre>
-        <p class="muted-note">Passports are Ed25519-signed. Mesh uses the stable age v1 format with native X25519 recipients and ChaCha20-Poly1305 payload protection. Conflicts become preserved branches, never last-write-wins. ContextLattice performs no delivery network calls and adds no MCP tool surface.</p>
+contextlattice_mesh_import --file envelope.json --apply --pretty
+
+# T7 portable continuation keeps rich artifacts out of the agent transcript
+contextlattice_agent_tools portable-continuation grant-create \
+  --payload-file grant-request.json --output grant.json --pretty
+contextlattice_agent_tools portable-continuation manifest-create \
+  --payload-file continuation-request.json \
+  --output continuation-envelope.json --pretty
+contextlattice_agent_tools portable-continuation manifest-reconcile \
+  --payload-file reconciliation-request.json \
+  --envelope-file continuation-envelope.json --pretty
+contextlattice_agent_tools portable-continuation status --pretty</code></pre>
+        <p class="muted-note">Passports are Ed25519-signed. Mesh uses the stable age v1 format with native X25519 recipients and ChaCha20-Poly1305 payload protection. Conflicts become preserved branches, never last-write-wins. Continuation reconciliation rechecks authorization, lineage, revocation, key epoch, and replay. ContextLattice performs no delivery or import execution, stores no continuation payload, and adds no MCP tool surface.</p>
       </article>
     </section>
 

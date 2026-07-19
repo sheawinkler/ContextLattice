@@ -1,0 +1,19 @@
+{
+  "schema_id": "frontier_t7_portable_continuation_baseline.v1",
+  "version": 1,
+  "frozen_at": "2026-07-19T00:00:00Z",
+  "base_release": "v3.23.0",
+  "frontier_items": [16, 18, 25, 17],
+  "behavior": {
+    "passport_diff": "Context Passports exposed structural change data without a bounded reviewer-oriented explanation of objectives, scope, claims, evidence, lineage, and redaction provenance.",
+    "collaborative_grants": "Context Mesh had project-scoped encrypted sharing primitives without the full signed capability, subject-snapshot, purpose, usage, delegation, recipient, key-epoch, approval, and revocation contract.",
+    "provenance_import": "Passport import and migration surfaces existed without deterministic resumable plans and external-execution-digest receipts preserving source-to-memory provenance.",
+    "cross_machine_continuation": "Operators could manually seal Mesh payloads but had no bounded signed continuation manifest, fresh receiver reconciliation, or replay-safe continuation lifecycle."
+  },
+  "measurements": {
+    "reviewer_diff_holdout_pass_rate": 0.0,
+    "grant_denial_and_revocation_pass_rate": 0.0,
+    "provenance_import_holdout_pass_rate": 0.0,
+    "continuation_safety_holdout_pass_rate": 0.0
+  }
+}

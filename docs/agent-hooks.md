@@ -76,6 +76,7 @@ Installed commands:
 | `contextlattice_retrieval_governance` | Entitled receipt, causal-bridge, counterfactual, reputation, regression, and adversarial-defense policy governance; it never executes retrieval or disables public defenses. |
 | `contextlattice_policy_lab` | Primary Policy Laboratory CLI for simulation, scoped cards, promotion evidence, reversible lifecycle, contradiction, storage-temperature, and governance status. |
 | `contextlattice_agent_fit` | Primary Agent Fit CLI for resumable steering, advisory runner/model selection, effective profiles, and explicit-use context preparation. |
+| `contextlattice_agent_tools portable-continuation` | Primary Portable Continuation CLI family for signed grants, provenance-preserving imports, encrypted manifests, dry-run reconciliation, and bounded status. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
 | `contextlattice_continuity_reconcile` | Resolve one stable task identity exact-first, keep its execution lane separate, and abstain on semantic ambiguity; merge and split require explicit operator attribution and reason. |
@@ -132,6 +133,15 @@ Runner adapter completions write compact `runner_quality_sample.v1` rows when ta
 | `contextlattice_command_output_budget` | Bounded command output with full artifact capture. |
 | `contextlattice_pre_compaction_write` | Persist objective state before compaction/handoff. |
 | `contextlattice_post_compaction_read` | Read objective state after compaction/resume. |
+
+### Portable Continuation
+
+Use `contextlattice_agent_tools portable-continuation` as the canonical
+interface. POST operations require an owner-only `--payload-file`; use
+`--output` for the encrypted envelope so ciphertext does not consume agent
+context. `manifest-reconcile` accepts that artifact through `--envelope-file`.
+The gateway verifies and records contracts only: an operator-chosen external
+adapter owns delivery and import execution.
 
 ### Verified utility receipts
 
