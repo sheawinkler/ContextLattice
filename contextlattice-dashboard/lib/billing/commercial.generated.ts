@@ -2,16 +2,16 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "91689d4ca0c8d47edc3c68934889e0dd2b5b10c9a6bf8cd6cbe90c4006483fcf";
+export const COMMERCIAL_CONTRACT_SHA256 = "b7294aa6fc5100711d02e7f22dc6707e221fd018628321f169181be75af7f0d8";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "3.22.0",
-    "stable_tag": "v3.22.0",
-    "release_train": "3.22",
+    "version": "3.23.0",
+    "stable_tag": "v3.23.0",
+    "release_train": "3.23",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
   },
@@ -151,6 +151,11 @@ export const COMMERCIAL_TRUTH = {
       "id": "frontier_policy_laboratory_automation",
       "buyer_label": "Let retrieval policy earn the keys",
       "description": "Simulate, compare, activate, schedule, and reverse evidence-bound retrieval and memory-lifecycle policy inside explicit workspace limits."
+    },
+    {
+      "id": "frontier_agent_fit_governance",
+      "buyer_label": "Every agent arrives ready",
+      "description": "Govern live steering, outcome-calibrated agent profiles, context preparation, and explicit runner or model activation while execution stays outside ContextLattice."
     }
   ],
   "plans": [
@@ -294,7 +299,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_evidence_reputation_activation",
         "frontier_continuous_retrieval_regression",
         "frontier_adversarial_defense_operations",
-        "frontier_policy_laboratory_automation"
+        "frontier_policy_laboratory_automation",
+        "frontier_agent_fit_governance"
       ]
     },
     {
@@ -341,7 +347,8 @@ export const COMMERCIAL_TRUTH = {
         "frontier_evidence_reputation_activation",
         "frontier_continuous_retrieval_regression",
         "frontier_adversarial_defense_operations",
-        "frontier_policy_laboratory_automation"
+        "frontier_policy_laboratory_automation",
+        "frontier_agent_fit_governance"
       ]
     }
   ],
@@ -402,7 +409,11 @@ export const COMMERCIAL_TRUTH = {
       "/memory/context-policy/canary",
       "/memory/lifecycle/automation",
       "/memory/contradictions/review-queue",
-      "/memory/storage/temperature/automation"
+      "/memory/storage/temperature/automation",
+      "/memory/agent-fit/steering/governance",
+      "/memory/agent-fit/profile/governance",
+      "/memory/agent-fit/context-prep/governance",
+      "/memory/agent-fit/selection/activation"
     ]
   },
   "paid_feature_route_contracts": [
@@ -615,9 +626,26 @@ export const COMMERCIAL_TRUTH = {
         "/memory/contradictions/review-queue",
         "/memory/storage/temperature/automation"
       ]
+    },
+    {
+      "feature_id": "frontier_agent_fit_governance",
+      "eligible_plan_ids": [
+        "operator",
+        "enterprise"
+      ],
+      "allowed_roles": [
+        "owner",
+        "admin"
+      ],
+      "routes": [
+        "/memory/agent-fit/steering/governance",
+        "/memory/agent-fit/profile/governance",
+        "/memory/agent-fit/context-prep/governance",
+        "/memory/agent-fit/selection/activation"
+      ]
     }
   ],
-  "contract_sha256": "91689d4ca0c8d47edc3c68934889e0dd2b5b10c9a6bf8cd6cbe90c4006483fcf"
+  "contract_sha256": "b7294aa6fc5100711d02e7f22dc6707e221fd018628321f169181be75af7f0d8"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

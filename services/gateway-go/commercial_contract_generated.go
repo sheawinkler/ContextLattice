@@ -8,10 +8,10 @@ import (
 )
 
 const commercialTruthSchemaID = "contextlattice_commercial_truth.v1"
-const commercialTruthProductVersion = "3.22.0"
-const commercialTruthStableTag = "v3.22.0"
-const commercialTruthReleaseTrain = "3.22"
-const commercialTruthContractSHA256 = "91689d4ca0c8d47edc3c68934889e0dd2b5b10c9a6bf8cd6cbe90c4006483fcf"
+const commercialTruthProductVersion = "3.23.0"
+const commercialTruthStableTag = "v3.23.0"
+const commercialTruthReleaseTrain = "3.23"
+const commercialTruthContractSHA256 = "b7294aa6fc5100711d02e7f22dc6707e221fd018628321f169181be75af7f0d8"
 
 type commercialTruthLimits struct {
 	MaxAPIKeys    *int
@@ -50,8 +50,8 @@ var commercialTruthPlans = map[string]commercialTruthPlan{
 	"free":       {ID: "free", BuyerLabel: "Free", Description: "Local-first core for individual builders and evaluation.", Paid: false, SelfServePurchasable: false, MonthlyUSD: commercialTruthInt(0), AnnualUSD: commercialTruthInt(0), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "frontier_verified_utility_ledger"}},
 	"starter":    {ID: "starter", BuyerLabel: "Starter", Description: "Paid single-operator access to hosted artifacts and protected runtime operations.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(24), AnnualUSD: commercialTruthInt(240), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(3), MaxProjects: commercialTruthInt(5), MaxWriteBytes: commercialTruthInt(50000), IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "protected_runtime_operations", "frontier_verified_utility_ledger", "frontier_utility_analytics"}},
 	"team":       {ID: "team", BuyerLabel: "Team", Description: "Shared workspace and analytics access for teams shipping agent workflows.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(99), AnnualUSD: commercialTruthInt(990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(10), MaxProjects: commercialTruthInt(25), MaxWriteBytes: commercialTruthInt(200000), IncludedSeats: commercialTruthInt(5)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance", "frontier_verified_utility_ledger", "frontier_utility_analytics", "frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance"}},
-	"operator":   {ID: "operator", BuyerLabel: "Operator", Description: "Advanced operator lane for protected runtime operations and analytics.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(299), AnnualUSD: commercialTruthInt(2990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_verified_utility_ledger", "frontier_utility_analytics", "frontier_verified_efficiency_operations", "frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance", "frontier_continuous_counterfactual_eval", "frontier_evidence_reputation_activation", "frontier_continuous_retrieval_regression", "frontier_adversarial_defense_operations", "frontier_policy_laboratory_automation"}},
-	"enterprise": {ID: "enterprise", BuyerLabel: "Enterprise", Description: "Custom-priced enterprise access with workspace controls and SCIM token management.", Paid: true, SelfServePurchasable: false, MonthlyUSD: nil, AnnualUSD: nil, CustomPricing: true, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(100), MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(100)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance", "frontier_verified_utility_ledger", "frontier_utility_analytics", "frontier_verified_efficiency_operations", "scim_token_management", "frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance", "frontier_continuous_counterfactual_eval", "frontier_evidence_reputation_activation", "frontier_continuous_retrieval_regression", "frontier_adversarial_defense_operations", "frontier_policy_laboratory_automation"}},
+	"operator":   {ID: "operator", BuyerLabel: "Operator", Description: "Advanced operator lane for protected runtime operations and analytics.", Paid: true, SelfServePurchasable: true, MonthlyUSD: commercialTruthInt(299), AnnualUSD: commercialTruthInt(2990), CustomPricing: false, Limits: commercialTruthLimits{MaxAPIKeys: nil, MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(1)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_verified_utility_ledger", "frontier_utility_analytics", "frontier_verified_efficiency_operations", "frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance", "frontier_continuous_counterfactual_eval", "frontier_evidence_reputation_activation", "frontier_continuous_retrieval_regression", "frontier_adversarial_defense_operations", "frontier_policy_laboratory_automation", "frontier_agent_fit_governance"}},
+	"enterprise": {ID: "enterprise", BuyerLabel: "Enterprise", Description: "Custom-priced enterprise access with workspace controls and SCIM token management.", Paid: true, SelfServePurchasable: false, MonthlyUSD: nil, AnnualUSD: nil, CustomPricing: true, Limits: commercialTruthLimits{MaxAPIKeys: commercialTruthInt(100), MaxProjects: nil, MaxWriteBytes: nil, IncludedSeats: commercialTruthInt(100)}, FeatureIDs: []string{"cli_workflows", "local_go_rust_runtime", "durable_memory", "staged_retrieval", "agent_session_context", "dashboard_visibility", "premium_artifact_downloads", "premium_runtime_keys", "shared_workspace_controls", "pro_analytics", "protected_runtime_operations", "frontier_semantic_continuity_automation", "frontier_shared_objective_graph", "frontier_shared_decision_provenance", "frontier_verified_utility_ledger", "frontier_utility_analytics", "frontier_verified_efficiency_operations", "scim_token_management", "frontier_retrieval_receipt_governance", "frontier_causal_bridge_governance", "frontier_continuous_counterfactual_eval", "frontier_evidence_reputation_activation", "frontier_continuous_retrieval_regression", "frontier_adversarial_defense_operations", "frontier_policy_laboratory_automation", "frontier_agent_fit_governance"}},
 }
 
 var commercialTruthPlanAliases = map[string]string{
@@ -94,29 +94,37 @@ var commercialTruthProtectedPaidRoutes = []string{
 	"/memory/lifecycle/automation",
 	"/memory/contradictions/review-queue",
 	"/memory/storage/temperature/automation",
+	"/memory/agent-fit/steering/governance",
+	"/memory/agent-fit/profile/governance",
+	"/memory/agent-fit/context-prep/governance",
+	"/memory/agent-fit/selection/activation",
 }
 
 var commercialTruthPaidRouteEligiblePlans = []string{"starter", "team", "operator", "enterprise"}
 var commercialTruthPaidRouteAllowedRoles = []string{"owner", "admin"}
 
 var commercialTruthPaidFeatureRouteRequirements = map[string]commercialTruthFeatureRouteRequirement{
-	"/memory/continuity/automation":          {FeatureID: "frontier_semantic_continuity_automation", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/objectives/shared":              {FeatureID: "frontier_shared_objective_graph", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/decision-changes/shared":        {FeatureID: "frontier_shared_decision_provenance", EligiblePlanIDs: []string{"team", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/telemetry/utility/analytics":           {FeatureID: "frontier_utility_analytics", EligiblePlanIDs: []string{"starter", "team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/telemetry/utility/policy/evaluate":     {FeatureID: "frontier_verified_efficiency_operations", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/retrieval/receipts/governance":  {FeatureID: "frontier_retrieval_receipt_governance", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/causal-bridges/governance":      {FeatureID: "frontier_causal_bridge_governance", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/retrieval/ablation/operations":  {FeatureID: "frontier_continuous_counterfactual_eval", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/evidence-reputation/activation": {FeatureID: "frontier_evidence_reputation_activation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/recall/regressions/operations":  {FeatureID: "frontier_continuous_retrieval_regression", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/trust/defense/operations":       {FeatureID: "frontier_adversarial_defense_operations", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/policy/simulation/history":      {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/policy/scoped/activation":       {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/context-policy/canary":          {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/lifecycle/automation":           {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/contradictions/review-queue":    {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
-	"/memory/storage/temperature/automation": {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/continuity/automation":             {FeatureID: "frontier_semantic_continuity_automation", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/objectives/shared":                 {FeatureID: "frontier_shared_objective_graph", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/decision-changes/shared":           {FeatureID: "frontier_shared_decision_provenance", EligiblePlanIDs: []string{"team", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/telemetry/utility/analytics":              {FeatureID: "frontier_utility_analytics", EligiblePlanIDs: []string{"starter", "team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/telemetry/utility/policy/evaluate":        {FeatureID: "frontier_verified_efficiency_operations", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/retrieval/receipts/governance":     {FeatureID: "frontier_retrieval_receipt_governance", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/causal-bridges/governance":         {FeatureID: "frontier_causal_bridge_governance", EligiblePlanIDs: []string{"team", "operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/retrieval/ablation/operations":     {FeatureID: "frontier_continuous_counterfactual_eval", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/evidence-reputation/activation":    {FeatureID: "frontier_evidence_reputation_activation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/recall/regressions/operations":     {FeatureID: "frontier_continuous_retrieval_regression", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/trust/defense/operations":          {FeatureID: "frontier_adversarial_defense_operations", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/policy/simulation/history":         {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/policy/scoped/activation":          {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/context-policy/canary":             {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/lifecycle/automation":              {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/contradictions/review-queue":       {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/storage/temperature/automation":    {FeatureID: "frontier_policy_laboratory_automation", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/agent-fit/steering/governance":     {FeatureID: "frontier_agent_fit_governance", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/agent-fit/profile/governance":      {FeatureID: "frontier_agent_fit_governance", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/agent-fit/context-prep/governance": {FeatureID: "frontier_agent_fit_governance", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
+	"/memory/agent-fit/selection/activation":    {FeatureID: "frontier_agent_fit_governance", EligiblePlanIDs: []string{"operator", "enterprise"}, AllowedRoles: []string{"owner", "admin"}},
 }
 
 func commercialTruthPaidRouteRequiredFeature(path string) string {

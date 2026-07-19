@@ -1,6 +1,7 @@
 # ContextLattice Launch Channel Copybook
-Last updated: 2026-07-18
-Launch target: ContextLattice v3.22 release wave: July 2026
+
+Last updated: 2026-07-19
+Launch target: ContextLattice v3.23 release wave: July 2026
 
 Use these blocks as final copy for synchronized launch submissions.
 
@@ -13,17 +14,19 @@ Use these blocks as final copy for synchronized launch submissions.
 - Publish timing: `Unscheduled`
 - Listing URL: `https://github.com/sheawinkler/ContextLattice/releases/new`
 
-Title: ContextLattice v3.22.0
+Title: ContextLattice v3.23.0
 
 ```text
-ContextLattice v3.22.0 makes retrieval policy earn the keys.
+ContextLattice v3.23.0 makes every agent arrive ready.
 
 Highlights:
-- replay candidate policy against immutable snapshots before it can influence production
-- learn project, task-class, and retrieval-intent policy without cross-project leakage
-- block promotion when assignments, uncertainty, drift, or survivor bias do not hold up
-- retire stale memory, resolve contradictions, and cool storage through reversible receipts
-- add bounded paid canaries, review queues, schedules, and automation without hidden broad mutation
+- deliver live, resumable steering over SSE with bounded pull fallback
+- learn outcome-calibrated profiles by project, task class, and retrieval intent
+- prepare source-bound context before work begins and reject it after authorization or task drift
+- recommend the right runner and model without silently rerouting execution
+- govern paid activation through receipts, workspace isolation, revocation, and rollback
+
+The CLI remains the primary interface. ContextLattice still executes no model, subprocess, merge, or push.
 
 Start with the CLI:
 - Docs: https://contextlattice.io/installation.html
@@ -169,13 +172,11 @@ Would appreciate feedback on retrieval quality and operational ergonomics.
 Title: X launch post
 
 ```text
-Retrieval policy should not reach production because it had a good vibe.
+Every agent should arrive already knowing how to work with you.
 
-ContextLattice v3.22.0 replays the candidate, shows the trade, learns the fit for one project, and refuses promotion when the evidence folds.
+ContextLattice v3.23.0 delivers live steering, outcome-calibrated profiles, and source-bound context before the first serious tool call. It can recommend the right runner and model, but it will never silently reroute your work.
 
-Stale memory retires without disappearing. Contradictions become proof workflows. Storage cools through reversible receipts. Paid controls scale the laboratory, never the blast radius.
-
-Memory with judgment. Policy with proof.
+The memory compounds. The agent adapts. You keep control.
 
 Start with the CLI: https://contextlattice.io/installation.html
 ```
@@ -188,11 +189,11 @@ Start with the CLI: https://contextlattice.io/installation.html
 Title: LinkedIn launch post
 
 ```text
-ContextLattice v3.22.0 turns retrieval policy into an evidence-gated production discipline.
+ContextLattice v3.23.0 gives every agent a live briefing layer.
 
-Same-snapshot simulation separates predicted deltas from observed outcomes. Scoped policy learns by project, task class, and retrieval intent. Promotion requires assignment exposure, uncertainty, drift, and survivor-bias proof. Retirement, contradiction resolution, and storage temperature preserve history through immutable reversible receipts.
+Resumable steering survives disconnects. Agent profiles learn from outcomes without crossing project boundaries. Context preparation is source-bound and invalidated after drift. Runner and model selection stays advisor-only until an operator explicitly authorizes the named target.
 
-Paid operations add bounded activation, canaries, queues, schedules, and automation. The public core remains explicit, local, and advisory until an operator applies a change.
+Paid governance adds durable receipts, workspace isolation, revocation, and rollback. ContextLattice remains the intelligence layer, not the harness: it executes no model, subprocess, merge, or push.
 
 The CLI remains the primary interface.
 

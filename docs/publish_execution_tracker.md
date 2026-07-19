@@ -1,6 +1,7 @@
 # ContextLattice Publish Execution Tracker (MCP Service)
-Last updated: 2026-07-18
-Launch window: ContextLattice v3.22 release wave: July 2026
+
+Last updated: 2026-07-19
+Launch window: ContextLattice v3.23 release wave: July 2026
 
 ## 1) Positioning Guardrails
 
@@ -26,7 +27,7 @@ Launch window: ContextLattice v3.22 release wave: July 2026
 
 | Tier | Channel | Listing URL | Submission path | Lead time | Cost signal | Owner | Publish timing | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| P0 | GitHub Release | https://github.com/sheawinkler/ContextLattice/releases/new | Publish the lane-approved v3.22.0 release with notes, checksums, and images | Same day | Free | Shea | Unscheduled | Live |
+| P0 | GitHub Release | https://github.com/sheawinkler/ContextLattice/releases/new | Publish the lane-approved v3.23.0 release with notes, checksums, and images | Same day | Free | Shea | Unscheduled | Live |
 | P0 | Custom Domain Docs | https://contextlattice.io | DNS + CNAME + HTTPS + smoke tests | 1-2 days | Domain/DNS | Shea | Unscheduled | Live |
 | P0 | MCP Registry (official) | https://registry.modelcontextprotocol.io | Publish server metadata via registry tooling | 1-3 days | Free | Shea | Unscheduled | Deferred (local-first track; requires public HTTPS /mcp) |
 | P0 | Glama MCP | https://glama.ai/mcp/servers | Add server listing + docs + repo links | 0-2 days | Free | Shea | Unscheduled | Submitted (awaiting review) |
