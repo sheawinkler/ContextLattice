@@ -45,7 +45,7 @@ ContextLattice provides a single memory contract for agentic systems:
 
 ## Current Public Baseline
 
-`v4.0.0` is the current release baseline. Aggregate Signal adds a privacy-bounded learning loop without making memory exportable: only explicitly opted-in, clipped sufficient statistics enter a local queue; small cohorts disappear behind suppression; composition, replay, expiry, and opt-out are enforced; and external network calls remain zero by default. Operator and Enterprise artifacts add credential-derived workspace governance, while production cohort contribution and reporting stay hard-blocked until independent privacy and utility reviews pass. The CLI remains the prescribed path; HTTP is the integration fallback. Continuity Zero, Verified Skill Evolution, Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Utility Ledger, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain one coherent contract.
+`v4.0.1` is the current release baseline. Aggregate Signal adds a privacy-bounded learning loop without making memory exportable: only explicitly opted-in, clipped sufficient statistics enter a local queue; small cohorts disappear behind suppression; composition, replay, expiry, and opt-out are enforced; and external network calls remain zero by default. Operator and Enterprise artifacts add credential-derived workspace governance, while production cohort contribution and reporting stay hard-blocked until independent privacy and utility reviews pass. The CLI remains the prescribed path; HTTP is the integration fallback. Continuity Zero, Verified Skill Evolution, Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Utility Ledger, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain one coherent contract.
 
 ## Public Runtime Stack (v4.0)
 
@@ -108,8 +108,8 @@ contextlattice_claim_write \
   --project contextlattice \
   --subject release \
   --predicate current_version \
-  --object 4.0.0 \
-  --statement "The current public release is 4.0.0." \
+  --object 4.0.1 \
+  --statement "The current public release is 4.0.1." \
   --pretty
 
 # Query current, historical, superseded, or contradicted claims.
@@ -475,6 +475,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v4.0.1.md` (public installer boundary repair with unchanged Aggregate Signal runtime semantics)
   - `docs/releases/v4.0.0.md` (privacy-bounded Aggregate Signal, explicit consent, cohort suppression, and proof-held paid governance)
   - `docs/releases/v3.26.0.md` (zero-entry continuity, fail-closed objective selection, and governed external-adapter intents)
   - `docs/releases/v3.25.0.md` (evidence-qualified skill evolution, atomic Foundry handoff, and exact-receipt governance)

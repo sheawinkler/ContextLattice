@@ -4,8 +4,8 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "4.0.0",
-    "stable_tag": "v4.0.0",
+    "version": "4.0.1",
+    "stable_tag": "v4.0.1",
     "release_train": "4.0",
     "primary_interface": "cli",
     "python_role": "build_and_development_tooling_only"
@@ -870,6 +870,6 @@
       ]
     }
   ],
-  "contract_sha256": "fb1383494191f44a5302c7172586aa5a4269a15647d7e5d188975733d2fdcf9d",
-  "commercial_truth_sha256": "0777f633758ac623825f069d50aa2fc0b90946f191e671739c124b3924455155"
+  "contract_sha256": "b6266d9b0479b367b11cba38e6bc961dda0900cdc641ccf28999247ff20cd8d7",
+  "commercial_truth_sha256": "031212d740a35e6dfd747764da89c64e5208d7736d0b520b8630c79eda244def"
 }

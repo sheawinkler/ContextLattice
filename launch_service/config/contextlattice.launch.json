@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v4.0.0 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v4.0.1 release with notes, checksums, and images",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v4.0.0",
-      "body": "ContextLattice v4.0.0 lets memory compound without giving itself away. Aggregate Signal accepts only explicitly opted-in, clipped sufficient statistics; suppresses cohorts below 20; bounds composition, replay, expiry, and opt-out; and performs zero external network calls by default.\n\nThe CLI remains the primary interface. The public core ships local preview and accounting. Operator and Enterprise add credential-derived workspace governance, while production cohort contribution and reporting remain blocked until six independent privacy and utility reviews pass. No raw memory, prompt, path, project, or stable identity enters the signal boundary.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v4.0.1",
+      "body": "ContextLattice v4.0.1 lets memory compound without giving itself away. Aggregate Signal accepts only explicitly opted-in, clipped sufficient statistics; suppresses cohorts below 20; bounds composition, replay, expiry, and opt-out; and performs zero external network calls by default.\n\nThe CLI remains the primary interface. The public core ships local preview and accounting. Operator and Enterprise add credential-derived workspace governance, while production cohort contribution and reporting remain blocked until six independent privacy and utility reviews pass. No raw memory, prompt, path, project, or stable identity enters the signal boundary.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -379,11 +379,11 @@
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Memory that compounds without giving itself away.\n\nContextLattice v4.0.0 turns explicitly opted-in, clipped outcome statistics into cohort-suppressed local signal. Raw memory, prompts, paths, projects, and stable identities stay outside the boundary. Small cohorts disappear. Privacy budgets stop release. Production paid aggregation stays held until independent reviews pass.\n\nSignal becomes useful without becoming surveillance.\n\nStart with the CLI: {docs_url}"
+      "body": "Memory that compounds without giving itself away.\n\nContextLattice v4.0.1 turns explicitly opted-in, clipped outcome statistics into cohort-suppressed local signal. Raw memory, prompts, paths, projects, and stable identities stay outside the boundary. Small cohorts disappear. Privacy budgets stop release. Production paid aggregation stays held until independent reviews pass.\n\nSignal becomes useful without becoming surveillance.\n\nStart with the CLI: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v4.0.0 adds Aggregate Signal: a bounded learning surface for system outcomes that refuses raw memory, prompts, embeddings, paths, projects, exact timestamps, and stable installation identities.\n\nLocal preview and accounting are explicit and network-free by default. Cohorts below 20 are suppressed. Composition budgets, replay rejection, expiry, revocation, and opt-out are enforced. Operator and Enterprise add workspace governance, but production contribution and reporting remain hard-blocked until independent privacy and utility reviews pass.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v4.0.1 adds Aggregate Signal: a bounded learning surface for system outcomes that refuses raw memory, prompts, embeddings, paths, projects, exact timestamps, and stable installation identities.\n\nLocal preview and accounting are explicit and network-free by default. Cohorts below 20 are suppressed. Composition budgets, replay rejection, expiry, revocation, and opt-out are enforced. Operator and Enterprise add workspace governance, but production contribution and reporting remain hard-blocked until independent privacy and utility reviews pass.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",
