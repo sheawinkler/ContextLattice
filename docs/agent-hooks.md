@@ -74,6 +74,8 @@ Installed commands:
 | `contextlattice_skills_index` | Skills Index search CLI for discovering capabilities without bloating startup context. |
 | `contextlattice_retrieval_plan` | Advisor-only evidence obligations, source/query plan, token allocation, graph expansion advice, and marginal-value stop conditions. |
 | `contextlattice_retrieval_governance` | Entitled receipt, causal-bridge, counterfactual, reputation, regression, and adversarial-defense policy governance; it never executes retrieval or disables public defenses. |
+| `contextlattice_policy_lab` | Primary Policy Laboratory CLI for simulation, scoped cards, promotion evidence, reversible lifecycle, contradiction, storage-temperature, and governance status. |
+| `contextlattice_agent_fit` | Primary Agent Fit CLI for resumable steering, advisory runner/model selection, effective profiles, and explicit-use context preparation. |
 | `contextlattice_claim_write` | Persist or revise a structured temporal claim with provenance, validity, contradiction, supersession, causality, branch, and commit identity. |
 | `contextlattice_claim_query` | Query current or historical structured claims without flattening supersession or contradiction. |
 | `contextlattice_continuity_reconcile` | Resolve one stable task identity exact-first, keep its execution lane separate, and abstain on semantic ambiguity; merge and split require explicit operator attribution and reason. |

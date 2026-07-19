@@ -1,0 +1,31 @@
+{
+  "schema_id": "frontier_t6_agent_fit_holdout.v1",
+  "version": 1,
+  "frozen_at": "2026-07-19T00:00:00Z",
+  "frontier_items": [5, 23, 11, 12],
+  "cases": [
+    {"id":"steering_unsupported_pull_fallback","item":5,"surface":"steering","scenario":"unsupported_harness","expected":{"decision":"fallback"}},
+    {"id":"steering_duplicate_deduplicated","item":5,"surface":"steering","scenario":"duplicate_publish","expected":{"decision":"deduplicated"}},
+    {"id":"steering_evicted_cursor_rejected","item":5,"surface":"steering","scenario":"expired_cursor","expected":{"decision":"cursor_expired"}},
+    {"id":"steering_backpressure_retries","item":5,"surface":"steering","scenario":"backpressure_retry","expected":{"decision":"retried"}},
+    {"id":"steering_restart_preserves_delivery","item":5,"surface":"steering","scenario":"restart_durable","expected":{"decision":"durable"}},
+
+    {"id":"selection_cold_start_abstains","item":23,"surface":"selection","scenario":"cold_start","expected":{"decision":"abstain"}},
+    {"id":"selection_provider_outage_abstains","item":23,"surface":"selection","scenario":"provider_outage","expected":{"decision":"abstain"}},
+    {"id":"selection_capability_mismatch_abstains","item":23,"surface":"selection","scenario":"capability_mismatch","expected":{"decision":"abstain"}},
+    {"id":"selection_cost_spike_abstains","item":23,"surface":"selection","scenario":"cost_spike","expected":{"decision":"abstain"}},
+    {"id":"selection_stable_evidence_recommends","item":23,"surface":"selection","scenario":"stable_rank","expected":{"decision":"recommend","selected_id":"runner_a"}},
+
+    {"id":"profile_unknown_agent_is_generic","item":11,"surface":"profile","scenario":"unknown_agent","expected":{"decision":"fallback"}},
+    {"id":"profile_explicit_overflow_abstains","item":11,"surface":"profile","scenario":"explicit_overflow","expected":{"decision":"abstain"}},
+    {"id":"profile_tool_mismatch_abstains","item":11,"surface":"profile","scenario":"tool_mismatch","expected":{"decision":"abstain"}},
+    {"id":"profile_low_context_adapts","item":11,"surface":"profile","scenario":"low_context","expected":{"decision":"adapted"}},
+    {"id":"profile_explicit_precedes_stored","item":11,"surface":"profile","scenario":"stored_precedence","expected":{"decision":"adapted"}},
+
+    {"id":"prep_unapproved_is_inert","item":12,"surface":"context_prep","scenario":"unapproved","expected":{"decision":"abstain"}},
+    {"id":"prep_low_confidence_is_inert","item":12,"surface":"context_prep","scenario":"low_confidence","expected":{"decision":"abstain"}},
+    {"id":"prep_task_pivot_rejected","item":12,"surface":"context_prep","scenario":"task_pivot","expected":{"decision":"rejected"}},
+    {"id":"prep_stale_generation_rejected","item":12,"surface":"context_prep","scenario":"stale_generation","expected":{"decision":"rejected"}},
+    {"id":"prep_authorization_change_rejected","item":12,"surface":"context_prep","scenario":"authorization_change","expected":{"decision":"rejected"}}
+  ]
+}

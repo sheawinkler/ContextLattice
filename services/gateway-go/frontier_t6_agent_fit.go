@@ -1356,7 +1356,7 @@ func frontierT6AdviseSelection(kind, schemaID string, request frontierT6Selectio
 	receipt := frontierT6SelectionReceipt{
 		SchemaID: schemaID, Version: 1, Kind: kind, TaskClass: taskClass,
 		Decision: "abstain", Confidence: "insufficient_evidence", SampleFloor: constraints.MinimumSamples,
-		ConstraintsDigest: frontierT6Digest(constraints), Candidates: rows, AdvisoryOnly: true,
+		ConstraintsDigest: frontierT6Digest(constraints), Candidates: rows, Reasons: []string{}, AdvisoryOnly: true,
 		RecommendedSurface: "cli_advisor",
 		ActivationAllowed:  false, ExecutionPerformed: false, NetworkCalls: 0,
 		CreatedAt: now.Format(time.RFC3339Nano),

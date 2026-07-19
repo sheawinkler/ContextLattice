@@ -1,0 +1,19 @@
+{
+  "schema_id": "frontier_t6_agent_fit_baseline.v1",
+  "version": 1,
+  "frozen_at": "2026-07-19T00:00:00Z",
+  "base_release": "v3.22.0",
+  "frontier_items": [5, 23, 11, 12],
+  "behavior": {
+    "async_steering": "Durable pull steering existed without capability-negotiated SSE replay, acknowledgements, or honest fallback receipts.",
+    "selection": "Runner quality was observable but no task-specific runner/model receipt combined readiness, capability, quality, context, cost, latency, and failures.",
+    "agent_profiles": "Static profiles existed without deterministic explicit-stored-generic precedence or capability-aware adaptation.",
+    "context_preparation": "Async continuation existed without approval-first, profile-bound, source-generation-bound, external-worker preparation artifacts."
+  },
+  "measurements": {
+    "steering_holdout_pass_rate": 0.0,
+    "selection_safe_abstention_rate": 0.0,
+    "profile_fallback_success_rate": 0.0,
+    "stale_preparation_rejection_rate": 0.0
+  }
+}
