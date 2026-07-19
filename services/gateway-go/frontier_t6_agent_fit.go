@@ -28,12 +28,14 @@ const (
 
 	frontierT6SteeringEventSchemaID    = "async_steering_event.v1"
 	frontierT6SteeringDeliverySchemaID = "async_steering_delivery.v1"
+	frontierT6SteeringStreamItemID     = "async_steering_stream_item.v1"
 	frontierT6RunnerSelectionSchemaID  = "runner_selection.v1"
 	frontierT6ModelSelectionSchemaID   = "model_selection.v1"
 	frontierT6ContextProfileSchemaID   = "agent_context_profile.v1"
 	frontierT6ContextPrepSchemaID      = "context_prep.v1"
 	frontierT6ContextPrepArtifactID    = "context_prep_artifact.v1"
 	frontierT6StateSchemaID            = "frontier_t6_agent_fit_state.v1"
+	frontierT6StatusSchemaID           = "frontier_t6_agent_fit_status.v1"
 
 	frontierT6StatePathEnv = "CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_PATH"
 	frontierT6EnabledEnv   = "CONTEXTLATTICE_FRONTIER_T6_AGENT_FIT_ENABLED"
@@ -2319,7 +2321,8 @@ func (h frontierT6AgentFitHandlers) Steering(w http.ResponseWriter, r *http.Requ
 		frontierT6WriteHandlerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "schema_id": frontierT6AgentFitContractID, "operation": operation, "result": response, "network_calls": 0, "automatic_model_execution": false})
+	payload := map[string]any{"ok": true, "schema_id": frontierT6AgentFitContractID, "operation": operation, "result": response, "network_calls": 0, "automatic_model_execution": false}
+	writeJSON(w, http.StatusOK, frontierT6AttachFormatContract(frontierT6AgentFitContractID, payload, "agent_http"))
 }
 
 type frontierT6SelectionHTTPRequest struct {
@@ -2355,7 +2358,7 @@ func (h frontierT6AgentFitHandlers) Selection(w http.ResponseWriter, r *http.Req
 		frontierT6WriteHandlerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, receipt)
+	writeJSON(w, http.StatusOK, frontierT6AttachFormatContract(receipt.SchemaID, receipt, "agent_http"))
 }
 
 type frontierT6ProfileHTTPRequest struct {
@@ -2423,7 +2426,12 @@ func (h frontierT6AgentFitHandlers) Profile(w http.ResponseWriter, r *http.Reque
 		frontierT6WriteHandlerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "schema_id": frontierT6ContextProfileSchemaID, "result": response, "automatic_model_execution": false})
+	payload := map[string]any{
+		"ok": true, "schema_id": frontierT6AgentFitContractID, "operation": operation,
+		"result_schema_id": frontierT6ContextProfileSchemaID, "result": response,
+		"network_calls": 0, "automatic_model_execution": false,
+	}
+	writeJSON(w, http.StatusOK, frontierT6AttachFormatContract(frontierT6AgentFitContractID, payload, "agent_http"))
 }
 
 type frontierT6PrepHTTPRequest struct {
@@ -2505,5 +2513,10 @@ func (h frontierT6AgentFitHandlers) ContextPrep(w http.ResponseWriter, r *http.R
 		frontierT6WriteHandlerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "schema_id": frontierT6ContextPrepSchemaID, "result": response, "network_calls": 0, "automatic_model_execution": false})
+	payload := map[string]any{
+		"ok": true, "schema_id": frontierT6AgentFitContractID, "operation": operation,
+		"result_schema_id": frontierT6ContextPrepSchemaID, "result": response,
+		"network_calls": 0, "automatic_model_execution": false,
+	}
+	writeJSON(w, http.StatusOK, frontierT6AttachFormatContract(frontierT6AgentFitContractID, payload, "agent_http"))
 }

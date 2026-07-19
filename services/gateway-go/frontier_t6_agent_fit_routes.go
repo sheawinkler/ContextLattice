@@ -49,6 +49,18 @@ func (s *server) frontierT6Handlers() frontierT6AgentFitHandlers {
 	return frontierT6AgentFitHandlers{Store: s.frontierT6, Authorize: s.frontierT6OwnerAuthorization}
 }
 
+func frontierT6AttachFormatContract(schemaID string, payload any, surface string) map[string]any {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return attachPayloadFormatContract(schemaID, map[string]any{"schema_id": schemaID}, "", surface, "")
+	}
+	result := map[string]any{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		result = map[string]any{"schema_id": schemaID}
+	}
+	return attachPayloadFormatContract(schemaID, result, "", surface, "")
+}
+
 func (s *server) frontierT6SteeringRoute(w http.ResponseWriter, r *http.Request) {
 	if !s.frontierT6Authorized(w, r) {
 		return
@@ -178,12 +190,12 @@ func (s *server) frontierT6SteeringEventsRoute(w http.ResponseWriter, r *http.Re
 	delivered := 0
 	for {
 		for _, item := range batch.Deliveries {
-			payload := map[string]any{
-				"ok": true, "schema_id": frontierT6SteeringDeliverySchemaID,
+			payload := frontierT6AttachFormatContract(frontierT6SteeringStreamItemID, map[string]any{
+				"ok": true, "schema_id": frontierT6SteeringStreamItemID,
 				"delivery_id": item.DeliveryID, "claim_token": item.ClaimToken,
 				"cursor": item.Event.Cursor, "event": item.Event,
 				"injection_performed": false, "requires_explicit_agent_use": true,
-			}
+			}, "agent_sse")
 			if err := frontierT6WriteSSEEvent(w, flusher, item.Event.Cursor, "steering", payload); err != nil {
 				return
 			}
@@ -243,8 +255,8 @@ func (s *server) frontierT6TelemetryRoute(w http.ResponseWriter, r *http.Request
 	limits := s.frontierT6.limits
 	enabled := s.frontierT6.enabled
 	s.frontierT6.mu.RUnlock()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "schema_id": frontierT6StateSchemaID, "enabled": enabled,
+	payload := map[string]any{
+		"ok": true, "schema_id": frontierT6StatusSchemaID, "enabled": enabled,
 		"steering_events": steeringEvents, "steering_deliveries": steeringDeliveries,
 		"profiles": profiles, "context_preps": contextPreps,
 		"last_steering_sequence": lastSteeringSequence, "replay_floor": replayFloor,
@@ -255,5 +267,6 @@ func (s *server) frontierT6TelemetryRoute(w http.ResponseWriter, r *http.Request
 		},
 		"execution_owner": "external_cli_worker", "gateway_runner_execution": false,
 		"automatic_model_execution": false, "network_calls": 0,
-	})
+	}
+	writeJSON(w, http.StatusOK, frontierT6AttachFormatContract(frontierT6StatusSchemaID, payload, "telemetry"))
 }

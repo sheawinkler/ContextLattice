@@ -56,6 +56,15 @@ func frontierT6RoutePublishPayload(now time.Time) map[string]any {
 	}
 }
 
+func frontierT6AssertContractPassed(t testing.TB, payload map[string]any) {
+	t.Helper()
+	format := anyMap(payload["format_contract"])
+	validation := anyMap(format["validation"])
+	if anyToString(validation["status"]) != "passed" {
+		t.Fatalf("contract validation did not pass: payload=%#v", payload)
+	}
+}
+
 func TestFrontierT6RoutesDeliverResumeAndAcknowledgeSSE(t *testing.T) {
 	now := time.Now().UTC()
 	s, _ := frontierT6RouteTestServer(t)
@@ -64,6 +73,11 @@ func TestFrontierT6RoutesDeliverResumeAndAcknowledgeSSE(t *testing.T) {
 	if published.Code != http.StatusOK {
 		t.Fatalf("publish status=%d body=%s", published.Code, published.Body.String())
 	}
+	publishedPayload := map[string]any{}
+	if err := json.Unmarshal(published.Body.Bytes(), &publishedPayload); err != nil {
+		t.Fatal(err)
+	}
+	frontierT6AssertContractPassed(t, publishedPayload)
 
 	streamPath := frontierT6SteeringEventsPath + "?project=contextlattice&session_id=session-t6&agent_id=agent-t6&subscriber_id=subscriber-t6&once=true&limit=2"
 	stream := frontierT6RouteRequest(t, mux, http.MethodGet, streamPath, nil)
@@ -86,6 +100,7 @@ func TestFrontierT6RoutesDeliverResumeAndAcknowledgeSSE(t *testing.T) {
 	if len(eventPayload) == 0 {
 		t.Fatalf("delivery event missing from SSE body: %s", body)
 	}
+	frontierT6AssertContractPassed(t, eventPayload)
 	event := anyMap(eventPayload["event"])
 	ack := frontierT6RouteRequest(t, mux, http.MethodPost, frontierT6SteeringPath, map[string]any{
 		"operation":     "acknowledge",
@@ -147,6 +162,7 @@ func TestFrontierT6RoutesKeepSelectionAdvisoryAndTelemetryPathFree(t *testing.T)
 	if !anyToBool(receipt["advisory_only"]) || anyToBool(receipt["activation_allowed"]) || anyToBool(receipt["execution_performed"]) {
 		t.Fatalf("selection crossed advisory boundary: %#v", receipt)
 	}
+	frontierT6AssertContractPassed(t, receipt)
 
 	telemetry := frontierT6RouteRequest(t, mux, http.MethodGet, frontierT6TelemetryPath, nil)
 	if telemetry.Code != http.StatusOK || strings.Contains(strings.ToLower(telemetry.Body.String()), "agent-fit.json") || strings.Contains(strings.ToLower(telemetry.Body.String()), "local-root") {
@@ -155,4 +171,9 @@ func TestFrontierT6RoutesKeepSelectionAdvisoryAndTelemetryPathFree(t *testing.T)
 	if !strings.Contains(telemetry.Body.String(), `"gateway_runner_execution":false`) || !strings.Contains(telemetry.Body.String(), `"network_calls":0`) {
 		t.Fatalf("telemetry omitted execution boundary: %s", telemetry.Body.String())
 	}
+	telemetryPayload := map[string]any{}
+	if err := json.Unmarshal(telemetry.Body.Bytes(), &telemetryPayload); err != nil {
+		t.Fatal(err)
+	}
+	frontierT6AssertContractPassed(t, telemetryPayload)
 }
