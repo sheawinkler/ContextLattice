@@ -23,7 +23,7 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "3.22.0" || commercialTruthStableTag != "v3.22.0" || commercialTruthReleaseTrain != "3.22" {
+	if commercialTruthProductVersion != "3.23.0" || commercialTruthStableTag != "v3.23.0" || commercialTruthReleaseTrain != "3.23" {
 		t.Fatalf(
 			"unexpected generated release truth: version=%q tag=%q train=%q",
 			commercialTruthProductVersion,
@@ -44,11 +44,15 @@ func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
 		}
 	}
 	wantFeatures := map[string]string{
-		"/memory/continuity/automation":      "frontier_semantic_continuity_automation",
-		"/memory/objectives/shared":          "frontier_shared_objective_graph",
-		"/memory/decision-changes/shared":    "frontier_shared_decision_provenance",
-		"/telemetry/utility/analytics":       "frontier_utility_analytics",
-		"/telemetry/utility/policy/evaluate": "frontier_verified_efficiency_operations",
+		"/memory/continuity/automation":             "frontier_semantic_continuity_automation",
+		"/memory/objectives/shared":                 "frontier_shared_objective_graph",
+		"/memory/decision-changes/shared":           "frontier_shared_decision_provenance",
+		"/telemetry/utility/analytics":              "frontier_utility_analytics",
+		"/telemetry/utility/policy/evaluate":        "frontier_verified_efficiency_operations",
+		"/memory/agent-fit/steering/governance":     "frontier_agent_fit_governance",
+		"/memory/agent-fit/profile/governance":      "frontier_agent_fit_governance",
+		"/memory/agent-fit/context-prep/governance": "frontier_agent_fit_governance",
+		"/memory/agent-fit/selection/activation":    "frontier_agent_fit_governance",
 	}
 	for path, featureID := range wantFeatures {
 		if got := commercialTruthPaidRouteRequiredFeature(path); got != featureID {
