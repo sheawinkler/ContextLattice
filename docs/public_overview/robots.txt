@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://contextlattice.io/sitemap.xml

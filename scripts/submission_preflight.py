@@ -191,7 +191,7 @@ def main() -> int:
     )
     readme_required = [
         "gmake quickstart",
-        "Local-first",
+        "local-first intelligence layer",
     ]
     checks.extend(_contains("README.md", readme_required))
     checks.extend(
@@ -205,7 +205,7 @@ def main() -> int:
             ],
         )
     )
-    checks.extend(_contains("docs/public_overview/contact.html", ["sheawinkler@gmail.com"]))
+    checks.extend(_contains("docs/public_overview/contact.html", ["hello@contextlattice.io"]))
     checks.extend(_contains("docs/public_overview/CNAME", ["contextlattice.io"]))
     checks.extend(_check_public_leak_guard())
     checks.extend(_check_launch_config())

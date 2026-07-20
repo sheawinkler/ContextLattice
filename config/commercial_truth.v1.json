@@ -4,10 +4,40 @@
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "4.0.1",
-    "stable_tag": "v4.0.1",
+    "version": "4.0.2",
+    "stable_tag": "v4.0.2",
     "release_train": "4.0",
+    "category": "local_first_agent_intelligence_layer",
+    "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
     "primary_interface": "cli",
+    "companion_interfaces": [
+      "http",
+      "mcp",
+      "dashboard"
+    ],
+    "official_urls": {
+      "repository": "https://github.com/sheawinkler/ContextLattice",
+      "website": "https://contextlattice.io",
+      "documentation": "https://contextlattice.io/installation.html"
+    },
+    "source_licenses": {
+      "public": {
+        "spdx": "Apache-2.0",
+        "label": "Apache License 2.0"
+      },
+      "commercial": {
+        "spdx": "BUSL-1.1",
+        "label": "Business Source License 1.1",
+        "change_license": "Apache-2.0"
+      }
+    },
+    "public_pillars": [
+      "durable_continuity",
+      "explainable_adaptive_retrieval",
+      "portable_context",
+      "verified_skill_evolution",
+      "privacy_bounded_aggregate_signal"
+    ],
     "python_role": "build_and_development_tooling_only"
   },
   "currency": "USD",

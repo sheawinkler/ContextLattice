@@ -2,17 +2,47 @@
 
 export type CommercialPlanId = "free" | "starter" | "team" | "operator" | "enterprise";
 
-export const COMMERCIAL_CONTRACT_SHA256 = "b6266d9b0479b367b11cba38e6bc961dda0900cdc641ccf28999247ff20cd8d7";
+export const COMMERCIAL_CONTRACT_SHA256 = "73099782452943b19aeb9d2d68acd93ae3169aa41cacc8ee244516290639b9d4";
 export const COMMERCIAL_TRUTH = {
   "schema_id": "contextlattice_commercial_truth.v1",
   "schema_version": 1,
   "contract_version": 1,
   "product": {
     "name": "ContextLattice",
-    "version": "4.0.1",
-    "stable_tag": "v4.0.1",
+    "version": "4.0.2",
+    "stable_tag": "v4.0.2",
     "release_train": "4.0",
+    "category": "local_first_agent_intelligence_layer",
+    "canonical_description": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
     "primary_interface": "cli",
+    "companion_interfaces": [
+      "http",
+      "mcp",
+      "dashboard"
+    ],
+    "official_urls": {
+      "repository": "https://github.com/sheawinkler/ContextLattice",
+      "website": "https://contextlattice.io",
+      "documentation": "https://contextlattice.io/installation.html"
+    },
+    "source_licenses": {
+      "public": {
+        "spdx": "Apache-2.0",
+        "label": "Apache License 2.0"
+      },
+      "commercial": {
+        "spdx": "BUSL-1.1",
+        "label": "Business Source License 1.1",
+        "change_license": "Apache-2.0"
+      }
+    },
+    "public_pillars": [
+      "durable_continuity",
+      "explainable_adaptive_retrieval",
+      "portable_context",
+      "verified_skill_evolution",
+      "privacy_bounded_aggregate_signal"
+    ],
     "python_role": "build_and_development_tooling_only"
   },
   "currency": "USD",
@@ -747,7 +777,7 @@ export const COMMERCIAL_TRUTH = {
       ]
     }
   ],
-  "contract_sha256": "b6266d9b0479b367b11cba38e6bc961dda0900cdc641ccf28999247ff20cd8d7"
+  "contract_sha256": "73099782452943b19aeb9d2d68acd93ae3169aa41cacc8ee244516290639b9d4"
 } as const;
 export const COMMERCIAL_PLANS = COMMERCIAL_TRUTH.plans;
 

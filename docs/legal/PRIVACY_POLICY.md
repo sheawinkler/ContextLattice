@@ -2,7 +2,7 @@
 
 Effective date: 2026-02-18
 Controller/Provider: Shea Winkler (Context Lattice)
-Contact: sheawinkler@gmail.com
+Contact: hello@contextlattice.io
 
 ## 1) Scope
 
@@ -61,7 +61,7 @@ appropriate to the transfer context.
 
 Subject to applicable law, you may request access, correction, deletion,
 portability, and objection/restriction rights.
-Submit requests via `sheawinkler@gmail.com`.
+Submit requests via `hello@contextlattice.io`.
 
 ## 10) California privacy notice
 

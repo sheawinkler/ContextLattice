@@ -5,11 +5,11 @@ This folder is the source for the public ContextLattice overview web pages.
 ## Files
 - `index.html` - public landing page
 - `architecture.html` - detailed runtime architecture
-- `local-ai-workspaces.html` - comparison guide for local AI workspaces, agent harnesses, and ContextLattice's local-first memory infrastructure role
+- `local-ai-workspaces.html` - comparison guide for local AI workspaces, agent harnesses, and ContextLattice's local-first intelligence-layer role
 - `scaling-memory.html` - scaling story for rollups, vectors, durable writes, CLI workflows, Skills Index discovery, provenance, learning, and deeper recall lanes
 - `wiki.html` - operator wiki with endpoint atlas and playbooks
 - `updates.html` - chronological updates page
-- `roadmap.html` - V3 integration and efficacy roadmap
+- `roadmap.html` - current product roadmap and release discipline
 - `installation.html` - install and launch command guide
 - `cli.html` - copy-ready CLI quickstart and validation commands
 - `integration.html` - client integration playbook
@@ -18,6 +18,9 @@ This folder is the source for the public ContextLattice overview web pages.
 - `troubleshooting.html` - install/runtime recovery guide
 - `contact.html` - contact page
 - `llms.txt` - crawler/assistant guidance for safe public-site usage
+- `commercial-truth.json` - generated public product, version, interface, and plan truth
+- `robots.txt` - crawler policy
+- `sitemap.xml` - canonical public-page index
 - `styles.css` - shared styles
 - `styles-gray.css` - grayscale/brutalist theme
 - `styles-fracture.css` - fracture-ledger visual treatment
@@ -63,6 +66,9 @@ This syncs:
 - `troubleshooting.html`
 - `contact.html`
 - `llms.txt`
+- `commercial-truth.json`
+- `robots.txt`
+- `sitemap.xml`
 - `styles.css`
 - `styles-gray.css`
 - `styles-fracture.css`

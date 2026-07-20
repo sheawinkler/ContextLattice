@@ -21,10 +21,13 @@ Recommended reading order:
 11. /troubleshooting.html
 
 Product positioning (public-safe):
-- Context Lattice is local-first memory infrastructure for AI agents.
-- Context Lattice complements local AI workspaces: workspaces are cockpits, while ContextLattice is the durable memory infrastructure and shared memory spine they can plug into.
+# BEGIN GENERATED COMMERCIAL TRUTH: llms-positioning
+- The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.
+- Models reason and harnesses act; ContextLattice preserves the mission, selects the evidence, carries the context, and records what actually worked.
+- The CLI is the primary interface. The dashboard, HTTP, and MCP are companion visibility and integration surfaces.
+# END GENERATED COMMERCIAL TRUTH: llms-positioning
 # BEGIN GENERATED COMMERCIAL TRUTH: llms-release
-- Current public release baseline is v4.0.1. The CLI is the primary product interface; the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration.
+- Current public release baseline is v4.0.2. The CLI is the primary product interface; the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration.
 # END GENERATED COMMERCIAL TRUTH: llms-release
 - Public local lite starts with topic rollups, Qdrant, CLI workflows, agent templates, and Skills Index discovery; full/operator stacks can add pgvector, raw ledger, behavior provenance, deeper async recall lanes, and stronger reliability controls behind the same agent-facing contract.
 - Runtime emphasizes Go/Rust primary lanes, staged retrieval, durable fanout, behavior provenance, and retrieval quality over time.

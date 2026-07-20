@@ -35,4 +35,4 @@ Provider may investigate and take action including:
 
 ## Reporting
 
-For abuse reports, contact: sheawinkler@gmail.com
+For abuse reports, contact: hello@contextlattice.io

@@ -1,6 +1,34 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+const commercialTruthContractPath = "../../config/commercial_truth.v1.json"
+
+type commercialTruthReleaseContract struct {
+	Product struct {
+		Version      string `json:"version"`
+		StableTag    string `json:"stable_tag"`
+		ReleaseTrain string `json:"release_train"`
+	} `json:"product"`
+}
+
+func readCommercialTruthReleaseContract(t *testing.T) commercialTruthReleaseContract {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.FromSlash(commercialTruthContractPath))
+	if err != nil {
+		t.Fatalf("read canonical commercial truth: %v", err)
+	}
+	var contract commercialTruthReleaseContract
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatalf("decode canonical commercial truth: %v", err)
+	}
+	return contract
+}
 
 func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 	tests := map[string]string{
@@ -23,12 +51,16 @@ func TestCommercialTruthGeneratedPlanNormalization(t *testing.T) {
 }
 
 func TestCommercialTruthGeneratedReleaseAndRoutes(t *testing.T) {
-	if commercialTruthProductVersion != "4.0.1" || commercialTruthStableTag != "v4.0.1" || commercialTruthReleaseTrain != "4.0" {
+	contract := readCommercialTruthReleaseContract(t)
+	if commercialTruthProductVersion != contract.Product.Version ||
+		commercialTruthStableTag != contract.Product.StableTag ||
+		commercialTruthReleaseTrain != contract.Product.ReleaseTrain {
 		t.Fatalf(
-			"unexpected generated release truth: version=%q tag=%q train=%q",
+			"generated release truth disagrees with canonical contract: version=%q tag=%q train=%q contract=%+v",
 			commercialTruthProductVersion,
 			commercialTruthStableTag,
 			commercialTruthReleaseTrain,
+			contract.Product,
 		)
 	}
 	protectedRoutes := make(map[string]struct{}, len(commercialTruthProtectedPaidRoutes))

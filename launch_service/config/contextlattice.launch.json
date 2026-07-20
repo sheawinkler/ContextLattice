@@ -1,11 +1,11 @@
 {
   "product_name": "ContextLattice",
-  "category": "Agent Memory Infrastructure",
+  "category": "Local-first Agent Intelligence Layer",
   "release_lane": "distribution-neutral",
   "launch_window": "ContextLattice v4.0 release wave: July 2026",
   "schedule_state": "unscheduled",
-  "one_liner": "The durable intelligence layer that lets every agent remember, reconnect, and compound what it learns.",
-  "primary_cta": "Install locally, then make the CLI your agent stack's canonical memory path.",
+  "one_liner": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.",
+  "primary_cta": "Install locally, then use the CLI as the canonical continuity and context path for every agent.",
   "metadata": {
     "primary_url": "https://contextlattice.io/",
     "docs_url": "https://contextlattice.io/installation.html",
@@ -18,7 +18,7 @@
       "tier": "P0",
       "name": "GitHub Release",
       "listing_url": "https://github.com/sheawinkler/ContextLattice/releases/new",
-      "submission_path": "Publish the lane-approved v4.0.1 release with notes, checksums, and images",
+      "submission_path": "Publish the lane-approved v4.0.2 release with notes, checksums, provenance, and installers",
       "lead_time": "Same day",
       "cost_signal": "Free",
       "owner": "Shea",
@@ -345,8 +345,8 @@
   ],
   "copy_blocks": {
     "github_release": {
-      "title": "{product_name} v4.0.1",
-      "body": "ContextLattice v4.0.1 lets memory compound without giving itself away. Aggregate Signal accepts only explicitly opted-in, clipped sufficient statistics; suppresses cohorts below 20; bounds composition, replay, expiry, and opt-out; and performs zero external network calls by default.\n\nThe CLI remains the primary interface. The public core ships local preview and accounting. Operator and Enterprise add credential-derived workspace governance, while production cohort contribution and reporting remain blocked until six independent privacy and utility reviews pass. No raw memory, prompt, path, project, or stable identity enters the signal boundary.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
+      "title": "{product_name} v4.0.2",
+      "body": "ContextLattice v4.0.2 gives every public surface one product truth. The CLI is the primary interface; the dashboard, HTTP, and MCP are companion surfaces. Durable continuity, explainable retrieval, portable context, verified skill evolution, and controlled Aggregate Signal now share one generated contract across source, docs, dashboard, and release proof.\n\nAggregate Signal remains a controlled preview: raw memory and prompts stay outside the signal boundary, and production cohort learning remains blocked pending independent privacy and utility review.\n\nStart with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {troubleshooting_url}\n- Repo: {repo_url}"
     },
     "custom_domain": {
       "title": "{product_name} docs go-live",
@@ -354,60 +354,60 @@
     },
     "mcp_registry": {
       "title": "Registry listing summary",
-      "body": "Name: {product_name}\\nCategory: MCP server / AI infrastructure\\nSummary: HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator.\\nInstall docs: {docs_url}\\nRepository: {repo_url}"
+      "body": "Name: {product_name}\nCategory: local-first agent intelligence layer\nSummary: CLI-first agent continuity and context infrastructure with HTTP and MCP companion surfaces.\nInstall docs: {docs_url}\nRepository: {repo_url}"
     },
     "glama": {
       "title": "Glama listing summary",
-      "body": "ContextLattice is an HTTP-first, MCP-compatible memory/context/task orchestrator that persists writes and returns fused recall from specialized stores with local-first defaults.\\n\\nPrimary URL: {primary_url}\\nInstall: {docs_url}\\nTroubleshooting: {troubleshooting_url}"
+      "body": "ContextLattice gives agents durable continuity, explainable retrieval, portable context, verified learning, and provenance. The CLI is primary; MCP is a companion integration surface.\n\nPrimary URL: {primary_url}\nInstall: {docs_url}\nTroubleshooting: {troubleshooting_url}"
     },
     "pulsemcp": {
       "title": "PulseMCP listing summary",
-      "body": "Private-by-default HTTP-first memory/context/task orchestration for every LLM, everywhere.\\n\\nWhat it does:\\n- durable write fanout\\n- federated retrieval\\n- learning rerank improvements over time\\n- high-throughput write ingestion for telemetry workloads\\n\\nDocs: {docs_url}\\nRepo: {repo_url}"
+      "body": "Local-first intelligence for long-horizon agents.\n\nWhat it does:\n- durable continuity across sessions\n- explainable, impact-ranked retrieval\n- portable context and provenance\n- outcome-driven learning\n\nCLI quickstart: {docs_url}\nRepository: {repo_url}"
     },
     "mcp_so": {
       "title": "MCP.so listing summary",
-      "body": "ContextLattice provides HTTP-first, MCP-compatible memory write/search APIs with multi-sink fanout, retrieval orchestration, and high-throughput telemetry ingestion.\\n\\nTry it locally with {primary_cta}\\nDocs: {docs_url}"
+      "body": "ContextLattice is the local-first intelligence layer beneath agent harnesses and AI workspaces. Use its CLI first; connect through MCP when a harness needs a programmatic memory and context surface.\n\nTry it locally with {primary_cta}\nDocs: {docs_url}"
     },
     "product_hunt": {
       "title": "{product_name}",
-      "tagline": "Private-by-default long-horizon memory, context, and task orchestrator for every LLM, everywhere.",
-      "body": "ContextLattice is an HTTP-first, MCP-compatible memory/context/task orchestrator built for long-horizon agent work.\\n\\nWhy this exists:\\n- In long-horizon workflows, agents that forget prior decisions repeat avoidable mistakes; the result is brittle output and operator fatigue.\\n- Finite context windows are unavoidable; without a durable memory/context system, retrieval quality decays toward zero as horizon length increases.\\n- ContextLattice also serves as a telemetry database backend for app stacks that generate sustained high write volume.\\n\\nWhat ships:\\n- one ingress write path + durable outbox fanout\\n- federated retrieval egress + context-quality feedback prompting + learning rerank loop\\n- local-first security defaults\\n- telemetry-grade throughput with queue controls and backpressure\\n\\nStart in minutes: {docs_url}"
+      "tagline": "Open an agent. The mission is already there.",
+      "body": "The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.\n\nAgents forget. ContextLattice carries the objective, evidence, decisions, skills, and outcomes across sessions and harnesses without stuffing the whole past into the next prompt.\n\nWhat ships:\n- durable continuity and bounded context packs\n- explainable adaptive retrieval with receipts\n- portable context with provenance\n- verified skill evolution and outcome feedback\n- local-first privacy boundaries\n\nStart with the CLI: {docs_url}"
     },
     "show_hn": {
-      "title": "Show HN: ContextLattice - HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator",
-      "body": "I built ContextLattice to solve long-horizon context failure in agent systems.\\n\\nIn long-running tasks, agents often forget prior decisions and repeat the same mistake loop.\\nContextLattice addresses that with:\\n- HTTP-first, MCP-compatible memory/context/task orchestration\\n- durable multi-sink writes\\n- federated retrieval egress + context-quality feedback prompting + learning rerank\\n- telemetry-grade write throughput for heavy app event streams\\n\\nQuickstart: {docs_url}\\nRepo: {repo_url}\\n\\nWould appreciate feedback on retrieval quality and operational ergonomics."
+      "title": "Show HN: ContextLattice - continuity and explainable retrieval for long-horizon agents",
+      "body": "I built ContextLattice because agent work should survive the window. It is a local-first intelligence layer that preserves mission state, ranks the evidence a task actually needs, carries bounded context across harnesses, and records which outcomes worked.\n\nThe CLI is the primary interface; HTTP and MCP are companion surfaces.\n\nQuickstart: {docs_url}\nRepo: {repo_url}\n\nI would value feedback on retrieval quality, continuity, and operational ergonomics."
     },
     "x_thread": {
       "title": "X launch post",
-      "body": "Memory that compounds without giving itself away.\n\nContextLattice v4.0.1 turns explicitly opted-in, clipped outcome statistics into cohort-suppressed local signal. Raw memory, prompts, paths, projects, and stable identities stay outside the boundary. Small cohorts disappear. Privacy budgets stop release. Production paid aggregation stays held until independent reviews pass.\n\nSignal becomes useful without becoming surveillance.\n\nStart with the CLI: {docs_url}"
+      "body": "Open an agent. The mission is already there.\n\nContextLattice v4.0.2 is the local-first intelligence layer for durable continuity, explainable retrieval, portable context, and verified learning across harnesses.\n\nCLI first. Raw memory local. Every useful result with receipts.\n\nStart here: {docs_url}"
     },
     "linkedin": {
       "title": "LinkedIn launch post",
-      "body": "ContextLattice v4.0.1 adds Aggregate Signal: a bounded learning surface for system outcomes that refuses raw memory, prompts, embeddings, paths, projects, exact timestamps, and stable installation identities.\n\nLocal preview and accounting are explicit and network-free by default. Cohorts below 20 are suppressed. Composition budgets, replay rejection, expiry, revocation, and opt-out are enforced. Operator and Enterprise add workspace governance, but production contribution and reporting remain hard-blocked until independent privacy and utility reviews pass.\n\nThe CLI remains the primary interface.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+      "body": "ContextLattice v4.0.2 gives long-horizon agent work a durable center. Objectives, evidence, decisions, context, skills, and outcomes can move across sessions and harnesses without turning every prompt into an archive dump.\n\nThe CLI is the primary interface. The dashboard makes the proof visible. HTTP and MCP remain companion integration surfaces.\n\nAggregate Signal stays a controlled preview until independent privacy and utility reviews pass.\n\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "reddit": {
       "title": "Reddit launch variant",
-      "body": "Built and shipped ContextLattice: an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator.\\n\\nDesign goals:\\n- stop repeated mistake loops from agent forgetfulness in long tasks\\n- keep retrieval quality from decaying across long horizons with federated retrieval egress and feedback prompting\\n- handle heavy write pressure as a telemetry backend, not just memory recall\\n- preserve local-first private defaults\\n\\nInstall docs: {docs_url}\\nTroubleshooting: {troubleshooting_url}\\n\\nHappy to share implementation details if anyone is benchmarking similar stacks."
+      "body": "Built ContextLattice to stop long-running agents from rebuilding their world every session. It stores continuity locally, retrieves only high-impact context, explains why evidence was selected, carries signed context between harnesses, and learns from verified outcomes.\n\nCLI-first quickstart: {docs_url}\nRepository: {repo_url}"
     },
     "huggingface": {
       "title": "Hugging Face Space card",
-      "body": "ContextLattice launch demo Space\\n\\nThis Space demonstrates:\\n- write flow into an HTTP-first, MCP-compatible memory service\\n- retrieval egress with multi-source fusion + context-quality feedback prompting + rerank learning\\n- local-first deployment docs\\n- telemetry-grade write ingestion path\\n\\nLinks:\\n- Main docs: {docs_url}\\n- Repo: {repo_url}\\n- Public overview: {primary_url}"
+      "body": "ContextLattice local-first agent intelligence demo\n\nThis Space demonstrates durable writes, scoped retrieval, bounded context, and evidence-aware synthesis through the lightweight public lane.\n\nMain docs: {docs_url}\nRepository: {repo_url}\nPublic overview: {primary_url}"
     },
     "futuretools": {
       "title": "FutureTools listing summary",
-      "body": "{one_liner}\\n\\nCategory: AI Infrastructure / MCP\\nProtocol posture: HTTP-first, MCP-compatible\\nTry it: {primary_url}\\nInstall: {docs_url}"
+      "body": "{one_liner}\n\nCategory: Agent Intelligence Infrastructure\nPrimary interface: CLI\nTry it: {primary_url}\nInstall: {docs_url}"
     },
     "futurepedia": {
       "title": "Futurepedia listing summary",
-      "body": "{one_liner}\\n\\nUse case: long-horizon cognitive spine for agent memory/context, plus telemetry-grade write ingestion.\\nDocs: {docs_url}"
+      "body": "{one_liner}\n\nUse case: durable continuity and high-impact context across agent sessions and harnesses.\nDocs: {docs_url}"
     },
     "toolify": {
       "title": "Toolify listing summary",
-      "body": "{one_liner}\\n\\nProtocol posture: HTTP-first, MCP-compatible\\nLaunch command: gmake quickstart\\nDocs: {docs_url}\\nRepo: {repo_url}"
+      "body": "{one_liner}\n\nPrimary interface: CLI\nLaunch command: gmake quickstart\nDocs: {docs_url}\nRepo: {repo_url}"
     },
     "devto": {
       "title": "Dev.to deep-dive title",
-      "body": "How I built an HTTP-first, MCP-compatible long-horizon memory/context/task orchestrator with telemetry-grade write ingestion\\n\\nStructure:\\n1) problem framing\\n2) architecture\\n3) operational controls\\n4) launch learnings\\n\\nStart here: {docs_url}"
+      "body": "How I built a local-first intelligence layer for durable agent continuity and explainable retrieval\n\nStructure:\n1) why context windows are not memory\n2) continuity and retrieval contracts\n3) proof, privacy, and outcome learning\n4) operational lessons\n\nStart here: {docs_url}"
     }
   }
 }

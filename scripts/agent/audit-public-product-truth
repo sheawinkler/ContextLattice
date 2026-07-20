@@ -1,0 +1,809 @@
+#!/usr/bin/env python3
+"""Audit public-facing product truth, static-site integrity, and dashboard posture."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import tomllib
+from dataclasses import asdict, dataclass
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlsplit
+from xml.etree import ElementTree
+
+
+CONTRACT_PATH = Path("config/commercial_truth.v1.json")
+README_PATH = Path("README.md")
+LICENSE_PATH = Path("LICENSE")
+PUBLIC_ROOT = Path("docs/public_overview")
+RELEASE_ROOT = Path("docs/releases")
+WORKFLOW_PATH = Path(".github/workflows/public-product-truth.yml")
+GENERATED_GO_PATH = Path("services/gateway-go/commercial_contract_generated.go")
+GENERATED_GO_TEST_PATH = Path("services/gateway-go/commercial_contract_generated_test.go")
+RUST_WORKSPACE_PATH = Path("crates/Cargo.toml")
+KEY_PUBLIC_PATHS = (
+    Path("docs/public_overview/index.html"),
+    Path("docs/public_overview/index-orb-white.html"),
+    Path("docs/public_overview/cli.html"),
+    Path("docs/public_overview/installation.html"),
+    Path("docs/public_overview/premium.html"),
+    Path("docs/public_overview/llms.txt"),
+)
+REQUIRED_PUBLIC_PATHS = KEY_PUBLIC_PATHS + (
+    Path("docs/public_overview/architecture.html"),
+    Path("docs/public_overview/integration.html"),
+    Path("docs/public_overview/roadmap.html"),
+    Path("docs/public_overview/troubleshooting.html"),
+    Path("docs/public_overview/updates.html"),
+    Path("docs/public_overview/commercial-truth.json"),
+    Path("docs/public_overview/robots.txt"),
+    Path("docs/public_overview/sitemap.xml"),
+    Path("docs/readme/contextlattice-architecture-readme-v2-2026-04-28.png"),
+)
+DASHBOARD_IDENTITY_PATHS = (
+    Path("contextlattice-dashboard/app/layout.tsx"),
+    Path("contextlattice-dashboard/app/overview/page.tsx"),
+    Path("contextlattice-dashboard/components/OverviewCommandDeck.tsx"),
+    Path("contextlattice-dashboard/app/pricing/page.tsx"),
+)
+PILLAR_LABELS = (
+    "Durable continuity",
+    "Explainable retrieval",
+    "Portable context",
+    "Verified skill evolution",
+    "Aggregate Signal",
+)
+NON_PUBLIC_DOC_MARKER = "internal" + " docs"
+LOCAL_PATH_PATTERN = re.compile(
+    r"(?:/Users/[^/\s<]+|/home/[^/\s<]+|/Volumes/[^/\s<]+|[A-Za-z]:[\\/]Users[\\/][^\\/\s<]+)",
+    re.IGNORECASE,
+)
+MERMAID_BLOCK_PATTERN = re.compile(
+    r'<(?:div|pre)[^>]*class=["\'][^"\']*\bmermaid\b[^"\']*["\'][^>]*>(.*?)</(?:div|pre)>',
+    re.IGNORECASE | re.DOTALL,
+)
+CSS_URL_PATTERN = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
+RELEASE_NOTE_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)\.md$")
+CURRENT_VERSION_CLAIM_PATTERN = re.compile(
+    r"\b(?:current|latest|stable|baseline|recommended|prescribed|install(?:ation|er|ed)?|"
+    r"upgrade(?:d)?|download|use|using|release(?:\s+(?:tag|version))?|ships?|now)\b",
+    re.IGNORECASE,
+)
+HISTORICAL_VERSION_CONTEXT_PATTERN = re.compile(
+    r"\b(?:historical|history|older|previous|prior|superseded|formerly|release notes?|changelog|"
+    r"roadmap|shipped|was|were|from)\b",
+    re.IGNORECASE,
+)
+HISTORICAL_PUBLIC_PATHS = {
+    Path("docs/public_overview/updates.html"),
+}
+WORKFLOW_REQUIRED_PATHS = (
+    "README.md",
+    "LICENSE",
+    "Makefile",
+    "config/commercial_truth.v1.json",
+    "crates/Cargo.toml",
+    "crates/**/Cargo.toml",
+    "docs/public_overview/**",
+    "docs/releases/**",
+    "packaging/**",
+    "scripts/build_release_payload.sh",
+    "scripts/install_global_agent_tools.sh",
+    "scripts/install_global_agent_tools.ps1",
+    "scripts/public_sync_guard.sh",
+    "scripts/agent_hooks/public_leak_guard.sh",
+    "scripts/tests/test_public_boundary_guards.py",
+    "scripts/tests/test_t*_public_projection.py",
+    "scripts/sync_public_overview.sh",
+    "scripts/install_public_overview_sync.sh",
+    "scripts/agent/audit-public-product-truth",
+    "scripts/generate_commercial_truth.py",
+    "scripts/tests/test_commercial_truth.py",
+    "scripts/tests/test_public_product_truth.py",
+    "services/gateway-go/commercial_contract_generated.go",
+    "services/gateway-go/commercial_contract_generated_test.go",
+    ".github/workflows/release-installers.yml",
+    ".github/workflows/public-product-truth.yml",
+)
+
+
+@dataclass(frozen=True)
+class Check:
+    check_id: str
+    path: str
+    ok: bool
+    detail: str
+
+
+class ReferenceParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.references: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        for attribute in ("href", "src"):
+            value = values.get(attribute)
+            if value:
+                self.references.append((attribute, value.strip()))
+        srcset = values.get("srcset")
+        if srcset:
+            for candidate in srcset.split(","):
+                value = candidate.strip().split(" ", 1)[0]
+                if value:
+                    self.references.append(("srcset", value))
+
+
+def read_text(root: Path, relative: Path) -> str:
+    return (root / relative).read_text(encoding="utf-8")
+
+
+def detect_lane(license_text: str) -> str:
+    lowered = license_text.lower()
+    if "business source license 1.1" in lowered or "spdx-license-identifier: busl-1.1" in lowered:
+        return "commercial"
+    if "apache license" in lowered and "version 2.0" in lowered:
+        return "public"
+    return "unknown"
+
+
+def parse_semver(value: str) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"(?:v)?(\d+)\.(\d+)\.(\d+)", value.strip())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def release_versions(root: Path) -> list[tuple[int, int, int]]:
+    release_root = root / RELEASE_ROOT
+    if not release_root.is_dir():
+        return []
+    versions = []
+    for path in release_root.iterdir():
+        match = RELEASE_NOTE_PATTERN.fullmatch(path.name)
+        if path.is_file() and match:
+            versions.append(tuple(int(part) for part in match.groups()))
+    return sorted(set(versions))
+
+
+def format_semver(version: tuple[int, int, int] | None) -> str:
+    return ".".join(str(part) for part in version) if version else ""
+
+
+def workflow_paths_for_event(text: str, event: str) -> set[str]:
+    lines = text.splitlines()
+    event_pattern = re.compile(rf"^(\s*){re.escape(event)}:\s*(?:#.*)?$")
+    for index, line in enumerate(lines):
+        event_match = event_pattern.match(line)
+        if not event_match:
+            continue
+        event_indent = len(event_match.group(1))
+        for path_index in range(index + 1, len(lines)):
+            candidate = lines[path_index]
+            stripped = candidate.strip()
+            if stripped and len(candidate) - len(candidate.lstrip()) <= event_indent:
+                break
+            path_match = re.match(r"^(\s*)paths:\s*(?:#.*)?$", candidate)
+            if not path_match:
+                continue
+            path_indent = len(path_match.group(1))
+            paths: set[str] = set()
+            for item in lines[path_index + 1 :]:
+                item_stripped = item.strip()
+                item_indent = len(item) - len(item.lstrip())
+                if item_stripped and item_indent <= path_indent:
+                    break
+                list_match = re.match(r"^\s*-\s+(['\"]?)(.*?)\1\s*(?:#.*)?$", item)
+                if list_match:
+                    paths.add(list_match.group(2))
+            return paths
+    return set()
+
+
+def generated_go_constant(text: str, name: str) -> str | None:
+    match = re.search(rf'^const\s+{re.escape(name)}\s*=\s*"([^"]*)"\s*$', text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def present_tense_stale_claims(path: Path, text: str, predecessor_tag: str) -> list[str]:
+    if not predecessor_tag or path in HISTORICAL_PUBLIC_PATHS or str(path).startswith(f"{RELEASE_ROOT}/"):
+        return []
+    findings = []
+    lines = text.splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        if predecessor_tag.lower() not in line.lower():
+            continue
+        historical = HISTORICAL_VERSION_CONTEXT_PATTERN.search(line) is not None
+        if not historical and "docs/releases/" in line.lower():
+            nearby_context = "\n".join(lines[max(0, line_number - 3) : line_number])
+            historical = HISTORICAL_VERSION_CONTEXT_PATTERN.search(nearby_context) is not None
+        if CURRENT_VERSION_CLAIM_PATTERN.search(line) and not historical:
+            findings.append(f"{path}:{line_number}:{line.strip()[:160]}")
+    return findings
+
+
+def resolve_local_reference(public_root: Path, page: Path, raw: str) -> Path | None:
+    if not raw or raw.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
+        return None
+    parsed = urlsplit(raw)
+    if parsed.scheme or parsed.netloc:
+        return None
+    path_text = unquote(parsed.path)
+    if not path_text or "{{" in path_text or "${" in path_text:
+        return None
+    if path_text.startswith("/"):
+        candidate = public_root / path_text.lstrip("/")
+    else:
+        candidate = page.parent / path_text
+    if path_text.endswith("/"):
+        candidate /= "index.html"
+    return candidate.resolve(strict=False)
+
+
+def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
+    checks: list[Check] = []
+
+    def add(check_id: str, path: Path | str, ok: bool, detail: str) -> None:
+        checks.append(Check(check_id, str(path), bool(ok), detail))
+
+    contract_file = root / CONTRACT_PATH
+    try:
+        contract = json.loads(contract_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        add("canonical_contract", CONTRACT_PATH, False, f"cannot load canonical contract: {exc}")
+        contract = {}
+    product = contract.get("product") if isinstance(contract, dict) else None
+    product = product if isinstance(product, dict) else {}
+    version = str(product.get("version") or "")
+    stable_tag = str(product.get("stable_tag") or "")
+    release_train = str(product.get("release_train") or "")
+    description = str(product.get("canonical_description") or "")
+    current_semver = parse_semver(version)
+    add(
+        "canonical_contract",
+        CONTRACT_PATH,
+        bool(
+            current_semver
+            and stable_tag == f"v{version}"
+            and release_train == ".".join(version.split(".")[:2])
+            and description
+        ),
+        "version, stable tag, release train, and canonical description must agree",
+    )
+
+    history = release_versions(root)
+    predecessor_semver = max((item for item in history if current_semver and item < current_semver), default=None)
+    predecessor_version = format_semver(predecessor_semver)
+    history_ok = bool(current_semver and predecessor_semver and history and current_semver == history[-1])
+    add(
+        "release_history",
+        RELEASE_ROOT,
+        history_ok,
+        f"current={version or 'missing'}; predecessor={predecessor_version or 'missing'}; latest_note={format_semver(history[-1]) if history else 'missing'}",
+    )
+    release_note_path = Path(f"docs/releases/v{version}.md") if version else Path("docs/releases/UNKNOWN.md")
+    try:
+        release_note = read_text(root, release_note_path)
+    except OSError:
+        release_note = ""
+    add(
+        "current_release_note",
+        release_note_path,
+        bool(stable_tag and stable_tag in release_note[:500]),
+        "current release note must exist and identify the canonical stable tag in its heading",
+    )
+
+    try:
+        license_text = read_text(root, LICENSE_PATH)
+    except OSError as exc:
+        license_text = ""
+        add("lane_license", LICENSE_PATH, False, f"cannot read license: {exc}")
+    detected_lane = detect_lane(license_text)
+    lane = detected_lane if requested_lane == "auto" else requested_lane
+    add(
+        "lane_license",
+        LICENSE_PATH,
+        detected_lane != "unknown" and (requested_lane == "auto" or detected_lane == requested_lane),
+        f"detected={detected_lane}; requested={requested_lane}",
+    )
+
+    source_licenses = product.get("source_licenses") if isinstance(product.get("source_licenses"), dict) else {}
+    lane_license = source_licenses.get(lane) if isinstance(source_licenses.get(lane), dict) else {}
+    expected_component_license = str(lane_license.get("spdx") or "")
+    rust_workspace = {}
+    rust_package = {}
+    rust_members: list[str] = []
+    try:
+        rust_workspace = tomllib.loads(read_text(root, RUST_WORKSPACE_PATH))
+        rust_workspace_table = rust_workspace.get("workspace", {})
+        rust_package = rust_workspace_table.get("package", {})
+        rust_members = [str(item) for item in rust_workspace_table.get("members", [])]
+    except (OSError, tomllib.TOMLDecodeError, AttributeError) as exc:
+        add("rust_workspace_policy", RUST_WORKSPACE_PATH, False, f"cannot load Rust workspace policy: {exc}")
+    rust_license = str(rust_package.get("license") or "")
+    rust_publish = rust_package.get("publish")
+    rust_member_failures = []
+    for member in rust_members:
+        member_manifest = RUST_WORKSPACE_PATH.parent / member / "Cargo.toml"
+        try:
+            member_package = tomllib.loads(read_text(root, member_manifest)).get("package", {})
+        except (OSError, tomllib.TOMLDecodeError, AttributeError) as exc:
+            rust_member_failures.append(f"{member}:unreadable={exc}")
+            continue
+        member_license = member_package.get("license")
+        effective_license = (
+            rust_license
+            if isinstance(member_license, dict) and member_license.get("workspace") is True
+            else str(member_license or "")
+        )
+        member_publish = member_package.get("publish")
+        effectively_non_publishable = member_publish is False or (
+            isinstance(member_publish, dict) and member_publish.get("workspace") is True and rust_publish is False
+        )
+        if effective_license != expected_component_license or not effectively_non_publishable:
+            rust_member_failures.append(
+                f"{member}:license={effective_license or 'missing'},publish={member_publish!r}"
+            )
+    add(
+        "rust_workspace_policy",
+        RUST_WORKSPACE_PATH,
+        bool(
+            expected_component_license
+            and rust_license == expected_component_license
+            and rust_publish is False
+            and not rust_member_failures
+        ),
+        f"lane={lane}; license={rust_license or 'missing'}; expected={expected_component_license or 'missing'}; "
+        f"workspace_publish={rust_publish!r}; member_failures={rust_member_failures}",
+    )
+
+    for relative in REQUIRED_PUBLIC_PATHS + DASHBOARD_IDENTITY_PATHS:
+        add("required_surface", relative, (root / relative).is_file(), "required public-facing surface must exist")
+
+    try:
+        readme = read_text(root, README_PATH)
+    except OSError as exc:
+        readme = ""
+        add("readme_present", README_PATH, False, str(exc))
+    readme_lower = readme.lower()
+    add("readme_version", README_PATH, bool(stable_tag and stable_tag in readme), f"must name {stable_tag}")
+    add(
+        "readme_category",
+        README_PATH,
+        description.lower() in readme_lower,
+        "must include the canonical product description",
+    )
+    add(
+        "readme_cli_primary",
+        README_PATH,
+        "cli is the primary" in readme_lower or "cli is the prescribed" in readme_lower,
+        "must present CLI as the primary interface",
+    )
+    add("readme_no_v3_positioning", README_PATH, "v3 roadmap" not in readme_lower, "must not position V3 as current")
+    if lane == "public":
+        add(
+            "readme_public_license",
+            README_PATH,
+            "apache license 2.0" in readme_lower and "bsl 1.1" not in readme_lower and "busl-1.1" not in readme_lower,
+            "public README must declare Apache-2.0 and must not claim BUSL/BSL",
+        )
+        add(
+            "readme_public_boundary",
+            README_PATH,
+            "docs/private" not in readme_lower and NON_PUBLIC_DOC_MARKER not in readme_lower,
+            "public README must not point at non-public documentation",
+        )
+        add(
+            "readme_public_paths",
+            README_PATH,
+            LOCAL_PATH_PATTERN.search(readme) is None,
+            "public README must not expose machine-specific absolute paths",
+        )
+    elif lane == "commercial":
+        add(
+            "readme_commercial_license",
+            README_PATH,
+            "bsl 1.1" in readme_lower or "business source license 1.1" in readme_lower,
+            "commercial README must declare BUSL/BSL 1.1",
+        )
+
+    key_text: dict[Path, str] = {}
+    for relative in KEY_PUBLIC_PATHS:
+        try:
+            key_text[relative] = read_text(root, relative)
+        except OSError:
+            key_text[relative] = ""
+    combined_key = "\n".join(key_text.values())
+    combined_key_lower = combined_key.lower()
+    add("site_version", PUBLIC_ROOT, bool(stable_tag and stable_tag in combined_key), f"must name {stable_tag}")
+    add(
+        "site_category",
+        Path("docs/public_overview/index.html"),
+        description.lower() in key_text.get(Path("docs/public_overview/index.html"), "").lower(),
+        "home page must include the canonical product description",
+    )
+    add(
+        "llms_category",
+        Path("docs/public_overview/llms.txt"),
+        description.lower() in key_text.get(Path("docs/public_overview/llms.txt"), "").lower(),
+        "agent-readable site guidance must include the canonical product description",
+    )
+    add(
+        "site_structured_identity",
+        Path("docs/public_overview/index.html"),
+        '"name": "ContextLattice"' in key_text.get(Path("docs/public_overview/index.html"), "")
+        and '"operatingSystem": "macOS, Linux, Windows (WSL2)"'
+        in key_text.get(Path("docs/public_overview/index.html"), ""),
+        "structured data must use the canonical name and supported desktop operating systems",
+    )
+    add(
+        "site_cli_primary",
+        PUBLIC_ROOT,
+        "primary interface:</strong> cli" in combined_key_lower or "cli is the primary" in combined_key_lower,
+        "public site must present CLI as the primary interface",
+    )
+    installation_lower = key_text.get(Path("docs/public_overview/installation.html"), "").lower()
+    add(
+        "install_channel_declaration",
+        Path("docs/public_overview/installation.html"),
+        "`gmake quickstart`" in readme_lower
+        and "installers are bootstrap alternatives" in readme_lower
+        and "<code>gmake quickstart</code>" in installation_lower
+        and ("remains the prescribed path" in installation_lower or "stays canonical" in installation_lower),
+        "README and installation guide must declare gmake quickstart canonical and installers as bootstrap alternatives",
+    )
+
+    all_public_text: list[str] = []
+    html_paths = sorted((root / PUBLIC_ROOT).glob("*.html")) if (root / PUBLIC_ROOT).is_dir() else []
+    robots_path = Path("docs/public_overview/robots.txt")
+    try:
+        robots_text = read_text(root, robots_path)
+    except OSError:
+        robots_text = ""
+    sitemap_directives = [
+        line.split(":", 1)[1].strip()
+        for line in robots_text.splitlines()
+        if line.lower().startswith("sitemap:") and ":" in line
+    ]
+    add(
+        "site_robots",
+        robots_path,
+        any(urlsplit(value).path == "/sitemap.xml" for value in sitemap_directives),
+        "robots.txt must declare the public sitemap URL",
+    )
+
+    sitemap_path = Path("docs/public_overview/sitemap.xml")
+    sitemap_error = ""
+    sitemap_locations: list[str] = []
+    try:
+        sitemap_root = ElementTree.fromstring(read_text(root, sitemap_path))
+        if sitemap_root.tag.rsplit("}", 1)[-1] != "urlset":
+            sitemap_error = "root element must be urlset"
+        sitemap_locations = [
+            (element.text or "").strip()
+            for element in sitemap_root.iter()
+            if element.tag.rsplit("}", 1)[-1] == "loc" and (element.text or "").strip()
+        ]
+    except (OSError, ElementTree.ParseError) as exc:
+        sitemap_error = str(exc)
+    sitemap_url_paths = {urlsplit(value).path or "/" for value in sitemap_locations}
+    canonical_html_paths = {
+        "/" if path.name == "index.html" else f"/{path.name}"
+        for path in html_paths
+        if path.name != "index-orb-white.html"
+    }
+    missing_sitemap_paths = sorted(canonical_html_paths - sitemap_url_paths)
+    invalid_sitemap_locations = sorted(
+        value for value in sitemap_locations if urlsplit(value).scheme not in {"http", "https"} or not urlsplit(value).netloc
+    )
+    add(
+        "site_sitemap",
+        sitemap_path,
+        not sitemap_error and bool(sitemap_locations) and not missing_sitemap_paths and not invalid_sitemap_locations,
+        sitemap_error
+        or (
+            f"missing={missing_sitemap_paths}; invalid={invalid_sitemap_locations}"
+            if missing_sitemap_paths or invalid_sitemap_locations
+            else f"represented canonical HTML pages={len(canonical_html_paths)}"
+        ),
+    )
+
+    predecessor_tag = f"v{predecessor_version}" if predecessor_version else ""
+    stale_claims = present_tense_stale_claims(README_PATH, readme, predecessor_tag)
+    for claim_path in html_paths:
+        relative = claim_path.relative_to(root)
+        try:
+            claim_text = claim_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        stale_claims.extend(present_tense_stale_claims(relative, claim_text, predecessor_tag))
+    llms_path = root / "docs/public_overview/llms.txt"
+    if llms_path.is_file():
+        stale_claims.extend(
+            present_tense_stale_claims(
+                llms_path.relative_to(root),
+                llms_path.read_text(encoding="utf-8"),
+                predecessor_tag,
+            )
+        )
+    add(
+        "present_version_claims",
+        PUBLIC_ROOT,
+        not stale_claims,
+        "; ".join(stale_claims[:12])
+        or f"no present-tense claims retain predecessor v{predecessor_version or 'UNKNOWN'}",
+    )
+    public_root_resolved = (root / PUBLIC_ROOT).resolve(strict=False)
+    broken_references: list[str] = []
+    broken_fragments: list[str] = []
+    mermaid_html_comments: list[str] = []
+    for absolute in html_paths:
+        relative = absolute.relative_to(root)
+        try:
+            text = absolute.read_text(encoding="utf-8")
+        except OSError as exc:
+            add("site_html_readable", relative, False, str(exc))
+            continue
+        all_public_text.append(text)
+        for block in MERMAID_BLOCK_PATTERN.findall(text):
+            if "<!--" in block:
+                mermaid_html_comments.append(str(relative))
+        parser = ReferenceParser()
+        parser.feed(text)
+        for attribute, raw in parser.references:
+            parsed_raw = urlsplit(raw)
+            if parsed_raw.fragment and not parsed_raw.scheme and not parsed_raw.netloc:
+                fragment = unquote(parsed_raw.fragment)
+                fragment_target = (
+                    absolute.resolve(strict=False)
+                    if not parsed_raw.path
+                    else resolve_local_reference(public_root_resolved, absolute.resolve(strict=False), raw)
+                )
+                if fragment_target is not None and fragment_target.is_file() and fragment_target.suffix.lower() in {".html", ".htm"}:
+                    target_text = fragment_target.read_text(encoding="utf-8")
+                    anchor_pattern = re.compile(
+                        r'(?:id|name)=["\']' + re.escape(fragment) + r'["\']',
+                        re.IGNORECASE,
+                    )
+                    if not anchor_pattern.search(target_text):
+                        broken_fragments.append(f"{relative}:{attribute}={raw}")
+            target = resolve_local_reference(public_root_resolved, absolute.resolve(strict=False), raw)
+            if target is None:
+                continue
+            try:
+                target.relative_to(public_root_resolved)
+            except ValueError:
+                broken_references.append(f"{relative}:{attribute}={raw} (escapes static root)")
+                continue
+            if not target.exists():
+                broken_references.append(f"{relative}:{attribute}={raw}")
+    public_blob = "\n".join(all_public_text)
+    public_blob_lower = public_blob.lower()
+    add("site_local_links", PUBLIC_ROOT, not broken_references, "; ".join(broken_references[:12]) or "all local links resolve")
+    add(
+        "site_html_fragments",
+        PUBLIC_ROOT,
+        not broken_fragments,
+        "; ".join(broken_fragments[:12]) or "all local HTML fragments resolve",
+    )
+    broken_css_assets: list[str] = []
+    for stylesheet in sorted((root / PUBLIC_ROOT).glob("*.css")) if (root / PUBLIC_ROOT).is_dir() else []:
+        css_text = stylesheet.read_text(encoding="utf-8")
+        for match in CSS_URL_PATTERN.finditer(css_text):
+            raw = match.group(2).strip()
+            if not raw or raw.startswith("#"):
+                continue
+            parsed = urlsplit(raw)
+            if parsed.scheme or parsed.netloc or raw.startswith("data:"):
+                continue
+            target = (stylesheet.parent / unquote(parsed.path)).resolve(strict=False)
+            try:
+                target.relative_to(public_root_resolved)
+            except ValueError:
+                broken_css_assets.append(f"{stylesheet.relative_to(root)}:url={raw} (escapes static root)")
+                continue
+            if not target.exists():
+                broken_css_assets.append(f"{stylesheet.relative_to(root)}:url={raw}")
+    add(
+        "site_css_assets",
+        PUBLIC_ROOT,
+        not broken_css_assets,
+        "; ".join(broken_css_assets[:12]) or "all local CSS assets resolve",
+    )
+    add(
+        "site_mermaid_comments",
+        PUBLIC_ROOT,
+        not mermaid_html_comments,
+        "; ".join(sorted(set(mermaid_html_comments))) or "Mermaid blocks use Mermaid-safe comments",
+    )
+    current_positioning = "\n".join(
+        [
+            key_text.get(Path("docs/public_overview/index.html"), ""),
+            key_text.get(Path("docs/public_overview/index-orb-white.html"), ""),
+            (root / "docs/public_overview/roadmap.html").read_text(encoding="utf-8")
+            if (root / "docs/public_overview/roadmap.html").is_file()
+            else "",
+        ]
+    ).lower()
+    add("site_no_v3_positioning", PUBLIC_ROOT, "v3 roadmap" not in current_positioning, "V3 must not be positioned as current")
+    add(
+        "site_no_private_references",
+        PUBLIC_ROOT,
+        "docs/private" not in public_blob_lower and NON_PUBLIC_DOC_MARKER not in public_blob_lower,
+        "public site must not mention non-public documentation",
+    )
+    add(
+        "site_no_local_paths",
+        PUBLIC_ROOT,
+        LOCAL_PATH_PATTERN.search(public_blob) is None,
+        "public site must not expose machine-specific absolute paths",
+    )
+    index_text = key_text.get(Path("docs/public_overview/index.html"), "")
+    for label in PILLAR_LABELS:
+        add("site_public_pillar", Path("docs/public_overview/index.html"), label.lower() in index_text.lower(), f"missing {label}")
+    aggregate_safe = (
+        "controlled activation preview" in combined_key_lower
+        and "independent privacy and utility reviews pass" in combined_key_lower
+    )
+    add(
+        "aggregate_signal_posture",
+        Path("docs/public_overview/premium.html"),
+        aggregate_safe,
+        "Aggregate Signal must retain preview and independent-review hold language",
+    )
+
+    try:
+        generated_go = read_text(root, GENERATED_GO_PATH)
+    except OSError as exc:
+        generated_go = ""
+        add("generated_go_source", GENERATED_GO_PATH, False, f"cannot read generated Go source: {exc}")
+    generated_values = {
+        "version": generated_go_constant(generated_go, "commercialTruthProductVersion"),
+        "stable_tag": generated_go_constant(generated_go, "commercialTruthStableTag"),
+        "release_train": generated_go_constant(generated_go, "commercialTruthReleaseTrain"),
+    }
+    expected_generated_values = {
+        "version": version,
+        "stable_tag": stable_tag,
+        "release_train": release_train,
+    }
+    add(
+        "generated_go_source",
+        GENERATED_GO_PATH,
+        generated_values == expected_generated_values,
+        f"generated={generated_values}; canonical={expected_generated_values}",
+    )
+    try:
+        generated_go_test = read_text(root, GENERATED_GO_TEST_PATH)
+    except OSError as exc:
+        generated_go_test = ""
+        add("generated_go_test", GENERATED_GO_TEST_PATH, False, f"cannot read generated Go test: {exc}")
+    hard_coded_release_versions = sorted(
+        set(re.findall(r'["\']v?(\d+\.\d+\.\d+)["\']', generated_go_test))
+    )
+    generated_test_dynamic = (
+        "commercial_truth.v1.json" in generated_go_test
+        and "commercialTruthProductVersion" in generated_go_test
+        and "commercialTruthStableTag" in generated_go_test
+        and "commercialTruthReleaseTrain" in generated_go_test
+        and not hard_coded_release_versions
+    )
+    add(
+        "generated_go_test",
+        GENERATED_GO_TEST_PATH,
+        generated_test_dynamic,
+        "test must compare all generated release constants with the canonical JSON without hard-coded patch versions"
+        if not hard_coded_release_versions
+        else f"hard-coded release versions={hard_coded_release_versions}",
+    )
+
+    try:
+        workflow_text = read_text(root, WORKFLOW_PATH)
+    except OSError as exc:
+        workflow_text = ""
+        add("workflow_trigger_coverage", WORKFLOW_PATH, False, f"cannot read workflow: {exc}")
+    for event in ("pull_request", "push"):
+        event_paths = workflow_paths_for_event(workflow_text, event)
+        missing_paths = sorted(set(WORKFLOW_REQUIRED_PATHS) - event_paths)
+        add(
+            "workflow_trigger_coverage",
+            WORKFLOW_PATH,
+            not missing_paths,
+            f"event={event}; missing={missing_paths}" if missing_paths else f"event={event}; all required paths covered",
+        )
+
+    layout = ""
+    overview = ""
+    pricing = ""
+    auth_mode = ""
+    auth_test = ""
+    for relative, target_name in (
+        (Path("contextlattice-dashboard/app/layout.tsx"), "layout"),
+        (Path("contextlattice-dashboard/components/OverviewCommandDeck.tsx"), "overview"),
+        (Path("contextlattice-dashboard/app/pricing/page.tsx"), "pricing"),
+        (Path("contextlattice-dashboard/lib/authMode.ts"), "auth_mode"),
+        (Path("contextlattice-dashboard/tests/auth-boundary.test.ts"), "auth_test"),
+    ):
+        try:
+            value = read_text(root, relative)
+        except OSError:
+            value = ""
+        if target_name == "layout":
+            layout = value
+        elif target_name == "overview":
+            overview = value
+        elif target_name == "pricing":
+            pricing = value
+        elif target_name == "auth_mode":
+            auth_mode = value
+        else:
+            auth_test = value
+    add(
+        "dashboard_category",
+        Path("contextlattice-dashboard/app/layout.tsx"),
+        "local-first intelligence layer" in layout.lower()
+        or "COMMERCIAL_TRUTH.product.canonical_description" in layout,
+        "dashboard metadata must use the canonical category",
+    )
+    overview_lower = overview.lower()
+    for label in PILLAR_LABELS:
+        add("dashboard_public_pillar", Path("contextlattice-dashboard/components/OverviewCommandDeck.tsx"), label.lower() in overview_lower, f"missing {label}")
+    add(
+        "dashboard_pricing_system",
+        Path("contextlattice-dashboard/app/pricing/page.tsx"),
+        ("ALL_PLANS" in pricing or "PLANS" in pricing) and "cl-page" in pricing,
+        "pricing must use generated commercial plans and the current dashboard design system",
+    )
+    add(
+        "dashboard_public_auth_default",
+        Path("contextlattice-dashboard/lib/authMode.ts"),
+        'process.env.AUTH_REQUIRED === "true"' in auth_mode,
+        "auth must remain opt-in so public local mode is open by default",
+    )
+    add(
+        "dashboard_auth_regression_test",
+        Path("contextlattice-dashboard/tests/auth-boundary.test.ts"),
+        "dashboard auth is disabled by default for local OSS mode" in auth_test
+        and 'process.env.AUTH_REQUIRED = "true"' in auth_test,
+        "tests must cover both public-open and explicit-auth modes",
+    )
+
+    failed = [item for item in checks if not item.ok]
+    return {
+        "schema_id": "contextlattice_public_product_truth_audit.v1",
+        "ok": not failed,
+        "lane": lane,
+        "detected_lane": detected_lane,
+        "product_version": version or None,
+        "predecessor_version": predecessor_version or None,
+        "checks": [asdict(item) for item in checks],
+        "summary": {
+            "checks": len(checks),
+            "passed": len(checks) - len(failed),
+            "failed": len(failed),
+        },
+        "failures": [asdict(item) for item in failed],
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="", help="Repository root; defaults to the audit script repository.")
+    parser.add_argument("--lane", choices=("auto", "public", "commercial"), default="auto")
+    parser.add_argument("--pretty", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
+    payload = run_audit(root, args.lane)
+    print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
