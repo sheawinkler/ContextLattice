@@ -8,10 +8,10 @@ import (
 )
 
 const commercialTruthSchemaID = "contextlattice_commercial_truth.v1"
-const commercialTruthProductVersion = "4.0.2"
-const commercialTruthStableTag = "v4.0.2"
+const commercialTruthProductVersion = "4.0.3"
+const commercialTruthStableTag = "v4.0.3"
 const commercialTruthReleaseTrain = "4.0"
-const commercialTruthContractSHA256 = "73099782452943b19aeb9d2d68acd93ae3169aa41cacc8ee244516290639b9d4"
+const commercialTruthContractSHA256 = "e0cdb82464c1c9a7776757b3b55713d83a013a79ec0522cfba99b1656b010089"
 
 type commercialTruthLimits struct {
 	MaxAPIKeys    *int

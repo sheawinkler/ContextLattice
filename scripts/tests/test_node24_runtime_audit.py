@@ -56,6 +56,25 @@ class Node24RuntimeAuditTests(unittest.TestCase):
             self.assertIn("docker_node_mismatch", kinds)
             self.assertIn("non_node24_base", kinds)
 
+    def test_dashboard_dev_server_contract_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "Dockerfile.dashboard").write_text(
+                "FROM node:24.18.0-bookworm-slim\n"
+                "ENV NODE_ENV=development\n"
+                'CMD ["sh", "-c", "npx --yes prisma db push && npm run dev"]\n',
+                encoding="utf-8",
+            )
+            findings: list[dict[str, str]] = []
+            AUDIT.audit_dashboard_production_contract(root, findings)
+            kinds = [item["kind"] for item in findings]
+            self.assertIn("dashboard_dev_server", kinds)
+            self.assertIn("dashboard_npx_network_install", kinds)
+            self.assertIn("dashboard_production_env_missing", kinds)
+            self.assertIn("dashboard_build_missing", kinds)
+            self.assertIn("dashboard_start_missing", kinds)
+            self.assertIn("dashboard_healthcheck_missing", kinds)
+
     def test_stale_install_script_approval_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

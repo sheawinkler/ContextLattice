@@ -1911,6 +1911,30 @@ body,
   align-items: start;
 }
 
+.cl-topic-layout > *,
+.cl-topic-row,
+.cl-topic-row > *,
+.cl-project-button,
+.cl-project-button > * {
+  min-width: 0;
+}
+
+.cl-topic-row span,
+.cl-project-button span,
+.cl-tree-label,
+.cl-tree-path {
+  overflow-wrap: anywhere;
+}
+
+.cl-topic-row span {
+  flex: 1 1 auto;
+}
+
+.cl-topic-row strong {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
 .cl-project-rail,
 .cl-topic-sidecar {
   position: sticky;
