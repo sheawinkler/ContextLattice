@@ -11,6 +11,7 @@ before broad commercial rollout.
 - `COMMERCIAL_LICENSE.md` - commercial terms for hosted/private offerings.
 - `TERMS_OF_SERVICE.md` - hosted service terms.
 - `PRIVACY_POLICY.md` - data handling and user rights.
+- `REFUND_POLICY.md` - refund request window and payment-rail handling.
 - `DPA.md` - data processing addendum baseline.
 - `ACCEPTABLE_USE_POLICY.md` - prohibited use and abuse controls.
 - `SUBPROCESSORS.md` - third-party processor inventory.

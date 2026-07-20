@@ -1,13 +1,25 @@
 # Security Policy
 
-## Reporting a Vulnerability
-Please do **not** open public issues for security vulnerabilities.
+## Report Privately
 
-Instead, use GitHub Security Advisories:
-1. Go to the repo’s **Security** tab.
-2. Click **Report a vulnerability**.
+Do not open a public issue for a suspected vulnerability.
 
-If you cannot use GitHub Security Advisories, contact the repository owner directly.
+Use **Security > Report a vulnerability** in the GitHub repository. If GitHub
+Security Advisories are unavailable, email `hello@contextlattice.io` with the
+subject `ContextLattice security report`. Do not include live credentials,
+customer memory, or private keys in the first message.
+
+Include the affected release, lane, deployment profile, reproduction boundary,
+impact, and any safe proof artifact. Reports are acknowledged and triaged before
+public disclosure is coordinated.
 
 ## Supported Versions
-Security fixes are applied to `main` and the latest release.
+
+Security fixes target `main` and the latest stable release. Older immutable
+release artifacts remain historical evidence and are not silently rewritten.
+
+## Security Boundaries
+
+Relevant reports include authentication or entitlement bypass, cross-workspace
+access, unsafe secret handling, release/provenance substitution, public/private
+lane leakage, memory disclosure, and unbounded local execution.

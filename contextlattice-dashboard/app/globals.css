@@ -1338,6 +1338,10 @@ body,
   gap: 1rem;
 }
 
+.cl-page > * {
+  min-width: 0;
+}
+
 .cl-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.34fr);
@@ -1849,6 +1853,10 @@ body,
   gap: 0.75rem;
 }
 
+.cl-capability-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .cl-capability-card,
 .cl-project-card,
 .cl-service-tile,
@@ -2070,6 +2078,10 @@ body,
 
 .cl-prompt-box {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .auth-shell {
@@ -2625,6 +2637,15 @@ body,
   align-items: start;
 }
 
+.cl-settings-state {
+  max-width: 52rem;
+  padding: clamp(1.5rem, 4vw, 3rem);
+}
+
+.cl-settings-state h2 {
+  margin: 0.4rem 0 0.75rem;
+}
+
 .cl-settings-card {
   display: grid;
   gap: 0.85rem;
@@ -2636,6 +2657,180 @@ body,
 
 .cl-settings-card--danger {
   border-color: rgba(255, 95, 86, 0.54);
+}
+
+.cl-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.8rem;
+  align-items: stretch;
+}
+
+.cl-pricing-card {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.cl-pricing-card--recommended {
+  border-color: var(--cl-accent);
+  box-shadow: 5px 5px 0 rgba(199, 255, 74, 0.16);
+}
+
+.cl-pricing-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-height: 3.5rem;
+}
+
+.cl-pricing-head h3,
+.cl-pricing-boundary h3 {
+  margin: 0.2rem 0 0;
+  color: var(--cl-paper);
+  font-family: var(--cl-mono);
+  font-size: clamp(1.2rem, 2vw, 1.75rem);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.cl-pricing-description,
+.cl-pricing-annual,
+.cl-pricing-seats,
+.cl-pricing-boundary p {
+  margin: 0;
+  color: var(--cl-muted);
+  font-size: 0.78rem;
+  line-height: 1.48;
+}
+
+.cl-pricing-description {
+  min-height: 4.7rem;
+}
+
+.cl-pricing-price {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.45rem;
+  border-top: 1px solid rgba(216, 207, 184, 0.16);
+  padding-top: 0.75rem;
+}
+
+.cl-pricing-price strong {
+  color: var(--cl-paper);
+  font-family: var(--cl-pixel);
+  font-size: clamp(2.35rem, 4vw, 4rem);
+  line-height: 0.78;
+  text-transform: uppercase;
+}
+
+.cl-pricing-price span {
+  color: var(--cl-muted);
+  font-size: 0.7rem;
+  padding-bottom: 0.18rem;
+  text-transform: uppercase;
+}
+
+.cl-pricing-annual {
+  min-height: 1.2rem;
+}
+
+.cl-pricing-seats {
+  color: var(--cl-paper);
+  font-family: var(--cl-mono);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.cl-pricing-features {
+  display: grid;
+  gap: 0.48rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cl-pricing-features li {
+  position: relative;
+  border-top: 1px solid rgba(216, 207, 184, 0.12);
+  color: var(--cl-muted);
+  font-size: 0.73rem;
+  line-height: 1.36;
+  padding: 0.48rem 0 0 0.85rem;
+}
+
+.cl-pricing-features li::before {
+  content: "+";
+  position: absolute;
+  left: 0;
+  color: var(--cl-accent);
+  font-family: var(--cl-mono);
+  font-weight: 800;
+}
+
+.cl-pricing-features .cl-pricing-more {
+  color: var(--cl-paper);
+  font-family: var(--cl-mono);
+  text-transform: uppercase;
+}
+
+.cl-pricing-action {
+  margin-top: auto;
+  padding-top: 0.35rem;
+}
+
+.cl-pricing-action .cl-button {
+  width: 100%;
+}
+
+.cl-pricing-boundary {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.35fr) auto;
+  gap: 1rem;
+  align-items: center;
+  border-color: var(--cl-line-strong);
+}
+
+.cl-legal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.cl-legal-grid .cl-panel {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+}
+
+.cl-legal-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--cl-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.cl-legal-list li::marker {
+  color: var(--cl-accent);
+}
+
+.cl-legal-source {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(300px, 1.4fr) auto;
+  align-items: center;
+  gap: 1rem;
+}
+
+.cl-legal-source p {
+  margin: 0;
+  color: var(--cl-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
 }
 
 .cl-definition-grid {
@@ -2794,7 +2989,10 @@ body,
 
   .cl-settings-grid,
   .cl-form-grid,
-  .cl-form-grid--inline {
+  .cl-form-grid--inline,
+  .cl-pricing-boundary,
+  .cl-legal-grid,
+  .cl-legal-source {
     grid-template-columns: 1fr;
   }
 

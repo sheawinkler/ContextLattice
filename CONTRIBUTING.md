@@ -1,43 +1,62 @@
-# Contributing
+# Contributing to ContextLattice
 
-Thanks for contributing to ContextLattice! This repo focuses on reliable memory, MCP routing, and orchestration across agents. The fastest way to help is to keep changes small, testable, and well‑documented.
+ContextLattice is the local-first intelligence layer that gives AI agents
+durable continuity, explainable retrieval, portable context, and verified
+learning across harnesses. The CLI is the primary interface; the dashboard,
+HTTP, and MCP are companion surfaces.
 
-## Quick start
-1. Fork + clone.
-2. Copy env: `cp .env.example .env` (adjust if needed).
-3. Bring up core services:
-   ```bash
-   docker compose --profile core up -d --build
-   ```
-4. Verify the stack:
-   ```bash
-   curl -fsS http://127.0.0.1:8075/status | jq
-   gmake mem-ping
-   ```
+## Quick Start
 
-## Local development
-- **Core runtime**: Docker Compose (`docker-compose.yml`).
-- **Profiles**: `core`, `analytics`, `observability`, `llm`.
-- **Logs**: `docker compose logs -f <service>`.
+```bash
+cp .env.example .env
+gmake quickstart
+contextlattice doctor --pretty
+```
 
-## Testing & checks
-- `gmake env-check` (compose validation)
-- `gmake mem-ping` (MCP hub tools/list)
-- `curl http://127.0.0.1:8075/status` (orchestrator health)
+The public local runtime is account-free. A Compose v2-compatible runtime is
+required. Use the deployment profile that fits the machine rather than enabling
+every optional service by default.
 
-If you add new services or endpoints, include a short smoke test in the PR body.
+## Development Contract
 
-## Pull requests
-- Keep PRs focused (ideally <300 lines of diff).
-- Update docs if you change endpoints, env vars, or runbooks.
-- Use clear titles: `fix: ...`, `chore: ...`, `docs: ...`.
+- Preserve the CLI-first product path.
+- Keep the active request path in Go/Rust; Python is build, migration, audit,
+  and development tooling, not a live application service.
+- Keep public Apache-2.0 source, commercial BUSL-1.1 source, and private
+  research/operations boundaries explicit.
+- Never include personal paths, secrets, private docs, or customer data in a
+  public change or test fixture.
+- Prefer small, deterministic checks and bounded artifacts over narrative proof.
 
-## Reporting bugs
-Open an issue with:
-- Expected vs actual behavior
-- Repro steps
-- Logs (minimal, redacted)
-- Environment (OS, Docker, branch/commit)
+## Verification
 
-## Security
-See `SECURITY.md` for vulnerability reporting.
+Run the narrow checks for the files you changed first. Before requesting review,
+run the relevant lane gate and report exact commands and results.
+
+Useful entry points:
+
+```bash
+gmake env-check
+gmake public-product-truth-audit
+curl -fsS http://127.0.0.1:8075/health | jq
+contextlattice doctor --pretty
+```
+
+Runtime or Rust changes require a full rebuild/restart before live claims.
+Frontend changes require desktop and mobile verification, including console and
+network errors.
+
+## Pull Requests
+
+- Keep the change focused and reviewable.
+- Name the affected lane: public, commercial, or private development.
+- Explain behavior, safety boundaries, rollback, and exact verification.
+- Update docs, contracts, generated projections, and tests when an interface or
+  product claim changes.
+- Do not commit generated drift manually when a repository generator owns it.
+
+## Bugs and Security
+
+Open a bug report with a redacted doctor result, release/install channel,
+deployment profile, exact reproduction, and observed behavior. Do not publish
+secrets or vulnerability details; follow [SECURITY.md](SECURITY.md) instead.

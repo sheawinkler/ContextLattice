@@ -82,11 +82,11 @@ export function OverviewCommandDeck() {
     <div className="cl-page cl-overview-page">
       <section className="cl-hero cl-hero--compact">
         <div className="cl-hero-copy">
-          <p className="cl-kicker">Overview // what this app is</p>
-          <h2>The memory layer under every serious agent run.</h2>
+          <p className="cl-kicker">Overview // intelligence layer</p>
+          <h2>The work survives the window.</h2>
           <p>
-            ContextLattice is not another chat cockpit. It is the durable context machine: write ledger,
-            retrieval policy, topic rollups, behavior provenance, learning loop, skills discovery, and agent install contract.
+            ContextLattice is the local-first intelligence layer that gives AI agents durable continuity,
+            explainable retrieval, portable context, and verified learning across harnesses.
           </p>
         </div>
         <div className="cl-overview-stamp">
@@ -113,47 +113,47 @@ export function OverviewCommandDeck() {
           <strong>{formatCompact(toInt(summary.totalEvents))}</strong>
         </div>
         <div>
-          <span className="cl-label">tokens saved</span>
+          <span className="cl-label">estimated tokens saved</span>
           <strong>{formatCompact(tokenImpact.estimatedSaved)}</strong>
         </div>
       </section>
 
       <section className="cl-capability-grid">
         <CapabilityCard
-          eyebrow="memory"
-          title="Durable writes, not vibes"
-          body="Agent events become replayable memory with metadata contracts, raw ledger shape, topic rollups, and provenance instead of vanishing into a chat transcript."
+          eyebrow="reopen"
+          title="Durable continuity"
+          body="The mission survives chats, agents, accounts, and restarts through replayable writes, checkpoints, objective lineage, sessions, and proof-linked handoffs."
           metric={`${formatCompact(toInt(metadataContract.totalWrites))} writes`}
         />
         <CapabilityCard
-          eyebrow="allocation"
-          title="Context per token, on purpose"
-          body="Retrieval lanes, rollups, and agent packs compete for limited prompt space so agents receive high-impact context instead of a warehouse dump."
+          eyebrow="select"
+          title="Explainable retrieval"
+          body="Retrieval lanes, rollups, graph evidence, and agent packs compete for limited prompt space so every selected token can justify its place."
           metric={`${tokenImpact.confidence} confidence`}
         />
         <CapabilityCard
-          eyebrow="retrieval"
-          title="Fast lanes plus deep recall"
-          body="Topic rollups, vector search, pgvector, raw stores, and long-tail sources are visible as operating lanes with health and latency pressure."
-          metric={`${formatCompact(retrievalAlerts)} alerts`}
+          eyebrow="move"
+          title="Portable context"
+          body="Signed packets, passports, encrypted continuations, and stable agent contracts carry bounded work across harnesses without surrendering lineage or execution control."
+          metric={`${formatCompact(activeAgents)} agents`}
         />
         <CapabilityCard
-          eyebrow="agent contract"
-          title="One install motion for many harnesses"
-          body="Codex, Hermes, Claude-style CLIs, Droid, Pi, and custom agents get a stable local contract for hooks, policy packs, checkpoints, and handoffs."
-          metric={`${formatCompact(activeAgents)} active`}
-        />
-        <CapabilityCard
-          eyebrow="learning"
-          title="Behavior provenance that compounds"
-          body="Preferences, source outcomes, objective lineage, and recall quality traces make the system less random as projects grow."
+          eyebrow="earn"
+          title="Verified skill evolution"
+          body="Outcomes, retrieval receipts, holdouts, and human approval stand between a repeated pattern and an activated skill or policy."
           metric={`${formatCompact(toInt(summary.coveredTopics))} covered`}
         />
         <CapabilityCard
-          eyebrow="runtime"
-          title="Local-first infrastructure shell"
-          body="Go/Rust hot paths carry the live stack while the dashboard remains the thin glass layer for operators, not the application core."
-          metric={vectorBackend || "native lanes"}
+          eyebrow="compound"
+          title="Aggregate Signal"
+          body="Explicitly opted-in, clipped statistics can queue locally while raw prompts and memory stay put; production learning remains proof-held."
+          metric="preview"
+        />
+        <CapabilityCard
+          eyebrow="prove"
+          title="Runtime truth, not theater"
+          body="Go/Rust hot paths carry the live stack while health, retrieval alerts, token impact, project density, and exclusions stay visible here."
+          metric={vectorBackend || `${formatCompact(retrievalAlerts)} alerts`}
         />
       </section>
 

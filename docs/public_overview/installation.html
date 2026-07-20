@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Installation Guide | Context Lattice</title>
-  <link rel="stylesheet" href="styles-gray.css?v=20260601d" />
+  <meta name="description" content="Install ContextLattice locally, launch the Go/Rust runtime, verify health, and integrate only the agent harnesses already present on the machine." />
+  <link rel="canonical" href="https://contextlattice.io/installation.html" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260720a" />
 </head>
 <body class="home">
   <main class="container">
@@ -47,12 +49,11 @@
         <div class="kicker">Quick Path</div>
         <h3>Fastest clean install route</h3>
         <ol class="step-list">
-          <li>Less technical macOS users: download and run the DMG bootstrap launcher.</li>
-          <li>Less technical Linux users: download and run the Linux bootstrap bundle installer.</li>
-          <li>Run <code>gmake quickstart</code>.</li>
-          <li>Choose launch mode: <code>gmake mem-up-lite</code> or <code>gmake mem-up-full</code>.</li>
-          <li>Validate <code>/health</code> and authenticated <code>/status</code>.</li>
-          <li>If needed, move high-growth data paths to external NVMe before heavy ingest.</li>
+          <li>Clone <code>https://github.com/sheawinkler/ContextLattice.git</code> or use a signed release installer.</li>
+          <li>Run <code>cp .env.example .env</code>, then <code>gmake quickstart</code>.</li>
+          <li>Validate <code>/health</code> and <code>contextlattice doctor --pretty</code>.</li>
+          <li>Integrate only the agent harnesses already installed with <code>contextlattice_adopt integrate</code>.</li>
+          <li>If needed, move high-growth data paths to external storage before heavy ingest.</li>
         </ol>
         <p class="muted-note">All details remain below. Use the on-page nav to jump directly to any section.</p>
       </article>
@@ -91,7 +92,11 @@
         <h3>Use <code>gmake quickstart</code> on first install</h3>
         <div class="priority-row"><span class="priority-chip required">Required</span></div>
         <p>This command creates missing env wiring, runs secure bootstrap, starts services, and validates health/auth so you do not get stuck on early 401 errors.</p>
-<pre><code>gmake quickstart</code></pre>
+<pre><code>git clone https://github.com/sheawinkler/ContextLattice.git
+cd ContextLattice
+cp .env.example .env
+gmake quickstart
+contextlattice doctor --pretty</code></pre>
       </article>
     </section>
 

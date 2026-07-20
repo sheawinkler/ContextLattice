@@ -2,7 +2,7 @@
 
 Effective date: 2026-02-18
 Licensor: Shea Winkler (Context Lattice)
-Contact: sheawinkler@gmail.com
+Contact: hello@contextlattice.io
 
 ## 1) Relationship to repository license
 

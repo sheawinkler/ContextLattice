@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useDashboardAuthRequired } from "@/lib/useDashboardAuthMode";
 
 type Workspace = {
   id: string;
@@ -54,6 +55,7 @@ function SecretOutput({ label, value }: { label: string; value: string }) {
 }
 
 export default function SettingsPage() {
+  const authRequired = useDashboardAuthRequired();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [newKeyName, setNewKeyName] = useState("");
@@ -102,11 +104,13 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    void loadWorkspace();
-    void loadKeys();
-    void loadBudget();
-    void loadAuditLogs();
-  }, []);
+    if (authRequired === true) {
+      void loadWorkspace();
+      void loadKeys();
+      void loadBudget();
+      void loadAuditLogs();
+    }
+  }, [authRequired]);
 
   async function createKey() {
     const name = newKeyName.trim();
@@ -200,6 +204,53 @@ export default function SettingsPage() {
     void loadWorkspace();
     void loadKeys();
     void loadAuditLogs();
+  }
+
+  if (authRequired === null) {
+    return (
+      <div className="cl-page cl-settings-page">
+        <section className="cl-panel cl-settings-state">
+          <p className="cl-kicker">Settings // boundary check</p>
+          <h2>Resolving dashboard mode.</h2>
+          <p>Workspace data stays sealed until the server confirms the active auth boundary.</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (authRequired === "unavailable") {
+    return (
+      <div className="cl-page cl-settings-page">
+        <section className="cl-panel cl-settings-state">
+          <p className="cl-kicker">Settings // safe stop</p>
+          <h2>Auth mode is unavailable.</h2>
+          <p>Workspace settings were not requested. Restore the dashboard server boundary and reload.</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!authRequired) {
+    return (
+      <div className="cl-page cl-settings-page">
+        <section className="cl-hero cl-hero--compact">
+          <div className="cl-hero-copy">
+            <p className="cl-kicker">Settings // local mode</p>
+            <h2>Local runtime settings stay local.</h2>
+            <p>
+              Account, workspace, billing, and hosted support controls are disabled in the
+              account-free dashboard. Configure the local runtime through <code>.env</code> and
+              the ContextLattice CLI.
+            </p>
+          </div>
+          <div className="cl-overview-stamp">
+            <span>auth mode</span>
+            <strong>local open</strong>
+            <small>no workspace requests</small>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   return (

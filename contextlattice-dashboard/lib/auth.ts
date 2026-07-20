@@ -6,11 +6,13 @@ import AppleProvider from "next-auth/providers/apple";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { compare } from "bcryptjs";
 import { prisma } from "./db";
-import { isRateLimited, recordAttempt } from "./rateLimit";
+import { isRateLimited, recordAttempt as recordFailedAttempt } from "./rateLimit";
+import { sanitizeCallbackUrl } from "./callback-url";
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
-  session: { strategy: "database" },
+  // Credentials auth in NextAuth requires JWT sessions.
+  session: { strategy: "jwt" },
   providers: [
     Credentials({
       name: "Email & Password",
@@ -22,26 +24,27 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.email || !credentials?.password) {
           return null;
         }
+        const email = credentials.email.trim().toLowerCase();
+        if (await isRateLimited(email, "login")) {
+          throw new Error("RATE_LIMITED");
+        }
         const user = await prisma.user.findUnique({
-          where: { email: credentials.email.toLowerCase() },
+          where: { email },
         });
         if (!user?.passwordHash) {
-          await recordAttempt(credentials.email.toLowerCase(), "login");
+          await recordFailedAttempt(email, "login");
           return null;
-        }
-        if (await isRateLimited(user.email, "login")) {
-          throw new Error("RATE_LIMITED");
         }
         const valid = await compare(credentials.password, user.passwordHash);
         if (!valid) {
-          await recordAttempt(user.email, "login");
+          await recordFailedAttempt(email, "login");
           return null;
         }
-        await recordAttempt(user.email, "login");
         if (
           process.env.AUTH_REQUIRE_EMAIL_VERIFICATION === "true" &&
           !user.emailVerified
         ) {
+          await recordFailedAttempt(email, "login");
           throw new Error("EMAIL_NOT_VERIFIED");
         }
         return {
@@ -82,19 +85,45 @@ export const authOptions: NextAuthOptions = {
     signIn: "/auth/login",
   },
   callbacks: {
-    async session({ session, user }) {
-      if (session.user && user) {
-        const sessionUser = session.user as typeof session.user & {
+    async redirect({ url, baseUrl }) {
+      const redirectUrl = sanitizeCallbackUrl(url, "/overview");
+      if (redirectUrl !== "/overview") {
+        return `${baseUrl}${redirectUrl}`;
+      }
+      return `${baseUrl}/overview`;
+    },
+
+    async jwt({ token, user }) {
+      const userId =
+        (typeof user?.id === "string" && user.id) ||
+        (typeof token.sub === "string" && token.sub) ||
+        "";
+      if (userId) {
+        token.id = userId;
+        const membership = await prisma.workspaceMember.findFirst({
+          where: { userId },
+          orderBy: { createdAt: "asc" },
+        });
+        token.workspaceId = membership?.workspaceId || null;
+        token.workspaceRole = membership?.role || null;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        const user = session.user as typeof session.user & {
           id?: string;
           workspaceId?: string | null;
           workspaceRole?: string | null;
         };
-        sessionUser.id = user.id;
-        const membership = await prisma.workspaceMember.findFirst({
-          where: { userId: user.id },
-          orderBy: { createdAt: "asc" },
-        });
-        sessionUser.workspaceId = membership?.workspaceId || null;
+        user.id =
+          (typeof token.id === "string" && token.id) ||
+          (typeof token.sub === "string" && token.sub) ||
+          undefined;
+        user.workspaceId =
+          typeof token.workspaceId === "string" ? token.workspaceId : null;
+        user.workspaceRole =
+          typeof token.workspaceRole === "string" ? token.workspaceRole : null;
       }
       return session;
     },

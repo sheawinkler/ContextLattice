@@ -19,6 +19,7 @@ PUBLIC_JSON_PATH = Path("docs/public_overview/commercial-truth.json")
 TYPESCRIPT_PATH = Path("contextlattice-dashboard/lib/billing/commercial.generated.ts")
 GO_PATH = Path("services/gateway-go/commercial_contract_generated.go")
 ENTITLEMENT_POLICY_PATH = Path("services/gateway-go/entitlement_policy.go")
+LAUNCH_CONFIG_PATH = Path("launch_service/config/contextlattice.launch.json")
 STATIC_PAGE_PATHS = (
     Path("docs/public_overview/premium.html"),
     Path("docs/public_overview/index.html"),
@@ -32,6 +33,8 @@ HTML_BEGIN = "<!-- BEGIN GENERATED COMMERCIAL TRUTH: {name} -->"
 HTML_END = "<!-- END GENERATED COMMERCIAL TRUTH: {name} -->"
 TEXT_BEGIN = "# BEGIN GENERATED COMMERCIAL TRUTH: {name}"
 TEXT_END = "# END GENERATED COMMERCIAL TRUTH: {name}"
+MERMAID_BEGIN = "%% BEGIN GENERATED COMMERCIAL TRUTH: {name}"
+MERMAID_END = "%% END GENERATED COMMERCIAL TRUTH: {name}"
 
 
 class ContractError(ValueError):
@@ -98,6 +101,41 @@ def validate_contract(contract: dict[str, Any]) -> None:
         raise ContractError("product.release_train must equal the major.minor version")
     if product.get("primary_interface") != "cli":
         raise ContractError("product.primary_interface must be cli")
+    if product.get("category") != "local_first_agent_intelligence_layer":
+        raise ContractError("product.category must be local_first_agent_intelligence_layer")
+    require_string(product, "canonical_description", "product")
+    if product.get("companion_interfaces") != ["http", "mcp", "dashboard"]:
+        raise ContractError("product.companion_interfaces must be http, mcp, dashboard")
+    official_urls = product.get("official_urls")
+    if not isinstance(official_urls, dict):
+        raise ContractError("product.official_urls must be an object")
+    for key in ("repository", "website", "documentation"):
+        value = require_string(official_urls, key, "product.official_urls")
+        if not value.startswith("https://"):
+            raise ContractError(f"product.official_urls.{key} must use https")
+    source_licenses = product.get("source_licenses")
+    if not isinstance(source_licenses, dict):
+        raise ContractError("product.source_licenses must be an object")
+    if source_licenses.get("public") != {
+        "spdx": "Apache-2.0",
+        "label": "Apache License 2.0",
+    }:
+        raise ContractError("product.source_licenses.public must declare Apache-2.0")
+    if source_licenses.get("commercial") != {
+        "spdx": "BUSL-1.1",
+        "label": "Business Source License 1.1",
+        "change_license": "Apache-2.0",
+    }:
+        raise ContractError("product.source_licenses.commercial must declare BUSL-1.1 with Apache-2.0 change license")
+    expected_pillars = [
+        "durable_continuity",
+        "explainable_adaptive_retrieval",
+        "portable_context",
+        "verified_skill_evolution",
+        "privacy_bounded_aggregate_signal",
+    ]
+    if product.get("public_pillars") != expected_pillars:
+        raise ContractError("product.public_pillars must match the canonical ordered v4 pillars")
     if product.get("python_role") != "build_and_development_tooling_only":
         raise ContractError("Python must be declared as build and development tooling only")
 
@@ -528,22 +566,38 @@ func normalizeCommercialTruthPlanID(raw string) string {{
 '''
 
 
-def marker_tokens(name: str, text_style: bool = False) -> tuple[str, str]:
+def marker_tokens(name: str, text_style: bool = False, mermaid_style: bool = False) -> tuple[str, str]:
+    if text_style and mermaid_style:
+        raise ContractError("generated marker cannot use text and Mermaid styles together")
     if text_style:
         return TEXT_BEGIN.format(name=name), TEXT_END.format(name=name)
+    if mermaid_style:
+        return MERMAID_BEGIN.format(name=name), MERMAID_END.format(name=name)
     return HTML_BEGIN.format(name=name), HTML_END.format(name=name)
 
 
-def marker_block(name: str, body: str, indent: str = "", text_style: bool = False) -> str:
-    begin, end = marker_tokens(name, text_style=text_style)
+def marker_block(
+    name: str,
+    body: str,
+    indent: str = "",
+    text_style: bool = False,
+    mermaid_style: bool = False,
+) -> str:
+    begin, end = marker_tokens(name, text_style=text_style, mermaid_style=mermaid_style)
     lines = [f"{indent}{begin}"]
     lines.extend(f"{indent}{line}" if line else "" for line in body.splitlines())
     lines.append(f"{indent}{end}")
     return "\n".join(lines)
 
 
-def replace_existing_marker(text: str, name: str, replacement: str, text_style: bool = False) -> tuple[str, bool]:
-    begin, end = marker_tokens(name, text_style=text_style)
+def replace_existing_marker(
+    text: str,
+    name: str,
+    replacement: str,
+    text_style: bool = False,
+    mermaid_style: bool = False,
+) -> tuple[str, bool]:
+    begin, end = marker_tokens(name, text_style=text_style, mermaid_style=mermaid_style)
     pattern = re.compile(
         r"^[ \t]*" + re.escape(begin) + r".*?^[ \t]*" + re.escape(end),
         re.DOTALL | re.MULTILINE,
@@ -560,8 +614,15 @@ def replace_or_bootstrap(
     bootstrap: Callable[[str, str], str],
     *,
     text_style: bool = False,
+    mermaid_style: bool = False,
 ) -> str:
-    updated, found = replace_existing_marker(text, name, replacement, text_style=text_style)
+    updated, found = replace_existing_marker(
+        text,
+        name,
+        replacement,
+        text_style=text_style,
+        mermaid_style=mermaid_style,
+    )
     return updated if found else bootstrap(text, replacement)
 
 
@@ -714,6 +775,93 @@ def bootstrap_index_card(text: str, title: str, block: str, description: str) ->
 def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
     version = contract["product"]["version"]
     train = contract["product"]["release_train"]
+    description = contract["product"]["canonical_description"]
+    escaped_description = html.escape(description, quote=True)
+    title = "Context Lattice | Local-first agent intelligence layer"
+    identity_replacements = (
+        (r"<title>.*?</title>", f"<title>{title}</title>", "document title", 0),
+        (
+            r'<meta name="description" content="[^"]*" />',
+            f'<meta name="description" content="{escaped_description}" />',
+            "meta description",
+            0,
+        ),
+        (
+            r'<meta property="og:title" content="[^"]*" />',
+            f'<meta property="og:title" content="{title}" />',
+            "Open Graph title",
+            0,
+        ),
+        (
+            r'<meta property="og:description" content="[^"]*" />',
+            f'<meta property="og:description" content="{escaped_description}" />',
+            "Open Graph description",
+            0,
+        ),
+        (
+            r'<meta property="og:image:alt" content="[^"]*" />',
+            '<meta property="og:image:alt" content="ContextLattice agent intelligence layer" />',
+            "Open Graph image alt",
+            0,
+        ),
+        (
+            r'<meta name="twitter:title" content="[^"]*" />',
+            f'<meta name="twitter:title" content="{title}" />',
+            "Twitter title",
+            0,
+        ),
+        (
+            r'<meta name="twitter:description" content="[^"]*" />',
+            f'<meta name="twitter:description" content="{escaped_description}" />',
+            "Twitter description",
+            0,
+        ),
+        (
+            r'      "description": ".*?",',
+            f'      "description": {json.dumps(description)},',
+            "structured-data description",
+            0,
+        ),
+        (
+            r'      "name": "(?:Context Lattice|ContextLattice)",',
+            '      "name": "ContextLattice",',
+            "structured-data name",
+            0,
+        ),
+        (
+            r'      "operatingSystem": ".*?",',
+            '      "operatingSystem": "macOS, Linux, Windows (WSL2)",',
+            "structured-data operating systems",
+            0,
+        ),
+        (
+            r'        <span class="badge">.*?</span>',
+            '        <span class="badge">Local-first agent intelligence layer</span>',
+            "hero badge",
+            0,
+        ),
+        (
+            r'        <p class="sub">.*?</p>',
+            f'        <p class="sub">\n          {html.escape(description)}\n        </p>',
+            "hero description",
+            re.DOTALL,
+        ),
+        (
+            r'        <div class="hero-local">.*?</div>',
+            "        <div class=\"hero-local\">CLI first + durable continuity + evidence receipts + portable context + verified learning</div>",
+            "hero interface line",
+            0,
+        ),
+        (
+            r'          <a class="cta primary" href="installation\.html">.*?</a>',
+            '          <a class="cta primary" href="installation.html">Give your agents continuity</a>',
+            "primary call to action",
+            0,
+        ),
+    )
+    for pattern, replacement, label, flags in identity_replacements:
+        text = replace_once(text, pattern, replacement, f"{page_key} {label}", flags=flags)
+
     heading = marker_block(
         f"{page_key}-release-heading",
         f"<h3>Public v{train} (current release train)</h3>",
@@ -756,6 +904,7 @@ def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
         f"{page_key}-release-diagram",
         f'A[Agent or App] --> B["Public Lane: v{train}"]',
         indent="  ",
+        mermaid_style=True,
     )
     text = replace_or_bootstrap(
         text,
@@ -763,10 +912,17 @@ def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
         diagram,
         lambda value, block: replace_once(
             value,
-            r'  A\[Agent or App\] --> B\["Public Lane: v\d+\.\d+"\]',
+            r'(?:  <!-- BEGIN GENERATED COMMERCIAL TRUTH: '
+            + re.escape(f"{page_key}-release-diagram")
+            + r' -->\s*)?'
+            + r'  A\[Agent or App\] --> B\["Public Lane: v\d+\.\d+"\]'
+            + r'(?:\s*  <!-- END GENERATED COMMERCIAL TRUTH: '
+            + re.escape(f"{page_key}-release-diagram")
+            + r' -->)?',
             block,
             f"{page_key} release diagram",
         ),
+        mermaid_style=True,
     )
 
     card_specs = (
@@ -790,6 +946,29 @@ def update_index(text: str, contract: dict[str, Any], page_key: str) -> str:
 
 def update_llms(text: str, contract: dict[str, Any]) -> str:
     version = contract["product"]["version"]
+    description = contract["product"]["canonical_description"]
+    positioning_body = "\n".join(
+        [
+            f"- {description}",
+            "- Models reason and harnesses act; ContextLattice preserves the mission, selects the evidence, carries the context, and records what actually worked.",
+            "- The CLI is the primary interface. The dashboard, HTTP, and MCP are companion visibility and integration surfaces.",
+        ]
+    )
+    positioning = marker_block("llms-positioning", positioning_body, text_style=True)
+    text = replace_or_bootstrap(
+        text,
+        "llms-positioning",
+        positioning,
+        lambda value, block: replace_once(
+            value,
+            r"- Context Lattice is local-first memory infrastructure for AI agents\.\s*"
+            r"- Context Lattice complements local AI workspaces:.*?plug into\.",
+            block,
+            "LLM product positioning",
+            flags=re.DOTALL,
+        ),
+        text_style=True,
+    )
     body = (
         f"- Current public release baseline is v{version}. The CLI is the primary product interface; "
         "the dashboard is the visibility and account companion, with HTTP and MCP available for programmatic integration."
@@ -891,6 +1070,188 @@ def update_installation(text: str, contract: dict[str, Any]) -> str:
     return text
 
 
+def render_launch_config(root: Path, contract: dict[str, Any]) -> str:
+    path = root / LAUNCH_CONFIG_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContractError(f"cannot load {LAUNCH_CONFIG_PATH}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ContractError("launch publication input must be a JSON object")
+
+    product = contract["product"]
+    version = product["version"]
+    tag = product["stable_tag"]
+    description = product["canonical_description"]
+    repo_url = "{repo_url}"
+    docs_url = "{docs_url}"
+    primary_url = "{primary_url}"
+
+    payload["category"] = "Local-first Agent Intelligence Layer"
+    payload["one_liner"] = description
+    payload["primary_cta"] = (
+        "Install locally, then use the CLI as the canonical continuity and context path for every agent."
+    )
+
+    channels = payload.get("channels")
+    if not isinstance(channels, list):
+        raise ContractError("launch publication channels must be an array")
+    github_channel = next(
+        (channel for channel in channels if isinstance(channel, dict) and channel.get("copy_key") == "github_release"),
+        None,
+    )
+    if github_channel is None:
+        raise ContractError("launch publication input must include the GitHub release channel")
+    github_channel["submission_path"] = (
+        f"Publish the lane-approved {tag} release with notes, checksums, provenance, and installers"
+    )
+
+    blocks = payload.get("copy_blocks")
+    if not isinstance(blocks, dict):
+        raise ContractError("launch publication copy_blocks must be an object")
+    required_blocks = {
+        "github_release",
+        "mcp_registry",
+        "glama",
+        "pulsemcp",
+        "mcp_so",
+        "product_hunt",
+        "show_hn",
+        "x_thread",
+        "linkedin",
+        "reddit",
+        "huggingface",
+        "futuretools",
+        "futurepedia",
+        "toolify",
+        "devto",
+    }
+    missing = sorted(required_blocks - set(blocks))
+    if missing:
+        raise ContractError(f"launch publication input is missing copy blocks: {missing}")
+
+    blocks["github_release"] = {
+        "title": f"{{product_name}} {tag}",
+        "body": (
+            f"ContextLattice {tag} gives every public surface one product truth. The CLI is the primary interface; "
+            "the dashboard, HTTP, and MCP are companion surfaces. Durable continuity, explainable retrieval, "
+            "portable context, verified skill evolution, and controlled Aggregate Signal now share one generated "
+            "contract across source, docs, dashboard, and release proof.\n\n"
+            "Aggregate Signal remains a controlled preview: raw memory and prompts stay outside the signal boundary, "
+            "and production cohort learning remains blocked pending independent privacy and utility review.\n\n"
+            f"Start with the CLI:\n- Docs: {docs_url}\n- Troubleshooting: {{troubleshooting_url}}\n- Repo: {repo_url}"
+        ),
+    }
+    blocks["mcp_registry"] = {
+        "title": "Registry listing summary",
+        "body": (
+            "Name: {product_name}\nCategory: local-first agent intelligence layer\nSummary: CLI-first agent "
+            f"continuity and context infrastructure with HTTP and MCP companion surfaces.\nInstall docs: {docs_url}\nRepository: {repo_url}"
+        ),
+    }
+    blocks["glama"] = {
+        "title": "Glama listing summary",
+        "body": (
+            "ContextLattice gives agents durable continuity, explainable retrieval, portable context, verified learning, "
+            f"and provenance. The CLI is primary; MCP is a companion integration surface.\n\nPrimary URL: {primary_url}\n"
+            "Install: {docs_url}\nTroubleshooting: {troubleshooting_url}"
+        ),
+    }
+    blocks["pulsemcp"] = {
+        "title": "PulseMCP listing summary",
+        "body": (
+            "Local-first intelligence for long-horizon agents.\n\nWhat it does:\n- durable continuity across sessions\n"
+            "- explainable, impact-ranked retrieval\n- portable context and provenance\n- outcome-driven learning\n\n"
+            f"CLI quickstart: {docs_url}\nRepository: {repo_url}"
+        ),
+    }
+    blocks["mcp_so"] = {
+        "title": "MCP.so listing summary",
+        "body": (
+            "ContextLattice is the local-first intelligence layer beneath agent harnesses and AI workspaces. "
+            "Use its CLI first; connect through MCP when a harness needs a programmatic memory and context surface.\n\n"
+            "Try it locally with {primary_cta}\nDocs: {docs_url}"
+        ),
+    }
+    blocks["product_hunt"] = {
+        "title": "{product_name}",
+        "tagline": "Open an agent. The mission is already there.",
+        "body": (
+            f"{description}\n\nAgents forget. ContextLattice carries the objective, evidence, decisions, skills, "
+            "and outcomes across sessions and harnesses without stuffing the whole past into the next prompt.\n\n"
+            "What ships:\n- durable continuity and bounded context packs\n- explainable adaptive retrieval with receipts\n"
+            "- portable context with provenance\n- verified skill evolution and outcome feedback\n- local-first privacy boundaries\n\n"
+            "Start with the CLI: {docs_url}"
+        ),
+    }
+    blocks["show_hn"] = {
+        "title": "Show HN: ContextLattice - continuity and explainable retrieval for long-horizon agents",
+        "body": (
+            "I built ContextLattice because agent work should survive the window. It is a local-first intelligence layer "
+            "that preserves mission state, ranks the evidence a task actually needs, carries bounded context across "
+            "harnesses, and records which outcomes worked.\n\nThe CLI is the primary interface; HTTP and MCP are "
+            "companion surfaces.\n\nQuickstart: {docs_url}\nRepo: {repo_url}\n\nI would value feedback on "
+            "retrieval quality, continuity, and operational ergonomics."
+        ),
+    }
+    blocks["x_thread"] = {
+        "title": "X launch post",
+        "body": (
+            f"Open an agent. The mission is already there.\n\nContextLattice {tag} is the local-first intelligence "
+            "layer for durable continuity, explainable retrieval, portable context, and verified learning across "
+            "harnesses.\n\nCLI first. Raw memory local. Every useful result with receipts.\n\nStart here: {docs_url}"
+        ),
+    }
+    blocks["linkedin"] = {
+        "title": "LinkedIn launch post",
+        "body": (
+            f"ContextLattice {tag} gives long-horizon agent work a durable center. Objectives, evidence, decisions, "
+            "context, skills, and outcomes can move across sessions and harnesses without turning every prompt into an "
+            "archive dump.\n\nThe CLI is the primary interface. The dashboard makes the proof visible. HTTP and MCP "
+            "remain companion integration surfaces.\n\nAggregate Signal stays a controlled preview until independent "
+            f"privacy and utility reviews pass.\n\nDocs: {docs_url}\nRepo: {repo_url}"
+        ),
+    }
+    blocks["reddit"] = {
+        "title": "Reddit launch variant",
+        "body": (
+            "Built ContextLattice to stop long-running agents from rebuilding their world every session. It stores "
+            "continuity locally, retrieves only high-impact context, explains why evidence was selected, carries signed "
+            "context between harnesses, and learns from verified outcomes.\n\nCLI-first quickstart: {docs_url}\n"
+            "Repository: {repo_url}"
+        ),
+    }
+    blocks["huggingface"] = {
+        "title": "Hugging Face Space card",
+        "body": (
+            "ContextLattice local-first agent intelligence demo\n\nThis Space demonstrates durable writes, scoped "
+            "retrieval, bounded context, and evidence-aware synthesis through the lightweight public lane.\n\n"
+            f"Main docs: {docs_url}\nRepository: {repo_url}\nPublic overview: {primary_url}"
+        ),
+    }
+    blocks["futuretools"] = {
+        "title": "FutureTools listing summary",
+        "body": "{one_liner}\n\nCategory: Agent Intelligence Infrastructure\nPrimary interface: CLI\nTry it: {primary_url}\nInstall: {docs_url}",
+    }
+    blocks["futurepedia"] = {
+        "title": "Futurepedia listing summary",
+        "body": "{one_liner}\n\nUse case: durable continuity and high-impact context across agent sessions and harnesses.\nDocs: {docs_url}",
+    }
+    blocks["toolify"] = {
+        "title": "Toolify listing summary",
+        "body": "{one_liner}\n\nPrimary interface: CLI\nLaunch command: gmake quickstart\nDocs: {docs_url}\nRepo: {repo_url}",
+    }
+    blocks["devto"] = {
+        "title": "Dev.to deep-dive title",
+        "body": (
+            "How I built a local-first intelligence layer for durable agent continuity and explainable retrieval\n\n"
+            "Structure:\n1) why context windows are not memory\n2) continuity and retrieval contracts\n3) proof, "
+            "privacy, and outcome learning\n4) operational lessons\n\nStart here: {docs_url}"
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=True, indent=2) + "\n"
+
+
 def render_static_page(path: Path, text: str, contract: dict[str, Any]) -> str:
     if path.name == "premium.html":
         return update_premium(text, contract)
@@ -913,6 +1274,7 @@ def expected_outputs(root: Path, contract: dict[str, Any]) -> dict[Path, str]:
         root / PUBLIC_JSON_PATH: json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
         root / TYPESCRIPT_PATH: render_typescript(contract),
         root / GO_PATH: render_go(contract, include_entitled_runtime=(root / ENTITLEMENT_POLICY_PATH).is_file()),
+        root / LAUNCH_CONFIG_PATH: render_launch_config(root, contract),
     }
     for relative_path in STATIC_PAGE_PATHS:
         path = root / relative_path

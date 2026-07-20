@@ -1,19 +1,29 @@
 ---
 name: Bug report
-about: Report a problem
+about: Report a reproducible ContextLattice problem
 labels: bug
 ---
 
-## What happened?
+## What Happened?
 
-## Expected behavior
+## Expected Outcome
 
-## Steps to reproduce
+## Reproduction
 
-## Environment
-- OS:
-- Docker version:
-- Branch/commit:
+## Runtime
 
-## Logs / screenshots
+- ContextLattice release/commit:
+- Install channel: source / GitHub release / Homebrew / other
+- OS and architecture:
+- Compose runtime and version:
+- Deployment profile: lite / lite-advanced / full / other
+- Agent harness, if relevant:
 
+## Bounded Evidence
+
+Paste a redacted `contextlattice doctor --pretty` result and the smallest useful
+log excerpt. Remove API keys, tokens, personal paths, prompts, and memory content.
+
+## Regression
+
+Last known working release or commit, if known:

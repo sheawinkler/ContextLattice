@@ -18,3 +18,17 @@ test("dashboard auth is disabled by default for local OSS mode", async () => {
   assert.equal(body.error, "auth_disabled");
   assert.equal(body.authRequired, false);
 });
+
+test("dashboard auth requires explicit hosted opt-in", () => {
+  const previous = process.env.AUTH_REQUIRED;
+  process.env.AUTH_REQUIRED = "true";
+  try {
+    assert.equal(dashboardAuthRequired(), true);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.AUTH_REQUIRED;
+    } else {
+      process.env.AUTH_REQUIRED = previous;
+    }
+  }
+});

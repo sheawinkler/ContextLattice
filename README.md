@@ -2,64 +2,95 @@
 
 <p align="center">
   <a href="https://contextlattice.io/" target="_blank" rel="noopener noreferrer">
-    <img src="docs/readme/contextlattice-architecture-readme-v2-2026-04-28.png" alt="ContextLattice architecture overview" width="100%" />
+    <img src="docs/readme/contextlattice-architecture-readme-v2-2026-04-28.png" alt="Context Lattice architecture overview poster" width="100%" />
   </a>
 </p>
 
 <p align="center">
-  Private-by-default memory and context orchestration for AI agents.
+  <strong>Open an agent. Already there.</strong>
 </p>
 
 <p align="center">
-  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-HTTP%20Gateway-6b7280?style=for-the-badge" alt="MCP HTTP Gateway"></a>
+  The local-first intelligence layer that gives AI agents durable continuity, explainable retrieval, portable context, and verified learning across harnesses.
+</p>
+
+<p align="center">
+  <a href="#quickstart"><img src="https://img.shields.io/badge/Interface-CLI%20First-111111?style=for-the-badge" alt="CLI first"></a>
+  <a href="https://github.com/sheawinkler/ContextLattice/releases/tag/v4.0.2"><img src="https://img.shields.io/badge/Release-v4.0.2-333333?style=for-the-badge" alt="ContextLattice v4.0.2"></a>
   <a href="#quickstart"><img src="https://img.shields.io/badge/Deploy-Docker%20Compose-4b5563?style=for-the-badge" alt="Docker Compose"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSL%201.1-1f2937?style=for-the-badge" alt="BSL 1.1"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-1f2937?style=for-the-badge" alt="Apache License 2.0"></a>
 </p>
 
 [![context-lattice MCP server](https://glama.ai/mcp/servers/sheawinkler/context-lattice/badges/card.svg?v=20260324-2)](https://glama.ai/mcp/servers/sheawinkler/context-lattice)
 
-## What ContextLattice Does
+<p align="center">
+  <a href="https://contextlattice.io/">Overview</a> |
+  <a href="https://contextlattice.io/architecture.html">Architecture</a> |
+  <a href="https://contextlattice.io/wiki.html">Wiki</a> |
+  <a href="https://contextlattice.io/roadmap.html">Roadmap</a> |
+  <a href="https://contextlattice.io/installation.html">Installation</a> |
+  <a href="https://contextlattice.io/integration.html">Integrations</a> |
+  <a href="https://contextlattice.io/premium.html">Premium</a> |
+  <a href="https://contextlattice.io/app.html">App Surface</a> |
+  <a href="https://contextlattice.io/troubleshooting.html">Troubleshooting</a> |
+  <a href="https://contextlattice.io/updates.html">Updates</a>
+</p>
 
-ContextLattice provides a single memory contract for agentic systems:
+## The Missing Layer
 
-- Unified write/read contract for memory and context.
-- Durable fanout across retrieval/storage lanes.
-- Staged retrieval (fast now, deep continuation when needed).
-- Bounded async inbox delivery that reports queued work as warming and surfaces terminal continuation results at normal CLI boundaries.
-- Temporal claims that preserve what was true, when it was true, what replaced it, what contradicts it, and the evidence behind each assertion.
-- Advisor-only retrieval planning plus proof-carrying synthesis that exposes support, opposition, uncertainty, missing proof, and causal context instead of laundering recall into certainty.
-- Outcome-trained policy candidates that must survive shadow and controlled canary gates one phase at a time before promotion can even be recommended.
-- Skill Foundry conversion of repeated verified workflows into independently evaluated, human-approved, inactive skill exports with explicit, non-destructive draft retirement.
-- Signed Context Passports that carry bounded claims, evidence, objectives, lineage, capability requirements, expiry, deterministic diffs, and replay plans across machines.
-- Encrypted Context Mesh envelopes with explicit project-scoped recipient grants, X25519 encryption, revocation, and conflict-preserving import without turning ContextLattice into a sync transport.
-- Portable Continuation that binds signed least-privilege grants, digest-only work manifests, provenance-preserving import receipts, and replay-safe cross-machine reconciliation into one CLI-first handoff.
-- Continuity Zero that opens one unambiguous active mission already assembled: packet, checkpoint, Agent Fit, preparation, repository commit, provenance, risks, and next move, without a giant setup prompt or local-path leakage.
-- Aggregate Signal that turns explicitly opted-in, clipped local sufficient statistics into cohort-suppressed learning with bounded privacy accounting, immediate opt-out, and zero network calls by default.
-- Agent runtime sessions that turn prior work, objective lineage, graph touches, skills, checkpoints, and handoffs into prompt-ready reference packages, exportable run traces, and exact-linked proof timelines.
-- Continuity Identity that keeps one task stable across agents and sessions without confusing it with a branch, worktree, or execution lane; semantic resemblance is advisory and never silently merges work.
-- Longitudinal objective graphs and decision-change receipts that preserve how work moved, why a decision changed, what evidence triggered it, and what was known at any requested point in time.
-- A verified Utility Ledger that keeps exact model-visible ContextLattice tokens separate from wire and observed provider totals, then claims causal gain only when a leakage-free matched control actually exists.
-- Go/Rust runtime ownership for the active application path.
-- Legacy Python runtime archived under `archive/services/orchestrator_legacy_python` for tooling/test compatibility only.
-- Local-first deployment with optional hosted surfaces.
+Models can reason. Harnesses can act. Neither one remembers the mission reliably after the chat, tool, account, or computer changes. ContextLattice closes that gap without turning every prompt into a transcript landfill.
 
-## Current Public Baseline
+- **Durable continuity.** Reopen the exact active mission with its checkpoint, decisions, risks, repository identity, proof, and next move already assembled.
+- **Explainable retrieval.** Spend the context window on the evidence with the highest impact per token, then expose why each result was selected, opposed, deferred, or omitted.
+- **Portable context.** Move signed, least-privilege continuation packets across agents, harnesses, accounts, and machines without surrendering provenance or execution control.
+- **Verified skill evolution.** Convert repeated successful work into evaluated, human-approved skills; keep policy candidates shadow-only until deterministic evidence earns promotion.
+- **Privacy-bounded Aggregate Signal.** Learn from explicitly opted-in, clipped statistics while raw prompts and memory stay local. Production cohort learning remains a controlled activation preview, hard-blocked until independent privacy and utility reviews pass.
 
-`v4.0.1` is the current release baseline. Aggregate Signal adds a privacy-bounded learning loop without making memory exportable: only explicitly opted-in, clipped sufficient statistics enter a local queue; small cohorts disappear behind suppression; composition, replay, expiry, and opt-out are enforced; and external network calls remain zero by default. Operator and Enterprise artifacts add credential-derived workspace governance, while production cohort contribution and reporting stay hard-blocked until independent privacy and utility reviews pass. The CLI remains the prescribed path; HTTP is the integration fallback. Continuity Zero, Verified Skill Evolution, Portable Continuation, Agent Fit, Policy Laboratory, Retrieval Receipts, Utility Ledger, synthesis, graph repair, Temporal Claims, Context Passports, Context Mesh, Pi/Droid runners, OMP/Mercury hooks, Skills Index discovery, Qdrant-first recall, and the Go/Rust runtime remain one coherent contract.
+## More Than Memory
 
-## Public Runtime Stack (v4.0)
+ContextLattice packages the full operating layer around agent intelligence: durable writes, scoped Context Packs, deterministic synthesis, temporal claims, graph links, Skills Index discovery, behavior provenance, agent sessions, Continuity Identity, Utility Ledger economics, Context Passports, encrypted Context Mesh, Agent Fit, Policy Laboratory, Pi/Droid runner adapters, and automatic instruction hooks for supported harnesses.
 
-- Ingress: `gateway-go`.
-- Core memory + retrieval lanes: Go + Rust services.
-- Retrieval policy: staged fast-return, async continuation lifecycle, and impact-per-token allocation.
-- Primary interface: `contextlattice context|resume|remember|finish|correct|utility|doctor`.
-- Advanced CLI helpers such as `contextlattice_adopt`, `contextlattice_agent_adapter`, `contextlattice_agent_session`, and `contextlattice_runner_quality` remain available for integration and debugging.
-- Companion surfaces: dashboard for visibility, HTTP for app integration, and MCP-compatible clients for host/harness integrations.
-- Single-container lite builds (`Dockerfile.hf-lite`) also run `gateway-go` (no Python runtime dependency).
-- Public single-container lite vector default: `topic_rollups` only.
-- Public local lite core default: `topic_rollups + qdrant`; pgvector and memory-bank spike adapters are not started by default.
-- Public local lite advanced: optional public adapter lab via `gmake mem-up-lite-advanced`; not the default quickstart and not a paid/private boundary.
-- Full/operator stacks: Qdrant remains the primary vector-native lane; pgvector stays supported for SQL-co-located vector workloads.
+The **CLI is the primary interface**. The dashboard makes behavior and proof visible. HTTP and MCP remain companion integration surfaces for applications and harnesses that need them.
+
+`v4.0.2` is the current release baseline. The active application path is Go/Rust; Python is retained for build, development, migration, and audit tooling rather than live request handling. Public local mode is account-free. Paid artifacts add hosted distribution, workspace governance, protected operations, and advanced analytics without moving local memory into a mandatory cloud.
+
+## Architecture Snapshot
+
+<table>
+  <tr>
+    <td width="50%">
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-service-map.svg" alt="Context Lattice service map" width="100%" />
+      </a>
+    </td>
+    <td width="50%">
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-write-flow.svg" alt="Write flow with durable outbox fanout" width="100%" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-retrieval-flow.svg" alt="Retrieval and learning feedback flow" width="100%" />
+      </a>
+    </td>
+    <td width="50%">
+      <a href="https://contextlattice.io/architecture.html">
+        <img src="docs/public_overview/assets/architecture-task-coordination.svg" alt="Task coordination and agent communication flow" width="100%" />
+      </a>
+    </td>
+  </tr>
+</table>
+
+## Operator Wiki
+
+Use the new operator wiki as the canonical “best tools + graphics” runtime manual for `public/main`.
+
+- Website wiki (recommended): `https://contextlattice.io/wiki.html`
+- Repo mirror: `docs/wiki/README.md`
+- Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
+- Scope: endpoint atlas, retrieval mode policy, continuation behavior, release-ready playbooks, and agent templates
 
 ### Cognition Core CLI
 
@@ -246,6 +277,7 @@ gmake quickstart
 ```
 
 `gmake quickstart` prompts for runtime profile and then launches the selected stack.
+It is the canonical first-install path; signed installers are bootstrap alternatives, not a competing control surface.
 
 ### 3) Verify
 
@@ -475,6 +507,7 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 - Plans and distribution boundaries: `docs/public_overview/premium.html`
 - Retrieval receipts and trust model: [`docs/retrieval-receipts.md`](docs/retrieval-receipts.md)
 - Release notes, newest first; older entries are historical:
+  - `docs/releases/v4.0.2.md` (one product truth across CLI, dashboard, docs, installers, release gates, and lane licensing)
   - `docs/releases/v4.0.1.md` (public installer boundary repair with unchanged Aggregate Signal runtime semantics)
   - `docs/releases/v4.0.0.md` (privacy-bounded Aggregate Signal, explicit consent, cohort suppression, and proof-held paid governance)
   - `docs/releases/v3.26.0.md` (zero-entry continuity, fail-closed objective selection, and governed external-adapter intents)
@@ -529,4 +562,4 @@ CODEX_SKILLS_QUARANTINE_INDEX=/opt/contextlattice/skills_quarantine/index/skills
 
 ## License
 
-Business Source License 1.1 (`LICENSE`).
+Apache License 2.0 (`LICENSE`).

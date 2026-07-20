@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Architecture | Context Lattice</title>
-  <link rel="stylesheet" href="styles-gray.css?v=20260601d" />
+  <meta name="description" content="See how ContextLattice turns durable continuity, impact-ranked retrieval, portable context, learning, and proof into one local-first agent intelligence layer." />
+  <link rel="canonical" href="https://contextlattice.io/architecture.html" />
+  <link rel="stylesheet" href="styles-gray.css?v=20260720a" />
 </head>
 <body class="home arch-page">
   <main class="container">
@@ -96,13 +98,13 @@
 
           <rect class="ive-node" x="64" y="256" rx="18" ry="18" width="230" height="176"></rect>
           <text class="ive-label" x="179" y="304" text-anchor="middle">[A] External Actors</text>
-          <text class="ive-sub" x="179" y="338" text-anchor="middle">Apps + agents</text>
-          <text class="ive-sub" x="179" y="366" text-anchor="middle">MCP tools</text>
+          <text class="ive-sub" x="179" y="338" text-anchor="middle">CLI + agent harnesses</text>
+          <text class="ive-sub" x="179" y="366" text-anchor="middle">HTTP / MCP clients</text>
           <text class="ive-sub" x="179" y="394" text-anchor="middle">Messaging hooks</text>
 
           <rect class="ive-core" x="438" y="234" rx="20" ry="20" width="444" height="140"></rect>
           <text class="ive-label" x="660" y="288" text-anchor="middle">[B] Orchestrator Control Plane</text>
-          <text class="ive-sub" x="660" y="320" text-anchor="middle">HTTP-first APIs + auth + policy</text>
+          <text class="ive-sub" x="660" y="320" text-anchor="middle">Go gateway + auth + policy</text>
 
           <rect class="ive-node" x="438" y="396" rx="16" ry="16" width="206" height="116"></rect>
           <text class="ive-label" x="541" y="444" text-anchor="middle">[C] Memory Plane</text>
@@ -181,7 +183,7 @@
           <li><strong>Panel 2 (Write Flow):</strong> how writes move from ingress to durable fanout sinks.</li>
           <li><strong>Panel 3 (Retrieval Flow):</strong> how recall/rerank returns context and captures learning signals.</li>
           <li><strong>Panel 4 (Task Coordination):</strong> how the orchestrator plans tasks, fans out workers, and communicates through messaging channels.</li>
-          <li><strong>HTTP-first ingress:</strong> orchestrator remains the single write/search entrypoint.</li>
+          <li><strong>CLI-first use:</strong> the CLI is the primary product interface; HTTP and MCP terminate at the same orchestrator contract for harness and application integration.</li>
           <li><strong>Messaging surfaces:</strong> can operate bidirectionally (human ingress + response egress).</li>
           <li><strong>Local-first default:</strong> local stores first, cloud BYO remains optional.</li>
         </ul>

@@ -2,7 +2,7 @@
 
 Effective date: 2026-02-18
 Provider: Shea Winkler (Context Lattice)
-Contact: sheawinkler@gmail.com
+Contact: hello@contextlattice.io
 
 These Terms govern use of hosted Context Lattice services.
 

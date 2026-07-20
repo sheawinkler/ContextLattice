@@ -53,10 +53,15 @@ def copy_fixture(destination: Path) -> None:
 class CommercialTruthTests(unittest.TestCase):
     def test_contract_decisions(self) -> None:
         contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
-        self.assertEqual(contract["product"]["version"], "4.0.1")
-        self.assertEqual(contract["product"]["stable_tag"], "v4.0.1")
+        self.assertEqual(contract["product"]["version"], "4.0.2")
+        self.assertEqual(contract["product"]["stable_tag"], "v4.0.2")
         self.assertEqual(contract["product"]["release_train"], "4.0")
+        self.assertEqual(contract["product"]["category"], "local_first_agent_intelligence_layer")
+        self.assertIn("local-first intelligence layer", contract["product"]["canonical_description"])
         self.assertEqual(contract["product"]["primary_interface"], "cli")
+        self.assertEqual(contract["product"]["companion_interfaces"], ["http", "mcp", "dashboard"])
+        self.assertEqual(contract["product"]["source_licenses"]["public"]["spdx"], "Apache-2.0")
+        self.assertEqual(contract["product"]["source_licenses"]["commercial"]["spdx"], "BUSL-1.1")
         self.assertEqual(contract["product"]["python_role"], "build_and_development_tooling_only")
 
         plans = {plan["id"]: plan for plan in contract["plans"]}
@@ -210,6 +215,20 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["drift"], [])
 
+    def test_launch_copy_is_generated_from_product_truth(self) -> None:
+        contract = json.loads((ROOT / "config/commercial_truth.v1.json").read_text(encoding="utf-8"))
+        launch = json.loads(
+            (ROOT / "launch_service/config/contextlattice.launch.json").read_text(encoding="utf-8")
+        )
+        version = contract["product"]["stable_tag"]
+        serialized = json.dumps(launch, ensure_ascii=True)
+        self.assertEqual(launch["category"], "Local-first Agent Intelligence Layer")
+        self.assertEqual(launch["one_liner"], contract["product"]["canonical_description"])
+        self.assertIn("CLI", launch["primary_cta"])
+        self.assertIn(version, launch["copy_blocks"]["github_release"]["title"])
+        self.assertNotIn("v4.0.1", serialized)
+        self.assertNotIn("HTTP-first, MCP-compatible", serialized)
+
     def test_public_projection_has_no_private_paths(self) -> None:
         payload = (ROOT / "docs/public_overview/commercial-truth.json").read_text(encoding="utf-8")
         self.assertNotIn("/Users/", payload)
@@ -217,7 +236,7 @@ class CommercialTruthTests(unittest.TestCase):
         self.assertNotIn("file://", payload)
         self.assertNotIn("BEGIN PRIVATE KEY", payload)
         public_truth = json.loads(payload)
-        self.assertEqual(public_truth["product"]["version"], "4.0.1")
+        self.assertEqual(public_truth["product"]["version"], "4.0.2")
         self.assertEqual(
             public_truth["release_availability"]["frontier_semantic_continuity_automation"]["availability"],
             "generally_available",
@@ -290,8 +309,11 @@ class CommercialTruthTests(unittest.TestCase):
 
     def test_pages_sync_publishes_commercial_truth(self) -> None:
         sync_script = (ROOT / "scripts/sync_public_overview.sh").read_text(encoding="utf-8")
+        required_files = sync_script.split("required_files=(", 1)[1].split("\n)", 1)[0]
+        self.assertIn("commercial-truth.json", required_files.split())
+        self.assertIn('for filename in "${required_files[@]}"; do', sync_script)
         self.assertIn(
-            'cp "$PUBLIC_SOURCE_DIR/commercial-truth.json" "$PUBLIC_DIR/commercial-truth.json"',
+            'cp "$PUBLIC_SOURCE_DIR/$filename" "$PUBLIC_DIR/$filename"',
             sync_script,
         )
 
