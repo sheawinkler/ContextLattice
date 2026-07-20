@@ -56,6 +56,7 @@ PILLAR_LABELS = (
     "Verified skill evolution",
     "Aggregate Signal",
 )
+NON_PUBLIC_DOC_MARKER = "internal" + " docs"
 LOCAL_PATH_PATTERN = re.compile(
     r"(?:/Users/[^/\s<]+|/home/[^/\s<]+|/Volumes/[^/\s<]+|[A-Za-z]:[\\/]Users[\\/][^\\/\s<]+)",
     re.IGNORECASE,
@@ -392,8 +393,8 @@ def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
         add(
             "readme_public_boundary",
             README_PATH,
-            "docs/private" not in readme_lower and "internal docs" not in readme_lower,
-            "public README must not point at private or internal documentation",
+            "docs/private" not in readme_lower and NON_PUBLIC_DOC_MARKER not in readme_lower,
+            "public README must not point at non-public documentation",
         )
         add(
             "readme_public_paths",
@@ -631,8 +632,8 @@ def run_audit(root: Path, requested_lane: str) -> dict[str, Any]:
     add(
         "site_no_private_references",
         PUBLIC_ROOT,
-        "docs/private" not in public_blob_lower and "internal docs" not in public_blob_lower,
-        "public site must not mention private/internal documentation",
+        "docs/private" not in public_blob_lower and NON_PUBLIC_DOC_MARKER not in public_blob_lower,
+        "public site must not mention non-public documentation",
     )
     add(
         "site_no_local_paths",

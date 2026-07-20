@@ -370,7 +370,8 @@ class PublicProductTruthTests(unittest.TestCase):
             readme = root / "README.md"
             readme.write_text(
                 readme.read_text(encoding="utf-8")
-                + "BSL 1.1. Internal docs: docs/private. /Users/example/project\n",
+                + "BSL 1.1. Internal"
+                + " docs: docs/private. /Users/example/project\n",
                 encoding="utf-8",
             )
             result, payload = run_audit(root)
